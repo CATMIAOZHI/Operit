@@ -8,6 +8,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      DEPS_RELEASE_TAG: deps-v1
+      DEPS_CACHE_VERSION: v1
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,16 +30,59 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           validate-wrappers: false
+          cache-read-only: false
+
+      - name: Restore vendored dependencies cache
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            app/libs
+            app/src/main/jniLibs
+            app/src/main/assets/models
+            app/src/main/assets/subpack
+          key: operit-vendored-deps-${{ env.DEPS_CACHE_VERSION }}
 
       - name: Download vendored dependencies
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "Note: app/libs/ dependencies (ffmpeg-kit etc.) are not in git."
-          echo "If build fails on FFmpeg imports, this is expected without vendored libs."
+          set -euo pipefail
+
+          gh release download "$DEPS_RELEASE_TAG" \
+            --repo CATMIAOZHI/Operit \
+            --pattern 'jniLibs.zip' \
+            --pattern 'libs.zip' \
+            --pattern 'models.zip' \
+            --pattern 'subpack.zip'
+
+          echo '8b973cc604041d6a6801a2040bab8e4f4faf7c7041cba16b6524100a866e99b3  jniLibs.zip' > deps.sha256
+          echo 'a9cf963c2bfac4ddaa0e47f66c0adc0fa9084e71c2733d3f8dd84a33957b92d2  libs.zip' >> deps.sha256
+          echo '8645d7d56266518e284e672ef9c017013238bec6d057abc1cd0b74686c1efbb8  models.zip' >> deps.sha256
+          echo '91e48b1634215c0ba91849d6e2a6353f3edee4e37317f832d1618f09f4f554fd  subpack.zip' >> deps.sha256
+          sha256sum -c deps.sha256
+
+          unzip -q -o jniLibs.zip -d .
+          unzip -q -o libs.zip -d .
+          unzip -q -o models.zip -d .
+          unzip -q -o subpack.zip -d .
+
+      - name: Save vendored dependencies cache
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            app/libs
+            app/src/main/jniLibs
+            app/src/main/assets/models
+            app/src/main/assets/subpack
+          key: operit-vendored-deps-${{ env.DEPS_CACHE_VERSION }}
 
       - name: Build Debug APK
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug -x lint
+          ./gradlew :app:assembleDebug -x lint --build-cache
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
