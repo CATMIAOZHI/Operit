@@ -1279,7 +1279,12 @@ class EnhancedAIService private constructor(private val context: Context) {
                                 preferenceProfileIdOverride,
                                 stream,
                                 enableGroupOrchestrationHint,
-                                disableWarning
+                                disableWarning,
+                                useToolCallApi = getModelConfigForFunction(
+                                    functionType = functionType,
+                                    chatModelConfigIdOverride = chatModelConfigIdOverride,
+                                    chatModelIndexOverride = chatModelIndexOverride
+                                ).enableToolCall
                             )
                         }
                     } else if (!hadFatalError) {
@@ -1704,7 +1709,8 @@ class EnhancedAIService private constructor(private val context: Context) {
             preferenceProfileIdOverride: String? = null,
             stream: Boolean = true,
             enableGroupOrchestrationHint: Boolean = false,
-            disableWarning: Boolean = false
+            disableWarning: Boolean = false,
+            useToolCallApi: Boolean = false
     ) {
         try {
             val startTime = messageTimingNow()
@@ -1824,8 +1830,10 @@ class EnhancedAIService private constructor(private val context: Context) {
             }
 
             // 预先提取工具调用信息，避免重复解析
+            // 当使用原生 function calling 时，工具调用通过 API 的 tool_calls 字段返回，
+            // 文本中出现的工具标签是普通文本内容，不应被解析执行
             val extractedToolInvocations =
-                    if (truncatedToolRecovery == null) {
+                    if (truncatedToolRecovery == null && !useToolCallApi) {
                         ToolExecutionManager.extractToolInvocations(finalContent)
                     } else {
                         emptyList()
@@ -2465,7 +2473,12 @@ class EnhancedAIService private constructor(private val context: Context) {
                     preferenceProfileIdOverride,
                     stream,
                     enableGroupOrchestrationHint,
-                    disableWarning
+                    disableWarning,
+                    useToolCallApi = getModelConfigForFunction(
+                        functionType = functionType,
+                        chatModelConfigIdOverride = chatModelConfigIdOverride,
+                        chatModelIndexOverride = chatModelIndexOverride
+                    ).enableToolCall
                 )
             } catch (e: CancellationException) {
                 AppLogger.d(TAG, "处理工具执行结果被取消")
