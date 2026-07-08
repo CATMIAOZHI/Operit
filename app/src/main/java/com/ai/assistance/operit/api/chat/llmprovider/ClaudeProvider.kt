@@ -1439,7 +1439,7 @@ class ClaudeProvider(
                             val toolName = block.optString("name", "")
                             if (toolName.isNotEmpty()) {
                                 val toolTagName = ChatMarkupRegex.generateRandomToolTagName()
-                                fullText.append("\n<$toolTagName name=\"$toolName\">")
+                fullText.append("\n<$toolTagName name=\"$toolName\" data-origin=\"${ChatMarkupRegex.NATIVE_TOOL_CALL_ORIGIN}\">")
                                 val input = block.optJSONObject("input")
                                 if (input != null) {
                                     val converter = StreamingJsonXmlConverter()
@@ -1674,8 +1674,8 @@ class ClaudeProvider(
                                                     val toolName = contentBlock.optString("name", "")
                                                     if (toolName.isNotEmpty()) {
                                                         val toolTagName = ChatMarkupRegex.generateRandomToolTagName()
-                                                        currentToolTagName = toolTagName
-                                                        val toolStartTag = "\n<$toolTagName name=\"$toolName\">"
+                currentToolTagName = toolTagName
+                val toolStartTag = "\n<$toolTagName name=\"$toolName\" data-origin=\"${ChatMarkupRegex.NATIVE_TOOL_CALL_ORIGIN}\">"
                                                         emittedAny = true
                                                         emit(toolStartTag)
                                                         receivedContent.append(toolStartTag)

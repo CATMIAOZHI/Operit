@@ -1279,7 +1279,8 @@ class EnhancedAIService private constructor(private val context: Context) {
                                 preferenceProfileIdOverride,
                                 stream,
                                 enableGroupOrchestrationHint,
-                                disableWarning
+                                disableWarning,
+                                useToolCallApi = modelSnapshot.config.enableToolCall
                             )
                         }
                     } else if (!hadFatalError) {
@@ -1704,7 +1705,8 @@ class EnhancedAIService private constructor(private val context: Context) {
             preferenceProfileIdOverride: String? = null,
             stream: Boolean = true,
             enableGroupOrchestrationHint: Boolean = false,
-            disableWarning: Boolean = false
+            disableWarning: Boolean = false,
+            useToolCallApi: Boolean = false
     ) {
         try {
             val startTime = messageTimingNow()
@@ -1826,7 +1828,7 @@ class EnhancedAIService private constructor(private val context: Context) {
             // 预先提取工具调用信息，避免重复解析
             val extractedToolInvocations =
                     if (truncatedToolRecovery == null) {
-                        ToolExecutionManager.extractToolInvocations(finalContent)
+                        ToolExecutionManager.extractToolInvocations(finalContent, onlyNative = useToolCallApi)
                     } else {
                         emptyList()
                     }
@@ -2465,7 +2467,8 @@ class EnhancedAIService private constructor(private val context: Context) {
                     preferenceProfileIdOverride,
                     stream,
                     enableGroupOrchestrationHint,
-                    disableWarning
+                    disableWarning,
+                    useToolCallApi = modelSnapshot.config.enableToolCall
                 )
             } catch (e: CancellationException) {
                 AppLogger.d(TAG, "处理工具执行结果被取消")
