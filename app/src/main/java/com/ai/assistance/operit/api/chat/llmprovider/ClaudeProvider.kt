@@ -299,12 +299,19 @@ class ClaudeProvider(
      * 解析XML格式的tool调用，转换为Claude Tool格式
      * @return Pair<文本内容, tool_use数组>
      */
-    private fun parseXmlToolCalls(content: String): Pair<String, JSONArray?> {
+    private fun parseXmlToolCalls(content: String, onlyNative: Boolean = false): Pair<String, JSONArray?> {
         if (!enableToolCall) return Pair(content, null)
 
-        val matches = ChatMarkupRegex.toolCallPattern.findAll(content)
+        val allMatches = ChatMarkupRegex.toolCallPattern.findAll(content).toList()
 
-        if (!matches.any()) {
+        // 当 onlyNative=true 时，只保留带 data-origin="native_tool_call" 标记的匹配
+        val matches = if (onlyNative) {
+            allMatches.filter { ChatMarkupRegex.isNativeToolCallOrigin(it.value) }
+        } else {
+            allMatches
+        }
+
+        if (matches.isEmpty()) {
             return Pair(content, null)
         }
 
@@ -799,7 +806,7 @@ class ClaudeProvider(
                     PromptTurnKind.SYSTEM -> Unit
 
                     PromptTurnKind.ASSISTANT -> {
-                        val (textContent, toolUses) = parseXmlToolCalls(content)
+                        val (textContent, toolUses) = parseXmlToolCalls(content, onlyNative = true)
                         if (toolUses != null && toolUses.length() > 0) {
                             if (openToolUseIds.isNotEmpty()) {
                                 flushOpenToolUsesAsCancelled("assistant_tool_use_before_result")
