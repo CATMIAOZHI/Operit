@@ -83,6 +83,20 @@ android {
     buildTypes {
         val releaseSigningConfig = signingConfigs.findByName("release")
 
+        // Fixed debug keystore from gradle properties (for CI consistent signing)
+        val debugKeystorePath = project.findProperty("operitDebugKeystore") as? String
+        val debugKeystorePassword = project.findProperty("operitDebugKeystorePassword") as? String
+        val debugKeyAlias = project.findProperty("operitDebugKeyAlias") as? String ?: "androiddebugkey"
+        val debugKeyPassword = project.findProperty("operitDebugKeyPassword") as? String
+        val fixedDebugSigningConfig = if (!debugKeystorePath.isNullOrBlank() && !debugKeystorePassword.isNullOrBlank()) {
+            signingConfigs.create("fixedDebug") {
+                storeFile = file(debugKeystorePath)
+                storePassword = debugKeystorePassword
+                keyAlias = debugKeyAlias
+                keyPassword = debugKeyPassword ?: debugKeystorePassword
+            }
+        } else null
+
         release {
             isMinifyEnabled = false
             isShrinkResources = false
@@ -96,9 +110,7 @@ android {
         }
         debug {
             applicationIdSuffix = ".debug"
-            if (releaseSigningConfig != null) {
-                signingConfig = releaseSigningConfig
-            }
+            signingConfig = fixedDebugSigningConfig ?: releaseSigningConfig
         }
         create("clone") {
             initWith(getByName("debug"))

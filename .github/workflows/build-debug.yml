@@ -113,8 +113,27 @@ jobs:
           ls -lh ../../app/src/main/jniLibs/arm64-v8a/liboperit_ripgrep.so
 
       - name: Build Debug APK
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          DEBUG_KEYSTORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
         run: |
           chmod +x gradlew
+
+          # Restore fixed debug keystore for consistent signing
+          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+            echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > /tmp/operit-debug.keystore
+            # Inject signing config via gradle properties
+            cat >> gradle.properties <<EOF
+          operitDebugKeystore=/tmp/operit-debug.keystore
+          operitDebugKeystorePassword=$DEBUG_KEYSTORE_PASSWORD
+          operitDebugKeyAlias=androiddebugkey
+          operitDebugKeyPassword=$DEBUG_KEYSTORE_PASSWORD
+          EOF
+            echo "Using fixed debug keystore for consistent signing"
+          else
+            echo "No fixed keystore secret found, using default debug signing"
+          fi
+
           ./gradlew :app:assembleDebug -x lint --build-cache
 
       - name: Upload APK
