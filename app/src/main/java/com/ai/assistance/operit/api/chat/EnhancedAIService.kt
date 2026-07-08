@@ -946,6 +946,7 @@ class EnhancedAIService private constructor(private val context: Context) {
                 )
             registerExecutionContext(execContext)
             var hadFatalError = false
+            var firstRoundEnableToolCall = false
             try {
                 // 确保所有操作都在IO线程上执行
                 withContext(Dispatchers.IO) {
@@ -969,6 +970,7 @@ class EnhancedAIService private constructor(private val context: Context) {
                             chatModelConfigIdOverride,
                             chatModelIndexOverride
                         )
+                    firstRoundEnableToolCall = modelSnapshot.config.enableToolCall
 
                     // Prepare conversation history with system prompt
                     val preparedHistory =
@@ -1280,7 +1282,7 @@ class EnhancedAIService private constructor(private val context: Context) {
                                 stream,
                                 enableGroupOrchestrationHint,
                                 disableWarning,
-                                useToolCallApi = modelSnapshot.config.enableToolCall
+                                useToolCallApi = firstRoundEnableToolCall
                             )
                         }
                     } else if (!hadFatalError) {

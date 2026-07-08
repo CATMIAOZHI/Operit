@@ -30,7 +30,7 @@ class MistralProvider(
         enableToolCall = enableToolCall
     ) {
 
-    override fun parseXmlToolCalls(content: String, onlyNative: Boolean = false): Pair<String, JSONArray?> {
+    override fun parseXmlToolCalls(content: String, onlyNative: Boolean): Pair<String, JSONArray?> {
         val matches = ChatMarkupRegex.toolCallPattern.findAll(content)
 
         // 当 onlyNative=true 时，只保留带 data-origin="native_tool_call" 标记的匹配
