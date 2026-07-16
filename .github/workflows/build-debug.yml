@@ -48,17 +48,14 @@ jobs:
 
       - name: Download vendored dependencies
         if: steps.deps-cache.outputs.cache-hit != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          gh release download "$DEPS_RELEASE_TAG" \
-            --repo CATMIAOZHI/Operit \
-            --pattern 'jniLibs.zip' \
-            --pattern 'libs.zip' \
-            --pattern 'models.zip' \
-            --pattern 'subpack.zip'
+          for asset in jniLibs.zip libs.zip models.zip subpack.zip; do
+            curl --fail --location --retry 3 \
+              --output "$asset" \
+              "https://github.com/CATMIAOZHI/Operit/releases/download/$DEPS_RELEASE_TAG/$asset"
+          done
 
           echo '8b973cc604041d6a6801a2040bab8e4f4faf7c7041cba16b6524100a866e99b3  jniLibs.zip' > deps.sha256
           echo 'a9cf963c2bfac4ddaa0e47f66c0adc0fa9084e71c2733d3f8dd84a33957b92d2  libs.zip' >> deps.sha256
