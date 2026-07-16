@@ -53,9 +53,16 @@ object ChatUtils {
         // 5. <search>...</search> (正常闭合的标签)
         // 6. <search>... (未闭合，直到字符串末尾)
         // \\z 匹配字符串的绝对末尾
+        val encodedThinkPattern =
+            "${Regex.escape(DeepseekReasoningTextCodec.OPENING_TAG)}.*?(</think>|\\z)"
+                .toRegex(RegexOption.DOT_MATCHES_ALL)
         val thinkPattern = "<think(?:ing)?>.*?(</think(?:ing)?>|\\z)".toRegex(RegexOption.DOT_MATCHES_ALL)
         val searchPattern = "<search>.*?(</search>|\\z)".toRegex(RegexOption.DOT_MATCHES_ALL)
-        return content.replace(thinkPattern, "").replace(searchPattern, "").trim()
+        return content
+            .replace(encodedThinkPattern, "")
+            .replace(thinkPattern, "")
+            .replace(searchPattern, "")
+            .trim()
     }
 
     /**

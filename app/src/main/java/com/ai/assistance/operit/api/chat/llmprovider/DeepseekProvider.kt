@@ -7,13 +7,12 @@ import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ToolPrompt
 import com.ai.assistance.operit.data.preferences.ApiPreferences
-import com.ai.assistance.operit.util.ChatUtils
+import com.ai.assistance.operit.util.DeepseekReasoningTextCodec
 import com.ai.assistance.operit.util.stream.Stream
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -45,6 +44,35 @@ class DeepseekProvider(
         supportsVideo = supportsVideo,
         enableToolCall = enableToolCall
     ) {
+
+    override val reasoningOpeningTag: String = DeepseekReasoningTextCodec.OPENING_TAG
+    override val emitContentBeforeToolCalls: Boolean = true
+
+    override fun encodeReasoningBody(content: String): String {
+        return DeepseekReasoningTextCodec.encodeBody(content)
+    }
+
+    override fun readReasoningContent(payload: JSONObject, allowReasoningAlias: Boolean): String {
+        if (payload.has("reasoning_content") && !payload.isNull("reasoning_content")) {
+            return payload.getString("reasoning_content")
+        }
+        return if (allowReasoningAlias) payload.optString("reasoning", "") else ""
+    }
+
+    override fun buildComparableHistory(
+        chatHistory: List<PromptTurn>,
+        preserveThinkInHistory: Boolean
+    ): List<Pair<String, String>> {
+        return super.buildComparableHistory(chatHistory, preserveThinkInHistory)
+            .mapIndexed { index, (role, content) ->
+                val turn = chatHistory[index]
+                if (preserveThinkInHistory && turn.kind == PromptTurnKind.ASSISTANT) {
+                    role to DeepseekReasoningTextCodec.decodeMarkedThinkBodiesForTokenEstimate(content)
+                } else {
+                    role to content
+                }
+            }
+    }
 
     /**
      * 重写创建请求体的方法，以支持DeepSeek的`reasoning_content`参数。
@@ -190,12 +218,12 @@ class DeepseekProvider(
         }
 
         fun appendQueuedAssistantReasoning(reasoningContent: String) {
-            if (reasoningContent.isBlank()) return
+            if (reasoningContent.isEmpty()) return
             queuedAssistantReasoning =
-                if (queuedAssistantReasoning.isNullOrBlank()) {
+                if (queuedAssistantReasoning == null) {
                     reasoningContent
                 } else {
-                    queuedAssistantReasoning + "\n" + reasoningContent
+                    queuedAssistantReasoning + reasoningContent
                 }
         }
 
@@ -282,7 +310,8 @@ class DeepseekProvider(
                         }
 
                         PromptTurnKind.ASSISTANT -> {
-                            val (content, reasoningContent) = ChatUtils.extractThinkingContent(originalContent)
+                            val (content, reasoningContent) =
+                                DeepseekReasoningTextCodec.extractHistoryContent(originalContent)
                             val (textContent, parsedToolCalls) = parseXmlToolCalls(content)
                             val toolCalls =
                                 if (parsedToolCalls != null) {
@@ -410,7 +439,8 @@ class DeepseekProvider(
                         }
 
                         PromptTurnKind.ASSISTANT -> {
-                            val (content, reasoningContent) = ChatUtils.extractThinkingContent(originalContent)
+                            val (content, reasoningContent) =
+                                DeepseekReasoningTextCodec.extractHistoryContent(originalContent)
                             messagesArray.put(
                                 JSONObject().apply {
                                     put("role", "assistant")

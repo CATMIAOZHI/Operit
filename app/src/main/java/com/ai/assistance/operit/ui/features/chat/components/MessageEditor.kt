@@ -46,11 +46,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.util.DeepseekReasoningTextCodec
 
 /**
  * 消息编辑器组件，用于编辑包含XML标签的消息
  */
-data class ParsedMessagePart(val type: PartType, val content: String, val tag: String? = null, val attributes: String? = null)
+data class ParsedMessagePart(
+    val type: PartType,
+    val content: String,
+    val tag: String? = null,
+    val attributes: String? = null,
+    val isEncodedReasoning: Boolean = false,
+)
 enum class PartType { TEXT, XML }
 
 private data class XmlTagSuggestion(
@@ -83,20 +90,34 @@ fun parseMessageContentForEditor(content: String): List<ParsedMessagePart> {
         val startIndex = matchResult.range.first
         if (startIndex > lastIndex) {
             val textPart = content.substring(lastIndex, startIndex)
-            if (textPart.isNotBlank()) {
+            if (textPart.isNotEmpty()) {
                 parts.add(ParsedMessagePart(PartType.TEXT, textPart, null, null))
             }
         }
         val tag = matchResult.groupValues[1]
         val attributes = matchResult.groupValues[2]
         val tagContent = matchResult.groupValues[3]
-        parts.add(ParsedMessagePart(PartType.XML, tagContent, tag, attributes))
+        val isEncodedReasoning =
+            "<$tag$attributes>" == DeepseekReasoningTextCodec.OPENING_TAG
+        parts.add(
+            ParsedMessagePart(
+                PartType.XML,
+                if (isEncodedReasoning) {
+                    DeepseekReasoningTextCodec.decodeBody(tagContent)
+                } else {
+                    tagContent
+                },
+                tag,
+                attributes,
+                isEncodedReasoning,
+            )
+        )
         lastIndex = matchResult.range.last + 1
     }
 
     if (lastIndex < content.length) {
         val trailingText = content.substring(lastIndex)
-        if (trailingText.isNotBlank()) {
+        if (trailingText.isNotEmpty()) {
             parts.add(ParsedMessagePart(PartType.TEXT, trailingText, null, null))
         }
     }
@@ -107,6 +128,10 @@ fun recomposeMessageFromParts(parts: List<ParsedMessagePart>): String {
     return parts.joinToString(separator = "") { part ->
         if (part.type == PartType.TEXT) {
             part.content
+        } else if (part.isEncodedReasoning) {
+            DeepseekReasoningTextCodec.OPENING_TAG +
+                DeepseekReasoningTextCodec.encodeBody(part.content) +
+                DeepseekReasoningTextCodec.CLOSING_TAG
         } else {
             "<${part.tag}${part.attributes ?: ""}>${part.content}</${part.tag}>"
         }
@@ -130,6 +155,12 @@ fun MessageEditor(
     var partToEdit by remember { mutableStateOf<Pair<Int, ParsedMessagePart>?>(null) }
     var showCreateTagDialog by remember { mutableStateOf(false) }
     var isRawEditMode by remember { mutableStateOf(false) }
+
+    fun syncVisualContent() {
+        if (!isRawEditMode) {
+            editingMessageContent.value = recomposeMessageFromParts(partsState)
+        }
+    }
 
     LaunchedEffect(partsState) {
         if (!isRawEditMode) {
@@ -377,7 +408,10 @@ fun MessageEditor(
 
                     if (showResendButton) {
                         OutlinedButton(
-                            onClick = onSave,
+                            onClick = {
+                                syncVisualContent()
+                                onSave()
+                            },
                             shape = RoundedCornerShape(16.dp),
                             border = ButtonDefaults.outlinedButtonBorder.copy(
                                 width = 1.dp
@@ -393,7 +427,10 @@ fun MessageEditor(
                         Spacer(modifier = Modifier.width(6.dp))
 
                         Button(
-                            onClick = onResend,
+                            onClick = {
+                                syncVisualContent()
+                                onResend()
+                            },
                             shape = RoundedCornerShape(16.dp),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -414,7 +451,10 @@ fun MessageEditor(
                         }
                     } else {
                         Button(
-                            onClick = onSave,
+                            onClick = {
+                                syncVisualContent()
+                                onSave()
+                            },
                             shape = RoundedCornerShape(16.dp)
                         ) {
                             Text(
@@ -648,6 +688,7 @@ private fun TagEditorDialog(
                 OutlinedTextField(
                     value = tagName,
                     onValueChange = { tagName = it },
+                    enabled = part?.isEncodedReasoning != true,
                     label = { Text(context.getString(R.string.tag_name), style=MaterialTheme.typography.bodySmall) },
                     placeholder = { Text(context.getString(R.string.tag_example)) },
                     trailingIcon = {
@@ -717,6 +758,7 @@ private fun TagEditorDialog(
                 OutlinedTextField(
                     value = attributes,
                     onValueChange = { attributes = it },
+                    enabled = part?.isEncodedReasoning != true,
                     label = { Text(context.getString(R.string.attributes_optional), style=MaterialTheme.typography.bodySmall) },
                     placeholder = { Text(context.getString(R.string.attributes_example)) },
                     modifier = Modifier.fillMaxWidth(),
@@ -775,7 +817,19 @@ private fun TagEditorDialog(
 
                     Button(
                         onClick = {
-                            onSave(ParsedMessagePart(PartType.XML, content, tagName, attributes))
+                            onSave(
+                                ParsedMessagePart(
+                                    PartType.XML,
+                                    content,
+                                    if (part?.isEncodedReasoning == true) "think" else tagName,
+                                    if (part?.isEncodedReasoning == true) {
+                                        DeepseekReasoningTextCodec.ENCODING_ATTRIBUTE
+                                    } else {
+                                        attributes
+                                    },
+                                    part?.isEncodedReasoning == true,
+                                )
+                            )
                         },
                         enabled = tagName.isNotBlank(),
                         shape = RoundedCornerShape(16.dp),

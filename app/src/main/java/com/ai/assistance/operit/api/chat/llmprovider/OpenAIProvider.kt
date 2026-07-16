@@ -127,6 +127,20 @@ open class OpenAIProvider(
 
     protected open val useResponsesApi: Boolean = false
 
+    protected open val reasoningOpeningTag: String = "<think>"
+    protected open val emitContentBeforeToolCalls: Boolean = false
+
+    protected open fun encodeReasoningBody(content: String): String = content
+
+    protected open fun readReasoningContent(payload: JSONObject, allowReasoningAlias: Boolean): String {
+        val reasoningContent = payload.optString("reasoning_content", "")
+        return if (allowReasoningAlias && reasoningContent.isBlank()) {
+            payload.optString("reasoning", "")
+        } else {
+            reasoningContent
+        }
+    }
+
     // 公开token计数
     override val inputTokenCount: Int
         get() = tokenCacheManager.totalInputTokenCount
@@ -1401,11 +1415,11 @@ open class OpenAIProvider(
     ) {
         private val savepointLengths = mutableMapOf<String, Int>()
 
-        suspend fun emitContent(content: String) {
-            if (content.isNotNullOrEmpty()) {
-                emit(content)
-                receivedContent.append(content)
-                tokenCacheManager.addOutputTokens(ChatUtils.estimateTokenCount(content))
+        private suspend fun emitCountedContent(outputContent: String, tokenContent: String) {
+            if (outputContent.isNotEmpty()) {
+                emit(outputContent)
+                receivedContent.append(outputContent)
+                tokenCacheManager.addOutputTokens(ChatUtils.estimateTokenCount(tokenContent))
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
                     tokenCacheManager.cachedInputTokenCount,
@@ -1414,18 +1428,27 @@ open class OpenAIProvider(
             }
         }
 
-        suspend fun emitThinkContent(thinkContent: String, tag: String = "think") {
-            if (thinkContent.isNotNullOrEmpty()) {
-                val wrapped = "<$tag>$thinkContent</$tag>"
-                emit(wrapped)
-                receivedContent.append(wrapped)
-                tokenCacheManager.addOutputTokens(ChatUtils.estimateTokenCount(thinkContent))
-                onTokensUpdated(
-                    tokenCacheManager.totalInputTokenCount,
-                    tokenCacheManager.cachedInputTokenCount,
-                    tokenCacheManager.outputTokenCount
-                )
-            }
+        suspend fun emitContent(content: String) {
+            emitCountedContent(content, content)
+        }
+
+        suspend fun emitReasoningStart() {
+            emitTag(reasoningOpeningTag)
+        }
+
+        suspend fun emitReasoningBody(content: String) {
+            emitCountedContent(encodeReasoningBody(content), content)
+        }
+
+        suspend fun emitReasoningEnd() {
+            emitTag("</think>")
+        }
+
+        suspend fun emitReasoningBlock(content: String) {
+            if (content.isEmpty()) return
+            emitReasoningStart()
+            emitReasoningBody(content)
+            emitReasoningEnd()
         }
 
         suspend fun emitTag(tag: String) {
@@ -1864,7 +1887,7 @@ open class OpenAIProvider(
         // 如果正在思考模式，收到工具调用时应先关闭思考标签
         if (state.isInReasoningMode) {
             state.isInReasoningMode = false
-            emitter.emitTag("</think>")
+            emitter.emitReasoningEnd()
             state.hasEmittedThinkStart = false
         }
 
@@ -2078,7 +2101,7 @@ open class OpenAIProvider(
                         OpenAIResponsesPayloadAdapter.createReasoningMetadataTag(item)?.let { metadataTag ->
                             if (state.isInReasoningMode) {
                                 state.isInReasoningMode = false
-                                emitter.emitTag("</think>")
+                                emitter.emitReasoningEnd()
                                 state.hasEmittedThinkStart = false
                             }
                             emitter.emitTag(metadataTag)
@@ -2167,7 +2190,7 @@ open class OpenAIProvider(
 
                 if (state.isInReasoningMode) {
                     state.isInReasoningMode = false
-                    emitter.emitTag("</think>")
+                    emitter.emitReasoningEnd()
                     state.hasEmittedThinkStart = false
                 } else {
                     val lateReasoningText = extractResponsesReasoningText(responseObj)
@@ -2251,18 +2274,18 @@ open class OpenAIProvider(
             if (!state.isInReasoningMode) {
                 state.isInReasoningMode = true
                 if (!state.hasEmittedThinkStart) {
-                    emitter.emitTag("<think>")
+                    emitter.emitReasoningStart()
                     state.hasEmittedThinkStart = true
                 }
             }
-            emitter.emitContent(reasoningContent)
+            emitter.emitReasoningBody(reasoningContent)
         }
         // 处理常规内容
         if (hasRegular) {
             // 如果之前在思考模式，现在切换到了常规内容，需要关闭思考标签
             if (state.isInReasoningMode) {
                 state.isInReasoningMode = false
-                emitter.emitTag("</think>")
+                emitter.emitReasoningEnd()
                 state.hasEmittedThinkStart = false
             }
 
@@ -2285,7 +2308,7 @@ open class OpenAIProvider(
         emitter: StreamEmitter
     ) {
         if (state.hasEmittedRegularContent) {
-            emitter.emitThinkContent(reasoningText)
+            emitter.emitReasoningBlock(reasoningText)
             state.streamedReasoningContentLength += reasoningText.length
         } else {
             processContentDelta(reasoningText, "", state, emitter)
@@ -2320,41 +2343,51 @@ open class OpenAIProvider(
                     ""
                 }
 
-            // 处理工具调用
             val toolCallsDeltas = delta.optJSONArray("tool_calls")
-            if (toolCallsDeltas != null && toolCallsDeltas.length() > 0 && enableToolCall) {
-                processToolCallsDelta(toolCallsDeltas, state, emitter)
+            val hasToolCalls =
+                toolCallsDeltas != null && toolCallsDeltas.length() > 0 && enableToolCall
+            if (!emitContentBeforeToolCalls && hasToolCalls) {
+                processToolCallsDelta(toolCallsDeltas!!, state, emitter)
             }
-
-            // 处理完成原因
-            if (finishReason.isNotEmpty()) {
+            if (!emitContentBeforeToolCalls && finishReason.isNotEmpty()) {
                 handleFinishReason(finishReason, state, emitter, onTokensUpdated)
             }
 
-            // 处理内容
-            val reasoningContent = delta.optString("reasoning_content", "").ifBlank {
-                delta.optString("reasoning", "")
-            }
+            val reasoningContent = readReasoningContent(delta, allowReasoningAlias = true)
             val regularContent = delta.optString("content", "")
             processContentDelta(reasoningContent, regularContent, state, emitter)
+
+            if (emitContentBeforeToolCalls && hasToolCalls) {
+                processToolCallsDelta(toolCallsDeltas!!, state, emitter)
+            }
+            if (emitContentBeforeToolCalls && finishReason.isNotEmpty()) {
+                handleFinishReason(finishReason, state, emitter, onTokensUpdated)
+            }
         }
         // 处理message格式（非流式响应）
         else {
             val message = choice.optJSONObject("message")
             if (message != null) {
-                val reasoningContent = message.optString("reasoning_content", "").ifBlank {
-                    message.optString("reasoning", "")
-                }
+                val reasoningContent = readReasoningContent(message, allowReasoningAlias = true)
                 val regularContent = message.optString("content", "")
 
                 // 先处理思考内容（如果有）
                 if (reasoningContent.isNotNullOrEmpty() && !state.hasEmittedRegularContent) {
-                    emitter.emitThinkContent(reasoningContent)
+                    emitter.emitReasoningBlock(reasoningContent)
                 }
                 // 然后处理常规内容
                 if (regularContent.isNotNullOrEmpty()) {
                     state.hasEmittedRegularContent = true
                     emitter.emitContent(regularContent)
+                }
+                if (emitContentBeforeToolCalls && enableToolCall) {
+                    val toolCalls = message.optJSONArray("tool_calls")
+                    if (toolCalls != null && toolCalls.length() > 0) {
+                        val xmlToolCalls = convertToolCallsToXml(toolCalls)
+                        if (xmlToolCalls.isNotEmpty()) {
+                            emitter.emitContent(xmlToolCalls)
+                        }
+                    }
                 }
             }
         }
@@ -2388,7 +2421,7 @@ open class OpenAIProvider(
                     closeAllOpenToolCalls(state, emitter)
                     if (state.isInReasoningMode) {
                         state.isInReasoningMode = false
-                        emitter.emitTag("</think>")
+                        emitter.emitReasoningEnd()
                         state.hasEmittedThinkStart = false
                     }
                     AppLogger.d("AIService", "【发送消息】收到流结束标记[DONE]")
@@ -2426,6 +2459,11 @@ open class OpenAIProvider(
                 }
             }
             
+            if (state.isInReasoningMode) {
+                state.isInReasoningMode = false
+                emitter.emitReasoningEnd()
+                state.hasEmittedThinkStart = false
+            }
             closeAllOpenToolCalls(state, emitter)
 
             AppLogger.d(
@@ -2608,7 +2646,7 @@ open class OpenAIProvider(
 
                                     parsed.reasoningChunks.forEach { reasoningChunk ->
                                         if (reasoningChunk.isNotEmpty()) {
-                                            emitter.emitThinkContent(reasoningChunk)
+                                            emitter.emitReasoningBlock(reasoningChunk)
                                         }
                                     }
                                     parsed.reasoningMetadataTags.forEach { metadataTag ->
@@ -2642,32 +2680,42 @@ open class OpenAIProvider(
                                         val messageObj = choice.optJSONObject("message")
 
                                         if (messageObj != null) {
-                                            // 检查是否有tool_calls（Tool Call API）
                                             val toolCalls = messageObj.optJSONArray("tool_calls")
-                                            if (toolCalls != null && toolCalls.length() > 0 && enableToolCall) {
-                                                val xmlToolCalls = convertToolCallsToXml(toolCalls)
-                                                if (xmlToolCalls.isNotEmpty()) {
-                                                    emitter.emitContent(xmlToolCalls)
-                                                    AppLogger.d(
-                                                        "AIService",
-                                                        "Tool Call转XML (非流式): $xmlToolCalls"
-                                                    )
+                                            val xmlToolCalls =
+                                                if (toolCalls != null && toolCalls.length() > 0 && enableToolCall) {
+                                                    convertToolCallsToXml(toolCalls)
+                                                } else {
+                                                    ""
                                                 }
+                                            if (!emitContentBeforeToolCalls && xmlToolCalls.isNotEmpty()) {
+                                                emitter.emitContent(xmlToolCalls)
+                                                AppLogger.d(
+                                                    "AIService",
+                                                    "Tool Call转XML (非流式): $xmlToolCalls"
+                                                )
                                             }
 
                                             val reasoningContent =
-                                                messageObj.optString("reasoning_content", "")
+                                                readReasoningContent(messageObj, allowReasoningAlias = false)
                                             val regularContent = messageObj.optString("content", "")
 
                                             // 处理思考内容（如果有）
                                             if (reasoningContent.isNotNullOrEmpty() && !hasEmittedRegularContent) {
-                                                emitter.emitThinkContent(reasoningContent)
+                                                emitter.emitReasoningBlock(reasoningContent)
                                             }
 
                                             // 处理常规内容
                                             if (regularContent.isNotNullOrEmpty()) {
                                                 hasEmittedRegularContent = true
                                                 emitter.emitContent(regularContent)
+                                            }
+
+                                            if (emitContentBeforeToolCalls && xmlToolCalls.isNotEmpty()) {
+                                                emitter.emitContent(xmlToolCalls)
+                                                AppLogger.d(
+                                                    "AIService",
+                                                    "Tool Call转XML (非流式): $xmlToolCalls"
+                                                )
                                             }
                                         }
                                     }

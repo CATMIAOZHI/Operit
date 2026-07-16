@@ -4,6 +4,7 @@ import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.util.DeepseekReasoningTextCodec
 import java.time.format.DateTimeFormatter
 
 /**
@@ -124,7 +125,9 @@ object TextExporter {
         }
         
         sb.appendLine()
-        sb.appendLine(message.content)
+        sb.appendLine(
+            DeepseekReasoningTextCodec.decodeMarkedThinkBodiesForPresentation(message.content)
+        )
         sb.appendLine()
         sb.appendLine("-".repeat(60))
     }

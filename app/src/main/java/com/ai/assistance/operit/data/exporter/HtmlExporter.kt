@@ -4,6 +4,7 @@ import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.util.DeepseekReasoningTextCodec
 import java.time.format.DateTimeFormatter
 
 /**
@@ -114,7 +115,9 @@ object HtmlExporter {
         }
         sb.appendLine("      </div>")
         sb.appendLine("      <div class=\"message-content\">")
-        sb.appendLine("        ${formatContent(message.content)}")
+        sb.appendLine(
+            "        ${formatContent(DeepseekReasoningTextCodec.decodeMarkedThinkBodiesForPresentation(message.content))}"
+        )
         sb.appendLine("      </div>")
         sb.appendLine("    </div>")
     }

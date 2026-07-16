@@ -44,6 +44,7 @@ import com.ai.assistance.operit.services.core.MAX_DISPLAY_PAGE_COUNT
 import com.ai.assistance.operit.services.core.resolveDisplayPageRanges
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatMarkupRegex
+import com.ai.assistance.operit.util.DeepseekReasoningTextCodec
 import com.ai.assistance.operit.util.StructuredAssistantContentParser
 import com.ai.assistance.operit.ui.theme.resolveThemeColorScheme
 import fi.iki.elonen.NanoHTTPD
@@ -1939,7 +1940,11 @@ class WebChatHttpBridge(
 
         return WebMessageContentBlock(
             kind = "xml",
-            content = block.content,
+            content =
+                DeepseekReasoningTextCodec.decodeThinkBodyForPresentation(
+                    block.rawContent,
+                    block.content,
+                ),
             xml = block.rawContent,
             tagName = block.tagName,
             rawTagName = block.rawTagName,

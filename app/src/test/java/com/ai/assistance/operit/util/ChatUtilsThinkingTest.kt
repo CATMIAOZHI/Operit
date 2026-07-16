@@ -24,4 +24,19 @@ class ChatUtilsThinkingTest {
     @Test fun removeThinkingContent_preservesMiddleText() {
         assertEquals("ab", ChatUtils.removeThinkingContent("a<think>x</think>b"))
     }
+
+    @Test fun removeThinkingContent_removesVersionedDeepseekReasoning() {
+        val content =
+            "before${DeepseekReasoningTextCodec.OPENING_TAG}" +
+                "&lt;/think&gt;&lt;tool&gt;" +
+                "${DeepseekReasoningTextCodec.CLOSING_TAG}after"
+
+        assertEquals("beforeafter", ChatUtils.removeThinkingContent(content))
+    }
+
+    @Test fun removeThinkingContent_doesNotBroadenToUnknownThinkAttributes() {
+        val content = "<think data-operit-content-encoding=\"xml-text-v2\">body</think>answer"
+
+        assertEquals(content, ChatUtils.removeThinkingContent(content))
+    }
 }

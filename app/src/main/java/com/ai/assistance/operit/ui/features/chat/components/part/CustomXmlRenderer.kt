@@ -46,6 +46,7 @@ import com.ai.assistance.operit.ui.common.markdown.XmlRenderPluginRegistry
 import com.ai.assistance.operit.ui.common.rememberLocal
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.ChatMarkupRegex
+import com.ai.assistance.operit.util.DeepseekReasoningTextCodec
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.stream
 
@@ -228,7 +229,11 @@ class CustomXmlRenderer(
     }
 
     /** 从XML内容中提取纯文本内容 */
-    private fun extractContentFromXml(content: String, tagName: String? = null): String {
+    private fun extractContentFromXml(
+        content: String,
+        tagName: String? = null,
+        trimResult: Boolean = true,
+    ): String {
         val rawTagName = extractRawTagName(content) ?: return content
         val normalizedRawTagName = ChatMarkupRegex.normalizeToolLikeTagName(rawTagName)
         val effectiveTagName =
@@ -258,7 +263,8 @@ class CustomXmlRenderer(
                 content.length
             }
 
-        return content.substring(startTagEnd + 1, contentEndExclusive).trim()
+        val body = content.substring(startTagEnd + 1, contentEndExclusive)
+        return if (trimResult) body.trim() else body
     }
 
     /** 从工具调用XML提取参数内容 */
@@ -465,7 +471,10 @@ class CustomXmlRenderer(
             thinkVisibilityState.currentState || thinkVisibilityState.targetState
         val thinkText =
             if (shouldComposeThinkBody) {
-                extractContentFromXml(content, tagName).trim()
+                DeepseekReasoningTextCodec.decodeThinkBodyForPresentation(
+                    content,
+                    extractContentFromXml(content, tagName, trimResult = false),
+                )
             } else {
                 ""
             }
@@ -664,15 +673,35 @@ class CustomXmlRenderer(
         val endTag = "</$tagName>"
         var startTagClosed = false
         var reachedEndTag = false
+        var decodeEncodedBody = false
+        var decoderFinished = false
+        val openingTag = StringBuilder()
         val tailBuffer = StringBuilder()
+        val decoder = DeepseekReasoningTextCodec.StreamingDecoder()
+
+        suspend fun emitBody(text: String) {
+            val decoded = if (decodeEncodedBody) decoder.feed(text) else text
+            decoded.forEach { emit(it) }
+        }
+
+        suspend fun finishDecoder() {
+            if (decodeEncodedBody && !decoderFinished) {
+                decoder.finish().forEach { emit(it) }
+                decoderFinished = true
+            }
+        }
 
         xmlStream.collect { chunk ->
             chunk.forEach { ch ->
                 if (reachedEndTag) return@forEach
 
                 if (!startTagClosed) {
+                    openingTag.append(ch)
                     if (ch == '>') {
                         startTagClosed = true
+                        decodeEncodedBody =
+                            tagName == "think" &&
+                                openingTag.toString() == DeepseekReasoningTextCodec.OPENING_TAG
                     }
                     return@forEach
                 }
@@ -680,20 +709,22 @@ class CustomXmlRenderer(
                 tailBuffer.append(ch)
 
                 while (tailBuffer.length > endTag.length) {
-                    emit(tailBuffer[0])
+                    emitBody(tailBuffer[0].toString())
                     tailBuffer.deleteCharAt(0)
                 }
 
                 if (tailBuffer.length == endTag.length && tailBuffer.toString() == endTag) {
                     tailBuffer.setLength(0)
                     reachedEndTag = true
+                    finishDecoder()
                 }
             }
         }
 
         if (!reachedEndTag && tailBuffer.isNotEmpty()) {
-            tailBuffer.toString().forEach { emit(it) }
+            emitBody(tailBuffer.toString())
         }
+        finishDecoder()
     }
 
     /** 渲染标准工具请求标签 <tool name="..."><param name="param_name">param_value</param></tool> */
