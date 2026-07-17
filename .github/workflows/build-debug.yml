@@ -84,6 +84,11 @@ jobs:
             app/src/main/assets/subpack
           key: operit-vendored-deps-${{ env.DEPS_CACHE_VERSION }}
 
+      - name: Run Debug Unit Tests
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest --build-cache
+
       - name: Build native ripgrep (.so)
         run: |
           ANDROID_HOME=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}
