@@ -84,10 +84,13 @@ jobs:
             app/src/main/assets/subpack
           key: operit-vendored-deps-${{ env.DEPS_CACHE_VERSION }}
 
-      - name: Run Debug Unit Tests
+      - name: Run Issue 727 Regression Tests
         run: |
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest --build-cache
+          ./gradlew :app:testDebugUnitTest --build-cache \
+            --tests com.ai.assistance.operit.util.DeepseekReasoningTextCodecTest \
+            --tests com.ai.assistance.operit.ui.features.chat.components.MessageEditorReasoningCodecTest \
+            --tests com.ai.assistance.operit.util.ChatUtilsThinkingTest
 
       - name: Build native ripgrep (.so)
         run: |
