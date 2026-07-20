@@ -71,6 +71,7 @@ env:
   ANDROID_NDK_VERSION: '25.1.8937393'
   ANDROID_CMAKE_VERSION: '3.22.1'
   MANUAL_DEPS_DIR: manual-deps
+  OPERIT_RELEASE_CERT_SHA256: '40:F8:7A:4D:66:EB:70:D0:E2:D1:37:9C:6A:97:DD:DC:0C:ED:D3:BA:87:2E:02:74:50:CA:77:AF:42:EC:5E:74'
 
 jobs:
   build:
@@ -193,18 +194,43 @@ jobs:
 
       - name: Configure Android build
         env:
-          GITHUB_CLIENT_ID: ${{ secrets.OPERIT_GITHUB_CLIENT_ID }}
-          GITHUB_CLIENT_SECRET: ${{ secrets.OPERIT_GITHUB_CLIENT_SECRET }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.OPERIT_RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.OPERIT_RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.OPERIT_RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.OPERIT_RELEASE_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
-          : "${GITHUB_CLIENT_ID:?OPERIT_GITHUB_CLIENT_ID is required}"
-          : "${GITHUB_CLIENT_SECRET:?OPERIT_GITHUB_CLIENT_SECRET is required}"
+          : "${RELEASE_KEYSTORE_BASE64:?OPERIT_RELEASE_KEYSTORE_BASE64 is required}"
+          : "${RELEASE_STORE_PASSWORD:?OPERIT_RELEASE_STORE_PASSWORD is required}"
+          : "${RELEASE_KEY_ALIAS:?OPERIT_RELEASE_KEY_ALIAS is required}"
+          : "${RELEASE_KEY_PASSWORD:?OPERIT_RELEASE_KEY_PASSWORD is required}"
+
+          release_keystore="$RUNNER_TEMP/operit-ry-release.jks"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$release_keystore"
+          chmod 600 "$release_keystore"
+
+          actual_cert_sha256="$(
+            keytool -list -v \
+              -keystore "$release_keystore" \
+              -storepass "$RELEASE_STORE_PASSWORD" \
+              -alias "$RELEASE_KEY_ALIAS" \
+              | sed -n 's/^[[:space:]]*SHA256: //p'
+          )"
+          if [[ "$actual_cert_sha256" != "$OPERIT_RELEASE_CERT_SHA256" ]]; then
+            echo "Release signing certificate does not match Operit Ry." >&2
+            exit 1
+          fi
+
           umask 077
           {
             echo "sdk.dir=$ANDROID_HOME"
-            echo "GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID"
-            echo "GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET"
+            echo 'GITHUB_CLIENT_ID='
+            echo 'GITHUB_CLIENT_SECRET='
+            echo "RELEASE_STORE_FILE=$release_keystore"
+            echo "RELEASE_STORE_PASSWORD=$RELEASE_STORE_PASSWORD"
+            echo "RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS"
+            echo "RELEASE_KEY_PASSWORD=$RELEASE_KEY_PASSWORD"
           } > local.properties
 
       - name: Run Gradle build
@@ -222,6 +248,36 @@ jobs:
           esac
           chmod +x ./gradlew
           ./gradlew "$gradle_task" --stacktrace --no-build-cache --no-daemon
+
+      - name: Verify Android artifact signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          artifacts=(
+            app/build/outputs/apk/**/*.apk
+            app/build/outputs/bundle/**/*.aab
+          )
+          if (( ${#artifacts[@]} == 0 )); then
+            echo 'The Android build produced no APK or AAB artifact.' >&2
+            exit 1
+          fi
+
+          expected_apk_digest="${OPERIT_RELEASE_CERT_SHA256//:/}"
+          expected_apk_digest="${expected_apk_digest,,}"
+          for artifact in "${artifacts[@]}"; do
+            case "$artifact" in
+              *.apk)
+                certificate="$($ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs "$artifact")"
+                grep -Fqi "Signer #1 certificate SHA-256 digest: $expected_apk_digest" <<< "$certificate"
+                ;;
+              *.aab)
+                jarsigner -verify "$artifact"
+                certificate="$(keytool -printcert -jarfile "$artifact")"
+                grep -Fq "SHA256: $OPERIT_RELEASE_CERT_SHA256" <<< "$certificate"
+                ;;
+            esac
+          done
 
       - name: Run JVM unit tests
         if: >-
