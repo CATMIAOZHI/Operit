@@ -46,7 +46,7 @@ class GitHubAuthPreferences(private val context: Context) {
         val GITHUB_CLIENT_SECRET = BuildConfig.GITHUB_CLIENT_SECRET
         const val GITHUB_SCOPE = "notifications,public_repo,user:email,read:user"
         private const val REQUIRED_AUTH_VERSION = 2
-        private const val GITHUB_REDIRECT_SCHEME = "operit"
+        private const val GITHUB_REDIRECT_SCHEME = "operitry"
         private const val GITHUB_REDIRECT_HOST = "github-oauth-callback"
         const val GITHUB_REDIRECT_URI = "$GITHUB_REDIRECT_SCHEME://$GITHUB_REDIRECT_HOST"
         

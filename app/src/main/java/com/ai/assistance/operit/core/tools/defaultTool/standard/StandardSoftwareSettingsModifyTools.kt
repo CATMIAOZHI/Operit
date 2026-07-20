@@ -7,6 +7,7 @@ import com.ai.assistance.operit.api.speech.SpeechServiceFactory
 import com.ai.assistance.operit.api.voice.HttpTtsResponsePipelineStep
 import com.ai.assistance.operit.api.voice.TtsException
 import com.ai.assistance.operit.api.voice.VoiceServiceFactory
+import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.core.tools.FunctionModelBindingResultData
 import com.ai.assistance.operit.core.tools.FunctionModelConfigResultData
 import com.ai.assistance.operit.core.tools.FunctionModelConfigsResultData
@@ -192,7 +193,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                 result =
                     SandboxPackagesResultData(
                         externalPackagesPath = externalPackagesPath,
-                        scriptDevGuide = "https://github.com/AAswordman/Operit/blob/main/docs/SCRIPT_DEV_SKILL.md",
+                        scriptDevGuide = DistributionConfig.SCRIPT_GUIDE_URL,
                         totalCount = availablePackages.size,
                         builtInCount = availablePackages.values.count { it.isBuiltIn },
                         externalCount = availablePackages.values.count { !it.isBuiltIn },
@@ -209,7 +210,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                 result =
                     SandboxPackagesResultData(
                         externalPackagesPath = "",
-                        scriptDevGuide = "https://github.com/AAswordman/Operit/blob/main/docs/SCRIPT_DEV_SKILL.md",
+                        scriptDevGuide = DistributionConfig.SCRIPT_GUIDE_URL,
                         totalCount = 0,
                         builtInCount = 0,
                         externalCount = 0,

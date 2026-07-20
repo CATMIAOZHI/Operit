@@ -2,6 +2,7 @@ package com.ai.assistance.operit.data.security
 
 import android.content.Context
 import android.util.AtomicFile
+import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.util.AppLogger
 import java.io.File
 import java.io.IOException
@@ -211,6 +212,6 @@ class PluginDenylistRepository(
         private const val ACTION = "reject_import"
         private val SHA256_PATTERN = Regex("[0-9a-f]{64}")
 
-        const val DEFAULT_POINTER_URL = "https://operit.app/plugin-denylist/latest.json"
+        const val DEFAULT_POINTER_URL = DistributionConfig.PLUGIN_DENYLIST_POINTER_URL
     }
 }

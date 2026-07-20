@@ -1184,7 +1184,7 @@ const iconPath = await ToolPkg.readResource('icon');
 ### 8.2 外部包
 
 用户可以通过以下方式导入外部包：
-1. 将 `.toolpkg` 文件复制到设备的 `Android/data/com.ai.assistance.operit/files/packages/` 目录
+1. 将 `.toolpkg` 文件复制到设备的 `Android/data/com.rainy.operitry/files/packages/` 目录
 2. 在应用中使用"导入包"功能
 
 ### 8.3 版本管理
@@ -1323,7 +1323,7 @@ my_toolpkg/
 1. 从 ToolPkg 目录或现成 `.toolpkg` 中读取 `manifest`
 2. 解析 `toolpkg_id` 与 `main`
 3. 如果输入是目录，则先临时打包成 `.toolpkg`
-4. 通过 `adb push` 将包推送到手机的 `Android/data/com.ai.assistance.operit/files/packages/`
+4. 通过 `adb push` 将包推送到手机的 `Android/data/com.rainy.operitry/files/packages/`
 5. 发送调试广播，让 App 重新扫描外部 packages 目录
 6. 按 `toolpkg_id` 启用该 ToolPkg 容器
 7. 按 manifest 默认值重新应用 subpackage 启用状态（可选关闭）

@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Operit AI</string>
+    <string name="app_name">Operit Ry</string>
     <string name="accessibility_service_description">Digunakan untuk mendapatkan hierarki UI, menyediakan keupayaan analisis antara muka yang lebih pantas untuk pembantu AI, tidak akan mengumpul atau menyimpan sebarang maklumat peribadi.</string>
     <string name="model_selector_title">Pilih Konfigurasi Model</string>
     <string name="model_selector_toggle">Tunjukkan Pemilih Model</string>
@@ -536,9 +536,9 @@
     <string name="about_title">Perihal Operit AI</string>
     <string name="about_version">Versi: %1$s</string>
     <string name="about_description">Operit AI ialah aplikasi pembantu pintar yang membantu pengguna menggunakan peranti dengan lebih cekap, menyediakan analisis antara muka, perbualan sembang dan fungsi lain.</string>
-    <string name="about_developer">Pembangun: &lt;a href="https://github.com/AAswordman"&gt;AAswordman&lt;/a&gt;</string>
-    <string name="about_contact">Hubungi kami: aaswordsman@foxmail.com</string>
-    <string name="about_website">&lt;a href="https://github.com/AAswordman/Operit"&gt;GitHub: https://github.com/AAswordman/Operit&lt;/a&gt;</string>
+    <string name="about_developer">Penyelenggara: &lt;a href="https://github.com/CATMIAOZHI"&gt;Rainy&lt;/a&gt;</string>
+    <string name="about_contact">Projek hulu: AAswordman / Operit</string>
+    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/Operit"&gt;GitHub: https://github.com/CATMIAOZHI/Operit&lt;/a&gt;</string>
     <string name="about_copyright">© 2025 - 2026 Operit. Hak cipta terpelihara.</string>
     <string name="star_on_github">Beri Bintang di GitHub</string>
     <string name="update_log">Log kemas kini</string>
@@ -724,7 +724,7 @@
     <string name="copy_path">Salin laluan</string>
     <string name="path_copied_to_clipboard">Laluan telah disalin ke papan keratan</string>
     <string name="open_file_manager">Buka pengurus fail</string>
-    <string name="navigate_to_external_files">Sila navigasi ke direktori Android/data/com.ai.assistance.operit/files/packages</string>
+    <string name="navigate_to_external_files">Sila navigasi ke direktori Android/data/com.rainy.operitry/files/packages</string>
     <string name="package_js_only">Hanya fail JavaScript(.js) dan ToolPkg(.toolpkg) disokong</string>
     <string name="pkg_toolpkg_subpackages">Subpakej ToolPkg</string>
     <string name="pkg_toolpkg_version">Versi: %1$s</string>

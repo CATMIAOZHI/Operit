@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.ai.assistance.operit.data.api.GitHubApiService
 import com.ai.assistance.operit.data.api.GitHubRelease
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.config.DistributionConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,11 +25,6 @@ class UpdateViewModel(private val context: Context) : ViewModel() {
     
     private val apiService = GitHubApiService(context)
     
-    companion object {
-        private const val REPO_OWNER = "AAswordman"
-        private const val REPO_NAME = "Operit"
-    }
-    
     init {
         loadUpdates()
     }
@@ -40,7 +36,12 @@ class UpdateViewModel(private val context: Context) : ViewModel() {
         viewModelScope.launch {
             _uiState.value = UpdateUiState.Loading
             
-            apiService.getRepositoryReleases(REPO_OWNER, REPO_NAME, page = 1, perPage = 20)
+            apiService.getRepositoryReleases(
+                DistributionConfig.OWNER,
+                DistributionConfig.SOURCE_REPOSITORY,
+                page = 1,
+                perPage = 20
+            )
                 .onSuccess { releases ->
                     val updates = releases
                         .filter { !it.draft && !it.prerelease } // 过滤掉草稿和预发布

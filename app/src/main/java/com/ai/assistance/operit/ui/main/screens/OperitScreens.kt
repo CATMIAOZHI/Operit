@@ -183,9 +183,6 @@ sealed class Screen(
         ) {
             val context = LocalContext.current
             PackageManagerScreen(
-                onNavigateToMCPMarket = { navigateTo(Market(MarketHomeTab.ALL)) },
-                onNavigateToSkillMarket = { navigateTo(Market(MarketHomeTab.ALL)) },
-                onNavigateToArtifactMarket = { navigateTo(Market(MarketHomeTab.ALL)) },
                 onStartPluginCreation = { intent ->
                     PendingChatDraftHandler.setPendingDraft(intent.toPrompt(context))
                     navigateTo(AiChat)

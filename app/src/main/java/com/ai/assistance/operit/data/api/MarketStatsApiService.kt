@@ -6,6 +6,7 @@ import com.ai.assistance.operit.data.preferences.GitHubAuthPreferences
 import com.ai.assistance.operit.data.preferences.GitHubUser
 import com.ai.assistance.operit.ui.features.packages.market.normalizeMarketArtifactId
 import com.ai.assistance.operit.util.AppLogger
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -1329,8 +1331,11 @@ class MarketStatsApiService {
         private const val USER_AGENT = "Operit-Market-V2"
         private const val TIMEOUT_SECONDS = 15L
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-        private val BASE_URL = "https://api.operit.app".toHttpUrl()
-        private val STATIC_BASE_URL = "https://static.operit.app".toHttpUrl()
+        private val BASE_URL = "https://api.operit.disabled.invalid".toHttpUrl()
+        private val STATIC_BASE_URL = "https://static.operit.disabled.invalid".toHttpUrl()
+        private val DISABLED_MARKET_INTERCEPTOR = Interceptor {
+            throw IOException("Operit online market is disabled in this distribution")
+        }
 
         @Volatile
         private var marketSession: String? = null
@@ -1338,6 +1343,7 @@ class MarketStatsApiService {
 
         private val STATIC_CLIENT by lazy {
             OkHttpClient.Builder()
+                .addInterceptor(DISABLED_MARKET_INTERCEPTOR)
                 .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -1348,6 +1354,7 @@ class MarketStatsApiService {
 
         private val DYNAMIC_CLIENT by lazy {
             OkHttpClient.Builder()
+                .addInterceptor(DISABLED_MARKET_INTERCEPTOR)
                 .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)

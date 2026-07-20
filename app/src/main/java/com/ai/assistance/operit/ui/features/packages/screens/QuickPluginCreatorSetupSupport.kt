@@ -3,6 +3,7 @@ package com.ai.assistance.operit.ui.features.packages.screens
 import android.content.Context
 import android.os.Environment
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
@@ -17,8 +18,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 private const val OPERIT_EDITOR_PACKAGE_NAME = "operit_editor"
-private const val SANDBOX_PACKAGE_DEV_INSTALL_SCRIPT_URL =
-    "https://cdn.jsdelivr.net/gh/AAswordman/Operit@main/tools/sandboxpackage_dev_install_or_update.js"
 private const val SANDBOX_PACKAGE_DEV_SCRIPT_RELATIVE_PATH =
     "Download/Operit/skills/SandboxPackage_DEV/scripts/install_or_update.js"
 
@@ -84,7 +83,7 @@ private fun downloadSandboxPackageDevInstallScript(): File {
     scriptFile.parentFile?.mkdirs()
 
     val connection =
-        (URL(SANDBOX_PACKAGE_DEV_INSTALL_SCRIPT_URL).openConnection() as HttpURLConnection).apply {
+        (URL(DistributionConfig.EXECUTABLE_INSTALLER_URL).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20_000
             readTimeout = 30_000
             doInput = true

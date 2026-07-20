@@ -5,6 +5,7 @@ import com.ai.assistance.operit.util.AppLogger
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.data.api.GitHubApiService
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.util.GithubReleaseUtil
@@ -61,7 +62,13 @@ class UpdateManager private constructor(private val context: Context) {
          * 比较两个版本号
          * @return -1 如果v1 < v2, 0 如果 v1 == v2, 1 如果 v1 > v2
          */
-        private data class ParsedVersion(val major: Int, val minor: Int, val patch: Int, val patchIndex: Int)
+        private data class ParsedVersion(
+            val major: Int,
+            val minor: Int,
+            val patch: Int,
+            val patchIndex: Int,
+            val ryRevision: Int
+        )
 
         private fun baseVersionOf(v: String): String {
             val s = v.trim().removePrefix("v")
@@ -73,15 +80,25 @@ class UpdateManager private constructor(private val context: Context) {
             val s = v.trim().removePrefix("v")
             val plusIdx = s.indexOf('+')
             val base = if (plusIdx >= 0) s.substring(0, plusIdx) else s
-            val patchIndex =
-                if (plusIdx >= 0) s.substring(plusIdx + 1).toIntOrNull() ?: 0 else 0
+            val buildSuffix = if (plusIdx >= 0) s.substring(plusIdx + 1) else ""
+            val patchIndex = buildSuffix.substringBefore('-').toIntOrNull() ?: 0
+            val ryRevision =
+                buildSuffix.substringAfter("-ry.", missingDelimiterValue = "")
+                    .substringBefore('-')
+                    .toIntOrNull() ?: 0
 
             val parts = base.split(".")
             val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
             val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
             val patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
 
-            return ParsedVersion(major = major, minor = minor, patch = patch, patchIndex = patchIndex)
+            return ParsedVersion(
+                major = major,
+                minor = minor,
+                patch = patch,
+                patchIndex = patchIndex,
+                ryRevision = ryRevision
+            )
         }
 
         fun compareVersions(v1: String, v2: String): Int {
@@ -91,26 +108,14 @@ class UpdateManager private constructor(private val context: Context) {
             if (p1.major != p2.major) return p1.major.compareTo(p2.major)
             if (p1.minor != p2.minor) return p1.minor.compareTo(p2.minor)
             if (p1.patch != p2.patch) return p1.patch.compareTo(p2.patch)
-            return p1.patchIndex.compareTo(p2.patchIndex)
+            if (p1.patchIndex != p2.patchIndex) return p1.patchIndex.compareTo(p2.patchIndex)
+            return p1.ryRevision.compareTo(p2.ryRevision)
         }
 
         /** 检查更新，返回更新状态 用于从MainActivity直接检查更新 */
         suspend fun checkForUpdates(context: Context, currentVersion: String): UpdateStatus {
             val manager = getInstance(context)
             return manager.checkForUpdatesInternal(currentVersion)
-        }
-    }
-
-    suspend fun checkForUpdatesSilently(currentVersion: String) {
-        AppLogger.d(TAG, "checkForUpdatesSilently() start: currentVersion=$currentVersion")
-        try {
-            val result = checkForUpdatesInternal(currentVersion)
-            AppLogger.d(TAG, "checkForUpdatesSilently() done: status=${result::class.java.simpleName}")
-            if (result is UpdateStatus.Available || result is UpdateStatus.PatchAvailable) {
-                _updateStatus.postValue(result)
-            }
-        } catch (e: Exception) {
-            AppLogger.w(TAG, "checkForUpdatesSilently() failed", e)
         }
     }
 
@@ -159,20 +164,8 @@ class UpdateManager private constructor(private val context: Context) {
                         null
                     }
 
-                // 从字符串资源中获取GitHub仓库信息
-                val aboutWebsite = context.getString(R.string.about_website)
-
-                // 解析GitHub仓库链接 - 处理HTML格式
-                val htmlContent = aboutWebsite.replace("&lt;", "<").replace("&gt;", ">")
-                val githubUrlPattern = "https://github.com/([^/\"<>]+)/([^/\"<>]+)".toRegex()
-                val matchResult = githubUrlPattern.find(htmlContent)
-
-                val (repoOwner, repoName) =
-                        if (matchResult != null) {
-                            Pair(matchResult.groupValues[1], matchResult.groupValues[2])
-                        } else {
-                            Pair("AAswordman", "Operit") // 默认值
-                        }
+                val repoOwner = DistributionConfig.OWNER
+                val repoName = DistributionConfig.SOURCE_REPOSITORY
 
                 val githubReleaseUtil = GithubReleaseUtil(context)
                 val releaseInfo = githubReleaseUtil.fetchLatestReleaseInfo(repoOwner, repoName)
@@ -223,8 +216,8 @@ class UpdateManager private constructor(private val context: Context) {
     private suspend fun tryFetchLatestPatchUpdate(currentVersion: String): UpdateStatus? {
         val api = GitHubApiService(context)
 
-        val owner = "AAswordman"
-        val repo = "OperitNightlyRelease"
+        val owner = DistributionConfig.OWNER
+        val repo = DistributionConfig.NIGHTLY_REPOSITORY
 
         AppLogger.d(TAG, "tryFetchLatestPatchUpdate(): currentVersion=$currentVersion repo=$owner/$repo")
         val result = api.getRepositoryReleases(owner = owner, repo = repo, page = 1, perPage = 20)

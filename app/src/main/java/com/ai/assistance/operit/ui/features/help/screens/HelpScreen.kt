@@ -18,13 +18,14 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebResourceRequest
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.ui.features.token.webview.WebViewConfig
 
 @Composable
 fun HelpScreen(onBackPressed: () -> Unit = {}) {
     val context = LocalContext.current
     var isLoading by remember { mutableStateOf(true) }
-    val helpUrl = "https://operit.app"
+    val helpUrl = DistributionConfig.HELP_URL
     val focusRequester = remember { FocusRequester() }
 
     // 创建WebView实例

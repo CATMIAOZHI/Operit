@@ -52,11 +52,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.ai.assistance.operit"
+        applicationId = "com.rainy.operitry"
         minSdk = 26
         targetSdk = 34
         versionCode = 44
-        versionName = "1.12.0+4"
+        versionName = "1.12.0+4-ry.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -106,7 +106,7 @@ android {
                 signingConfig = releaseSigningConfig
             }
             matchingFallbacks += listOf("debug")
-            resValue("string", "app_name", "Operit Clone")
+            resValue("string", "app_name", "Operit Ry Clone")
         }
         create("nightly") {
             isMinifyEnabled = false
@@ -119,7 +119,6 @@ android {
                 signingConfig = releaseSigningConfig
             }
             matchingFallbacks += listOf("release")
-            signingConfig = signingConfigs.getByName("debug")
         }
     }
     applicationVariants.all {

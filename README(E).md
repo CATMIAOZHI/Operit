@@ -2,21 +2,25 @@
   <a href="README.md">中文版</a> | <span>English</span>
 </div>
 
+## Operit Ry Personal Distribution
+
+**Operit Ry** is an unofficial personal distribution maintained by [Rainy / CATMIAOZHI](https://github.com/CATMIAOZHI) on the [`personal/main`](https://github.com/CATMIAOZHI/Operit/tree/personal/main) branch. The upstream project is created and maintained by [AAswordman](https://github.com/AAswordman/Operit). Fixes intended for upstream contribution should branch from `upstream/main`.
+
 <div align="center">
-  <img src="https://img.shields.io/github/last-commit/AAswordman/Operit" alt="Last Commit">
+  <img src="https://img.shields.io/github/last-commit/CATMIAOZHI/Operit/personal/main" alt="Last Commit">
   <img src="https://img.shields.io/badge/Platform-Android_8.0%2B-brightgreen.svg" alt="Platform">
-  <a href="https://github.com/AAswordman/Operit/releases/latest"><img src="https://img.shields.io/github/v/release/AAswordman/Operit" alt="Latest Release"></a>
+  <a href="https://github.com/CATMIAOZHI/Operit/releases/latest"><img src="https://img.shields.io/github/v/release/CATMIAOZHI/Operit" alt="Latest Release"></a>
   <br>
-  <a href="https://github.com/AAswordman/Operit/stargazers"><img src="https://img.shields.io/github/stars/AAswordman/Operit" alt="GitHub Stars"></a>
-  <a href="https://aaswordman.github.io/OperitWeb"><img src="https://img.shields.io/badge/📖-User_Guide-blue.svg" alt="User Guide"></a>
+  <a href="https://github.com/CATMIAOZHI/Operit/stargazers"><img src="https://img.shields.io/github/stars/CATMIAOZHI/Operit" alt="GitHub Stars"></a>
+  <a href="https://github.com/CATMIAOZHI/Operit/tree/personal/main/docs"><img src="https://img.shields.io/badge/📖-User_Guide-blue.svg" alt="User Guide"></a>
   <a href="https://www.patreon.com/c/aaswordsman"><img src="https://img.shields.io/badge/🌍-Patreon-f96854.svg" alt="Patreon"></a>
   <a href="https://afdian.com/a/aaswordsman"><img src="https://img.shields.io/badge/💖-Support_Development-ff6b6b.svg" alt="Support Development"></a>
   <a href="docs/doc-src/dev-core/CONTRIBUTING.md"><img src="https://img.shields.io/badge/contributions-welcome-brightgreen.svg" alt="Contributions Welcome"></a>
   <br>
-  <a href="mailto:aaswordsman@foxmail.com"><img src="https://img.shields.io/badge/📧-Email-red.svg" alt="Email"></a>
+  <a href="https://github.com/CATMIAOZHI"><img src="https://img.shields.io/badge/Maintainer-Rainy-ff85a2.svg" alt="Maintainer Rainy"></a>
   <a href="https://qm.qq.com/q/Sa4fKEH7sO"><img src="https://img.shields.io/badge/💬-QQ_Group-blue.svg" alt="QQ Group"></a>
   <a href="https://discord.gg/YnV9MWurRF"><img src="https://img.shields.io/badge/🎮-Discord-5865F2.svg" alt="Discord"></a>
-  <a href="https://github.com/AAswordman/Operit/issues"><img src="https://img.shields.io/badge/🐛-Issues-orange.svg" alt="Issues"></a>
+  <a href="https://github.com/CATMIAOZHI/Operit/issues"><img src="https://img.shields.io/badge/🐛-Issues-orange.svg" alt="Issues"></a>
 </div>
 
 <div align="center">
@@ -67,7 +71,7 @@ Support for MNN / llama.cpp local models (GGUF)—run AI completely offline to p
 Customize AI personality and speaking style, with character card backup/export (Tavern/JSON)/QR sharing and independent histories; supports AI-to-AI chats
 
 ### 🔌 Rich Tool Ecosystem
-40+ built-in tools + MCP/Skill marketplace plugins + toolkits/workflows, including AutoGLM auto-click agent, drawing/image search, AI-to-AI & self-awareness tools, scheduled tasks, and a prompt marketplace
+40+ built-in tools + local MCP/Skill imports + toolkits/workflows, including AutoGLM auto-click agent, drawing/image search, AI-to-AI & self-awareness tools, scheduled tasks, and prompt management
 
 </td>
 </tr>
@@ -113,7 +117,7 @@ Customize AI personality and speaking style, with character card backup/export (
 <summary><b>🔗 Integration Capabilities (Click to expand)</b></summary>
 
 - 🤖 **Tasker Integration**: Trigger custom AI agent events for deep automation
-- 🌐 **MCP/Skill Marketplace**: One-click plugin installation, remote MCP, auto-description, uvx/npx support
+- 🌐 **MCP/Skill Management**: Repository, ZIP, and configuration imports with remote MCP, uvx, and npx support
 - 🔌 **Multi-Model Support**: OpenAI Responses API, Claude, Gemini, xAI, Novita, Ollama, NVIDIA, OpenRouter, LMStudio, Bailing, and more
 - 🧪 **Model & Prompt Management**: Multi configs/param customization, prompt marketplace
 - 🔐 **Permissions**: Per-tool authorization and safety prompts
@@ -163,8 +167,8 @@ Access anytime, share conveniently
 </td>
 <td align="center" width="33%">
 <img src="docs/assets/README_examples/function_packageMarket.png" height="200px"><br>
-<b>Plugin Marketplace</b><br>
-Rich MCP ecosystem
+<b>Local Package Management</b><br>
+Import and manage MCP, Skill, and tool packages
 </td>
 </tr>
 </table>
@@ -176,10 +180,10 @@ Rich MCP ecosystem
 | Item | Description |
 |------|-------------|
 | 📋 **System Requirements** | Android 8.0+ (API 26+), 6GB+ RAM recommended, 5GB+ free storage |
-| 📥 **Download & Install** | Download the latest APK from the [Release Page](https://github.com/AAswordman/Operit/releases) |
-| 📖 **User Guide** | [Official Website](https://operit.app) with detailed tutorials and examples |
+| 📥 **Download & Install** | Download the latest APK from the [Release Page](https://github.com/CATMIAOZHI/Operit/releases) |
+| 📖 **User Guide** | [Personal distribution docs](https://github.com/CATMIAOZHI/Operit/tree/personal/main/docs) with tutorials and examples |
 
-> **Security Warning:** To ensure your data security, please download this application exclusively from the official [Release Page](https://github.com/AAswordman/Operit/releases) or the [Official Website](https://operit.app). Installation packages from unofficial sources may be maliciously modified, potentially leading to privacy leaks or device monitoring.
+> **Security Warning:** Operit Ry is an unofficial personal distribution. Download it only from this distribution's [Release Page](https://github.com/CATMIAOZHI/Operit/releases) or [project repository](https://github.com/CATMIAOZHI/Operit). Packages from unknown sources may be maliciously modified, potentially leading to privacy leaks or device monitoring.
 
 **Installation Steps:** Download APK → Install & Launch → Follow Setup Guide → Start Using ✨
 
@@ -189,7 +193,7 @@ Rich MCP ecosystem
 
 - **Cloud models are user configured:** When using a cloud model, choose the provider and configure the API key, model, and endpoint yourself. Chat requests are sent directly from your device to that provider. Operit does not provide chat inference, API request relaying, or cloud hosting for chat records. Review the selected provider's terms and privacy policy as well.
 - **Local models can infer offline:** MNN and llama.cpp models run inference on the device. Once model files are prepared, they can be used without connecting to a model provider.
-- **Other network features operate separately:** Marketplace, announcements, update checks, GitHub sign-in, and any MCP, search, speech, drawing, or similar feature you enable may access the relevant third-party or Operit network resources. These features do not relay chat model requests.
+- **Personal distribution network boundary:** Operit Ry disables the upstream online market and remote announcements. Update requests contact CATMIAOZHI GitHub Releases only after a manual check. MCP, search, speech, drawing, and GitHub features you explicitly enable still contact their corresponding third-party services.
 - **Deployers are responsible for public services:** The external HTTP service is disabled by default. Once enabled, it provides a web chat interface and HTTP API on the device's network interfaces. Examples such as the QQ Bot can also be used for automated replies. Expose them only to authorized parties, and take responsibility for access control, data protection, and content management. A deployer or operator that continuously provides anthropomorphic emotional-interaction services to the public in China must also assess and comply with applicable laws and regulatory requirements.
 
 ---
@@ -433,7 +437,7 @@ Rich MCP ecosystem
 </tr>
 </table>
 
-> 📝 **Full Changelog**: Visit the [Releases Page](https://github.com/AAswordman/Operit/releases) for detailed updates on each version
+> 📝 **Full Changelog**: Visit the [Releases Page](https://github.com/CATMIAOZHI/Operit/releases) for detailed updates on each version
 
 ---
 
@@ -480,7 +484,7 @@ In simple terms, this means:
 
 ## 📝 Feedback
 
-Encountered a problem or have a suggestion? Welcome to [submit an Issue](https://github.com/AAswordman/Operit/issues)!
+Encountered an Operit Ry problem or have a suggestion? [Submit an Issue](https://github.com/CATMIAOZHI/Operit/issues)!
 
 **Submission Guidelines:**
 - 📝 Clearly describe the problem/suggestion with reproduction steps

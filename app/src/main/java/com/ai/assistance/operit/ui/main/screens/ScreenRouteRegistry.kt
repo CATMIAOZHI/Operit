@@ -85,6 +85,22 @@ private fun Class<out Screen>.isKotlinObjectClass(): Boolean {
 }
 
 object ScreenRouteRegistry {
+    private val onlineMarketScreenTypes: Set<Class<out Screen>> =
+        setOf(
+            Screen.Market::class.java,
+            Screen.MarketCategory::class.java,
+            Screen.MarketNotifications::class.java,
+            Screen.MarketEntryDetail::class.java,
+            Screen.MarketAuthor::class.java,
+            Screen.MarketManage::class.java,
+            Screen.ArtifactPublish::class.java,
+            Screen.ArtifactContinuePublish::class.java,
+            Screen.ArtifactEdit::class.java,
+            Screen.RepoPublish::class.java,
+            Screen.RepoEdit::class.java,
+            Screen.RepoPublishVersion::class.java
+        )
+
     private val screenTypes: List<Class<out Screen>> =
         Screen::class.java.declaredClasses
             .mapNotNull { declaredClass ->
@@ -94,6 +110,7 @@ object ScreenRouteRegistry {
                     declaredClass.asSubclass(Screen::class.java)
                 }
             }
+            .filterNot(onlineMarketScreenTypes::contains)
             .sortedBy { it.simpleName }
 
     private val routeTypeById: Map<String, Class<out Screen>> =

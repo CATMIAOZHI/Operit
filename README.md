@@ -2,21 +2,25 @@
   <span>中文</span> | <a href="README(E).md">English</a>
 </div>
 
+## Operit Ry 个人发行版
+
+**Operit Ry** 是由 [Rainy / CATMIAOZHI](https://github.com/CATMIAOZHI) 维护的非官方个人发行版，开发分支为 [`personal/main`](https://github.com/CATMIAOZHI/Operit/tree/personal/main)。原项目由 [AAswordman](https://github.com/AAswordman/Operit) 创建并维护。准备向上游贡献的修复应从 `upstream/main` 创建分支。
+
 <div align="center">
-  <img src="https://img.shields.io/github/last-commit/AAswordman/Operit" alt="Last Commit">
+  <img src="https://img.shields.io/github/last-commit/CATMIAOZHI/Operit/personal/main" alt="Last Commit">
   <img src="https://img.shields.io/badge/Platform-Android_8.0%2B-brightgreen.svg" alt="Platform">
-  <a href="https://github.com/AAswordman/Operit/releases/latest"><img src="https://img.shields.io/github/v/release/AAswordman/Operit" alt="Latest Release"></a>
+  <a href="https://github.com/CATMIAOZHI/Operit/releases/latest"><img src="https://img.shields.io/github/v/release/CATMIAOZHI/Operit" alt="Latest Release"></a>
   <br>
-  <a href="https://github.com/AAswordman/Operit/stargazers"><img src="https://img.shields.io/github/stars/AAswordman/Operit" alt="GitHub Stars"></a>
-  <a href="https://aaswordman.github.io/OperitWeb"><img src="https://img.shields.io/badge/📖-用户指南-blue.svg" alt="User Guide"></a>
+  <a href="https://github.com/CATMIAOZHI/Operit/stargazers"><img src="https://img.shields.io/github/stars/CATMIAOZHI/Operit" alt="GitHub Stars"></a>
+  <a href="https://github.com/CATMIAOZHI/Operit/tree/personal/main/docs"><img src="https://img.shields.io/badge/📖-用户指南-blue.svg" alt="User Guide"></a>
   <a href="https://www.patreon.com/c/aaswordsman"><img src="https://img.shields.io/badge/🌍-Patreon-f96854.svg" alt="Patreon"></a>
   <a href="https://afdian.com/a/aaswordsman"><img src="https://img.shields.io/badge/💖-支持开发-ff6b6b.svg" alt="Support Development"></a>
   <a href="docs/doc-src/dev-core/CONTRIBUTING.md"><img src="https://img.shields.io/badge/contributions-welcome-brightgreen.svg" alt="Contributions Welcome"></a>
   <br>
-  <a href="mailto:aaswordsman@foxmail.com"><img src="https://img.shields.io/badge/📧-Email-red.svg" alt="Email"></a>
+  <a href="https://github.com/CATMIAOZHI"><img src="https://img.shields.io/badge/Maintainer-Rainy-ff85a2.svg" alt="Maintainer Rainy"></a>
   <a href="https://qm.qq.com/q/Sa4fKEH7sO"><img src="https://img.shields.io/badge/💬-QQ群-blue.svg" alt="QQ Group"></a>
   <a href="https://discord.gg/YnV9MWurRF"><img src="https://img.shields.io/badge/🎮-Discord-5865F2.svg" alt="Discord"></a>
-  <a href="https://github.com/AAswordman/Operit/issues"><img src="https://img.shields.io/badge/🐛-Issues-orange.svg" alt="Issues"></a>
+  <a href="https://github.com/CATMIAOZHI/Operit/issues"><img src="https://img.shields.io/badge/🐛-Issues-orange.svg" alt="Issues"></a>
 </div>
 
 <div align="center">
@@ -67,7 +71,7 @@ AI自动分类管理记忆，支持时间查询/导入导出/自动总结，智�
 自定义AI性格、说话风格，支持角色卡导入导出（酒馆/JSON）/备份/二维码分享，角色卡可互聊并拥有独立对话历史
 
 ### 🔌 丰富工具生态
-40+ 内置工具 + MCP/Skill 市场插件 + 工具包/工作流，含自动点击 Agent、绘图/图片搜索、AI 互聊/自我认知、定时任务、提示词市场等，覆盖文件操作、网络请求、系统控制、媒体处理
+40+ 内置工具 + MCP/Skill 本地导入 + 工具包/工作流，含自动点击 Agent、绘图/图片搜索、AI 互聊/自我认知、定时任务、提示词管理等，覆盖文件操作、网络请求、系统控制、媒体处理
 
 </td>
 </tr>
@@ -113,7 +117,7 @@ AI自动分类管理记忆，支持时间查询/导入导出/自动总结，智�
 <summary><b>🔗 集成能力（点击展开）</b></summary>
 
 - 🤖 **Tasker集成**：触发自定义AI代理事件，深度自动化
-- 🌐 **MCP/Skill 市场**：一键安装插件、远程MCP、自动描述、uvx/npx支持
+- 🌐 **MCP/Skill 管理**：支持仓库、ZIP 与配置导入，兼容远程 MCP、uvx 和 npx
 - 🔌 **多模型支持**：OpenAI Responses API、Claude、Gemini、xAI、Novita、Ollama、NVIDIA、OpenRouter、LMStudio、百灵等
 - 🧪 **模型与提示词管理**：多配置/参数自定义、提示词市场
 - 🔐 **权限系统**：工具级权限控制与安全提示
@@ -163,8 +167,8 @@ AI自动分类管理记忆，支持时间查询/导入导出/自动总结，智�
 </td>
 <td align="center" width="33%">
 <img src="docs/assets/README_examples/function_packageMarket.png" height="200px"><br>
-<b>插件市场</b><br>
-丰富的MCP生态
+<b>本地包管理</b><br>
+导入并管理 MCP、Skill 与工具包
 </td>
 </tr>
 </table>
@@ -176,10 +180,10 @@ AI自动分类管理记忆，支持时间查询/导入导出/自动总结，智�
 | 项目 | 说明 |
 |-----|------|
 | 📋 **系统要求** | Android 8.0+ (API 26+)，建议 6GB+ 内存，5GB+ 剩余存储 |
-| 📥 **下载安装** | [Release页面](https://github.com/AAswordman/Operit/releases) 下载最新APK |
-| 📖 **使用指南** | [官方网站](https://operit.app) 包含详细教程和示例 |
+| 📥 **下载安装** | [Release页面](https://github.com/CATMIAOZHI/Operit/releases) 下载最新APK |
+| 📖 **使用指南** | [个人版文档](https://github.com/CATMIAOZHI/Operit/tree/personal/main/docs) 包含教程和示例 |
 
-> **安全提示：** 为确保您的数据安全，请务必从官方 [Release页面](https://github.com/AAswordman/Operit/releases) 或 [官方网站](https://operit.app) 下载本应用。通过未知渠道下载的安装包可能被恶意修改，从而导致隐私泄露或设备被监听。
+> **安全提示：** Operit Ry 是非官方个人发行版。请仅从本发行版的 [Release 页面](https://github.com/CATMIAOZHI/Operit/releases) 或 [项目仓库](https://github.com/CATMIAOZHI/Operit) 下载。通过未知渠道下载的安装包可能被恶意修改，从而导致隐私泄露或设备被监听。
 
 **安装步骤：** 下载APK → 安装启动 → 按引导配置 → 开始使用 ✨
 
@@ -189,7 +193,7 @@ AI自动分类管理记忆，支持时间查询/导入导出/自动总结，智�
 
 - **云模型由用户自行配置：** 使用云模型时，请自行选择服务商并配置 API Key、模型和端点。聊天请求从您的设备直接发送至所选服务商，Operit 不提供聊天推理、API 请求中转或聊天记录云端托管。请同时阅读所选服务商的服务条款和隐私政策。
 - **本地模型可离线推理：** MNN 和 llama.cpp 模型在设备本地执行推理；模型文件准备完成后，可在不连接模型服务商的情况下使用。
-- **其他网络功能独立运行：** 市场、公告、更新检查、GitHub 登录及您主动启用的 MCP、搜索、语音、绘图等功能会访问相应的第三方或 Operit 网络资源。这些功能不构成聊天模型请求中转。
+- **个人版网络边界：** Operit Ry 禁用上游在线市场与远程公告，更新只在您手动检查时访问 CATMIAOZHI 的 GitHub Release。您主动启用的 MCP、搜索、语音、绘图与 GitHub 功能仍会访问对应第三方服务。
 - **对外提供服务由部署者负责：** 外部 HTTP 服务默认关闭；启用后会在设备网络接口上提供网页聊天和 HTTP API。QQ Bot 等示例也可用于自动回复。请仅向获得授权的对象开放，并自行负责访问控制、数据保护和内容管理。面向中国境内公众持续提供拟人化情感互动服务的部署或运营者，还应自行评估并遵守适用的法律法规和监管要求。
 
 ---
@@ -433,7 +437,7 @@ AI自动分类管理记忆，支持时间查询/导入导出/自动总结，智�
 </tr>
 </table>
 
-> 📝 **完整更新日志**：访问 [Releases 页面](https://github.com/AAswordman/Operit/releases) 查看每个版本的详细更新内容
+> 📝 **完整更新日志**：访问 [Releases 页面](https://github.com/CATMIAOZHI/Operit/releases) 查看每个版本的详细更新内容
 
 ---
 
@@ -480,7 +484,7 @@ AI自动分类管理记忆，支持时间查询/导入导出/自动总结，智�
 
 ## 📝 问题反馈
 
-遇到问题或有建议？欢迎 [提交 Issue](https://github.com/AAswordman/Operit/issues)！
+遇到 Operit Ry 的问题或有建议？欢迎 [提交 Issue](https://github.com/CATMIAOZHI/Operit/issues)！
 
 **提交指南：**
 - 📝 清晰描述问题/建议，提供复现步骤

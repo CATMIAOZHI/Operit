@@ -33,7 +33,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Store
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -89,7 +88,6 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 fun SkillConfigScreen(
     skillRepository: SkillRepository,
     snackbarHostState: SnackbarHostState,
-    onNavigateToSkillMarket: () -> Unit = {},
     searchQuery: String = "",
     skillOrder: List<String> = emptyList(),
     onSaveSkillOrder: (List<String>) -> Unit = {},
@@ -364,18 +362,6 @@ fun SkillConfigScreen(
             }
 
             FloatingActionButton(
-                onClick = onNavigateToSkillMarket,
-                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                modifier = Modifier.size(56.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Store,
-                    contentDescription = stringResource(R.string.screen_title_skill_market)
-                )
-            }
-
-            FloatingActionButton(
                 onClick = { showImportDialog = true }
             ) {
                 Icon(
@@ -437,24 +423,10 @@ fun SkillConfigScreen(
 
                     when (importTabIndex) {
                         0 -> {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.enter_repo_info),
-                                    modifier = Modifier.weight(1f)
-                                )
-                                TextButton(
-                                    enabled = !isImporting,
-                                    onClick = {
-                                        showImportDialog = false
-                                        onNavigateToSkillMarket()
-                                    }
-                                ) {
-                                    Text(stringResource(R.string.get_skill))
-                                }
-                            }
+                            Text(
+                                text = stringResource(R.string.enter_repo_info),
+                                modifier = Modifier.fillMaxWidth()
+                            )
 
                             OutlinedTextField(
                                 value = repoUrlInput,

@@ -150,7 +150,7 @@ org.gradle.parallel=true
    - 填写以下信息：
      - **Application name**: `Operit Dev` (或任何你喜欢的名字)
      - **Homepage URL**: `https://github.com/<你的 GitHub 用户名>/Operit` (使用你 Fork 后的仓库地址)
-     - **Authorization callback URL**: `operit://github-oauth-callback` (**必须完全匹配！**)
+     - **Authorization callback URL**: `operitry://github-oauth-callback` (**必须完全匹配！**)
 
 2. **获取 Client ID:**  
    创建成功后，页面会显示生成的 **Client ID**。复制这个 ID。

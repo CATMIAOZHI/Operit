@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.data.announcement
 
 import com.ai.assistance.operit.BuildConfig
+import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -256,6 +257,6 @@ class RemoteAnnouncementRepository(
 
     companion object {
         private const val TAG = "RemoteAnnouncementRepo"
-        const val DEFAULT_POINTER_URL = "https://operit.app/announcements/latest.json"
+        const val DEFAULT_POINTER_URL = DistributionConfig.DISABLED_ANNOUNCEMENT_POINTER_URL
     }
 }

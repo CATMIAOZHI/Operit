@@ -2,6 +2,7 @@ package com.ai.assistance.operit.core.tools.system
 
 import android.content.Context
 import android.content.pm.PackageManager
+import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.GithubReleaseUtil
 import com.google.gson.Gson
@@ -13,8 +14,6 @@ import java.io.IOException
 
 object OperitTerminalManager {
     const val PACKAGE_NAME = "com.ai.assistance.operit.terminal"
-    private const val REPO_OWNER = "AAswordman"
-    private const val REPO_NAME = "OperitTerminal"
     private const val TAG = "OperitTerminalManager"
 
     data class ReleaseInfo(
@@ -43,7 +42,10 @@ object OperitTerminalManager {
 
     suspend fun fetchLatestReleaseInfo(context: Context): ReleaseInfo? = withContext(Dispatchers.IO) {
         val githubReleaseUtil = GithubReleaseUtil(context)
-        val releaseInfo = githubReleaseUtil.fetchLatestReleaseInfo(REPO_OWNER, REPO_NAME)
+        val releaseInfo = githubReleaseUtil.fetchLatestReleaseInfo(
+            DistributionConfig.TERMINAL_OWNER,
+            DistributionConfig.TERMINAL_REPOSITORY
+        )
         releaseInfo?.let {
             ReleaseInfo(it.version, it.downloadUrl, it.releaseNotes)
         }

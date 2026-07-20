@@ -18,7 +18,6 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Store
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
@@ -69,7 +68,6 @@ import com.ai.assistance.operit.ui.features.startup.screens.LocalPluginLoadingSt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MCPConfigScreen(
-    onNavigateToMCPMarket: () -> Unit = {},
     searchQuery: String = ""
 ) {
     val context = LocalContext.current
@@ -689,25 +687,11 @@ fun MCPConfigScreen(
                     when (importTabIndex) {
                         0 -> {
                             // 从仓库导入
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    stringResource(R.string.enter_repo_info), 
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                TextButton(
-                                    onClick = {
-                                        showImportDialog = false
-                                        onNavigateToMCPMarket()
-                                    }
-                                ) {
-                                    Text(stringResource(R.string.get_mcp))
-                                }
-                            }
+                            Text(
+                                stringResource(R.string.enter_repo_info),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                             
                             OutlinedTextField(
                                 value = repoUrlInput,
@@ -1127,16 +1111,6 @@ fun MCPConfigScreen(
                         } else {
                             Icon(Icons.Default.PlayArrow, contentDescription = stringResource(R.string.start_plugin))
                         }
-                    }
-
-                    // 市场按钮
-                    FloatingActionButton(
-                        onClick = onNavigateToMCPMarket,
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                        modifier = Modifier.size(56.dp)
-                    ) {
-                        Icon(Icons.Default.Store, contentDescription = stringResource(R.string.mcp_market))
                     }
 
                     // 导入按钮

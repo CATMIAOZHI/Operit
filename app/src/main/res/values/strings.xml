@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Operit AI</string>
+    <string name="app_name">Operit Ry</string>
     <string name="accessibility_service_description">用于获取UI层次结构，为AI助手提供更快速的界面分析能力，不会收集或存储任何个人信息。</string>
     
     <!-- 模型选择器相关 -->
@@ -580,9 +580,9 @@
     <string name="about_title">关于 Operit AI</string>
     <string name="about_version">版本: %1$s</string>
     <string name="about_description">Operit AI是一个智能助手应用，能够帮助用户更高效地使用设备，提供界面分析、聊天对话等功能。</string>
-    <string name="about_developer">开发者: &lt;a href="https://github.com/AAswordman"&gt;AAswordman&lt;/a&gt;</string>
-    <string name="about_contact">联系我们: aaswordsman@foxmail.com</string>
-    <string name="about_website">&lt;a href="https://github.com/AAswordman/Operit"&gt;GitHub: https://github.com/AAswordman/Operit&lt;/a&gt;</string>
+    <string name="about_developer">维护者: &lt;a href="https://github.com/CATMIAOZHI"&gt;Rainy&lt;/a&gt;</string>
+    <string name="about_contact">上游项目: AAswordman / Operit</string>
+    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/Operit"&gt;GitHub: https://github.com/CATMIAOZHI/Operit&lt;/a&gt;</string>
     <string name="about_copyright">© 2025 - 2026 Operit. 保留所有权利。</string>
     <string name="star_on_github">在 GitHub 点个 Star</string>
     <string name="update_log">更新日志</string>
@@ -1038,7 +1038,7 @@
     <string name="copy_path">复制路径</string>
     <string name="path_copied_to_clipboard">路径已复制到剪贴板</string>
     <string name="open_file_manager">打开文件管理器</string>
-    <string name="navigate_to_external_files">请导航到Android/data/com.ai.assistance.operit/files/packages目录</string>
+    <string name="navigate_to_external_files">请导航到Android/data/com.rainy.operitry/files/packages目录</string>
     <string name="package_js_only">仅支持 JavaScript(.js) 和 ToolPkg(.toolpkg) 文件</string>
     <string name="package_script_only">仅支持 HJSON(.hjson)、JavaScript(.js) 和 TypeScript(.ts) 文件</string>
     <string name="plugin_toolpkg_only">仅支持 ToolPkg(.toolpkg) 文件</string>

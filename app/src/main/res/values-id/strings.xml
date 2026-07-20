@@ -205,7 +205,7 @@
     <string name="colorpicker_select_statusbar">Pilih warna bilah status</string>
     <string name="colorpicker_select_navigation_drawer_background">Pilih warna latar menu geser samping</string>
 
-    <string name="app_name">Operit AI</string>
+    <string name="app_name">Operit Ry</string>
     <string name="accessibility_service_description">Digunakan untuk mendapatkan hierarki UI, memberikan kemampuan analisis antarmuka yang lebih cepat untuk asisten AI, tidak akan mengumpulkan atau menyimpan informasi pribadi apa pun.</string>
     <string name="model_selector_title">Pilih Konfigurasi Model</string>
     <string name="model_selector_toggle">Tampilkan Pemilih Model</string>
@@ -497,9 +497,9 @@
     <string name="about_title">Tentang Operit AI</string>
     <string name="about_version">Versi: %1$s</string>
     <string name="about_description">Operit AI adalah aplikasi asisten cerdas yang membantu pengguna menggunakan perangkat dengan lebih efisien, menyediakan analisis antarmuka, percakapan obrolan, dan fungsi lainnya.</string>
-    <string name="about_developer">Pengembang: &lt;a href="https://github.com/AAswordman"&gt;AAswordman&lt;/a&gt;</string>
-    <string name="about_contact">Hubungi kami: aaswordsman@foxmail.com</string>
-    <string name="about_website">&lt;a href="https://github.com/AAswordman/Operit"&gt;GitHub: https://github.com/AAswordman/Operit&lt;/a&gt;</string>
+    <string name="about_developer">Pengelola: &lt;a href="https://github.com/CATMIAOZHI"&gt;Rainy&lt;/a&gt;</string>
+    <string name="about_contact">Proyek hulu: AAswordman / Operit</string>
+    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/Operit"&gt;GitHub: https://github.com/CATMIAOZHI/Operit&lt;/a&gt;</string>
     <string name="about_copyright">© 2025 - 2026 Operit. Hak cipta dilindungi undang-undang.</string>
     <string name="star_on_github">Beri Bintang di GitHub</string>
     <string name="update_log">Catatan Pembaruan</string>
@@ -861,7 +861,7 @@
     <string name="copy_path">Salin Jalur</string>
     <string name="path_copied_to_clipboard">Jalur telah disalin ke papan klip</string>
     <string name="open_file_manager">Buka Pengelola File</string>
-    <string name="navigate_to_external_files">Silakan navigasi ke direktori Android/data/com.ai.assistance.operit/files/packages</string>
+    <string name="navigate_to_external_files">Silakan navigasi ke direktori Android/data/com.rainy.operitry/files/packages</string>
     <string name="package_js_only">Hanya mendukung file JavaScript (.js) dan ToolPkg (.toolpkg)</string>
     <string name="pkg_toolpkg_subpackages">Subpaket ToolPkg</string>
     <string name="pkg_toolpkg_version">Versi: %1$s</string>

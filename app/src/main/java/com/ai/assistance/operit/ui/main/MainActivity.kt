@@ -82,7 +82,6 @@ class MainActivity : ComponentActivity() {
     // ======== 工具和管理器 ========
     private lateinit var toolHandler: AIToolHandler
     private lateinit var agreementPreferences: AgreementPreferences
-    private var updateCheckPerformed = false
     private lateinit var anrMonitor: AnrMonitor
     private lateinit var mcpRepository: MCPRepository
 
@@ -810,36 +809,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         )
-
-        // 自动检查更新（仅提示，不自动下载）
-        lifecycleScope.launch {
-            // 延迟几秒，等待应用完全启动
-            delay(3000)
-            checkForUpdates()
-        }
-    }
-
-    private fun checkForUpdates() {
-        if (updateCheckPerformed) return
-        updateCheckPerformed = true
-
-        val appVersion =
-            try {
-                packageManager.getPackageInfo(packageName, 0).versionName
-                    ?: getString(R.string.unknown_value)
-            } catch (e: PackageManager.NameNotFoundException) {
-                getString(R.string.unknown_value)
-            }
-
-        // 使用UpdateManager检查更新
-        lifecycleScope.launch {
-            try {
-                updateManager.checkForUpdatesSilently(appVersion)
-                // 不需要显式处理更新状态，因为我们已经设置了观察者
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "更新检查失败: ${e.message}")
-            }
-        }
     }
 
     private fun showUpdateNotification(newVersion: String) {

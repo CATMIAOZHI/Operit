@@ -28,7 +28,6 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Store
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
@@ -123,9 +122,6 @@ private suspend fun runQuickPluginCreatorSetupAndPublishResult(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun PackageManagerScreen(
-    onNavigateToMCPMarket: () -> Unit = {},
-    onNavigateToSkillMarket: () -> Unit = {},
-    onNavigateToArtifactMarket: () -> Unit = {},
     onStartPluginCreation: (PluginCreationIntent) -> Unit = {},
     onOpenToolPkgPluginConfig: (String, String, String, Boolean) -> Unit = { _, _, _, _ -> },
 ) {
@@ -571,22 +567,6 @@ fun PackageManagerScreen(
                         )
                     }
 
-                    FloatingActionButton(
-                        onClick = onNavigateToArtifactMarket,
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                        modifier =
-                            Modifier.shadow(
-                                elevation = 6.dp,
-                                shape = FloatingActionButtonDefaults.shape
-                            )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Store,
-                            contentDescription = "Artifact Market"
-                        )
-                    }
-
                     // Existing import package button
                     FloatingActionButton(
                         onClick = { packageFilePicker.launch("*/*") },
@@ -905,7 +885,6 @@ fun PackageManagerScreen(
                         SkillConfigScreen(
                             skillRepository = skillRepository,
                             snackbarHostState = snackbarHostState,
-                            onNavigateToSkillMarket = onNavigateToSkillMarket,
                             searchQuery = skillSearchQuery,
                             skillOrder = skillOrder,
                             onSaveSkillOrder = { newOrder ->
@@ -919,7 +898,6 @@ fun PackageManagerScreen(
 
                     PackageTab.MCP -> {
                         MCPConfigScreen(
-                            onNavigateToMCPMarket = onNavigateToMCPMarket,
                             searchQuery = mcpSearchQuery
                         )
                     }

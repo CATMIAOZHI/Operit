@@ -107,7 +107,7 @@
 
 【Sandbox Package：安装与排查】
 1) 沙盒包目录（外部）：
-- Android/data/com.ai.assistance.operit/files/packages
+- Android/data/com.rainy.operitry/files/packages
 2) 内置包：
 - 内置包来自应用内置资源，不在上述外部目录；删除内置包文件不是常规操作，通常只做开关管理。
 3) 导入与删除：
@@ -117,7 +117,7 @@
 - 先调用 list_sandbox_packages 获取“内置+外部”包列表与当前 enabled 状态。
 - 再调用 set_sandbox_package_enabled(package_name, enabled) 执行启停。
 5) 制作包文档：
-- https://cdn.jsdelivr.net/gh/AAswordman/Operit@main/docs/SCRIPT_DEV_SKILL.md
+- https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/main/docs/SCRIPT_DEV_SKILL.md
 - 该地址可直接通过 HTTP GET 请求访问，用于拉取原始 Markdown 文档内容。
 6) 软件内调试烧录：
 - 普通 `.js` 沙盒包优先用 `debug_install_js_package`。
@@ -128,16 +128,6 @@
 - 可用包列表中的条目，不保证同类型；可能是三种类型混合出现。
 - `use_package` 是三兼容入口：对 MCP/Skill/Sandbox Package 都可统一调用。
 - `ping_mcp` 工具是 `use_package` 的直通封装，用于快速探测指定包是否可被加载。
-
-【市场 Agent API（HTTP，只读）】
-- 基础前缀：`https://api.operit.app/market-stats`
-- 搜索：`/agent/search?q=<关键词>&type=mcp|skill|package|script&limit=10`
-- 详情：`/agent/items/<type>/<id>`
-- 安装计划：`/agent/items/<type>/<id>/install-plan`
-- `package` / `script` 的 install_plan 通常会返回 `download_url`、`tracked_download_url`、`sha256`、`runtime_package_id`。
-- `skill` 的 install_plan 通常会返回 `repository_url`。
-- `mcp` 的 install_plan 可能返回 `config`（可直接作为 installConfig 参考）或 `repository_url`。
-- 当前软件未对 JS 暴露统一的一键安装市场接口；需要安装时，按条目类型自行下载、解压、导入，必要时配合 `debug_install_js_package` / `debug_install_toolpkg` / `use_package`。
 
 【功能模型与模型配置】
 1) 模型配置（Model Config）：
@@ -355,7 +345,7 @@
 
 [Sandbox Package: install and troubleshooting]
 1) External sandbox packages directory:
-- Android/data/com.ai.assistance.operit/files/packages
+- Android/data/com.rainy.operitry/files/packages
 2) Built-in packages:
 - Built-in packages come from app bundled assets, not from the external directory above; usually manage via enable/disable instead of file deletion.
 3) Import and delete:
@@ -365,7 +355,7 @@
 - Call list_sandbox_packages first to get built-in + external package list and current enabled state.
 - Then call set_sandbox_package_enabled(package_name, enabled) to apply changes.
 5) Package authoring guide:
-- https://cdn.jsdelivr.net/gh/AAswordman/Operit@main/docs/SCRIPT_DEV_SKILL.md
+- https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/main/docs/SCRIPT_DEV_SKILL.md
 - This URL can be accessed directly with an HTTP GET request to fetch the raw Markdown document.
 6) In-app debug install:
 - For plain `.js` sandbox packages, prefer `debug_install_js_package`.
@@ -376,16 +366,6 @@
 - Available package entries are not guaranteed to be a single type; mixed types are expected.
 - `use_package` is tri-compatible and can be called uniformly for MCP/Skill/Sandbox Package.
 - `ping_mcp` is a thin wrapper over `use_package` for quick package availability probing.
-
-[Market agent API (HTTP, read-only)]
-- Base prefix: `https://api.operit.app/market-stats`
-- Search: `/agent/search?q=<query>&type=mcp|skill|package|script&limit=10`
-- Detail: `/agent/items/<type>/<id>`
-- Install plan: `/agent/items/<type>/<id>/install-plan`
-- `package` / `script` install_plan usually returns `download_url`, `tracked_download_url`, `sha256`, and `runtime_package_id`.
-- `skill` install_plan usually returns `repository_url`.
-- `mcp` install_plan may return `config` (usable as installConfig reference) or `repository_url`.
-- The app does not currently expose a unified one-click market install API to JS; when installation is needed, download/extract/import by item type and use `debug_install_js_package`, `debug_install_toolpkg`, or `use_package` when appropriate.
 
 [Function model and model config]
 1) Model config:
@@ -2114,14 +2094,14 @@ description: one-line summary of what this skill does
             });
         }
     }
-    const SANDBOX_EXTERNAL_PACKAGES_DIR = "/sdcard/Android/data/com.ai.assistance.operit/files/packages";
+    const SANDBOX_EXTERNAL_PACKAGES_DIR = "/sdcard/Android/data/com.rainy.operitry/files/packages";
     const TOOLPKG_DEBUG_INSTALL_ACTION = "com.ai.assistance.operit.DEBUG_INSTALL_TOOLPKG";
-    const TOOLPKG_DEBUG_INSTALL_COMPONENT = "com.ai.assistance.operit/.core.tools.packTool.ToolPkgDebugInstallReceiver";
+    const TOOLPKG_DEBUG_INSTALL_COMPONENT = "com.rainy.operitry/com.ai.assistance.operit.core.tools.packTool.ToolPkgDebugInstallReceiver";
     const SANDBOX_SCRIPT_EXECUTION_ACTION = "com.ai.assistance.operit.EXECUTE_JS";
-    const SANDBOX_SCRIPT_EXECUTION_COMPONENT = "com.ai.assistance.operit/com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver";
+    const SANDBOX_SCRIPT_EXECUTION_COMPONENT = "com.rainy.operitry/com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver";
     const SANDBOX_SCRIPT_EXECUTION_MODE_SCRIPT = "script";
     const SANDBOX_SCRIPT_EXECUTION_MODE_CODE = "code";
-    const SANDBOX_JS_TEMP_DIR = "/sdcard/Android/data/com.ai.assistance.operit/js_temp";
+    const SANDBOX_JS_TEMP_DIR = "/sdcard/Android/data/com.rainy.operitry/js_temp";
     const DEFAULT_SANDBOX_REFRESH_TIMEOUT_MS = 1500;
     const DEFAULT_TOOLPKG_INSTALL_WAIT_MS = 1500;
     const DEFAULT_SANDBOX_SCRIPT_WAIT_MS = 15000;

@@ -39,6 +39,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.data.updates.FullUpdateInstaller
 import com.ai.assistance.operit.data.updates.UpdateManager
 import com.ai.assistance.operit.data.updates.UpdateStatus
@@ -57,8 +58,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import java.util.Locale
-
-private const val GITHUB_PROJECT_URL = "https://github.com/AAswordman/Operit"
 
 private enum class PatchUpdatePhase {
     SELECTING_MIRROR,
@@ -954,9 +953,9 @@ fun AboutScreen(
                         icon = Icons.Default.Language,
                         iconTint = MaterialTheme.colorScheme.secondary,
                         title = stringResource(id = R.string.project_url),
-                        subtitleText = GITHUB_PROJECT_URL,
+                        subtitleText = DistributionConfig.PROJECT_URL,
                         onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_PROJECT_URL)).apply {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(DistributionConfig.PROJECT_URL)).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
                             context.startActivity(intent)
@@ -970,7 +969,7 @@ fun AboutScreen(
                         iconTint = MaterialTheme.colorScheme.secondary,
                         title = stringResource(id = R.string.star_on_github),
                         onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_PROJECT_URL)).apply {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(DistributionConfig.PROJECT_URL)).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
                             context.startActivity(intent)
@@ -1003,7 +1002,16 @@ fun AboutScreen(
                         icon = Icons.Default.Email,
                         iconTint = MaterialTheme.colorScheme.primary,
                         title = stringResource(id = R.string.contact),
-                        subtitleText = stringResource(id = R.string.about_contact)
+                        subtitleText = stringResource(id = R.string.about_contact),
+                        onClick = {
+                            val intent = Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse(DistributionConfig.UPSTREAM_PROJECT_URL)
+                            ).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                        }
                     )
 
                     HorizontalDivider(modifier = Modifier.padding(start = 66.dp))

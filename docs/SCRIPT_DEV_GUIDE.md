@@ -51,8 +51,8 @@ Operit 会核对 Release 资产与本地所选文件是否相同，并由市场�
 **步骤 1: 克隆项目并安装依赖**
 
 ```bash
-# 克隆项目仓库
-git clone https://github.com/AAswordman/Operit.git
+# 克隆 Operit Ry 个人分支
+git clone --branch personal/main --single-branch https://github.com/CATMIAOZHI/Operit.git
 cd Operit
 
 # 安装项目依赖 (主要是TypeScript编译器)

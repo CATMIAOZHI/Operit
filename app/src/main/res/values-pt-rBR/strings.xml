@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='utf-8'?>
-<resources><string name="app_name">Operar IA</string>
+<resources><string name="app_name">Operit Ry</string>
     <string name="accessibility_service_description">Ele é usado para obter a hierarquia da IU e fornecer recursos de análise de interface mais rápidos para o assistente de IA. Nenhuma informação pessoal será coletada ou armazenada.</string>
     <string name="model_selector_title">Selecione a configuração do modelo</string>
     <string name="model_selector_toggle">Mostrar seletor de modelo</string>
@@ -524,9 +524,9 @@
     <string name="about_title">Sobre a Operit AI</string>
     <string name="about_version">Versão: %1$s</string>
     <string name="about_description">Operit AI é um aplicativo assistente inteligente que pode ajudar os usuários a usar os dispositivos com mais eficiência, fornecendo análise de interface, diálogo de chat e outras funções.</string>
-    <string name="about_developer">Desenvolvedor: &lt;a href="https://github.com/AAswordman"&gt;AAswordman&lt;/a&gt;</string>
-    <string name="about_contact">Contate-nos: aaswordsman@foxmail.com</string>
-    <string name="about_website">&lt;a href="https://github.com/AAswordman/Operit"&gt;GitHub: https://github.com/AAswordman/Operit&lt;/a&gt;</string>
+    <string name="about_developer">Mantenedor: &lt;a href="https://github.com/CATMIAOZHI"&gt;Rainy&lt;/a&gt;</string>
+    <string name="about_contact">Projeto original: AAswordman / Operit</string>
+    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/Operit"&gt;GitHub: https://github.com/CATMIAOZHI/Operit&lt;/a&gt;</string>
     <string name="about_copyright">© 2025 - 2026 Operit. Todos os direitos reservados.</string>
     <string name="star_on_github">Clique em uma estrela no GitHub</string>
     <string name="update_log">Registro de alterações</string>
@@ -920,7 +920,7 @@
     <string name="copy_path">copiar caminho</string>
     <string name="path_copied_to_clipboard">Caminho copiado para a área de transferência</string>
     <string name="open_file_manager">Abra o gerenciador de arquivos</string>
-    <string name="navigate_to_external_files">Navegue até o diretório Android/data/com.ai.assistance.operit/files/packages</string>
+    <string name="navigate_to_external_files">Navegue até o diretório Android/data/com.rainy.operitry/files/packages</string>
     <string name="package_js_only">Somente arquivos JavaScript(.js) e ToolPkg(.toolpkg) são suportados</string>
     <string name="pkg_toolpkg_subpackages">Subpacote ToolPkg</string>
     <string name="pkg_toolpkg_version">Versão: %1$s</string>
