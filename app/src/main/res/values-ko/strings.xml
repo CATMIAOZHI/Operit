@@ -7089,4 +7089,5 @@
     <string name="ai_message_use_package_failed">use_package 호출 실패: %1$s</string>
     <string name="ai_message_use_package_empty">use_package 반환 결과가 비어 있습니다.</string>
     <string name="ai_message_package_warmup_item">%1$d. 패키지 %2$s (%3$d회 적중)</string>
+    <string name="artifact_publish_encrypt_market_toolpkg_title">압축 및 난독화하여 게시</string>
 </resources>

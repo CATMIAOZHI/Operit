@@ -7309,4 +7309,5 @@ Ahora puede usar el modo AutoGLM en la interfaz de conversación.</string>
     <string name="ai_message_use_package_failed">Error al llamar a use_package: %1$s</string>
     <string name="ai_message_use_package_empty">use_package devolvió un resultado vacío.</string>
     <string name="ai_message_package_warmup_item">%1$d. Kit %2$s (usado %3$d veces)</string>
+    <string name="artifact_publish_encrypt_market_toolpkg_title">Publicar con minimización y ofuscación</string>
 </resources>

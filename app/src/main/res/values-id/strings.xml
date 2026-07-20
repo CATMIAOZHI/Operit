@@ -7242,4 +7242,5 @@ Sekarang Anda dapat menggunakan mode AutoGLM di antarmuka percakapan.</string>
     <string name="ai_message_use_package_failed">Panggilan use_package gagal: %1$s</string>
     <string name="ai_message_use_package_empty">use_package mengembalikan kosong.</string>
     <string name="ai_message_package_warmup_item">%1$d. Paket %2$s (terkena %3$d kali)</string>
+    <string name="artifact_publish_encrypt_market_toolpkg_title">Publikasikan dengan Minifikasi dan Obfuscation</string>
 </resources>
