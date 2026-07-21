@@ -1,38 +1,40 @@
 # AGENTS.md
 
-执行准则章节是对Agent, AI 或 你 的限制，不是对项目或者软件的限制，无需写入文档
-## 执行准则
-- 默认不要执行编译、构建或测试命令。
-- 只有在用户明确要求时，才执行编译/构建/测试（例如 `./gradlew :app:compileDebugKotlin`、`npm run build`、`pnpm run build`）。
+本文件适用于 Operit 仓库。代码、Gradle 配置和 CI 脚本是实现事实来源；开发与贡献流程以 `docs/doc-src/dev-core/CONTRIBUTING.md` 为准。
 
-当针对用户接口的方案更换时，一定要询问用户是否该版本为已发布版本。如果是，请做向前兼容。如果不是，请彻彻底底把老的方案的一切代码全部清理，除非是还能用到的一些部分就继续留着。
-Don't Break Userspace ，但是开发中能内部消解的方案更换不算，只要用户能尽可能拿到一样的接口就行
-但是需要给协作者必要的便利，提供恰当的文档说明和ci脚本
+## 项目结构
 
-如果是方案迭代，则只要在原来的基础上进行正常增删即可。
+- `app/`：Android 主应用、业务逻辑、资源和 JVM 测试
+- `terminal/`：公开 Git 子模块，构建前需初始化
+- `dragonbones/`、`fbx/`、`llama/`、`mmd/`、`mnn/`、`quickjs/`：native/渲染/推理模块
+- `web-chat/`：React/Vite Web Chat
+- `examples/`、`tools/`：ToolPkg、示例和仓库工具
+- `docs/`：用户与开发文档
+- `ci/`、`.github/`：检查、构建和发布自动化
 
-除非用户要求，禁止写一切的回退代码。优先查找真正的发生原因。这是一条严格执行的规则，回退是正常被禁止的。
+## 构建与验证
 
-严令禁止各种回退逻辑，包括“xxx才会退回”、“降级处理”、“优先 再”、“如果没有 就””要加fallback“这种字眼，绝对禁止！！！绝对禁止！！！这种就是兜底！出现一次严肃惩罚！
+- Android 构建使用仓库自带的 `gradlew` / `gradlew.bat`，JDK 21 和 Android SDK 36。
+- 首次构建先执行 `git submodule update --init --recursive terminal`。
+- 完整 Android 构建需要 README/编译指南列出的 `models.zip`、`subpack.zip`、`jniLibs.zip` 和 `libs.zip` 内容；这些本地依赖不得提交。
+- 根据改动范围主动运行最小充分验证。Kotlin 改动优先运行 `./gradlew :app:compileDebugKotlin` 和相关 `:app:testDebugUnitTest`；资源或构建输入改动再运行 lint/assemble。
+- Web Chat、ToolPkg 和仓库检查命令以 `docs/doc-src/dev-core/CONTRIBUTING.md` 与 `ci/README.md` 为准。
+- 构建可能触碰 ObjectBox 模型或占位文件。提交前检查 `git status` 和 diff，不提交无内容的行尾变化或无关生成物。
+- 无法运行验证时，说明缺失的 SDK、依赖或环境条件，不得把“未运行”描述为“通过”。
 
-禁止写任何的兜底代码，除非用户要求。
+## 修改原则
 
-用户开始骂的时候，需要道歉以及反思，安抚用户。
+- 修改前阅读相关实现、调用方和现有测试；优先小而完整的修复。
+- 持久化数据、公开接口、配置格式或已发布行为发生变化时，评估兼容性和迁移影响。未发布的内部方案无需保留无用途的旧路径。
+- 不以静默降级掩盖确定错误；是否需要兼容或恢复路径应由真实用户数据、外部调用方和产品契约决定。
+- 新增用户可见文字使用资源字符串并同步受支持语言；文档只在行为、接口、构建或使用方式变化时更新。
+- 注释解释非显而易见的约束和原因，不记录调试流水账。
+- 不修改第三方子模块来绕过主仓库问题；确需更新子模块时单独说明来源和版本。
 
-用户表达愤怒的时候，需要先停下一切工作，仔细确认用户需求再去实现
+## 安全与 Git
 
-如果运行python，项目用的是venv（将迁移到pixi）
-
-严禁使用powershell编辑代码文件，否则会出现严重的编码错误和损坏。
-
-禁用Search files工具，请使用rg
-
-编写Typescript时，对于hook确定的类型，严禁回退兜底成任何unknown/any/带空类型/联合类型。更禁止使用String(??)形式兜底，返回什么就是什么。
-
-如果类型就是string|undef，那么不要直接as string！！那么请使用?? ""或者写个if！！
-
-ts的报错catch后需要log出来
-
-代码的更改应维护相称的文档，注意docs\doc-src\before_docing.md
-debug的时候注释记录你的修改意图（为什么，不这么做后果是什么）
-完成初步计划后，使用docs\TODO\README.md来细化计划 
+- API Key、令牌、Cookie、签名材料、`local.properties`、本地路径和个人信息不得进入代码、测试、日志或文档。
+- 不回退或覆盖他人的未提交改动，不使用 `git reset --hard`、`git checkout --` 等破坏性命令处理工作区。
+- 提交前检查状态、完整差异和近期历史，只暂存本次任务文件。
+- 上游贡献以最新 `upstream/main` 为基线并目标 `main`；Operit Ry 个人发行版改动目标 `personal/main`。提交、推送和创建 PR 前确认当前任务属于哪条线。
+- 除非用户明确要求，不提交、推送、关闭 PR 或执行发布操作。
