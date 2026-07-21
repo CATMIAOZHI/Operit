@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -62,6 +63,7 @@ import com.ai.assistance.operit.ui.common.displays.VirtualDisplayOverlay
 import com.ai.assistance.operit.util.AnrMonitor
 import com.ai.assistance.operit.util.LocaleUtils
 import java.util.*
+import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -218,11 +220,13 @@ class MainActivity : ComponentActivity() {
             }
             MigrationStateStore.State.PREPARING,
             MigrationStateStore.State.REPLACING,
-            MigrationStateStore.State.FAILED -> {
+            MigrationStateStore.State.FAILED,
+            MigrationStateStore.State.NEEDS_RECOVERY -> {
                 // The migration was interrupted and the data directory may be partially
-                // replaced. Do NOT initialize normally; show the recovery surface so the user
-                // can restore from the pre-migration safety snapshot.
-                showMigrationRecoverySurface(migrationSnapshot.state)
+                // replaced, or the state file is corrupt. Do NOT initialize normally; show the
+                // recovery surface so the user can restore from the pre-migration safety
+                // snapshot (path recorded in the state file when available).
+                showMigrationRecoverySurface(migrationSnapshot)
                 return
             }
             MigrationStateStore.State.IDLE,
@@ -237,7 +241,9 @@ class MainActivity : ComponentActivity() {
         if (initResult != OperitApplication.MainApplicationInitResult.Initialized) {
             // Should not happen here because we already handled non-IDLE/COMPLETED states above,
             // but guard against a race where the state changed between our read and the call.
-            showMigrationRecoverySurface(MigrationStateStore.State.PREPARING)
+            showMigrationRecoverySurface(
+                RawSnapshotBackupManager.officialOperitMigrationState(applicationContext)
+            )
             return
         }
 
@@ -317,15 +323,20 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Show the migration recovery surface when the migration was interrupted (PREPARING /
-     * REPLACING / FAILED). The data directory may be partially replaced, so the app MUST NOT
-     * initialize normally. The user is instructed to restore from the pre-migration safety
-     * snapshot, which is retained by the manager.
+     * REPLACING / FAILED / NEEDS_RECOVERY). The data directory may be partially replaced or the
+     * state file may be corrupt, so the app MUST NOT initialize normally. The user can restore
+     * from the pre-migration safety snapshot (whose path is recorded in [snapshot] when
+     * available), retry the migration (state=PENDING-only transitions are not offered here), or
+     * dismiss the recovery surface after a manual restore.
      */
-    private fun showMigrationRecoverySurface(state: MigrationStateStore.State) {
-        AppLogger.w(TAG, "Migration was interrupted (state=$state), showing recovery surface")
+    private fun showMigrationRecoverySurface(snapshot: MigrationStateStore.Snapshot) {
+        AppLogger.w(
+            TAG,
+            "Migration was interrupted (state=${snapshot.state}, safety=${snapshot.safetyBackupPath}), showing recovery surface"
+        )
         setContent {
             OperitTheme {
-                MigrationRecoveryScreen(state)
+                MigrationRecoveryScreen(snapshot)
             }
         }
     }
@@ -975,8 +986,16 @@ private fun MigrationInProgressScreen() {
 }
 
 @Composable
-private fun MigrationRecoveryScreen(state: MigrationStateStore.State) {
+private fun MigrationRecoveryScreen(snapshot: MigrationStateStore.Snapshot) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var snapshots by remember {
+        mutableStateOf(RawSnapshotBackupManager.listRawSnapshots())
+    }
+    var selectedPath by remember { mutableStateOf(snapshot.safetyBackupPath ?: snapshots.firstOrNull()?.absolutePath) }
+    var restoring by remember { mutableStateOf(false) }
+    var restoreError by remember { mutableStateOf<String?>(null) }
+
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -996,12 +1015,105 @@ private fun MigrationRecoveryScreen(state: MigrationStateStore.State) {
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
-            if (state == MigrationStateStore.State.FAILED) {
+            if (snapshot.state == MigrationStateStore.State.FAILED) {
                 Text(
                     text = stringResource(id = R.string.backup_official_operit_migration_recovery_failed_hint),
                     style = MaterialTheme.typography.bodySmall,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
+            } else if (snapshot.state == MigrationStateStore.State.NEEDS_RECOVERY) {
+                Text(
+                    text = stringResource(id = R.string.backup_official_operit_migration_recovery_corrupt_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+
+            if (restoring) {
+                CircularProgressIndicator()
+                Text(
+                    text = stringResource(id = R.string.backup_official_operit_migration_recovery_in_progress),
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            } else {
+                restoreError?.let { err ->
+                    Text(
+                        text = stringResource(
+                            id = R.string.backup_official_operit_migration_recovery_restore_failed,
+                            err
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+
+                if (snapshots.isEmpty()) {
+                    Text(
+                        text = stringResource(id = R.string.backup_official_operit_migration_recovery_no_snapshots),
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                } else {
+                    val recommendedPath = snapshot.safetyBackupPath
+                    if (recommendedPath != null) {
+                        Text(
+                            text = stringResource(id = R.string.backup_official_operit_migration_recovery_recommended),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Text(
+                            text = recommendedPath.substringAfterLast('/'),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Text(
+                        text = stringResource(id = R.string.backup_official_operit_migration_recovery_available),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    snapshots.forEach { file ->
+                        val path = file.absolutePath
+                        val isSelected = path == selectedPath
+                        TextButton(
+                            onClick = { selectedPath = path },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = (if (isSelected) "● " else "○ ") + file.name,
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                            )
+                        }
+                    }
+                }
+
+                val selectedFile = selectedPath?.let { File(it) }
+                val canRestore = selectedFile != null && selectedFile.isFile
+                TextButton(
+                    enabled = canRestore,
+                    onClick = {
+                        restoring = true
+                        restoreError = null
+                        scope.launch(Dispatchers.IO + NonCancellable) {
+                            try {
+                                RawSnapshotBackupManager.restoreFromBackupFile(context, selectedFile!!)
+                                exitProcess(0)
+                            } catch (e: Exception) {
+                                AppLogger.e(TAG, "recovery restore failed", e)
+                                restoreError = e.message ?: e.javaClass.name
+                                restoring = false
+                            }
+                        }
+                    }
+                ) {
+                    Text(stringResource(id = R.string.backup_official_operit_migration_recovery_restore))
+                }
+                TextButton(onClick = {
+                    RawSnapshotBackupManager.clearMigrationState(context)
+                    exitProcess(0)
+                }) {
+                    Text(stringResource(id = R.string.backup_official_operit_migration_recovery_clear_state))
+                }
             }
             TextButton(onClick = { exitProcess(0) }) {
                 Text(stringResource(id = R.string.backup_official_operit_migration_recovery_exit))

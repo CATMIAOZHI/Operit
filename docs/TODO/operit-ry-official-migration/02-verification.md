@@ -39,6 +39,23 @@
 - Confirmed the migration coroutine uses `GlobalScope + Dispatchers.IO + NonCancellable` so the
   migration completes even if the activity is destroyed (config change, user backing out),
   and the pending-flag clearing paths cannot be interrupted by cancellation.
+- Confirmed `MigrationStateStore.read` is fail-closed: a missing state file returns IDLE (normal
+  first install), but an unreadable or unparseable state file returns NEEDS_RECOVERY, which the
+  global gate treats the same as PREPARING/REPLACING/FAILED and routes to the recovery surface
+  instead of normal-starting into potentially-partially-replaced data.
+- Confirmed the state file records the safety snapshot absolute path during PREPARING->REPLACING
+  and FAILED transitions, so the recovery surface can recommend the correct snapshot.
+- Confirmed the PREPARING transition happens inside `prepareForReplacement` (after the zip is
+  read, extracted and validated), so a corrupt zip, wrong source package, or URI permission
+  failure leaves the state at PENDING and the user can pick a different archive instead of being
+  locked into the recovery surface with no safety snapshot to restore.
+- Confirmed FAILED is only written when `enteredPreparing` is true, so pure validation failures
+  do not poison the recovery surface.
+- Confirmed the recovery surface lists `OperitBackupDirs.rawSnapshotDir()` files, pre-selects
+  the safety snapshot recorded in the state file, and offers Restore / Clear-state / Exit
+  actions. A successful restore via `restoreFromBackupFile` (or `restoreFromBackupUri`) clears
+  the migration state, so the next cold start enters normal mode instead of looping back into
+  the recovery surface.
 
 ## Automated coverage
 

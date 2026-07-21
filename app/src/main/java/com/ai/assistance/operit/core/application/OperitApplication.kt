@@ -147,10 +147,10 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
      *   NOT proceed with normal initialization. Activities should route to the migration surface;
      *   services should stop themselves and exit the process so the migration can run from the
      *   activity entry point.
-     * - [MigrationNeedsRecovery]: the migration was interrupted (PREPARING / REPLACING / FAILED)
-     *   and the data directory may be partially replaced. The caller MUST NOT initialize
-     *   normally. Activities should route to the recovery surface; services should stop
-     *   themselves and exit the process.
+     * - [MigrationNeedsRecovery]: the migration was interrupted (PREPARING / REPLACING / FAILED
+     *   / NEEDS_RECOVERY) and the data directory may be partially replaced or the state file is
+     *   corrupt. The caller MUST NOT initialize normally. Activities should route to the
+     *   recovery surface; services should stop themselves and exit the process.
      */
     enum class MainApplicationInitResult {
         Initialized,
@@ -173,7 +173,8 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                 MigrationStateStore.State.PENDING -> MainApplicationInitResult.MigrationInProgress
                 MigrationStateStore.State.PREPARING,
                 MigrationStateStore.State.REPLACING,
-                MigrationStateStore.State.FAILED -> MainApplicationInitResult.MigrationNeedsRecovery
+                MigrationStateStore.State.FAILED,
+                MigrationStateStore.State.NEEDS_RECOVERY -> MainApplicationInitResult.MigrationNeedsRecovery
                 MigrationStateStore.State.IDLE,
                 MigrationStateStore.State.COMPLETED -> {
                     initializeMainApplicationLocked()

@@ -335,8 +335,62 @@ object RawSnapshotBackupManager {
                 },
                 onProgress = onProgress
             )
+            // A successful restore of any raw snapshot replaces the data directory with a state
+            // captured before any migration marker was written (raw snapshots exclude
+            // noBackupFilesDir). Clear any stale migration state so the next cold start enters
+            // normal mode instead of looping back into the recovery surface. This covers the
+            // primary recovery path: the user restores the pre-migration safety snapshot from
+            // the recovery surface or from Settings, and the FAILED/REPLACING marker is dropped.
+            MigrationStateStore.clear(context)
         }
     }
+
+    /**
+     * Clear any persisted migration state. Safe to call from the recovery surface after a
+     * successful manual restore, or from Settings when the user dismisses a stuck migration.
+     */
+    fun clearMigrationState(context: Context) {
+        MigrationStateStore.clear(context)
+    }
+
+    /**
+     * Restore from a local backup [File] (typically a snapshot listed by [listRawSnapshots]).
+     * Used by the recovery surface, which operates on files inside the app's private backup
+     * directory and therefore does not need a persisted URI permission.
+     *
+     * On success, the migration state is cleared and the caller should exit the process so the
+     * next cold start enters normal mode.
+     */
+    suspend fun restoreFromBackupFile(
+        context: Context,
+        file: File,
+        onProgress: ((RestoreProgress) -> Unit)? = null
+    ) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            check(!processRestartRequired) { "Application restart required before another snapshot operation" }
+            restoreFromBackupUriLocked(
+                context = context,
+                uri = Uri.fromFile(file),
+                expectedPackageName = context.packageName,
+                prepareForReplacement = {
+                    AppDatabase.closeDatabase()
+                    ObjectBoxManager.closeAll()
+                },
+                onProgress = onProgress
+            )
+            MigrationStateStore.clear(context)
+        }
+    }
+
+    /**
+     * List raw snapshot files in the canonical backup directory, newest first. Used by the
+     * recovery surface to offer the user a choice of snapshots to restore.
+     */
+    fun listRawSnapshots(): List<File> =
+        OperitBackupDirs.rawSnapshotDir()
+            .listFiles { f -> f.isFile && f.name.startsWith(ZIP_PREFIX) && f.name.endsWith(".zip") }
+            ?.sortedByDescending { it.lastModified() }
+            ?: emptyList()
 
     /**
      * Run the pending official Operit migration in a dedicated cold-start phase.
@@ -349,10 +403,11 @@ object RawSnapshotBackupManager {
      *
      * State transitions (persisted to noBackupFilesDir, outside raw snapshots):
      *
-     * PENDING -> PREPARING (before reading/extracting the zip)
-     * PREPARING -> REPLACING (inside prepareForReplacement, before any directory is replaced)
+     * PENDING (validation failures stay here so the user can pick a different archive)
+     * PENDING -> PREPARING (inside prepareForReplacement, after the zip is validated)
+     * PREPARING -> REPLACING (after the safety snapshot is on disk, before any directory is replaced)
      * REPLACING -> COMPLETED (after all directories are replaced and the completion marker is written)
-     * PREPARING/REPLACING -> FAILED (on any exception)
+     * PREPARING/REPLACING -> FAILED (on any exception during the destructive phase)
      *
      * If the process crashes during PREPARING or REPLACING, the next cold start observes that
      * state and enters the dedicated recovery surface instead of initializing normally, because
@@ -380,11 +435,19 @@ object RawSnapshotBackupManager {
             val uri = snapshot.uri
                 ?: throw IllegalStateException("No pending official Operit migration URI")
 
-            // Transition to PREPARING before any work. If the process dies after this point, the
-            // next cold start observes PREPARING and enters the recovery surface instead of
-            // initializing normally with partially-replaced data.
-            MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.PREPARING, uri)
-
+            // State machine guard: stays PENDING until the zip is read, extracted and validated
+            // inside restoreFromBackupUriLocked. A corrupt zip, wrong source package, or URI
+            // permission failure throws before prepareForReplacement runs, leaving state=PENDING
+            // so the user can pick a different archive instead of being locked into the recovery
+            // surface with no safety snapshot to restore.
+            //
+            // The destructive phase (close databases, checkpoint, take safety snapshot, replace
+            // directories) runs inside prepareForReplacement, which is wrapped in
+            // NonCancellable and only invoked after validation succeeds. The state transitions
+            // PREPARING -> REPLACING happen inside prepareForReplacement at the precise points
+            // where the data directory becomes at risk.
+            var enteredPreparing = false
+            var safetyBackupPath: String? = null
             lateinit var safetyBackup: File
             try {
                 restoreFromBackupUriLocked(
@@ -392,10 +455,12 @@ object RawSnapshotBackupManager {
                     uri = uri,
                     expectedPackageName = RawSnapshotPackagePolicy.OFFICIAL_OPERIT_PACKAGE,
                     prepareForReplacement = {
-                        // Transition to REPLACING before closing databases and taking the safety
-                        // snapshot. If the process dies during directory replacement, the next
-                        // cold start observes REPLACING and enters the recovery surface.
-                        MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.REPLACING, uri)
+                        // Transition to PREPARING before closing databases and taking the safety
+                        // snapshot. Validation has already succeeded at this point, so a crash
+                        // here leaves state=PREPARING with data untouched; the recovery surface
+                        // lets the user retry or restore from any earlier snapshot.
+                        MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.PREPARING, uri)
+                        enteredPreparing = true
                         // In the dedicated cold-start phase no background writer is running yet,
                         // so a Room checkpoint is safe and the safety snapshot is consistent.
                         checkpointRoomDatabase(context)
@@ -415,14 +480,33 @@ object RawSnapshotBackupManager {
                             onProgress = null,
                             performDatabaseCheckpoint = false
                         )
+                        safetyBackupPath = safetyBackup.absolutePath
+                        // Transition to REPLACING after the safety snapshot is on disk. If the
+                        // process dies during directory replacement, the next cold start observes
+                        // REPLACING and the recovery surface recommends the safety snapshot whose
+                        // path is recorded in the state file.
+                        MigrationStateStore.writeOrThrow(
+                            context,
+                            MigrationStateStore.State.REPLACING,
+                            uri,
+                            safetyBackupPath
+                        )
                     },
                     onProgress = onProgress
                 )
             } catch (e: Exception) {
-                // Record FAILED so the next cold start enters the recovery surface instead of
-                // initializing normally with potentially-partially-replaced data. The safety
-                // snapshot (if created) is retained so the user can recover manually.
-                MigrationStateStore.write(context, MigrationStateStore.State.FAILED, uri)
+                // Only record FAILED if we entered PREPARING or REPLACING, i.e. the data
+                // directory may have been touched (databases closed, snapshot taken, directories
+                // partially replaced). Pure validation failures leave state=PENDING so the user
+                // can pick a different archive from Settings without being locked into recovery.
+                if (enteredPreparing) {
+                    MigrationStateStore.write(
+                        context,
+                        MigrationStateStore.State.FAILED,
+                        uri,
+                        safetyBackupPath
+                    )
+                }
                 throw e
             }
             // Success: transition to COMPLETED. The state file is in noBackupFilesDir, which is

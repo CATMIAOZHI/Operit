@@ -29,11 +29,16 @@ Provide a one-time, explicit migration path from an official Operit raw snapshot
   schedulers, repositories and DataStore writers start, so no background writer races with the
   safety snapshot or file replacement.
 - Persist migration state in `noBackupFilesDir` (outside raw snapshots) as a state machine
-  (IDLE -> PENDING -> PREPARING -> REPLACING -> COMPLETED | FAILED), so a crash during
-  PREPARING or REPLACING is detected on the next cold start and routes to a recovery surface
-  instead of initializing normally with partially-replaced data.
+  (IDLE -> PENDING -> PREPARING -> REPLACING -> COMPLETED | FAILED, plus virtual NEEDS_RECOVERY
+  for unreadable/corrupt state files), so a crash during PREPARING or REPLACING is detected on
+  the next cold start and routes to a recovery surface instead of initializing normally with
+  partially-replaced data. State files record the safety snapshot path so the recovery surface
+  can recommend the correct snapshot.
 - Enforce the migration gate inside `OperitApplication.initializeMainApplication()` so every
   process entry point (Activity, Service, Receiver, Worker) respects it, not only MainActivity.
+- Provide a recovery surface that lists local snapshots, pre-selects the recorded safety
+  snapshot, and offers Restore / Clear-state / Exit actions. A successful restore clears the
+  migration state so the next cold start enters normal mode.
 
 ## Pull request
 
