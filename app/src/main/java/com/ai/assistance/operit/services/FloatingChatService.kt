@@ -204,11 +204,25 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         // the application. Stop the service and exit the process so the next cold start routes
         // through MainActivity, which drives the migration or recovery surface.
         val initResult = (application as OperitApplication).initializeMainApplication()
-        if (initResult != OperitApplication.MainApplicationInitResult.Initialized) {
-            AppLogger.w(TAG, "Migration gate blocked initialization ($initResult), stopping service")
-            stopSelf()
-            exitProcess(0)
-            return
+        when (initResult) {
+            OperitApplication.MainApplicationInitResult.Initialized -> { /* proceed */ }
+            OperitApplication.MainApplicationInitResult.MigrationInProgress -> {
+                // A migration is pending or preparing but this process does not own it. The
+                // migration process (driven by MainActivity) must stay alive; killing this
+                // process via exitProcess would terminate the migration mid-run when Android
+                // restarts this sticky service in the same process. Just stop the service.
+                AppLogger.w(TAG, "Migration in progress, stopping service without killing process")
+                stopSelf()
+                return
+            }
+            OperitApplication.MainApplicationInitResult.MigrationNeedsRecovery -> {
+                // Data may be partially replaced or corrupt; exit so the next cold start routes
+                // through MainActivity's recovery surface.
+                AppLogger.w(TAG, "Migration needs recovery, stopping service and exiting process")
+                stopSelf()
+                exitProcess(0)
+                return
+            }
         }
         AppLogger.d(TAG, "onCreate")
 

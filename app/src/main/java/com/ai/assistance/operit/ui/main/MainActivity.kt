@@ -207,6 +207,14 @@ class MainActivity : ComponentActivity() {
         lastOrientation = resources.configuration.orientation
 
         if (RawSnapshotBackupManager.isProcessRestartRequired()) {
+            // If the migration is running in this process (e.g. Activity recreation during
+            // PREPARING/REPLACING), do NOT exit: the migration coroutine owns the process and
+            // the progress surface must stay alive. Only exit when no in-process migration is
+            // active, meaning a previous process required restart and this is a fresh entry.
+            if (RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()) {
+                showMigrationInProgressSurface()
+                return
+            }
             exitProcess(0)
         }
 
