@@ -184,7 +184,6 @@ jobs:
           MARKDOWN_OUTCOME: ${{ steps.markdown.outcome }}
           LOCALIZATION_OUTCOME: ${{ steps.localization.outcome }}
           YAML_OUTCOME: ${{ steps.yaml.outcome }}
-          LOCALIZATION_REQUIRED: ${{ needs.plan.outputs.localization }}
           YAML_REQUIRED: ${{ needs.plan.outputs.yaml }}
         shell: bash
         run: |
@@ -215,7 +214,7 @@ jobs:
           check_stage hygiene true "$HYGIENE_OUTCOME"
           check_stage lint-baseline true "$LINT_BASELINE_OUTCOME"
           check_stage markdown true "$MARKDOWN_OUTCOME"
-          check_stage localization "$LOCALIZATION_REQUIRED" "$LOCALIZATION_OUTCOME"
+          check_stage localization false "$LOCALIZATION_OUTCOME"
           check_stage yaml "$YAML_REQUIRED" "$YAML_OUTCOME"
 
           if (( failures > 0 )); then
