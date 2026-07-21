@@ -5208,6 +5208,7 @@
     <string name="backup_official_operit_migration_pending_cancel_failed">The cancellation state still could not be saved. Check available storage and try again.</string>
     <string name="backup_official_operit_migration_startup_error_message">App data was not replaced, and the migration request was cancelled safely.\n\nError: %1$s</string>
     <string name="backup_official_operit_migration_restart_to_settings">Exit and select another snapshot next launch</string>
+    <string name="backup_official_operit_migration_preparing_interrupted">Migration was interrupted before data replacement. App data was not replaced, and the migration request was cancelled safely.</string>
     <string name="backup_official_operit_migration_error_title">Migration preparation failed</string>
     <string name="backup_official_operit_migration_error_uri_permission">Could not obtain persistent read permission for the selected snapshot. Please re-select the snapshot file and try again.</string>
     <string name="backup_official_operit_migration_error_state_write">Could not persist the migration request. Storage may be full; please check and try again.</string>

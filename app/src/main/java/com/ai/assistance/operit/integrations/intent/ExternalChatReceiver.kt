@@ -6,6 +6,7 @@ import android.content.Intent
 import com.ai.assistance.operit.integrations.externalchat.ExternalChatRequest
 import com.ai.assistance.operit.integrations.externalchat.ExternalChatRequestExecutor
 import com.ai.assistance.operit.integrations.externalchat.ExternalChatResult
+import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +45,22 @@ class ExternalChatReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_EXTERNAL_CHAT) return
+        if (!OperitApplication.isMainDataAccessAllowed(context)) {
+            val replyAction = intent.getStringExtra(EXTRA_REPLY_ACTION)?.takeIf { it.isNotBlank() }
+                ?: ACTION_EXTERNAL_CHAT_RESULT
+            val replyPackage = intent.getStringExtra(EXTRA_REPLY_PACKAGE)?.takeIf { it.isNotBlank() }
+            sendResultBroadcast(
+                context = context,
+                action = replyAction,
+                packageName = replyPackage,
+                result = ExternalChatResult(
+                    requestId = intent.getStringExtra(EXTRA_REQUEST_ID),
+                    success = false,
+                    error = "Operit data is unavailable during migration"
+                )
+            )
+            return
+        }
 
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {

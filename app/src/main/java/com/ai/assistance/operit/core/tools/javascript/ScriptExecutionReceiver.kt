@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.util.OperitPaths
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -46,6 +47,7 @@ class ScriptExecutionReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_EXECUTE_JS) {
             return
         }
+        if (!OperitApplication.isMainDataAccessAllowed(context)) return
 
         val executionMode =
             intent.getStringExtra(EXTRA_EXECUTION_MODE)?.trim()?.lowercase().orEmpty()

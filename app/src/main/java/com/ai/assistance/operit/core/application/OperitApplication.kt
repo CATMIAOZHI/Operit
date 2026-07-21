@@ -97,6 +97,14 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             private set
 
         private const val TAG = "OperitApplication"
+
+        fun initializeMainApplication(context: Context): MainApplicationInitResult {
+            val application = context.applicationContext as OperitApplication
+            return application.initializeMainApplication()
+        }
+
+        fun isMainDataAccessAllowed(context: Context): Boolean =
+            MigrationStateStore.isMainDataAccessAllowed(context)
     }
 
     // 应用级协程作用域
@@ -162,6 +170,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         synchronized(mainInitializationLock) {
             if (mainApplicationInitialized) {
                 return MainApplicationInitResult.Initialized
+            }
+            if (RawSnapshotBackupManager.isProcessRestartRequired()) {
+                return MainApplicationInitResult.MigrationNeedsRecovery
             }
             // Global migration gate: any process entry point (Activity, Service, Receiver,
             // Worker) that calls initializeMainApplication must respect the migration state.

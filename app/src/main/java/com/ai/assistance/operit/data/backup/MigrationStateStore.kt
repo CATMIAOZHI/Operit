@@ -24,10 +24,10 @@ import java.io.File
  *                                           -> FAILED
  *
  * Any process entry point (Activity, Service, Receiver, Worker) that observes PENDING must run
- * or resume the migration. PREPARING / REPLACING / FAILED mean the data directory may be
- * partially replaced and the app MUST NOT initialize normally; it must enter the dedicated
- * recovery surface so the user can restore from the safety snapshot. COMPLETED means the
- * migration succeeded and the entry point can initialize normally.
+ * or resume the migration. PREPARING blocks normal initialization; the process-owned run keeps
+ * its progress surface across Activity recreation, while a cold process can safely reset it
+ * because replacement has not started. REPLACING / FAILED require the recovery surface.
+ * COMPLETED means the migration succeeded and the entry point can initialize normally.
  *
  * [State.NEEDS_RECOVERY] is a virtual state returned by [read] when an existing state file is
  * unreadable or contains an unknown state name. It exists only in memory and is NEVER written
@@ -49,6 +49,7 @@ import java.io.File
 object MigrationStateStore {
     private const val TAG = "MigrationStateStore"
     private const val STATE_FILE = "official_operit_migration_state.txt"
+    private val processStateLock = Any()
 
     enum class State {
         IDLE,
@@ -62,7 +63,9 @@ object MigrationStateStore {
          * unreadable or contains an unknown state name. Forces the caller into the recovery
          * surface instead of fail-open-ing into normal mode.
          */
-        NEEDS_RECOVERY
+        NEEDS_RECOVERY;
+
+        fun allowsMainDataAccess(): Boolean = this == IDLE || this == COMPLETED
     }
 
     data class Snapshot(val state: State, val uri: Uri?, val safetyBackupPath: String?) {
@@ -79,7 +82,7 @@ object MigrationStateStore {
     fun read(context: Context): Snapshot {
         val file = stateFile(context)
         val atomicFile = AtomicFile(file)
-        if (!atomicFile.exists()) {
+        if (!file.isFile && !File(file.absolutePath + ".bak").isFile) {
             // A missing state file is normal on first install; treat as IDLE.
             return Snapshot.IDLE
         }
@@ -106,6 +109,13 @@ object MigrationStateStore {
         val safetyBackupPath = if (safetyPath.isNotEmpty()) safetyPath else null
         return Snapshot(state, uri, safetyBackupPath)
     }
+
+    fun isMainDataAccessAllowed(context: Context): Boolean =
+        !RawSnapshotBackupManager.isProcessRestartRequired() &&
+            read(context).state.allowsMainDataAccess()
+
+    internal fun <T> withProcessStateLock(block: () -> T): T =
+        synchronized(processStateLock, block)
 
     /**
      * Atomically write [state] (and [uri] / [safetyBackupPath] when non-null, only meaningful
@@ -177,4 +187,46 @@ object MigrationStateStore {
 
     private fun stateFile(context: Context): File =
         File(context.noBackupFilesDir, STATE_FILE)
+}
+
+internal object MigrationStatePolicy {
+    enum class StartupAction {
+        INITIALIZE,
+        RUN_PENDING,
+        SHOW_IN_PROGRESS,
+        RESET_PREPARING,
+        SHOW_RECOVERY
+    }
+
+    fun isSafelyCancellable(state: MigrationStateStore.State): Boolean =
+        state == MigrationStateStore.State.PENDING ||
+            state == MigrationStateStore.State.PREPARING
+
+    fun stateAfterFailure(
+        replacementStarted: Boolean,
+        processRestartRequired: Boolean
+    ): MigrationStateStore.State =
+        when {
+            replacementStarted -> MigrationStateStore.State.FAILED
+            processRestartRequired -> MigrationStateStore.State.PREPARING
+            else -> MigrationStateStore.State.IDLE
+        }
+
+    fun startupAction(
+        state: MigrationStateStore.State,
+        migrationRunningInProcess: Boolean = false
+    ): StartupAction =
+        when (state) {
+            MigrationStateStore.State.IDLE,
+            MigrationStateStore.State.COMPLETED -> StartupAction.INITIALIZE
+            MigrationStateStore.State.PENDING ->
+                if (migrationRunningInProcess) StartupAction.SHOW_IN_PROGRESS
+                else StartupAction.RUN_PENDING
+            MigrationStateStore.State.PREPARING ->
+                if (migrationRunningInProcess) StartupAction.SHOW_IN_PROGRESS
+                else StartupAction.RESET_PREPARING
+            MigrationStateStore.State.REPLACING,
+            MigrationStateStore.State.FAILED,
+            MigrationStateStore.State.NEEDS_RECOVERY -> StartupAction.SHOW_RECOVERY
+        }
 }

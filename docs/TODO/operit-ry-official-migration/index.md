@@ -30,12 +30,15 @@ Provide a one-time, explicit migration path from an official Operit raw snapshot
   safety snapshot or file replacement.
 - Persist migration state in `noBackupFilesDir` (outside raw snapshots) as a state machine
   (IDLE -> PENDING -> PREPARING -> REPLACING -> COMPLETED | FAILED, plus virtual NEEDS_RECOVERY
-  for unreadable/corrupt state files), so a crash during PREPARING or REPLACING is detected on
-  the next cold start and routes to a recovery surface instead of initializing normally with
+  for unreadable/corrupt state files). PREPARING is safely cancellable by a cold process because
+  payload replacement has not started; Activity recreation preserves an active process-owned run.
+  REPLACING and FAILED route to recovery instead of initializing normally with
   partially-replaced data. State files record the safety snapshot path so the recovery surface
   can recommend the correct snapshot.
-- Enforce the migration gate inside `OperitApplication.initializeMainApplication()` so every
-  process entry point (Activity, Service, Receiver, Worker) respects it, not only MainActivity.
+- Enforce the migration gate inside `OperitApplication.initializeMainApplication()` and use a
+  lightweight state gate for normal data-writing Receiver and widget entry points. Main-process
+  DocumentsProviders use the same state policy before every operation because they start before
+  `Application.onCreate`; the `:repair` provider remains available.
 - Provide a recovery surface that lists local snapshots, pre-selects the recorded safety
   snapshot, and offers Restore / Exit actions. Recovery states cannot be cleared without a
   successful restore; normal restores preserve the permanent COMPLETED marker.

@@ -5645,6 +5645,7 @@
     <string name="backup_official_operit_migration_pending_cancel_failed">仍无法持久化取消状态。请检查存储空间后重试。</string>
     <string name="backup_official_operit_migration_startup_error_message">迁移尚未修改应用数据，迁移请求已安全取消。\n\n错误：%1$s</string>
     <string name="backup_official_operit_migration_restart_to_settings">退出；下次启动时重新选择快照</string>
+    <string name="backup_official_operit_migration_preparing_interrupted">迁移在替换数据前被中断，应用数据尚未被替换。迁移请求已安全取消。</string>
     <string name="backup_official_operit_migration_error_title">迁移准备失败</string>
     <string name="backup_official_operit_migration_error_uri_permission">无法获取所选快照的长期读取权限。请重新选择快照文件后再试。</string>
     <string name="backup_official_operit_migration_error_state_write">无法持久化迁移请求。存储空间可能不足，请检查后重试。</string>

@@ -65,13 +65,16 @@ import com.ai.assistance.operit.util.LocaleUtils
 import java.util.*
 import java.io.File
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.ai.assistance.operit.data.mcp.MCPRepository
 import com.ai.assistance.operit.data.backup.MigrationStateStore
+import com.ai.assistance.operit.data.backup.MigrationStatePolicy
 import com.ai.assistance.operit.data.backup.RawSnapshotBackupManager
 import android.content.Intent
 import android.net.Uri
@@ -82,12 +85,12 @@ import com.ai.assistance.operit.widget.ToolPkgDesktopWidgetHost
 import org.json.JSONObject
 import kotlin.system.exitProcess
 
+private const val TAG = "MainActivity"
+
 class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_OPEN_SETTINGS_SHORTCUT = "com.ai.assistance.operit.action.OPEN_SETTINGS_SHORTCUT"
     }
-
-    private val TAG = "MainActivity"
 
     // ======== 屏幕方向变更状态 ========
     private var showOrientationChangeDialog by mutableStateOf(false)
@@ -173,8 +176,13 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun attachBaseContext(newBase: Context) {
-        // 获取当前设置的语言
-        val code = LocaleUtils.getCurrentLanguage(newBase)
+        // Do not open the main DataStore while migration owns the data directory.
+        val code =
+            if (MigrationStateStore.isMainDataAccessAllowed(newBase)) {
+                LocaleUtils.getCurrentLanguage(newBase)
+            } else {
+                LocaleUtils.LanguageCodes.AUTO
+            }
         val locale = LocaleUtils.getLocaleForLanguageCode(code, newBase)
         val config = Configuration(newBase.resources.configuration)
 
@@ -192,20 +200,18 @@ class MainActivity : ComponentActivity() {
         // 使用createConfigurationContext创建新的本地化上下文
         val context = newBase.createConfigurationContext(config)
         super.attachBaseContext(context)
-        AppLogger.d(TAG, "MainActivity应用语言设置: $code")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         lastOrientation = resources.configuration.orientation
-        AppLogger.d(TAG, "onCreate: Android SDK version: ${Build.VERSION.SDK_INT}")
+
+        if (RawSnapshotBackupManager.isProcessRestartRequired()) {
+            exitProcess(0)
+        }
 
         // Set window background to solid color to prevent system theme leaking through
         window.setBackgroundDrawableResource(android.R.color.black)
-
-        // Handle the intent that started the activity
-        handleIntent(intent)
-        restoreRuntimeTaskViewVisibilityIfNeeded()
 
         // Dedicated cold-start migration phase: check the migration state machine BEFORE
         // initializeMainApplication() starts WorkManager, foreground services, schedulers,
@@ -213,15 +219,29 @@ class MainActivity : ComponentActivity() {
         // snapshots do not capture, so it survives crashes and is never included in safety
         // snapshots.
         val migrationSnapshot = RawSnapshotBackupManager.officialOperitMigrationState(applicationContext)
-        when (migrationSnapshot.state) {
-            MigrationStateStore.State.PENDING -> {
+        when (
+            MigrationStatePolicy.startupAction(
+                migrationSnapshot.state,
+                RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()
+            )
+        ) {
+            MigrationStatePolicy.StartupAction.RUN_PENDING -> {
                 runPendingOfficialOperitMigration()
                 return
             }
-            MigrationStateStore.State.PREPARING,
-            MigrationStateStore.State.REPLACING,
-            MigrationStateStore.State.FAILED,
-            MigrationStateStore.State.NEEDS_RECOVERY -> {
+            MigrationStatePolicy.StartupAction.SHOW_IN_PROGRESS -> {
+                showMigrationInProgressSurface()
+                return
+            }
+            MigrationStatePolicy.StartupAction.RESET_PREPARING -> {
+                val reset = RawSnapshotBackupManager.cancelSafeOfficialOperitMigration(applicationContext)
+                showMigrationStartupErrorSurface(
+                    message = getString(R.string.backup_official_operit_migration_preparing_interrupted),
+                    pendingResetRequired = !reset
+                )
+                return
+            }
+            MigrationStatePolicy.StartupAction.SHOW_RECOVERY -> {
                 // The migration was interrupted and the data directory may be partially
                 // replaced, or the state file is corrupt. Do NOT initialize normally; show the
                 // recovery surface so the user can restore from the pre-migration safety
@@ -229,8 +249,7 @@ class MainActivity : ComponentActivity() {
                 showMigrationRecoverySurface(migrationSnapshot)
                 return
             }
-            MigrationStateStore.State.IDLE,
-            MigrationStateStore.State.COMPLETED -> {
+            MigrationStatePolicy.StartupAction.INITIALIZE -> {
                 // Normal path: initializeMainApplication also checks the state, but it returns
                 // Initialized for IDLE/COMPLETED. The redundant check is a defense-in-depth
                 // guarantee that services restored before the activity also respect the gate.
@@ -246,6 +265,13 @@ class MainActivity : ComponentActivity() {
             )
             return
         }
+
+        AppLogger.d(TAG, "MainActivity应用语言设置: ${LocaleUtils.getCurrentLanguage(this)}")
+        AppLogger.d(TAG, "onCreate: Android SDK version: ${Build.VERSION.SDK_INT}")
+
+        // Intent processing can touch repositories, so it runs only after the migration gate.
+        handleIntent(intent)
+        restoreRuntimeTaskViewVisibilityIfNeeded()
 
         // 语言设置已在Application中初始化，这里无需重复
 
@@ -295,57 +321,56 @@ class MainActivity : ComponentActivity() {
      * partially-replaced data.
      */
     private fun runPendingOfficialOperitMigration() {
-        // Show a minimal migration surface so the user sees something is happening instead of a
-        // black screen while the migration runs.
-        setContent {
-            OperitTheme {
-                MigrationInProgressScreen()
-            }
-        }
-
-        // Launch on GlobalScope with NonCancellable so the migration completes even if the
-        // activity is destroyed (e.g. config change, user backing out). The migration replaces
-        // application private data and must run to completion. The process exits after a final
-        // state is persisted; safe pre-replacement failures remain on an explicit error surface.
-        GlobalScope.launch(Dispatchers.IO + NonCancellable) {
-            var shouldExit = true
+        // Claim process ownership before Activity recreation can observe PREPARING and mistake
+        // the active run for an interrupted migration.
+        GlobalScope.launch(Dispatchers.IO + NonCancellable, start = CoroutineStart.UNDISPATCHED) {
             try {
                 RawSnapshotBackupManager.runPendingOfficialOperitMigration(applicationContext)
                 AppLogger.i(TAG, "Official Operit migration completed successfully")
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Official Operit migration failed: ${e.message}", e)
-                when (RawSnapshotBackupManager.officialOperitMigrationState(applicationContext).state) {
-                    MigrationStateStore.State.PENDING -> {
-                        // Resetting an invalid pending request failed. Do not exit into an
-                        // automatic restart loop; let the user retry the atomic reset.
-                        shouldExit = false
-                        withContext(Dispatchers.Main) {
-                            showMigrationStartupErrorSurface(
-                                message = e.message ?: e.javaClass.name,
-                                pendingResetRequired = true
-                            )
-                        }
-                    }
-                    MigrationStateStore.State.IDLE -> {
-                        // Validation or preparation failed before data replacement and the
-                        // pending request was safely reset. Surface the error before restarting
-                        // to Settings rather than silently exiting.
-                        shouldExit = false
-                        withContext(Dispatchers.Main) {
-                            showMigrationStartupErrorSurface(
-                                message = e.message ?: e.javaClass.name,
-                                pendingResetRequired = false
-                            )
-                        }
-                    }
-                    else -> Unit
-                }
+            }
+        }
+        showMigrationInProgressSurface()
+    }
+
+    private fun showMigrationInProgressSurface() {
+        // Show a minimal migration surface so the user sees something is happening instead of a
+        // black screen while the process-owned migration continues across Activity recreation.
+        setContent {
+            OperitTheme {
+                MigrationInProgressScreen()
+            }
+        }
+        lifecycleScope.launch {
+            while (RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()) {
+                delay(100)
             }
 
-            // Exit the process so the next cold start observes the final state (COMPLETED or
-            // FAILED) and enters the appropriate mode.
-            if (shouldExit) {
+            val state = RawSnapshotBackupManager
+                .officialOperitMigrationState(applicationContext)
+                .state
+            if (RawSnapshotBackupManager.isProcessRestartRequired()) {
                 exitProcess(0)
+            }
+            when (state) {
+                MigrationStateStore.State.IDLE ->
+                    showMigrationStartupErrorSurface(
+                        message = RawSnapshotBackupManager.officialOperitMigrationFailureMessage()
+                            ?: state.name,
+                        pendingResetRequired = false
+                    )
+                MigrationStateStore.State.PENDING,
+                MigrationStateStore.State.PREPARING ->
+                    showMigrationStartupErrorSurface(
+                        message = RawSnapshotBackupManager.officialOperitMigrationFailureMessage()
+                            ?: state.name,
+                        pendingResetRequired = true
+                    )
+                MigrationStateStore.State.REPLACING,
+                MigrationStateStore.State.COMPLETED,
+                MigrationStateStore.State.FAILED,
+                MigrationStateStore.State.NEEDS_RECOVERY -> exitProcess(0)
             }
         }
     }
@@ -382,6 +407,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
+        if (!MigrationStateStore.isMainDataAccessAllowed(applicationContext)) return
         setIntent(intent) // 重要：更新当前Intent
         AppLogger.d(TAG, "onNewIntent: Received intent with action: ${intent?.action}")
         restoreRuntimeTaskViewVisibilityIfNeeded()
@@ -1082,7 +1108,7 @@ private fun MigrationStartupErrorScreen(message: String, pendingResetRequired: B
                     scope.launch {
                         val cancelled = withContext(Dispatchers.IO + NonCancellable) {
                             runCatching {
-                                RawSnapshotBackupManager.cancelPendingOfficialOperitMigration(context)
+                                RawSnapshotBackupManager.cancelSafeOfficialOperitMigration(context)
                             }.onFailure { error ->
                                 AppLogger.e(TAG, "failed to cancel pending migration", error)
                             }.getOrDefault(false)

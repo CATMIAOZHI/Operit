@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.lifecycle.lifecycleScope
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.ui.theme.OperitTheme
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +49,11 @@ class ToolPkgDesktopWidgetConfigActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        if (!OperitApplication.isMainDataAccessAllowed(this)) {
+            finish()
+            return
+        }
 
         val appWidgetId =
             intent?.getIntExtra(

@@ -16,6 +16,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -49,6 +50,9 @@ object RawSnapshotBackupManager {
     private val terminalTopLevelDirNames = setOf("usr", "tmp", "bin")
 
     private val mutex = Mutex()
+    private val officialMigrationRunning = AtomicBoolean(false)
+    @Volatile
+    private var officialMigrationFailureMessage: String? = null
 
     @Volatile
     private var processRestartRequired = false
@@ -299,17 +303,25 @@ object RawSnapshotBackupManager {
         check(context.packageName == RawSnapshotPackagePolicy.OPERIT_RY_PACKAGE) {
             "Official Operit migration is only available in Operit Ry"
         }
-        check(MigrationStateStore.read(context).state == MigrationStateStore.State.IDLE) {
-            "Official Operit migration is not idle"
+        return MigrationStateStore.withProcessStateLock {
+            check(MigrationStateStore.read(context).state == MigrationStateStore.State.IDLE) {
+                "Official Operit migration is not idle"
+            }
+            MigrationStateStore.write(context, MigrationStateStore.State.PENDING, uri)
         }
-        return MigrationStateStore.write(context, MigrationStateStore.State.PENDING, uri)
     }
 
-    fun cancelPendingOfficialOperitMigration(context: Context): Boolean {
-        check(MigrationStateStore.read(context).state == MigrationStateStore.State.PENDING) {
-            "Official Operit migration is not pending"
+    fun cancelSafeOfficialOperitMigration(context: Context): Boolean {
+        return MigrationStateStore.withProcessStateLock {
+            val state = MigrationStateStore.read(context).state
+            check(MigrationStatePolicy.isSafelyCancellable(state)) {
+                "Official Operit migration is not safely cancellable (state=$state)"
+            }
+            check(!officialMigrationRunning.get()) {
+                "Cannot cancel an active official Operit migration"
+            }
+            MigrationStateStore.write(context, MigrationStateStore.State.IDLE)
         }
-        return MigrationStateStore.write(context, MigrationStateStore.State.IDLE)
     }
 
     /**
@@ -324,6 +336,10 @@ object RawSnapshotBackupManager {
         MigrationStateStore.read(context)
 
     fun isProcessRestartRequired(): Boolean = processRestartRequired
+
+    fun isOfficialOperitMigrationRunningInProcess(): Boolean = officialMigrationRunning.get()
+
+    fun officialOperitMigrationFailureMessage(): String? = officialMigrationFailureMessage
 
     suspend fun restoreFromBackupUri(
         context: Context,
@@ -377,13 +393,13 @@ object RawSnapshotBackupManager {
 
     private fun completeRecoveryIfNeeded(context: Context) {
         when (MigrationStateStore.read(context).state) {
-            MigrationStateStore.State.PREPARING,
             MigrationStateStore.State.REPLACING,
             MigrationStateStore.State.FAILED,
             MigrationStateStore.State.NEEDS_RECOVERY ->
                 MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.IDLE)
             MigrationStateStore.State.IDLE,
             MigrationStateStore.State.PENDING,
+            MigrationStateStore.State.PREPARING,
             MigrationStateStore.State.COMPLETED -> Unit
         }
     }
@@ -413,12 +429,12 @@ object RawSnapshotBackupManager {
      * PENDING -> PREPARING (inside prepareForReplacement, after the zip is validated)
      * PREPARING -> REPLACING (after the safety snapshot is on disk, before any directory is replaced)
      * REPLACING -> COMPLETED (after all directories are replaced and the completion marker is written)
-     * PREPARING/REPLACING -> FAILED (on any exception during the destructive phase)
+     * PREPARING -> IDLE (pre-replacement failure)
+     * REPLACING -> FAILED (failure after replacement may have started)
      *
-     * If the process crashes during PREPARING or REPLACING, the next cold start observes that
-     * state and enters the dedicated recovery surface instead of initializing normally, because
-     * the data directory may be partially replaced. The pre-migration safety snapshot is retained
-     * so the user can recover manually.
+     * Activity recreation during PREPARING observes the process ownership flag and keeps showing
+     * progress. If the process crashes during PREPARING, the next cold start safely resets IDLE;
+     * a crash during REPLACING enters recovery because data may be partially replaced.
      *
      * The migration state lives in noBackupFilesDir, which raw snapshots do NOT capture, so the
      * safety snapshot never contains migration state. A later restore of the safety snapshot for
@@ -429,8 +445,14 @@ object RawSnapshotBackupManager {
     suspend fun runPendingOfficialOperitMigration(
         context: Context,
         onProgress: ((RestoreProgress) -> Unit)? = null
-    ): File = withContext(Dispatchers.IO) {
-        mutex.withLock {
+    ): File {
+        check(officialMigrationRunning.compareAndSet(false, true)) {
+            "Official Operit migration is already running in this process"
+        }
+        officialMigrationFailureMessage = null
+        return try {
+            withContext(Dispatchers.IO) {
+                mutex.withLock {
             check(context.packageName == RawSnapshotPackagePolicy.OPERIT_RY_PACKAGE) {
                 "Official Operit migration is only available in Operit Ry"
             }
@@ -455,7 +477,7 @@ object RawSnapshotBackupManager {
             // NonCancellable and only invoked after validation succeeds. The state transitions
             // PREPARING -> REPLACING happen inside prepareForReplacement at the precise points
             // where the data directory becomes at risk.
-            var enteredPreparing = false
+            var enteredReplacing = false
             var safetyBackupPath: String? = null
             lateinit var safetyBackup: File
             try {
@@ -466,10 +488,9 @@ object RawSnapshotBackupManager {
                     prepareForReplacement = {
                         // Transition to PREPARING before closing databases and taking the safety
                         // snapshot. Validation has already succeeded at this point, so a crash
-                        // here leaves state=PREPARING with data untouched; the recovery surface
-                        // lets the user retry or restore from any earlier snapshot.
+                        // here leaves state=PREPARING with data untouched; the next MainActivity
+                        // cold start safely resets the request to IDLE.
                         MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.PREPARING, uri)
-                        enteredPreparing = true
                         // In the dedicated cold-start phase no background writer is running yet,
                         // so a Room checkpoint is safe and the safety snapshot is consistent.
                         checkpointRoomDatabase(context)
@@ -500,31 +521,43 @@ object RawSnapshotBackupManager {
                             uri,
                             safetyBackupPath
                         )
+                        enteredReplacing = true
                     },
                     onProgress = onProgress
                 )
             } catch (e: Exception) {
-                // Only record FAILED if we entered PREPARING or REPLACING, i.e. the data
-                // directory may have been touched (databases closed, snapshot taken, directories
-                // partially replaced). Pure validation failures atomically return to IDLE so the
-                // next cold start can reach Settings instead of retrying the same URI forever.
-                if (enteredPreparing) {
-                    MigrationStateStore.writeOrThrow(
-                        context,
-                        MigrationStateStore.State.FAILED,
-                        uri,
+                // Only record FAILED after REPLACING was persisted, when directory replacement
+                // may have started. Failures before stores close return to IDLE. Once this process
+                // requires restart, PREPARING remains persisted so no entry point can reopen the
+                // closed stores before exit; the next cold process safely resets it to IDLE.
+                val failureState = MigrationStatePolicy.stateAfterFailure(
+                    replacementStarted = enteredReplacing,
+                    processRestartRequired = processRestartRequired
+                )
+                MigrationStateStore.writeOrThrow(
+                    context,
+                    failureState,
+                    uri = if (failureState == MigrationStateStore.State.FAILED) uri else null,
+                    safetyBackupPath = if (failureState == MigrationStateStore.State.FAILED) {
                         safetyBackupPath
-                    )
-                } else {
-                    MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.IDLE)
-                }
+                    } else {
+                        null
+                    }
+                )
                 throw e
             }
             // Success: transition to COMPLETED. The state file is in noBackupFilesDir, which is
             // not captured by raw snapshots, so a future restore of any snapshot taken after this
             // point will observe COMPLETED and enter normal mode.
             MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.COMPLETED)
-            safetyBackup
+                    safetyBackup
+                }
+            }
+        } catch (e: Exception) {
+            officialMigrationFailureMessage = e.message ?: e.javaClass.name
+            throw e
+        } finally {
+            officialMigrationRunning.set(false)
         }
     }
 
