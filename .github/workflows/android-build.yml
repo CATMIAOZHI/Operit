@@ -12,6 +12,7 @@ on:
           - assembleDebug
           - ':app:assembleNightly'
           - ':app:assembleClone'
+          - ':app:assembleRelease'
           - ':app:bundleRelease'
       run_unit_tests:
         description: Run JVM unit tests after the build
