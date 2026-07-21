@@ -37,8 +37,8 @@ Provide a one-time, explicit migration path from an official Operit raw snapshot
 - Enforce the migration gate inside `OperitApplication.initializeMainApplication()` so every
   process entry point (Activity, Service, Receiver, Worker) respects it, not only MainActivity.
 - Provide a recovery surface that lists local snapshots, pre-selects the recorded safety
-  snapshot, and offers Restore / Clear-state / Exit actions. A successful restore clears the
-  migration state so the next cold start enters normal mode.
+  snapshot, and offers Restore / Exit actions. Recovery states cannot be cleared without a
+  successful restore; normal restores preserve the permanent COMPLETED marker.
 
 ## Pull request
 

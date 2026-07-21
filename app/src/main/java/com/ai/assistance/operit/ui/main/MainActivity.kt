@@ -305,19 +305,59 @@ class MainActivity : ComponentActivity() {
 
         // Launch on GlobalScope with NonCancellable so the migration completes even if the
         // activity is destroyed (e.g. config change, user backing out). The migration replaces
-        // application private data and must run to completion; the process exits immediately
-        // afterwards, so GlobalScope is bounded to this short-lived phase.
+        // application private data and must run to completion. The process exits after a final
+        // state is persisted; safe pre-replacement failures remain on an explicit error surface.
         GlobalScope.launch(Dispatchers.IO + NonCancellable) {
+            var shouldExit = true
             try {
                 RawSnapshotBackupManager.runPendingOfficialOperitMigration(applicationContext)
                 AppLogger.i(TAG, "Official Operit migration completed successfully")
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Official Operit migration failed: ${e.message}", e)
+                when (RawSnapshotBackupManager.officialOperitMigrationState(applicationContext).state) {
+                    MigrationStateStore.State.PENDING -> {
+                        // Resetting an invalid pending request failed. Do not exit into an
+                        // automatic restart loop; let the user retry the atomic reset.
+                        shouldExit = false
+                        withContext(Dispatchers.Main) {
+                            showMigrationStartupErrorSurface(
+                                message = e.message ?: e.javaClass.name,
+                                pendingResetRequired = true
+                            )
+                        }
+                    }
+                    MigrationStateStore.State.IDLE -> {
+                        // Validation or preparation failed before data replacement and the
+                        // pending request was safely reset. Surface the error before restarting
+                        // to Settings rather than silently exiting.
+                        shouldExit = false
+                        withContext(Dispatchers.Main) {
+                            showMigrationStartupErrorSurface(
+                                message = e.message ?: e.javaClass.name,
+                                pendingResetRequired = false
+                            )
+                        }
+                    }
+                    else -> Unit
+                }
             }
 
             // Exit the process so the next cold start observes the final state (COMPLETED or
             // FAILED) and enters the appropriate mode.
-            exitProcess(0)
+            if (shouldExit) {
+                exitProcess(0)
+            }
+        }
+    }
+
+    private fun showMigrationStartupErrorSurface(
+        message: String,
+        pendingResetRequired: Boolean
+    ) {
+        setContent {
+            OperitTheme {
+                MigrationStartupErrorScreen(message, pendingResetRequired)
+            }
         }
     }
 
@@ -326,8 +366,7 @@ class MainActivity : ComponentActivity() {
      * REPLACING / FAILED / NEEDS_RECOVERY). The data directory may be partially replaced or the
      * state file may be corrupt, so the app MUST NOT initialize normally. The user can restore
      * from the pre-migration safety snapshot (whose path is recorded in [snapshot] when
-     * available), retry the migration (state=PENDING-only transitions are not offered here), or
-     * dismiss the recovery surface after a manual restore.
+     * available). The state cannot be dismissed without a successful restore.
      */
     private fun showMigrationRecoverySurface(snapshot: MigrationStateStore.Snapshot) {
         AppLogger.w(
@@ -631,7 +670,9 @@ class MainActivity : ComponentActivity() {
             AppLogger.e(TAG, "Error hiding VirtualDisplayOverlay in MainActivity.onDestroy", e)
         }
 
-        anrMonitor.stop()
+        if (::anrMonitor.isInitialized) {
+            anrMonitor.stop()
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -986,6 +1027,89 @@ private fun MigrationInProgressScreen() {
 }
 
 @Composable
+private fun MigrationStartupErrorScreen(message: String, pendingResetRequired: Boolean) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var cancelling by remember { mutableStateOf(false) }
+    var cancellationFailed by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.padding(24.dp)
+        ) {
+            Text(
+                text = stringResource(
+                    id = if (pendingResetRequired) {
+                        R.string.backup_official_operit_migration_pending_error_title
+                    } else {
+                        R.string.backup_official_operit_migration_error_title
+                    }
+                ),
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Text(
+                text = stringResource(
+                    id = if (pendingResetRequired) {
+                        R.string.backup_official_operit_migration_pending_error_message
+                    } else {
+                        R.string.backup_official_operit_migration_startup_error_message
+                    },
+                    message
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            if (pendingResetRequired && cancellationFailed) {
+                Text(
+                    text = stringResource(id = R.string.backup_official_operit_migration_pending_cancel_failed),
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            if (pendingResetRequired && cancelling) {
+                CircularProgressIndicator()
+            } else if (pendingResetRequired) {
+                TextButton(onClick = {
+                    cancelling = true
+                    cancellationFailed = false
+                    scope.launch {
+                        val cancelled = withContext(Dispatchers.IO + NonCancellable) {
+                            runCatching {
+                                RawSnapshotBackupManager.cancelPendingOfficialOperitMigration(context)
+                            }.onFailure { error ->
+                                AppLogger.e(TAG, "failed to cancel pending migration", error)
+                            }.getOrDefault(false)
+                        }
+                        if (cancelled) {
+                            exitProcess(0)
+                        } else {
+                            cancellationFailed = true
+                            cancelling = false
+                        }
+                    }
+                }) {
+                    Text(stringResource(id = R.string.backup_official_operit_migration_pending_cancel))
+                }
+            } else {
+                TextButton(onClick = { exitProcess(0) }) {
+                    Text(stringResource(id = R.string.backup_official_operit_migration_restart_to_settings))
+                }
+            }
+            TextButton(onClick = { exitProcess(0) }) {
+                Text(stringResource(id = R.string.backup_official_operit_migration_recovery_exit))
+            }
+        }
+    }
+}
+
+@Composable
 private fun MigrationRecoveryScreen(snapshot: MigrationStateStore.Snapshot) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1107,12 +1231,6 @@ private fun MigrationRecoveryScreen(snapshot: MigrationStateStore.Snapshot) {
                     }
                 ) {
                     Text(stringResource(id = R.string.backup_official_operit_migration_recovery_restore))
-                }
-                TextButton(onClick = {
-                    RawSnapshotBackupManager.clearMigrationState(context)
-                    exitProcess(0)
-                }) {
-                    Text(stringResource(id = R.string.backup_official_operit_migration_recovery_clear_state))
                 }
             }
             TextButton(onClick = { exitProcess(0) }) {

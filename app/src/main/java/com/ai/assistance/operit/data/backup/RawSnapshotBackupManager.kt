@@ -305,6 +305,13 @@ object RawSnapshotBackupManager {
         return MigrationStateStore.write(context, MigrationStateStore.State.PENDING, uri)
     }
 
+    fun cancelPendingOfficialOperitMigration(context: Context): Boolean {
+        check(MigrationStateStore.read(context).state == MigrationStateStore.State.PENDING) {
+            "Official Operit migration is not pending"
+        }
+        return MigrationStateStore.write(context, MigrationStateStore.State.IDLE)
+    }
+
     /**
      * Read the current migration state. Any process entry point (Activity, Service, Receiver,
      * Worker) MUST call this before initializing the application. PENDING must run or resume the
@@ -335,22 +342,8 @@ object RawSnapshotBackupManager {
                 },
                 onProgress = onProgress
             )
-            // A successful restore of any raw snapshot replaces the data directory with a state
-            // captured before any migration marker was written (raw snapshots exclude
-            // noBackupFilesDir). Clear any stale migration state so the next cold start enters
-            // normal mode instead of looping back into the recovery surface. This covers the
-            // primary recovery path: the user restores the pre-migration safety snapshot from
-            // the recovery surface or from Settings, and the FAILED/REPLACING marker is dropped.
-            MigrationStateStore.clear(context)
+            completeRecoveryIfNeeded(context)
         }
-    }
-
-    /**
-     * Clear any persisted migration state. Safe to call from the recovery surface after a
-     * successful manual restore, or from Settings when the user dismisses a stuck migration.
-     */
-    fun clearMigrationState(context: Context) {
-        MigrationStateStore.clear(context)
     }
 
     /**
@@ -358,8 +351,8 @@ object RawSnapshotBackupManager {
      * Used by the recovery surface, which operates on files inside the app's private backup
      * directory and therefore does not need a persisted URI permission.
      *
-     * On success, the migration state is cleared and the caller should exit the process so the
-     * next cold start enters normal mode.
+     * On success, an interrupted recovery state is atomically reset to IDLE and the caller should
+     * exit the process so the next cold start enters normal mode. A COMPLETED marker is preserved.
      */
     suspend fun restoreFromBackupFile(
         context: Context,
@@ -378,7 +371,20 @@ object RawSnapshotBackupManager {
                 },
                 onProgress = onProgress
             )
-            MigrationStateStore.clear(context)
+            completeRecoveryIfNeeded(context)
+        }
+    }
+
+    private fun completeRecoveryIfNeeded(context: Context) {
+        when (MigrationStateStore.read(context).state) {
+            MigrationStateStore.State.PREPARING,
+            MigrationStateStore.State.REPLACING,
+            MigrationStateStore.State.FAILED,
+            MigrationStateStore.State.NEEDS_RECOVERY ->
+                MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.IDLE)
+            MigrationStateStore.State.IDLE,
+            MigrationStateStore.State.PENDING,
+            MigrationStateStore.State.COMPLETED -> Unit
         }
     }
 
@@ -403,7 +409,7 @@ object RawSnapshotBackupManager {
      *
      * State transitions (persisted to noBackupFilesDir, outside raw snapshots):
      *
-     * PENDING (validation failures stay here so the user can pick a different archive)
+     * PENDING -> IDLE (missing URI or validation failure; the user can select another archive)
      * PENDING -> PREPARING (inside prepareForReplacement, after the zip is validated)
      * PREPARING -> REPLACING (after the safety snapshot is on disk, before any directory is replaced)
      * REPLACING -> COMPLETED (after all directories are replaced and the completion marker is written)
@@ -433,13 +439,16 @@ object RawSnapshotBackupManager {
                 "Official Operit migration is not pending (state=${snapshot.state})"
             }
             val uri = snapshot.uri
-                ?: throw IllegalStateException("No pending official Operit migration URI")
+            if (uri == null) {
+                MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.IDLE)
+                throw IllegalStateException("No pending official Operit migration URI")
+            }
 
             // State machine guard: stays PENDING until the zip is read, extracted and validated
             // inside restoreFromBackupUriLocked. A corrupt zip, wrong source package, or URI
-            // permission failure throws before prepareForReplacement runs, leaving state=PENDING
-            // so the user can pick a different archive instead of being locked into the recovery
-            // surface with no safety snapshot to restore.
+            // permission failure throws before prepareForReplacement runs. The catch atomically
+            // returns the state to IDLE so the next launch reaches Settings and the user can pick
+            // another archive instead of retrying the same bad request forever.
             //
             // The destructive phase (close databases, checkpoint, take safety snapshot, replace
             // directories) runs inside prepareForReplacement, which is wrapped in
@@ -497,22 +506,23 @@ object RawSnapshotBackupManager {
             } catch (e: Exception) {
                 // Only record FAILED if we entered PREPARING or REPLACING, i.e. the data
                 // directory may have been touched (databases closed, snapshot taken, directories
-                // partially replaced). Pure validation failures leave state=PENDING so the user
-                // can pick a different archive from Settings without being locked into recovery.
+                // partially replaced). Pure validation failures atomically return to IDLE so the
+                // next cold start can reach Settings instead of retrying the same URI forever.
                 if (enteredPreparing) {
-                    MigrationStateStore.write(
+                    MigrationStateStore.writeOrThrow(
                         context,
                         MigrationStateStore.State.FAILED,
                         uri,
                         safetyBackupPath
                     )
+                } else {
+                    MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.IDLE)
                 }
                 throw e
             }
             // Success: transition to COMPLETED. The state file is in noBackupFilesDir, which is
             // not captured by raw snapshots, so a future restore of any snapshot taken after this
-            // point will observe COMPLETED (or IDLE if the user manually clears state) and enter
-            // normal mode.
+            // point will observe COMPLETED and enter normal mode.
             MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.COMPLETED)
             safetyBackup
         }
