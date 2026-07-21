@@ -21,6 +21,7 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlin.system.measureTimeMillis
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -36,6 +37,9 @@ object RawSnapshotBackupManager {
 
     private const val ZIP_PREFIX = "operit_raw_snapshot_"
 
+    private const val MIGRATION_PREFERENCES = "operit_ry_official_migration"
+    private const val MIGRATION_COMPLETED = "completed"
+
     private const val ENTRY_MANIFEST = "manifest.json"
     private const val ENTRY_PAYLOAD_PREFIX = "payload/"
 
@@ -48,6 +52,9 @@ object RawSnapshotBackupManager {
     private val terminalTopLevelDirNames = setOf("usr", "tmp", "bin")
 
     private val mutex = Mutex()
+
+    @Volatile
+    private var processRestartRequired = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @Serializable
@@ -105,6 +112,18 @@ object RawSnapshotBackupManager {
         onProgress: ((ExportProgressInfo) -> Unit)? = null
     ): File = withContext(Dispatchers.IO) {
         mutex.withLock {
+            check(!processRestartRequired) { "Application restart required before another snapshot operation" }
+            exportToBackupDirLocked(context, options, onProgress)
+        }
+    }
+
+    private suspend fun exportToBackupDirLocked(
+        context: Context,
+        options: SnapshotOptions,
+        onProgress: ((ExportProgressInfo) -> Unit)?,
+        performDatabaseCheckpoint: Boolean = true,
+        requireDatabaseCheckpoint: Boolean = false
+    ): File {
             AppLogger.i(TAG, "export start (includeTerminalData=${options.includeTerminalData})")
             withContext(Dispatchers.Main) { onProgress?.invoke(ExportProgressInfo(ExportProgress.PREPARING)) }
             val exportDir = OperitBackupDirs.rawSnapshotDir()
@@ -124,11 +143,13 @@ object RawSnapshotBackupManager {
             val datastoreDir = File(dataDir, "datastore")
             val databasesDir = File(dataDir, "databases")
 
-            try {
-                val sqliteDb = AppDatabase.getDatabase(context).openHelper.writableDatabase
-                sqliteDb.query("PRAGMA wal_checkpoint(FULL)").close()
-            } catch (e: Exception) {
-                AppLogger.w(TAG, "wal_checkpoint failed", e)
+            if (performDatabaseCheckpoint) {
+                try {
+                    checkpointRoomDatabase(context)
+                } catch (e: Exception) {
+                    AppLogger.w(TAG, "wal_checkpoint failed", e)
+                    if (requireDatabaseCheckpoint) throw e
+                }
             }
 
             val includes = listOf(
@@ -253,9 +274,18 @@ object RawSnapshotBackupManager {
             }
 
             AppLogger.i(TAG, "export done: ${outFile.absolutePath} (${outFile.length()} bytes)")
-            outFile
-        }
+            return outFile
     }
+
+    fun isOfficialOperitMigrationCompleted(context: Context): Boolean =
+        context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
+            .getBoolean(MIGRATION_COMPLETED, false)
+
+    fun isOfficialOperitMigrationAvailable(context: Context): Boolean =
+        context.packageName == RawSnapshotPackagePolicy.OPERIT_RY_PACKAGE &&
+            !isOfficialOperitMigrationCompleted(context)
+
+    fun isProcessRestartRequired(): Boolean = processRestartRequired
 
     suspend fun restoreFromBackupUri(
         context: Context,
@@ -263,6 +293,69 @@ object RawSnapshotBackupManager {
         onProgress: ((RestoreProgress) -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            check(!processRestartRequired) { "Application restart required before another snapshot operation" }
+            restoreFromBackupUriLocked(
+                context = context,
+                uri = uri,
+                expectedPackageName = context.packageName,
+                markOfficialMigrationCompleted = false,
+                prepareForReplacement = {
+                    AppDatabase.closeDatabase()
+                    ObjectBoxManager.closeAll()
+                },
+                onProgress = onProgress
+            )
+        }
+    }
+
+    suspend fun migrateFromOfficialOperitUri(
+        context: Context,
+        uri: Uri,
+        onSafetyBackupStarted: (() -> Unit)? = null,
+        onProgress: ((RestoreProgress) -> Unit)? = null
+    ): File = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            check(!processRestartRequired) { "Application restart required before another snapshot operation" }
+            check(context.packageName == RawSnapshotPackagePolicy.OPERIT_RY_PACKAGE) {
+                "Official Operit migration is only available in Operit Ry"
+            }
+            check(!isOfficialOperitMigrationCompleted(context)) {
+                "Official Operit migration has already completed"
+            }
+
+            lateinit var safetyBackup: File
+            restoreFromBackupUriLocked(
+                context = context,
+                uri = uri,
+                expectedPackageName = RawSnapshotPackagePolicy.OFFICIAL_OPERIT_PACKAGE,
+                markOfficialMigrationCompleted = true,
+                prepareForReplacement = {
+                    checkpointRoomDatabase(context)
+                    processRestartRequired = true
+                    AppDatabase.closeDatabase()
+                    ObjectBoxManager.closeAll()
+                    withContext(Dispatchers.Main) { onSafetyBackupStarted?.invoke() }
+                    safetyBackup = exportToBackupDirLocked(
+                        context = context,
+                        options = SnapshotOptions(),
+                        onProgress = null,
+                        performDatabaseCheckpoint = false
+                    )
+                },
+                onProgress = onProgress
+            )
+            safetyBackup
+        }
+    }
+
+    private suspend fun restoreFromBackupUriLocked(
+        context: Context,
+        uri: Uri,
+        expectedPackageName: String,
+        markOfficialMigrationCompleted: Boolean,
+        prepareForReplacement: suspend () -> Unit,
+        onProgress: ((RestoreProgress) -> Unit)?
+    ) {
             val cacheZip = File.createTempFile("raw_snapshot_restore_", ".zip", context.cacheDir)
             val workDir = File(context.cacheDir, "raw_snapshot_restore_work").apply {
                 if (exists()) deleteRecursively()
@@ -281,13 +374,8 @@ object RawSnapshotBackupManager {
 
                 AppLogger.i(TAG, "restore cached zip: ${cacheZip.absolutePath} (${cacheZip.length()} bytes)")
 
-                AppDatabase.closeDatabase()
-                ObjectBoxManager.closeAll()
-
-                AppLogger.i(TAG, "restore closed databases (room + objectbox)")
-
                 withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.EXTRACTING) }
-                val manifest = extractZipToWorkDir(cacheZip, workDir, expectedPackageName = context.packageName)
+                val manifest = extractZipToWorkDir(cacheZip, workDir, expectedPackageName)
 
                 val payloadDir = File(workDir, "payload")
                 val externalFilesPayloadDir = File(payloadDir, "external_files")
@@ -306,25 +394,39 @@ object RawSnapshotBackupManager {
                     "restore manifest ok (formatVersion=${manifest.formatVersion}, includeTerminalData=${manifest.includeTerminalData})"
                 )
 
-                AppLogger.i(TAG, "restore replace dirs (preserveTerminalTopLevel=${preservedNames.isNotEmpty()})")
+                withContext(NonCancellable) {
+                    prepareForReplacement()
 
-                withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_FILES) }
-                replaceDirContents(File(payloadDir, "files"), context.filesDir, preservedTopLevelDirNames = preservedNames)
-                if (externalFilesPayloadDir.exists()) {
-                    val externalFilesDir = requireNotNull(context.getExternalFilesDir(null)) {
-                        "External files dir is unavailable"
+                    AppLogger.i(TAG, "restore closed databases (room + objectbox)")
+                    AppLogger.i(TAG, "restore replace dirs (preserveTerminalTopLevel=${preservedNames.isNotEmpty()})")
+
+                    withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_FILES) }
+                    replaceDirContents(File(payloadDir, "files"), context.filesDir, preservedTopLevelDirNames = preservedNames)
+                    if (externalFilesPayloadDir.exists()) {
+                        val externalFilesDir = requireNotNull(context.getExternalFilesDir(null)) {
+                            "External files dir is unavailable"
+                        }
+                        withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_EXTERNAL_FILES) }
+                        replaceDirContents(externalFilesPayloadDir, externalFilesDir)
                     }
-                    withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_EXTERNAL_FILES) }
-                    replaceDirContents(externalFilesPayloadDir, externalFilesDir)
-                }
-                withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_SHARED_PREFS) }
-                replaceDirContents(File(payloadDir, "shared_prefs"), File(context.dataDir, "shared_prefs"))
-                withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_DATASTORE) }
-                replaceDirContents(File(payloadDir, "datastore"), File(context.dataDir, "datastore"))
-                withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_DATABASES) }
-                replaceDirContents(File(payloadDir, "databases"), File(context.dataDir, "databases"))
+                    withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_SHARED_PREFS) }
+                    replaceDirContents(File(payloadDir, "shared_prefs"), File(context.dataDir, "shared_prefs"))
+                    withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_DATASTORE) }
+                    replaceDirContents(File(payloadDir, "datastore"), File(context.dataDir, "datastore"))
+                    withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_DATABASES) }
+                    replaceDirContents(File(payloadDir, "databases"), File(context.dataDir, "databases"))
 
-                withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.FINALIZING) }
+                    if (markOfficialMigrationCompleted) {
+                        val recorded = context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
+                            .edit()
+                            .putBoolean(MIGRATION_COMPLETED, true)
+                            .commit()
+                        check(recorded) { "Failed to record official Operit migration completion" }
+                    }
+
+                    withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.FINALIZING) }
+                }
+
                 AppLogger.i(TAG, "restore done: ${manifest.packageName}")
             } catch (e: Exception) {
                 AppLogger.e(TAG, "restore failed", e)
@@ -339,7 +441,6 @@ object RawSnapshotBackupManager {
                 } catch (_: Exception) {
                 }
             }
-        }
     }
 
     private fun extractZipToWorkDir(zipFile: File, workDir: File, expectedPackageName: String): Manifest {
@@ -348,6 +449,13 @@ object RawSnapshotBackupManager {
 
         var manifestText: String? = null
         var extractedPayloadFiles = 0
+        val supportedPayloadPrefixes = listOf(
+            ENTRY_FILES,
+            ENTRY_EXTERNAL_FILES,
+            ENTRY_SHARED_PREFS,
+            ENTRY_DATASTORE,
+            ENTRY_DATABASES
+        )
 
         val buffer = ByteArray(64 * 1024)
         val extractMs = measureTimeMillis {
@@ -373,12 +481,25 @@ object RawSnapshotBackupManager {
                         continue
                     }
 
+                    val payloadPrefix = supportedPayloadPrefixes.firstOrNull { prefix ->
+                        name.startsWith(prefix)
+                    }
+                    if (payloadPrefix == null) {
+                        zis.closeEntry()
+                        throw IllegalArgumentException("Unsupported payload entry: $name")
+                    }
+
                     val target = File(workDir, name)
                     val workCanonical = workDir.canonicalFile
                     val targetCanonical = target.canonicalFile
                     if (!targetCanonical.path.startsWith(workCanonical.path + File.separator)) {
                         zis.closeEntry()
                         throw IllegalArgumentException("Invalid zip entry path: $name")
+                    }
+                    val payloadRootCanonical = File(workDir, payloadPrefix).canonicalFile
+                    if (!targetCanonical.path.startsWith(payloadRootCanonical.path + File.separator)) {
+                        zis.closeEntry()
+                        throw IllegalArgumentException("Invalid payload entry path: $name")
                     }
 
                     target.parentFile?.mkdirs()
@@ -406,11 +527,28 @@ object RawSnapshotBackupManager {
             throw IllegalArgumentException("Unsupported backup version: ${manifest.formatVersion}")
         }
 
-        if (manifest.packageName != expectedPackageName) {
-            throw IllegalArgumentException("Backup package mismatch: ${manifest.packageName}")
-        }
+        RawSnapshotPackagePolicy.requireSourcePackage(manifest.packageName, expectedPackageName)
+
+        val requiredIncludes = listOf(
+            ENTRY_FILES,
+            ENTRY_EXTERNAL_FILES,
+            ENTRY_SHARED_PREFS,
+            ENTRY_DATASTORE,
+            ENTRY_DATABASES
+        )
+        val legacyIncludes = requiredIncludes - ENTRY_EXTERNAL_FILES
+        RawSnapshotPackagePolicy.requireArchiveContents(
+            actualIncludes = manifest.includes,
+            supportedIncludes = listOf(requiredIncludes, legacyIncludes),
+            payloadFileCount = extractedPayloadFiles
+        )
 
         return manifest
+    }
+
+    private fun checkpointRoomDatabase(context: Context) {
+        val sqliteDb = AppDatabase.getDatabase(context).openHelper.writableDatabase
+        sqliteDb.query("PRAGMA wal_checkpoint(FULL)").close()
     }
 
     private fun addDirToZip(

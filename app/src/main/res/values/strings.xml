@@ -5622,6 +5622,13 @@
     <string name="backup_raw_snapshot_restart_message">文件快照已恢复。为避免旧的缓存/连接导致异常，建议立即重启应用。</string>
     <string name="backup_raw_snapshot_restart_now">立即重启</string>
     <string name="backup_raw_snapshot_restart_later">稍后</string>
+    <string name="backup_official_operit_migration_action">从原版 Operit 迁移</string>
+    <string name="backup_official_operit_migration_desc">一次性导入原版 Operit 的文件快照。迁移前会自动备份当前 Operit Ry 数据；迁移成功后此入口将隐藏并立即重启应用。</string>
+    <string name="backup_official_operit_migration_confirm_title">确认从原版 Operit 迁移</string>
+    <string name="backup_official_operit_migration_confirm_message">将从以下原版 Operit 文件快照迁移数据：\n%1$s\n\n迁移会合并并覆盖同名的 Operit Ry 数据，且成功后不能再次执行。应用将先创建当前数据的安全快照，完成后立即重启。请选择你自己从原版 Operit 创建的快照；旧快照不含来源签名。Android Keystore 加密的数据可能需要重新配置。</string>
+    <string name="backup_official_operit_migration_confirm_action">创建备份并迁移</string>
+    <string name="backup_official_operit_migration_safety_backup">正在备份当前 Operit Ry 数据...</string>
+    <string name="backup_official_operit_migration_reading">正在校验原版 Operit 快照...</string>
 
     <string name="backup_chat_history">聊天记录</string>
     <string name="backup_chat_history_subtitle">跨格式备份、导出与恢复</string>

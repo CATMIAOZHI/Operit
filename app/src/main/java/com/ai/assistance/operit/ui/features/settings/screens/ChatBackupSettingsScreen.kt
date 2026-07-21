@@ -111,6 +111,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.system.exitProcess
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -173,6 +174,11 @@ fun ChatBackupSettingsScreen() {
     var pendingRawSnapshotRestoreUri by remember { mutableStateOf<Uri?>(null) }
     var showRawSnapshotRestoreConfirmDialog by remember { mutableStateOf(false) }
     var showRawSnapshotRestoreRestartDialog by remember { mutableStateOf(false) }
+    var officialOperitMigrationAvailable by remember {
+        mutableStateOf(RawSnapshotBackupManager.isOfficialOperitMigrationAvailable(context))
+    }
+    var pendingOfficialOperitMigrationUri by remember { mutableStateOf<Uri?>(null) }
+    var showOfficialOperitMigrationConfirmDialog by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showMemoryImportStrategyDialog by remember { mutableStateOf(false) }
     var pendingMemoryImportUri by remember { mutableStateOf<Uri?>(null) }
@@ -399,6 +405,18 @@ fun ChatBackupSettingsScreen() {
                 result.data?.data?.let { uri ->
                     pendingRawSnapshotRestoreUri = uri
                     showRawSnapshotRestoreConfirmDialog = true
+                }
+            }
+        }
+
+    val officialOperitMigrationFilePickerLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                result.data?.data?.let { uri ->
+                    pendingOfficialOperitMigrationUri = uri
+                    showOfficialOperitMigrationConfirmDialog = true
                 }
             }
         }
@@ -1013,7 +1031,9 @@ fun ChatBackupSettingsScreen() {
                                     }
                                 }
                             },
-                            modifier = Modifier.weight(1f, fill = false)
+                            modifier = Modifier.weight(1f, fill = false),
+                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP &&
+                                rawSnapshotOperationState != RawSnapshotOperation.RESTORING
                         )
 
                         ManagementButton(
@@ -1029,7 +1049,35 @@ fun ChatBackupSettingsScreen() {
                                 rawSnapshotRestoreFilePickerLauncher.launch(intent)
                             },
                             modifier = Modifier.weight(1f, fill = false),
-                            isWarning = true
+                            isWarning = true,
+                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP &&
+                                rawSnapshotOperationState != RawSnapshotOperation.RESTORING
+                        )
+                    }
+
+                    if (officialOperitMigrationAvailable) {
+                        HorizontalDivider()
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = stringResource(R.string.backup_official_operit_migration_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        ManagementButton(
+                            text = stringResource(R.string.backup_official_operit_migration_action),
+                            icon = Icons.Default.CloudUpload,
+                            onClick = {
+                                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                                    addCategory(Intent.CATEGORY_OPENABLE)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    type = "*/*"
+                                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/zip"))
+                                }
+                                officialOperitMigrationFilePickerLauncher.launch(intent)
+                            },
+                            isWarning = true,
+                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP &&
+                                rawSnapshotOperationState != RawSnapshotOperation.RESTORING
                         )
                     }
 
@@ -1506,6 +1554,121 @@ fun ChatBackupSettingsScreen() {
         )
     }
 
+    if (showOfficialOperitMigrationConfirmDialog) {
+        val targetName = pendingOfficialOperitMigrationUri?.lastPathSegment ?: "-"
+
+        AlertDialog(
+            onDismissRequest = {
+                showOfficialOperitMigrationConfirmDialog = false
+                pendingOfficialOperitMigrationUri = null
+            },
+            title = { Text(stringResource(R.string.backup_official_operit_migration_confirm_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.backup_official_operit_migration_confirm_message,
+                        targetName
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showOfficialOperitMigrationConfirmDialog = false
+                        val uri = pendingOfficialOperitMigrationUri
+                        pendingOfficialOperitMigrationUri = null
+                        if (uri != null) {
+                            scope.launch {
+                                rawSnapshotOperationState = RawSnapshotOperation.RESTORING
+                                rawSnapshotOperationMessage = context.getString(
+                                    R.string.backup_official_operit_migration_safety_backup
+                                )
+                                try {
+                                    try {
+                                        context.contentResolver.takePersistableUriPermission(
+                                            uri,
+                                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                        )
+                                    } catch (_: Exception) {
+                                    }
+
+                                    withContext(NonCancellable) {
+                                        RawSnapshotBackupManager.migrateFromOfficialOperitUri(
+                                            context = context,
+                                            uri = uri,
+                                            onSafetyBackupStarted = {
+                                                rawSnapshotOperationMessage = context.getString(
+                                                    R.string.backup_official_operit_migration_safety_backup
+                                                )
+                                            },
+                                            onProgress = { progress ->
+                                                rawSnapshotOperationMessage = when (progress) {
+                                                    RawSnapshotBackupManager.RestoreProgress.PREPARING,
+                                                    RawSnapshotBackupManager.RestoreProgress.READING_ZIP ->
+                                                        context.getString(
+                                                            R.string.backup_official_operit_migration_reading
+                                                        )
+
+                                                    RawSnapshotBackupManager.RestoreProgress.EXTRACTING ->
+                                                        context.getString(R.string.backup_raw_snapshot_progress_extracting)
+
+                                                    RawSnapshotBackupManager.RestoreProgress.REPLACING_FILES ->
+                                                        context.getString(R.string.backup_raw_snapshot_progress_replacing_files)
+
+                                                    RawSnapshotBackupManager.RestoreProgress.REPLACING_EXTERNAL_FILES ->
+                                                        context.getString(R.string.backup_raw_snapshot_progress_replacing_external_files)
+
+                                                    RawSnapshotBackupManager.RestoreProgress.REPLACING_SHARED_PREFS ->
+                                                        context.getString(R.string.backup_raw_snapshot_progress_replacing_shared_prefs)
+
+                                                    RawSnapshotBackupManager.RestoreProgress.REPLACING_DATASTORE ->
+                                                        context.getString(R.string.backup_raw_snapshot_progress_replacing_datastore)
+
+                                                    RawSnapshotBackupManager.RestoreProgress.REPLACING_DATABASES ->
+                                                        context.getString(R.string.backup_raw_snapshot_progress_replacing_databases)
+
+                                                    RawSnapshotBackupManager.RestoreProgress.FINALIZING ->
+                                                        context.getString(R.string.backup_raw_snapshot_progress_finalizing)
+                                                }
+                                            }
+                                        )
+                                        officialOperitMigrationAvailable = false
+                                        withContext(Dispatchers.Main) {
+                                            restartApplication(context)
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    if (RawSnapshotBackupManager.isProcessRestartRequired()) {
+                                        withContext(NonCancellable) {
+                                            withContext(Dispatchers.Main) {
+                                                restartApplication(context)
+                                            }
+                                        }
+                                    } else {
+                                        rawSnapshotOperationState = RawSnapshotOperation.FAILED
+                                        rawSnapshotOperationMessage = e.localizedMessage ?: e.toString()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.backup_official_operit_migration_confirm_action))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showOfficialOperitMigrationConfirmDialog = false
+                        pendingOfficialOperitMigrationUri = null
+                    }
+                ) {
+                    Text(stringResource(R.string.backup_raw_snapshot_restore_cancel_action))
+                }
+            }
+        )
+    }
+
     if (showRoomDbRestoreRestartDialog) {
         AlertDialog(
             onDismissRequest = { showRoomDbRestoreRestartDialog = false },
@@ -1558,6 +1721,17 @@ fun ChatBackupSettingsScreen() {
                 }
             }
         )
+    }
+}
+
+private fun restartApplication(context: Context) {
+    try {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+        context.startActivity(intent)
+    } finally {
+        exitProcess(0)
     }
 }
 
