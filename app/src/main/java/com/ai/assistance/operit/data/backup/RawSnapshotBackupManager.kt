@@ -288,9 +288,21 @@ object RawSnapshotBackupManager {
             !isOfficialOperitMigrationCompleted(context) &&
             !isOfficialOperitMigrationPending(context)
 
-    fun isOfficialOperitMigrationPending(context: Context): Boolean =
-        context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
-            .getBoolean(MIGRATION_PENDING, false)
+    fun isOfficialOperitMigrationPending(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(MIGRATION_PENDING, false)) return false
+        // If the migration already completed but the pending flag is still set, the process was
+        // killed between markOfficialMigrationCompleted (commit #1) and the pending clear
+        // (commit #2). In the previous design this was a permanent boot loop: MainActivity would
+        // keep entering the migration path, runPendingOfficialOperitMigration would throw on
+        // the completion check, and the activity would exit on every launch. Clear the stale
+        // pending flag and report "not pending" so the app enters normal mode.
+        if (prefs.getBoolean(MIGRATION_COMPLETED, false)) {
+            prefs.edit().remove(MIGRATION_PENDING).remove(MIGRATION_PENDING_URI).commit()
+            return false
+        }
+        return true
+    }
 
     /**
      * Persist a pending official Operit migration URI so the migration can run in a dedicated
@@ -398,6 +410,14 @@ object RawSnapshotBackupManager {
                         processRestartRequired = true
                         AppDatabase.closeDatabase()
                         ObjectBoxManager.closeAll()
+                        // Clear the pending state BEFORE taking the safety snapshot. Otherwise the
+                        // safety snapshot (which captures shared_prefs) would contain pending=true
+                        // and the source URI. A later restore of this safety snapshot for rollback
+                        // would re-enter the cold-start migration path and overwrite the rolled-
+                        // back data. The completion flag is committed only after replacement
+                        // succeeds, so at this point neither pending nor completed is set, and a
+                        // rollback restores the pre-migration state cleanly.
+                        clearPendingOfficialOperitMigration(context)
                         // Safety snapshot must preserve terminal data because legacy v1 manifests
                         // default to includeTerminalData=true and migration may overwrite
                         // usr/tmp/bin. Without this, a failed migration or manual rollback could
@@ -412,14 +432,18 @@ object RawSnapshotBackupManager {
                     onProgress = onProgress
                 )
             } catch (e: Exception) {
-                // Clear the pending flag so the next cold start enters normal mode instead of
+                // The pending flag was already cleared in prepareForReplacement before the
+                // safety snapshot was taken, so a rollback from the safety snapshot will not
+                // re-enter the migration path. If the failure happened before
+                // prepareForReplacement ran (e.g. invalid zip, package mismatch), clear the
+                // pending flag here so the next cold start enters normal mode instead of
                 // retrying the migration and looping. The safety snapshot (if created) is kept.
                 clearPendingOfficialOperitMigration(context)
                 throw e
             }
-            // Success: clear the pending flag. The completion flag was already committed inside
-            // restoreFromBackupUriLocked via markOfficialMigrationCompleted.
-            clearPendingOfficialOperitMigration(context)
+            // Success: the pending flag was already cleared in prepareForReplacement, and the
+            // completion flag was committed inside restoreFromBackupUriLocked via
+            // markOfficialMigrationCompleted. No further state update is needed.
             safetyBackup
         }
     }

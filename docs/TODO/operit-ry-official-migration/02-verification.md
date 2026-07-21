@@ -20,6 +20,13 @@
   `OperitApplication.initializeMainApplication`, so WorkManager, foreground services,
   schedulers, repositories and DataStore writers are not started during the migration.
 - Confirmed the pending flag is cleared on both success and failure to avoid a restart loop.
+- Confirmed the pending flag is cleared in `prepareForReplacement` BEFORE the safety snapshot
+  is taken, so restoring the safety snapshot for rollback does not re-enter the migration path
+  and overwrite rolled-back data.
+- Confirmed `isOfficialOperitMigrationPending` detects the `completed=true + pending=true`
+  combination (process killed between the completion commit and any remaining state update),
+  clears the stale pending flag, and returns false, so `MainActivity` enters normal mode
+  instead of looping on the completion check.
 - Confirmed the migration coroutine uses `GlobalScope + Dispatchers.IO + NonCancellable` so the
   migration completes even if the activity is destroyed (config change, user backing out),
   and the pending-flag clearing paths cannot be interrupted by cancellation.
