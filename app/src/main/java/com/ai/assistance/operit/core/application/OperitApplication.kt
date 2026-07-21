@@ -34,6 +34,7 @@ import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.system.AndroidShellExecutor
 import com.ai.assistance.operit.core.tools.system.Terminal
 import com.ai.assistance.operit.core.workflow.WorkflowSchedulerInitializer
+import com.ai.assistance.operit.data.backup.MigrationStatePolicy
 import com.ai.assistance.operit.data.backup.MigrationStateStore
 import com.ai.assistance.operit.data.backup.RawSnapshotBackupManager
 import com.ai.assistance.operit.data.backup.RoomDatabaseBackupPreferences
@@ -151,10 +152,10 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
      * Result of [initializeMainApplication].
      *
      * - [Initialized]: the application was initialized normally and the caller can proceed.
-     * - [MigrationInProgress]: a pending official Operit migration was observed. The caller MUST
-     *   NOT proceed with normal initialization. Activities should route to the migration surface;
-     *   services should stop themselves and exit the process so the migration can run from the
-     *   activity entry point.
+     * - [MigrationInProgress]: a pending or process-owned official Operit migration was observed.
+     *   The caller MUST NOT proceed with normal initialization. Activities should route to the
+     *   migration surface; services should stop themselves without exiting the process because
+     *   this process may own the active migration.
      * - [MigrationNeedsRecovery]: the migration was interrupted (PREPARING / REPLACING / FAILED
      *   / NEEDS_RECOVERY) and the data directory may be partially replaced or the state file is
      *   corrupt. The caller MUST NOT initialize normally. Activities should route to the
@@ -171,23 +172,25 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             if (mainApplicationInitialized) {
                 return MainApplicationInitResult.Initialized
             }
-            if (RawSnapshotBackupManager.isProcessRestartRequired()) {
-                return MainApplicationInitResult.MigrationNeedsRecovery
-            }
             // Global migration gate: any process entry point (Activity, Service, Receiver,
             // Worker) that calls initializeMainApplication must respect the migration state.
             // This guarantees that even if Android restores a sticky Service before creating
             // MainActivity, WorkManager, DataStore, repositories and background coroutines are
             // not started before the migration completes or recovery is entered.
             val migrationState = RawSnapshotBackupManager.officialOperitMigrationState(applicationContext)
-            return when (migrationState.state) {
-                MigrationStateStore.State.PENDING -> MainApplicationInitResult.MigrationInProgress
-                MigrationStateStore.State.PREPARING,
-                MigrationStateStore.State.REPLACING,
-                MigrationStateStore.State.FAILED,
-                MigrationStateStore.State.NEEDS_RECOVERY -> MainApplicationInitResult.MigrationNeedsRecovery
-                MigrationStateStore.State.IDLE,
-                MigrationStateStore.State.COMPLETED -> {
+            return when (
+                MigrationStatePolicy.mainInitializationAction(
+                    state = migrationState.state,
+                    processRestartRequired = RawSnapshotBackupManager.isProcessRestartRequired(),
+                    migrationRunningInProcess =
+                        RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()
+                )
+            ) {
+                MigrationStatePolicy.MainInitializationAction.MIGRATION_IN_PROGRESS ->
+                    MainApplicationInitResult.MigrationInProgress
+                MigrationStatePolicy.MainInitializationAction.SHOW_RECOVERY ->
+                    MainApplicationInitResult.MigrationNeedsRecovery
+                MigrationStatePolicy.MainInitializationAction.INITIALIZE -> {
                     initializeMainApplicationLocked()
                     mainApplicationInitialized = true
                     MainApplicationInitResult.Initialized
@@ -617,7 +620,14 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         configureOpenMpEnvironment()
         // 在基础上下文附加前应用语言设置
         try {
-            val code = LocaleUtils.getCurrentLanguage(base)
+            // The Application is attached before any Activity migration gate. Avoid opening the
+            // main DataStore while its directory is being imported or awaiting recovery.
+            val code =
+                if (MigrationStateStore.isMainDataAccessAllowed(base)) {
+                    LocaleUtils.getCurrentLanguage(base)
+                } else {
+                    LocaleUtils.LanguageCodes.AUTO
+                }
             val locale = LocaleUtils.getLocaleForLanguageCode(code, base)
             val config = Configuration(base.resources.configuration)
 

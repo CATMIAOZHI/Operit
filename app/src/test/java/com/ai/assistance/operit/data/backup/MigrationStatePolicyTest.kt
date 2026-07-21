@@ -100,4 +100,47 @@ class MigrationStatePolicyTest {
             )
         )
     }
+
+    @Test
+    fun servicesDoNotKillProcessOwnedMigrationAfterStoresClose() {
+        listOf(
+            MigrationStateStore.State.PREPARING,
+            MigrationStateStore.State.REPLACING
+        ).forEach { state ->
+            assertEquals(
+                state.name,
+                MigrationStatePolicy.MainInitializationAction.MIGRATION_IN_PROGRESS,
+                MigrationStatePolicy.mainInitializationAction(
+                    state = state,
+                    processRestartRequired = true,
+                    migrationRunningInProcess = true
+                )
+            )
+        }
+    }
+
+    @Test
+    fun restartRequirementBlocksMainDataAccessInEveryState() {
+        MigrationStateStore.State.entries.forEach { state ->
+            assertFalse(
+                state.name,
+                MigrationStatePolicy.isMainDataAccessAllowed(
+                    state = state,
+                    processRestartRequired = true
+                )
+            )
+        }
+    }
+
+    @Test
+    fun restartRequiredWithoutProcessOwnedMigrationRequiresRecovery() {
+        assertEquals(
+            MigrationStatePolicy.MainInitializationAction.SHOW_RECOVERY,
+            MigrationStatePolicy.mainInitializationAction(
+                state = MigrationStateStore.State.PREPARING,
+                processRestartRequired = true,
+                migrationRunningInProcess = false
+            )
+        )
+    }
 }

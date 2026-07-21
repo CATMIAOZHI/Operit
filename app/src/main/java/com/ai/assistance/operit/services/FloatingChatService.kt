@@ -207,10 +207,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         when (initResult) {
             OperitApplication.MainApplicationInitResult.Initialized -> { /* proceed */ }
             OperitApplication.MainApplicationInitResult.MigrationInProgress -> {
-                // A migration is pending or preparing but this process does not own it. The
-                // migration process (driven by MainActivity) must stay alive; killing this
-                // process via exitProcess would terminate the migration mid-run when Android
-                // restarts this sticky service in the same process. Just stop the service.
+                // This process may own the migration. Killing it when Android restores this
+                // sticky service would terminate the migration mid-run.
                 AppLogger.w(TAG, "Migration in progress, stopping service without killing process")
                 stopSelf()
                 return

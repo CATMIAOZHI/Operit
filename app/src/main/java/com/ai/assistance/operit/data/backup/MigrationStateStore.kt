@@ -111,8 +111,10 @@ object MigrationStateStore {
     }
 
     fun isMainDataAccessAllowed(context: Context): Boolean =
-        !RawSnapshotBackupManager.isProcessRestartRequired() &&
-            read(context).state.allowsMainDataAccess()
+        MigrationStatePolicy.isMainDataAccessAllowed(
+            state = read(context).state,
+            processRestartRequired = RawSnapshotBackupManager.isProcessRestartRequired()
+        )
 
     internal fun <T> withProcessStateLock(block: () -> T): T =
         synchronized(processStateLock, block)
@@ -190,6 +192,12 @@ object MigrationStateStore {
 }
 
 internal object MigrationStatePolicy {
+    enum class MainInitializationAction {
+        INITIALIZE,
+        MIGRATION_IN_PROGRESS,
+        SHOW_RECOVERY
+    }
+
     enum class StartupAction {
         INITIALIZE,
         RUN_PENDING,
@@ -202,6 +210,11 @@ internal object MigrationStatePolicy {
         state == MigrationStateStore.State.PENDING ||
             state == MigrationStateStore.State.PREPARING
 
+    fun isMainDataAccessAllowed(
+        state: MigrationStateStore.State,
+        processRestartRequired: Boolean
+    ): Boolean = !processRestartRequired && state.allowsMainDataAccess()
+
     fun stateAfterFailure(
         replacementStarted: Boolean,
         processRestartRequired: Boolean
@@ -210,6 +223,20 @@ internal object MigrationStatePolicy {
             replacementStarted -> MigrationStateStore.State.FAILED
             processRestartRequired -> MigrationStateStore.State.PREPARING
             else -> MigrationStateStore.State.IDLE
+        }
+
+    fun mainInitializationAction(
+        state: MigrationStateStore.State,
+        processRestartRequired: Boolean,
+        migrationRunningInProcess: Boolean
+    ): MainInitializationAction =
+        when {
+            migrationRunningInProcess -> MainInitializationAction.MIGRATION_IN_PROGRESS
+            processRestartRequired -> MainInitializationAction.SHOW_RECOVERY
+            state == MigrationStateStore.State.PENDING ->
+                MainInitializationAction.MIGRATION_IN_PROGRESS
+            state.allowsMainDataAccess() -> MainInitializationAction.INITIALIZE
+            else -> MainInitializationAction.SHOW_RECOVERY
         }
 
     fun startupAction(
