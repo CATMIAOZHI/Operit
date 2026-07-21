@@ -108,6 +108,12 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
 
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: false
+          cache-cleanup: on-success
+
       - name: Set up Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
@@ -234,11 +240,13 @@ jobs:
             echo "RELEASE_KEY_PASSWORD=$RELEASE_KEY_PASSWORD"
           } > local.properties
 
-      - name: Run Gradle build
+      - name: Run Gradle build and checks
         id: gradle-build
         env:
           DISPATCH_GRADLE_TASK: ${{ inputs.gradle_task }}
           EVENT_NAME: ${{ github.event_name }}
+          RUN_UNIT_TESTS: ${{ inputs.run_unit_tests }}
+          RUN_ANDROID_LINT: ${{ inputs.run_android_lint }}
         shell: bash
         run: |
           set -euo pipefail
@@ -247,8 +255,15 @@ jobs:
             workflow_dispatch) gradle_task="$DISPATCH_GRADLE_TASK" ;;
             *) echo "Unsupported workflow event: $EVENT_NAME" >&2; exit 2 ;;
           esac
+          tasks=("$gradle_task")
+          if [[ "$EVENT_NAME" == "push" || "$RUN_UNIT_TESTS" == "true" ]]; then
+            tasks+=(":app:testDebugUnitTest")
+          fi
+          if [[ "$EVENT_NAME" == "push" || "$RUN_ANDROID_LINT" == "true" ]]; then
+            tasks+=(":app:lintDebug")
+          fi
           chmod +x ./gradlew
-          ./gradlew "$gradle_task" --stacktrace --no-build-cache --no-daemon
+          ./gradlew "${tasks[@]}" --continue --stacktrace --no-daemon
 
       - name: Verify Android artifact signatures
         shell: bash
@@ -279,20 +294,6 @@ jobs:
                 ;;
             esac
           done
-
-      - name: Run JVM unit tests
-        if: >-
-          !cancelled() &&
-          steps.gradle-build.outcome == 'success' &&
-          (github.event_name == 'push' || inputs.run_unit_tests)
-        run: ./gradlew :app:testDebugUnitTest --stacktrace --no-build-cache --no-daemon
-
-      - name: Run Android lint
-        if: >-
-          !cancelled() &&
-          steps.gradle-build.outcome == 'success' &&
-          (github.event_name == 'push' || inputs.run_android_lint)
-        run: ./gradlew :app:lintDebug --stacktrace --no-build-cache --no-daemon
 
       - name: Upload Android reports
         if: always()
