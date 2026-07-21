@@ -5628,6 +5628,13 @@
     <string name="backup_official_operit_migration_confirm_message">将从以下原版 Operit 文件快照迁移数据：\n%1$s\n\n迁移会合并并覆盖同名的 Operit Ry 数据，且成功后不能再次执行。确认后应用会立即退出，并在下次启动时于安全模式下创建当前数据的安全快照、替换数据后再次重启。请选择你自己从原版 Operit 创建的快照；旧快照不含来源签名。Android Keystore 加密的数据可能需要重新配置。</string>
     <string name="backup_official_operit_migration_confirm_action">确认并重启迁移</string>
     <string name="backup_official_operit_migration_in_progress">正在从原版 Operit 迁移数据，请勿关闭应用...</string>
+    <string name="backup_official_operit_migration_recovery_title">迁移中断</string>
+    <string name="backup_official_operit_migration_recovery_message">上次从原版 Operit 迁移时被中断，应用数据可能处于部分替换的状态。为避免数据不一致，已阻止正常启动。\n\n迁移前已自动创建安全快照，请在“设置 → 备份与恢复 → 文件快照恢复”中手动恢复迁移前的安全快照，然后重启应用。</string>
+    <string name="backup_official_operit_migration_recovery_failed_hint">如果安全快照恢复后仍无法启动，请再次恢复或清除应用数据。</string>
+    <string name="backup_official_operit_migration_recovery_exit">退出应用</string>
+    <string name="backup_official_operit_migration_error_title">迁移准备失败</string>
+    <string name="backup_official_operit_migration_error_uri_permission">无法获取所选快照的长期读取权限。请重新选择快照文件后再试。</string>
+    <string name="backup_official_operit_migration_error_state_write">无法持久化迁移请求。存储空间可能不足，请检查后重试。</string>
 
     <string name="backup_chat_history">聊天记录</string>
     <string name="backup_chat_history_subtitle">跨格式备份、导出与恢复</string>

@@ -25,10 +25,15 @@ Provide a one-time, explicit migration path from an official Operit raw snapshot
 - Validate the selected archive before closing databases.
 - Preserve the existing merge-based raw snapshot semantics and restart requirement.
 - Record successful migration after imported shared preferences have been written.
-- Add focused package policy tests and user-facing migration documentation.
 - Run the migration in a dedicated cold-start phase, before WorkManager, foreground services,
   schedulers, repositories and DataStore writers start, so no background writer races with the
   safety snapshot or file replacement.
+- Persist migration state in `noBackupFilesDir` (outside raw snapshots) as a state machine
+  (IDLE -> PENDING -> PREPARING -> REPLACING -> COMPLETED | FAILED), so a crash during
+  PREPARING or REPLACING is detected on the next cold start and routes to a recovery surface
+  instead of initializing normally with partially-replaced data.
+- Enforce the migration gate inside `OperitApplication.initializeMainApplication()` so every
+  process entry point (Activity, Service, Receiver, Worker) respects it, not only MainActivity.
 
 ## Pull request
 

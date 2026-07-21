@@ -5191,6 +5191,13 @@
     <string name="backup_official_operit_migration_confirm_message">Data will be migrated from this official Operit file snapshot:\n%1$s\n\nMigration merges data and overwrites matching Operit Ry files. It cannot be run again after success. After confirmation the app exits immediately and, on the next launch, creates a safety snapshot of current data in a safe mode, replaces the data, then restarts again. Select a snapshot you created in official Operit; historical snapshots do not include an origin signature. Data protected by Android Keystore may need to be configured again.</string>
     <string name="backup_official_operit_migration_confirm_action">Confirm and restart to migrate</string>
     <string name="backup_official_operit_migration_in_progress">Migrating data from official Operit. Do not close the app...</string>
+    <string name="backup_official_operit_migration_recovery_title">Migration interrupted</string>
+    <string name="backup_official_operit_migration_recovery_message">The last official Operit migration was interrupted and app data may be partially replaced. Normal startup has been blocked to avoid data inconsistency.\n\nA safety snapshot was created before the migration started. Restore it manually under \"Settings → Backup & restore → Raw snapshot restore\", then restart the app.</string>
+    <string name="backup_official_operit_migration_recovery_failed_hint">If the app still cannot start after restoring the safety snapshot, restore it again or clear app data.</string>
+    <string name="backup_official_operit_migration_recovery_exit">Exit app</string>
+    <string name="backup_official_operit_migration_error_title">Migration preparation failed</string>
+    <string name="backup_official_operit_migration_error_uri_permission">Could not obtain persistent read permission for the selected snapshot. Please re-select the snapshot file and try again.</string>
+    <string name="backup_official_operit_migration_error_state_write">Could not persist the migration request. Storage may be full; please check and try again.</string>
 
     <string name="backup_chat_history">Chat History</string>
     <string name="backup_chat_history_subtitle">Cross-format backup, export and recovery</string>

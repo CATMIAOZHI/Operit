@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.system.exitProcess
 
 class FloatingChatService : Service(), FloatingWindowCallback {
     private val TAG = "FloatingChatService"
@@ -199,7 +200,16 @@ class FloatingChatService : Service(), FloatingWindowCallback {
 
     override fun onCreate() {
         super.onCreate()
-        (application as OperitApplication).initializeMainApplication()
+        // Global migration gate: if a migration is pending or was interrupted, do NOT initialize
+        // the application. Stop the service and exit the process so the next cold start routes
+        // through MainActivity, which drives the migration or recovery surface.
+        val initResult = (application as OperitApplication).initializeMainApplication()
+        if (initResult != OperitApplication.MainApplicationInitResult.Initialized) {
+            AppLogger.w(TAG, "Migration gate blocked initialization ($initResult), stopping service")
+            stopSelf()
+            exitProcess(0)
+            return
+        }
         AppLogger.d(TAG, "onCreate")
 
         instance = this

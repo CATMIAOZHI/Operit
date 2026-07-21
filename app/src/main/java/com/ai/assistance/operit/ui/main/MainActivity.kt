@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +69,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.ai.assistance.operit.data.mcp.MCPRepository
+import com.ai.assistance.operit.data.backup.MigrationStateStore
 import com.ai.assistance.operit.data.backup.RawSnapshotBackupManager
 import android.content.Intent
 import android.net.Uri
@@ -203,17 +205,41 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
         restoreRuntimeTaskViewVisibilityIfNeeded()
 
-        // Dedicated cold-start migration phase: if a pending official Operit migration was
-        // persisted by the settings screen, run it BEFORE initializeMainApplication() starts
-        // WorkManager, foreground services, schedulers, repositories and DataStore writers. At
-        // this point no background writer is running, so the pre-migration safety snapshot is
-        // consistent and file replacement cannot race with concurrent writes.
-        if (RawSnapshotBackupManager.isOfficialOperitMigrationPending(applicationContext)) {
-            runPendingOfficialOperitMigration()
-            return
+        // Dedicated cold-start migration phase: check the migration state machine BEFORE
+        // initializeMainApplication() starts WorkManager, foreground services, schedulers,
+        // repositories and DataStore writers. The state lives in noBackupFilesDir, which raw
+        // snapshots do not capture, so it survives crashes and is never included in safety
+        // snapshots.
+        val migrationSnapshot = RawSnapshotBackupManager.officialOperitMigrationState(applicationContext)
+        when (migrationSnapshot.state) {
+            MigrationStateStore.State.PENDING -> {
+                runPendingOfficialOperitMigration()
+                return
+            }
+            MigrationStateStore.State.PREPARING,
+            MigrationStateStore.State.REPLACING,
+            MigrationStateStore.State.FAILED -> {
+                // The migration was interrupted and the data directory may be partially
+                // replaced. Do NOT initialize normally; show the recovery surface so the user
+                // can restore from the pre-migration safety snapshot.
+                showMigrationRecoverySurface(migrationSnapshot.state)
+                return
+            }
+            MigrationStateStore.State.IDLE,
+            MigrationStateStore.State.COMPLETED -> {
+                // Normal path: initializeMainApplication also checks the state, but it returns
+                // Initialized for IDLE/COMPLETED. The redundant check is a defense-in-depth
+                // guarantee that services restored before the activity also respect the gate.
+            }
         }
 
-        (application as OperitApplication).initializeMainApplication()
+        val initResult = (application as OperitApplication).initializeMainApplication()
+        if (initResult != OperitApplication.MainApplicationInitResult.Initialized) {
+            // Should not happen here because we already handled non-IDLE/COMPLETED states above,
+            // but guard against a race where the state changed between our read and the call.
+            showMigrationRecoverySurface(MigrationStateStore.State.PREPARING)
+            return
+        }
 
         // 语言设置已在Application中初始化，这里无需重复
 
@@ -255,6 +281,12 @@ class MainActivity : ComponentActivity() {
      * thread, then exits the process so the next cold start enters normal mode. This runs BEFORE
      * [OperitApplication.initializeMainApplication], so WorkManager, foreground services,
      * schedulers, repositories and DataStore writers are not started yet.
+     *
+     * The migration state machine transitions PENDING -> PREPARING -> REPLACING -> COMPLETED (or
+     * FAILED), persisted to noBackupFilesDir. If the process crashes during PREPARING or
+     * REPLACING, the next cold start observes that state and [showMigrationRecoverySurface]
+     * guides the user to restore from the safety snapshot instead of initializing normally with
+     * partially-replaced data.
      */
     private fun runPendingOfficialOperitMigration() {
         // Show a minimal migration surface so the user sees something is happening instead of a
@@ -277,9 +309,24 @@ class MainActivity : ComponentActivity() {
                 AppLogger.e(TAG, "Official Operit migration failed: ${e.message}", e)
             }
 
-            // Exit the process so the next cold start enters normal mode. Whether the migration
-            // succeeded or failed, the pending flag has already been cleared by the manager.
+            // Exit the process so the next cold start observes the final state (COMPLETED or
+            // FAILED) and enters the appropriate mode.
             exitProcess(0)
+        }
+    }
+
+    /**
+     * Show the migration recovery surface when the migration was interrupted (PREPARING /
+     * REPLACING / FAILED). The data directory may be partially replaced, so the app MUST NOT
+     * initialize normally. The user is instructed to restore from the pre-migration safety
+     * snapshot, which is retained by the manager.
+     */
+    private fun showMigrationRecoverySurface(state: MigrationStateStore.State) {
+        AppLogger.w(TAG, "Migration was interrupted (state=$state), showing recovery surface")
+        setContent {
+            OperitTheme {
+                MigrationRecoveryScreen(state)
+            }
         }
     }
 
@@ -923,6 +970,42 @@ private fun MigrationInProgressScreen() {
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
+        }
+    }
+}
+
+@Composable
+private fun MigrationRecoveryScreen(state: MigrationStateStore.State) {
+    val context = LocalContext.current
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.padding(24.dp)
+        ) {
+            Text(
+                text = stringResource(id = R.string.backup_official_operit_migration_recovery_title),
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Text(
+                text = stringResource(id = R.string.backup_official_operit_migration_recovery_message),
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            if (state == MigrationStateStore.State.FAILED) {
+                Text(
+                    text = stringResource(id = R.string.backup_official_operit_migration_recovery_failed_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+            TextButton(onClick = { exitProcess(0) }) {
+                Text(stringResource(id = R.string.backup_official_operit_migration_recovery_exit))
+            }
         }
     }
 }

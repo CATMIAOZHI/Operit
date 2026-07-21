@@ -75,6 +75,7 @@ import com.ai.assistance.operit.data.backup.RoomDatabaseBackupManager
 import com.ai.assistance.operit.data.backup.RoomDatabaseBackupPreferences
 import com.ai.assistance.operit.data.backup.RoomDatabaseBackupScheduler
 import com.ai.assistance.operit.data.backup.RoomDatabaseRestoreManager
+import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
@@ -178,6 +179,7 @@ fun ChatBackupSettingsScreen() {
     }
     var pendingOfficialOperitMigrationUri by remember { mutableStateOf<Uri?>(null) }
     var showOfficialOperitMigrationConfirmDialog by remember { mutableStateOf(false) }
+    var officialOperitMigrationError by remember { mutableStateOf<String?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showMemoryImportStrategyDialog by remember { mutableStateOf(false) }
     var pendingMemoryImportUri by remember { mutableStateOf<Uri?>(null) }
@@ -1578,20 +1580,31 @@ fun ChatBackupSettingsScreen() {
                         pendingOfficialOperitMigrationUri = null
                         if (uri != null) {
                             // Persist the URI permission so it survives the process restart and
-                            // can be read during the dedicated cold-start migration phase.
+                            // can be read during the dedicated cold-start migration phase. If
+                            // this fails (e.g. the granting app revoked permission), do NOT
+                            // proceed: the cold-start migration would be unable to read the zip.
                             try {
                                 context.contentResolver.takePersistableUriPermission(
                                     uri,
                                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                                 )
-                            } catch (_: Exception) {
+                            } catch (e: Exception) {
+                                AppLogger.e("ChatBackupSettings", "takePersistableUriPermission failed", e)
+                                officialOperitMigrationError = context.getString(
+                                    R.string.backup_official_operit_migration_error_uri_permission
+                                )
+                                return@TextButton
                             }
-                            // Persist the pending migration request and exit the process. The
-                            // migration itself runs on the next cold start BEFORE
-                            // OperitApplication.initializeMainApplication() initializes WorkManager,
-                            // foreground services, schedulers and repositories, so no background
-                            // writer races with the safety snapshot or file replacement.
-                            RawSnapshotBackupManager.setPendingOfficialOperitMigration(context, uri)
+                            // Persist the pending migration request. If the state write fails,
+                            // do NOT exit the process: the cold start would not observe a
+                            // pending state and the migration would never run.
+                            val persisted = RawSnapshotBackupManager.setPendingOfficialOperitMigration(context, uri)
+                            if (!persisted) {
+                                officialOperitMigrationError = context.getString(
+                                    R.string.backup_official_operit_migration_error_state_write
+                                )
+                                return@TextButton
+                            }
                             officialOperitMigrationAvailable = false
                             restartApplication(context)
                         }
@@ -1607,6 +1620,19 @@ fun ChatBackupSettingsScreen() {
                         pendingOfficialOperitMigrationUri = null
                     }
                 ) {
+                    Text(stringResource(R.string.backup_raw_snapshot_restore_cancel_action))
+                }
+            }
+        )
+    }
+
+    officialOperitMigrationError?.let { errorMessage ->
+        AlertDialog(
+            onDismissRequest = { officialOperitMigrationError = null },
+            title = { Text(stringResource(R.string.backup_official_operit_migration_error_title)) },
+            text = { Text(errorMessage) },
+            confirmButton = {
+                TextButton(onClick = { officialOperitMigrationError = null }) {
                     Text(stringResource(R.string.backup_raw_snapshot_restore_cancel_action))
                 }
             }

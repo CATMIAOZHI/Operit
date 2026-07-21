@@ -20,13 +20,22 @@
   `OperitApplication.initializeMainApplication`, so WorkManager, foreground services,
   schedulers, repositories and DataStore writers are not started during the migration.
 - Confirmed the pending flag is cleared on both success and failure to avoid a restart loop.
-- Confirmed the pending flag is cleared in `prepareForReplacement` BEFORE the safety snapshot
-  is taken, so restoring the safety snapshot for rollback does not re-enter the migration path
-  and overwrite rolled-back data.
-- Confirmed `isOfficialOperitMigrationPending` detects the `completed=true + pending=true`
-  combination (process killed between the completion commit and any remaining state update),
-  clears the stale pending flag, and returns false, so `MainActivity` enters normal mode
-  instead of looping on the completion check.
+- Confirmed the migration state machine lives in `noBackupFilesDir`, which raw snapshots do NOT
+  capture, so the safety snapshot never contains migration state and a rollback enters normal
+  mode (IDLE) instead of re-entering the migration path.
+- Confirmed state transitions are atomic (temp file + rename) and strictly forward
+  (IDLE -> PENDING -> PREPARING -> REPLACING -> COMPLETED | FAILED), so a crash mid-write
+  leaves either the previous or the new state.
+- Confirmed a crash during PREPARING or REPLACING is detected on the next cold start and
+  routes to the recovery surface instead of initializing normally with partially-replaced data.
+- Confirmed the migration gate is enforced inside `OperitApplication.initializeMainApplication`,
+  so every process entry point (MainActivity, AIForegroundService, FloatingChatService) respects
+  it, not only MainActivity. Sticky services restored by Android before the activity is created
+  will stop and exit instead of starting background writers.
+- Confirmed `takePersistableUriPermission` failures are surfaced to the user and the process is
+  not exited, so the cold start would not observe a pending state it cannot read.
+- Confirmed `setPendingOfficialOperitMigration` returns false on write failure and the caller
+  surfaces an error instead of exiting the process.
 - Confirmed the migration coroutine uses `GlobalScope + Dispatchers.IO + NonCancellable` so the
   migration completes even if the activity is destroyed (config change, user backing out),
   and the pending-flag clearing paths cannot be interrupted by cancellation.

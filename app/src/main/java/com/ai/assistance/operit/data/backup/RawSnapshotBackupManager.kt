@@ -37,11 +37,6 @@ object RawSnapshotBackupManager {
 
     private const val ZIP_PREFIX = "operit_raw_snapshot_"
 
-    private const val MIGRATION_PREFERENCES = "operit_ry_official_migration"
-    private const val MIGRATION_COMPLETED = "completed"
-    private const val MIGRATION_PENDING = "pending"
-    private const val MIGRATION_PENDING_URI = "pending_uri"
-
     private const val ENTRY_MANIFEST = "manifest.json"
     private const val ENTRY_PAYLOAD_PREFIX = "payload/"
 
@@ -280,29 +275,14 @@ object RawSnapshotBackupManager {
     }
 
     fun isOfficialOperitMigrationCompleted(context: Context): Boolean =
-        context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
-            .getBoolean(MIGRATION_COMPLETED, false)
+        MigrationStateStore.read(context).state == MigrationStateStore.State.COMPLETED
 
     fun isOfficialOperitMigrationAvailable(context: Context): Boolean =
         context.packageName == RawSnapshotPackagePolicy.OPERIT_RY_PACKAGE &&
-            !isOfficialOperitMigrationCompleted(context) &&
-            !isOfficialOperitMigrationPending(context)
+            MigrationStateStore.read(context).state == MigrationStateStore.State.IDLE
 
-    fun isOfficialOperitMigrationPending(context: Context): Boolean {
-        val prefs = context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
-        if (!prefs.getBoolean(MIGRATION_PENDING, false)) return false
-        // If the migration already completed but the pending flag is still set, the process was
-        // killed between markOfficialMigrationCompleted (commit #1) and the pending clear
-        // (commit #2). In the previous design this was a permanent boot loop: MainActivity would
-        // keep entering the migration path, runPendingOfficialOperitMigration would throw on
-        // the completion check, and the activity would exit on every launch. Clear the stale
-        // pending flag and report "not pending" so the app enters normal mode.
-        if (prefs.getBoolean(MIGRATION_COMPLETED, false)) {
-            prefs.edit().remove(MIGRATION_PENDING).remove(MIGRATION_PENDING_URI).commit()
-            return false
-        }
-        return true
-    }
+    fun isOfficialOperitMigrationPending(context: Context): Boolean =
+        MigrationStateStore.read(context).state == MigrationStateStore.State.PENDING
 
     /**
      * Persist a pending official Operit migration URI so the migration can run in a dedicated
@@ -310,36 +290,31 @@ object RawSnapshotBackupManager {
      * initializes WorkManager, foreground services, schedulers, repositories and DataStore writers.
      *
      * The caller must already hold a persistable read URI permission for [uri]. After persisting,
-     * the caller should exit the process so the next cold start observes the pending flag.
+     * the caller should exit the process so the next cold start observes the pending state.
+     *
+     * Returns true on success, false on failure. Callers MUST check the return value and surface
+     * an error to the user instead of exiting the process.
      */
-    fun setPendingOfficialOperitMigration(context: Context, uri: Uri) {
+    fun setPendingOfficialOperitMigration(context: Context, uri: Uri): Boolean {
         check(context.packageName == RawSnapshotPackagePolicy.OPERIT_RY_PACKAGE) {
             "Official Operit migration is only available in Operit Ry"
         }
-        check(!isOfficialOperitMigrationCompleted(context)) {
-            "Official Operit migration has already completed"
+        check(MigrationStateStore.read(context).state == MigrationStateStore.State.IDLE) {
+            "Official Operit migration is not idle"
         }
-        context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(MIGRATION_PENDING, true)
-            .putString(MIGRATION_PENDING_URI, uri.toString())
-            .commit()
+        return MigrationStateStore.write(context, MigrationStateStore.State.PENDING, uri)
     }
 
-    fun clearPendingOfficialOperitMigration(context: Context) {
-        context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
-            .edit()
-            .remove(MIGRATION_PENDING)
-            .remove(MIGRATION_PENDING_URI)
-            .commit()
-    }
-
-    private fun pendingOfficialOperitMigrationUri(context: Context): Uri? {
-        val prefs = context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
-        if (!prefs.getBoolean(MIGRATION_PENDING, false)) return null
-        val uriString = prefs.getString(MIGRATION_PENDING_URI, null) ?: return null
-        return runCatching { Uri.parse(uriString) }.getOrNull()
-    }
+    /**
+     * Read the current migration state. Any process entry point (Activity, Service, Receiver,
+     * Worker) MUST call this before initializing the application. PENDING must run or resume the
+     * migration. PREPARING / REPLACING / FAILED mean the data directory may be partially
+     * replaced and the app MUST NOT initialize normally; it must enter the dedicated recovery
+     * surface so the user can restore from the safety snapshot. COMPLETED means the migration
+     * succeeded and the entry point can initialize normally.
+     */
+    fun officialOperitMigrationState(context: Context): MigrationStateStore.Snapshot =
+        MigrationStateStore.read(context)
 
     fun isProcessRestartRequired(): Boolean = processRestartRequired
 
@@ -354,7 +329,6 @@ object RawSnapshotBackupManager {
                 context = context,
                 uri = uri,
                 expectedPackageName = context.packageName,
-                markOfficialMigrationCompleted = false,
                 prepareForReplacement = {
                     AppDatabase.closeDatabase()
                     ObjectBoxManager.closeAll()
@@ -373,12 +347,21 @@ object RawSnapshotBackupManager {
      * not running. At this point no background writer has been started, so the safety snapshot is
      * consistent and file replacement is not racing with concurrent writes.
      *
-     * On success, the pending flag is cleared, the completion flag is committed, and the caller
-     * should exit the process and let the next cold start enter normal mode.
+     * State transitions (persisted to noBackupFilesDir, outside raw snapshots):
      *
-     * On failure, the pending flag is cleared to avoid a restart loop; the pre-migration safety
-     * snapshot is retained so the user can recover manually. The caller should still exit the
-     * process so the next cold start enters normal mode without the pending migration.
+     * PENDING -> PREPARING (before reading/extracting the zip)
+     * PREPARING -> REPLACING (inside prepareForReplacement, before any directory is replaced)
+     * REPLACING -> COMPLETED (after all directories are replaced and the completion marker is written)
+     * PREPARING/REPLACING -> FAILED (on any exception)
+     *
+     * If the process crashes during PREPARING or REPLACING, the next cold start observes that
+     * state and enters the dedicated recovery surface instead of initializing normally, because
+     * the data directory may be partially replaced. The pre-migration safety snapshot is retained
+     * so the user can recover manually.
+     *
+     * The migration state lives in noBackupFilesDir, which raw snapshots do NOT capture, so the
+     * safety snapshot never contains migration state. A later restore of the safety snapshot for
+     * rollback enters normal mode (IDLE) instead of re-entering the migration path.
      *
      * Returns the safety backup file on success. Throws on failure.
      */
@@ -390,11 +373,17 @@ object RawSnapshotBackupManager {
             check(context.packageName == RawSnapshotPackagePolicy.OPERIT_RY_PACKAGE) {
                 "Official Operit migration is only available in Operit Ry"
             }
-            check(!isOfficialOperitMigrationCompleted(context)) {
-                "Official Operit migration has already completed"
+            val snapshot = MigrationStateStore.read(context)
+            check(snapshot.state == MigrationStateStore.State.PENDING) {
+                "Official Operit migration is not pending (state=${snapshot.state})"
             }
-            val uri = pendingOfficialOperitMigrationUri(context)
+            val uri = snapshot.uri
                 ?: throw IllegalStateException("No pending official Operit migration URI")
+
+            // Transition to PREPARING before any work. If the process dies after this point, the
+            // next cold start observes PREPARING and enters the recovery surface instead of
+            // initializing normally with partially-replaced data.
+            MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.PREPARING, uri)
 
             lateinit var safetyBackup: File
             try {
@@ -402,26 +391,24 @@ object RawSnapshotBackupManager {
                     context = context,
                     uri = uri,
                     expectedPackageName = RawSnapshotPackagePolicy.OFFICIAL_OPERIT_PACKAGE,
-                    markOfficialMigrationCompleted = true,
                     prepareForReplacement = {
+                        // Transition to REPLACING before closing databases and taking the safety
+                        // snapshot. If the process dies during directory replacement, the next
+                        // cold start observes REPLACING and enters the recovery surface.
+                        MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.REPLACING, uri)
                         // In the dedicated cold-start phase no background writer is running yet,
                         // so a Room checkpoint is safe and the safety snapshot is consistent.
                         checkpointRoomDatabase(context)
                         processRestartRequired = true
                         AppDatabase.closeDatabase()
                         ObjectBoxManager.closeAll()
-                        // Clear the pending state BEFORE taking the safety snapshot. Otherwise the
-                        // safety snapshot (which captures shared_prefs) would contain pending=true
-                        // and the source URI. A later restore of this safety snapshot for rollback
-                        // would re-enter the cold-start migration path and overwrite the rolled-
-                        // back data. The completion flag is committed only after replacement
-                        // succeeds, so at this point neither pending nor completed is set, and a
-                        // rollback restores the pre-migration state cleanly.
-                        clearPendingOfficialOperitMigration(context)
                         // Safety snapshot must preserve terminal data because legacy v1 manifests
                         // default to includeTerminalData=true and migration may overwrite
                         // usr/tmp/bin. Without this, a failed migration or manual rollback could
                         // not restore pre-migration terminal data from the safety snapshot.
+                        // The migration state is in noBackupFilesDir, which raw snapshots do NOT
+                        // capture, so the safety snapshot never contains migration state and a
+                        // rollback enters normal mode (IDLE) instead of re-entering the migration.
                         safetyBackup = exportToBackupDirLocked(
                             context = context,
                             options = SnapshotOptions(includeTerminalData = true),
@@ -432,18 +419,17 @@ object RawSnapshotBackupManager {
                     onProgress = onProgress
                 )
             } catch (e: Exception) {
-                // The pending flag was already cleared in prepareForReplacement before the
-                // safety snapshot was taken, so a rollback from the safety snapshot will not
-                // re-enter the migration path. If the failure happened before
-                // prepareForReplacement ran (e.g. invalid zip, package mismatch), clear the
-                // pending flag here so the next cold start enters normal mode instead of
-                // retrying the migration and looping. The safety snapshot (if created) is kept.
-                clearPendingOfficialOperitMigration(context)
+                // Record FAILED so the next cold start enters the recovery surface instead of
+                // initializing normally with potentially-partially-replaced data. The safety
+                // snapshot (if created) is retained so the user can recover manually.
+                MigrationStateStore.write(context, MigrationStateStore.State.FAILED, uri)
                 throw e
             }
-            // Success: the pending flag was already cleared in prepareForReplacement, and the
-            // completion flag was committed inside restoreFromBackupUriLocked via
-            // markOfficialMigrationCompleted. No further state update is needed.
+            // Success: transition to COMPLETED. The state file is in noBackupFilesDir, which is
+            // not captured by raw snapshots, so a future restore of any snapshot taken after this
+            // point will observe COMPLETED (or IDLE if the user manually clears state) and enter
+            // normal mode.
+            MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.COMPLETED)
             safetyBackup
         }
     }
@@ -452,7 +438,6 @@ object RawSnapshotBackupManager {
         context: Context,
         uri: Uri,
         expectedPackageName: String,
-        markOfficialMigrationCompleted: Boolean,
         prepareForReplacement: suspend () -> Unit,
         onProgress: ((RestoreProgress) -> Unit)?
     ) {
@@ -515,14 +500,6 @@ object RawSnapshotBackupManager {
                     replaceDirContents(File(payloadDir, "datastore"), File(context.dataDir, "datastore"))
                     withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_DATABASES) }
                     replaceDirContents(File(payloadDir, "databases"), File(context.dataDir, "databases"))
-
-                    if (markOfficialMigrationCompleted) {
-                        val recorded = context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
-                            .edit()
-                            .putBoolean(MIGRATION_COMPLETED, true)
-                            .commit()
-                        check(recorded) { "Failed to record official Operit migration completion" }
-                    }
 
                     withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.FINALIZING) }
                 }

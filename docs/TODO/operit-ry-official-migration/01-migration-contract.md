@@ -10,27 +10,36 @@ Payload files are merged into the corresponding Operit Ry private directories us
 
 ## Safety
 
-The source archive is extracted and its manifest is validated before any live data is changed. Operit Ry then checkpoints Room, closes Room and ObjectBox, and creates a current-package raw snapshot (including terminal data) before writing migrated data. A successful migration records a private completion marker and exits the process so the next cold start enters normal mode.
+The source archive is extracted and its manifest is validated before any live data is changed. Operit Ry then checkpoints Room, closes Room and ObjectBox, and creates a current-package raw snapshot (including terminal data) before writing migrated data. A successful migration records the COMPLETED state and exits the process so the next cold start enters normal mode.
 
-The migration runs in a dedicated cold-start phase, before `OperitApplication.initializeMainApplication` initializes WorkManager, foreground services, schedulers, repositories and DataStore writers. This guarantees no background writer races with the safety snapshot or file replacement.
+The migration runs in a dedicated cold-start phase, before `OperitApplication.initializeMainApplication` initializes WorkManager, foreground services, schedulers, repositories and DataStore writers. The migration gate is enforced inside `initializeMainApplication` itself, so every process entry point (Activity, Service, Receiver, Worker) respects it, not only `MainActivity`. This prevents a sticky service restored by Android from starting background writers before the migration completes.
 
-Once live stores close, the operation cannot be cancelled. Other snapshot operations are rejected until the mandatory restart. If writing migrated data fails, Operit Ry clears the pending flag (to avoid a restart loop), retains the pre-migration safety snapshot, and exits the process so the next cold start enters normal mode; the user can recover manually from the safety snapshot. The pending flag is also cleared before the safety snapshot is taken, so restoring the safety snapshot for rollback does not re-trigger the migration.
+Once live stores close, the operation cannot be cancelled. Other snapshot operations are rejected until the mandatory restart. If writing migrated data fails, Operit Ry records the FAILED state, retains the pre-migration safety snapshot, and exits the process; the next cold start observes FAILED and routes to the recovery surface instead of initializing normally. The user can recover manually from the safety snapshot.
 
 Android Keystore keys do not migrate between package identities. Data encrypted with installation-bound keys can require reconfiguration after restart.
 
 Historical raw snapshots are unsigned. Package validation provides format isolation, not proof of origin, so users must select a snapshot they created in official Operit.
 
-## Pending state
+## Migration state machine
 
-The settings screen persists a pending migration request (`pending=true`, `pending_uri=<SAF URI>`) to a private `SharedPreferences` and exits the process. On the next cold start, `MainActivity.onCreate` checks the pending flag before calling `initializeMainApplication`. If pending, it runs the migration in a background coroutine (showing a minimal progress surface), then exits the process regardless of outcome.
+The migration state is persisted in `Context.noBackupFilesDir` (`<dataDir>/no_backup`), which raw snapshots do NOT capture (they only include `files/`, `external_files/`, `shared_prefs/`, `datastore/` and `databases/`). This guarantees the pre-migration safety snapshot never contains migration state, so restoring it for rollback enters normal mode (IDLE) instead of re-entering the migration path.
 
-The manager clears the pending flag in two places:
+States transition strictly forward:
 
-1. **Before the safety snapshot** (`prepareForReplacement`): so the safety snapshot does not capture `pending=true` / `pending_uri`. A later restore of the safety snapshot for rollback will not re-enter the migration path and overwrite the rolled-back data.
-2. **On failure before `prepareForReplacement`**: so a failure during zip reading, manifest validation or package mismatch (before the safety snapshot is taken) still clears the pending flag, avoiding a restart loop.
+```
+IDLE -> PENDING -> PREPARING -> REPLACING -> COMPLETED
+                                         -> FAILED
+```
 
-On success, the completion flag is committed inside the replacement phase (single `SharedPreferences.commit`). The pending flag has already been cleared in step 1, so there is no two-commit window between "completed" and "pending clear".
+- **IDLE**: no migration requested. The settings screen shows the migration action (in Operit Ry only).
+- **PENDING**: the settings screen has persisted the source URI and exited the process. The next cold start observes PENDING and runs the migration.
+- **PREPARING**: the migration has started and is reading/extracting/validating the zip. If the process crashes here, the data directory is untouched and the next cold start routes to the recovery surface (the user can retry by clearing state to IDLE).
+- **REPLACING**: databases are closed, the safety snapshot has been taken, and directory replacement is in progress. If the process crashes here, the data directory may be partially replaced and the next cold start MUST NOT initialize normally; it routes to the recovery surface so the user can restore from the safety snapshot.
+- **COMPLETED**: all directories replaced successfully. The next cold start enters normal mode and the migration action is hidden.
+- **FAILED**: the migration threw an exception (after PREPARING or REPLACING). The next cold start routes to the recovery surface.
 
-If the process is killed between the completion commit and any remaining state update, a stale `pending=true` may coexist with `completed=true`. `isOfficialOperitMigrationPending` detects this combination, clears the stale pending flag, and reports "not pending", so `MainActivity` enters normal mode instead of looping on the completion check.
+State writes are atomic (temp file + rename), so a crash mid-write leaves either the previous or the new state, never a truncated hybrid.
+
+The settings screen only transitions IDLE -> PENDING after both `takePersistableUriPermission` and the state write succeed. If either fails, the error is surfaced to the user and the process is not exited.
 
 [DONE]

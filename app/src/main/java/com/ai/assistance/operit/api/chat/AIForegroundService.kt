@@ -925,7 +925,18 @@ class AIForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning.set(true)
-        (application as OperitApplication).initializeMainApplication()
+        // Global migration gate: if a migration is pending or was interrupted, do NOT initialize
+        // the application (WorkManager, DataStore, repositories, background coroutines). Stop the
+        // service and exit the process so the next cold start routes through MainActivity, which
+        // drives the migration or recovery surface. This prevents a sticky service restored by
+        // Android from starting background writers before the migration completes.
+        val initResult = (application as OperitApplication).initializeMainApplication()
+        if (initResult != OperitApplication.MainApplicationInitResult.Initialized) {
+            AppLogger.w(TAG, "Migration gate blocked initialization ($initResult), stopping service")
+            stopSelf()
+            exitProcess(0)
+            return
+        }
         wakeListeningSuspendedForIme = lastRequestedImeVisible
         AppLogger.d(TAG, "AI 前台服务创建。")
         chatRuntimeHolder

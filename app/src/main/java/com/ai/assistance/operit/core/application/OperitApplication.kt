@@ -34,6 +34,8 @@ import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.system.AndroidShellExecutor
 import com.ai.assistance.operit.core.tools.system.Terminal
 import com.ai.assistance.operit.core.workflow.WorkflowSchedulerInitializer
+import com.ai.assistance.operit.data.backup.MigrationStateStore
+import com.ai.assistance.operit.data.backup.RawSnapshotBackupManager
 import com.ai.assistance.operit.data.backup.RoomDatabaseBackupPreferences
 import com.ai.assistance.operit.data.backup.RoomDatabaseBackupScheduler
 import com.ai.assistance.operit.data.db.AppDatabase
@@ -137,13 +139,48 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         globalImageLoader = ImageLoader.Builder(this).build()
     }
 
-    fun initializeMainApplication() {
+    /**
+     * Result of [initializeMainApplication].
+     *
+     * - [Initialized]: the application was initialized normally and the caller can proceed.
+     * - [MigrationInProgress]: a pending official Operit migration was observed. The caller MUST
+     *   NOT proceed with normal initialization. Activities should route to the migration surface;
+     *   services should stop themselves and exit the process so the migration can run from the
+     *   activity entry point.
+     * - [MigrationNeedsRecovery]: the migration was interrupted (PREPARING / REPLACING / FAILED)
+     *   and the data directory may be partially replaced. The caller MUST NOT initialize
+     *   normally. Activities should route to the recovery surface; services should stop
+     *   themselves and exit the process.
+     */
+    enum class MainApplicationInitResult {
+        Initialized,
+        MigrationInProgress,
+        MigrationNeedsRecovery
+    }
+
+    fun initializeMainApplication(): MainApplicationInitResult {
         synchronized(mainInitializationLock) {
             if (mainApplicationInitialized) {
-                return
+                return MainApplicationInitResult.Initialized
             }
-            initializeMainApplicationLocked()
-            mainApplicationInitialized = true
+            // Global migration gate: any process entry point (Activity, Service, Receiver,
+            // Worker) that calls initializeMainApplication must respect the migration state.
+            // This guarantees that even if Android restores a sticky Service before creating
+            // MainActivity, WorkManager, DataStore, repositories and background coroutines are
+            // not started before the migration completes or recovery is entered.
+            val migrationState = RawSnapshotBackupManager.officialOperitMigrationState(applicationContext)
+            return when (migrationState.state) {
+                MigrationStateStore.State.PENDING -> MainApplicationInitResult.MigrationInProgress
+                MigrationStateStore.State.PREPARING,
+                MigrationStateStore.State.REPLACING,
+                MigrationStateStore.State.FAILED -> MainApplicationInitResult.MigrationNeedsRecovery
+                MigrationStateStore.State.IDLE,
+                MigrationStateStore.State.COMPLETED -> {
+                    initializeMainApplicationLocked()
+                    mainApplicationInitialized = true
+                    MainApplicationInitResult.Initialized
+                }
+            }
         }
     }
 
