@@ -19,6 +19,7 @@
 - 完整 Android 构建需要 README/编译指南列出的 `models.zip`、`subpack.zip`、`jniLibs.zip` 和 `libs.zip` 内容；这些本地依赖不得提交。
 - 根据改动范围主动运行最小充分验证。Kotlin 改动优先运行 `./gradlew :app:compileDebugKotlin` 和相关 `:app:testDebugUnitTest`；资源或构建输入改动再运行 lint/assemble。
 - Web Chat、ToolPkg 和仓库检查命令以 `docs/doc-src/dev-core/CONTRIBUTING.md` 与 `ci/README.md` 为准。
+- 等待 GitHub Actions workflow 时使用至少 60 秒的轮询间隔（例如 `gh run watch <run-id> --interval 60`），避免高频状态输出浪费上下文。
 - 构建可能触碰 ObjectBox 模型或占位文件。提交前检查 `git status` 和 diff，不提交无内容的行尾变化或无关生成物。
 - 无法运行验证时，说明缺失的 SDK、依赖或环境条件，不得把“未运行”描述为“通过”。
 
