@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Bundle
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.data.repository.WorkflowRepository
+import com.ai.assistance.operit.core.application.OperitApplication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -38,6 +39,7 @@ class WorkflowTaskerReceiver : BroadcastReceiver() {
         if (action.isNullOrBlank()) {
             return
         }
+        if (!OperitApplication.isMainDataAccessAllowed(context)) return
 
         AppLogger.d(TAG, "Received workflow trigger broadcast for action: $action. Checking for matching workflows.")
 
@@ -74,6 +76,7 @@ class WorkflowBootReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) {
             return
         }
+        if (!OperitApplication.isMainDataAccessAllowed(context)) return
 
         AppLogger.d(TAG, "Device booted, rescheduling workflows")
 

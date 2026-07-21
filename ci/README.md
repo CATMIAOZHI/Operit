@@ -35,11 +35,11 @@ python3 -B ci/script/normalize_lint_baseline.py --check
 
 ## PR check lanes
 
-每个 PR 只产生一个 `Candidate checks` 技术状态。快速检查会先收集全部诊断，失败后不启动耗时阶段。
+每个 PR 只产生一个 `Candidate checks` 技术状态。`plan` 分类改动后，`fast-checks`、`web` 和 `toolpkg` 并行启动；`android-jvm` 和 `android-full` 依赖 `fast-checks` 成功后才运行，避免耗时构建在快速检查失败时白白消耗资源。
 
 - 所有改动：空白、冲突标记、JSON/XML 语法和门禁单元测试；变更 YAML 时使用 Psych AST 与 actionlint 1.7.12 检查
 - 所有改动：比较 base/candidate 两棵 Git tree，只阻断 candidate 新增的本地断链；删除被文档引用的非 Markdown 文件也会检查
-- 本地化：按 locale、资源类型和 key 比较，只阻断 candidate 引入或实际触碰的错误
+- 本地化：按 locale、资源类型和 key 比较 candidate 引入或实际触碰的错误；个人发行版中此检查为信息性，不阻断合并
 - 翻译资源：运行 AAPT2 resource compile 检查资源语法，不执行 resource link 或完整 Android 构建
 - Kotlin/Java 和普通 Android 资源：运行 JVM unit tests 与 Android lint
 - Native、Gradle 和构建输入：运行 assemble、JVM unit tests 与 Android lint

@@ -13,6 +13,7 @@ import android.provider.DocumentsProvider
 import android.util.Base64
 import android.util.Log
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.backup.MigrationStateStore
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.model.Memory
 import com.ai.assistance.operit.data.model.MemorySpace
@@ -66,6 +67,18 @@ class MemoryDocumentsProvider : DocumentsProvider() {
         return context ?: throw IllegalStateException("Context is null")
     }
 
+    private fun requireMainDataAccess() {
+        check(MigrationStateStore.isMainDataAccessAllowed(requireProviderContext())) {
+            "Memory documents are unavailable during migration"
+        }
+    }
+
+    private fun <T> withMainDataMutation(block: () -> T): T =
+        MigrationStateStore.withProcessStateLock {
+            requireMainDataAccess()
+            block()
+        }
+
     override fun attachInfo(context: Context?, info: ProviderInfo?) {
         Log.d(
             TAG,
@@ -77,6 +90,9 @@ class MemoryDocumentsProvider : DocumentsProvider() {
     override fun onCreate(): Boolean {
         return try {
             val context = context ?: return false
+            if (!MigrationStateStore.isMainDataAccessAllowed(context)) {
+                return true
+            }
             AppLogger.bindContext(context)
             Log.d(TAG, "onCreate package=${context.packageName}")
             AppLogger.d(TAG, "MemoryDocumentsProvider initialized for ${context.packageName}")
@@ -92,7 +108,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
         sourceDocumentId: String,
         sourceParentDocumentId: String,
         targetParentDocumentId: String
-    ): String? {
+    ): String? = withMainDataMutation {
         Log.d(
             TAG,
             "moveDocument source=$sourceDocumentId sourceParent=$sourceParentDocumentId targetParent=$targetParentDocumentId"
@@ -102,7 +118,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
             "moveDocument source=$sourceDocumentId sourceParent=$sourceParentDocumentId targetParent=$targetParentDocumentId"
         )
 
-        return try {
+        try {
             val source = parseDocumentId(sourceDocumentId)
             val targetParent = parseDocumentId(targetParentDocumentId)
 
@@ -185,7 +201,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
                     }
 
                     if (newPath == source.path) {
-                        return sourceDocumentId
+                        return@withMainDataMutation sourceDocumentId
                     }
 
                     val repo = getRepository(sourceProfileId)
@@ -218,6 +234,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
     }
 
     override fun queryRoots(projection: Array<out String>?): Cursor {
+        requireMainDataAccess()
         Log.d(TAG, "queryRoots projection=${projection?.joinToString()}")
         val result = MatrixCursor(projection ?: DEFAULT_ROOT_PROJECTION)
 
@@ -239,6 +256,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
     }
 
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor {
+        requireMainDataAccess()
         Log.d(TAG, "queryDocument documentId=$documentId projection=${projection?.joinToString()}")
         val result = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION)
         includeDocument(result, documentId)
@@ -250,6 +268,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
         projection: Array<out String>?,
         sortOrder: String?
     ): Cursor {
+        requireMainDataAccess()
         Log.d(
             TAG,
             "queryChildDocuments parent=$parentDocumentId projection=${projection?.joinToString()} sortOrder=$sortOrder"
@@ -331,6 +350,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
         mode: String,
         signal: CancellationSignal?
     ): ParcelFileDescriptor {
+        requireMainDataAccess()
         Log.d(TAG, "openDocument documentId=$documentId mode=$mode")
         AppLogger.d(TAG, "openDocument documentId=$documentId mode=$mode")
         val ref = parseDocumentId(documentId)
@@ -378,10 +398,14 @@ class MemoryDocumentsProvider : DocumentsProvider() {
                 AppLogger.d(TAG, "openDocument(write) onClose uuid=${ref.uuid} tempPath=$tempPath")
                 writeBackExecutor.execute {
                     try {
-                        AppLogger.d(TAG, "writeBack start uuid=${ref.uuid}")
-                        val writtenText = File(tempPath).readText(StandardCharsets.UTF_8)
-                        applyWrittenContentToMemory(repo, ref.uuid, writtenText)
-                        AppLogger.d(TAG, "writeBack done uuid=${ref.uuid} chars=${writtenText.length}")
+                        MigrationStateStore.withProcessStateLock {
+                            if (MigrationStateStore.isMainDataAccessAllowed(context)) {
+                                AppLogger.d(TAG, "writeBack start uuid=${ref.uuid}")
+                                val writtenText = File(tempPath).readText(StandardCharsets.UTF_8)
+                                applyWrittenContentToMemory(repo, ref.uuid, writtenText)
+                                AppLogger.d(TAG, "writeBack done uuid=${ref.uuid} chars=${writtenText.length}")
+                            }
+                        }
                     } catch (e: Exception) {
                         AppLogger.e(TAG, "Failed to apply written content for ${ref.uuid}", e)
                     } finally {
@@ -395,7 +419,8 @@ class MemoryDocumentsProvider : DocumentsProvider() {
         }
     }
 
-    override fun createDocument(parentDocumentId: String, mimeType: String, displayName: String): String? {
+    override fun createDocument(parentDocumentId: String, mimeType: String, displayName: String): String? =
+        withMainDataMutation {
         AppLogger.d(TAG, "createDocument parent=$parentDocumentId mimeType=$mimeType displayName=$displayName")
         val parent = parseDocumentId(parentDocumentId)
         if (parent is DocRef.Memory) {
@@ -425,7 +450,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
             throw IllegalArgumentException("displayName contains ':': $displayName")
         }
 
-        return if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+        if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
             val newFolderPath = when (parent) {
                 is DocRef.Profile -> cleanName
                 is DocRef.Directory -> parent.path + "/" + cleanName
@@ -464,7 +489,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
         }
     }
 
-    override fun deleteDocument(documentId: String) {
+    override fun deleteDocument(documentId: String) = withMainDataMutation {
         AppLogger.d(TAG, "deleteDocument documentId=$documentId")
         when (val ref = parseDocumentId(documentId)) {
             is DocRef.Root -> throw IllegalArgumentException("Cannot delete root")
@@ -491,7 +516,8 @@ class MemoryDocumentsProvider : DocumentsProvider() {
         }
     }
 
-    override fun renameDocument(documentId: String, displayName: String): String? {
+    override fun renameDocument(documentId: String, displayName: String): String? =
+        withMainDataMutation {
         AppLogger.d(TAG, "renameDocument documentId=$documentId displayName=$displayName")
         val prefs = UserPreferencesManager.getInstance(context ?: throw IllegalStateException("Context is null"))
         val cleanName = displayName.trim().trim('/').trim()
@@ -505,7 +531,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
             throw IllegalArgumentException("displayName contains ':': $displayName")
         }
 
-        return when (val ref = parseDocumentId(documentId)) {
+        when (val ref = parseDocumentId(documentId)) {
             is DocRef.Root -> throw IllegalArgumentException("Cannot rename root")
 
             is DocRef.Profile -> {
@@ -563,6 +589,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
     }
 
     override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
+        requireMainDataAccess()
         Log.d(TAG, "isChildDocument parent=$parentDocumentId doc=$documentId")
         val parent = try {
             parseDocumentId(parentDocumentId)

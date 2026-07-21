@@ -3,10 +3,13 @@ package com.ai.assistance.operit.provider
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.data.backup.MigrationStateStore
 import android.webkit.MimeTypeMap
 import java.io.File
 import java.io.FileNotFoundException
@@ -50,18 +53,33 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
     }
     
     private lateinit var workspaceRoot: File
+
+    private fun requireMainDataAccess() {
+        val providerContext = context ?: throw IllegalStateException("Context is null")
+        check(MigrationStateStore.isMainDataAccessAllowed(providerContext)) {
+            "Workspace documents are unavailable during migration"
+        }
+    }
+
+    private fun <T> withMainDataMutation(block: () -> T): T =
+        MigrationStateStore.withProcessStateLock {
+            requireMainDataAccess()
+            block()
+        }
     
     override fun onCreate(): Boolean {
         return try {
             val context = context ?: return false
             workspaceRoot = File(context.filesDir, "workspace")
-            
-            if (!workspaceRoot.exists()) {
-                workspaceRoot.mkdirs()
-                AppLogger.d(TAG, "Created workspace directory: ${workspaceRoot.absolutePath}")
+            val accessAllowed = MigrationStateStore.withProcessStateLock {
+                val allowed = MigrationStateStore.isMainDataAccessAllowed(context)
+                if (allowed && !workspaceRoot.exists()) {
+                    workspaceRoot.mkdirs()
+                    AppLogger.d(TAG, "Created workspace directory: ${workspaceRoot.absolutePath}")
+                }
+                allowed
             }
-            
-            AppLogger.d(TAG, "WorkspaceDocumentsProvider initialized, root: ${workspaceRoot.absolutePath}")
+            if (!accessAllowed) return true
             true
         } catch (e: Exception) {
             AppLogger.e(TAG, "Failed to initialize provider", e)
@@ -70,6 +88,7 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
     }
     
     override fun queryRoots(projection: Array<out String>?): Cursor {
+        requireMainDataAccess()
         val result = MatrixCursor(projection ?: DEFAULT_ROOT_PROJECTION)
         
         val row = result.newRow()
@@ -90,6 +109,7 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
     }
     
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor {
+        requireMainDataAccess()
         val result = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION)
         includeFile(result, documentId)
         return result
@@ -100,6 +120,7 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         projection: Array<out String>?,
         sortOrder: String?
     ): Cursor {
+        requireMainDataAccess()
         val result = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION)
         val parent = getFileForDocId(parentDocumentId)
         
@@ -121,6 +142,7 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         mode: String,
         signal: CancellationSignal?
     ): ParcelFileDescriptor {
+        requireMainDataAccess()
         val file = getFileForDocId(documentId)
         
         if (!file.exists()) {
@@ -128,14 +150,38 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         }
         
         val accessMode = ParcelFileDescriptor.parseMode(mode)
-        return ParcelFileDescriptor.open(file, accessMode)
+        val wantsWrite = mode.contains('w') || mode.contains('W') || mode.contains('a')
+        if (!wantsWrite) {
+            return ParcelFileDescriptor.open(file, accessMode)
+        }
+
+        val providerContext = context ?: throw IllegalStateException("Context is null")
+        val stagedFile = File.createTempFile("workspace_document_", ".tmp", providerContext.cacheDir)
+        if (file.isFile && !mode.contains('t')) {
+            file.copyTo(stagedFile, overwrite = true)
+        }
+        return ParcelFileDescriptor.open(
+            stagedFile,
+            accessMode,
+            Handler(Looper.getMainLooper())
+        ) {
+            try {
+                MigrationStateStore.withProcessStateLock {
+                    if (MigrationStateStore.isMainDataAccessAllowed(providerContext)) {
+                        stagedFile.copyTo(file, overwrite = true)
+                    }
+                }
+            } finally {
+                stagedFile.delete()
+            }
+        }
     }
     
     override fun createDocument(
         parentDocumentId: String,
         mimeType: String,
         displayName: String
-    ): String? {
+    ): String? = withMainDataMutation {
         val parent = getFileForDocId(parentDocumentId)
         
         if (!parent.isDirectory) {
@@ -155,14 +201,14 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
                 }
             }
             
-            return getDocIdForFile(file)
+            getDocIdForFile(file)
         } catch (e: Exception) {
             AppLogger.e(TAG, "Failed to create document", e)
             throw e
         }
     }
     
-    override fun deleteDocument(documentId: String) {
+    override fun deleteDocument(documentId: String) = withMainDataMutation {
         val file = getFileForDocId(documentId)
         
         if (!file.exists()) {
@@ -174,7 +220,8 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         }
     }
     
-    override fun renameDocument(documentId: String, displayName: String): String? {
+    override fun renameDocument(documentId: String, displayName: String): String? =
+        withMainDataMutation {
         val sourceFile = getFileForDocId(documentId)
         val destFile = File(sourceFile.parentFile, displayName)
         
@@ -182,10 +229,11 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
             throw IllegalStateException("Failed to rename file")
         }
         
-        return getDocIdForFile(destFile)
-    }
+            getDocIdForFile(destFile)
+        }
     
     override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
+        requireMainDataAccess()
         val parent = getFileForDocId(parentDocumentId)
         val child = getFileForDocId(documentId)
         

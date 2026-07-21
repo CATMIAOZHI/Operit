@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.ai.assistance.operit.core.tools.AIToolHandler
+import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +23,7 @@ class PackageDebugRefreshReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_DEBUG_REFRESH_PACKAGES) {
             return
         }
+        if (!OperitApplication.isMainDataAccessAllowed(context)) return
 
         val reactivateActivePackages =
             intent.getBooleanExtra(EXTRA_REACTIVATE_ACTIVE_PACKAGES, true)

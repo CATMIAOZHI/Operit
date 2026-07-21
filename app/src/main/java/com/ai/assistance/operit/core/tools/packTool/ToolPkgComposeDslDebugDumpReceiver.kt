@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.ai.assistance.operit.ui.common.composedsl.ToolPkgComposeDslDebugSnapshotStore
+import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +22,7 @@ class ToolPkgComposeDslDebugDumpReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_DUMP_COMPOSE_DSL_UI) {
             return
         }
+        if (!OperitApplication.isMainDataAccessAllowed(context)) return
 
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {

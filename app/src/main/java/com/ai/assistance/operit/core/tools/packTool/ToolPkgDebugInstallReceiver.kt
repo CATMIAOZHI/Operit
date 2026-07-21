@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.ai.assistance.operit.core.tools.AIToolHandler
+import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +25,7 @@ class ToolPkgDebugInstallReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_DEBUG_INSTALL_TOOLPKG) {
             return
         }
+        if (!OperitApplication.isMainDataAccessAllowed(context)) return
 
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME)?.trim().orEmpty()
         val filePath = intent.getStringExtra(EXTRA_FILE_PATH)?.trim().orEmpty()
