@@ -22,10 +22,25 @@ env:
   MANUAL_DEPS_DIR: manual-deps
 
 jobs:
-  candidate:
-    name: Candidate checks
+  plan:
+    name: Plan candidate checks
     runs-on: ubuntu-24.04
     timeout-minutes: 240
+    outputs:
+      changed_count: ${{ steps.plan.outputs.changed_count }}
+      localization: ${{ steps.plan.outputs.localization }}
+      android_resources: ${{ steps.plan.outputs.android_resources }}
+      android_jvm: ${{ steps.plan.outputs.android_jvm }}
+      android_instrumentation: ${{ steps.plan.outputs.android_instrumentation }}
+      android_full: ${{ steps.plan.outputs.android_full }}
+      web: ${{ steps.plan.outputs.web }}
+      toolpkg: ${{ steps.plan.outputs.toolpkg }}
+      docs: ${{ steps.plan.outputs.docs }}
+      yaml: ${{ steps.plan.outputs.yaml }}
+      ci: ${{ steps.plan.outputs.ci }}
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+      head_sha: ${{ steps.plan.outputs.head_sha }}
+      candidate_sha: ${{ steps.plan.outputs.candidate_sha }}
 
     steps:
       - name: Checkout merge candidate
@@ -55,6 +70,26 @@ jobs:
             --github-output "$GITHUB_OUTPUT" \
             --step-summary "$GITHUB_STEP_SUMMARY"
 
+  fast-checks:
+    name: Fast checks
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout merge candidate
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
       - name: Check gate implementation
         id: gate-tests
         continue-on-error: true
@@ -65,8 +100,8 @@ jobs:
         continue-on-error: true
         run: |
           python3 ci/script/check_repo_hygiene.py \
-            --base "${{ steps.plan.outputs.base_sha }}" \
-            --candidate "${{ steps.plan.outputs.candidate_sha }}"
+            --base "${{ needs.plan.outputs.base_sha }}" \
+            --candidate "${{ needs.plan.outputs.candidate_sha }}"
 
       - name: Check Android lint baseline
         id: lint-baseline
@@ -78,25 +113,25 @@ jobs:
         continue-on-error: true
         run: |
           python3 ci/script/check_markdown_links.py \
-            --base "${{ steps.plan.outputs.base_sha }}" \
-            --candidate "${{ steps.plan.outputs.candidate_sha }}"
+            --base "${{ needs.plan.outputs.base_sha }}" \
+            --candidate "${{ needs.plan.outputs.candidate_sha }}"
 
       - name: Check localization changes
         id: localization
-        if: steps.plan.outputs.localization == 'true'
+        if: needs.plan.outputs.localization == 'true'
         continue-on-error: true
         run: |
           python3 ci/script/check_localizations.py \
-            --base "${{ steps.plan.outputs.base_sha }}" \
-            --candidate "${{ steps.plan.outputs.candidate_sha }}"
+            --base "${{ needs.plan.outputs.base_sha }}" \
+            --candidate "${{ needs.plan.outputs.candidate_sha }}"
 
       - name: Check changed YAML and Actions workflows
         id: yaml
-        if: steps.plan.outputs.yaml == 'true'
+        if: needs.plan.outputs.yaml == 'true'
         continue-on-error: true
         env:
-          BASE_SHA: ${{ steps.plan.outputs.base_sha }}
-          CANDIDATE_SHA: ${{ steps.plan.outputs.candidate_sha }}
+          BASE_SHA: ${{ needs.plan.outputs.base_sha }}
+          CANDIDATE_SHA: ${{ needs.plan.outputs.candidate_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -142,15 +177,15 @@ jobs:
       - name: Require successful fast checks
         if: always()
         env:
-          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+          PLAN_OUTCOME: ${{ needs.plan.result }}
           GATE_TESTS_OUTCOME: ${{ steps.gate-tests.outcome }}
           HYGIENE_OUTCOME: ${{ steps.hygiene.outcome }}
           LINT_BASELINE_OUTCOME: ${{ steps.lint-baseline.outcome }}
           MARKDOWN_OUTCOME: ${{ steps.markdown.outcome }}
           LOCALIZATION_OUTCOME: ${{ steps.localization.outcome }}
           YAML_OUTCOME: ${{ steps.yaml.outcome }}
-          LOCALIZATION_REQUIRED: ${{ steps.plan.outputs.localization }}
-          YAML_REQUIRED: ${{ steps.plan.outputs.yaml }}
+          LOCALIZATION_REQUIRED: ${{ needs.plan.outputs.localization }}
+          YAML_REQUIRED: ${{ needs.plan.outputs.yaml }}
         shell: bash
         run: |
           set -euo pipefail
@@ -187,24 +222,76 @@ jobs:
             exit 1
           fi
 
+  web:
+    name: WebChat
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    if: needs.plan.outputs.web == 'true' || needs.plan.outputs.android_full == 'true'
+
+    steps:
+      - name: Checkout merge candidate
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
       - name: Set up Node.js
-        if: >-
-          steps.plan.outputs.web == 'true' ||
-          steps.plan.outputs.toolpkg == 'true' ||
-          steps.plan.outputs.android_full == 'true'
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install JavaScript dependencies
-        if: >-
-          steps.plan.outputs.web == 'true' ||
-          steps.plan.outputs.toolpkg == 'true' ||
-          steps.plan.outputs.android_full == 'true'
         env:
-          WEB_REQUIRED: ${{ steps.plan.outputs.web }}
-          TOOLPKG_REQUIRED: ${{ steps.plan.outputs.toolpkg }}
-          FULL_ANDROID_REQUIRED: ${{ steps.plan.outputs.android_full }}
+          WEB_REQUIRED: ${{ needs.plan.outputs.web }}
+          FULL_ANDROID_REQUIRED: ${{ needs.plan.outputs.android_full }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g pnpm@10.34.5
+          if [[ "$WEB_REQUIRED" == "true" || "$FULL_ANDROID_REQUIRED" == "true" ]]; then
+            npm --prefix web-chat ci --no-audit --no-fund
+          fi
+
+      - name: Check WebChat
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix web-chat run typecheck
+          npm run build:webchat
+
+  toolpkg:
+    name: ToolPkg
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    if: needs.plan.outputs.toolpkg == 'true' || needs.plan.outputs.android_full == 'true'
+
+    steps:
+      - name: Checkout merge candidate
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Install JavaScript dependencies
+        env:
+          TOOLPKG_REQUIRED: ${{ needs.plan.outputs.toolpkg }}
+          FULL_ANDROID_REQUIRED: ${{ needs.plan.outputs.android_full }}
         shell: bash
         run: |
           set -euo pipefail
@@ -213,22 +300,10 @@ jobs:
             npm ci --no-audit --no-fund
             npm --prefix examples/toolpkg_wasm_demo ci --no-audit --no-fund
           fi
-          if [[ "$WEB_REQUIRED" == "true" || "$FULL_ANDROID_REQUIRED" == "true" ]]; then
-            npm --prefix web-chat ci --no-audit --no-fund
-          fi
-
-      - name: Check WebChat
-        if: steps.plan.outputs.web == 'true' || steps.plan.outputs.android_full == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm --prefix web-chat run typecheck
-          npm run build:webchat
 
       - name: Check bundled ToolPkg packages
-        if: steps.plan.outputs.toolpkg == 'true' || steps.plan.outputs.android_full == 'true'
         env:
-          TOOLPKG_REQUIRED: ${{ steps.plan.outputs.toolpkg }}
+          TOOLPKG_REQUIRED: ${{ needs.plan.outputs.toolpkg }}
         shell: bash
         run: |
           set -euo pipefail
@@ -243,28 +318,35 @@ jobs:
           fi
           python3 tools/example_packages/sync_example_packages.py --no-hot-reload
 
+  android-jvm:
+    name: Android JVM checks
+    needs: [plan, fast-checks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    if: needs.plan.outputs.android_jvm == 'true'
+
+    steps:
+      - name: Checkout merge candidate
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
       - name: Set up JDK
-        if: steps.plan.outputs.android_jvm == 'true' || steps.plan.outputs.android_full == 'true'
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
 
       - name: Set up Android SDK
-        if: >-
-          steps.plan.outputs.android_resources == 'true' ||
-          steps.plan.outputs.android_jvm == 'true' ||
-          steps.plan.outputs.android_full == 'true'
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
 
       - name: Install required Android toolchain
-        if: >-
-          steps.plan.outputs.android_resources == 'true' ||
-          steps.plan.outputs.android_jvm == 'true' ||
-          steps.plan.outputs.android_full == 'true'
         env:
-          JVM_REQUIRED: ${{ steps.plan.outputs.android_jvm }}
-          FULL_REQUIRED: ${{ steps.plan.outputs.android_full }}
+          JVM_REQUIRED: ${{ needs.plan.outputs.android_jvm }}
+          FULL_REQUIRED: ${{ needs.plan.outputs.android_full }}
         shell: bash
         run: |
           set -euo pipefail
@@ -278,7 +360,7 @@ jobs:
           sdkmanager --install "${packages[@]}"
 
       - name: Compile changed Android resources
-        if: steps.plan.outputs.android_resources == 'true'
+        if: needs.plan.outputs.android_resources == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -289,7 +371,6 @@ jobs:
           test -s "$output"
 
       - name: Initialize terminal submodule
-        if: steps.plan.outputs.android_jvm == 'true' || steps.plan.outputs.android_full == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -298,7 +379,6 @@ jobs:
           git submodule status -- terminal
 
       - name: Configure secret-free Android build
-        if: steps.plan.outputs.android_jvm == 'true' || steps.plan.outputs.android_full == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -310,38 +390,111 @@ jobs:
 
       - name: Restore JVM dependency cache
         id: cache-jvm-deps
-        if: steps.plan.outputs.android_jvm == 'true'
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ env.MANUAL_DEPS_DIR }}
           key: android-jvm-deps-${{ runner.os }}-${{ hashFiles('ci/script/download_android_dependencies.sh', 'ci/script/prepare_android_dependencies.py') }}
 
       - name: Download JVM dependencies
-        if: steps.plan.outputs.android_jvm == 'true' && steps.cache-jvm-deps.outputs.cache-hit != 'true'
+        if: steps.cache-jvm-deps.outputs.cache-hit != 'true'
         run: bash ci/script/download_android_dependencies.sh jvm "$MANUAL_DEPS_DIR"
 
-      - name: Restore full Android dependency cache
-        id: cache-full-deps
-        if: steps.plan.outputs.android_full == 'true'
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        with:
-          path: ${{ env.MANUAL_DEPS_DIR }}
-          key: android-full-deps-${{ runner.os }}-${{ hashFiles('ci/script/download_android_dependencies.sh', 'ci/script/prepare_android_dependencies.py') }}
-
-      - name: Download full Android dependencies
-        if: steps.plan.outputs.android_full == 'true' && steps.cache-full-deps.outputs.cache-hit != 'true'
-        run: bash ci/script/download_android_dependencies.sh full "$MANUAL_DEPS_DIR"
-
       - name: Prepare JVM dependencies
-        if: steps.plan.outputs.android_jvm == 'true'
         run: |
           python3 ci/script/prepare_android_dependencies.py \
             --profile jvm \
             --archives "$MANUAL_DEPS_DIR" \
             --repository "$GITHUB_WORKSPACE"
 
+      - name: Run Android JVM checks
+        env:
+          INSTRUMENTATION_REQUIRED: ${{ needs.plan.outputs.android_instrumentation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          tasks=(":app:testDebugUnitTest" ":app:lintDebug")
+          if [[ "$INSTRUMENTATION_REQUIRED" == "true" ]]; then
+            tasks+=(":app:compileDebugAndroidTestKotlin" ":app:compileDebugAndroidTestJavaWithJavac")
+          fi
+          ./gradlew "${tasks[@]}" --stacktrace --no-daemon
+
+  android-full:
+    name: Full Android checks
+    needs: [plan, fast-checks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    if: needs.plan.outputs.android_full == 'true'
+
+    steps:
+      - name: Checkout merge candidate
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Set up JDK
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+
+      - name: Install required Android toolchain
+        env:
+          JVM_REQUIRED: ${{ needs.plan.outputs.android_jvm }}
+          FULL_REQUIRED: ${{ needs.plan.outputs.android_full }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages=("build-tools;$ANDROID_BUILD_TOOLS_VERSION")
+          if [[ "$JVM_REQUIRED" == "true" || "$FULL_REQUIRED" == "true" ]]; then
+            packages+=("platform-tools" "platforms;android-34" "platforms;android-36")
+          fi
+          if [[ "$FULL_REQUIRED" == "true" ]]; then
+            packages+=("ndk;$ANDROID_NDK_VERSION" "cmake;$ANDROID_CMAKE_VERSION")
+          fi
+          sdkmanager --install "${packages[@]}"
+
+      - name: Initialize terminal submodule
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule sync -- terminal
+          git submodule update --init --recursive --depth 1 terminal
+          git submodule status -- terminal
+
+      - name: Configure secret-free Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "sdk.dir=$ANDROID_HOME"
+            echo 'GITHUB_CLIENT_ID='
+            echo 'GITHUB_CLIENT_SECRET='
+          } > local.properties
+
+      - name: Restore full Android dependency cache
+        id: cache-full-deps
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ env.MANUAL_DEPS_DIR }}
+          key: android-full-deps-${{ runner.os }}-${{ hashFiles('ci/script/download_android_dependencies.sh', 'ci/script/prepare_android_dependencies.py') }}
+
+      - name: Download full Android dependencies
+        if: steps.cache-full-deps.outputs.cache-hit != 'true'
+        run: bash ci/script/download_android_dependencies.sh full "$MANUAL_DEPS_DIR"
+
       - name: Prepare full Android dependencies
-        if: steps.plan.outputs.android_full == 'true'
         run: |
           python3 ci/script/prepare_android_dependencies.py \
             --profile full \
@@ -349,7 +502,6 @@ jobs:
             --repository "$GITHUB_WORKSPACE"
 
       - name: Restore native ripgrep cache
-        if: steps.plan.outputs.android_full == 'true'
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
@@ -359,7 +511,6 @@ jobs:
           key: native-ripgrep-arm64-${{ runner.os }}-${{ hashFiles('tools/native_ripgrep/Cargo.lock') }}
 
       - name: Build native ripgrep
-        if: steps.plan.outputs.android_full == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -377,24 +528,9 @@ jobs:
             app/src/main/jniLibs/arm64-v8a/liboperit_ripgrep.so
           test -s app/src/main/jniLibs/arm64-v8a/liboperit_ripgrep.so
 
-      - name: Run Android JVM checks
-        if: steps.plan.outputs.android_jvm == 'true'
-        env:
-          INSTRUMENTATION_REQUIRED: ${{ steps.plan.outputs.android_instrumentation }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x ./gradlew
-          tasks=(":app:testDebugUnitTest" ":app:lintDebug")
-          if [[ "$INSTRUMENTATION_REQUIRED" == "true" ]]; then
-            tasks+=(":app:compileDebugAndroidTestKotlin" ":app:compileDebugAndroidTestJavaWithJavac")
-          fi
-          ./gradlew "${tasks[@]}" --stacktrace --no-build-cache --no-daemon
-
       - name: Run full Android checks
-        if: steps.plan.outputs.android_full == 'true'
         env:
-          INSTRUMENTATION_REQUIRED: ${{ steps.plan.outputs.android_instrumentation }}
+          INSTRUMENTATION_REQUIRED: ${{ needs.plan.outputs.android_instrumentation }}
         shell: bash
         run: |
           set -euo pipefail
@@ -403,4 +539,4 @@ jobs:
           if [[ "$INSTRUMENTATION_REQUIRED" == "true" ]]; then
             tasks+=(":app:compileDebugAndroidTestKotlin" ":app:compileDebugAndroidTestJavaWithJavac")
           fi
-          ./gradlew "${tasks[@]}" --stacktrace --no-build-cache --no-daemon
+          ./gradlew "${tasks[@]}" --stacktrace --no-daemon
