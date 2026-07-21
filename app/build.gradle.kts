@@ -95,6 +95,9 @@ android {
             }
         }
         debug {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            resValue("string", "app_name", "Operit Ry Dev")
             if (releaseSigningConfig != null) {
                 signingConfig = releaseSigningConfig
             }
