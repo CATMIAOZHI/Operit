@@ -62,6 +62,10 @@ operit-pc-agent.zip
 *.toolpkg
 .venv
 
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+
 # generated React web-chat build outputs
 web-chat/dist/
 app/src/main/assets/web-chat/
