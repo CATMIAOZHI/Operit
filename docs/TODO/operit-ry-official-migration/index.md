@@ -21,11 +21,14 @@ Provide a one-time, explicit migration path from an official Operit raw snapshot
 
 - Show a dedicated migration action until one migration succeeds.
 - Accept only raw snapshots whose source package is `com.ai.assistance.operit`.
-- Create an Operit Ry safety snapshot before writing migrated data.
+- Create an Operit Ry safety snapshot (with terminal data) before writing migrated data.
 - Validate the selected archive before closing databases.
 - Preserve the existing merge-based raw snapshot semantics and restart requirement.
 - Record successful migration after imported shared preferences have been written.
 - Add focused package policy tests and user-facing migration documentation.
+- Run the migration in a dedicated cold-start phase, before WorkManager, foreground services,
+  schedulers, repositories and DataStore writers start, so no background writer races with the
+  safety snapshot or file replacement.
 
 ## Pull request
 

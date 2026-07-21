@@ -16,7 +16,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -24,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
@@ -56,9 +62,13 @@ import com.ai.assistance.operit.util.AnrMonitor
 import com.ai.assistance.operit.util.LocaleUtils
 import java.util.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.ai.assistance.operit.data.mcp.MCPRepository
+import com.ai.assistance.operit.data.backup.RawSnapshotBackupManager
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.res.stringResource
@@ -66,6 +76,7 @@ import com.ai.assistance.operit.data.preferences.GitHubAuthPreferences
 import com.ai.assistance.operit.ui.features.github.GitHubOAuthCoordinator
 import com.ai.assistance.operit.widget.ToolPkgDesktopWidgetHost
 import org.json.JSONObject
+import kotlin.system.exitProcess
 
 class MainActivity : ComponentActivity() {
     companion object {
@@ -192,6 +203,16 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
         restoreRuntimeTaskViewVisibilityIfNeeded()
 
+        // Dedicated cold-start migration phase: if a pending official Operit migration was
+        // persisted by the settings screen, run it BEFORE initializeMainApplication() starts
+        // WorkManager, foreground services, schedulers, repositories and DataStore writers. At
+        // this point no background writer is running, so the pre-migration safety snapshot is
+        // consistent and file replacement cannot race with concurrent writes.
+        if (RawSnapshotBackupManager.isOfficialOperitMigrationPending(applicationContext)) {
+            runPendingOfficialOperitMigration()
+            return
+        }
+
         (application as OperitApplication).initializeMainApplication()
 
         // 语言设置已在Application中初始化，这里无需重复
@@ -225,6 +246,41 @@ class MainActivity : ComponentActivity() {
 
         // 设置双击返回退出
         setupBackPressHandler()
+    }
+
+    /**
+     * Run the pending official Operit migration in a dedicated cold-start phase.
+     *
+     * Shows a minimal migration progress surface while the migration runs on a background
+     * thread, then exits the process so the next cold start enters normal mode. This runs BEFORE
+     * [OperitApplication.initializeMainApplication], so WorkManager, foreground services,
+     * schedulers, repositories and DataStore writers are not started yet.
+     */
+    private fun runPendingOfficialOperitMigration() {
+        // Show a minimal migration surface so the user sees something is happening instead of a
+        // black screen while the migration runs.
+        setContent {
+            OperitTheme {
+                MigrationInProgressScreen()
+            }
+        }
+
+        // Launch on GlobalScope with NonCancellable so the migration completes even if the
+        // activity is destroyed (e.g. config change, user backing out). The migration replaces
+        // application private data and must run to completion; the process exits immediately
+        // afterwards, so GlobalScope is bounded to this short-lived phase.
+        GlobalScope.launch(Dispatchers.IO + NonCancellable) {
+            try {
+                RawSnapshotBackupManager.runPendingOfficialOperitMigration(applicationContext)
+                AppLogger.i(TAG, "Official Operit migration completed successfully")
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Official Operit migration failed: ${e.message}", e)
+            }
+
+            // Exit the process so the next cold start enters normal mode. Whether the migration
+            // succeeded or failed, the pending flag has already been cleared by the manager.
+            exitProcess(0)
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -849,4 +905,24 @@ private fun OrientationChangeDialog(onConfirm: () -> Unit, onDismiss: () -> Unit
             }
         }
     )
+}
+
+@Composable
+private fun MigrationInProgressScreen() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            CircularProgressIndicator()
+            Text(
+                text = stringResource(id = R.string.backup_official_operit_migration_in_progress),
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
+    }
 }

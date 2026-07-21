@@ -111,7 +111,6 @@ import java.util.Date
 import java.util.Locale
 import kotlin.system.exitProcess
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1578,78 +1577,23 @@ fun ChatBackupSettingsScreen() {
                         val uri = pendingOfficialOperitMigrationUri
                         pendingOfficialOperitMigrationUri = null
                         if (uri != null) {
-                            scope.launch {
-                                rawSnapshotOperationState = RawSnapshotOperation.RESTORING
-                                rawSnapshotOperationMessage = context.getString(
-                                    R.string.backup_official_operit_migration_safety_backup
+                            // Persist the URI permission so it survives the process restart and
+                            // can be read during the dedicated cold-start migration phase.
+                            try {
+                                context.contentResolver.takePersistableUriPermission(
+                                    uri,
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION
                                 )
-                                try {
-                                    try {
-                                        context.contentResolver.takePersistableUriPermission(
-                                            uri,
-                                            Intent.FLAG_GRANT_READ_URI_PERMISSION
-                                        )
-                                    } catch (_: Exception) {
-                                    }
-
-                                    withContext(NonCancellable) {
-                                        RawSnapshotBackupManager.migrateFromOfficialOperitUri(
-                                            context = context,
-                                            uri = uri,
-                                            onSafetyBackupStarted = {
-                                                rawSnapshotOperationMessage = context.getString(
-                                                    R.string.backup_official_operit_migration_safety_backup
-                                                )
-                                            },
-                                            onProgress = { progress ->
-                                                rawSnapshotOperationMessage = when (progress) {
-                                                    RawSnapshotBackupManager.RestoreProgress.PREPARING,
-                                                    RawSnapshotBackupManager.RestoreProgress.READING_ZIP ->
-                                                        context.getString(
-                                                            R.string.backup_official_operit_migration_reading
-                                                        )
-
-                                                    RawSnapshotBackupManager.RestoreProgress.EXTRACTING ->
-                                                        context.getString(R.string.backup_raw_snapshot_progress_extracting)
-
-                                                    RawSnapshotBackupManager.RestoreProgress.REPLACING_FILES ->
-                                                        context.getString(R.string.backup_raw_snapshot_progress_replacing_files)
-
-                                                    RawSnapshotBackupManager.RestoreProgress.REPLACING_EXTERNAL_FILES ->
-                                                        context.getString(R.string.backup_raw_snapshot_progress_replacing_external_files)
-
-                                                    RawSnapshotBackupManager.RestoreProgress.REPLACING_SHARED_PREFS ->
-                                                        context.getString(R.string.backup_raw_snapshot_progress_replacing_shared_prefs)
-
-                                                    RawSnapshotBackupManager.RestoreProgress.REPLACING_DATASTORE ->
-                                                        context.getString(R.string.backup_raw_snapshot_progress_replacing_datastore)
-
-                                                    RawSnapshotBackupManager.RestoreProgress.REPLACING_DATABASES ->
-                                                        context.getString(R.string.backup_raw_snapshot_progress_replacing_databases)
-
-                                                    RawSnapshotBackupManager.RestoreProgress.FINALIZING ->
-                                                        context.getString(R.string.backup_raw_snapshot_progress_finalizing)
-                                                }
-                                            }
-                                        )
-                                        officialOperitMigrationAvailable = false
-                                        withContext(Dispatchers.Main) {
-                                            restartApplication(context)
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    if (RawSnapshotBackupManager.isProcessRestartRequired()) {
-                                        withContext(NonCancellable) {
-                                            withContext(Dispatchers.Main) {
-                                                restartApplication(context)
-                                            }
-                                        }
-                                    } else {
-                                        rawSnapshotOperationState = RawSnapshotOperation.FAILED
-                                        rawSnapshotOperationMessage = e.localizedMessage ?: e.toString()
-                                    }
-                                }
+                            } catch (_: Exception) {
                             }
+                            // Persist the pending migration request and exit the process. The
+                            // migration itself runs on the next cold start BEFORE
+                            // OperitApplication.initializeMainApplication() initializes WorkManager,
+                            // foreground services, schedulers and repositories, so no background
+                            // writer races with the safety snapshot or file replacement.
+                            RawSnapshotBackupManager.setPendingOfficialOperitMigration(context, uri)
+                            officialOperitMigrationAvailable = false
+                            restartApplication(context)
                         }
                     }
                 ) {

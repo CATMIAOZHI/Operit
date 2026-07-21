@@ -39,6 +39,8 @@ object RawSnapshotBackupManager {
 
     private const val MIGRATION_PREFERENCES = "operit_ry_official_migration"
     private const val MIGRATION_COMPLETED = "completed"
+    private const val MIGRATION_PENDING = "pending"
+    private const val MIGRATION_PENDING_URI = "pending_uri"
 
     private const val ENTRY_MANIFEST = "manifest.json"
     private const val ENTRY_PAYLOAD_PREFIX = "payload/"
@@ -283,7 +285,49 @@ object RawSnapshotBackupManager {
 
     fun isOfficialOperitMigrationAvailable(context: Context): Boolean =
         context.packageName == RawSnapshotPackagePolicy.OPERIT_RY_PACKAGE &&
-            !isOfficialOperitMigrationCompleted(context)
+            !isOfficialOperitMigrationCompleted(context) &&
+            !isOfficialOperitMigrationPending(context)
+
+    fun isOfficialOperitMigrationPending(context: Context): Boolean =
+        context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
+            .getBoolean(MIGRATION_PENDING, false)
+
+    /**
+     * Persist a pending official Operit migration URI so the migration can run in a dedicated
+     * cold-start phase before [com.ai.assistance.operit.core.application.OperitApplication.initializeMainApplication]
+     * initializes WorkManager, foreground services, schedulers, repositories and DataStore writers.
+     *
+     * The caller must already hold a persistable read URI permission for [uri]. After persisting,
+     * the caller should exit the process so the next cold start observes the pending flag.
+     */
+    fun setPendingOfficialOperitMigration(context: Context, uri: Uri) {
+        check(context.packageName == RawSnapshotPackagePolicy.OPERIT_RY_PACKAGE) {
+            "Official Operit migration is only available in Operit Ry"
+        }
+        check(!isOfficialOperitMigrationCompleted(context)) {
+            "Official Operit migration has already completed"
+        }
+        context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(MIGRATION_PENDING, true)
+            .putString(MIGRATION_PENDING_URI, uri.toString())
+            .commit()
+    }
+
+    fun clearPendingOfficialOperitMigration(context: Context) {
+        context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
+            .edit()
+            .remove(MIGRATION_PENDING)
+            .remove(MIGRATION_PENDING_URI)
+            .commit()
+    }
+
+    private fun pendingOfficialOperitMigrationUri(context: Context): Uri? {
+        val prefs = context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(MIGRATION_PENDING, false)) return null
+        val uriString = prefs.getString(MIGRATION_PENDING_URI, null) ?: return null
+        return runCatching { Uri.parse(uriString) }.getOrNull()
+    }
 
     fun isProcessRestartRequired(): Boolean = processRestartRequired
 
@@ -308,42 +352,74 @@ object RawSnapshotBackupManager {
         }
     }
 
-    suspend fun migrateFromOfficialOperitUri(
+    /**
+     * Run the pending official Operit migration in a dedicated cold-start phase.
+     *
+     * This must be called from [com.ai.assistance.operit.ui.main.MainActivity.onCreate] BEFORE
+     * [com.ai.assistance.operit.core.application.OperitApplication.initializeMainApplication]
+     * so that WorkManager, foreground services, schedulers, repositories and DataStore writers are
+     * not running. At this point no background writer has been started, so the safety snapshot is
+     * consistent and file replacement is not racing with concurrent writes.
+     *
+     * On success, the pending flag is cleared, the completion flag is committed, and the caller
+     * should exit the process and let the next cold start enter normal mode.
+     *
+     * On failure, the pending flag is cleared to avoid a restart loop; the pre-migration safety
+     * snapshot is retained so the user can recover manually. The caller should still exit the
+     * process so the next cold start enters normal mode without the pending migration.
+     *
+     * Returns the safety backup file on success. Throws on failure.
+     */
+    suspend fun runPendingOfficialOperitMigration(
         context: Context,
-        uri: Uri,
-        onSafetyBackupStarted: (() -> Unit)? = null,
         onProgress: ((RestoreProgress) -> Unit)? = null
     ): File = withContext(Dispatchers.IO) {
         mutex.withLock {
-            check(!processRestartRequired) { "Application restart required before another snapshot operation" }
             check(context.packageName == RawSnapshotPackagePolicy.OPERIT_RY_PACKAGE) {
                 "Official Operit migration is only available in Operit Ry"
             }
             check(!isOfficialOperitMigrationCompleted(context)) {
                 "Official Operit migration has already completed"
             }
+            val uri = pendingOfficialOperitMigrationUri(context)
+                ?: throw IllegalStateException("No pending official Operit migration URI")
 
             lateinit var safetyBackup: File
-            restoreFromBackupUriLocked(
-                context = context,
-                uri = uri,
-                expectedPackageName = RawSnapshotPackagePolicy.OFFICIAL_OPERIT_PACKAGE,
-                markOfficialMigrationCompleted = true,
-                prepareForReplacement = {
-                    checkpointRoomDatabase(context)
-                    processRestartRequired = true
-                    AppDatabase.closeDatabase()
-                    ObjectBoxManager.closeAll()
-                    withContext(Dispatchers.Main) { onSafetyBackupStarted?.invoke() }
-                    safetyBackup = exportToBackupDirLocked(
-                        context = context,
-                        options = SnapshotOptions(),
-                        onProgress = null,
-                        performDatabaseCheckpoint = false
-                    )
-                },
-                onProgress = onProgress
-            )
+            try {
+                restoreFromBackupUriLocked(
+                    context = context,
+                    uri = uri,
+                    expectedPackageName = RawSnapshotPackagePolicy.OFFICIAL_OPERIT_PACKAGE,
+                    markOfficialMigrationCompleted = true,
+                    prepareForReplacement = {
+                        // In the dedicated cold-start phase no background writer is running yet,
+                        // so a Room checkpoint is safe and the safety snapshot is consistent.
+                        checkpointRoomDatabase(context)
+                        processRestartRequired = true
+                        AppDatabase.closeDatabase()
+                        ObjectBoxManager.closeAll()
+                        // Safety snapshot must preserve terminal data because legacy v1 manifests
+                        // default to includeTerminalData=true and migration may overwrite
+                        // usr/tmp/bin. Without this, a failed migration or manual rollback could
+                        // not restore pre-migration terminal data from the safety snapshot.
+                        safetyBackup = exportToBackupDirLocked(
+                            context = context,
+                            options = SnapshotOptions(includeTerminalData = true),
+                            onProgress = null,
+                            performDatabaseCheckpoint = false
+                        )
+                    },
+                    onProgress = onProgress
+                )
+            } catch (e: Exception) {
+                // Clear the pending flag so the next cold start enters normal mode instead of
+                // retrying the migration and looping. The safety snapshot (if created) is kept.
+                clearPendingOfficialOperitMigration(context)
+                throw e
+            }
+            // Success: clear the pending flag. The completion flag was already committed inside
+            // restoreFromBackupUriLocked via markOfficialMigrationCompleted.
+            clearPendingOfficialOperitMigration(context)
             safetyBackup
         }
     }
