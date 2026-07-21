@@ -179,7 +179,7 @@ fun ChatBackupSettingsScreen() {
     }
     var pendingOfficialOperitMigrationUri by remember { mutableStateOf<Uri?>(null) }
     var showOfficialOperitMigrationConfirmDialog by remember { mutableStateOf(false) }
-    var officialOperitMigrationError by remember { mutableStateOf<String?>(null) }
+    var officialOperitMigrationErrorResId by remember { mutableStateOf<Int?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showMemoryImportStrategyDialog by remember { mutableStateOf(false) }
     var pendingMemoryImportUri by remember { mutableStateOf<Uri?>(null) }
@@ -1590,9 +1590,8 @@ fun ChatBackupSettingsScreen() {
                                 )
                             } catch (e: Exception) {
                                 AppLogger.e("ChatBackupSettings", "takePersistableUriPermission failed", e)
-                                officialOperitMigrationError = context.getString(
+                                officialOperitMigrationErrorResId =
                                     R.string.backup_official_operit_migration_error_uri_permission
-                                )
                                 return@TextButton
                             }
                             // Persist the pending migration request. If the state write fails,
@@ -1600,9 +1599,8 @@ fun ChatBackupSettingsScreen() {
                             // pending state and the migration would never run.
                             val persisted = RawSnapshotBackupManager.setPendingOfficialOperitMigration(context, uri)
                             if (!persisted) {
-                                officialOperitMigrationError = context.getString(
+                                officialOperitMigrationErrorResId =
                                     R.string.backup_official_operit_migration_error_state_write
-                                )
                                 return@TextButton
                             }
                             officialOperitMigrationAvailable = false
@@ -1626,13 +1624,13 @@ fun ChatBackupSettingsScreen() {
         )
     }
 
-    officialOperitMigrationError?.let { errorMessage ->
+    officialOperitMigrationErrorResId?.let { errorResId ->
         AlertDialog(
-            onDismissRequest = { officialOperitMigrationError = null },
+            onDismissRequest = { officialOperitMigrationErrorResId = null },
             title = { Text(stringResource(R.string.backup_official_operit_migration_error_title)) },
-            text = { Text(errorMessage) },
+            text = { Text(stringResource(errorResId)) },
             confirmButton = {
-                TextButton(onClick = { officialOperitMigrationError = null }) {
+                TextButton(onClick = { officialOperitMigrationErrorResId = null }) {
                     Text(stringResource(R.string.backup_raw_snapshot_restore_cancel_action))
                 }
             }
