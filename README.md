@@ -4,7 +4,9 @@
 
 ## Operit Ry 个人发行版
 
-**Operit Ry** 是由 [Rainy / CATMIAOZHI](https://github.com/CATMIAOZHI) 维护的非官方个人发行版，开发分支为 [`personal/main`](https://github.com/CATMIAOZHI/Operit/tree/personal/main)。原项目由 [AAswordman](https://github.com/AAswordman/Operit) 创建并维护。准备向上游贡献的修复应从 `upstream/main` 创建分支。
+**Operit Ry** 是由 [Rainy / CATMIAOZHI](https://github.com/CATMIAOZHI) 维护的非官方个人发行版，稳定发行分支为 [`personal/main`](https://github.com/CATMIAOZHI/Operit/tree/personal/main)。原项目由 [AAswordman](https://github.com/AAswordman/Operit) 创建并维护。准备向上游贡献的修复应从 `upstream/main` 创建分支。
+
+[`personal/dev`](https://github.com/CATMIAOZHI/Operit/tree/personal/dev) 是新功能的集成与测试分支；功能通过可共存 debug APK 验证后，才会晋升到 `personal/main`。开发版以 `Operit Ry Dev` / `com.rainy.operitry.dev` 独立安装，并带有 DEV 角标图标，可与官方 Operit 和 Operit Ry 稳定版共存；同一补丁链内可通过 `OperitNightlyRelease` 快速更新，链不匹配时回退到完整开发版 APK。普通用户应从 Releases 下载稳定版，不应将开发分支构建作为正式更新来源。
 
 <div align="center">
   <img src="https://img.shields.io/github/last-commit/CATMIAOZHI/Operit/personal/main" alt="Last Commit">
@@ -213,9 +215,10 @@ AI自动分类管理记忆，支持时间查询/导入导出/自动总结，智�
 <tr><th>版本</th><th>发布日期</th><th>核心更新</th></tr>
 
 <tr>
-<td><b>v1.12.0</b><br><sub>最新</sub></td>
-<td>2026-07-01</td>
+<td><b>v1.12.0+4-ry.1</b><br><sub>最新</sub></td>
+<td>2026-07-22</td>
 <td>
+• <b>Operit Ry 首个个人发行版</b>：使用独立应用身份和发布签名，可与官方 Operit 共存，并支持通过原始快照迁移官方版数据<br>
 • <b>市场与创作生态</b>：统一市场流程，新增 Artifact 市场、项目管理与发布能力，完善市场搜索、GitHub OAuth 登录、示例仓库与侧栏入口<br>
 • <b>工具包与工作区</b>：抽离 ToolPkg IPC / runtime 管理，新增 hook runner、计划模式 runtime IPC、工作区变更追踪/附件/模板、zip include_root_directory 参数<br>
 • <b>多语言、语音与媒体</b>：新增韩语、西班牙语、葡萄牙语本地化，加入 MIMO/Mimo、VITS、ONNX、Doubao TTS、音乐播放队列，并优化图片附件与附件文件名去重<br>

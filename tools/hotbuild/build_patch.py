@@ -364,6 +364,42 @@ def publish_release(repo: str, tag: str, title: str, notes: str, assets: list[Pa
     if shutil.which("gh") is not None:
         code, _, _ = run(["gh", "release", "view", tag, "-R", repo])
         if code == 0:
+            edit_code, edit_out, edit_err = run(
+                [
+                    "gh",
+                    "release",
+                    "edit",
+                    tag,
+                    "-R",
+                    repo,
+                    "--title",
+                    title,
+                    "--notes",
+                    notes,
+                    "--prerelease",
+                ]
+            )
+            sys.stdout.write(edit_out)
+            sys.stderr.write(edit_err)
+            if edit_code != 0:
+                raise RuntimeError(f"failed to update existing release metadata for {tag}")
+            assets_code, assets_out, assets_err = run(
+                ["gh", "release", "view", tag, "-R", repo, "--json", "assets"]
+            )
+            if assets_code != 0:
+                sys.stderr.write(assets_err)
+                raise RuntimeError(f"failed to list existing release assets for {tag}")
+            for asset in json.loads(assets_out).get("assets", []):
+                asset_name = asset.get("name")
+                if not asset_name:
+                    continue
+                delete_code, delete_out, delete_err = run(
+                    ["gh", "release", "delete-asset", tag, asset_name, "-R", repo, "--yes"]
+                )
+                sys.stdout.write(delete_out)
+                sys.stderr.write(delete_err)
+                if delete_code != 0:
+                    raise RuntimeError(f"failed to delete stale release asset {asset_name}")
             cmd = ["gh", "release", "upload", tag, "-R", repo, "--clobber"] + [str(a) for a in assets]
         else:
             cmd = [
@@ -377,6 +413,7 @@ def publish_release(repo: str, tag: str, title: str, notes: str, assets: list[Pa
                 title,
                 "--notes",
                 notes,
+                "--prerelease",
             ] + [str(a) for a in assets]
         code, out, err = run(cmd)
         sys.stdout.write(out)
@@ -410,17 +447,29 @@ def publish_release(repo: str, tag: str, title: str, notes: str, assets: list[Pa
                 "prerelease": True,
             },
         )
+    else:
+        release = gh_api_json(
+            "PATCH",
+            f"{base}/releases/{int(release['id'])}",
+            token,
+            {
+                "name": title,
+                "body": notes,
+                "draft": False,
+                "prerelease": True,
+            },
+        )
 
     release_id = int(release["id"])
     upload_url = str(release["upload_url"]).split("{")[0]
 
     existing = gh_api_json("GET", f"{base}/releases/{release_id}/assets", token)
-    existing_by_name = {a.get("name"): int(a.get("id")) for a in existing if a.get("name") and a.get("id")}
+    for asset in existing:
+        asset_id = asset.get("id")
+        if asset_id:
+            gh_api_json("DELETE", f"{base}/releases/assets/{int(asset_id)}", token)
 
     for a in assets:
-        aid = existing_by_name.get(a.name)
-        if aid:
-            gh_api_json("DELETE", f"{base}/releases/assets/{aid}", token)
         data = a.read_bytes()
         url = f"{upload_url}?name={urllib.parse.quote(a.name)}"
         gh_api_bytes("POST", url, token, data)
@@ -439,6 +488,13 @@ def main() -> int:
     ap.add_argument("--repo", default="CATMIAOZHI/OperitNightlyRelease")
     ap.add_argument("--tag", default=None)
     ap.add_argument("--token", default=None)
+    ap.add_argument("--channel", default=None)
+    ap.add_argument("--application-id", default=None)
+    ap.add_argument("--dev-build", type=int, default=None)
+    ap.add_argument("--version-label", default=None)
+    ap.add_argument("--series", default=None)
+    ap.add_argument("--source-sha", default=None)
+    ap.add_argument("--extra-asset", action="append", default=[])
     ap.add_argument("--no-publish", action="store_true")
     args = ap.parse_args()
 
@@ -524,6 +580,18 @@ def main() -> int:
         "blockSize": int(args.block_size),
         "createdAt": int(time.time()),
     }
+    if args.channel:
+        meta["channel"] = args.channel
+    if args.application_id:
+        meta["applicationId"] = args.application_id
+    if args.dev_build is not None:
+        meta["devBuild"] = args.dev_build
+    if args.version_label:
+        meta["version"] = args.version_label
+    if args.series:
+        meta["series"] = args.series
+    if args.source_sha:
+        meta["sourceSha"] = args.source_sha
 
     meta.update(extra)
 
@@ -548,7 +616,21 @@ def main() -> int:
         "metaFile": meta_path.name,
         "createdAt": meta.get("createdAt"),
     }
-    publish_release(args.repo, tag, tag, json.dumps(notes, indent=2, sort_keys=True), [patch_path, meta_path], token)
+    for key in ("channel", "applicationId", "devBuild", "version", "series", "sourceSha"):
+        if key in meta:
+            notes[key] = meta[key]
+    extra_assets = [(wd / asset).resolve() for asset in args.extra_asset]
+    missing_assets = [str(asset) for asset in extra_assets if not asset.is_file()]
+    if missing_assets:
+        raise RuntimeError(f"extra asset not found: {', '.join(missing_assets)}")
+    publish_release(
+        args.repo,
+        tag,
+        tag,
+        json.dumps(notes, indent=2, sort_keys=True),
+        [patch_path, meta_path, *extra_assets],
+        token,
+    )
     sys.stdout.write(f"published {args.repo} {tag}\n")
     return 0
 

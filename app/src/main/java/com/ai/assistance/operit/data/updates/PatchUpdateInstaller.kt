@@ -2,9 +2,12 @@ package com.ai.assistance.operit.data.updates
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.Signature
 import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
+import com.ai.assistance.operit.BuildConfig
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.api.GitHubApiService
 import com.ai.assistance.operit.util.GithubReleaseUtil
@@ -101,6 +104,9 @@ object PatchUpdateInstaller {
     )
 
     fun installApk(context: Context, apkFile: File) {
+        if (BuildConfig.PERSONAL_DEV_UPDATE_CHANNEL) {
+            verifyPersonalDevApk(context, apkFile)
+        }
         val apkUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             FileProvider.getUriForFile(
                 context,
@@ -196,6 +202,7 @@ object PatchUpdateInstaller {
             onEvent = onEvent
         )
         val targetMeta = JSONObject(targetMetaFile.readText())
+        validatePersonalDevMetadata(context, targetMeta)
 
         val format = targetMeta.optString("format", "")
         if (format != "apkraw-1") {
@@ -247,6 +254,7 @@ object PatchUpdateInstaller {
                 onEvent = onEvent
             )
             val stepMeta = JSONObject(stepMetaFile.readText())
+            validatePersonalDevMetadata(context, stepMeta)
 
             val stepFormat = stepMeta.optString("format", "")
             if (stepFormat != "apkraw-1") {
@@ -523,6 +531,59 @@ object PatchUpdateInstaller {
             AppLogger.w(TAG, "Skip patch release with invalid JSON body", e)
             null
         }
+    }
+
+    private fun validatePersonalDevMetadata(context: Context, metadata: JSONObject) {
+        if (!BuildConfig.PERSONAL_DEV_UPDATE_CHANNEL) return
+        check(metadata.optString("channel") == "personal-dev") {
+            "Patch is not from the personal dev channel"
+        }
+        check(metadata.optString("applicationId") == context.packageName) {
+            "Patch package does not match ${context.packageName}"
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun verifyPersonalDevApk(context: Context, apkFile: File) {
+        val packageManager = context.packageManager
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            PackageManager.GET_SIGNATURES
+        }
+        val archiveInfo = packageManager.getPackageArchiveInfo(apkFile.absolutePath, flags)
+            ?: error("Downloaded file is not a valid APK")
+        check(archiveInfo.packageName == context.packageName) {
+            "Update package does not match ${context.packageName}"
+        }
+
+        val installedInfo = packageManager.getPackageInfo(context.packageName, flags)
+        check(packageVersionCode(archiveInfo) > packageVersionCode(installedInfo)) {
+            "Update versionCode must be newer than the installed development build"
+        }
+        val archiveSignatures = packageSignatures(archiveInfo)
+        val installedSignatures = packageSignatures(installedInfo)
+        check(archiveSignatures.isNotEmpty() && archiveSignatures == installedSignatures) {
+            "Update signing certificate does not match the installed development build"
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun packageVersionCode(info: android.content.pm.PackageInfo): Long =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode.toLong()
+
+    @Suppress("DEPRECATION")
+    private fun packageSignatures(info: android.content.pm.PackageInfo): Set<String> {
+        val signatures: Array<Signature> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.signingInfo?.apkContentsSigners.orEmpty()
+        } else {
+            info.signatures.orEmpty()
+        }
+        return signatures.map { signature ->
+            MessageDigest.getInstance("SHA-256")
+                .digest(signature.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+        }.toSet()
     }
 
     private fun cleanupPatchWorkDir(workDir: File, keepFile: File) {

@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.data.updates
 
 import android.content.Context
+import com.ai.assistance.operit.BuildConfig
 import com.ai.assistance.operit.util.AppLogger
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -11,7 +12,9 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.util.GithubReleaseUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.security.MessageDigest
 
 // 更新状态 - 移除下载相关状态
 sealed class UpdateStatus {
@@ -67,7 +70,8 @@ class UpdateManager private constructor(private val context: Context) {
             val minor: Int,
             val patch: Int,
             val patchIndex: Int,
-            val ryRevision: Int
+            val ryRevision: Int,
+            val devBuild: Int
         )
 
         private fun baseVersionOf(v: String): String {
@@ -86,6 +90,10 @@ class UpdateManager private constructor(private val context: Context) {
                 buildSuffix.substringAfter("-ry.", missingDelimiterValue = "")
                     .substringBefore('-')
                     .toIntOrNull() ?: 0
+            val devBuild =
+                buildSuffix.substringAfter("-dev.", missingDelimiterValue = "")
+                    .substringBefore('-')
+                    .toIntOrNull() ?: 0
 
             val parts = base.split(".")
             val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
@@ -97,7 +105,8 @@ class UpdateManager private constructor(private val context: Context) {
                 minor = minor,
                 patch = patch,
                 patchIndex = patchIndex,
-                ryRevision = ryRevision
+                ryRevision = ryRevision,
+                devBuild = devBuild
             )
         }
 
@@ -109,7 +118,8 @@ class UpdateManager private constructor(private val context: Context) {
             if (p1.minor != p2.minor) return p1.minor.compareTo(p2.minor)
             if (p1.patch != p2.patch) return p1.patch.compareTo(p2.patch)
             if (p1.patchIndex != p2.patchIndex) return p1.patchIndex.compareTo(p2.patchIndex)
-            return p1.ryRevision.compareTo(p2.ryRevision)
+            if (p1.ryRevision != p2.ryRevision) return p1.ryRevision.compareTo(p2.ryRevision)
+            return p1.devBuild.compareTo(p2.devBuild)
         }
 
         /** 检查更新，返回更新状态 用于从MainActivity直接检查更新 */
@@ -143,12 +153,13 @@ class UpdateManager private constructor(private val context: Context) {
                 } catch (_: Exception) {
                     false
                 }
+                val isPersonalDev = BuildConfig.PERSONAL_DEV_UPDATE_CHANNEL
 
-                AppLogger.d(TAG, "checkForUpdatesInternal(): currentVersion=$currentVersion betaEnabled=$betaEnabled")
+                AppLogger.d(TAG, "checkForUpdatesInternal(): currentVersion=$currentVersion betaEnabled=$betaEnabled personalDev=$isPersonalDev")
 
                 val patchUpdate: UpdateStatus? =
-                    if (betaEnabled) {
-                        AppLogger.d(TAG, "beta enabled, trying patch update releases...")
+                    if (isPersonalDev || betaEnabled) {
+                        AppLogger.d(TAG, "patch channel enabled, trying patch update releases...")
                         val patch = tryFetchLatestPatchUpdate(currentVersion)
                         if (patch != null) {
                             val p = patch as? UpdateStatus.PatchAvailable
@@ -163,6 +174,10 @@ class UpdateManager private constructor(private val context: Context) {
                     } else {
                         null
                     }
+
+                if (isPersonalDev) {
+                    return@withContext patchUpdate ?: UpdateStatus.UpToDate
+                }
 
                 val repoOwner = DistributionConfig.OWNER
                 val repoName = DistributionConfig.SOURCE_REPOSITORY
@@ -235,17 +250,32 @@ class UpdateManager private constructor(private val context: Context) {
         var newerThanCurrent = 0
         var withAssets = 0
         var best: UpdateStatus.PatchAvailable? = null
+        var bestFull: UpdateStatus.Available? = null
         var bestVersion = ""
+        var bestTargetSha = ""
+        var bestFullVersion = ""
+        val isPersonalDev = BuildConfig.PERSONAL_DEV_UPDATE_CHANNEL
+        val currentApkSha = if (isPersonalDev) sha256Hex(File(context.applicationInfo.sourceDir)) else ""
+        val patchEdges = mutableMapOf<String, MutableSet<String>>()
 
         for (r in releases) {
             if (r.draft) continue
+
+            val metadata = runCatching { JSONObject(r.body.orEmpty()) }.getOrNull()
+            val channel = metadata?.optString("channel", "").orEmpty()
+            val applicationId = metadata?.optString("applicationId", "").orEmpty()
+            if (isPersonalDev) {
+                if (channel != "personal-dev" || applicationId != context.packageName) continue
+            } else if (channel == "personal-dev") {
+                continue
+            }
 
             val tag = r.tag_name
             val version = tag.removePrefix("v")
 
             // Patch updates are only valid within the same base version (x.y.z).
             // This prevents cases like 1.7.0+1 being offered 1.7.1+3 (should take 1.7.1 full APK first).
-            if (baseVersionOf(version) != currentBase) {
+            if (!isPersonalDev && baseVersionOf(version) != currentBase) {
                 continue
             }
 
@@ -256,6 +286,19 @@ class UpdateManager private constructor(private val context: Context) {
             }
 
             newerThanCurrent += 1
+
+            if (isPersonalDev) {
+                val apkAsset = r.assets.firstOrNull { it.name.endsWith(".apk") }
+                if (apkAsset != null && (bestFull == null || compareVersions(version, bestFullVersion) > 0)) {
+                    bestFullVersion = version
+                    bestFull = UpdateStatus.Available(
+                        newVersion = version,
+                        updateUrl = r.html_url,
+                        releaseNotes = r.body ?: "",
+                        downloadUrl = apkAsset.browser_download_url
+                    )
+                }
+            }
 
             val metaAsset =
                 r.assets.firstOrNull { it.name.startsWith("patch_") && it.name.endsWith(".json") }
@@ -272,6 +315,11 @@ class UpdateManager private constructor(private val context: Context) {
             }
 
             withAssets += 1
+            val baseSha = metadata?.optString("baseSha256", "")?.lowercase().orEmpty()
+            val targetSha = metadata?.optString("targetSha256", "")?.lowercase().orEmpty()
+            if (baseSha.isNotBlank() && targetSha.isNotBlank()) {
+                patchEdges.getOrPut(baseSha) { mutableSetOf() } += targetSha
+            }
 
             AppLogger.d(
                 TAG,
@@ -280,6 +328,7 @@ class UpdateManager private constructor(private val context: Context) {
 
             if (best == null || compareVersions(version, bestVersion) > 0) {
                 bestVersion = version
+                bestTargetSha = targetSha
                 best = UpdateStatus.PatchAvailable(
                     newVersion = version,
                     updateUrl = r.html_url,
@@ -298,6 +347,40 @@ class UpdateManager private constructor(private val context: Context) {
         if (best == null) {
             AppLogger.d(TAG, "tryFetchLatestPatchUpdate(): no valid patch candidates")
         }
-        return best
+        val patchIsReachable = !isPersonalDev || canReachSha(currentApkSha, bestTargetSha, patchEdges)
+        return if (patchIsReachable) best ?: bestFull else bestFull
+    }
+
+    private fun canReachSha(
+        fromSha: String,
+        targetSha: String,
+        edges: Map<String, Set<String>>
+    ): Boolean {
+        if (fromSha.isBlank() || targetSha.isBlank()) return false
+        val queue = ArrayDeque<String>()
+        val visited = mutableSetOf(fromSha.lowercase())
+        queue.add(fromSha.lowercase())
+        val target = targetSha.lowercase()
+        while (queue.isNotEmpty()) {
+            val current = queue.removeFirst()
+            if (current == target) return true
+            for (next in edges[current].orEmpty()) {
+                if (visited.add(next)) queue.add(next)
+            }
+        }
+        return false
+    }
+
+    private fun sha256Hex(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 }

@@ -23,6 +23,15 @@
 - 构建可能触碰 ObjectBox 模型或占位文件。提交前检查 `git status` 和 diff，不提交无内容的行尾变化或无关生成物。
 - 无法运行验证时，说明缺失的 SDK、依赖或环境条件，不得把“未运行”描述为“通过”。
 
+## 分支与发布
+
+- 上游贡献以最新 `upstream/main` 为基线并目标 `main`，不得混入 Operit Ry 的品牌、服务路由或发布配置。
+- `personal/main` 是 Operit Ry 稳定发行分支，受规则保护；改动必须通过 PR 和必需检查，稳定 APK 与 `v*` Release tag 只从该分支发布。
+- `personal/dev` 是所有新功能的集成与测试分支。新功能必须先进入该分支，构建并实际测试可共存的 debug APK；测试通过后，再以只包含通用功能提交的 PR 晋升到 `personal/main`。不得绕过开发版验证直接向稳定分支加入新功能，也不得把开发版专属配置带入晋升 PR。
+- 上游更新先整合进 `personal/main`，再将 `personal/main` 合并到 `personal/dev`；不要用上游分支重置或覆盖任一个人分支。
+- `personal/dev` 的 `debug` 变体使用包名 `com.rainy.operitry.dev`、应用名 `Operit Ry Dev` 和 `-dev` 版本后缀，可与官方 Operit 及稳定版同时安装；`app/src/debug/res/` 维护 DEV 角标图标和指向开发包名的快捷方式，修改应用身份时必须同步核对这些资源。
+- `OperitNightlyRelease` 仓库定时拉取 `personal/dev`，使用递增的 `-dev.<build>` 版本和自身 `GITHUB_TOKEN` 发布 `personal-dev` 差分更新；发布链中的 APK 必须保持 `com.rainy.operitry.dev` 包名及与现有开发版相同的固定签名，首次或补丁链不匹配时保留完整 debug APK 回退。签名 Secret 只配置在 Actions 中，不得写入代码或日志。
+
 ## 修改原则
 
 - 修改前阅读相关实现、调用方和现有测试；优先小而完整的修复。
@@ -37,5 +46,4 @@
 - API Key、令牌、Cookie、签名材料、`local.properties`、本地路径和个人信息不得进入代码、测试、日志或文档。
 - 不回退或覆盖他人的未提交改动，不使用 `git reset --hard`、`git checkout --` 等破坏性命令处理工作区。
 - 提交前检查状态、完整差异和近期历史，只暂存本次任务文件。
-- 上游贡献以最新 `upstream/main` 为基线并目标 `main`；Operit Ry 个人发行版改动目标 `personal/main`。提交、推送和创建 PR 前确认当前任务属于哪条线。
 - 除非用户明确要求，不提交、推送、关闭 PR 或执行发布操作。

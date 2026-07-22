@@ -19,6 +19,7 @@ val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localProperties.load(FileInputStream(localPropertiesFile))
 }
+val devBuildNumber = System.getenv("OPERIT_DEV_BUILD_NUMBER")?.toIntOrNull()?.takeIf { it > 0 }
 
 android {
     namespace = "com.ai.assistance.operit"
@@ -55,7 +56,7 @@ android {
         applicationId = "com.rainy.operitry"
         minSdk = 26
         targetSdk = 34
-        versionCode = 44
+        versionCode = devBuildNumber?.let { 100_000 + it } ?: 44
         versionName = "1.12.0+4-ry.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -78,6 +79,7 @@ android {
 
         buildConfigField("String", "GITHUB_CLIENT_ID", "\"${localProperties.getProperty("GITHUB_CLIENT_ID")}\"")
         buildConfigField("String", "GITHUB_CLIENT_SECRET", "\"${localProperties.getProperty("GITHUB_CLIENT_SECRET")}\"")
+        buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "false")
     }
 
     buildTypes {
@@ -96,8 +98,9 @@ android {
         }
         debug {
             applicationIdSuffix = ".dev"
-            versionNameSuffix = "-dev"
+            versionNameSuffix = "-dev${devBuildNumber?.let { ".$it" }.orEmpty()}"
             resValue("string", "app_name", "Operit Ry Dev")
+            buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "true")
             if (releaseSigningConfig != null) {
                 signingConfig = releaseSigningConfig
             }
@@ -105,6 +108,7 @@ android {
         create("clone") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".clone"
+            buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "false")
             if (releaseSigningConfig != null) {
                 signingConfig = releaseSigningConfig
             }
