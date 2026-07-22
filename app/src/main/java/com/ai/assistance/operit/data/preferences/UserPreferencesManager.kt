@@ -280,6 +280,45 @@ class UserPreferencesManager private constructor(private val context: Context) {
         const val DEFAULT_CUSTOM_PRIMARY_COLOR = 0xFFFED1EE.toInt()
         const val DEFAULT_CUSTOM_SECONDARY_COLOR = 0xFFF8B6D9.toInt()
 
+        /**
+         * 从存储键名中解析主题前缀。
+         *
+         * 对 `character_card_theme_<id>_<key>` 或 `character_group_theme_<id>_<key>`
+         * 形式的键，在所有候选主题键名中找出最长后缀匹配，返回以 `_` 结尾的前缀。
+         *
+         * 最长匹配解决键名重叠（如 `use_custom_font` 与 `bubble_user_use_custom_font`
+         * 同为 `character_card_theme_X_bubble_user_use_custom_font` 的后缀）；
+         * `_` 边界校验确保分割点在合法键名边界，而非字符恰好重合。
+         *
+         * @return 非 null 表示有效主题前缀（如 `character_card_theme_123_`）；
+         *         null 表示键名不以 theme 前缀开头，或无匹配的主题键名。
+         */
+        internal fun resolveThemePrefix(
+            keyName: String,
+            allThemeKeyNames: Set<String>,
+        ): String? {
+            if (!keyName.startsWith("character_card_theme_") &&
+                !keyName.startsWith("character_group_theme_")
+            ) {
+                return null
+            }
+            var bestMatch: String? = null
+            var bestPrefix: String? = null
+            for (themeKeyName in allThemeKeyNames) {
+                if (keyName.endsWith(themeKeyName)) {
+                    val candidatePrefix = keyName.removeSuffix(themeKeyName)
+                    // 前缀必须以 '_' 结尾，确保分割点在键名边界
+                    if (candidatePrefix.endsWith("_") &&
+                        (bestMatch == null || themeKeyName.length > bestMatch.length)
+                    ) {
+                        bestMatch = themeKeyName
+                        bestPrefix = candidatePrefix
+                    }
+                }
+            }
+            return bestPrefix
+        }
+
         private val KEY_BACKGROUND_BLUR_RADIUS = floatPreferencesKey("background_blur_radius")
         private val KEY_CHAT_STYLE = stringPreferencesKey("chat_style")
         private val KEY_SHOW_THINKING_PROCESS = booleanPreferencesKey("show_thinking_process")
@@ -1911,41 +1950,71 @@ class UserPreferencesManager private constructor(private val context: Context) {
     }
 
     /**
-     * 一次性迁移：将升级前已保存的角色卡/群组主题中的缺键补写为旧版默认值，
-     * 避免切换到这些主题时被新默认值（Rainy 粉色、气泡样式等）静默改写。
+     * 一次性迁移：将升级前已保存的主题中的缺键补写为旧版默认值，
+     * 避免被新默认值（Rainy 粉色、气泡样式等）静默改写。
+     *
+     * 迁移范围：
+     * 1. 角色卡/群组主题（前缀键）：对每个已保存主题前缀，补写缺键为旧默认值。
+     * 2. 全局主题（无前缀键）：仅对老用户（DataStore 已有数据）补写；全新安装不补，
+     *    保留 Rainy 出厂体验。
+     *
      * 迁移仅执行一次，通过 theme_migration_v1_done 标记控制。
      */
     private suspend fun performThemeMigration() {
         val migrationDoneKey = booleanPreferencesKey("theme_migration_v1_done")
+        // 在 edit 块外构建键名集合（避免 MutablePreferences receiver 干扰实例方法解析）
+        val allThemeKeyNames = buildThemeKeyNameSet()
 
         context.userPreferencesDataStore.edit { preferences ->
             if (preferences[migrationDoneKey] == true) return@edit
 
-            // 发现所有已有的主题前缀（仅角色卡和群组主题，不包括全局设置）
+            // ========== 全局主题迁移（仅老用户）==========
+            // DataStore 非空 → 已有用户数据，补写全局缺键为旧默认值
+            // DataStore 为空 → 全新安装，不补写，保留 Rainy 出厂体验
+            if (preferences.asMap().isNotEmpty()) {
+                // Boolean 全局键 — 旧默认值
+                if (!preferences.contains(USE_CUSTOM_COLORS))
+                    preferences[USE_CUSTOM_COLORS] = false
+                if (!preferences.contains(CHAT_INPUT_FLOATING))
+                    preferences[CHAT_INPUT_FLOATING] = false
+                if (!preferences.contains(BUBBLE_WIDE_LAYOUT_ENABLED))
+                    preferences[BUBBLE_WIDE_LAYOUT_ENABLED] = false
+                if (!preferences.contains(BUBBLE_USER_ROUNDED_CORNERS_ENABLED))
+                    preferences[BUBBLE_USER_ROUNDED_CORNERS_ENABLED] = true
+                if (!preferences.contains(BUBBLE_AI_ROUNDED_CORNERS_ENABLED))
+                    preferences[BUBBLE_AI_ROUNDED_CORNERS_ENABLED] = true
+                if (!preferences.contains(KEY_SHOW_MODEL_PROVIDER))
+                    preferences[KEY_SHOW_MODEL_PROVIDER] = false
+                if (!preferences.contains(KEY_SHOW_MODEL_NAME))
+                    preferences[KEY_SHOW_MODEL_NAME] = false
+                if (!preferences.contains(KEY_SHOW_MESSAGE_TOKEN_STATS))
+                    preferences[KEY_SHOW_MESSAGE_TOKEN_STATS] = false
+                if (!preferences.contains(KEY_SHOW_MESSAGE_TIMING_STATS))
+                    preferences[KEY_SHOW_MESSAGE_TIMING_STATS] = false
+                if (!preferences.contains(KEY_SHOW_MESSAGE_TIMESTAMP))
+                    preferences[KEY_SHOW_MESSAGE_TIMESTAMP] = false
+
+                // String 全局键 — 旧默认值
+                if (!preferences.contains(CHAT_STYLE))
+                    preferences[CHAT_STYLE] = CHAT_STYLE_CURSOR
+                if (!preferences.contains(INPUT_STYLE))
+                    preferences[INPUT_STYLE] = INPUT_STYLE_AGENT
+            }
+
+            // ========== 角色卡/群组主题迁移（老数据前缀补键）==========
             val allKeys = preferences.asMap().keys
             val prefixes = mutableSetOf<String>()
 
-            val allThemeKeyNames = (getAllStringThemeKeys().map { it.name } +
-                    getAllBooleanThemeKeys().map { it.name } +
-                    getAllIntThemeKeys().map { it.name } +
-                    getAllFloatThemeKeys().map { it.name }).toSet()
-
             for (rawKey in allKeys) {
-                val keyName = rawKey.name
-                if (keyName.startsWith("character_card_theme_") || keyName.startsWith("character_group_theme_")) {
-                    for (themeKeyName in allThemeKeyNames) {
-                        if (keyName.endsWith(themeKeyName)) {
-                            prefixes.add(keyName.removeSuffix(themeKeyName))
-                            break
-                        }
-                    }
+                val prefix = resolveThemePrefix(rawKey.name, allThemeKeyNames)
+                if (prefix != null) {
+                    prefixes.add(prefix)
                 }
             }
 
-            // 本次 PR 改变默认值的主题键 —— 旧版默认值（迁移用）
             // 对每个已有的主题前缀，将缺键补写为旧默认值，使升级后切换主题保持原外观
             for (prefix in prefixes) {
-                // Boolean 键 —— 旧默认值
+                // Boolean 键 — 旧默认值
                 if (!preferences.contains(booleanPreferencesKey("${prefix}${USE_CUSTOM_COLORS.name}")))
                     preferences[booleanPreferencesKey("${prefix}${USE_CUSTOM_COLORS.name}")] = false
                 if (!preferences.contains(booleanPreferencesKey("${prefix}${CHAT_INPUT_FLOATING.name}")))
@@ -1967,7 +2036,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
                 if (!preferences.contains(booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TIMESTAMP.name}")))
                     preferences[booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TIMESTAMP.name}")] = false
 
-                // String 键 —— 旧默认值
+                // String 键 — 旧默认值
                 if (!preferences.contains(stringPreferencesKey("${prefix}${CHAT_STYLE.name}")))
                     preferences[stringPreferencesKey("${prefix}${CHAT_STYLE.name}")] = CHAT_STYLE_CURSOR
                 if (!preferences.contains(stringPreferencesKey("${prefix}${INPUT_STYLE.name}")))
@@ -1976,6 +2045,17 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
             preferences[migrationDoneKey] = true
         }
+    }
+
+    /**
+     * 构建全部主题键名的集合（字符串形式），供前缀解析使用。
+     * 合并全部四种类型（String / Boolean / Int / Float）的键名，去重。
+     */
+    private fun buildThemeKeyNameSet(): Set<String> {
+        return (getAllStringThemeKeys().map { it.name } +
+                getAllBooleanThemeKeys().map { it.name } +
+                getAllIntThemeKeys().map { it.name } +
+                getAllFloatThemeKeys().map { it.name }).toSet()
     }
 
     suspend fun copyCurrentThemeToCharacterCard(characterCardId: String) {

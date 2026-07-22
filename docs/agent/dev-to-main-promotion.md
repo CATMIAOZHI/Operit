@@ -76,11 +76,23 @@ git commit --amend --no-edit
 ### 6. 验证
 
 ```bash
-# 确认 applicationId 不含 .dev
-grep -n "applicationIdSuffix" app/build.gradle.kts  # 应只在 debug 块中
+# === 拒绝所有 personal/dev 身份配置（无论是否在 debug 块中）===
 
-# 确认 PERSONAL_DEV_UPDATE_CHANNEL 为 false
-grep -n "PERSONAL_DEV_UPDATE_CHANNEL" app/build.gradle.kts
+# 以下任何匹配均应视为晋升失败，对应提交需重新 cherry-pick 并排除：
+#   applicationIdSuffix = ".dev"
+#   versionNameSuffix = "-dev"（或含 -dev 的任何变体）
+#   resValue("string", "app_name", "Operit Ry Dev")
+#   buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "true")
+#   app/src/debug/res/ 下 *_dev_* 图标文件
+
+grep -En 'applicationIdSuffix\s*=\s*"\.dev"|versionNameSuffix\s*=\s*".*-dev|app_name.*Operit Ry Dev|PERSONAL_DEV_UPDATE_CHANNEL.*true' \
+  app/build.gradle.kts && echo "FAIL: dev 身份配置残留" && exit 1 || true
+
+test -f app/src/debug/res/drawable/ic_launcher_dev_badge.xml \
+  && echo "FAIL: DEV 图标残留" && exit 1 || true
+
+# 注意：clone 配置（applicationIdSuffix = ".clone"、Operit Ry Clone）可以在
+# 稳定分支中保留；上述检查只针对 dev 专用身份。
 
 # 编译检查
 ./gradlew :app:compileDebugKotlin
@@ -88,8 +100,10 @@ grep -n "PERSONAL_DEV_UPDATE_CHANNEL" app/build.gradle.kts
 # 单元测试
 ./gradlew :app:testDebugUnitTest
 
-# 完整构建（如有条件）
-./gradlew :app:assembleRelease
+# Lint
+./gradlew :app:lintDebug
+
+# 完整 release 构建与 APK 验证交给 GitHub Actions（PR Check / Nightly）
 ```
 
 ### 7. 推送并创建 PR
