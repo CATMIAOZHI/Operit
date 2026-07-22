@@ -98,7 +98,7 @@ fun BubbleAiMessageComposable(
     val displayPreferencesManager = remember { DisplayPreferencesManager.getInstance(context) }
     val characterCardManager = remember { CharacterCardManager.getInstance(context) }
     val bubbleShowAvatar by preferencesManager.bubbleShowAvatar.collectAsState(initial = true)
-    val bubbleWideLayoutEnabled by preferencesManager.bubbleWideLayoutEnabled.collectAsState(initial = false)
+    val bubbleWideLayoutEnabled by preferencesManager.bubbleWideLayoutEnabled.collectAsState(initial = true)
     val showThinkingProcess by preferencesManager.showThinkingProcess.collectAsState(initial = true)
     val showStatusTags by preferencesManager.showStatusTags.collectAsState(initial = true)
     val effectiveShowThinkingProcess = if (forceShowThinkingProcess) true else showThinkingProcess
@@ -117,10 +117,10 @@ fun BubbleAiMessageComposable(
     val bubbleAiCustomFontPath by
         preferencesManager.bubbleAiCustomFontPath.collectAsState(initial = null)
     
-    val showModelProvider by preferencesManager.showModelProvider.collectAsState(initial = false)
-    val showModelName by preferencesManager.showModelName.collectAsState(initial = false)
+    val showModelProvider by preferencesManager.showModelProvider.collectAsState(initial = true)
+    val showModelName by preferencesManager.showModelName.collectAsState(initial = true)
     val showRoleName by preferencesManager.showRoleName.collectAsState(initial = true)
-    val toolCollapseMode by displayPreferencesManager.toolCollapseMode.collectAsState(initial = ToolCollapseMode.ALL)
+    val toolCollapseMode by displayPreferencesManager.toolCollapseMode.collectAsState(initial = ToolCollapseMode.FULL)
     
     // 根据角色名获取头像
     val aiAvatarUri by remember(message.roleName) {

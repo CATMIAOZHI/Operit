@@ -100,10 +100,10 @@ fun OperitTheme(content: @Composable () -> Unit) {
             preferencesManager.themeMode.collectAsState(
                     initial = UserPreferencesManager.THEME_MODE_LIGHT
             )
-    val useCustomColors by preferencesManager.useCustomColors.collectAsState(initial = false)
-    val customPrimaryColor by preferencesManager.customPrimaryColor.collectAsState(initial = null)
+    val useCustomColors by preferencesManager.useCustomColors.collectAsState(initial = true)
+    val customPrimaryColor by preferencesManager.customPrimaryColor.collectAsState(initial = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR)
     val customSecondaryColor by
-            preferencesManager.customSecondaryColor.collectAsState(initial = null)
+            preferencesManager.customSecondaryColor.collectAsState(initial = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR)
     val onColorMode by preferencesManager.onColorMode.collectAsState(initial = ON_COLOR_MODE_AUTO)
 
     // 获取背景图片设置

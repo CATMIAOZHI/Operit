@@ -101,7 +101,7 @@ fun BubbleUserMessageComposable(
     val displayPreferencesManager = remember { DisplayPreferencesManager.getInstance(context) }
     val characterCardManager = remember { CharacterCardManager.getInstance(context) }
     val bubbleShowAvatar by preferencesManager.bubbleShowAvatar.collectAsState(initial = true)
-    val bubbleWideLayoutEnabled by preferencesManager.bubbleWideLayoutEnabled.collectAsState(initial = false)
+    val bubbleWideLayoutEnabled by preferencesManager.bubbleWideLayoutEnabled.collectAsState(initial = true)
     val customUserAvatarUri by preferencesManager.customUserAvatarUri.collectAsState(initial = null)
     val globalUserAvatarUri by displayPreferencesManager.globalUserAvatarUri.collectAsState(initial = null)
     val globalUserName by displayPreferencesManager.globalUserName.collectAsState(initial = null)

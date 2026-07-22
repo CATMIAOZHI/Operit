@@ -185,7 +185,7 @@ class DisplayPreferencesManager private constructor(private val context: Context
 
     val visitWebWaitSeconds: Flow<Int> =
         context.displayPreferencesDataStore.data.map { preferences ->
-            preferences[KEY_VISIT_WEB_WAIT_SECONDS] ?: 0
+            preferences[KEY_VISIT_WEB_WAIT_SECONDS] ?: 5
         }
 
     val virtualDisplayBitrateKbps: Flow<Int> =
@@ -195,7 +195,13 @@ class DisplayPreferencesManager private constructor(private val context: Context
 
     val toolCollapseMode: Flow<ToolCollapseMode> =
         context.displayPreferencesDataStore.data.map { preferences ->
-            ToolCollapseMode.fromValue(preferences[KEY_TOOL_COLLAPSE_MODE])
+            val stored = preferences[KEY_TOOL_COLLAPSE_MODE]
+            // 缺键时使用 FULL 作为新默认值；已存但非法的字符串仍回退到 ALL，保持旧容错行为
+            if (stored == null) {
+                ToolCollapseMode.FULL
+            } else {
+                ToolCollapseMode.fromValue(stored)
+            }
         }
 
     /**

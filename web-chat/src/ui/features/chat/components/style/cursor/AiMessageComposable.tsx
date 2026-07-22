@@ -31,7 +31,7 @@ export function AiMessageComposable({
           showStatusTags={theme?.show_status_tags ?? true}
           showThinking={theme?.show_thinking_process ?? true}
           streaming={message.streaming === true}
-          toolCollapseMode={theme?.display.tool_collapse_mode ?? 'all'}
+          toolCollapseMode={theme?.display.tool_collapse_mode ?? 'full'}
         />
       </div>
       {message.attachments.length ? (
