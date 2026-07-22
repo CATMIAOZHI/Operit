@@ -13,9 +13,11 @@ function(operit_git_ref_var out_var dependency_name git_ref)
     string(REPLACE "-" "_" dependency_key "${dependency_key}")
 
     set(ref_var "OPERIT_${dependency_key}_GIT_REF")
-    if(NOT DEFINED ${ref_var})
-        set(${ref_var} "${git_ref}" CACHE STRING "Git ref used to fetch ${dependency_name}")
-    endif()
+    # Use FORCE so a stale CMake cache value (e.g. "master" or empty) from a
+    # previous configure is always overwritten with the ref declared in the
+    # current CMakeLists.txt. Without FORCE, NOT DEFINED would keep the old
+    # cached value and pinning to a SHA would silently be ignored.
+    set(${ref_var} "${git_ref}" CACHE STRING "Git ref used to fetch ${dependency_name}" FORCE)
 
     set(${out_var} "${ref_var}" PARENT_SCOPE)
 endfunction()
