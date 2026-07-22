@@ -13,15 +13,20 @@ function(operit_git_ref_var out_var dependency_name git_ref)
     string(REPLACE "-" "_" dependency_key "${dependency_key}")
 
     set(ref_var "OPERIT_${dependency_key}_GIT_REF")
-    if(NOT DEFINED ${ref_var})
-        set(${ref_var} "${git_ref}" CACHE STRING "Git ref used to fetch ${dependency_name}")
-    endif()
+    # Use FORCE so a stale CMake cache value (e.g. "master" or empty) from a
+    # previous configure is always overwritten with the ref declared in the
+    # current CMakeLists.txt. Without FORCE, NOT DEFINED would keep the old
+    # cached value and pinning to a SHA would silently be ignored.
+    set(${ref_var} "${git_ref}" CACHE STRING "Git ref used to fetch ${dependency_name}" FORCE)
 
     set(${out_var} "${ref_var}" PARENT_SCOPE)
 endfunction()
 
 function(operit_resolve_git_ref out_var repository git_ref)
-    if("${git_ref}" MATCHES "^[0-9a-fA-F]{40}$")
+    # CMake's built-in regex does not support {n} quantifiers. Match a 40-char
+    # hex SHA by explicitly checking length and character class.
+    string(LENGTH "${git_ref}" _ref_len)
+    if(_ref_len EQUAL 40 AND "${git_ref}" MATCHES "^[0-9a-fA-F]+$")
         string(TOLOWER "${git_ref}" resolved_sha)
         set(${out_var} "${resolved_sha}" PARENT_SCOPE)
         return()

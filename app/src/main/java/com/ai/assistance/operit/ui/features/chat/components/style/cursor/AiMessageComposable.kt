@@ -60,10 +60,10 @@ fun AiMessageComposable(
     val showStatusTags by preferencesManager.showStatusTags.collectAsState(initial = true)
     val effectiveShowThinkingProcess = if (forceShowThinkingProcess) true else showThinkingProcess
     
-    val showModelProvider by preferencesManager.showModelProvider.collectAsState(initial = false)
-    val showModelName by preferencesManager.showModelName.collectAsState(initial = false)
+    val showModelProvider by preferencesManager.showModelProvider.collectAsState(initial = true)
+    val showModelName by preferencesManager.showModelName.collectAsState(initial = true)
     val showRoleName by preferencesManager.showRoleName.collectAsState(initial = true)
-    val toolCollapseMode by displayPreferencesManager.toolCollapseMode.collectAsState(initial = ToolCollapseMode.ALL)
+    val toolCollapseMode by displayPreferencesManager.toolCollapseMode.collectAsState(initial = ToolCollapseMode.FULL)
 
     // 链接预览弹窗状态
     var showLinkDialog by remember { mutableStateOf(false) }

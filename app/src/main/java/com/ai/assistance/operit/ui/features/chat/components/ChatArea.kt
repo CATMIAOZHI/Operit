@@ -224,11 +224,11 @@ fun ChatArea(
     val coroutineScope = rememberCoroutineScope()
     val preferencesManager = remember { UserPreferencesManager.getInstance(context) }
     val showMessageTokenStats by
-        preferencesManager.showMessageTokenStats.collectAsState(initial = false)
+        preferencesManager.showMessageTokenStats.collectAsState(initial = true)
     val showMessageTimingStats by
-        preferencesManager.showMessageTimingStats.collectAsState(initial = false)
+        preferencesManager.showMessageTimingStats.collectAsState(initial = true)
     val showMessageTimestamp by
-        preferencesManager.showMessageTimestamp.collectAsState(initial = false)
+        preferencesManager.showMessageTimestamp.collectAsState(initial = true)
     var viewportHeightPx by remember { mutableStateOf(0) }
     val messageAnchors = remember(currentChatId) { mutableStateMapOf<Long, ChatScrollMessageAnchor>() }
     var pendingJumpToMessageTimestamp by remember(currentChatId) { mutableStateOf<Long?>(null) }

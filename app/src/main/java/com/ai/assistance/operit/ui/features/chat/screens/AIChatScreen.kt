@@ -172,7 +172,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val backgroundImageUri by preferencesManager.backgroundImageUri.collectAsState(initial = null)
     val chatHeaderTransparent by preferencesManager.chatHeaderTransparent.collectAsState(initial = false)
     val chatInputTransparent by preferencesManager.chatInputTransparent.collectAsState(initial = false)
-    val chatInputFloating by preferencesManager.chatInputFloating.collectAsState(initial = false)
+    val chatInputFloating by preferencesManager.chatInputFloating.collectAsState(initial = true)
     val chatInputLiquidGlassRaw by
         preferencesManager.chatInputLiquidGlass.collectAsState(initial = false)
     val chatInputWaterGlass by
@@ -191,7 +191,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val effectiveHasBackgroundImage = hasBackgroundImage || hasBackgroundImageFromPrefs
 
     // Collect chat style from preferences
-    val chatStyleSetting by preferencesManager.chatStyle.collectAsState(initial = UserPreferencesManager.CHAT_STYLE_CURSOR)
+    val chatStyleSetting by preferencesManager.chatStyle.collectAsState(initial = UserPreferencesManager.CHAT_STYLE_BUBBLE)
     val chatStyle = remember(chatStyleSetting) {
         when (chatStyleSetting) {
             UserPreferencesManager.CHAT_STYLE_BUBBLE -> ChatStyle.BUBBLE
@@ -200,7 +200,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     }
     val inputStyle by
         preferencesManager.inputStyle.collectAsState(
-            initial = UserPreferencesManager.INPUT_STYLE_AGENT,
+            initial = UserPreferencesManager.INPUT_STYLE_CLASSIC,
         )
     val cursorUserBubbleFollowTheme by
         preferencesManager.cursorUserBubbleFollowTheme.collectAsState(initial = true)
@@ -278,9 +278,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
             initial = UserPreferencesManager.BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
         )
     val bubbleUserRoundedCornersEnabled by
-        preferencesManager.bubbleUserRoundedCornersEnabled.collectAsState(initial = true)
+        preferencesManager.bubbleUserRoundedCornersEnabled.collectAsState(initial = false)
     val bubbleAiRoundedCornersEnabled by
-        preferencesManager.bubbleAiRoundedCornersEnabled.collectAsState(initial = true)
+        preferencesManager.bubbleAiRoundedCornersEnabled.collectAsState(initial = false)
     val bubbleUserContentPaddingLeft by
         preferencesManager.bubbleUserContentPaddingLeft.collectAsState(initial = 12f)
     val bubbleUserContentPaddingRight by

@@ -987,7 +987,7 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
         val extractionRequested = remember { mutableStateOf(false) }
         val loadToken = remember { mutableStateOf(0) }
         val displayPreferencesManager = remember { DisplayPreferencesManager.getInstance(context) }
-        val visitWebWaitSeconds by displayPreferencesManager.visitWebWaitSeconds.collectAsState(initial = 0)
+        val visitWebWaitSeconds by displayPreferencesManager.visitWebWaitSeconds.collectAsState(initial = 5)
 
         // 自动模式状态
         val autoModeEnabled = remember { mutableStateOf(true) } // 是否启用自动模式
