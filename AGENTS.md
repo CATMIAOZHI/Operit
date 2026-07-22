@@ -7,16 +7,18 @@
 - `app/`：Android 主应用、业务逻辑、资源和 JVM 测试
 - `terminal/`：公开 Git 子模块，构建前需初始化
 - `dragonbones/`、`fbx/`、`llama/`、`mmd/`、`mnn/`、`quickjs/`：native/渲染/推理模块
+- `cmake/`：共享 CMake 工具和原生依赖锁定清单（`operit_git_source.cmake`、`NATIVE_DEPENDENCY_LOCK.md`）
 - `web-chat/`：React/Vite Web Chat
 - `examples/`、`tools/`：ToolPkg、示例和仓库工具
-- `docs/`：用户与开发文档
+- `docs/`：用户与开发文档；Agent 操作手册位于 `docs/agent/`（构建手册、晋升流程、提交检查清单）
 - `ci/`、`.github/`：检查、构建和发布自动化
 
 ## 构建与验证
 
-- Android 构建使用仓库自带的 `gradlew` / `gradlew.bat`，JDK 21 和 Android SDK 36。
+- Android 构建使用仓库自带的 `gradlew` / `gradlew.bat`，JDK 21 和 Android SDK 36。构建手册见 `docs/agent/build-guide.md`。
 - 首次构建先执行 `git submodule update --init --recursive terminal`。
 - 完整 Android 构建需要 README/编译指南列出的 `models.zip`、`subpack.zip`、`jniLibs.zip` 和 `libs.zip` 内容；这些本地依赖不得提交。
+- 原生第三方依赖（MNN、llama.cpp、ncnn、sherpa-ncnn、WAMR、QuickJS、Saba、Bullet3、ufbx、KleidiAI）已固定到具体 commit SHA，锁定清单见 `cmake/NATIVE_DEPENDENCY_LOCK.md`；升级时更新该清单和对应 `CMakeLists.txt`，不要通过 `OPERIT_*_GIT_REF` 命令行参数覆盖（已不再生效）。
 - 根据改动范围主动运行最小充分验证。Kotlin 改动优先运行 `./gradlew :app:compileDebugKotlin` 和相关 `:app:testDebugUnitTest`；资源或构建输入改动再运行 lint/assemble。
 - Web Chat、ToolPkg 和仓库检查命令以 `docs/doc-src/dev-core/CONTRIBUTING.md` 与 `ci/README.md` 为准。
 - 等待 GitHub Actions workflow 时使用至少 60 秒的轮询间隔并默认静默输出（PowerShell 示例：`gh run watch <run-id> --exit-status --interval 60 *> $null`）；结束后用一次 `gh run view` 查询最终结果，仅在诊断失败时读取详细 job 日志。
@@ -27,10 +29,10 @@
 
 - 上游贡献以最新 `upstream/main` 为基线并目标 `main`，不得混入 Operit Ry 的品牌、服务路由或发布配置。
 - `personal/main` 是 Operit Ry 稳定发行分支，受规则保护；改动必须通过 PR 和必需检查，稳定 APK 与 `v*` Release tag 只从该分支发布。
-- `personal/dev` 是所有新功能的集成与测试分支。新功能必须先进入该分支，构建并实际测试可共存的 debug APK；测试通过后，再以只包含通用功能提交的 PR 晋升到 `personal/main`。不得绕过开发版验证直接向稳定分支加入新功能，也不得把开发版专属配置带入晋升 PR。
-- 上游更新先整合进 `personal/main`，再将 `personal/main` 合并到 `personal/dev`；不要用上游分支重置或覆盖任一个人分支。
+- `personal/dev` 是所有新功能的集成与测试分支。新功能必须先进入该分支，构建并实际测试可共存的 debug APK；测试通过后，经用户同意再以只包含通用功能提交的 PR 晋升到 `personal/main`。晋升操作手册见 `docs/agent/dev-to-main-promotion.md`。不得绕过开发版验证直接向稳定分支加入新功能，也不得把开发版专属配置带入晋升 PR。
+- 上游更新先整合进 `personal/dev` 构建并测试，确认不破坏现有功能后再合并到 `personal/main`；不要用上游分支重置或覆盖任一个人分支。
 - `personal/dev` 的 `debug` 变体使用包名 `com.rainy.operitry.dev`、应用名 `Operit Ry Dev` 和 `-dev` 版本后缀，可与官方 Operit 及稳定版同时安装；`app/src/debug/res/` 维护 DEV 角标图标和指向开发包名的快捷方式，修改应用身份时必须同步核对这些资源。
-- `OperitNightlyRelease` 仓库定时拉取 `personal/dev`，使用递增的 `-dev.<build>` 版本和自身 `GITHUB_TOKEN` 发布 `personal-dev` 差分更新；发布链中的 APK 必须保持 `com.rainy.operitry.dev` 包名及与现有开发版相同的固定签名，首次或补丁链不匹配时保留完整 debug APK 回退。签名 Secret 只配置在 Actions 中，不得写入代码或日志。
+- `OperitNightlyRelease` 仓库定时拉取 `personal/dev`，使用递增的 `-dev.<build>` 版本和自身 `GITHUB_TOKEN` 发布 `personal-dev` 差分更新；发布链中的 APK 必须保持 `com.rainy.operitry.dev` 包名及与现有开发版相同的固定签名，首次或补丁链不匹配时保留完整 debug APK 回退。签名 Secret 只配置在 Actions 中，不得写入代码或日志。Nightly 构建使用 ccache（`CCACHE_COMPILERCHECK=content`、2G 滚动缓存）加速原生编译，修改 `cmake/operit_git_source.cmake` 或原生依赖 SHA 时需注意对缓存命中率的影响。
 
 ## 修改原则
 
@@ -45,5 +47,5 @@
 
 - API Key、令牌、Cookie、签名材料、`local.properties`、本地路径和个人信息不得进入代码、测试、日志或文档。
 - 不回退或覆盖他人的未提交改动，不使用 `git reset --hard`、`git checkout --` 等破坏性命令处理工作区。
-- 提交前检查状态、完整差异和近期历史，只暂存本次任务文件。
+- 提交前检查状态、完整差异和近期历史，只暂存本次任务文件。提交前检查清单见 `docs/agent/commit-checklist.md`。
 - 除非用户明确要求，不提交、推送、关闭 PR 或执行发布操作。
