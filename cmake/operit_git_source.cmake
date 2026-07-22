@@ -25,10 +25,13 @@ endfunction()
 function(operit_resolve_git_ref out_var repository git_ref)
     message(STATUS "DEBUG operit_resolve_git_ref: repository='${repository}' git_ref='${git_ref}' length=${git_ref}")
     if("${git_ref}" MATCHES "^[0-9a-fA-F]{40}$")
+        message(STATUS "DEBUG: matched 40-hex SHA, returning directly")
         string(TOLOWER "${git_ref}" resolved_sha)
         set(${out_var} "${resolved_sha}" PARENT_SCOPE)
         return()
     endif()
+
+    message(STATUS "DEBUG: did NOT match 40-hex SHA, falling through to git ls-remote")
 
     execute_process(
         COMMAND git ls-remote "${repository}" "${git_ref}" "refs/heads/${git_ref}" "refs/tags/${git_ref}"
