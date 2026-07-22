@@ -15,7 +15,7 @@ operit_prepare_git_source(
     OPERIT_LLAMA_CPP_BINARY_DIR
     llama_cpp
     "https://github.com/ggml-org/llama.cpp.git"
-    "master"
+    "c5a4a0bb832fcdb44487996150b3141490fdff69"
 )
 
 add_subdirectory("${OPERIT_LLAMA_CPP_SOURCE_DIR}" "${OPERIT_LLAMA_CPP_BINARY_DIR}" EXCLUDE_FROM_ALL)

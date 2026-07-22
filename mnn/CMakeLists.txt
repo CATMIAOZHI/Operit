@@ -9,7 +9,7 @@ operit_prepare_git_source(
     OPERIT_MNN_BINARY_DIR
     mnn
     "https://github.com/alibaba/MNN.git"
-    "master"
+    "b418a758628ac9c5b2422975922cc31736992280"
 )
 
 operit_prepare_git_source(
@@ -17,7 +17,7 @@ operit_prepare_git_source(
     OPERIT_KLEIDIAI_BINARY_DIR
     kleidiai
     "https://github.com/ARM-software/kleidiai.git"
-    "v1.16.0"
+    "fa0a8e861d58451e0a3a0d1588bc0d49bad23743"
 )
 
 # 使用 CMake Policy CMP0077 来让 set() 覆盖 option()
