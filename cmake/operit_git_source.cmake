@@ -23,6 +23,7 @@ function(operit_git_ref_var out_var dependency_name git_ref)
 endfunction()
 
 function(operit_resolve_git_ref out_var repository git_ref)
+    message(STATUS "DEBUG operit_resolve_git_ref: repository='${repository}' git_ref='${git_ref}' length=${git_ref}")
     if("${git_ref}" MATCHES "^[0-9a-fA-F]{40}$")
         string(TOLOWER "${git_ref}" resolved_sha)
         set(${out_var} "${resolved_sha}" PARENT_SCOPE)
