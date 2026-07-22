@@ -123,6 +123,17 @@ git diff --exit-code -- examples/github.js
 
 Nightly 构建由 `OperitNightlyRelease` 仓库的 `personal-dev-update.yml` workflow 自动执行，每 5 分钟检查 `personal/dev` 是否有新提交。
 
+Nightly 统一负责 dev 分支的**验证与发布**：
+
+- `assembleDebug`（硬门控，失败不发布）
+- `testDebugUnitTest` + `lintDebug`（非阻断，失败仍发布，结果写入 step summary）
+- 单测和 Lint 报告上传为 `operit-ry-dev-reports-<run>` artifact（保留 14 天）
+- 包名验证、签名验证、差分更新发布
+
+Agent 推送 `personal/dev` 后**直接结束**，无需手动触发 Android Build 或等待 Nightly。检查结果在 workflow run summary 和 reports artifact 中查看。
+
+Android Build workflow（`android-build.yml`）仍可手动触发用于 release、clone 或独立验证，但 dev 日常迭代不需要。
+
 关键配置：
 
 - **NDK 版本**：`25.1.8937393`
@@ -131,7 +142,7 @@ Nightly 构建由 `OperitNightlyRelease` 仓库的 `personal-dev-update.yml` wor
 - **ccache**：`CCACHE_COMPILERCHECK=content`、2G 滚动缓存，加速原生编译
 - **签名**：使用 Actions Secrets 中配置的 Operit Ry 发布签名，构建前和构建后双重校验证书 SHA-256
 
-Agent 等待 Actions 时使用至少 60 秒轮询间隔：
+等待 Android Build workflow 时使用至少 60 秒轮询间隔：
 
 ```bash
 gh run watch <run-id> --exit-status --interval 60 *> $null

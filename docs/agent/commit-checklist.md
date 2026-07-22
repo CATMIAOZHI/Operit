@@ -74,6 +74,7 @@ git checkout -- <file>
 
 - 等待 Actions 时使用至少 60 秒轮询间隔
 - 不写入签名密钥或 Token 值到 workflow 文件
+- dev 分支推送后由 Nightly 自动完成云端验证和发布，Agent 推送后直接结束，无需手动触发 Android Build
 
 ## 分支相关
 
@@ -81,6 +82,7 @@ git checkout -- <file>
 
 - 直接 push 即可，不需要 PR（但禁止删除和强推）
 - 可以包含开发版专属配置（包名 `.dev`、DEV 图标、Nightly 子模块等）
+- 推送后由 Nightly 自动完成云端验证（assembleDebug + 单测 + Lint）并发布 APK，检查结果在 workflow run summary 和 reports artifact 中查看
 
 ### personal/main
 
