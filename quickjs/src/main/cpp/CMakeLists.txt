@@ -9,7 +9,7 @@ operit_prepare_git_source(
     OPERIT_QUICKJS_BINARY_DIR
     quickjs
     "https://github.com/bellard/quickjs.git"
-    "master"
+    "04be246001599f5995fa2f2d8c91a0f198d3f34c"
 )
 
 file(READ "${QUICKJS_DIR}/VERSION" QUICKJS_VERSION_RAW)
