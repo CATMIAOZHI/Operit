@@ -23,16 +23,14 @@ function(operit_git_ref_var out_var dependency_name git_ref)
 endfunction()
 
 function(operit_resolve_git_ref out_var repository git_ref)
+    # CMake's built-in regex does not support {n} quantifiers. Match a 40-char
+    # hex SHA by explicitly checking length and character class.
     string(LENGTH "${git_ref}" _ref_len)
-    message(STATUS "DEBUG operit_resolve_git_ref: repository='${repository}' git_ref='${git_ref}' ref_length=${_ref_len}")
-    if("${git_ref}" MATCHES "^[0-9a-fA-F]{40}$")
-        message(STATUS "DEBUG: matched 40-hex SHA, returning directly")
+    if(_ref_len EQUAL 40 AND "${git_ref}" MATCHES "^[0-9a-fA-F]+$")
         string(TOLOWER "${git_ref}" resolved_sha)
         set(${out_var} "${resolved_sha}" PARENT_SCOPE)
         return()
     endif()
-
-    message(STATUS "DEBUG: did NOT match 40-hex SHA (len=${_ref_len}), falling through to git ls-remote")
 
     execute_process(
         COMMAND git ls-remote "${repository}" "${git_ref}" "refs/heads/${git_ref}" "refs/tags/${git_ref}"
@@ -70,7 +68,6 @@ endfunction()
 
 function(operit_declare_git_source dependency_name repository git_ref)
     operit_git_ref_var(ref_var "${dependency_name}" "${git_ref}")
-    message(STATUS "DEBUG operit_declare_git_source: dependency_name='${dependency_name}' repository='${repository}' git_ref='${git_ref}' ref_var='${ref_var}' ref_var_value='${${ref_var}}'")
     operit_resolve_git_ref(resolved_sha "${repository}" "${${ref_var}}")
     operit_github_archive_url(archive_url "${repository}" "${resolved_sha}")
     operit_normalize_source_token(source_token "${dependency_name}-${resolved_sha}")
