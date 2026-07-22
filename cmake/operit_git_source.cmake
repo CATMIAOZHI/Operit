@@ -65,6 +65,7 @@ endfunction()
 
 function(operit_declare_git_source dependency_name repository git_ref)
     operit_git_ref_var(ref_var "${dependency_name}" "${git_ref}")
+    message(STATUS "DEBUG operit_declare_git_source: dependency_name='${dependency_name}' repository='${repository}' git_ref='${git_ref}' ref_var='${ref_var}' ref_var_value='${${ref_var}}'")
     operit_resolve_git_ref(resolved_sha "${repository}" "${${ref_var}}")
     operit_github_archive_url(archive_url "${repository}" "${resolved_sha}")
     operit_normalize_source_token(source_token "${dependency_name}-${resolved_sha}")
