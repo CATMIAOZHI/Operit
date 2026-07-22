@@ -23,7 +23,10 @@ function(operit_git_ref_var out_var dependency_name git_ref)
 endfunction()
 
 function(operit_resolve_git_ref out_var repository git_ref)
-    if("${git_ref}" MATCHES "^[0-9a-fA-F]{40}$")
+    # CMake's built-in regex does not support {n} quantifiers. Match a 40-char
+    # hex SHA by explicitly checking length and character class.
+    string(LENGTH "${git_ref}" _ref_len)
+    if(_ref_len EQUAL 40 AND "${git_ref}" MATCHES "^[0-9a-fA-F]+$")
         string(TOLOWER "${git_ref}" resolved_sha)
         set(${out_var} "${resolved_sha}" PARENT_SCOPE)
         return()
