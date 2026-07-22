@@ -197,7 +197,7 @@ git submodule update --init --recursive terminal
 ```bash
 git submodule update --init --recursive terminal
 ```  
-其中 `ufbx`、`Bullet3`、`Saba`、`ncnn`、`sherpa-ncnn`、WAMR、`llama.cpp`、QuickJS、MNN 和 MNN 使用的 KleidiAI 由 CMake 通过 `FetchContent` 获取。CMake 会先解析远端 ref 的 commit，再下载对应 GitHub archive，因此不会拉取完整 Git 历史；默认跟随各自上游主分支或上游工程声明的 tag。如需固定某个 ref，可在 CMake 参数中设置 `OPERIT_UFBX_GIT_REF`、`OPERIT_BULLET3_GIT_REF`、`OPERIT_SABA_GIT_REF`、`OPERIT_NCNN_GIT_REF`、`OPERIT_SHERPA_NCNN_GIT_REF`、`OPERIT_WAMR_GIT_REF`、`OPERIT_LLAMA_CPP_GIT_REF`、`OPERIT_QUICKJS_GIT_REF`、`OPERIT_MNN_GIT_REF` 或 `OPERIT_KLEIDIAI_GIT_REF`。
+其中 `ufbx`、`Bullet3`、`Saba`、`ncnn`、`sherpa-ncnn`、WAMR、`llama.cpp`、QuickJS、MNN 和 MNN 使用的 KleidiAI 由 CMake 通过 `FetchContent` 获取。CMake 会下载对应 GitHub archive，因此不会拉取完整 Git 历史。所有依赖已固定到具体 commit SHA（见 `cmake/NATIVE_DEPENDENCY_LOCK.md`），如需升级请更新该清单和对应 `CMakeLists.txt`。
 2. **下载并放置依赖库 (关键步骤！):**  
 `README.md` 中提到，项目依赖一些需要手动下载的库。请从 [这个 Google Drive 链接](https://drive.google.com/drive/folders/1g-Q_i7cf6Ua4KX9ZM6V282EEZvTVVfF7?usp=sharing) 下载所有文件，并将它们解压或放置到项目根目录下对应的 `libs` 或有 `.keep` 文件的文件夹中。  **警告：** 如果跳过此步骤，编译将因缺少依赖而失败。当前需要下载并解压这四个压缩包：`models.zip`、`subpack.zip`、`jniLibs.zip`、`libs.zip`。  
 ```bash

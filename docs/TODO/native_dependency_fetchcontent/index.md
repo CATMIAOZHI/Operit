@@ -15,7 +15,7 @@ For_Agent: native dependency FetchContent migration notes
 - 将这些原生依赖改成 CMake `FetchContent`
 - 默认跟随各自上游主分支
 - 每次配置先解析远端 ref 的 commit，再下载对应 GitHub archive
-- 保留 `OPERIT_*_GIT_REF` 参数，便于 CI 或发布构建指定 ref
+- 依赖固定到具体 commit SHA（见 `cmake/NATIVE_DEPENDENCY_LOCK.md`），通过 `CMakeLists.txt` 声明而非命令行参数覆盖
 - FetchContent 源码和构建目录落在各模块 `.cxx/operit_deps`，降低 Windows native build 路径长度
 
 ## 作用域
