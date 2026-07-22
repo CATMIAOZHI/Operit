@@ -13,6 +13,8 @@
 
 构建变体定义在 `app/build.gradle.kts` 的 `buildTypes` 块中。`debug` 变体自动添加 `.dev` 包名后缀和 `-dev` 版本后缀，`clone` 变体添加 `.clone` 后缀。
 
+> **注意**：`debug` 变体的 `.dev` 包名后缀、应用名 `Operit Ry Dev` 和 `PERSONAL_DEV_UPDATE_CHANNEL=true` 仅在 `personal/dev` 分支存在。在 `personal/main` 上构建 `assembleDebug` 使用稳定的 `com.rainy.operitry` 包名，**不具备**与官方 Operit 或开发版共存的能力，会覆盖已安装的稳定版或官方版。
+
 ## 前置步骤
 
 ### 1. 初始化子模块
@@ -21,7 +23,7 @@
 git submodule update --init --recursive terminal
 ```
 
-`terminal` 是唯一的 Git 子模块，构建前必须初始化。其他原生依赖（MNN、llama.cpp 等）由 CMake 通过 `FetchContent` 自动下载，不需要手动克隆。
+`terminal` 是 Android 构建唯一需要初始化的子模块。仓库另有一个 `tools/hotbuild/OperitNightlyRelease` 子模块，仅由 Nightly 发布流程使用，本地构建无需关注。
 
 ### 2. 准备本地依赖
 
@@ -83,7 +85,7 @@ python3 ./tools/example_packages/sync_example_packages.py --no-hot-reload
 ### 共存版（clone）
 
 ```bash
-./gradlew :app:assembleDebugClone
+./gradlew :app:assembleClone
 # 输出：app/build/outputs/apk/clone/app-clone.apk
 # 包名：com.rainy.operitry.clone
 ```
@@ -145,8 +147,8 @@ Android Build workflow（`android-build.yml`）仍可手动触发用于 release�
 等待 Android Build workflow 时使用至少 60 秒轮询间隔：
 
 ```bash
-gh run watch <run-id> --exit-status --interval 60 *> $null
-gh run view <run-id> --json status,conclusion
+gh run watch <run-id> --exit-status --interval 60 >/dev/null 2>&1
+# Windows PowerShell: gh run watch <run-id> --exit-status --interval 60 *> $null
 ```
 
 ## 原生依赖

@@ -58,7 +58,20 @@ git cherry-pick <oldest-sha>^..<newest-sha>
 | Nightly 子模块 | `tools/hotbuild/OperitNightlyRelease` 子模块指针 |
 | ccache/CI 专属 | Nightly workflow 中的 ccache 配置 |
 
-如果 cherry-pick 时这些文件被带入，用 `git checkout HEAD -- <file>` 恢复后再提交。
+如果 cherry-pick 时这些文件被带入，使用不提交的 cherry-pick + 精确恢复：
+
+```bash
+git cherry-pick -n <commit-sha>
+git restore --source=HEAD --staged --worktree -- <dev-only-file>
+git commit
+```
+
+若 cherry-pick 已经提交完成，可从父提交恢复并 amend：
+
+```bash
+git restore --source=HEAD^ --staged --worktree -- <dev-only-file>
+git commit --amend --no-edit
+```
 
 ### 6. 验证
 
@@ -91,7 +104,7 @@ gh pr create --base personal/main --head promote/<feature-name> \
 ### 8. 等待 CI 并合并
 
 ```bash
-gh run watch <run-id> --exit-status --interval 60 *> $null
+gh run watch <run-id> --exit-status --interval 60 >/dev/null 2>&1
 ```
 
 CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并后可将 `personal/main` 合并回 `personal/dev` 保持同步。
