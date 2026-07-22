@@ -412,7 +412,7 @@ export function CustomXmlRenderer({
   showThinking,
   showStatusTags,
   streaming = false,
-  toolCollapseMode = 'all'
+  toolCollapseMode = 'full'
 }: {
   content: string;
   blocks?: WebMessageContentBlock[] | null;

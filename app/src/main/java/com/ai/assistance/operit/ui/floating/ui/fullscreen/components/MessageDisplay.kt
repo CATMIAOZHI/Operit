@@ -48,9 +48,9 @@ fun MessageDisplay(
     val context = LocalContext.current
     val preferencesManager = remember { UserPreferencesManager.getInstance(context) }
     val bubbleUserRoundedCornersEnabled by
-        preferencesManager.bubbleUserRoundedCornersEnabled.collectAsState(initial = true)
+        preferencesManager.bubbleUserRoundedCornersEnabled.collectAsState(initial = false)
     val bubbleAiRoundedCornersEnabled by
-        preferencesManager.bubbleAiRoundedCornersEnabled.collectAsState(initial = true)
+        preferencesManager.bubbleAiRoundedCornersEnabled.collectAsState(initial = false)
     val bubbleUserContentPaddingLeft by
         preferencesManager.bubbleUserContentPaddingLeft.collectAsState(initial = 12f)
     val bubbleUserContentPaddingRight by

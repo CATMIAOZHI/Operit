@@ -273,6 +273,10 @@ class UserPreferencesManager private constructor(private val context: Context) {
         const val BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE = "tiled_nine_slice"
         const val BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH = "nine_patch"
 
+        // Rainy 粉色强调色默认值（ARGB int）
+        const val DEFAULT_CUSTOM_PRIMARY_COLOR = 0xFFFF6B8E.toInt()
+        const val DEFAULT_CUSTOM_SECONDARY_COLOR = 0xFFFF85A2.toInt()
+
         private val KEY_BACKGROUND_BLUR_RADIUS = floatPreferencesKey("background_blur_radius")
         private val KEY_CHAT_STYLE = stringPreferencesKey("chat_style")
         private val KEY_SHOW_THINKING_PROCESS = booleanPreferencesKey("show_thinking_process")
@@ -559,17 +563,17 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     val customPrimaryColor: Flow<Int?> =
             context.userPreferencesDataStore.data.map { preferences ->
-                preferences[CUSTOM_PRIMARY_COLOR]
+                preferences[CUSTOM_PRIMARY_COLOR] ?: DEFAULT_CUSTOM_PRIMARY_COLOR
             }
 
     val customSecondaryColor: Flow<Int?> =
             context.userPreferencesDataStore.data.map { preferences ->
-                preferences[CUSTOM_SECONDARY_COLOR]
+                preferences[CUSTOM_SECONDARY_COLOR] ?: DEFAULT_CUSTOM_SECONDARY_COLOR
             }
 
     val useCustomColors: Flow<Boolean> =
             context.userPreferencesDataStore.data.map { preferences ->
-                preferences[USE_CUSTOM_COLORS] ?: false
+                preferences[USE_CUSTOM_COLORS] ?: true
             }
 
     // 背景图片相关Flow
@@ -681,7 +685,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     val chatInputFloating: Flow<Boolean> =
             context.userPreferencesDataStore.data.map { preferences ->
-                preferences[CHAT_INPUT_FLOATING] ?: false
+                preferences[CHAT_INPUT_FLOATING] ?: true
             }
 
     val chatInputLiquidGlass: Flow<Boolean> =
@@ -732,12 +736,12 @@ class UserPreferencesManager private constructor(private val context: Context) {
     // Chat style preference
     val chatStyle: Flow<String> =
             context.userPreferencesDataStore.data.map { preferences ->
-                preferences[CHAT_STYLE] ?: CHAT_STYLE_CURSOR
+                preferences[CHAT_STYLE] ?: CHAT_STYLE_BUBBLE
             }
 
     val inputStyle: Flow<String> =
             context.userPreferencesDataStore.data.map { preferences ->
-                preferences[INPUT_STYLE] ?: INPUT_STYLE_AGENT
+                preferences[INPUT_STYLE] ?: INPUT_STYLE_CLASSIC
             }
 
     val bubbleShowAvatar: Flow<Boolean> =
@@ -747,7 +751,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     val bubbleWideLayoutEnabled: Flow<Boolean> =
         context.userPreferencesDataStore.data.map { preferences ->
-            preferences[BUBBLE_WIDE_LAYOUT_ENABLED] ?: false
+            preferences[BUBBLE_WIDE_LAYOUT_ENABLED] ?: true
         }
 
     val cursorUserBubbleFollowTheme: Flow<Boolean> =
@@ -971,12 +975,12 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     val bubbleUserRoundedCornersEnabled: Flow<Boolean> =
         context.userPreferencesDataStore.data.map { preferences ->
-            preferences[BUBBLE_USER_ROUNDED_CORNERS_ENABLED] ?: true
+            preferences[BUBBLE_USER_ROUNDED_CORNERS_ENABLED] ?: false
         }
 
     val bubbleAiRoundedCornersEnabled: Flow<Boolean> =
         context.userPreferencesDataStore.data.map { preferences ->
-            preferences[BUBBLE_AI_ROUNDED_CORNERS_ENABLED] ?: true
+            preferences[BUBBLE_AI_ROUNDED_CORNERS_ENABLED] ?: false
         }
 
     val bubbleUserContentPaddingLeft: Flow<Float> =
@@ -1011,12 +1015,12 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     val showModelProvider: Flow<Boolean> =
         context.userPreferencesDataStore.data.map { preferences ->
-            preferences[KEY_SHOW_MODEL_PROVIDER] ?: false
+            preferences[KEY_SHOW_MODEL_PROVIDER] ?: true
         }
 
     val showModelName: Flow<Boolean> =
         context.userPreferencesDataStore.data.map { preferences ->
-            preferences[KEY_SHOW_MODEL_NAME] ?: false
+            preferences[KEY_SHOW_MODEL_NAME] ?: true
         }
 
     val showRoleName: Flow<Boolean> =
@@ -1031,17 +1035,17 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     val showMessageTokenStats: Flow<Boolean> =
         context.userPreferencesDataStore.data.map { preferences ->
-            preferences[KEY_SHOW_MESSAGE_TOKEN_STATS] ?: false
+            preferences[KEY_SHOW_MESSAGE_TOKEN_STATS] ?: true
         }
 
     val showMessageTimingStats: Flow<Boolean> =
         context.userPreferencesDataStore.data.map { preferences ->
-            preferences[KEY_SHOW_MESSAGE_TIMING_STATS] ?: false
+            preferences[KEY_SHOW_MESSAGE_TIMING_STATS] ?: true
         }
 
     val showMessageTimestamp: Flow<Boolean> =
         context.userPreferencesDataStore.data.map { preferences ->
-            preferences[KEY_SHOW_MESSAGE_TIMESTAMP] ?: false
+            preferences[KEY_SHOW_MESSAGE_TIMESTAMP] ?: true
         }
 
     val customUserAvatarUri: Flow<String?> =
@@ -2027,9 +2031,9 @@ class UserPreferencesManager private constructor(private val context: Context) {
             sourceId = sourceId,
             themeMode = stringValue(THEME_MODE, THEME_MODE_LIGHT) ?: THEME_MODE_LIGHT,
             useSystemTheme = booleanValue(USE_SYSTEM_THEME, true),
-            useCustomColors = booleanValue(USE_CUSTOM_COLORS, false),
-            customPrimaryColor = intValue(CUSTOM_PRIMARY_COLOR),
-            customSecondaryColor = intValue(CUSTOM_SECONDARY_COLOR),
+            useCustomColors = booleanValue(USE_CUSTOM_COLORS, true),
+            customPrimaryColor = intValue(CUSTOM_PRIMARY_COLOR) ?: DEFAULT_CUSTOM_PRIMARY_COLOR,
+            customSecondaryColor = intValue(CUSTOM_SECONDARY_COLOR) ?: DEFAULT_CUSTOM_SECONDARY_COLOR,
             onColorMode = stringValue(KEY_ON_COLOR_MODE, ON_COLOR_MODE_AUTO) ?: ON_COLOR_MODE_AUTO,
             useBackgroundImage = booleanValue(USE_BACKGROUND_IMAGE, false),
             backgroundImageUri = stringValue(BACKGROUND_IMAGE_URI),
@@ -2039,13 +2043,13 @@ class UserPreferencesManager private constructor(private val context: Context) {
             chatHeaderTransparent = booleanValue(CHAT_HEADER_TRANSPARENT, false),
             chatHeaderOverlayMode = booleanValue(CHAT_HEADER_OVERLAY_MODE, false),
             chatInputTransparent = booleanValue(CHAT_INPUT_TRANSPARENT, false),
-            chatInputFloating = booleanValue(CHAT_INPUT_FLOATING, false),
+            chatInputFloating = booleanValue(CHAT_INPUT_FLOATING, true),
             chatInputLiquidGlass = booleanValue(CHAT_INPUT_LIQUID_GLASS, false),
             chatInputWaterGlass = booleanValue(CHAT_INPUT_WATER_GLASS, false),
-            chatStyle = stringValue(CHAT_STYLE, CHAT_STYLE_CURSOR) ?: CHAT_STYLE_CURSOR,
-            inputStyle = stringValue(INPUT_STYLE, INPUT_STYLE_AGENT) ?: INPUT_STYLE_AGENT,
+            chatStyle = stringValue(CHAT_STYLE, CHAT_STYLE_BUBBLE) ?: CHAT_STYLE_BUBBLE,
+            inputStyle = stringValue(INPUT_STYLE, INPUT_STYLE_CLASSIC) ?: INPUT_STYLE_CLASSIC,
             bubbleShowAvatar = booleanValue(BUBBLE_SHOW_AVATAR, true),
-            bubbleWideLayoutEnabled = booleanValue(BUBBLE_WIDE_LAYOUT_ENABLED, false),
+            bubbleWideLayoutEnabled = booleanValue(BUBBLE_WIDE_LAYOUT_ENABLED, true),
             cursorUserBubbleFollowTheme = booleanValue(CURSOR_USER_BUBBLE_FOLLOW_THEME, true),
             cursorUserBubbleColor = intValue(CURSOR_USER_BUBBLE_COLOR),
             bubbleUserBubbleColor = intValue(BUBBLE_USER_BUBBLE_COLOR),
@@ -2062,9 +2066,9 @@ class UserPreferencesManager private constructor(private val context: Context) {
                     BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE
                 ) ?: BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
             bubbleUserRoundedCornersEnabled =
-                booleanValue(BUBBLE_USER_ROUNDED_CORNERS_ENABLED, true),
+                booleanValue(BUBBLE_USER_ROUNDED_CORNERS_ENABLED, false),
             bubbleAiRoundedCornersEnabled =
-                booleanValue(BUBBLE_AI_ROUNDED_CORNERS_ENABLED, true),
+                booleanValue(BUBBLE_AI_ROUNDED_CORNERS_ENABLED, false),
             bubbleUserContentPaddingLeft = floatValue(BUBBLE_USER_CONTENT_PADDING_LEFT, 12f),
             bubbleUserContentPaddingRight = floatValue(BUBBLE_USER_CONTENT_PADDING_RIGHT, 12f),
             bubbleAiContentPaddingLeft = floatValue(BUBBLE_AI_CONTENT_PADDING_LEFT, 12f),
@@ -2079,13 +2083,13 @@ class UserPreferencesManager private constructor(private val context: Context) {
             fontScale = floatValue(FONT_SCALE, 1.0f),
             showThinkingProcess = booleanValue(KEY_SHOW_THINKING_PROCESS, true),
             showStatusTags = booleanValue(KEY_SHOW_STATUS_TAGS, true),
-            showModelProvider = booleanValue(KEY_SHOW_MODEL_PROVIDER, false),
-            showModelName = booleanValue(KEY_SHOW_MODEL_NAME, false),
+            showModelProvider = booleanValue(KEY_SHOW_MODEL_PROVIDER, true),
+            showModelName = booleanValue(KEY_SHOW_MODEL_NAME, true),
             showRoleName = booleanValue(KEY_SHOW_ROLE_NAME, true),
             showUserName = booleanValue(KEY_SHOW_USER_NAME, true),
-            showMessageTokenStats = booleanValue(KEY_SHOW_MESSAGE_TOKEN_STATS, false),
-            showMessageTimingStats = booleanValue(KEY_SHOW_MESSAGE_TIMING_STATS, false),
-            showMessageTimestamp = booleanValue(KEY_SHOW_MESSAGE_TIMESTAMP, false),
+            showMessageTokenStats = booleanValue(KEY_SHOW_MESSAGE_TOKEN_STATS, true),
+            showMessageTimingStats = booleanValue(KEY_SHOW_MESSAGE_TIMING_STATS, true),
+            showMessageTimestamp = booleanValue(KEY_SHOW_MESSAGE_TIMESTAMP, true),
             showInputProcessingStatus = booleanValue(KEY_SHOW_INPUT_PROCESSING_STATUS, true)
         )
     }

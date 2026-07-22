@@ -546,13 +546,13 @@ internal fun ThemeSettingsChatTab(
     val defaultBubbleAiBubbleColor = MaterialTheme.colorScheme.surface.toArgb()
 
     val chatStyle by preferencesManager.chatStyle.collectAsState(
-        initial = UserPreferencesManager.CHAT_STYLE_CURSOR,
+        initial = UserPreferencesManager.CHAT_STYLE_BUBBLE,
     )
     val inputStyle by preferencesManager.inputStyle.collectAsState(
-        initial = UserPreferencesManager.INPUT_STYLE_AGENT,
+        initial = UserPreferencesManager.INPUT_STYLE_CLASSIC,
     )
     val bubbleShowAvatar by preferencesManager.bubbleShowAvatar.collectAsState(initial = true)
-    val bubbleWideLayoutEnabled by preferencesManager.bubbleWideLayoutEnabled.collectAsState(initial = false)
+    val bubbleWideLayoutEnabled by preferencesManager.bubbleWideLayoutEnabled.collectAsState(initial = true)
     val cursorUserBubbleFollowTheme by preferencesManager.cursorUserBubbleFollowTheme.collectAsState(initial = true)
     val cursorUserBubbleLiquidGlass by preferencesManager.cursorUserBubbleLiquidGlass.collectAsState(initial = false)
     val cursorUserBubbleWaterGlass by preferencesManager.cursorUserBubbleWaterGlass.collectAsState(initial = false)
@@ -606,8 +606,8 @@ internal fun ThemeSettingsChatTab(
     val bubbleImageRenderMode by preferencesManager.bubbleImageRenderMode.collectAsState(
         initial = UserPreferencesManager.BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
     )
-    val bubbleUserRoundedCornersEnabled by preferencesManager.bubbleUserRoundedCornersEnabled.collectAsState(initial = true)
-    val bubbleAiRoundedCornersEnabled by preferencesManager.bubbleAiRoundedCornersEnabled.collectAsState(initial = true)
+    val bubbleUserRoundedCornersEnabled by preferencesManager.bubbleUserRoundedCornersEnabled.collectAsState(initial = false)
+    val bubbleAiRoundedCornersEnabled by preferencesManager.bubbleAiRoundedCornersEnabled.collectAsState(initial = false)
     val bubbleUserContentPaddingLeft by preferencesManager.bubbleUserContentPaddingLeft.collectAsState(initial = 12f)
     val bubbleUserContentPaddingRight by preferencesManager.bubbleUserContentPaddingRight.collectAsState(initial = 12f)
     val bubbleAiContentPaddingLeft by preferencesManager.bubbleAiContentPaddingLeft.collectAsState(initial = 12f)
@@ -622,13 +622,13 @@ internal fun ThemeSettingsChatTab(
     val avatarCornerRadius by preferencesManager.avatarCornerRadius.collectAsState(initial = 8f)
     val showThinkingProcess by preferencesManager.showThinkingProcess.collectAsState(initial = true)
     val showStatusTags by preferencesManager.showStatusTags.collectAsState(initial = true)
-    val showModelProvider by preferencesManager.showModelProvider.collectAsState(initial = false)
-    val showModelName by preferencesManager.showModelName.collectAsState(initial = false)
+    val showModelProvider by preferencesManager.showModelProvider.collectAsState(initial = true)
+    val showModelName by preferencesManager.showModelName.collectAsState(initial = true)
     val showRoleName by preferencesManager.showRoleName.collectAsState(initial = true)
     val showUserName by preferencesManager.showUserName.collectAsState(initial = true)
-    val showMessageTokenStats by preferencesManager.showMessageTokenStats.collectAsState(initial = false)
-    val showMessageTimingStats by preferencesManager.showMessageTimingStats.collectAsState(initial = false)
-    val showMessageTimestamp by preferencesManager.showMessageTimestamp.collectAsState(initial = false)
+    val showMessageTokenStats by preferencesManager.showMessageTokenStats.collectAsState(initial = true)
+    val showMessageTimingStats by preferencesManager.showMessageTimingStats.collectAsState(initial = true)
+    val showMessageTimestamp by preferencesManager.showMessageTimestamp.collectAsState(initial = true)
     val showInputProcessingStatus by preferencesManager.showInputProcessingStatus.collectAsState(initial = true)
     val showChatFloatingDotsAnimation by preferencesManager.showChatFloatingDotsAnimation.collectAsState(initial = true)
     val recentColors by preferencesManager.recentColorsFlow.collectAsState(initial = emptyList())
