@@ -3,7 +3,6 @@ package com.ai.assistance.operit.data.updates
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.pm.Signature
 import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
@@ -574,7 +573,7 @@ object PatchUpdateInstaller {
 
     @Suppress("DEPRECATION")
     private fun packageSignatures(info: android.content.pm.PackageInfo): Set<String> {
-        val signatures: Array<Signature> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             info.signingInfo?.apkContentsSigners.orEmpty()
         } else {
             info.signatures.orEmpty()
