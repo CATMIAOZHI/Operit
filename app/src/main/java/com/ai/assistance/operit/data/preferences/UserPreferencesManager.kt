@@ -61,7 +61,10 @@ class UserPreferencesManager private constructor(private val context: Context) {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: run {
                     val appContext = context.applicationContext ?: context
-                    UserPreferencesManager(appContext).also { INSTANCE = it }
+                    UserPreferencesManager(appContext).also { instance ->
+                        INSTANCE = instance
+                        GlobalScope.launch { instance.performThemeMigration() }
+                    }
                 }
             }
         }
@@ -274,8 +277,8 @@ class UserPreferencesManager private constructor(private val context: Context) {
         const val BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH = "nine_patch"
 
         // Rainy 粉色强调色默认值（ARGB int）
-        const val DEFAULT_CUSTOM_PRIMARY_COLOR = 0xFFFF6B8E.toInt()
-        const val DEFAULT_CUSTOM_SECONDARY_COLOR = 0xFFFF85A2.toInt()
+        const val DEFAULT_CUSTOM_PRIMARY_COLOR = 0xFFFED1EE.toInt()
+        const val DEFAULT_CUSTOM_SECONDARY_COLOR = 0xFFF8B6D9.toInt()
 
         private val KEY_BACKGROUND_BLUR_RADIUS = floatPreferencesKey("background_blur_radius")
         private val KEY_CHAT_STYLE = stringPreferencesKey("chat_style")
@@ -1905,6 +1908,74 @@ class UserPreferencesManager private constructor(private val context: Context) {
                 getAllBooleanThemeKeys().any { key -> preferences.contains(booleanPreferencesKey("${prefix}${key.name}")) } ||
                 getAllIntThemeKeys().any { key -> preferences.contains(intPreferencesKey("${prefix}${key.name}")) } ||
                 getAllFloatThemeKeys().any { key -> preferences.contains(floatPreferencesKey("${prefix}${key.name}")) }
+    }
+
+    /**
+     * 一次性迁移：将升级前已保存的角色卡/群组主题中的缺键补写为旧版默认值，
+     * 避免切换到这些主题时被新默认值（Rainy 粉色、气泡样式等）静默改写。
+     * 迁移仅执行一次，通过 theme_migration_v1_done 标记控制。
+     */
+    private suspend fun performThemeMigration() {
+        val migrationDoneKey = booleanPreferencesKey("theme_migration_v1_done")
+
+        context.userPreferencesDataStore.edit { preferences ->
+            if (preferences[migrationDoneKey] == true) return@edit
+
+            // 发现所有已有的主题前缀（仅角色卡和群组主题，不包括全局设置）
+            val allKeys = preferences.asMap().keys
+            val prefixes = mutableSetOf<String>()
+
+            val allThemeKeyNames = (getAllStringThemeKeys().map { it.name } +
+                    getAllBooleanThemeKeys().map { it.name } +
+                    getAllIntThemeKeys().map { it.name } +
+                    getAllFloatThemeKeys().map { it.name }).toSet()
+
+            for (rawKey in allKeys) {
+                val keyName = rawKey.name
+                if (keyName.startsWith("character_card_theme_") || keyName.startsWith("character_group_theme_")) {
+                    for (themeKeyName in allThemeKeyNames) {
+                        if (keyName.endsWith(themeKeyName)) {
+                            prefixes.add(keyName.removeSuffix(themeKeyName))
+                            break
+                        }
+                    }
+                }
+            }
+
+            // 本次 PR 改变默认值的主题键 —— 旧版默认值（迁移用）
+            // 对每个已有的主题前缀，将缺键补写为旧默认值，使升级后切换主题保持原外观
+            for (prefix in prefixes) {
+                // Boolean 键 —— 旧默认值
+                if (!preferences.contains(booleanPreferencesKey("${prefix}${USE_CUSTOM_COLORS.name}")))
+                    preferences[booleanPreferencesKey("${prefix}${USE_CUSTOM_COLORS.name}")] = false
+                if (!preferences.contains(booleanPreferencesKey("${prefix}${CHAT_INPUT_FLOATING.name}")))
+                    preferences[booleanPreferencesKey("${prefix}${CHAT_INPUT_FLOATING.name}")] = false
+                if (!preferences.contains(booleanPreferencesKey("${prefix}${BUBBLE_WIDE_LAYOUT_ENABLED.name}")))
+                    preferences[booleanPreferencesKey("${prefix}${BUBBLE_WIDE_LAYOUT_ENABLED.name}")] = false
+                if (!preferences.contains(booleanPreferencesKey("${prefix}${BUBBLE_USER_ROUNDED_CORNERS_ENABLED.name}")))
+                    preferences[booleanPreferencesKey("${prefix}${BUBBLE_USER_ROUNDED_CORNERS_ENABLED.name}")] = true
+                if (!preferences.contains(booleanPreferencesKey("${prefix}${BUBBLE_AI_ROUNDED_CORNERS_ENABLED.name}")))
+                    preferences[booleanPreferencesKey("${prefix}${BUBBLE_AI_ROUNDED_CORNERS_ENABLED.name}")] = true
+                if (!preferences.contains(booleanPreferencesKey("${prefix}${KEY_SHOW_MODEL_PROVIDER.name}")))
+                    preferences[booleanPreferencesKey("${prefix}${KEY_SHOW_MODEL_PROVIDER.name}")] = false
+                if (!preferences.contains(booleanPreferencesKey("${prefix}${KEY_SHOW_MODEL_NAME.name}")))
+                    preferences[booleanPreferencesKey("${prefix}${KEY_SHOW_MODEL_NAME.name}")] = false
+                if (!preferences.contains(booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TOKEN_STATS.name}")))
+                    preferences[booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TOKEN_STATS.name}")] = false
+                if (!preferences.contains(booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TIMING_STATS.name}")))
+                    preferences[booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TIMING_STATS.name}")] = false
+                if (!preferences.contains(booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TIMESTAMP.name}")))
+                    preferences[booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TIMESTAMP.name}")] = false
+
+                // String 键 —— 旧默认值
+                if (!preferences.contains(stringPreferencesKey("${prefix}${CHAT_STYLE.name}")))
+                    preferences[stringPreferencesKey("${prefix}${CHAT_STYLE.name}")] = CHAT_STYLE_CURSOR
+                if (!preferences.contains(stringPreferencesKey("${prefix}${INPUT_STYLE.name}")))
+                    preferences[stringPreferencesKey("${prefix}${INPUT_STYLE.name}")] = INPUT_STYLE_AGENT
+            }
+
+            preferences[migrationDoneKey] = true
+        }
     }
 
     suspend fun copyCurrentThemeToCharacterCard(characterCardId: String) {

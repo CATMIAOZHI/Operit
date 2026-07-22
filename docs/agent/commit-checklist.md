@@ -34,11 +34,18 @@ git diff --cached --stat
 git diff --cached --check
 ```
 
-不要提交无内容的行尾变化（CRLF → LF 或反之）。如果文件被 git 自动转换了行尾但内容未变，恢复它：
+不要提交无内容的行尾变化（CRLF → LF 或反之）。如果文件被 git 自动转换了行尾但内容未变：
 
-```bash
-git checkout -- <file>
-```
+1. 先确认是否只有行尾变化、无其他未暂存修改：
+   ```bash
+   git diff -- <file>
+   ```
+2. 若确认只有行尾变化，用 `git restore` 恢复工作区：
+   ```bash
+   git restore -- <file>
+   ```
+3. 若文件有未暂存的实际修改：先 `git stash` 暂存实际改动，单独处理行尾变化后再恢复。
+4. **不要**用 `git checkout -- <file>` 等无条件恢复命令处理工作区——这会丢弃全部未提交改动，与仓库规则冲突。
 
 ### 4. 检查 ObjectBox 和生成物
 
