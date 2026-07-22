@@ -6,7 +6,7 @@
 
 **Operit Ry** 是由 [Rainy / CATMIAOZHI](https://github.com/CATMIAOZHI) 维护的非官方个人发行版，稳定发行分支为 [`personal/main`](https://github.com/CATMIAOZHI/Operit/tree/personal/main)。原项目由 [AAswordman](https://github.com/AAswordman/Operit) 创建并维护。准备向上游贡献的修复应从 `upstream/main` 创建分支。
 
-[`personal/dev`](https://github.com/CATMIAOZHI/Operit/tree/personal/dev) 是新功能的集成与测试分支；功能通过可共存 debug APK 验证后，才会晋升到 `personal/main`。开发版以 `Operit Ry Dev` / `com.rainy.operitry.dev` 独立安装，并带有 DEV 角标图标，可与官方 Operit 和 Operit Ry 稳定版共存；同一补丁链内可通过 `OperitNightlyRelease` 快速更新，链不匹配时回退到完整开发版 APK。普通用户应从 Releases 下载稳定版，不应将开发分支构建作为正式更新来源。
+[`personal/dev`](https://github.com/CATMIAOZHI/Operit/tree/personal/dev) 是新功能的集成与测试分支；功能通过可共存 debug APK 验证后，才会晋升到 `personal/main`。开发版以 `Operit Ry Dev` / `com.rainy.operitry.dev` 独立安装，并带有 DEV 角标图标，可与官方 Operit 和 Operit Ry 稳定版共存；同一补丁链内可通过 [`OperitNightlyRelease`](https://github.com/CATMIAOZHI/OperitNightlyRelease) 快速更新，链不匹配时回退到完整开发版 APK。普通用户应从 Releases 下载稳定版，不应将开发分支构建作为正式更新来源。
 
 <div align="center">
   <img src="https://img.shields.io/github/last-commit/CATMIAOZHI/Operit/personal/main" alt="Last Commit">
