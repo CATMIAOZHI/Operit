@@ -277,9 +277,11 @@ class UserPreferencesManager private constructor(private val context: Context) {
         const val BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE = "tiled_nine_slice"
         const val BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH = "nine_patch"
 
-        // Rainy 粉色强调色默认值（ARGB int）
-        const val DEFAULT_CUSTOM_PRIMARY_COLOR = 0xFFFED1EE.toInt()
-        const val DEFAULT_CUSTOM_SECONDARY_COLOR = 0xFFF8B6D9.toInt()
+        // Defaults shown by the custom color editor, aligned with OpenCode Rainy light mode.
+        const val DEFAULT_CUSTOM_PRIMARY_COLOR = 0xFFFF6B8E.toInt()
+        const val DEFAULT_CUSTOM_SECONDARY_COLOR = 0xFFFF85A2.toInt()
+        internal const val LEGACY_RAINY_PRIMARY_COLOR = 0xFFFED1EE.toInt()
+        internal const val LEGACY_RAINY_SECONDARY_COLOR = 0xFFF8B6D9.toInt()
 
         private const val FLOATING_CHAT_PREFERENCES = "floating_chat_prefs"
         private const val FLOATING_COLOR_SCHEME_KEY = "floating_color_scheme_json"
@@ -337,8 +339,8 @@ class UserPreferencesManager private constructor(private val context: Context) {
             secondaryColor: Int?,
         ): Boolean {
             return useCustomColors == true &&
-                primaryColor == DEFAULT_CUSTOM_PRIMARY_COLOR &&
-                secondaryColor == DEFAULT_CUSTOM_SECONDARY_COLOR
+                primaryColor == LEGACY_RAINY_PRIMARY_COLOR &&
+                secondaryColor == LEGACY_RAINY_SECONDARY_COLOR
         }
 
         private val KEY_BACKGROUND_BLUR_RADIUS = floatPreferencesKey("background_blur_radius")

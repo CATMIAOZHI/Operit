@@ -84,7 +84,10 @@ class ThemeResetAndroidTest {
         assertNull("customPrimaryColor must be null in snapshot", snapshot.customPrimaryColor)
         assertNull("customSecondaryColor must be null in snapshot", snapshot.customSecondaryColor)
 
-        val colorScheme = resolveThemeColorScheme(context, snapshot)
+        val colorScheme = resolveThemeColorScheme(
+            context,
+            snapshot.copy(useSystemTheme = false, themeMode = UserPreferencesManager.THEME_MODE_LIGHT),
+        )
         assertEquals(
             Color(UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR),
             colorScheme.primary,

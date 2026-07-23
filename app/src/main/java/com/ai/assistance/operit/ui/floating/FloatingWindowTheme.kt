@@ -1,15 +1,14 @@
 package com.ai.assistance.operit.ui.floating
 
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.ColorScheme
+import com.ai.assistance.operit.ui.theme.rainyBaseColorScheme
 
 /**
  * 为悬浮窗提供的独立主题
@@ -21,43 +20,7 @@ fun FloatingWindowTheme(
     typography: Typography? = null,
     content: @Composable () -> Unit
 ) {
-    // 使用静态颜色，匹配 Rainy 粉色默认主题
-    val finalColorScheme = colorScheme ?: lightColorScheme(
-        // 主要颜色
-        primary = Color(0xFFFED1EE),                // Rainy 主色
-        onPrimary = Color(0xFF1C1B1F),
-        primaryContainer = Color(0xFFFFE0F2),       // 浅粉容器
-        onPrimaryContainer = Color(0xFF370B1E),
-
-        // 次要颜色
-        secondary = Color(0xFFF8B6D9),              // Rainy 辅色
-        onSecondary = Color(0xFF1C1B1F),
-        secondaryContainer = Color(0xFFFFD8E4),     // 浅粉容器
-        onSecondaryContainer = Color(0xFF370B1E),
-
-        // 第三颜色
-        tertiary = Color(0xFFE8A0B8),               // 第三色
-        onTertiary = Color(0xFF1C1B1F),
-        tertiaryContainer = Color(0xFFFFD8E4),      // 浅粉色容器
-        onTertiaryContainer = Color(0xFF370B1E),    // 深粉色文本
-
-        // 错误颜色
-        error = Color(0xFFB3261E),                  // 标准Material错误色
-        onError = Color.White,
-        errorContainer = Color(0xFFF9DEDC),         // 浅红色容器
-        onErrorContainer = Color(0xFF410E0B),       // 深红色文本
-
-        // 背景和表面
-        background = Color(0xFFFFFBFE),             // 几乎白色背景
-        onBackground = Color(0xFF1C1B1F),           // 深色文本
-        surface = Color(0xFFFFFBFE),                // 表面与背景相同
-        onSurface = Color(0xFF1C1B1F),              // 表面上的文本
-        surfaceVariant = Color(0xFFE7E0EC),         // 浅灰色变体表面
-        onSurfaceVariant = Color(0xFF49454F),       // 变体表面上的文本
-
-        // 轮廓
-        outline = Color(0xFF79747E)                 // 标准轮廓色
-    )
+    val finalColorScheme = colorScheme ?: rainyBaseColorScheme(darkTheme = false)
     
     // 创建调整大小后的默认Typography，如果没有传入typography参数则使用此默认值
     val defaultSmallTypography = Typography(
@@ -127,4 +90,4 @@ fun FloatingWindowTheme(
         typography = finalTypography,
         content = content
     )
-} 
+}
