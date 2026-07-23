@@ -2,11 +2,8 @@ package com.ai.assistance.operit.ui.theme
 
 import android.content.Context
 import android.content.res.Configuration
-import android.os.Build
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import com.ai.assistance.operit.data.preferences.ThemePreferenceSnapshot
@@ -17,15 +14,18 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companio
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_DARK
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_LIGHT
 
-private val ResolvedDarkColorScheme =
+private val RainyDarkColorScheme =
     darkColorScheme(primary = Color(DEFAULT_CUSTOM_PRIMARY_COLOR), secondary = Color(DEFAULT_CUSTOM_SECONDARY_COLOR), tertiary = Pink80)
 
-private val ResolvedLightColorScheme =
+private val RainyLightColorScheme =
     lightColorScheme(
         primary = Color(DEFAULT_CUSTOM_PRIMARY_COLOR),
         secondary = Color(DEFAULT_CUSTOM_SECONDARY_COLOR),
         tertiary = Pink40
     )
+
+internal fun rainyBaseColorScheme(darkTheme: Boolean): ColorScheme =
+    if (darkTheme) RainyDarkColorScheme else RainyLightColorScheme
 
 fun resolveThemeColorScheme(
     context: Context,
@@ -41,18 +41,14 @@ fun resolveThemeColorScheme(
             snapshot.themeMode == UserPreferencesManager.THEME_MODE_DARK
         }
 
-    var colorScheme =
-        when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
-                if (darkTheme) {
-                    dynamicDarkColorScheme(context)
-                } else {
-                    dynamicLightColorScheme(context)
-                }
+    return resolveThemeColorScheme(snapshot, darkTheme)
+}
 
-            darkTheme -> ResolvedDarkColorScheme
-            else -> ResolvedLightColorScheme
-        }
+internal fun resolveThemeColorScheme(
+    snapshot: ThemePreferenceSnapshot,
+    darkTheme: Boolean
+): ColorScheme {
+    var colorScheme = rainyBaseColorScheme(darkTheme)
 
     if (snapshot.useCustomColors) {
         snapshot.customPrimaryColor?.let { primaryArgb ->
@@ -93,7 +89,7 @@ private fun generateResolvedLightColorScheme(
     val secondaryContainer = lightenResolvedColor(secondaryColor, 0.7f)
     val onSecondaryContainer = getResolvedContrastingTextColor(secondaryContainer)
 
-    return ResolvedLightColorScheme.copy(
+    return RainyLightColorScheme.copy(
         primary = primaryColor,
         onPrimary = onPrimary,
         primaryContainer = primaryContainer,
@@ -135,7 +131,7 @@ private fun generateResolvedDarkColorScheme(
     val onSecondaryContainer =
         getResolvedContrastingTextColor(secondaryContainer, forceLight = true)
 
-    return ResolvedDarkColorScheme.copy(
+    return RainyDarkColorScheme.copy(
         primary = adjustedPrimaryColor,
         onPrimary = onPrimary,
         primaryContainer = primaryContainer,

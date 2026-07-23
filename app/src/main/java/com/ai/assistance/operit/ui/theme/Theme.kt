@@ -16,10 +16,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -65,27 +61,6 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import io.github.fletchmckee.liquid.liquefiable
 import io.github.fletchmckee.liquid.rememberLiquidState
-
-private val DarkColorScheme =
-        darkColorScheme(primary = Purple80, secondary = PurpleGrey80, tertiary = Pink80)
-
-private val LightColorScheme =
-        lightColorScheme(
-                primary = Purple40,
-                secondary = PurpleGrey40,
-                tertiary = Pink40,
-
-                /* Other default colors to override
-                background = Color(0xFFFFFBFE),
-                surface = Color(0xFFFFFBFE),
-                onPrimary = Color.White,
-                onSecondary = Color.White,
-                onTertiary = Color.White,
-                onBackground = Color(0xFF1C1B1F),
-                onSurface = Color(0xFF1C1B1F),
-                */
-                )
-
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
@@ -163,19 +138,8 @@ fun OperitTheme(content: @Composable () -> Unit) {
                 themeMode == UserPreferencesManager.THEME_MODE_DARK
             }
 
-    // Dynamic color is available on Android 12+
-    val dynamicColor = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-
-    // 基础主题色调
-    var colorScheme =
-            when {
-                dynamicColor -> {
-                    if (darkTheme) dynamicDarkColorScheme(context)
-                    else dynamicLightColorScheme(context)
-                }
-                darkTheme -> DarkColorScheme
-                else -> LightColorScheme
-            }
+    // Rainy is the product default. System settings only choose light or dark mode.
+    var colorScheme = rainyBaseColorScheme(darkTheme)
 
     // 应用自定义颜色和文本颜色
     if (useCustomColors) {
@@ -558,7 +522,7 @@ private fun generateLightColorScheme(
     val onSecondaryContainer = getContrastingTextColor(secondaryContainer)
 
     // Return a complete color scheme, ensuring onSurface and onSurfaceVariant are consistent
-    return LightColorScheme.copy(
+    return rainyBaseColorScheme(darkTheme = false).copy(
             primary = primaryColor,
             onPrimary = onPrimary,
             primaryContainer = primaryContainer,
@@ -600,7 +564,7 @@ private fun generateDarkColorScheme(
     val onSecondaryContainer = getContrastingTextColor(secondaryContainer, forceLight = true)
 
     // Return a complete color scheme, ensuring onSurface and onSurfaceVariant are consistent
-    return DarkColorScheme.copy(
+    return rainyBaseColorScheme(darkTheme = true).copy(
             primary = adjustedPrimaryColor,
             onPrimary = onPrimary,
             primaryContainer = primaryContainer,

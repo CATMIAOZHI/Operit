@@ -5,19 +5,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * v2 主题迁移行为契约（[UserPreferencesManager.performThemeMigration]）与纯判定函数测试。
+ * v3 主题迁移行为契约（[UserPreferencesManager.performThemeMigration]）与纯判定函数测试。
  *
  * 迁移行为契约（v2 正确语义）：
  *
  * 1. 关闭自定义颜色时，默认显示 Rainy 粉色（通过 Material 基础色方案）。
  *    useCustomColors 默认为 false；Flow/快照颜色缺键返回 null。
  *
- * 2. v1 错误写入纠正：v1 对全新安装写入了 useCustomColors=true + Rainy 颜色。
- *    v2 检测到这种精确组合时，删除颜色键并设置 useCustomColors=false。
+ * 2. 旧版错误写入纠正：旧版对全新安装写入了 useCustomColors=true + Rainy 颜色。
+ *    v3 检测到这种精确组合时，删除颜色键并设置 useCustomColors=false。
  *
  * 3. 非 Rainy 色的自定义颜色不受影响，完整保留。
  *
- * 4. 幂等：theme_rainy_defaults_v2_done=true 后不再执行。
+ * 4. 幂等：theme_rainy_defaults_v3_done=true 后不再执行。
  */
 class ThemeMigrationTest {
 

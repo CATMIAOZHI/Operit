@@ -2268,8 +2268,12 @@ class WebChatHttpBridge(
             themeMode = snapshot.themeMode,
             useSystemTheme = snapshot.useSystemTheme,
             useCustomColors = snapshot.useCustomColors,
-            primaryColor = colorToCss(snapshot.customPrimaryColor),
-            secondaryColor = colorToCss(snapshot.customSecondaryColor),
+            primaryColor = snapshot.customPrimaryColor
+                .takeIf { snapshot.useCustomColors }
+                ?.let(::colorToCss),
+            secondaryColor = snapshot.customSecondaryColor
+                .takeIf { snapshot.useCustomColors }
+                ?.let(::colorToCss),
             palette = WebThemePalette(
                 backgroundColor = composeColorToCss(colorScheme.background),
                 surfaceColor = composeColorToCss(colorScheme.surface),
