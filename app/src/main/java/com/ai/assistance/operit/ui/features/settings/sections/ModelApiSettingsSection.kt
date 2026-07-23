@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
@@ -52,6 +53,7 @@ import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelOption
+import com.ai.assistance.operit.data.model.normalizeProviderId
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import com.ai.assistance.operit.ui.common.input.bringIntoViewOnImeFocus
@@ -447,7 +449,7 @@ fun ModelApiSettingsSection(
                         onProviderSelected = { provider ->
                             selectedProviderTypeId = provider.id
 
-                            // 对有默认模型名的供应商，视为“有强制内容”：切换时总是重置为该供应商默认模型名
+                            // 对有默认模型名的供应商，视为"有强制内容"：切换时总是重置为该供应商默认模型名
                             val hasForcedModelName = getDefaultModelName(provider.id).isNotEmpty()
                             if (hasForcedModelName) {
                                 modelNameInput = getDefaultModelName(provider.id)
@@ -457,7 +459,8 @@ fun ModelApiSettingsSection(
                             }
 
                             showApiProviderDialog = false
-                        }
+                        },
+                        configManager = configManager
                 )
             }
 
@@ -1566,13 +1569,38 @@ private fun forwardTypeName(type: Int): String {
 @Composable
 private fun ApiProviderDialog(
         onDismissRequest: () -> Unit,
-        onProviderSelected: (ProviderSelectionOption) -> Unit
+        onProviderSelected: (ProviderSelectionOption) -> Unit,
+        configManager: ModelConfigManager
 ) {
     val context = LocalContext.current
     val providers = remember { getProviderSelectionOptions(context) }
     var searchQuery by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+    val collapsedProviderIds by configManager.collapsedProviderIdsFlow.collectAsState(initial = emptySet())
     
-    val filteredProviders = remember(searchQuery) {
+    // 投影为正常/折叠两组
+    val normalProviders: List<ProviderSelectionOption>
+    val collapsedProviders: List<ProviderSelectionOption>
+    if (searchQuery.isNotEmpty()) {
+        normalProviders = providers
+        collapsedProviders = emptyList()
+    } else {
+        val norm = mutableListOf<ProviderSelectionOption>()
+        val coll = mutableListOf<ProviderSelectionOption>()
+        for (p in providers) {
+            val normalized = normalizeProviderId(p.id)
+            if (normalized.isNotEmpty() && collapsedProviderIds.contains(normalized)) {
+                coll.add(p)
+            } else {
+                norm.add(p)
+            }
+        }
+        normalProviders = norm
+        collapsedProviders = coll
+    }
+    var collapsedExpanded by remember { mutableStateOf(false) }
+    
+    val filteredProviders = remember(searchQuery, providers) {
         if (searchQuery.isEmpty()) {
             providers
         } else {
@@ -1582,6 +1610,8 @@ private fun ApiProviderDialog(
             }
         }
     }
+
+    val showSearchResults = searchQuery.isNotEmpty()
 
     Dialog(onDismissRequest = onDismissRequest) {
         Surface(
@@ -1634,45 +1664,75 @@ private fun ApiProviderDialog(
                 androidx.compose.foundation.lazy.LazyColumn(
                         modifier = Modifier.weight(1f)
                 ) {
-                    items(filteredProviders.size) { index ->
-                        val provider = filteredProviders[index]
-                        // 美化的提供商选项
-                        Surface(
-                                modifier = Modifier
+                    // 搜索结果或正常模式
+                    if (showSearchResults) {
+                        items(filteredProviders.size) { index ->
+                            val provider = filteredProviders[index]
+                            ProviderRow(
+                                provider = provider,
+                                onSelect = { onProviderSelected(provider) },
+                                collapsed = collapsedProviderIds.contains(normalizeProviderId(provider.id)),
+                                onToggleCollapse = {
+                                    scope.launch {
+                                        configManager.toggleProviderCollapsed(provider.id)
+                                    }
+                                },
+                            )
+                        }
+                    } else {
+                        // 正常提供商
+                        items(normalProviders.size) { index ->
+                            val provider = normalProviders[index]
+                            ProviderRow(
+                                provider = provider,
+                                onSelect = { onProviderSelected(provider) },
+                                collapsed = false,
+                                onToggleCollapse = {
+                                    scope.launch {
+                                        configManager.toggleProviderCollapsed(provider.id)
+                                    }
+                                },
+                            )
+                        }
+                        // 已折叠提供商分区
+                        if (collapsedProviders.isNotEmpty()) {
+                            item {
+                                Row(
+                                    modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 4.dp)
-                                        .clickable { onProviderSelected(provider) },
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                        ) {
-                            Row(
-                                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // 提供商图标（使用圆形背景色）
-                                Box(
-                                        modifier = Modifier
-                                                .size(32.dp)
-                                                .background(
-                                                        getProviderColor(provider.id),
-                                                        CircleShape
-                                                ),
-                                        contentAlignment = Alignment.Center
+                                        .clickable { collapsedExpanded = !collapsedExpanded }
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                            text = provider.displayName.firstOrNull()?.toString() ?: "?",
-                                            color = MaterialTheme.colorScheme.onPrimary,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            fontWeight = FontWeight.Bold
+                                        stringResource(R.string.collapsed_providers_count, collapsedProviders.size),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Icon(
+                                        imageVector = if (collapsedExpanded) Icons.Default.KeyboardArrowUp
+                                        else Icons.Default.KeyboardArrowDown,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                
-                                Spacer(modifier = Modifier.width(16.dp))
-                                
-                                Text(
-                                        text = provider.displayName,
-                                        style = MaterialTheme.typography.bodyLarge
-                                )
+                            }
+                            if (collapsedExpanded) {
+                                items(collapsedProviders.size) { index ->
+                                    val provider = collapsedProviders[index]
+                                    ProviderRow(
+                                        provider = provider,
+                                        onSelect = { onProviderSelected(provider) },
+                                        collapsed = true,
+                                        onToggleCollapse = {
+                                            scope.launch {
+                                                configManager.toggleProviderCollapsed(provider.id)
+                                            }
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
@@ -1687,6 +1747,69 @@ private fun ApiProviderDialog(
                         Text(stringResource(R.string.cancel))
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderRow(
+    provider: ProviderSelectionOption,
+    onSelect: () -> Unit,
+    collapsed: Boolean,
+    onToggleCollapse: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clickable { onSelect() },
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+    ) {
+        Row(
+            modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // 提供商图标（使用圆形背景色）
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .background(
+                        getProviderColor(provider.id),
+                        CircleShape,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = provider.displayName.firstOrNull()?.toString() ?: "?",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Text(
+                text = provider.displayName,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+
+            // 折叠/取消折叠按钮
+            IconButton(
+                onClick = {
+                    onToggleCollapse()
+                },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Text(
+                    text = if (collapsed) "+" else "\u2212", // × -> − for collapse icon
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

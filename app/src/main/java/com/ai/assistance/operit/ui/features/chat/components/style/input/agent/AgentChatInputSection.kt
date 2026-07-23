@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.DataObject
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.TipsAndUpdates
 import androidx.compose.material.icons.rounded.Psychology
@@ -117,10 +119,14 @@ import com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.ModelConfigSummary
+import com.ai.assistance.operit.data.model.FavoriteModelRef
 import com.ai.assistance.operit.data.model.MemorySpace
 import com.ai.assistance.operit.data.model.getModelByIndex
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.getValidModelIndex
+import com.ai.assistance.operit.data.model.resolveFavoriteModelIndex
+import com.ai.assistance.operit.data.model.resolveValidFavorites
+import com.ai.assistance.operit.data.model.partitionConfigsByCollapsed
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.model.ActivePrompt
@@ -360,6 +366,11 @@ fun AgentChatInputSection(
     val configMappingWithIndex by
         functionalConfigManager.functionConfigMappingWithIndexFlow.collectAsState(initial = emptyMap())
     var configSummaries by remember { mutableStateOf<List<ModelConfigSummary>>(emptyList()) }
+    val favoriteModels by modelConfigManager.favoriteModelsFlow.collectAsState(initial = emptyList())
+    val collapsedProviderIds by modelConfigManager.collapsedProviderIdsFlow.collectAsState(initial = emptySet())
+    val validFavorites = remember(favoriteModels, configSummaries) {
+        resolveValidFavorites(configSummaries, favoriteModels)
+    }
     val activeProfileId by userPreferencesManager.activeMemorySpaceIdFlow.collectAsState(initial = "default")
     var preferenceProfiles by remember { mutableStateOf<List<MemorySpace>>(emptyList()) }
     val currentConfigMapping =
@@ -1417,6 +1428,13 @@ fun AgentChatInputSection(
                     onNavigateToModelConfig()
                 },
                 onDismiss = { showModelSelectorPopup.value = false },
+                validFavorites = validFavorites,
+                collapsedProviderIds = collapsedProviderIds,
+                onToggleFavorite = { configId, modelName ->
+                    scope.launch {
+                        modelConfigManager.toggleFavoriteModel(configId, modelName)
+                    }
+                },
             )
 
             AgentExtraSettingsPopup(
@@ -1501,6 +1519,9 @@ private fun AgentModelSelectorPopup(
     onSelectModel: (String, Int) -> Unit,
     onManageModels: () -> Unit,
     onDismiss: () -> Unit,
+    validFavorites: List<FavoriteModelRef> = emptyList(),
+    collapsedProviderIds: Set<String> = emptySet(),
+    onToggleFavorite: (String, String) -> Unit = { _, _ -> },
 ) {
     if (!visible) return
 
@@ -1665,6 +1686,9 @@ private fun AgentModelSelectorPopup(
                                 context.getString(R.string.model_config) to
                                     context.getString(R.string.model_config_desc)
                         },
+                        validFavorites = validFavorites,
+                        collapsedProviderIds = collapsedProviderIds,
+                        onToggleFavorite = onToggleFavorite,
                     )
                 }
             }
@@ -2017,14 +2041,16 @@ private fun AgentModelSelectorItem(
     allowCollapse: Boolean = true,
     onManageClick: () -> Unit,
     onInfoClick: () -> Unit,
+    validFavorites: List<FavoriteModelRef> = emptyList(),
+    collapsedProviderIds: Set<String> = emptySet(),
+    onToggleFavorite: (String, String) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
-    val showAutoGlmError: () -> Unit = {
-        Toast.makeText(
-            context,
-            context.getString(R.string.chat_autoglm_warning),
-            Toast.LENGTH_LONG,
-        ).show()
+    val showAutoGlmError: (String) -> Boolean = { modelName ->
+        if (modelName.contains("autoglm", ignoreCase = true)) {
+            Toast.makeText(context, context.getString(R.string.chat_autoglm_warning), Toast.LENGTH_LONG).show()
+            true
+        } else false
     }
 
     val currentConfig = configSummaries.find { it.id == currentConfigMapping.configId }
@@ -2106,7 +2132,65 @@ private fun AgentModelSelectorItem(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 )
             } else {
-                configSummaries.forEach { config ->
+                // ===== 收藏区 =====
+                if (validFavorites.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.favorite_models),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                    validFavorites.forEach { fav ->
+                        val favConfig = configSummaries.find { it.id == fav.configId }
+                        val displayLabel = buildString {
+                            val providerId = favConfig?.apiProviderTypeId?.lowercase()?.take(16) ?: "?"
+                            append(providerId)
+                            append(":")
+                            append(fav.modelName.take(24))
+                            if (favConfig != null && configSummaries.count { it.apiProviderTypeId == favConfig.apiProviderTypeId } > 1) {
+                                append(" ")
+                                append(favConfig.name.take(10))
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable {
+                                    val idx = resolveFavoriteModelIndex(configSummaries, fav)
+                                    if (idx != null && !showAutoGlmError(fav.modelName)) {
+                                        onSelectModel(fav.configId, idx)
+                                        onExpandedChange(false)
+                                    }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.Star,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = displayLabel,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+
+                val (normalConfigs, collapsedConfigs) = partitionConfigsByCollapsed(configSummaries, collapsedProviderIds)
+                var collapsedExpanded by remember { mutableStateOf(false) }
+
+                normalConfigs.forEach { config ->
                     val isSelected = config.id == currentConfigMapping.configId
                     val modelList = getModelList(config.modelName)
                     val hasMultipleModels = modelList.size > 1
@@ -2130,8 +2214,8 @@ private fun AgentModelSelectorItem(
                                             expandedConfigId = if (isExpanded) null else config.id
                                         } else {
                                             val singleModelName = modelList.firstOrNull().orEmpty()
-                                            if (singleModelName.contains("autoglm", ignoreCase = true)) {
-                                                showAutoGlmError()
+                                            if (showAutoGlmError(singleModelName)) {
+                                                // blocked
                                             } else {
                                                 onSelectModel(config.id, 0)
                                                 onExpandedChange(false)
@@ -2147,111 +2231,129 @@ private fun AgentModelSelectorItem(
                                 Text(
                                     text = config.name,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color =
-                                        if (isSelected) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurface
-                                        },
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface,
                                     fontSize = 13.sp,
-                                    maxLines = 2,
+                                    maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f),
                                 )
+                                val uniqueModel = if (!hasMultipleModels) modelList.firstOrNull() else null
+                                val isFav = validFavorites.any { it.configId == config.id && it.modelName.equals(uniqueModel ?: "", ignoreCase = true) }
+                                IconButton(
+                                    onClick = {
+                                        if (uniqueModel != null) {
+                                            onToggleFavorite(config.id, uniqueModel)
+                                        }
+                                    },
+                                    modifier = Modifier.size(24.dp),
+                                ) {
+                                    Icon(
+                                        if (isFav) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = if (isFav) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                    )
+                                }
                                 Spacer(modifier = Modifier.width(4.dp))
                                 if (hasMultipleModels) {
-                                    Text(
-                                        text = stringResource(R.string.chat_model_count, modelList.size),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 10.sp,
-                                    )
-                                    Icon(
-                                        imageVector =
-                                            if (isExpanded) {
-                                                Icons.Default.KeyboardArrowUp
-                                            } else {
-                                                Icons.Default.KeyboardArrowDown
-                                            },
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
+                                    Text(text = stringResource(R.string.chat_model_count, modelList.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                                    Icon(imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 } else {
-                                    Text(
-                                        text = config.modelName,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 11.sp,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
+                                    Text(text = config.modelName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
                         }
-
                         if (hasMultipleModels && isExpanded) {
                             Column(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .background(popupContainerColor)
-                                        .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 8.dp),
+                                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                                    .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 8.dp),
                             ) {
-                                val validIndex =
-                                    getValidModelIndex(config.modelName, currentConfigMapping.modelIndex)
+                                val validIndex = getValidModelIndex(config.modelName, currentConfigMapping.modelIndex)
                                 modelList.forEachIndexed { index, modelName ->
                                     val isModelSelected = isSelected && validIndex == index
-                                    Box(
-                                        modifier =
-                                            Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(
-                                                    if (isModelSelected) {
-                                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                                    } else {
-                                                        Color.Transparent
-                                                    },
-                                                )
-                                                .clickable {
-                                                    if (modelName.contains("autoglm", ignoreCase = true)) {
-                                                        showAutoGlmError()
-                                                    } else {
-                                                        onSelectModel(config.id, index)
-                                                        onExpandedChange(false)
-                                                        expandedConfigId = null
-                                                    }
+                                    val isModelFav = validFavorites.any { it.configId == config.id && it.modelName.equals(modelName, ignoreCase = true) }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp))
+                                            .background(if (isModelSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent)
+                                            .clickable {
+                                                if (showAutoGlmError(modelName)) {
+                                                    // blocked
+                                                } else {
+                                                    onSelectModel(config.id, index)
+                                                    onExpandedChange(false)
+                                                    expandedConfigId = null
                                                 }
-                                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Text(
-                                            text = modelName,
-                                            fontSize = 12.sp,
-                                            fontWeight =
-                                                if (isModelSelected) {
-                                                    FontWeight.Bold
-                                                } else {
-                                                    FontWeight.Normal
-                                                },
-                                            color =
-                                                if (isModelSelected) {
-                                                    MaterialTheme.colorScheme.primary
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurface
-                                                },
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
+                                        Text(text = modelName, fontSize = 12.sp, fontWeight = if (isModelSelected) FontWeight.Bold else FontWeight.Normal, color = if (isModelSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                        IconButton(onClick = { onToggleFavorite(config.id, modelName) }, modifier = Modifier.size(24.dp)) {
+                                            Icon(
+                                                if (isModelFav) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                                                contentDescription = null, modifier = Modifier.size(13.dp),
+                                                tint = if (isModelFav) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                            )
+                                        }
                                     }
-                                    if (index < modelList.size - 1) {
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                    }
+                                    if (index < modelList.size - 1) { Spacer(modifier = Modifier.height(2.dp)) }
                                 }
                             }
                         }
-                        if (configSummaries.last() != config) {
-                            Spacer(modifier = Modifier.height(4.dp))
+                    }
+                    if (normalConfigs.last() != config) { Spacer(modifier = Modifier.height(4.dp)) }
+                }
+
+                // ===== 折叠区 =====
+                if (collapsedConfigs.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { collapsedExpanded = !collapsedExpanded }.padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(stringResource(R.string.collapsed_providers_count, collapsedConfigs.size), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        Icon(imageVector = if (collapsedExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (collapsedExpanded) {
+                        collapsedConfigs.forEach { config ->
+                            val isSelected = config.id == currentConfigMapping.configId
+                            val modelList = getModelList(config.modelName)
+                            val hasMultipleModels = modelList.size > 1
+                            val isExpanded = expandedConfigId == config.id
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent).clickable {
+                                    if (hasMultipleModels) { expandedConfigId = if (isExpanded) null else config.id }
+                                    else {
+                                        val m = modelList.firstOrNull().orEmpty()
+                                        if (!showAutoGlmError(m)) { onSelectModel(config.id, 0); onExpandedChange(false) }
+                                    }
+                                }.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Text(text = config.name, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                        if (hasMultipleModels) {
+                                            Text(text = stringResource(R.string.chat_model_count, modelList.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                                            Icon(imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+                                if (hasMultipleModels && isExpanded) {
+                                    Column(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)).padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 8.dp)) {
+                                        val vi = getValidModelIndex(config.modelName, currentConfigMapping.modelIndex)
+                                        modelList.forEachIndexed { index, modelName ->
+                                            val isModelSelected = isSelected && vi == index
+                                            Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).background(if (isModelSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent).clickable {
+                                                if (!showAutoGlmError(modelName)) { onSelectModel(config.id, index); onExpandedChange(false); expandedConfigId = null }
+                                            }.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                                                Text(text = modelName, fontSize = 12.sp, fontWeight = if (isModelSelected) FontWeight.Bold else FontWeight.Normal, color = if (isModelSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+                                            if (index < modelList.size - 1) { Spacer(modifier = Modifier.height(2.dp)) }
+                                        }
+                                    }
+                                }
+                            }
+                            if (collapsedConfigs.last() != config) { Spacer(modifier = Modifier.height(2.dp)) }
                         }
                     }
                 }
