@@ -1489,6 +1489,9 @@
     <string name="create">Create</string>
     <string name="unnamed_config">Unnamed Configuration</string>
     <string name="delete_config">Delete</string>
+    <string name="delete_config_confirm_title">Delete Model Config</string>
+    <string name="delete_config_confirm_message">Are you sure you want to delete "%1$s"? This action cannot be undone.</string>
+    <string name="delete_config_confirm_button">Delete</string>
     
     <!-- Functional Prompt Config Screen -->
     <string name="functional_prompt_title">Functional Prompt Configuration</string>

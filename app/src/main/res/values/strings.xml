@@ -1468,7 +1468,9 @@
     <string name="create">创建</string>
     <string name="unnamed_config">未命名配置</string>
     <string name="delete_config">删除</string>
-    
+    <string name="delete_config_confirm_title">删除模型配置</string>
+    <string name="delete_config_confirm_message">确定要删除配置"%1$s"吗？此操作无法撤销。</string>
+    <string name="delete_config_confirm_button">删除</string>    
     <!-- 功能提示词配置屏幕 -->
     <string name="functional_prompt_title">功能提示词配置设置</string>
     <string name="functional_prompt_desc">为不同功能设置单独的提示词配置，使每个功能都能使用最适合的提示词。</string>

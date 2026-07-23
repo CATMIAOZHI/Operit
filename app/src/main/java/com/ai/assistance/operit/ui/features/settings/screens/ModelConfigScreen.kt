@@ -195,6 +195,7 @@ fun ModelConfigScreen(
     var newConfigName by remember { mutableStateOf("") }
     var renameConfigName by remember { mutableStateOf("") }
     var confirmMessage by remember { mutableStateOf("") }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
 
     // 排序、收藏与折叠相关
     var configSummaries by remember { mutableStateOf<List<ModelConfigSummary>>(emptyList()) }
@@ -508,11 +509,7 @@ fun ModelConfigScreen(
 
                                 TextButton(
                                     onClick = {
-                                        scope.launch {
-                                            configManager.deleteConfig(selectedConfigId)
-                                            selectedConfigId = ModelConfigManager.DEFAULT_CONFIG_ID
-                                            showNotification(context.getString(R.string.config_deleted))
-                                        }
+                                        showDeleteConfirmDialog = true
                                     },
                                     contentPadding = PaddingValues(horizontal = 12.dp),
                                     colors =
@@ -966,6 +963,49 @@ fun ModelConfigScreen(
                     ) { Text(stringResource(R.string.cancel_action), fontSize = 13.sp) }
                 },
                 shape = RoundedCornerShape(12.dp)
+            )
+        }
+
+        // 删除配置确认对话框
+        if (showDeleteConfirmDialog) {
+            val configName = selectedConfig.value?.name ?: ""
+            AlertDialog(
+                onDismissRequest = { showDeleteConfirmDialog = false },
+                title = {
+                    Text(
+                        stringResource(R.string.delete_config_confirm_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
+                text = {
+                    Text(
+                        stringResource(R.string.delete_config_confirm_message, configName),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                configManager.deleteConfig(selectedConfigId)
+                                selectedConfigId = ModelConfigManager.DEFAULT_CONFIG_ID
+                                showNotification(context.getString(R.string.config_deleted))
+                            }
+                            showDeleteConfirmDialog = false
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                        ),
+                    ) { Text(stringResource(R.string.delete_config_confirm_button), fontSize = 13.sp) }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showDeleteConfirmDialog = false },
+                    ) { Text(stringResource(R.string.cancel_action), fontSize = 13.sp) }
+                },
+                shape = RoundedCornerShape(12.dp),
             )
         }
 
