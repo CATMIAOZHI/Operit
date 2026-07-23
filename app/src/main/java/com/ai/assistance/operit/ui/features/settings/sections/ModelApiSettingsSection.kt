@@ -1599,7 +1599,7 @@ private fun ApiProviderDialog(
         collapsedProviders = coll
     }
     var collapsedExpanded by remember { mutableStateOf(false) }
-    
+
     val filteredProviders = remember(searchQuery, providers) {
         if (searchQuery.isEmpty()) {
             providers
