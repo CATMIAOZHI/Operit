@@ -14,6 +14,7 @@ import com.ai.assistance.operit.data.model.FavoriteModelRef
 import com.ai.assistance.operit.data.model.ModelConfigBackup
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelConfigSummary
+import com.ai.assistance.operit.data.model.mergeCollapsedConfigIds
 import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
@@ -51,9 +52,10 @@ class ModelConfigManager(private val context: Context) {
         val CONFIG_LIST_KEY = stringPreferencesKey("config_list")
         val FAVORITE_MODELS_KEY = stringPreferencesKey("favorite_models")
         val COLLAPSED_PROVIDER_IDS_KEY = stringPreferencesKey("collapsed_provider_ids")
+        val COLLAPSED_CONFIG_IDS_KEY = stringPreferencesKey("collapsed_config_ids")
 
         // 当前备份版本号
-        const val BACKUP_VERSION = 1
+        const val BACKUP_VERSION = 2
 
         // 默认值
         const val DEFAULT_CONFIG_ID = "default"
@@ -100,6 +102,22 @@ class ModelConfigManager(private val context: Context) {
                     try {
                         json.decodeFromString<List<String>>(raw)
                             .map { normalizeProviderId(it) }
+                            .filter { it.isNotEmpty() }
+                            .toSet()
+                    } catch (_: Exception) {
+                        emptySet()
+                    }
+                }
+            }
+
+    // 折叠的配置 ID 集合 Flow（使用 config ID 精确匹配，不做大小写归一化）
+    val collapsedConfigIdsFlow: Flow<Set<String>> =
+            context.modelConfigDataStore.data.map { preferences ->
+                val raw = preferences[COLLAPSED_CONFIG_IDS_KEY] ?: ""
+                if (raw.isEmpty()) emptySet()
+                else {
+                    try {
+                        json.decodeFromString<List<String>>(raw)
                             .filter { it.isNotEmpty() }
                             .toSet()
                     } catch (_: Exception) {
@@ -231,6 +249,20 @@ class ModelConfigManager(private val context: Context) {
             try {
                 json.decodeFromString<List<String>>(raw)
                     .map { normalizeProviderId(it) }
+                    .filter { it.isNotEmpty() }
+                    .toSet()
+            } catch (_: Exception) {
+                emptySet()
+            }
+        }
+    }
+
+    private fun readCollapsedConfigIdsFromPrefs(prefs: Preferences): Set<String> {
+        val raw = prefs[COLLAPSED_CONFIG_IDS_KEY] ?: ""
+        return if (raw.isEmpty()) emptySet()
+        else {
+            try {
+                json.decodeFromString<List<String>>(raw)
                     .filter { it.isNotEmpty() }
                     .toSet()
             } catch (_: Exception) {
@@ -372,6 +404,24 @@ class ModelConfigManager(private val context: Context) {
         }
     }
 
+    /**
+     * 切换某个配置（configId）的折叠状态。
+     * 已在折叠集中则移除，否则加入。
+     */
+    suspend fun toggleConfigCollapsed(configId: String) {
+        if (configId.isBlank()) return
+        context.modelConfigDataStore.edit { preferences ->
+            val current = readCollapsedConfigIdsFromPrefs(preferences)
+            val updated = if (configId in current) {
+                current - configId
+            } else {
+                current + configId
+            }
+            preferences[COLLAPSED_CONFIG_IDS_KEY] =
+                json.encodeToString(updated.toList())
+        }
+    }
+
     // 创建新配置
     suspend fun createConfig(name: String): String {
         val configId = UUID.randomUUID().toString()
@@ -415,6 +465,10 @@ class ModelConfigManager(private val context: Context) {
             val favorites = readFavoriteModelsFromPrefs(preferences)
                 .filter { it.configId != configId }
             preferences[FAVORITE_MODELS_KEY] = json.encodeToString(favorites)
+            // 清理该配置的折叠状态
+            val collapsedConfigIds = readCollapsedConfigIdsFromPrefs(preferences) - configId
+            preferences[COLLAPSED_CONFIG_IDS_KEY] =
+                json.encodeToString(collapsedConfigIds.toList())
         }
     }
 
@@ -858,13 +912,17 @@ class ModelConfigManager(private val context: Context) {
         }
 
         val favorites = readFavoriteModelsFromPrefs(snapshot)
-        val collapsed = readCollapsedProviderIdsFromPrefs(snapshot).toList()
+        val collapsedProviders = readCollapsedProviderIdsFromPrefs(snapshot).toList()
+        val collapsedConfigs = readCollapsedConfigIdsFromPrefs(snapshot)
+            .filter { configId -> configIds.contains(configId) }
+            .toList()
 
         val backup = ModelConfigBackup(
             version = BACKUP_VERSION,
             configs = allConfigs,
             favoriteModels = favorites,
-            collapsedProviderIds = collapsed,
+            collapsedProviderIds = collapsedProviders,
+            collapsedConfigIds = collapsedConfigs,
         )
 
         val exportJson = Json {
@@ -1002,15 +1060,29 @@ class ModelConfigManager(private val context: Context) {
             }
             preferences[FAVORITE_MODELS_KEY] = json.encodeToString(mergedFavorites)
 
-            // 4. 折叠合并：本地与备份取并集（规范化后）
-            val localCollapsed = readCollapsedProviderIdsFromPrefs(preferences)
-            val backupCollapsed = backup.collapsedProviderIds
+            // 4. 提供商折叠合并：本地与备份取并集（规范化后）
+            val localProviderCollapsed = readCollapsedProviderIdsFromPrefs(preferences)
+            val backupProviderCollapsed = backup.collapsedProviderIds
                 .map { normalizeProviderId(it) }
                 .filter { it.isNotEmpty() }
                 .toSet()
-            val mergedCollapsed = localCollapsed + backupCollapsed
+            val mergedProviderCollapsed = localProviderCollapsed + backupProviderCollapsed
             preferences[COLLAPSED_PROVIDER_IDS_KEY] =
-                json.encodeToString(mergedCollapsed.toList())
+                json.encodeToString(mergedProviderCollapsed.toList())
+
+            // 5. 配置折叠合并
+            //    v1 备份缺少 collapsedConfigIds，只保留本地有效项
+            //    v2 备份合并本地与备份的并集
+            val localConfigCollapsed = readCollapsedConfigIdsFromPrefs(preferences)
+            val backupConfigCollapsed: Collection<String> =
+                if (backup.version >= 2) backup.collapsedConfigIds else emptyList()
+            val mergedConfigCollapsed = mergeCollapsedConfigIds(
+                localIds = localConfigCollapsed,
+                backupIds = backupConfigCollapsed,
+                mergedConfigIds = mergedIds,
+            )
+            preferences[COLLAPSED_CONFIG_IDS_KEY] =
+                json.encodeToString(mergedConfigCollapsed.toList())
         }
 
         return Triple(newCount, updatedCount, skippedCount)

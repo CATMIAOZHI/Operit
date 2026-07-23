@@ -7,9 +7,10 @@ import com.ai.assistance.operit.data.model.getModelByIndex
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.getValidModelIndex
 import com.ai.assistance.operit.data.model.isProviderCollapsed
+import com.ai.assistance.operit.data.model.mergeCollapsedConfigIds
 import com.ai.assistance.operit.data.model.normalizeConfigOrder
 import com.ai.assistance.operit.data.model.normalizeProviderId
-import com.ai.assistance.operit.data.model.partitionConfigsByCollapsed
+import com.ai.assistance.operit.data.model.partitionConfigsByCollapsedIds
 import com.ai.assistance.operit.data.model.resolveFavoriteModelIndex
 import com.ai.assistance.operit.data.model.resolveValidFavorites
 import org.junit.Assert.*
@@ -150,44 +151,109 @@ class ModelListPreferencesTest {
         assertEquals("c2" to "claude-3", result[1].configId to result[1].modelName)
     }
 
-    // ==================== partitionConfigsByCollapsed ====================
+    // ==================== partitionConfigsByCollapsedIds ====================
 
     @Test
-    fun partitionConfigsByCollapsed_splitsCorrectly() {
+    fun partitionConfigsByCollapsedIds_singleConfigCollapsed_sameProviderOthersNormal() {
         val summaries = listOf(
-            mkSummary("c1", "deepseek", name = "DeepSeek"),
+            mkSummary("c1", "deepseek", name = "DeepSeek 1"),
             mkSummary("c2", "ollama", name = "Ollama Local"),
             mkSummary("c3", "deepseek", name = "DeepSeek 2"),
             mkSummary("c4", "openai", name = "OpenAI"),
         )
-        val collapsed = setOf("deepseek")
-        val (normal, collapsedList) = partitionConfigsByCollapsed(summaries, collapsed)
-        assertEquals(listOf("Ollama Local", "OpenAI"), normal.map { it.name })
-        assertEquals(listOf("DeepSeek", "DeepSeek 2"), collapsedList.map { it.name })
+        val collapsed = setOf("c1")
+        val (normal, collapsedList) = partitionConfigsByCollapsedIds(summaries, collapsed)
+        assertEquals(listOf("Ollama Local", "DeepSeek 2", "OpenAI"), normal.map { it.name })
+        assertEquals(listOf("DeepSeek 1"), collapsedList.map { it.name })
     }
 
     @Test
-    fun partitionConfigsByCollapsed_caseInsensitive() {
+    fun partitionConfigsByCollapsedIds_multiProviderIndependentCollapse() {
         val summaries = listOf(
-            mkSummary("c1", "DeepSeek", name = "DS"),
-            mkSummary("c2", "openai", name = "GPT"),
+            mkSummary("c1", "deepseek", name = "DeepSeek"),
+            mkSummary("c2", "ollama", name = "Ollama"),
+            mkSummary("c3", "openai", name = "OpenAI"),
         )
-        val collapsed = setOf(normalizeProviderId("deepseek"))
-        val (normal, collapsedList) = partitionConfigsByCollapsed(summaries, collapsed)
-        assertEquals(listOf("GPT"), normal.map { it.name })
-        assertEquals(listOf("DS"), collapsedList.map { it.name })
+        val collapsed = setOf("c1", "c3")
+        val (normal, collapsedList) = partitionConfigsByCollapsedIds(summaries, collapsed)
+        assertEquals(listOf("Ollama"), normal.map { it.name })
+        assertEquals(listOf("DeepSeek", "OpenAI"), collapsedList.map { it.name })
     }
 
     @Test
-    fun partitionConfigsByCollapsed_toolPkgProviderId() {
+    fun partitionConfigsByCollapsedIds_preservesGlobalOrder() {
         val summaries = listOf(
-            mkSummary("c1", "custom.toolpkg.v1", name = "Custom"),
-            mkSummary("c2", "openai", name = "GPT"),
+            mkSummary("a", "p1", name = "A"),
+            mkSummary("b", "p2", name = "B"),
+            mkSummary("c", "p1", name = "C"),
+            mkSummary("d", "p3", name = "D"),
         )
-        val collapsed = setOf("custom.toolpkg.v1")
-        val (normal, collapsedList) = partitionConfigsByCollapsed(summaries, collapsed)
-        assertEquals(listOf("GPT"), normal.map { it.name })
-        assertEquals(listOf("Custom"), collapsedList.map { it.name })
+        val collapsed = setOf("b", "d")
+        val (normal, collapsedList) = partitionConfigsByCollapsedIds(summaries, collapsed)
+        assertEquals(listOf("A", "C"), normal.map { it.name })
+        assertEquals(listOf("B", "D"), collapsedList.map { it.name })
+    }
+
+    @Test
+    fun partitionConfigsByCollapsedIds_emptySetAllNormal() {
+        val summaries = listOf(
+            mkSummary("c1", name = "A"),
+            mkSummary("c2", name = "B"),
+        )
+        val (normal, collapsedList) = partitionConfigsByCollapsedIds(summaries, emptySet())
+        assertEquals(listOf("A", "B"), normal.map { it.name })
+        assertTrue(collapsedList.isEmpty())
+    }
+
+    @Test
+    fun partitionConfigsByCollapsedIds_nonExistentIdIgnored() {
+        val summaries = listOf(mkSummary("c1", name = "A"))
+        val (normal, collapsedList) = partitionConfigsByCollapsedIds(summaries, setOf("ghost"))
+        assertEquals(listOf("A"), normal.map { it.name })
+        assertTrue(collapsedList.isEmpty())
+    }
+
+    // ==================== mergeCollapsedConfigIds ====================
+
+    @Test
+    fun mergeCollapsedConfigIds_unionOfLocalAndBackup() {
+        val result = mergeCollapsedConfigIds(
+            localIds = setOf("a", "b"),
+            backupIds = listOf("b", "c"),
+            mergedConfigIds = listOf("a", "b", "c", "d"),
+        )
+        assertEquals(setOf("a", "b", "c"), result)
+    }
+
+    @Test
+    fun mergeCollapsedConfigIds_filtersOutGhostIds() {
+        val result = mergeCollapsedConfigIds(
+            localIds = setOf("a", "ghost"),
+            backupIds = listOf("c"),
+            mergedConfigIds = listOf("a", "c", "d"),
+        )
+        assertEquals(setOf("a", "c"), result)
+    }
+
+    @Test
+    fun mergeCollapsedConfigIds_v1EmptyBackupPreservesLocal() {
+        // v1 scenario: backup has no collapsedConfigIds, only local state
+        val result = mergeCollapsedConfigIds(
+            localIds = setOf("a", "b"),
+            backupIds = emptyList(),
+            mergedConfigIds = listOf("a", "b", "c"),
+        )
+        assertEquals(setOf("a", "b"), result)
+    }
+
+    @Test
+    fun mergeCollapsedConfigIds_v2MergesUnion() {
+        val result = mergeCollapsedConfigIds(
+            localIds = setOf("x"),
+            backupIds = listOf("y", "z"),
+            mergedConfigIds = listOf("x", "y", "z"),
+        )
+        assertEquals(setOf("x", "y", "z"), result)
     }
 
     // ==================== getModelByIndex / getModelList ====================

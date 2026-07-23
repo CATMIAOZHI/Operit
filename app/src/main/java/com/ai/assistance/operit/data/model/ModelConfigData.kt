@@ -16,6 +16,7 @@ data class ModelConfigBackup(
     val configs: List<ModelConfigData> = emptyList(),
     val favoriteModels: List<FavoriteModelRef> = emptyList(),
     val collapsedProviderIds: List<String> = emptyList(),
+    val collapsedConfigIds: List<String> = emptyList(),
 )
 
 /** API提供商类型枚举 */
@@ -252,10 +253,33 @@ fun resolveValidFavorites(
 }
 
 /**
- * 将配置列表按折叠状态分区。
+ * 将配置列表按折叠配置 ID 分区。
+ * Pair.first = 正常配置, Pair.second = 折叠配置。
+ * 各区内部保持原顺序。config ID 使用精确匹配。
+ */
+fun partitionConfigsByCollapsedIds(
+    configSummaries: List<ModelConfigSummary>,
+    collapsedConfigIds: Set<String>,
+): Pair<List<ModelConfigSummary>, List<ModelConfigSummary>> {
+    val normal = mutableListOf<ModelConfigSummary>()
+    val collapsed = mutableListOf<ModelConfigSummary>()
+    for (summary in configSummaries) {
+        if (summary.id in collapsedConfigIds) {
+            collapsed.add(summary)
+        } else {
+            normal.add(summary)
+        }
+    }
+    return normal to collapsed
+}
+
+/**
+ * 将配置列表按提供商折叠状态分区。
+ * 已废弃：请用 partitionConfigsByCollapsedIds 代替。
  * Pair.first = 正常配置, Pair.second = 折叠配置。
  * 各区内部保持原顺序。
  */
+@Deprecated("Use partitionConfigsByCollapsedIds for config-level collapse", ReplaceWith("partitionConfigsByCollapsedIds(configSummaries, collapsedConfigIds)"))
 fun partitionConfigsByCollapsed(
     configSummaries: List<ModelConfigSummary>,
     collapsedProviderIds: Set<String>,
@@ -271,6 +295,24 @@ fun partitionConfigsByCollapsed(
         }
     }
     return normal to collapsed
+}
+
+/**
+ * 合并本地与备份的配置折叠 ID。
+ * 本地集合与备份集合取并集，然后过滤掉不在 mergedConfigIds 中的幽灵 ID。
+ *
+ * @param localIds 本地当前有效的折叠 config ID
+ * @param backupIds 备份中的折叠 config ID（v1 导入时传空集合）
+ * @param mergedConfigIds 合并后存在的所有 config ID
+ * @return 合并过滤后的折叠 config ID 集合
+ */
+fun mergeCollapsedConfigIds(
+    localIds: Set<String>,
+    backupIds: Collection<String>,
+    mergedConfigIds: Collection<String>,
+): Set<String> {
+    val mergedSet = mergedConfigIds.toSet()
+    return (localIds + backupIds).filter { it in mergedSet }.toSet()
 }
 
 /**
