@@ -1,0 +1,30 @@
+name: Sync Main Mirror
+
+on:
+  push:
+    branches:
+      - personal/main
+
+concurrency:
+  group: sync-main-mirror
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Fast-forward main to personal/main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout personal/main
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Update compatibility mirror
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:refs/heads/main
