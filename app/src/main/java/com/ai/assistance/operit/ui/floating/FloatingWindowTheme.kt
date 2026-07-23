@@ -21,23 +21,23 @@ fun FloatingWindowTheme(
     typography: Typography? = null,
     content: @Composable () -> Unit
 ) {
-    // 使用静态颜色，匹配动态主题的默认值
+    // 使用静态颜色，匹配 Rainy 粉色默认主题
     val finalColorScheme = colorScheme ?: lightColorScheme(
         // 主要颜色
-        primary = Color(0xFF6650a4),                // Purple40 - 与主应用默认主色匹配
-        onPrimary = Color.White,
-        primaryContainer = Color(0xFFEADDFF),       // 浅紫色容器
-        onPrimaryContainer = Color(0xFF21005E),     // 深紫色文本
+        primary = Color(0xFFFED1EE),                // Rainy 主色
+        onPrimary = Color(0xFF1C1B1F),
+        primaryContainer = Color(0xFFFFE0F2),       // 浅粉容器
+        onPrimaryContainer = Color(0xFF370B1E),
 
         // 次要颜色
-        secondary = Color(0xFF625b71),              // PurpleGrey40 - 次要色
-        onSecondary = Color.White,
-        secondaryContainer = Color(0xFFE8DEF8),     // 浅灰紫色容器
-        onSecondaryContainer = Color(0xFF1E192B),   // 深灰紫色文本
+        secondary = Color(0xFFF8B6D9),              // Rainy 辅色
+        onSecondary = Color(0xFF1C1B1F),
+        secondaryContainer = Color(0xFFFFD8E4),     // 浅粉容器
+        onSecondaryContainer = Color(0xFF370B1E),
 
         // 第三颜色
-        tertiary = Color(0xFF7D5260),               // Pink40 - 第三色
-        onTertiary = Color.White,
+        tertiary = Color(0xFFE8A0B8),               // 第三色
+        onTertiary = Color(0xFF1C1B1F),
         tertiaryContainer = Color(0xFFFFD8E4),      // 浅粉色容器
         onTertiaryContainer = Color(0xFF370B1E),    // 深粉色文本
 

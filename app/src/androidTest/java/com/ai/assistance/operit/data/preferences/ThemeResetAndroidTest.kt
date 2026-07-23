@@ -6,13 +6,17 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * 真实 DataStore 重置回归测试：验证 resetThemeSettings() 将颜色恢复为 Rainy 默认值，
- * 并且 resolveThemePreferenceSnapshot 对缺键和回退也返回匹配的 Rainy 结果。
+ * 真实 DataStore 重置回归测试。
+ *
+ * 正确语义：关闭自定义颜色时默认显示 Rainy 粉色（通过 Material 基础色方案）。
+ * 重置后 useCustomColors=false，颜色键删除 → Flow 返回 null。
+ * 基础色方案已在 Color.kt / Theme.kt / ThemeColorSchemeResolver.kt 中改为 Rainy。
  */
 @RunWith(AndroidJUnit4::class)
 class ThemeResetAndroidTest {
@@ -21,7 +25,6 @@ class ThemeResetAndroidTest {
 
     @After
     fun tearDown() {
-        // 测试结束后再次重置，避免测试数据污染同一测试包中的其他用例
         runBlocking {
             val manager = UserPreferencesManager.getInstance(context)
             manager.resetThemeSettings()
@@ -29,57 +32,39 @@ class ThemeResetAndroidTest {
     }
 
     @Test
-    fun `reset to Rainy writes correct colors`() = runBlocking {
+    fun `reset clears custom colors and sets useCustomColors false`() = runBlocking {
         val manager = UserPreferencesManager.getInstance(context)
 
-        // 先保存非 Rainy 颜色和 useCustomColors=false，模拟旧默认状态
-        val otherPrimary = 0xFF0000FF.toInt()
-        val otherSecondary = 0xFF00FF00.toInt()
+        // 先写入自定义颜色和 useCustomColors=true，模拟 v1 错误状态
         manager.saveThemeSettings(
-            customPrimaryColor = otherPrimary,
-            customSecondaryColor = otherSecondary,
-            useCustomColors = false,
+            customPrimaryColor = 0xFF0000FF.toInt(),
+            customSecondaryColor = 0xFF00FF00.toInt(),
+            useCustomColors = true,
         )
 
         // 执行重置
         manager.resetThemeSettings()
 
-        // 断言 Flow 返回 Rainy
+        // 断言：开关为 false，颜色键被删除（Flow 返回 null）
         val ucc = manager.useCustomColors.first()
         val primary = manager.customPrimaryColor.first()
         val secondary = manager.customSecondaryColor.first()
 
-        assertEquals("useCustomColors must be true after reset", true, ucc)
-        assertEquals(
-            "primary color must be DEFAULT_CUSTOM_PRIMARY_COLOR",
-            UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
-            primary,
-        )
-        assertEquals(
-            "secondary color must be DEFAULT_CUSTOM_SECONDARY_COLOR",
-            UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
-            secondary,
-        )
+        assertFalse("useCustomColors must be false after reset", ucc)
+        assertNull("primary color must be null (key deleted)", primary)
+        assertNull("secondary color must be null (key deleted)", secondary)
     }
 
     @Test
-    fun `snapshot resolves Rainy after reset`() = runBlocking {
+    fun `snapshot has useCustomColors false and null colors after reset`() = runBlocking {
         val manager = UserPreferencesManager.getInstance(context)
         manager.resetThemeSettings()
 
         val snapshot = manager.resolveThemePreferenceSnapshot()
         assertEquals("source must be global", "global", snapshot.source)
-        assertEquals("useCustomColors must be true in snapshot", true, snapshot.useCustomColors)
-        assertEquals(
-            "customPrimaryColor must be Rainy in snapshot",
-            UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
-            snapshot.customPrimaryColor,
-        )
-        assertEquals(
-            "customSecondaryColor must be Rainy in snapshot",
-            UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
-            snapshot.customSecondaryColor,
-        )
+        assertFalse("useCustomColors must be false in snapshot", snapshot.useCustomColors)
+        assertNull("customPrimaryColor must be null in snapshot", snapshot.customPrimaryColor)
+        assertNull("customSecondaryColor must be null in snapshot", snapshot.customSecondaryColor)
     }
 
     @Test
@@ -93,26 +78,5 @@ class ThemeResetAndroidTest {
         // 重置应删除该键，回退到 Flow 默认值 bubble
         val snapshot = manager.resolveThemePreferenceSnapshot()
         assertEquals("chatStyle must reset to bubble", "bubble", snapshot.chatStyle)
-    }
-
-    @Test
-    fun `snapshot resolves Rainy for fresh install with no keys`() = runBlocking {
-        val manager = UserPreferencesManager.getInstance(context)
-
-        // 确保三键不存在（先删除）
-        manager.resetThemeSettings()
-
-        val snapshot = manager.resolveThemePreferenceSnapshot()
-        assertTrue("useCustomColors must default to true", snapshot.useCustomColors)
-        assertEquals(
-            "customPrimaryColor must default to Rainy",
-            UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
-            snapshot.customPrimaryColor,
-        )
-        assertEquals(
-            "customSecondaryColor must default to Rainy",
-            UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
-            snapshot.customSecondaryColor,
-        )
     }
 }
