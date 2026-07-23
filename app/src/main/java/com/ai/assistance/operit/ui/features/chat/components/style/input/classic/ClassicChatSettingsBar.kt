@@ -1711,13 +1711,11 @@ private fun ModelSelectorItem(
                     validFavorites.forEach { fav ->
                         val favConfig = configSummaries.find { it.id == fav.configId }
                         val favConfigName = favConfig?.name ?: ""
-                        val displayLabel = stringResource(R.string.favorite_model_label, favConfigName, fav.modelName)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(4.dp))
                                 .padding(horizontal = 4.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                            verticalAlignment = Alignment.Top,
                         ) {
                             IconButton(
                                 onClick = { onToggleFavorite(fav.configId, fav.modelName) },
@@ -1733,6 +1731,7 @@ private fun ModelSelectorItem(
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
+                                    .padding(top = 4.dp)
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable {
                                         val idx = resolveFavoriteModelIndex(configSummaries, fav)
@@ -1743,15 +1742,25 @@ private fun ModelSelectorItem(
                                             }
                                         }
                                     }
-                                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
                             ) {
-                                Text(
-                                    text = displayLabel,
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                Column {
+                                    Text(
+                                        text = favConfigName,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        text = fav.modelName,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
                         }
                     }
