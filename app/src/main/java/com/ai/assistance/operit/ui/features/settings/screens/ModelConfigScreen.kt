@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -30,6 +31,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -43,6 +45,10 @@ import com.ai.assistance.operit.api.chat.llmprovider.ModelConfigConnectionTester
 import com.ai.assistance.operit.api.chat.llmprovider.ModelConnectionTestType
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelConfigData
+import com.ai.assistance.operit.data.model.ModelConfigSummary
+import com.ai.assistance.operit.data.model.getModelList
+import com.ai.assistance.operit.data.model.partitionConfigsByCollapsedIds
+import com.ai.assistance.operit.data.model.normalizeProviderId
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.ui.features.settings.DebouncedModelConfigAutoSaveEffect
@@ -58,10 +64,13 @@ import com.ai.assistance.operit.ui.features.settings.sections.SettingsTextField
 import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import com.ai.assistance.operit.ui.main.navigation.RegisterRouteBackGuard
 import com.ai.assistance.operit.util.AppLogger
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -182,9 +191,21 @@ fun ModelConfigScreen(
     var showRenameConfigDialog by remember { mutableStateOf(false) }
     var showSaveSuccessMessage by remember { mutableStateOf(false) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
+    var showConfigSelectDialog by remember { mutableStateOf(false) }
     var newConfigName by remember { mutableStateOf("") }
     var renameConfigName by remember { mutableStateOf("") }
     var confirmMessage by remember { mutableStateOf("") }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+
+    // 排序、收藏与折叠相关
+    var configSummaries by remember { mutableStateOf<List<ModelConfigSummary>>(emptyList()) }
+    val collapsedConfigIds by configManager.collapsedConfigIdsFlow.collectAsState(initial = emptySet())
+    val sortedConfigIds = configList  // configList 已按全局顺序排列
+
+    // 加载摘要列表
+    LaunchedEffect(configList) {
+        configSummaries = configManager.getAllConfigSummaries()
+    }
 
     // 连接测试状态
     var isTestingConnection by remember { mutableStateOf(false) }
@@ -205,6 +226,7 @@ fun ModelConfigScreen(
         val availableConfigIds = configManager.configListFlow.first()
         selectedConfigId =
             availableConfigIds.firstOrNull { it == chatConfigId }
+                ?: availableConfigIds.firstOrNull { it == ModelConfigManager.DEFAULT_CONFIG_ID }
                 ?: availableConfigIds.firstOrNull()
                 ?: ModelConfigManager.DEFAULT_CONFIG_ID
         hasInitializedSelection = true
@@ -425,7 +447,7 @@ fun ModelConfigScreen(
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { isDropdownExpanded = true },
+                                .clickable { showConfigSelectDialog = true },
                             shape = RoundedCornerShape(8.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                             tonalElevation = 0.5.dp,
@@ -487,11 +509,7 @@ fun ModelConfigScreen(
 
                                 TextButton(
                                     onClick = {
-                                        scope.launch {
-                                            configManager.deleteConfig(selectedConfigId)
-                                            selectedConfigId = configList.firstOrNull() ?: "default"
-                                            showNotification(context.getString(R.string.config_deleted))
-                                        }
+                                        showDeleteConfirmDialog = true
                                     },
                                     contentPadding = PaddingValues(horizontal = 12.dp),
                                     colors =
@@ -692,63 +710,6 @@ fun ModelConfigScreen(
                             }
                         }
                     }
-
-                    DropdownMenu(
-                        expanded = isDropdownExpanded,
-                        onDismissRequest = { isDropdownExpanded = false },
-                        modifier = Modifier.width(280.dp),
-                        properties = PopupProperties(focusable = true)
-                    ) {
-                        configList.forEach { configId ->
-                            val configName =
-                                configNameMap[configId] ?: stringResource(R.string.unnamed_profile)
-                            val isSelected = configId == selectedConfigId
-
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = configName,
-                                        fontWeight =
-                                            if (isSelected) FontWeight.SemiBold
-                                            else FontWeight.Normal,
-                                        color =
-                                            if (isSelected)
-                                                MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurface
-                                    )
-                                },
-                                leadingIcon =
-                                    if (isSelected) {
-                                        {
-                                            Icon(
-                                                Icons.Default.Check,
-                                                contentDescription = stringResource(R.string.selected_desc),
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    } else null,
-                                onClick = {
-                                    selectedConfigId = configId
-                                    isDropdownExpanded = false
-                                },
-                                colors =
-                                    MenuDefaults.itemColors(
-                                        textColor =
-                                            if (isSelected)
-                                                MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurface
-                                    ),
-                                modifier = Modifier.padding(horizontal = 4.dp)
-                            )
-
-                            if (configId != configList.last()) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(horizontal = 8.dp),
-                                    thickness = 0.5.dp
-                                )
-                            }
-                        }
-                    }
                 }
             }
 
@@ -831,8 +792,39 @@ fun ModelConfigScreen(
                             }
                         }
                     }
-                }
             }
+        }
+        } // end LazyColumn
+
+        // ====== 打开配置选择弹窗时先刷新 Summary ======
+        LaunchedEffect(showConfigSelectDialog) {
+            if (showConfigSelectDialog) {
+                configSummaries = configManager.getAllConfigSummaries()
+            }
+        }
+
+        // 配置选择拖拽弹窗
+        if (showConfigSelectDialog) {
+            ConfigSelectDialog(
+                configSummaries = configSummaries,
+                collapsedConfigIds = collapsedConfigIds,
+                selectedConfigId = selectedConfigId,
+                onSelectConfig = { configId ->
+                    selectedConfigId = configId
+                    showConfigSelectDialog = false
+                },
+                onReorder = { orderedIds ->
+                    scope.launch {
+                        configManager.updateConfigOrder(orderedIds)
+                    }
+                },
+                onToggleConfigCollapsed = { configId ->
+                    scope.launch {
+                        configManager.toggleConfigCollapsed(configId)
+                    }
+                },
+                onDismiss = { showConfigSelectDialog = false },
+            )
         }
 
         // 新建配置对话框
@@ -971,6 +963,49 @@ fun ModelConfigScreen(
                     ) { Text(stringResource(R.string.cancel_action), fontSize = 13.sp) }
                 },
                 shape = RoundedCornerShape(12.dp)
+            )
+        }
+
+        // 删除配置确认对话框
+        if (showDeleteConfirmDialog) {
+            val configName = selectedConfig.value?.name ?: ""
+            AlertDialog(
+                onDismissRequest = { showDeleteConfirmDialog = false },
+                title = {
+                    Text(
+                        stringResource(R.string.delete_config_confirm_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
+                text = {
+                    Text(
+                        stringResource(R.string.delete_config_confirm_message, configName),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                configManager.deleteConfig(selectedConfigId)
+                                selectedConfigId = ModelConfigManager.DEFAULT_CONFIG_ID
+                                showNotification(context.getString(R.string.config_deleted))
+                            }
+                            showDeleteConfirmDialog = false
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                        ),
+                    ) { Text(stringResource(R.string.delete_config_confirm_button), fontSize = 13.sp) }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showDeleteConfirmDialog = false },
+                    ) { Text(stringResource(R.string.cancel_action), fontSize = 13.sp) }
+                },
+                shape = RoundedCornerShape(12.dp),
             )
         }
 
@@ -1573,4 +1608,224 @@ private fun ModelConnectionTestType.toLabelResId(): Int {
 
 private fun formatFloatValue(value: Float): String {
     return if (value % 1f == 0f) value.toInt().toString() else String.format("%.2f", value)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConfigSelectDialog(
+    configSummaries: List<ModelConfigSummary>,
+    collapsedConfigIds: Set<String>,
+    selectedConfigId: String,
+    onSelectConfig: (String) -> Unit,
+    onReorder: (List<String>) -> Unit,
+    onToggleConfigCollapsed: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+
+    // 分区分割
+    val (normalConfigs, collapsedConfigs) = remember(configSummaries, collapsedConfigIds) {
+        partitionConfigsByCollapsedIds(configSummaries, collapsedConfigIds)
+    }
+
+    var collapsedSectionExpanded by remember { mutableStateOf(false) }
+
+    // 构建扁平化项目列表
+    data class FlatItem(val type: String, val config: ModelConfigSummary? = null)
+    val flatItems = buildList {
+        normalConfigs.forEach { add(FlatItem("normal", it)) }
+        if (collapsedConfigs.isNotEmpty()) {
+            add(FlatItem("header"))
+            if (collapsedSectionExpanded) {
+                collapsedConfigs.forEach { add(FlatItem("collapsed", it)) }
+            }
+        }
+    }
+
+    val lazyListState = rememberLazyListState()
+    val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
+        val fromItem = flatItems.getOrNull(from.index) ?: return@rememberReorderableLazyListState
+        val toItem = flatItems.getOrNull(to.index) ?: return@rememberReorderableLazyListState
+
+        if (fromItem.type == "header" || toItem.type == "header") return@rememberReorderableLazyListState
+        if (fromItem.type != toItem.type) return@rememberReorderableLazyListState
+        if (fromItem.type != "normal" || toItem.type != "normal") return@rememberReorderableLazyListState
+
+        val newNormalIds = flatItems.filter { it.type == "normal" }.map { it.config!!.id }.toMutableList()
+        val movedId = fromItem.config!!.id
+        val fromIdx = newNormalIds.indexOf(movedId)
+        val toIdx = if (to.index < flatItems.size) {
+            val targetId = toItem.config!!.id
+            newNormalIds.indexOf(targetId)
+        } else fromIdx
+
+        if (fromIdx < 0 || toIdx < 0) return@rememberReorderableLazyListState
+        newNormalIds.add(toIdx, newNormalIds.removeAt(fromIdx))
+
+        // 构建最终全局顺序: 正常区新顺序 + 折叠区原相对顺序（来自完整 collapsedConfigs，不是 flatItems）
+        val collapsedOrderIds = collapsedConfigs.map { it.id }
+        val newGlobalOrder = newNormalIds + collapsedOrderIds
+
+        scope.launch {
+            onReorder(newGlobalOrder)
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    stringResource(R.string.model_selector_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+
+                LazyColumn(
+                    state = lazyListState,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    items(flatItems.size, key = { index ->
+                        val item = flatItems.getOrNull(index) ?: return@items "unknown"
+                        when (item.type) {
+                            "normal", "collapsed" -> "cfg-${item.config?.id}"
+                            "header" -> "header"
+                            else -> "item-$index"
+                        }
+                    }) { index ->
+                        val item = flatItems[index]
+                        when (item.type) {
+                            "normal", "collapsed" -> {
+                                val config = item.config!!
+                                val isSelected = config.id == selectedConfigId
+                                val isCollapsed = item.type == "collapsed"
+                                ReorderableItem(
+                                    reorderableState,
+                                    key = "cfg-${config.id}",
+                                ) { isDragging ->
+                                    val elevation = if (isDragging) 4.dp else 0.dp
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 2.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isSelected)
+                                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                        else
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                        shadowElevation = elevation,
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { onSelectConfig(config.id) }
+                                                .padding(vertical = 10.dp, horizontal = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            // 正常区显示拖动手柄
+                                            if (!isCollapsed) {
+                                                Icon(
+                                                    Icons.Default.DragHandle,
+                                                    contentDescription = stringResource(R.string.drag_to_reorder),
+                                                    modifier = Modifier
+                                                        .size(20.dp)
+                                                        .draggableHandle(),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                            }
+                                            // 选中标记在折叠按钮左侧
+                                            if (isSelected) {
+                                                Icon(
+                                                    Icons.Default.Check,
+                                                    contentDescription = stringResource(R.string.selected_desc),
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                            }
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = config.name,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.primary
+                                                    else MaterialTheme.colorScheme.onSurface,
+                                                )
+                                                val provider = config.apiProviderType
+                                                val modelInfo = getModelList(config.modelName).let { models ->
+                                                    if (models.size == 1) models.first()
+                                                    else "${models.size} models"
+                                                }
+                                                if (provider.name.isNotEmpty()) {
+                                                    Text(
+                                                        text = "${provider.name} · $modelInfo",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    )
+                                                }
+                                            }
+                                            // 折叠/取消折叠按钮
+                                            IconButton(
+                                                onClick = { onToggleConfigCollapsed(config.id) },
+                                                modifier = Modifier.size(28.dp),
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isCollapsed) Icons.Default.ArrowBack
+                                                    else Icons.Default.UnfoldLess,
+                                                    contentDescription = if (isCollapsed)
+                                                        stringResource(R.string.uncollapse_model_config)
+                                                    else
+                                                        stringResource(R.string.collapse_model_config),
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            "header" -> {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { collapsedSectionExpanded = !collapsedSectionExpanded }
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        stringResource(R.string.collapsed_model_configs_count, collapsedConfigs.size),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Icon(
+                                        imageVector = if (collapsedSectionExpanded) Icons.Default.KeyboardArrowUp
+                                        else Icons.Default.KeyboardArrowDown,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.cancel_action))
+                    }
+                }
+            }
+        }
+    }
 }
