@@ -2,6 +2,22 @@ package com.ai.assistance.operit.data.model
 
 import kotlinx.serialization.Serializable
 
+/** 收藏的模型引用：绑定到具体配置ID和模型名称 */
+@Serializable
+data class FavoriteModelRef(
+    val configId: String,
+    val modelName: String,
+)
+
+/** 带版本号的模型配置备份，包含顺序、收藏和折叠状态 */
+@Serializable
+data class ModelConfigBackup(
+    val version: Int,
+    val configs: List<ModelConfigData> = emptyList(),
+    val favoriteModels: List<FavoriteModelRef> = emptyList(),
+    val collapsedProviderIds: List<String> = emptyList(),
+)
+
 /** API提供商类型枚举 */
 @Serializable
 enum class ApiProviderType {
@@ -167,6 +183,7 @@ data class ModelConfigSummary(
         val modelName: String = "",
         val apiEndpoint: String = "",
         val apiProviderType: ApiProviderType = ApiProviderType.DEEPSEEK,
+        val apiProviderTypeId: String = apiProviderType.name,
         val modelIndex: Int = 0 // 当modelName包含多个模型（逗号分隔）时，选择第几个模型（从0开始）
 )
 
@@ -197,4 +214,106 @@ fun getValidModelIndex(modelName: String, requestedIndex: Int): Int {
     } else {
         0 // 索引越界时使用第一个
     }
+}
+
+/** 规范化 provider ID：trim + 小写 */
+fun normalizeProviderId(providerTypeId: String): String =
+    providerTypeId.trim().lowercase()
+
+/**
+ * 在给定的 configSummaries 中解析收藏引用对应的模型索引。
+ * 返回 null 表示无法解析（配置不存在或模型中无此模型名）。
+ */
+fun resolveFavoriteModelIndex(
+    configSummaries: List<ModelConfigSummary>,
+    favorite: FavoriteModelRef,
+): Int? {
+    val config = configSummaries.find { it.id == favorite.configId } ?: return null
+    val models = getModelList(config.modelName)
+    val index = models.indexOfFirst { it.equals(favorite.modelName, ignoreCase = true) }
+    return if (index >= 0) index else null
+}
+
+/**
+ * 过滤出在给定 configSummaries 中可解析的有效收藏引用，
+ * 保留原有相对顺序，去重。
+ */
+fun resolveValidFavorites(
+    configSummaries: List<ModelConfigSummary>,
+    favorites: List<FavoriteModelRef>,
+): List<FavoriteModelRef> {
+    val seen = mutableSetOf<Pair<String, String>>()
+    return favorites.filter { fav ->
+        val key = fav.configId to fav.modelName
+        if (key in seen) return@filter false
+        seen.add(key)
+        resolveFavoriteModelIndex(configSummaries, fav) != null
+    }
+}
+
+/**
+ * 将配置列表按折叠状态分区。
+ * Pair.first = 正常配置, Pair.second = 折叠配置。
+ * 各区内部保持原顺序。
+ */
+fun partitionConfigsByCollapsed(
+    configSummaries: List<ModelConfigSummary>,
+    collapsedProviderIds: Set<String>,
+): Pair<List<ModelConfigSummary>, List<ModelConfigSummary>> {
+    val normal = mutableListOf<ModelConfigSummary>()
+    val collapsed = mutableListOf<ModelConfigSummary>()
+    for (summary in configSummaries) {
+        val normalizedId = normalizeProviderId(summary.apiProviderTypeId)
+        if (normalizedId.isNotEmpty() && collapsedProviderIds.contains(normalizedId)) {
+            collapsed.add(summary)
+        } else {
+            normal.add(summary)
+        }
+    }
+    return normal to collapsed
+}
+
+/**
+ * 归一化配置ID顺序。
+ * 1. 对请求 ID 去重并保持请求顺序。
+ * 2. 忽略已不存在的配置 ID（不在 allCurrentIds 中）。
+ * 3. 将当前存在但请求中缺失的 ID 追加到末尾。
+ * 4. 每个当前配置 ID 恰好保留一次。
+ * 5. 空请求保留全部当前 ID。
+ *
+ * @param requestedOrder 请求的配置 ID 顺序
+ * @param allCurrentIds 当前存在的所有配置 ID（顺序无关，用于去重和补全）
+ * @return 归一化后的配置 ID 列表
+ */
+fun normalizeConfigOrder(
+    requestedOrder: List<String>,
+    allCurrentIds: List<String>,
+): List<String> {
+    if (requestedOrder.isEmpty()) return allCurrentIds.toList()
+    val currentSet = allCurrentIds.toSet()
+    // 去重并保持请求顺序，忽略已不存在的 ID
+    val seen = mutableSetOf<String>()
+    val result = requestedOrder
+        .filter { it in currentSet }
+        .filter { seen.add(it) }
+        .toMutableList()
+    // 追加请求中缺失的当前 ID
+    for (id in allCurrentIds) {
+        if (id !in seen) {
+            result.add(id)
+            seen.add(id)
+        }
+    }
+    return result
+}
+
+/**
+ * 替代当前排除键比较，使用规范化 provider ID 避免大小写不一致。
+ */
+fun isProviderCollapsed(
+    providerTypeId: String,
+    collapsedProviderIds: Set<String>,
+): Boolean {
+    val normalized = normalizeProviderId(providerTypeId)
+    return normalized.isNotEmpty() && collapsedProviderIds.contains(normalized)
 }

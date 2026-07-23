@@ -10,6 +10,8 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.ai.assistance.operit.data.model.CustomParameterData
+import com.ai.assistance.operit.data.model.FavoriteModelRef
+import com.ai.assistance.operit.data.model.ModelConfigBackup
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.ModelParameter
@@ -18,6 +20,9 @@ import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.model.StandardModelParameters
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ApiKeyInfo
+import com.ai.assistance.operit.data.model.getModelList
+import com.ai.assistance.operit.data.model.normalizeProviderId
+import com.ai.assistance.operit.data.model.normalizeConfigOrder
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -44,6 +49,11 @@ class ModelConfigManager(private val context: Context) {
     companion object {
         // 配置相关key
         val CONFIG_LIST_KEY = stringPreferencesKey("config_list")
+        val FAVORITE_MODELS_KEY = stringPreferencesKey("favorite_models")
+        val COLLAPSED_PROVIDER_IDS_KEY = stringPreferencesKey("collapsed_provider_ids")
+
+        // 当前备份版本号
+        const val BACKUP_VERSION = 1
 
         // 默认值
         const val DEFAULT_CONFIG_ID = "default"
@@ -65,6 +75,37 @@ class ModelConfigManager(private val context: Context) {
                 val configList = preferences[CONFIG_LIST_KEY] ?: ""
                 if (configList.isEmpty()) emptyList()
                 else json.decodeFromString<List<String>>(configList)
+            }
+
+    // 收藏模型列表 Flow
+    val favoriteModelsFlow: Flow<List<FavoriteModelRef>> =
+            context.modelConfigDataStore.data.map { preferences ->
+                val raw = preferences[FAVORITE_MODELS_KEY] ?: ""
+                if (raw.isEmpty()) emptyList()
+                else {
+                    try {
+                        json.decodeFromString<List<FavoriteModelRef>>(raw)
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                }
+            }
+
+    // 折叠的提供商 ID 集合 Flow（外部使用 Set 语义）
+    val collapsedProviderIdsFlow: Flow<Set<String>> =
+            context.modelConfigDataStore.data.map { preferences ->
+                val raw = preferences[COLLAPSED_PROVIDER_IDS_KEY] ?: ""
+                if (raw.isEmpty()) emptySet()
+                else {
+                    try {
+                        json.decodeFromString<List<String>>(raw)
+                            .map { normalizeProviderId(it) }
+                            .filter { it.isNotEmpty() }
+                            .toSet()
+                    } catch (_: Exception) {
+                        emptySet()
+                    }
+                }
             }
 
     // 删除获取当前活跃配置ID的流
@@ -158,6 +199,46 @@ class ModelConfigManager(private val context: Context) {
         }
     }
 
+    // 从 Preferences 中读取配置 ID 列表（不做 Flow 操作，仅在 edit 块内调用）
+    private fun readConfigListFromPrefs(prefs: Preferences): List<String> {
+        val raw = prefs[CONFIG_LIST_KEY] ?: ""
+        return if (raw.isEmpty()) emptyList()
+        else {
+            try {
+                json.decodeFromString<List<String>>(raw)
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }
+
+    private fun readFavoriteModelsFromPrefs(prefs: Preferences): List<FavoriteModelRef> {
+        val raw = prefs[FAVORITE_MODELS_KEY] ?: ""
+        return if (raw.isEmpty()) emptyList()
+        else {
+            try {
+                json.decodeFromString<List<FavoriteModelRef>>(raw)
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }
+
+    private fun readCollapsedProviderIdsFromPrefs(prefs: Preferences): Set<String> {
+        val raw = prefs[COLLAPSED_PROVIDER_IDS_KEY] ?: ""
+        return if (raw.isEmpty()) emptySet()
+        else {
+            try {
+                json.decodeFromString<List<String>>(raw)
+                    .map { normalizeProviderId(it) }
+                    .filter { it.isNotEmpty() }
+                    .toSet()
+            } catch (_: Exception) {
+                emptySet()
+            }
+        }
+    }
+
     private suspend fun updateConfigInternal(
             configId: String,
             transform: (ModelConfigData) -> ModelConfigData
@@ -231,7 +312,8 @@ class ModelConfigManager(private val context: Context) {
                             name = config.name,
                             modelName = config.modelName,
                             apiEndpoint = config.apiEndpoint,
-                            apiProviderType = config.apiProviderType
+                            apiProviderType = config.apiProviderType,
+                            apiProviderTypeId = config.apiProviderTypeId
                     )
             )
         }
@@ -239,10 +321,60 @@ class ModelConfigManager(private val context: Context) {
         return summaries
     }
 
+    // ---------- 排序、收藏、折叠 ----------
+
+    /**
+     * 更新配置 ID 的全局排序。在单个 DataStore edit 中原子化完成。
+     */
+    suspend fun updateConfigOrder(requestedOrder: List<String>) {
+        context.modelConfigDataStore.edit { preferences ->
+            val currentIds = readConfigListFromPrefs(preferences)
+            val normalized = normalizeConfigOrder(requestedOrder, currentIds)
+            preferences[CONFIG_LIST_KEY] = json.encodeToString(normalized)
+        }
+    }
+
+    /**
+     * 切换某个模型（configId + modelName）的收藏状态。
+     * 已在收藏中则移除，否则追加到末尾。
+     */
+    suspend fun toggleFavoriteModel(configId: String, modelName: String) {
+        if (modelName.isBlank()) return
+        context.modelConfigDataStore.edit { preferences ->
+            val current = readFavoriteModelsFromPrefs(preferences)
+            val ref = FavoriteModelRef(configId, modelName)
+            val key = ref.configId to ref.modelName
+            val updated = if (current.any { it.configId to it.modelName == key }) {
+                current.filter { it.configId to it.modelName != key }
+            } else {
+                current + ref
+            }
+            preferences[FAVORITE_MODELS_KEY] = json.encodeToString(updated)
+        }
+    }
+
+    /**
+     * 切换某个提供商（providerTypeId）的折叠状态。
+     * 已在折叠集中则移除，否则加入。
+     */
+    suspend fun toggleProviderCollapsed(providerTypeId: String) {
+        val normalized = normalizeProviderId(providerTypeId)
+        if (normalized.isEmpty()) return
+        context.modelConfigDataStore.edit { preferences ->
+            val current = readCollapsedProviderIdsFromPrefs(preferences)
+            val updated = if (normalized in current) {
+                current - normalized
+            } else {
+                current + normalized
+            }
+            preferences[COLLAPSED_PROVIDER_IDS_KEY] =
+                json.encodeToString(updated.toList())
+        }
+    }
+
     // 创建新配置
     suspend fun createConfig(name: String): String {
         val configId = UUID.randomUUID().toString()
-        val configList = configListFlow.first().toMutableList()
 
         val newConfig =
                 ModelConfigData(
@@ -253,13 +385,13 @@ class ModelConfigManager(private val context: Context) {
                         enableToolCall = true
                 )
 
-        // 保存新配置
-        saveConfigToDataStore(newConfig)
-
-        // 更新配置列表
-        configList.add(configId)
         context.modelConfigDataStore.edit { preferences ->
-            preferences[CONFIG_LIST_KEY] = json.encodeToString(configList)
+            // 保存新配置
+            preferences[stringPreferencesKey("config_${configId}")] = json.encodeToString(newConfig)
+            // 原子化更新配置列表
+            val currentList = readConfigListFromPrefs(preferences).toMutableList()
+            currentList.add(configId)
+            preferences[CONFIG_LIST_KEY] = json.encodeToString(currentList)
         }
 
         return configId
@@ -272,16 +404,18 @@ class ModelConfigManager(private val context: Context) {
             return
         }
 
-        val configList = configListFlow.first().toMutableList()
-
-        // 从列表中移除
-        configList.remove(configId)
         context.modelConfigDataStore.edit { preferences ->
-            // 删除配置记录 - 修复null赋值问题
+            // 从列表中移除
+            val currentList = readConfigListFromPrefs(preferences).toMutableList()
+            currentList.remove(configId)
+            preferences[CONFIG_LIST_KEY] = json.encodeToString(currentList)
+            // 删除配置记录
             preferences.remove(stringPreferencesKey("config_${configId}"))
-            // 更新配置列表
-            preferences[CONFIG_LIST_KEY] = json.encodeToString(configList)
-                                }
+            // 清理关联的收藏
+            val favorites = readFavoriteModelsFromPrefs(preferences)
+                .filter { it.configId != configId }
+            preferences[FAVORITE_MODELS_KEY] = json.encodeToString(favorites)
+        }
     }
 
     // 更新配置基本信息（名称等）
@@ -701,70 +835,220 @@ class ModelConfigManager(private val context: Context) {
     }
     
     /**
-     * 导出所有模型配置为JSON字符串
-     * @return JSON格式的所有配置数据
+     * 导出所有模型配置为带版本号的 JSON 字符串。
+     * 包含配置顺序、收藏和折叠状态。
+     * @return JSON格式的 ModelConfigBackup 数据
      */
     suspend fun exportAllConfigs(): String {
-        val configList = configListFlow.first()
+        // 从同一个快照读取所有数据，保证一致性
+        val snapshot = context.modelConfigDataStore.data.first()
+        val configIds = readConfigListFromPrefs(snapshot)
         val allConfigs = mutableListOf<ModelConfigData>()
-        
-        for (configId in configList) {
-            val config = getModelConfigFlow(configId).first()
-            allConfigs.add(config)
+
+        for (configId in configIds) {
+            val configKey = stringPreferencesKey("config_${configId}")
+            val configJson = snapshot[configKey]
+            if (configJson != null) {
+                try {
+                    allConfigs.add(json.decodeFromString<ModelConfigData>(configJson))
+                } catch (_: Exception) {
+                    // 跳过损坏的配置
+                }
+            }
         }
-        
-        val json = Json {
+
+        val favorites = readFavoriteModelsFromPrefs(snapshot)
+        val collapsed = readCollapsedProviderIdsFromPrefs(snapshot).toList()
+
+        val backup = ModelConfigBackup(
+            version = BACKUP_VERSION,
+            configs = allConfigs,
+            favoriteModels = favorites,
+            collapsedProviderIds = collapsed,
+        )
+
+        val exportJson = Json {
             prettyPrint = true
             ignoreUnknownKeys = true
         }
-        
-        return json.encodeToString(allConfigs)
+
+        return exportJson.encodeToString(backup)
     }
-    
+
     /**
-     * 从JSON字符串导入模型配置
+     * 从JSON字符串导入模型配置。
+     * 支持旧版纯数组和带版本号的对象格式。
+     * 新版采用非破坏性合并。
      * @param jsonContent JSON格式的配置数据
      * @return 导入结果统计 (新增数量, 更新数量, 跳过数量)
      */
     suspend fun importConfigs(jsonContent: String): Triple<Int, Int, Int> {
-        try {
-            val importedConfigs = json.decodeFromString<List<ModelConfigData>>(jsonContent)
-            val existingConfigList = configListFlow.first().toMutableList()
-            val existingConfigIds = existingConfigList.toSet()
-            
-            var newCount = 0
-            var updatedCount = 0
-            var skippedCount = 0
-            
-            for (config in importedConfigs) {
+        val trimmed = jsonContent.trim()
+
+        // 尝试解析为带版本号的对象
+        val backupJson = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+        }
+
+        runCatching {
+            backupJson.decodeFromString<ModelConfigBackup>(trimmed)
+        }.onSuccess { backup ->
+            return importVersionedBackup(backup)
+        }
+
+        // 尝试解析为旧版纯配置数组
+        runCatching {
+            backupJson.decodeFromString<List<ModelConfigData>>(trimmed)
+        }.onSuccess { configs ->
+            return importLegacyConfigs(configs)
+        }
+
+        throw Exception(context.getString(R.string.model_config_import_failed, "Unrecognized backup format"))
+    }
+
+    private suspend fun importVersionedBackup(backup: ModelConfigBackup): Triple<Int, Int, Int> {
+        // 版本检查
+        if (backup.version <= 0 || backup.version > BACKUP_VERSION) {
+            throw Exception(
+                context.getString(
+                    R.string.model_config_import_failed,
+                    "Unsupported backup version: ${backup.version}"
+                )
+            )
+        }
+
+        var newCount = 0
+        var updatedCount = 0
+        var skippedCount = 0
+
+        context.modelConfigDataStore.edit { preferences ->
+            val currentIds = readConfigListFromPrefs(preferences)
+            val currentIdSet = currentIds.toSet()
+
+            // 1. 备份配置：去重保留首次，重复计入 skipped
+            val seenBackupIds = mutableSetOf<String>()
+            val dedupedBackupConfigs = backup.configs.filter { config ->
+                if (config.id.isEmpty() || config.name.isEmpty()) {
+                    skippedCount++
+                    return@filter false
+                }
+                if (!seenBackupIds.add(config.id)) {
+                    skippedCount++
+                    return@filter false
+                }
+                true
+            }
+
+            // 保存/更新配置
+            for (config in dedupedBackupConfigs) {
+                preferences[stringPreferencesKey("config_${config.id}")] =
+                    json.encodeToString(config)
+                if (config.id in currentIdSet) {
+                    updatedCount++
+                } else {
+                    newCount++
+                }
+            }
+
+            // 2. 构建合并后的配置列表：
+            //    - 备份配置按原顺序在前
+            //    - 本地独有配置按原相对顺序追加在后
+            val backupOrderedIds = dedupedBackupConfigs.map { it.id }
+            // 备份中已经存在的本地 ID 已在上方置前，剩下的本地 ID 追加
+            val backupIdSet = backupOrderedIds.toSet()
+            val mergedIds = backupOrderedIds +
+                    currentIds.filter { it !in backupIdSet }
+            preferences[CONFIG_LIST_KEY] = json.encodeToString(mergedIds)
+
+            // 3. 收藏合并：本地优先 + 备份新项追加，去重，过滤无效
+            val localFavorites = readFavoriteModelsFromPrefs(preferences)
+            val seenFavoriteKeys = localFavorites.map { it.configId to it.modelName }.toMutableSet()
+            val mergedFavorites = localFavorites.toMutableList()
+
+            // 需要合并后的配置列表来判断有效性
+            val mergedConfigs = buildList {
+                for (id in mergedIds) {
+                    val configKey = stringPreferencesKey("config_${id}")
+                    val configJson = preferences[configKey]
+                    if (configJson != null) {
+                        try {
+                            add(json.decodeFromString<ModelConfigData>(configJson))
+                        } catch (_: Exception) { }
+                    }
+                }
+            }
+            val configSummaries = mergedConfigs.map { config ->
+                ModelConfigSummary(
+                    id = config.id,
+                    name = config.name,
+                    modelName = config.modelName,
+                    apiEndpoint = config.apiEndpoint,
+                    apiProviderType = config.apiProviderType,
+                    apiProviderTypeId = config.apiProviderTypeId
+                )
+            }
+
+            for (fav in backup.favoriteModels) {
+                val key = fav.configId to fav.modelName
+                if (seenFavoriteKeys.add(key)) {
+                    // 检查是否在合并后的配置中有效
+                    val validIdx =
+                        com.ai.assistance.operit.data.model.resolveFavoriteModelIndex(configSummaries, fav)
+                    if (validIdx != null) {
+                        mergedFavorites.add(fav)
+                    }
+                }
+            }
+            preferences[FAVORITE_MODELS_KEY] = json.encodeToString(mergedFavorites)
+
+            // 4. 折叠合并：本地与备份取并集（规范化后）
+            val localCollapsed = readCollapsedProviderIdsFromPrefs(preferences)
+            val backupCollapsed = backup.collapsedProviderIds
+                .map { normalizeProviderId(it) }
+                .filter { it.isNotEmpty() }
+                .toSet()
+            val mergedCollapsed = localCollapsed + backupCollapsed
+            preferences[COLLAPSED_PROVIDER_IDS_KEY] =
+                json.encodeToString(mergedCollapsed.toList())
+        }
+
+        return Triple(newCount, updatedCount, skippedCount)
+    }
+
+    private suspend fun importLegacyConfigs(configs: List<ModelConfigData>): Triple<Int, Int, Int> {
+        var newCount = 0
+        var updatedCount = 0
+        var skippedCount = 0
+
+        context.modelConfigDataStore.edit { preferences ->
+            val currentIds = readConfigListFromPrefs(preferences).toMutableList()
+            val currentIdSet = currentIds.toSet()
+
+            for (config in configs) {
                 if (config.id.isEmpty() || config.name.isEmpty()) {
                     skippedCount++
                     continue
                 }
-                
-                // 保存配置
-                saveConfigToDataStore(config)
-                
-                if (existingConfigIds.contains(config.id)) {
+
+                preferences[stringPreferencesKey("config_${config.id}")] =
+                    json.encodeToString(config)
+
+                if (config.id in currentIdSet) {
                     updatedCount++
                 } else {
                     newCount++
-                    existingConfigList.add(config.id)
+                    currentIds.add(config.id)
                 }
             }
-            
-            // 更新配置列表
+
             if (newCount > 0) {
-                context.modelConfigDataStore.edit { preferences ->
-                    preferences[CONFIG_LIST_KEY] = json.encodeToString(existingConfigList)
-                }
+                preferences[CONFIG_LIST_KEY] = json.encodeToString(currentIds)
             }
-            
-            return Triple(newCount, updatedCount, skippedCount)
-        } catch (e: Exception) {
-            AppLogger.e("ModelConfigManager", "导入配置失败", e)
-            throw Exception(context.getString(R.string.model_config_import_failed, e.localizedMessage ?: e.message))
+            // 旧版导入不修改本地收藏与折叠
         }
+
+        return Triple(newCount, updatedCount, skippedCount)
     }
 }
 
