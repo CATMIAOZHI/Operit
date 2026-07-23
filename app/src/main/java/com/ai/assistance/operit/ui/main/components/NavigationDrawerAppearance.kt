@@ -69,7 +69,7 @@ fun rememberNavigationDrawerAppearance(): NavigationDrawerAppearance {
             itemColor = MaterialTheme.colorScheme.onSurfaceVariant,
             buttonContainerColor = MaterialTheme.colorScheme.surfaceVariant,
             selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-            selectedContentColor = MaterialTheme.colorScheme.primary,
+            selectedContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
             dividerColor =
                 if (useCustomNavigationDrawerAccentColor) {
                     customNavigationDrawerAccentColor?.let { Color(it).copy(alpha = 0.42f) }

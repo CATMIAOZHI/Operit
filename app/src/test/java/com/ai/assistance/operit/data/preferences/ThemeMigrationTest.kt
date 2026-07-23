@@ -39,8 +39,8 @@ class ThemeMigrationTest {
         assertTrue(
             UserPreferencesManager.isErroneousV1RainyState(
                 useCustomColors = true,
-                primaryColor = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
-                secondaryColor = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
+                primaryColor = UserPreferencesManager.LEGACY_RAINY_PRIMARY_COLOR,
+                secondaryColor = UserPreferencesManager.LEGACY_RAINY_SECONDARY_COLOR,
             )
         )
     }
@@ -50,8 +50,8 @@ class ThemeMigrationTest {
         assertFalse(
             UserPreferencesManager.isErroneousV1RainyState(
                 useCustomColors = false,
-                primaryColor = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
-                secondaryColor = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
+                primaryColor = UserPreferencesManager.LEGACY_RAINY_PRIMARY_COLOR,
+                secondaryColor = UserPreferencesManager.LEGACY_RAINY_SECONDARY_COLOR,
             )
         )
     }
@@ -73,7 +73,7 @@ class ThemeMigrationTest {
             UserPreferencesManager.isErroneousV1RainyState(
                 useCustomColors = true,
                 primaryColor = 0xFF0000FF.toInt(),
-                secondaryColor = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
+                secondaryColor = UserPreferencesManager.LEGACY_RAINY_SECONDARY_COLOR,
             )
         )
     }
@@ -83,7 +83,7 @@ class ThemeMigrationTest {
         assertFalse(
             UserPreferencesManager.isErroneousV1RainyState(
                 useCustomColors = true,
-                primaryColor = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
+                primaryColor = UserPreferencesManager.LEGACY_RAINY_PRIMARY_COLOR,
                 secondaryColor = 0xFF00FF00.toInt(),
             )
         )
@@ -94,7 +94,7 @@ class ThemeMigrationTest {
         assertFalse(
             UserPreferencesManager.isErroneousV1RainyState(
                 useCustomColors = true,
-                primaryColor = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
+                primaryColor = UserPreferencesManager.LEGACY_RAINY_PRIMARY_COLOR,
                 secondaryColor = null,
             )
         )
@@ -106,7 +106,7 @@ class ThemeMigrationTest {
             UserPreferencesManager.isErroneousV1RainyState(
                 useCustomColors = true,
                 primaryColor = null,
-                secondaryColor = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
+                secondaryColor = UserPreferencesManager.LEGACY_RAINY_SECONDARY_COLOR,
             )
         )
     }
@@ -127,8 +127,8 @@ class ThemeMigrationTest {
         assertFalse(
             UserPreferencesManager.isErroneousV1RainyState(
                 useCustomColors = null,
-                primaryColor = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
-                secondaryColor = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
+                primaryColor = UserPreferencesManager.LEGACY_RAINY_PRIMARY_COLOR,
+                secondaryColor = UserPreferencesManager.LEGACY_RAINY_SECONDARY_COLOR,
             )
         )
     }

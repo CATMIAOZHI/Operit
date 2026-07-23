@@ -17,16 +17,26 @@ class ThemeColorSchemeResolverTest {
 
         val scheme = resolveThemeColorScheme(snapshot, darkTheme = false)
 
-        assertEquals(Color(UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR), scheme.primary)
-        assertEquals(Color(UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR), scheme.secondary)
+        assertEquals(RainyPinkHover, scheme.primary)
+        assertEquals(RainyPink, scheme.secondary)
+        assertEquals(RainyLightHover, scheme.primaryContainer)
+        assertEquals(RainyLightText, scheme.onPrimaryContainer)
+        assertEquals(RainyLightBackground, scheme.background)
+        assertEquals(RainyLightPanel, scheme.surface)
+        assertEquals(RainyLightElement, scheme.surfaceVariant)
     }
 
     @Test
     fun `custom colors off resolves Rainy dark scheme`() {
         val scheme = resolveThemeColorScheme(snapshot(), darkTheme = true)
 
-        assertEquals(Color(UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR), scheme.primary)
-        assertEquals(Color(UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR), scheme.secondary)
+        assertEquals(RainySakura, scheme.primary)
+        assertEquals(RainyPink, scheme.secondary)
+        assertEquals(RainyDarkElement, scheme.primaryContainer)
+        assertEquals(RainySakura, scheme.onPrimaryContainer)
+        assertEquals(RainyDarkBackground, scheme.background)
+        assertEquals(RainyDarkPanel, scheme.surface)
+        assertEquals(RainyDarkElement, scheme.surfaceVariant)
     }
 
     @Test
@@ -50,8 +60,8 @@ class ThemeColorSchemeResolverTest {
             darkTheme = false,
         )
 
-        assertEquals(Color(UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR), scheme.primary)
-        assertEquals(Color(UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR), scheme.secondary)
+        assertEquals(RainyPinkHover, scheme.primary)
+        assertEquals(RainyPink, scheme.secondary)
     }
 
     private fun snapshot(
