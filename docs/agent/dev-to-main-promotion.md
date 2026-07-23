@@ -121,7 +121,7 @@ gh pr create --base personal/main --head promote/<feature-name> \
 gh run watch <run-id> --exit-status --interval 60 >/dev/null 2>&1
 ```
 
-CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并后可将 `personal/main` 合并回 `personal/dev` 保持同步。
+CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并后 `sync-main-mirror.yml` 会将同一 commit 自动快进到只读 `main` 镜像；也可将 `personal/main` 合并回 `personal/dev` 保持开发线同步。
 
 ## 注意事项
 

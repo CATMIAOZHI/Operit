@@ -94,10 +94,18 @@ git diff --cached --check
 - 必须通过 PR 和必需检查
 - 不得包含开发版专属配置
 - 晋升流程见 [dev → main 晋升操作手册](./dev-to-main-promotion.md)
+- 合并后由 `sync-main-mirror.yml` 自动将同一 commit 快进到 `main`
+
+### main 镜像
+
+- 仅作为 `personal/main` 的只读兼容镜像，供仅支持 `main` 的安全工具读取
+- `MAIN_MIRROR_TOKEN` 必须是仅授权本仓库 **Contents: read and write** 与 **Workflows: read and write** 的 fine-grained PAT；不得改用权限不足的 `GITHUB_TOKEN` 或复用其他服务的 token
+- 不直接提交、不接受 PR、不强推；同步失败时排查分叉，不得覆盖历史
 
 ### 上游 main
 
-- 以 `upstream/main` 为基线，目标分支为 `main`
+- 以最新 `upstream/main` 为基线，为每个 PR 创建独立的 `contrib/<topic>` 分支
+- 创建 PR 时显式指定官方仓库及目标：`gh pr create --repo AAswordman/Operit --base main --head CATMIAOZHI:contrib/<topic>`
 - 不得混入 Operit Ry 的品牌、服务路由或发布配置
 - PR 流程以 `docs/doc-src/dev-core/CONTRIBUTING.md` 为准
 
