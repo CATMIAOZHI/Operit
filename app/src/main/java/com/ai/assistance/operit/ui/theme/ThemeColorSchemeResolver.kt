@@ -11,17 +11,19 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import com.ai.assistance.operit.data.preferences.ThemePreferenceSnapshot
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.DEFAULT_CUSTOM_PRIMARY_COLOR
+import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.DEFAULT_CUSTOM_SECONDARY_COLOR
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_AUTO
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_DARK
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_LIGHT
 
 private val ResolvedDarkColorScheme =
-    darkColorScheme(primary = Purple80, secondary = PurpleGrey80, tertiary = Pink80)
+    darkColorScheme(primary = Color(DEFAULT_CUSTOM_PRIMARY_COLOR), secondary = Color(DEFAULT_CUSTOM_SECONDARY_COLOR), tertiary = Pink80)
 
 private val ResolvedLightColorScheme =
     lightColorScheme(
-        primary = Purple40,
-        secondary = PurpleGrey40,
+        primary = Color(DEFAULT_CUSTOM_PRIMARY_COLOR),
+        secondary = Color(DEFAULT_CUSTOM_SECONDARY_COLOR),
         tertiary = Pink40
     )
 

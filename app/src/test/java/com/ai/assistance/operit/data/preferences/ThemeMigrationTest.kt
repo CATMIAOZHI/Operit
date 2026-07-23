@@ -5,24 +5,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * v2 主题迁移行为契��（[UserPreferencesManager.performThemeMigration]）与纯判定函数测试。
+ * v2 主题迁移行为契约（[UserPreferencesManager.performThemeMigration]）与纯判定函数测试。
  *
- * 迁移行为契约：
+ * 迁移行为契约（v2 正确语义）：
  *
- * 1. 旧默认形态（useCustomColors 不为 true 且主色、辅色均不存在）→ 一次性纠正为 Rainy。
- *    - 包括全局和角色卡/群组前缀数据。
- *    - 与 v1 写入的 false + 无颜色值状态一致。
+ * 1. 关闭自定义颜色时，默认显示 Rainy 粉色（通过 Material 基础色方案）。
+ *    useCustomColors 默认为 false；Flow/快照颜色缺键返回 null。
  *
- * 2. 非旧默认形态不覆盖。
- *    - useCustomColors=true 或有任一颜色值 → 保留。
- *    - useCustomColors=false 但有颜色 → 不覆盖（用户有意关闭但保留配色）。
+ * 2. v1 错误写入纠正：v1 对全新安装写入了 useCustomColors=true + Rainy 颜色。
+ *    v2 检测到这种精确组合时，删除颜色键并设置 useCustomColors=false。
  *
- * 3. 全缺键状态（三键都不存在）→ 也写入 Rainy，形成稳定的出厂数据。
+ * 3. 非 Rainy 色的自定义颜色不受影响，完整保留。
  *
  * 4. 幂等：theme_rainy_defaults_v2_done=true 后不再执行。
- *
- * 5. v1 完成标记 theme_migration_v1_done 不阻止 v2 执行；
- *    只有 v2 完成标记可以阻止重复迁移。
  */
 class ThemeMigrationTest {
 
@@ -37,105 +32,103 @@ class ThemeMigrationTest {
         assertTrue("primary and secondary must be distinct", primary != secondary)
     }
 
-    // ========== isOldDefaultThemeState 纯判定函数测试 ==========
+    // ========== isErroneousV1RainyState 纯判定函数测试 ==========
 
     @Test
-    fun `false plus no colors is old default`() {
+    fun `true plus Rainy colors is erroneous v1 state`() {
         assertTrue(
-            UserPreferencesManager.isOldDefaultThemeState(
-                useCustomColors = false,
-                hasPrimaryColor = false,
-                hasSecondaryColor = false,
-            )
-        )
-    }
-
-    @Test
-    fun `null useCustomColors plus no colors is old default`() {
-        // 全缺键形态：useCustomColors 为 null（三键都不存在）
-        assertTrue(
-            UserPreferencesManager.isOldDefaultThemeState(
-                useCustomColors = null,
-                hasPrimaryColor = false,
-                hasSecondaryColor = false,
-            )
-        )
-    }
-
-    @Test
-    fun `true plus no colors is NOT old default`() {
-        // 用户显式开启自定义颜色但还未选择颜色
-        assertFalse(
-            UserPreferencesManager.isOldDefaultThemeState(
+            UserPreferencesManager.isErroneousV1RainyState(
                 useCustomColors = true,
-                hasPrimaryColor = false,
-                hasSecondaryColor = false,
+                primaryColor = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
+                secondaryColor = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
             )
         )
     }
 
     @Test
-    fun `false plus has primary color is NOT old default`() {
+    fun `false plus Rainy colors is NOT erroneous`() {
         assertFalse(
-            UserPreferencesManager.isOldDefaultThemeState(
+            UserPreferencesManager.isErroneousV1RainyState(
                 useCustomColors = false,
-                hasPrimaryColor = true,
-                hasSecondaryColor = false,
+                primaryColor = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
+                secondaryColor = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
             )
         )
     }
 
     @Test
-    fun `false plus has secondary color is NOT old default`() {
+    fun `true plus null colors is NOT erroneous`() {
         assertFalse(
-            UserPreferencesManager.isOldDefaultThemeState(
-                useCustomColors = false,
-                hasPrimaryColor = false,
-                hasSecondaryColor = true,
-            )
-        )
-    }
-
-    @Test
-    fun `false plus both colors is NOT old default`() {
-        assertFalse(
-            UserPreferencesManager.isOldDefaultThemeState(
-                useCustomColors = false,
-                hasPrimaryColor = true,
-                hasSecondaryColor = true,
-            )
-        )
-    }
-
-    @Test
-    fun `true plus has colors is NOT old default`() {
-        assertFalse(
-            UserPreferencesManager.isOldDefaultThemeState(
+            UserPreferencesManager.isErroneousV1RainyState(
                 useCustomColors = true,
-                hasPrimaryColor = true,
-                hasSecondaryColor = true,
+                primaryColor = null,
+                secondaryColor = null,
             )
         )
     }
 
     @Test
-    fun `null plus has primary color is NOT old default`() {
+    fun `true plus non Rainy primary is NOT erroneous`() {
         assertFalse(
-            UserPreferencesManager.isOldDefaultThemeState(
-                useCustomColors = null,
-                hasPrimaryColor = true,
-                hasSecondaryColor = false,
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = true,
+                primaryColor = 0xFF0000FF.toInt(),
+                secondaryColor = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
             )
         )
     }
 
     @Test
-    fun `null plus has secondary color is NOT old default`() {
+    fun `true plus non Rainy secondary is NOT erroneous`() {
         assertFalse(
-            UserPreferencesManager.isOldDefaultThemeState(
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = true,
+                primaryColor = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
+                secondaryColor = 0xFF00FF00.toInt(),
+            )
+        )
+    }
+
+    @Test
+    fun `true plus only primary Rainy is NOT erroneous`() {
+        assertFalse(
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = true,
+                primaryColor = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
+                secondaryColor = null,
+            )
+        )
+    }
+
+    @Test
+    fun `true plus only secondary Rainy is NOT erroneous`() {
+        assertFalse(
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = true,
+                primaryColor = null,
+                secondaryColor = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
+            )
+        )
+    }
+
+    @Test
+    fun `false plus null colors is NOT erroneous`() {
+        assertFalse(
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = false,
+                primaryColor = null,
+                secondaryColor = null,
+            )
+        )
+    }
+
+    @Test
+    fun `null useCustomColors plus Rainy colors is NOT erroneous`() {
+        assertFalse(
+            UserPreferencesManager.isErroneousV1RainyState(
                 useCustomColors = null,
-                hasPrimaryColor = false,
-                hasSecondaryColor = true,
+                primaryColor = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR,
+                secondaryColor = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR,
             )
         )
     }

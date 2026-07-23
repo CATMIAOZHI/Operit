@@ -321,18 +321,21 @@ class UserPreferencesManager private constructor(private val context: Context) {
         }
 
         /**
-         * v2 迁移旧默认识别：当 useCustomColors 不为 true 且主色、辅色均不存在时，
-         * 认为该状态为旧默认形态，需要纠正为 Rainy。
+         * v2 迁移检测：v1 错误写入的 Rainy 自定义颜色状态。
          *
-         * 只根据具体主题键状态判断，不依赖 DataStore 是否为空。
-         * 任一颜色存在即不属于旧默认形态，避免覆盖用户自定义数据。
+         * 当 useCustomColors=true 且主色、辅色恰好等于 Rainy 常量时，
+         * 认为该状态为 v1 对全新安装的过时写入，需要纠正为关闭自定义、信任基础色方案。
+         *
+         * 非 Rainy 色的自定义颜色或未开启自定义颜色均不受影响。
          */
-        internal fun isOldDefaultThemeState(
+        internal fun isErroneousV1RainyState(
             useCustomColors: Boolean?,
-            hasPrimaryColor: Boolean,
-            hasSecondaryColor: Boolean,
+            primaryColor: Int?,
+            secondaryColor: Int?,
         ): Boolean {
-            return useCustomColors != true && !hasPrimaryColor && !hasSecondaryColor
+            return useCustomColors == true &&
+                primaryColor == DEFAULT_CUSTOM_PRIMARY_COLOR &&
+                secondaryColor == DEFAULT_CUSTOM_SECONDARY_COLOR
         }
 
         private val KEY_BACKGROUND_BLUR_RADIUS = floatPreferencesKey("background_blur_radius")
@@ -621,17 +624,17 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     val customPrimaryColor: Flow<Int?> =
             context.userPreferencesDataStore.data.map { preferences ->
-                preferences[CUSTOM_PRIMARY_COLOR] ?: DEFAULT_CUSTOM_PRIMARY_COLOR
+                preferences[CUSTOM_PRIMARY_COLOR]
             }
 
     val customSecondaryColor: Flow<Int?> =
             context.userPreferencesDataStore.data.map { preferences ->
-                preferences[CUSTOM_SECONDARY_COLOR] ?: DEFAULT_CUSTOM_SECONDARY_COLOR
+                preferences[CUSTOM_SECONDARY_COLOR]
             }
 
     val useCustomColors: Flow<Boolean> =
             context.userPreferencesDataStore.data.map { preferences ->
-                preferences[USE_CUSTOM_COLORS] ?: true
+                preferences[USE_CUSTOM_COLORS] ?: false
             }
 
     // 背景图片相关Flow
@@ -1663,10 +1666,9 @@ class UserPreferencesManager private constructor(private val context: Context) {
         context.userPreferencesDataStore.edit { preferences ->
             preferences.remove(THEME_MODE)
             preferences.remove(USE_SYSTEM_THEME)
-            // Rainy 默认配色显式写入（不再删除键依赖缺省回退）
-            preferences[USE_CUSTOM_COLORS] = true
-            preferences[CUSTOM_PRIMARY_COLOR] = DEFAULT_CUSTOM_PRIMARY_COLOR
-            preferences[CUSTOM_SECONDARY_COLOR] = DEFAULT_CUSTOM_SECONDARY_COLOR
+            preferences.remove(CUSTOM_PRIMARY_COLOR)
+            preferences.remove(CUSTOM_SECONDARY_COLOR)
+            preferences[USE_CUSTOM_COLORS] = false
             preferences.remove(USE_BACKGROUND_IMAGE)
             preferences.remove(BACKGROUND_IMAGE_URI)
             preferences.remove(BACKGROUND_IMAGE_OPACITY)
@@ -1967,13 +1969,14 @@ class UserPreferencesManager private constructor(private val context: Context) {
     }
 
     /**
-     * v2 主题迁移：统一 Rainy 默认配色语义。
+     * v2 主题迁移：将 v1 错误写入的 Rainy 自定义颜色状态纠正为"关闭自定义、信任基础色方案"。
      *
-     * 只负责将处于旧默认形态（useCustomColors 不为 true 且两颜色均不存在）
-     * 的全局及前缀数据纠正为 Rainy。不补写非颜色旧默认值。
+     * v1 对全新安装写入了 useCustomColors=true + Rainy 主色辅色。现在基础色方案
+     * 已改为 Rainy，这些键应被清除：删除颜色键、设置 useCustomColors=false，
+     * 让 Material 基础色方案的 Rainy 色正常展现。
      *
-     * 已运行过 v1 的设备仍会执行一次纠正；迁移幂等，由独立的
-     * theme_rainy_defaults_v2_done 完成标记保证。
+     * 不是 Rainy 色的自定义颜色不受影响。已运行过 v1 的设备仍执行纠正；迁移幂等，
+     * 由独立的 theme_rainy_defaults_v2_done 完成标记保证。
      */
     internal suspend fun performThemeMigration() {
         val v2DoneKey = booleanPreferencesKey("theme_rainy_defaults_v2_done")
@@ -1982,16 +1985,18 @@ class UserPreferencesManager private constructor(private val context: Context) {
         context.userPreferencesDataStore.edit { preferences ->
             if (preferences[v2DoneKey] == true) return@edit
 
-            // ========== 全局主题 ==========
+            // ========== 全局主题：纠正 v1 错误写入的 Rainy 自定义颜色状态 ==========
             val globalUcc = preferences[USE_CUSTOM_COLORS]
-            val globalHasPrimary = preferences.contains(CUSTOM_PRIMARY_COLOR)
-            val globalHasSecondary = preferences.contains(CUSTOM_SECONDARY_COLOR)
-            val globalIsOldDefault = globalUcc != true && !globalHasPrimary && !globalHasSecondary
+            val globalPrimary = preferences[CUSTOM_PRIMARY_COLOR]
+            val globalSecondary = preferences[CUSTOM_SECONDARY_COLOR]
 
-            if (globalIsOldDefault) {
-                preferences[USE_CUSTOM_COLORS] = true
-                preferences[CUSTOM_PRIMARY_COLOR] = DEFAULT_CUSTOM_PRIMARY_COLOR
-                preferences[CUSTOM_SECONDARY_COLOR] = DEFAULT_CUSTOM_SECONDARY_COLOR
+            if (globalUcc == true &&
+                globalPrimary == DEFAULT_CUSTOM_PRIMARY_COLOR &&
+                globalSecondary == DEFAULT_CUSTOM_SECONDARY_COLOR
+            ) {
+                preferences.remove(CUSTOM_PRIMARY_COLOR)
+                preferences.remove(CUSTOM_SECONDARY_COLOR)
+                preferences[USE_CUSTOM_COLORS] = false
             }
 
             // ========== 角色卡/群组主题前缀 ==========
@@ -2011,14 +2016,16 @@ class UserPreferencesManager private constructor(private val context: Context) {
                 val prefixSecondaryKey = intPreferencesKey("${prefix}${CUSTOM_SECONDARY_COLOR.name}")
 
                 val prefixUcc = preferences[prefixUccKey]
-                val prefixHasPrimary = preferences.contains(prefixPrimaryKey)
-                val prefixHasSecondary = preferences.contains(prefixSecondaryKey)
-                val prefixIsOldDefault = prefixUcc != true && !prefixHasPrimary && !prefixHasSecondary
+                val prefixPrimary = preferences[prefixPrimaryKey]
+                val prefixSecondary = preferences[prefixSecondaryKey]
 
-                if (prefixIsOldDefault) {
-                    preferences[prefixUccKey] = true
-                    preferences[prefixPrimaryKey] = DEFAULT_CUSTOM_PRIMARY_COLOR
-                    preferences[prefixSecondaryKey] = DEFAULT_CUSTOM_SECONDARY_COLOR
+                if (prefixUcc == true &&
+                    prefixPrimary == DEFAULT_CUSTOM_PRIMARY_COLOR &&
+                    prefixSecondary == DEFAULT_CUSTOM_SECONDARY_COLOR
+                ) {
+                    preferences.remove(prefixPrimaryKey)
+                    preferences.remove(prefixSecondaryKey)
+                    preferences[prefixUccKey] = false
                 }
             }
 
@@ -2161,9 +2168,9 @@ class UserPreferencesManager private constructor(private val context: Context) {
             sourceId = sourceId,
             themeMode = stringValue(THEME_MODE, THEME_MODE_LIGHT) ?: THEME_MODE_LIGHT,
             useSystemTheme = booleanValue(USE_SYSTEM_THEME, true),
-            useCustomColors = booleanValue(USE_CUSTOM_COLORS, true),
-            customPrimaryColor = intValue(CUSTOM_PRIMARY_COLOR) ?: DEFAULT_CUSTOM_PRIMARY_COLOR,
-            customSecondaryColor = intValue(CUSTOM_SECONDARY_COLOR) ?: DEFAULT_CUSTOM_SECONDARY_COLOR,
+            useCustomColors = booleanValue(USE_CUSTOM_COLORS, false),
+            customPrimaryColor = intValue(CUSTOM_PRIMARY_COLOR),
+            customSecondaryColor = intValue(CUSTOM_SECONDARY_COLOR),
             onColorMode = stringValue(KEY_ON_COLOR_MODE, ON_COLOR_MODE_AUTO) ?: ON_COLOR_MODE_AUTO,
             useBackgroundImage = booleanValue(USE_BACKGROUND_IMAGE, false),
             backgroundImageUri = stringValue(BACKGROUND_IMAGE_URI),
