@@ -281,10 +281,11 @@ jobs:
 
           expected_apk_digest="${OPERIT_RELEASE_CERT_SHA256//:/}"
           expected_apk_digest="${expected_apk_digest,,}"
+          apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
           for artifact in "${artifacts[@]}"; do
             case "$artifact" in
               *.apk)
-                certificate="$($ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs "$artifact")"
+                certificate="$("$apksigner" verify --print-certs "$artifact")"
                 grep -Fqi "Signer #1 certificate SHA-256 digest: $expected_apk_digest" <<< "$certificate"
                 ;;
               *.aab)
