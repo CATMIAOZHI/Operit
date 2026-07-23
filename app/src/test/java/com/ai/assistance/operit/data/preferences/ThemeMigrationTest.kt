@@ -5,70 +5,28 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 测试 [UserPreferencesManager.isFreshInstallMigration] 的新安装判定逻辑，
- * 并记录迁移行为契约供后续回归验证。
+ * v2 主题迁移行为契��（[UserPreferencesManager.performThemeMigration]）与纯判定函数测试。
  *
- * 迁移行为契约（[UserPreferencesManager.performThemeMigration]）：
+ * 迁移行为契约：
  *
- * 1. 全新安装：DataStore 首次打开，除 theme_migration_v1_done 自身外无任何键。
- *    迁移后应写入 USE_CUSTOM_COLORS=true, CUSTOM_PRIMARY_COLOR=DEFAULT_CUSTOM_PRIMARY_COLOR,
- *    CUSTOM_SECONDARY_COLOR=DEFAULT_CUSTOM_SECONDARY_COLOR, theme_migration_v1_done=true。
+ * 1. 旧默认形态（useCustomColors 不为 true 且主色、辅色均不存在）→ 一次性纠正为 Rainy。
+ *    - 包括全局和角色卡/群组前缀数据。
+ *    - 与 v1 写入的 false + 无颜色值状态一致。
  *
- * 2. 老用户（USE_CUSTOM_COLORS=true 但无颜色键）：升级前用户只开了自定义颜色开关
- *    但从未保存颜色。迁移不覆盖 USE_CUSTOM_COLORS（已存在），不补颜色键 → 快照中
- *    customPrimaryColor=null, customSecondaryColor=null → ThemeColorSchemeResolver 的
- *    `customPrimaryColor?.let { }` 守卫跳过自定义配色 → 保持旧版行为。
+ * 2. 非旧默认形态不覆盖。
+ *    - useCustomColors=true 或有任一颜色值 → 保留。
+ *    - useCustomColors=false 但有颜色 → 不覆盖（用户有意关闭但保留配色）。
  *
- * 3. 老用户（仅保存主色，无辅色）：辅色缺键 → 快照 customSecondaryColor=null →
- *    resolver 辅色跟随系统 colorScheme.secondary → 保持旧版行为。
+ * 3. 全缺键状态（三键都不存在）→ 也写入 Rainy，形成稳定的出厂数据。
  *
- * 4. 老用户（USE_CUSTOM_COLORS 缺键）：迁移补 false → useCustomColors=false →
- *    不应用自定义配色 → 保持旧版行为。
+ * 4. 幂等：theme_rainy_defaults_v2_done=true 后不再执行。
  *
- * 5. 重复启动：theme_migration_v1_done=true → 直接 return → 幂等。
+ * 5. v1 完成标记 theme_migration_v1_done 不阻止 v2 执行；
+ *    只有 v2 完成标记可以阻止重复迁移。
  */
 class ThemeMigrationTest {
 
-    @Test
-    fun `empty key set is fresh install`() {
-        assertTrue(UserPreferencesManager.isFreshInstallMigration(emptySet()))
-    }
-
-    @Test
-    fun `only migration key is fresh install`() {
-        assertTrue(
-            UserPreferencesManager.isFreshInstallMigration(
-                setOf("theme_migration_v1_done")
-            )
-        )
-    }
-
-    @Test
-    fun `any other key means existing user`() {
-        assertFalse(
-            UserPreferencesManager.isFreshInstallMigration(
-                setOf("active_memory_space_id")
-            )
-        )
-    }
-
-    @Test
-    fun `mix of migration key and other key means existing user`() {
-        assertFalse(
-            UserPreferencesManager.isFreshInstallMigration(
-                setOf("theme_migration_v1_done", "use_custom_colors")
-            )
-        )
-    }
-
-    @Test
-    fun `multiple non migration keys means existing user`() {
-        assertFalse(
-            UserPreferencesManager.isFreshInstallMigration(
-                setOf("chat_style", "use_custom_colors", "custom_primary_color")
-            )
-        )
-    }
+    // ========== 基础常量测试 ==========
 
     @Test
     fun `Rainy default colors are non zero and distinct`() {
@@ -79,19 +37,105 @@ class ThemeMigrationTest {
         assertTrue("primary and secondary must be distinct", primary != secondary)
     }
 
+    // ========== isOldDefaultThemeState 纯判定函数测试 ==========
+
     @Test
-    fun `fresh install detection ignores custom migration key name`() {
-        // Custom key name for testing flexibility
+    fun `false plus no colors is old default`() {
         assertTrue(
-            UserPreferencesManager.isFreshInstallMigration(
-                keyNames = setOf("custom_migration_flag"),
-                migrationDoneKeyName = "custom_migration_flag"
+            UserPreferencesManager.isOldDefaultThemeState(
+                useCustomColors = false,
+                hasPrimaryColor = false,
+                hasSecondaryColor = false,
             )
         )
+    }
+
+    @Test
+    fun `null useCustomColors plus no colors is old default`() {
+        // 全缺键形态：useCustomColors 为 null（三键都不存在）
+        assertTrue(
+            UserPreferencesManager.isOldDefaultThemeState(
+                useCustomColors = null,
+                hasPrimaryColor = false,
+                hasSecondaryColor = false,
+            )
+        )
+    }
+
+    @Test
+    fun `true plus no colors is NOT old default`() {
+        // 用户显式开启自定义颜色但还未选择颜色
         assertFalse(
-            UserPreferencesManager.isFreshInstallMigration(
-                keyNames = setOf("custom_migration_flag", "user_data"),
-                migrationDoneKeyName = "custom_migration_flag"
+            UserPreferencesManager.isOldDefaultThemeState(
+                useCustomColors = true,
+                hasPrimaryColor = false,
+                hasSecondaryColor = false,
+            )
+        )
+    }
+
+    @Test
+    fun `false plus has primary color is NOT old default`() {
+        assertFalse(
+            UserPreferencesManager.isOldDefaultThemeState(
+                useCustomColors = false,
+                hasPrimaryColor = true,
+                hasSecondaryColor = false,
+            )
+        )
+    }
+
+    @Test
+    fun `false plus has secondary color is NOT old default`() {
+        assertFalse(
+            UserPreferencesManager.isOldDefaultThemeState(
+                useCustomColors = false,
+                hasPrimaryColor = false,
+                hasSecondaryColor = true,
+            )
+        )
+    }
+
+    @Test
+    fun `false plus both colors is NOT old default`() {
+        assertFalse(
+            UserPreferencesManager.isOldDefaultThemeState(
+                useCustomColors = false,
+                hasPrimaryColor = true,
+                hasSecondaryColor = true,
+            )
+        )
+    }
+
+    @Test
+    fun `true plus has colors is NOT old default`() {
+        assertFalse(
+            UserPreferencesManager.isOldDefaultThemeState(
+                useCustomColors = true,
+                hasPrimaryColor = true,
+                hasSecondaryColor = true,
+            )
+        )
+    }
+
+    @Test
+    fun `null plus has primary color is NOT old default`() {
+        assertFalse(
+            UserPreferencesManager.isOldDefaultThemeState(
+                useCustomColors = null,
+                hasPrimaryColor = true,
+                hasSecondaryColor = false,
+            )
+        )
+    }
+
+    @Test
+    fun `null plus has secondary color is NOT old default`() {
+        assertFalse(
+            UserPreferencesManager.isOldDefaultThemeState(
+                useCustomColors = null,
+                hasPrimaryColor = false,
+                hasSecondaryColor = true,
             )
         )
     }
