@@ -68,7 +68,7 @@ import com.ai.assistance.operit.data.model.getModelByIndex
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.getValidModelIndex
 import com.ai.assistance.operit.data.model.resolveValidFavorites
-import com.ai.assistance.operit.data.model.partitionConfigsByCollapsed
+import com.ai.assistance.operit.data.model.partitionConfigsByCollapsedIds
 import com.ai.assistance.operit.data.model.resolveFavoriteModelIndex
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.ApiPreferences
@@ -174,7 +174,7 @@ fun ClassicChatSettingsBar(
     var configSummaries by remember { mutableStateOf<List<ModelConfigSummary>>(emptyList()) }
     LaunchedEffect(Unit) { configSummaries = modelConfigManager.getAllConfigSummaries() }
     val favoriteModels by modelConfigManager.favoriteModelsFlow.collectAsState(initial = emptyList())
-    val collapsedProviderIds by modelConfigManager.collapsedProviderIdsFlow.collectAsState(initial = emptySet())
+    val collapsedConfigIds by modelConfigManager.collapsedConfigIdsFlow.collectAsState(initial = emptySet())
     val validFavorites = remember(favoriteModels, configSummaries) {
         resolveValidFavorites(configSummaries, favoriteModels)
     }
@@ -573,7 +573,7 @@ fun ClassicChatSettingsBar(
                                         showMenu = false
                                     },
                                     validFavorites = validFavorites,
-                                    collapsedProviderIds = collapsedProviderIds,
+                                    collapsedConfigIds = collapsedConfigIds,
                                     onToggleFavorite = { configId, modelName ->
                                         scope.launch {
                                             modelConfigManager.toggleFavoriteModel(configId, modelName)
@@ -1598,7 +1598,7 @@ private fun ModelSelectorItem(
     onManageClick: () -> Unit,
     onInfoClick: () -> Unit,
     validFavorites: List<FavoriteModelRef> = emptyList(),
-    collapsedProviderIds: Set<String> = emptySet(),
+    collapsedConfigIds: Set<String> = emptySet(),
     onToggleFavorite: (String, String) -> Unit = { _, _ -> },
     showAutoGlmError: (String) -> Boolean = { false },
 ) {
@@ -1710,46 +1710,47 @@ private fun ModelSelectorItem(
                     )
                     validFavorites.forEach { fav ->
                         val favConfig = configSummaries.find { it.id == fav.configId }
-                        val displayLabel = buildString {
-                            val providerId = favConfig?.apiProviderTypeId?.lowercase()?.take(16) ?: "?"
-                            append(providerId)
-                            append(":")
-                            append(fav.modelName.take(24))
-                            if (favConfig != null && configSummaries.count { it.apiProviderTypeId == favConfig.apiProviderTypeId } > 1) {
-                                append(" ")
-                                append(favConfig.name.take(10))
-                            }
-                        }
-                        Box(
+                        val favConfigName = favConfig?.name ?: ""
+                        val displayLabel = stringResource(R.string.favorite_model_label, favConfigName, fav.modelName)
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(4.dp))
-                                .clickable {
-                                    val idx = resolveFavoriteModelIndex(configSummaries, fav)
-                                    if (idx != null) {
-                                        if (!showAutoGlmError(fav.modelName)) {
-                                            onSelectModel(fav.configId, idx)
-                                            onExpandedChange(false)
-                                        }
-                                    }
-                                }
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { onToggleFavorite(fav.configId, fav.modelName) },
+                                modifier = Modifier.size(24.dp),
+                            ) {
                                 Icon(
                                     Icons.Filled.Star,
-                                    contentDescription = null,
+                                    contentDescription = stringResource(R.string.remove_model_from_favorites),
                                     modifier = Modifier.size(14.dp),
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable {
+                                        val idx = resolveFavoriteModelIndex(configSummaries, fav)
+                                        if (idx != null) {
+                                            if (!showAutoGlmError(fav.modelName)) {
+                                                onSelectModel(fav.configId, idx)
+                                                onExpandedChange(false)
+                                            }
+                                        }
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                            ) {
                                 Text(
                                     text = displayLabel,
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
                                 )
                             }
                         }
@@ -1758,91 +1759,60 @@ private fun ModelSelectorItem(
                 }
 
                 // 正常配置分区 & 折叠分区
-                val (normalConfigs, collapsedConfigs) = partitionConfigsByCollapsed(configSummaries, collapsedProviderIds)
+                val (normalConfigs, collapsedConfigs) = partitionConfigsByCollapsedIds(configSummaries, collapsedConfigIds)
                 var collapsedExpanded by remember { mutableStateOf(false) }
 
-                // 正常配置列表
-                normalConfigs.forEach { config ->
+                // 配置项 Composable（供正常区和折叠区复用）
+                @Composable
+                fun ConfigItem(config: ModelConfigSummary) {
                     val isSelected = config.id == currentConfigMapping.configId
                     val modelList = getModelList(config.modelName)
                     val hasMultipleModels = modelList.size > 1
                     val isExpanded = expandedConfigId == config.id
-                    
+
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Box(
-                                modifier =
-                                        Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
                                 .clip(RoundedCornerShape(4.dp))
-                                                .background(
-                                                        if (isSelected)
-                                                                MaterialTheme.colorScheme.primary.copy(
-                                                                        alpha = 0.1f
-                                                                )
-                                                        else Color.Transparent
-                                                )
+                                .background(
+                                    if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                                    else Color.Transparent
+                                )
                                 .clickable {
-                                    if (hasMultipleModels) {
-                                        expandedConfigId = if (isExpanded) null else config.id
-                                    } else {
-                                        val singleModelName = modelList.firstOrNull().orEmpty()
-                                        if (showAutoGlmError(singleModelName)) {
-                                            // blocked
-                                        } else {
-                                            onSelectModel(config.id, 0)
-                                            onExpandedChange(false)
-                                        }
-                                    }
+                                    // 标题行只切换展开，不直接选择
+                                    expandedConfigId = if (isExpanded) null else config.id
                                 }
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
                                     text = config.name,
-                                        fontWeight =
-                                                if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color =
-                                                if (isSelected) MaterialTheme.colorScheme.primary
-                                                else MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface,
                                     fontSize = 13.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
+                                    modifier = Modifier.weight(1f),
                                 )
-                                // ☆ 收藏按钮（多模型或单模型）
-                                val uniqueModel = if (!hasMultipleModels) modelList.firstOrNull() else null
-                                val isFav = validFavorites.any { it.configId == config.id && it.modelName.equals(uniqueModel ?: "", ignoreCase = true) }
-                                IconButton(
-                                    onClick = {
-                                        if (uniqueModel != null) {
-                                            onToggleFavorite(config.id, uniqueModel)
-                                        }
-                                    },
-                                    modifier = Modifier.size(24.dp),
-                                ) {
-                                    Icon(
-                                        if (isFav) Icons.Filled.Star else Icons.Outlined.StarOutline,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(14.dp),
-                                        tint = if (isFav) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                    )
-                                }
                                 Spacer(modifier = Modifier.width(4.dp))
                                 if (hasMultipleModels) {
                                     Text(
                                         text = stringResource(R.string.chat_model_count, modelList.size),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 10.sp
+                                        fontSize = 10.sp,
                                     )
                                     Icon(
-                                        imageVector = if (isExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                                        imageVector = if (isExpanded) Icons.Filled.KeyboardArrowUp
+                                        else Icons.Filled.KeyboardArrowDown,
                                         contentDescription = null,
                                         modifier = Modifier.size(16.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 } else {
                                     Text(
@@ -1851,31 +1821,38 @@ private fun ModelSelectorItem(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontSize = 11.sp,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Icon(
+                                        imageVector = if (isExpanded) Icons.Filled.KeyboardArrowUp
+                                        else Icons.Filled.KeyboardArrowDown,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }
                         }
-                        
-                        // 多模型展开
-                        if (hasMultipleModels && isExpanded) {
+                        // 展开的具体模型行（单模型和多模型统一）
+                        if (isExpanded) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-                                    .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 8.dp)
+                                    .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 8.dp),
                             ) {
                                 val validIndex = getValidModelIndex(config.modelName, currentConfigMapping.modelIndex)
                                 modelList.forEachIndexed { index, modelName ->
                                     val isModelSelected = isSelected && validIndex == index
-                                    val isModelFav = validFavorites.any { it.configId == config.id && it.modelName.equals(modelName, ignoreCase = true) }
+                                    val isModelFav = validFavorites.any {
+                                        it.configId == config.id && it.modelName.equals(modelName, ignoreCase = true)
+                                    }
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(4.dp))
                                             .background(
-                                                if (isModelSelected)
-                                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                if (isModelSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                                                 else Color.Transparent
                                             )
                                             .clickable {
@@ -1894,10 +1871,8 @@ private fun ModelSelectorItem(
                                             text = modelName,
                                             fontSize = 12.sp,
                                             fontWeight = if (isModelSelected) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isModelSelected) 
-                                                MaterialTheme.colorScheme.primary 
-                                            else 
-                                                MaterialTheme.colorScheme.onSurface,
+                                            color = if (isModelSelected) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurface,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f),
@@ -1908,7 +1883,10 @@ private fun ModelSelectorItem(
                                         ) {
                                             Icon(
                                                 if (isModelFav) Icons.Filled.Star else Icons.Outlined.StarOutline,
-                                                contentDescription = null,
+                                                contentDescription = if (isModelFav)
+                                                    stringResource(R.string.remove_model_from_favorites)
+                                                else
+                                                    stringResource(R.string.add_model_to_favorites),
                                                 modifier = Modifier.size(13.dp),
                                                 tint = if (isModelFav) MaterialTheme.colorScheme.primary
                                                 else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
@@ -1922,6 +1900,11 @@ private fun ModelSelectorItem(
                             }
                         }
                     }
+                }
+
+                // 正常配置列表
+                normalConfigs.forEach { config ->
+                    ConfigItem(config = config)
                     if (normalConfigs.last() != config) {
                         Spacer(modifier = Modifier.height(4.dp))
                     }
@@ -1937,7 +1920,7 @@ private fun ModelSelectorItem(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            stringResource(R.string.collapsed_providers_count, collapsedConfigs.size),
+                            stringResource(R.string.collapsed_model_configs_count, collapsedConfigs.size),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f),
@@ -1952,112 +1935,7 @@ private fun ModelSelectorItem(
                     }
                     if (collapsedExpanded) {
                         collapsedConfigs.forEach { config ->
-                            val isSelected = config.id == currentConfigMapping.configId
-                            val modelList = getModelList(config.modelName)
-                            val hasMultipleModels = modelList.size > 1
-                            val isExpanded = expandedConfigId == config.id
-                            
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(
-                                            if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-                                            else Color.Transparent
-                                        )
-                                        .clickable {
-                                            if (hasMultipleModels) {
-                                                expandedConfigId = if (isExpanded) null else config.id
-                                            } else {
-                                                val singleModelName = modelList.firstOrNull().orEmpty()
-                                                if (showAutoGlmError(singleModelName)) {
-                                                    // blocked
-                                                } else {
-                                                    onSelectModel(config.id, 0)
-                                                    onExpandedChange(false)
-                                                }
-                                            }
-                                        }
-                                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text(
-                                            text = config.name,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurface,
-                                            fontSize = 12.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f),
-                                        )
-                                        if (hasMultipleModels) {
-                                            Text(
-                                                text = stringResource(R.string.chat_model_count, modelList.size),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                fontSize = 10.sp,
-                                            )
-                                            Icon(
-                                                imageVector = if (isExpanded) Icons.Filled.KeyboardArrowUp
-                                                else Icons.Filled.KeyboardArrowDown,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp),
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
-                                    }
-                                }
-                                if (hasMultipleModels && isExpanded) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-                                            .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 8.dp),
-                                    ) {
-                                        val validIndex = getValidModelIndex(config.modelName, currentConfigMapping.modelIndex)
-                                        modelList.forEachIndexed { index, modelName ->
-                                            val isModelSelected = isSelected && validIndex == index
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(4.dp))
-                                                    .background(
-                                                        if (isModelSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                                        else Color.Transparent,
-                                                    )
-                                                    .clickable {
-                                                        if (showAutoGlmError(modelName)) {
-                                                            // blocked
-                                                        } else {
-                                                            onSelectModel(config.id, index)
-                                                            onExpandedChange(false)
-                                                            expandedConfigId = null
-                                                        }
-                                                    }
-                                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                                            ) {
-                                                Text(
-                                                    text = modelName,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = if (isModelSelected) FontWeight.Bold else FontWeight.Normal,
-                                                    color = if (isModelSelected) MaterialTheme.colorScheme.primary
-                                                    else MaterialTheme.colorScheme.onSurface,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                )
-                                            }
-                                            if (index < modelList.size - 1) {
-                                                Spacer(modifier = Modifier.height(2.dp))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            ConfigItem(config = config)
                             if (collapsedConfigs.last() != config) {
                                 Spacer(modifier = Modifier.height(2.dp))
                             }

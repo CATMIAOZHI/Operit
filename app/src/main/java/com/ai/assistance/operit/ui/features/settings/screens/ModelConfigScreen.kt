@@ -47,7 +47,7 @@ import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.getModelList
-import com.ai.assistance.operit.data.model.partitionConfigsByCollapsed
+import com.ai.assistance.operit.data.model.partitionConfigsByCollapsedIds
 import com.ai.assistance.operit.data.model.normalizeProviderId
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
@@ -198,7 +198,7 @@ fun ModelConfigScreen(
 
     // 排序、收藏与折叠相关
     var configSummaries by remember { mutableStateOf<List<ModelConfigSummary>>(emptyList()) }
-    val collapsedProviderIds by configManager.collapsedProviderIdsFlow.collectAsState(initial = emptySet())
+    val collapsedConfigIds by configManager.collapsedConfigIdsFlow.collectAsState(initial = emptySet())
     val sortedConfigIds = configList  // configList 已按全局顺序排列
 
     // 加载摘要列表
@@ -810,7 +810,7 @@ fun ModelConfigScreen(
         if (showConfigSelectDialog) {
             ConfigSelectDialog(
                 configSummaries = configSummaries,
-                collapsedProviderIds = collapsedProviderIds,
+                collapsedConfigIds = collapsedConfigIds,
                 selectedConfigId = selectedConfigId,
                 onSelectConfig = { configId ->
                     selectedConfigId = configId
@@ -819,6 +819,11 @@ fun ModelConfigScreen(
                 onReorder = { orderedIds ->
                     scope.launch {
                         configManager.updateConfigOrder(orderedIds)
+                    }
+                },
+                onToggleConfigCollapsed = { configId ->
+                    scope.launch {
+                        configManager.toggleConfigCollapsed(configId)
                     }
                 },
                 onDismiss = { showConfigSelectDialog = false },
@@ -1569,20 +1574,21 @@ private fun formatFloatValue(value: Float): String {
 @Composable
 private fun ConfigSelectDialog(
     configSummaries: List<ModelConfigSummary>,
-    collapsedProviderIds: Set<String>,
+    collapsedConfigIds: Set<String>,
     selectedConfigId: String,
     onSelectConfig: (String) -> Unit,
     onReorder: (List<String>) -> Unit,
+    onToggleConfigCollapsed: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
 
     // 分区分割
-    val (normalConfigs, collapsedConfigs) = remember(configSummaries, collapsedProviderIds) {
-        partitionConfigsByCollapsed(configSummaries, collapsedProviderIds)
+    val (normalConfigs, collapsedConfigs) = remember(configSummaries, collapsedConfigIds) {
+        partitionConfigsByCollapsedIds(configSummaries, collapsedConfigIds)
     }
 
-    var collapsedExpanded by remember { mutableStateOf(false) }
+    var collapsedSectionExpanded by remember { mutableStateOf(false) }
 
     // 构建扁平化项目列表
     data class FlatItem(val type: String, val config: ModelConfigSummary? = null)
@@ -1590,7 +1596,7 @@ private fun ConfigSelectDialog(
         normalConfigs.forEach { add(FlatItem("normal", it)) }
         if (collapsedConfigs.isNotEmpty()) {
             add(FlatItem("header"))
-            if (collapsedExpanded) {
+            if (collapsedSectionExpanded) {
                 collapsedConfigs.forEach { add(FlatItem("collapsed", it)) }
             }
         }
@@ -1598,15 +1604,11 @@ private fun ConfigSelectDialog(
 
     val lazyListState = rememberLazyListState()
     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
-        // 只允许分区内拖动
         val fromItem = flatItems.getOrNull(from.index) ?: return@rememberReorderableLazyListState
         val toItem = flatItems.getOrNull(to.index) ?: return@rememberReorderableLazyListState
 
-        // 不允许拖到标题行或跨分区
         if (fromItem.type == "header" || toItem.type == "header") return@rememberReorderableLazyListState
         if (fromItem.type != toItem.type) return@rememberReorderableLazyListState
-
-        // 只允许在正常区内拖动（折叠区收起时不显示，展开时不支持拖动）
         if (fromItem.type != "normal" || toItem.type != "normal") return@rememberReorderableLazyListState
 
         val newNormalIds = flatItems.filter { it.type == "normal" }.map { it.config!!.id }.toMutableList()
@@ -1620,9 +1622,9 @@ private fun ConfigSelectDialog(
         if (fromIdx < 0 || toIdx < 0) return@rememberReorderableLazyListState
         newNormalIds.add(toIdx, newNormalIds.removeAt(fromIdx))
 
-        // 构建最终全局顺序: 正常区新顺序 + 折叠区原顺序
-        val collapsedIds = flatItems.filter { it.type == "collapsed" }.map { it.config!!.id }
-        val newGlobalOrder = newNormalIds + collapsedIds
+        // 构建最终全局顺序: 正常区新顺序 + 折叠区原相对顺序（来自完整 collapsedConfigs，不是 flatItems）
+        val collapsedOrderIds = collapsedConfigs.map { it.id }
+        val newGlobalOrder = newNormalIds + collapsedOrderIds
 
         scope.launch {
             onReorder(newGlobalOrder)
@@ -1661,6 +1663,7 @@ private fun ConfigSelectDialog(
                             "normal", "collapsed" -> {
                                 val config = item.config!!
                                 val isSelected = config.id == selectedConfigId
+                                val isCollapsed = item.type == "collapsed"
                                 ReorderableItem(
                                     reorderableState,
                                     key = "cfg-${config.id}",
@@ -1685,7 +1688,7 @@ private fun ConfigSelectDialog(
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
                                             // 正常区显示拖动手柄
-                                            if (item.type == "normal") {
+                                            if (!isCollapsed) {
                                                 Icon(
                                                     Icons.Default.DragHandle,
                                                     contentDescription = stringResource(R.string.drag_to_reorder),
@@ -1695,6 +1698,16 @@ private fun ConfigSelectDialog(
                                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 )
                                                 Spacer(modifier = Modifier.width(8.dp))
+                                            }
+                                            // 选中标记在折叠按钮左侧
+                                            if (isSelected) {
+                                                Icon(
+                                                    Icons.Default.Check,
+                                                    contentDescription = stringResource(R.string.selected_desc),
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
                                             }
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
@@ -1717,12 +1730,20 @@ private fun ConfigSelectDialog(
                                                     )
                                                 }
                                             }
-                                            if (isSelected) {
+                                            // 折叠/取消折叠按钮
+                                            IconButton(
+                                                onClick = { onToggleConfigCollapsed(config.id) },
+                                                modifier = Modifier.size(28.dp),
+                                            ) {
                                                 Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = stringResource(R.string.selected_desc),
+                                                    imageVector = if (isCollapsed) Icons.Default.ArrowBack
+                                                    else Icons.Default.UnfoldLess,
+                                                    contentDescription = if (isCollapsed)
+                                                        stringResource(R.string.uncollapse_model_config)
+                                                    else
+                                                        stringResource(R.string.collapse_model_config),
                                                     modifier = Modifier.size(16.dp),
-                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 )
                                             }
                                         }
@@ -1733,18 +1754,18 @@ private fun ConfigSelectDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable { collapsedExpanded = !collapsedExpanded }
+                                        .clickable { collapsedSectionExpanded = !collapsedSectionExpanded }
                                         .padding(vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        stringResource(R.string.collapsed_providers_count, collapsedConfigs.size),
+                                        stringResource(R.string.collapsed_model_configs_count, collapsedConfigs.size),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.weight(1f),
                                     )
                                     Icon(
-                                        imageVector = if (collapsedExpanded) Icons.Default.KeyboardArrowUp
+                                        imageVector = if (collapsedSectionExpanded) Icons.Default.KeyboardArrowUp
                                         else Icons.Default.KeyboardArrowDown,
                                         contentDescription = null,
                                         modifier = Modifier.size(18.dp),
