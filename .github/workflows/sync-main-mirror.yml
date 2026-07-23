@@ -10,18 +10,27 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   sync:
     name: Fast-forward main to personal/main
     runs-on: ubuntu-latest
     steps:
+      - name: Require workflow-capable mirror token
+        env:
+          MAIN_MIRROR_TOKEN: ${{ secrets.MAIN_MIRROR_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${MAIN_MIRROR_TOKEN:?MAIN_MIRROR_TOKEN secret is required}"
+
       - name: Checkout personal/main
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+          token: ${{ secrets.MAIN_MIRROR_TOKEN }}
 
       - name: Update compatibility mirror
         shell: bash

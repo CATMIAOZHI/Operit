@@ -99,6 +99,7 @@ git diff --cached --check
 ### main 镜像
 
 - 仅作为 `personal/main` 的只读兼容镜像，供仅支持 `main` 的安全工具读取
+- `MAIN_MIRROR_TOKEN` 必须是仅授权本仓库 **Contents: read and write** 与 **Workflows: read and write** 的 fine-grained PAT；不得改用权限不足的 `GITHUB_TOKEN` 或复用其他服务的 token
 - 不直接提交、不接受 PR、不强推；同步失败时排查分叉，不得覆盖历史
 
 ### 上游 main
