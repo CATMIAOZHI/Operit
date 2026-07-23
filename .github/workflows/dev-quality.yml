@@ -1,0 +1,132 @@
+name: Dev Quality
+
+on:
+  push:
+    branches:
+      - personal/dev
+
+concurrency:
+  group: dev-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '21'
+  ANDROID_BUILD_TOOLS_VERSION: '35.0.0'
+  MANUAL_DEPS_DIR: manual-deps
+
+jobs:
+  quality:
+    name: Lint and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Initialize terminal submodule
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule sync -- terminal
+          git submodule update --init --recursive --depth 1 terminal
+          git submodule status -- terminal
+
+      - name: Set up JDK
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: false
+          cache-cleanup: on-success
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+
+      - name: Install JVM-check Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "platforms;android-36" \
+            "build-tools;$ANDROID_BUILD_TOOLS_VERSION"
+
+      - name: Configure secret-free Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "sdk.dir=$ANDROID_HOME"
+            echo 'GITHUB_CLIENT_ID='
+            echo 'GITHUB_CLIENT_SECRET='
+          } > local.properties
+
+      - name: Restore JVM dependency cache
+        id: cache-jvm-deps
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ env.MANUAL_DEPS_DIR }}
+          key: android-jvm-deps-${{ runner.os }}-${{ hashFiles('ci/script/download_android_dependencies.sh', 'ci/script/prepare_android_dependencies.py') }}
+
+      - name: Download JVM dependencies
+        if: steps.cache-jvm-deps.outputs.cache-hit != 'true'
+        run: bash ci/script/download_android_dependencies.sh jvm "$MANUAL_DEPS_DIR"
+
+      - name: Prepare JVM dependencies
+        run: |
+          python3 ci/script/prepare_android_dependencies.py \
+            --profile jvm \
+            --archives "$MANUAL_DEPS_DIR" \
+            --repository "$GITHUB_WORKSPACE"
+
+      - name: Run unit tests and lint
+        id: dev-checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest :app:lintDebug --continue --stacktrace
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: operit-dev-quality-reports-${{ github.run_number }}
+          path: app/build/reports/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Report check results
+        if: always()
+        shell: bash
+        run: |
+          outcome="${{ steps.dev-checks.outcome }}"
+          {
+            echo "## Dev Quality Checks"
+            echo ""
+            echo "| Check | Outcome |"
+            echo "| --- | --- |"
+            echo "| Unit tests + Lint | $outcome |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$outcome" == "failure" ]]; then
+            echo "::warning::Unit tests or lint failed. Download the reports artifact to review."
+          fi
