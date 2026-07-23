@@ -579,6 +579,7 @@ fun ClassicChatSettingsBar(
                                             modelConfigManager.toggleFavoriteModel(configId, modelName)
                                         }
                                     },
+                                    showAutoGlmError = showAutoGlmError,
                             )
                             inputMenuTogglesBySlot[InputMenuToggleSlots.MODEL].orEmpty().forEach { toggle ->
                                 InputMenuToggleSettingItem(
