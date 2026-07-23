@@ -281,6 +281,9 @@ class UserPreferencesManager private constructor(private val context: Context) {
         const val DEFAULT_CUSTOM_PRIMARY_COLOR = 0xFFFED1EE.toInt()
         const val DEFAULT_CUSTOM_SECONDARY_COLOR = 0xFFF8B6D9.toInt()
 
+        private const val FLOATING_CHAT_PREFERENCES = "floating_chat_prefs"
+        private const val FLOATING_COLOR_SCHEME_KEY = "floating_color_scheme_json"
+
         /**
          * 从存储键名中解析主题前缀。
          *
@@ -1676,6 +1679,8 @@ class UserPreferencesManager private constructor(private val context: Context) {
             preferences.remove(VIDEO_BACKGROUND_MUTED)
             preferences.remove(VIDEO_BACKGROUND_LOOP)
             preferences.remove(TOOLBAR_TRANSPARENT)
+            preferences.remove(USE_CUSTOM_APP_BAR_COLOR)
+            preferences.remove(CUSTOM_APP_BAR_COLOR)
             preferences.remove(NAVIGATION_DRAWER_WATER_GLASS)
             preferences.remove(NAVIGATION_DRAWER_BUTTON_LIQUID_GLASS)
             preferences.remove(USE_CUSTOM_NAVIGATION_DRAWER_BACKGROUND_COLOR)
@@ -1775,6 +1780,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
             preferences.remove(CUSTOM_FONT_PATH)
             preferences.remove(FONT_SCALE)
         }
+        clearFloatingColorSchemeCache()
     }
 
     // ========== 角色卡/群组主题绑定功能 ==========
@@ -1969,37 +1975,29 @@ class UserPreferencesManager private constructor(private val context: Context) {
     }
 
     /**
-     * v2 主题迁移：将 v1 错误写入的 Rainy 自定义颜色状态纠正为"关闭自定义、信任基础色方案"。
+     * v3 主题迁移：纠正旧版本写入的 Rainy 自定义状态，并废弃旧的派生颜色缓存。
      *
-     * v1 对全新安装写入了 useCustomColors=true + Rainy 主色辅色。现在基础色方案
-     * 已改为 Rainy，这些键应被清除：删除颜色键、设置 useCustomColors=false，
-     * 让 Material 基础色方案的 Rainy 色正常展现。
-     *
-     * 不是 Rainy 色的自定义颜色不受影响。已运行过 v1 的设备仍执行纠正；迁移幂等，
-     * 由独立的 theme_rainy_defaults_v2_done 完成标记保证。
+     * v2 标记已被错误实现提前消费，因此必须使用新的 v3 标记。只有精确匹配
+     * useCustomColors=true + Rainy 主辅色的状态会被规范化；其他用户颜色保持不变。
      */
     internal suspend fun performThemeMigration() {
-        val v2DoneKey = booleanPreferencesKey("theme_rainy_defaults_v2_done")
+        val v3DoneKey = booleanPreferencesKey("theme_rainy_defaults_v3_done")
         val allThemeKeyNames = buildThemeKeyNameSet()
+        var appliedV3 = false
 
         context.userPreferencesDataStore.edit { preferences ->
-            if (preferences[v2DoneKey] == true) return@edit
+            if (preferences[v3DoneKey] == true) return@edit
 
-            // ========== 全局主题：纠正 v1 错误写入的 Rainy 自定义颜色状态 ==========
             val globalUcc = preferences[USE_CUSTOM_COLORS]
             val globalPrimary = preferences[CUSTOM_PRIMARY_COLOR]
             val globalSecondary = preferences[CUSTOM_SECONDARY_COLOR]
 
-            if (globalUcc == true &&
-                globalPrimary == DEFAULT_CUSTOM_PRIMARY_COLOR &&
-                globalSecondary == DEFAULT_CUSTOM_SECONDARY_COLOR
-            ) {
+            if (isErroneousV1RainyState(globalUcc, globalPrimary, globalSecondary)) {
                 preferences.remove(CUSTOM_PRIMARY_COLOR)
                 preferences.remove(CUSTOM_SECONDARY_COLOR)
                 preferences[USE_CUSTOM_COLORS] = false
             }
 
-            // ========== 角色卡/群组主题前缀 ==========
             val allKeys = preferences.asMap().keys
             val prefixes = mutableSetOf<String>()
 
@@ -2019,18 +2017,25 @@ class UserPreferencesManager private constructor(private val context: Context) {
                 val prefixPrimary = preferences[prefixPrimaryKey]
                 val prefixSecondary = preferences[prefixSecondaryKey]
 
-                if (prefixUcc == true &&
-                    prefixPrimary == DEFAULT_CUSTOM_PRIMARY_COLOR &&
-                    prefixSecondary == DEFAULT_CUSTOM_SECONDARY_COLOR
-                ) {
+                if (isErroneousV1RainyState(prefixUcc, prefixPrimary, prefixSecondary)) {
                     preferences.remove(prefixPrimaryKey)
                     preferences.remove(prefixSecondaryKey)
                     preferences[prefixUccKey] = false
                 }
             }
 
-            preferences[v2DoneKey] = true
+            preferences[v3DoneKey] = true
+            appliedV3 = true
         }
+
+        if (appliedV3) clearFloatingColorSchemeCache()
+    }
+
+    private fun clearFloatingColorSchemeCache() {
+        context.getSharedPreferences(FLOATING_CHAT_PREFERENCES, Context.MODE_PRIVATE)
+            .edit()
+            .remove(FLOATING_COLOR_SCHEME_KEY)
+            .apply()
     }
 
     /**

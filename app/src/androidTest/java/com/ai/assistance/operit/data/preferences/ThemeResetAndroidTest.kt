@@ -1,7 +1,10 @@
 package com.ai.assistance.operit.data.preferences
 
+import android.content.Context
+import androidx.compose.ui.graphics.Color
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.ai.assistance.operit.ui.theme.resolveThemeColorScheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -40,7 +43,13 @@ class ThemeResetAndroidTest {
             customPrimaryColor = 0xFF0000FF.toInt(),
             customSecondaryColor = 0xFF00FF00.toInt(),
             useCustomColors = true,
+            useCustomAppBarColor = true,
+            customAppBarColor = 0xFFFF0000.toInt(),
         )
+        context.getSharedPreferences("floating_chat_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("floating_color_scheme_json", "stale")
+            .commit()
 
         // 执行重置
         manager.resetThemeSettings()
@@ -49,10 +58,19 @@ class ThemeResetAndroidTest {
         val ucc = manager.useCustomColors.first()
         val primary = manager.customPrimaryColor.first()
         val secondary = manager.customSecondaryColor.first()
+        val useCustomAppBarColor = manager.useCustomAppBarColor.first()
+        val customAppBarColor = manager.customAppBarColor.first()
 
         assertFalse("useCustomColors must be false after reset", ucc)
         assertNull("primary color must be null (key deleted)", primary)
         assertNull("secondary color must be null (key deleted)", secondary)
+        assertFalse("custom AppBar color must be disabled", useCustomAppBarColor)
+        assertNull("custom AppBar color must be deleted", customAppBarColor)
+        assertNull(
+            "floating derived color cache must be deleted",
+            context.getSharedPreferences("floating_chat_prefs", Context.MODE_PRIVATE)
+                .getString("floating_color_scheme_json", null),
+        )
     }
 
     @Test
@@ -65,6 +83,16 @@ class ThemeResetAndroidTest {
         assertFalse("useCustomColors must be false in snapshot", snapshot.useCustomColors)
         assertNull("customPrimaryColor must be null in snapshot", snapshot.customPrimaryColor)
         assertNull("customSecondaryColor must be null in snapshot", snapshot.customSecondaryColor)
+
+        val colorScheme = resolveThemeColorScheme(context, snapshot)
+        assertEquals(
+            Color(UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR),
+            colorScheme.primary,
+        )
+        assertEquals(
+            Color(UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR),
+            colorScheme.secondary,
+        )
     }
 
     @Test
