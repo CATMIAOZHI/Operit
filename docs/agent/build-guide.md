@@ -123,7 +123,7 @@ git diff --exit-code -- examples/github.js
 
 ## CI 构建（Nightly）
 
-Nightly 构建由 `OperitNightlyRelease` 仓库的 `personal-dev-update.yml` workflow 自动执行，每 5 分钟检查 `personal/dev` 是否有新提交。
+Nightly 构建由 `OperitNightlyRelease` 仓库的 `personal-dev-update.yml` workflow 自动执行。`personal/dev` 的 push 通过本仓库的 `trigger-nightly-build.yml` 即时发送 `repository_dispatch` 事件通知 nightly；每小时第 7 分钟的 `cron` 仅作为漏触发兜底。不再使用每 5 分钟轮询，因为 GitHub Actions 的定时调度在高峰期会被丢弃，实测只能达到约每小时一次。
 
 Nightly 统一负责 dev 分支的**验证与发布**：
 

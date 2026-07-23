@@ -1,0 +1,46 @@
+name: Trigger Nightly Build
+
+# Auto trigger only fires for pushes to personal/dev. Pushes to personal/main
+# never auto-trigger; personal/main builds are manual-only.
+#
+# workflow_dispatch is allowed from both personal/dev and personal/main. The
+# two manual trigger builds are kept separate by dispatching different
+# event_type values so the receiving side can route them independently:
+#   personal/dev  -> personal-dev-updated
+#   personal/main -> personal-main-updated
+
+on:
+  push:
+    branches:
+      - personal/dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trigger-nightly-build
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    name: Notify OperitNightlyRelease
+    if: github.ref == 'refs/heads/personal/dev' || github.ref == 'refs/heads/personal/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch repository_dispatch event
+        env:
+          GH_TOKEN: ${{ secrets.NIGHTLY_DISPATCH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${GH_TOKEN:?NIGHTLY_DISPATCH_TOKEN secret is required}"
+          case "$GITHUB_REF" in
+            refs/heads/personal/dev)  event_type=personal-dev-updated ;;
+            refs/heads/personal/main) event_type=personal-main-updated ;;
+            *) echo "Unsupported branch: $GITHUB_REF" >&2; exit 1 ;;
+          esac
+          gh api --method POST \
+            repos/CATMIAOZHI/OperitNightlyRelease/dispatches \
+            -f event_type="$event_type" \
+            -F "client_payload[sourceSha]=${{ github.sha }}"
