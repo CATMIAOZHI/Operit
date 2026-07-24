@@ -2121,7 +2121,7 @@ fun ChatHistorySelector(
                                         .size(24.dp)
                                         .clip(CircleShape)
                                         .background(
-                                            if (!avatarUri.isNullOrBlank()) Color.Transparent 
+                                            if (!avatarUri.isNullOrBlank()) Color.Transparent
                                             else MaterialTheme.colorScheme.primaryContainer
                                         ),
                                     contentAlignment = Alignment.Center
