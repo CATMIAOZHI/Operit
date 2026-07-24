@@ -137,6 +137,8 @@ fun ModelPromptsSettingsScreen(
     var showEditCharacterCardDialog by remember { mutableStateOf(false) }
     var editingCharacterCard by remember { mutableStateOf<CharacterCard?>(null) }
     var editingOriginalName by remember { mutableStateOf<String?>(null) }
+    // 新建角色卡草稿头像 URI（正式保存前暂存，避免空 ID 写入偏好）
+    var draftCharacterCardAvatarUri by remember { mutableStateOf<String?>(null) }
 
     // 删除确认对话框状态
     var showDeleteCharacterCardConfirm by remember { mutableStateOf(false) }
@@ -149,6 +151,8 @@ fun ModelPromptsSettingsScreen(
     var editingGroupCard by remember { mutableStateOf<CharacterGroupCard?>(null) }
     var showDeleteGroupCardConfirm by remember { mutableStateOf(false) }
     var deletingGroupCard by remember { mutableStateOf<CharacterGroupCard?>(null) }
+    // 新建群组草稿头像 URI（正式保存前暂存，避免空 ID 写入偏好）
+    var draftGroupCardAvatarUri by remember { mutableStateOf<String?>(null) }
 
     // 重置确认对话框状态
     var showResetDefaultConfirm by remember { mutableStateOf(false) }
@@ -180,11 +184,21 @@ fun ModelPromptsSettingsScreen(
             if (croppedUri != null) {
                 scope.launch {
                     editingCharacterCard?.let { card ->
-                        val internalUri = FileUtils.copyFileToInternalStorage(context, croppedUri, "avatar_${card.id}")
+                        val filePrefix = if (card.id.isNotBlank()) "avatar_${card.id}" else "avatar_new"
+                        val internalUri = FileUtils.copyFileToInternalStorage(context, croppedUri, filePrefix)
                         if (internalUri != null) {
-                            userPreferencesManager.saveAiAvatarForCharacterCard(card.id, internalUri.toString())
-                            Toast.makeText(context, context.getString(R.string.avatar_updated), Toast.LENGTH_SHORT).show()
-                            refreshTrigger++
+                            val internalUriStr = internalUri.toString()
+                            if (card.id.isNotBlank()) {
+                                // 编辑已有角色卡：直接保存
+                                userPreferencesManager.saveAiAvatarForCharacterCard(card.id, internalUriStr)
+                                Toast.makeText(context, context.getString(R.string.avatar_updated), Toast.LENGTH_SHORT).show()
+                                refreshTrigger++
+                            } else {
+                                // 新建角色卡：保存到草稿状态，等正式 UUID 后迁移
+                                draftCharacterCardAvatarUri = internalUriStr
+                                Toast.makeText(context, context.getString(R.string.avatar_updated), Toast.LENGTH_SHORT).show()
+                                refreshTrigger++
+                            }
                         } else {
                             Toast.makeText(context, context.getString(R.string.theme_copy_failed), Toast.LENGTH_LONG).show()
                         }
@@ -202,11 +216,21 @@ fun ModelPromptsSettingsScreen(
             if (croppedUri != null) {
                 scope.launch {
                     editingGroupCard?.let { group ->
-                        val internalUri = FileUtils.copyFileToInternalStorage(context, croppedUri, "group_avatar_${group.id}")
+                        val filePrefix = if (group.id.isNotBlank()) "group_avatar_${group.id}" else "group_avatar_new"
+                        val internalUri = FileUtils.copyFileToInternalStorage(context, croppedUri, filePrefix)
                         if (internalUri != null) {
-                            userPreferencesManager.saveAiAvatarForCharacterGroup(group.id, internalUri.toString())
-                            Toast.makeText(context, context.getString(R.string.avatar_updated), Toast.LENGTH_SHORT).show()
-                            refreshTrigger++
+                            val internalUriStr = internalUri.toString()
+                            if (group.id.isNotBlank()) {
+                                // 编辑已有群组：直接保存
+                                userPreferencesManager.saveAiAvatarForCharacterGroup(group.id, internalUriStr)
+                                Toast.makeText(context, context.getString(R.string.avatar_updated), Toast.LENGTH_SHORT).show()
+                                refreshTrigger++
+                            } else {
+                                // 新建群组：保存到草稿状态，等正式 UUID 后迁移
+                                draftGroupCardAvatarUri = internalUriStr
+                                Toast.makeText(context, context.getString(R.string.avatar_updated), Toast.LENGTH_SHORT).show()
+                                refreshTrigger++
+                            }
                         } else {
                             Toast.makeText(context, context.getString(R.string.theme_copy_failed), Toast.LENGTH_LONG).show()
                         }
@@ -610,6 +634,11 @@ fun ModelPromptsSettingsScreen(
             scope.launch {
                 if (!isExistingCard) {
                     val newCardId = characterCardManager.createCharacterCard(card)
+                    // 迁移草稿头像到正式 UUID
+                    draftCharacterCardAvatarUri?.let { draftUri ->
+                        userPreferencesManager.saveAiAvatarForCharacterCard(newCardId, draftUri)
+                        draftCharacterCardAvatarUri = null
+                    }
                     userPreferencesManager.saveCustomChatTitleForCharacterCard(newCardId, card.name.ifEmpty { null })
                 } else {
                     characterCardManager.updateCharacterCard(card)
@@ -719,6 +748,12 @@ fun ModelPromptsSettingsScreen(
                 val isNew = group.id.isBlank()
                 if (isNew) {
                     val newGroupId = characterGroupCardManager.createCharacterGroupCard(group)
+                    // 迁移草稿头像：createCharacterGroupCard 已写入默认拼图头像，
+                    // 草稿头像必须在创建完成后覆盖以确保自定义头像最终生效
+                    draftGroupCardAvatarUri?.let { draftUri ->
+                        userPreferencesManager.saveAiAvatarForCharacterGroup(newGroupId, draftUri)
+                        draftGroupCardAvatarUri = null
+                    }
                     userPreferencesManager.saveCustomChatTitleForCharacterGroup(
                         newGroupId,
                         group.name.ifEmpty { null }
@@ -1158,9 +1193,11 @@ fun ModelPromptsSettingsScreen(
             ),
             allTags = allTags,
             userPreferencesManager = userPreferencesManager,
+            draftAvatarUri = draftCharacterCardAvatarUri,
             onDismiss = {
                 showAddCharacterCardDialog = false
                 editingCharacterCard = null
+                draftCharacterCardAvatarUri = null
             },
             onSave = { card ->
                 editingCharacterCard = card
@@ -1172,7 +1209,11 @@ fun ModelPromptsSettingsScreen(
             onAvatarReset = {
                 scope.launch {
                     editingCharacterCard?.let {
-                        userPreferencesManager.saveAiAvatarForCharacterCard(it.id, null)
+                        if (it.id.isNotBlank()) {
+                            userPreferencesManager.saveAiAvatarForCharacterCard(it.id, null)
+                        } else {
+                            draftCharacterCardAvatarUri = null
+                        }
                         refreshTrigger++
                     }
                 }
@@ -1265,9 +1306,11 @@ fun ModelPromptsSettingsScreen(
             group = editingGroupCard ?: CharacterGroupCard(id = "", name = ""),
             allCharacterCards = allCharacterCards,
             userPreferencesManager = userPreferencesManager,
+            draftAvatarUri = draftGroupCardAvatarUri,
             onDismiss = {
                 showAddGroupCardDialog = false
                 editingGroupCard = null
+                draftGroupCardAvatarUri = null
             },
             onSave = { group ->
                 editingGroupCard = group
@@ -1279,7 +1322,11 @@ fun ModelPromptsSettingsScreen(
             onAvatarReset = {
                 scope.launch {
                     editingGroupCard?.let { group ->
-                        userPreferencesManager.saveAiAvatarForCharacterGroup(group.id, null)
+                        if (group.id.isNotBlank()) {
+                            userPreferencesManager.saveAiAvatarForCharacterGroup(group.id, null)
+                        } else {
+                            draftGroupCardAvatarUri = null
+                        }
                         Toast.makeText(context, context.getString(R.string.avatar_reset), Toast.LENGTH_SHORT).show()
                         refreshTrigger++
                     }
@@ -2844,7 +2891,8 @@ private fun GroupCardDialog(
     onDismiss: () -> Unit,
     onSave: (CharacterGroupCard) -> Unit,
     onAvatarChange: () -> Unit,
-    onAvatarReset: () -> Unit
+    onAvatarReset: () -> Unit,
+    draftAvatarUri: String? = null,
 ) {
     var name by remember(group.id) { mutableStateOf(group.name) }
     var description by remember(group.id) { mutableStateOf(group.description) }
@@ -2864,8 +2912,13 @@ private fun GroupCardDialog(
         selectedAddMemberId = selectableCards.first().id
     }
 
-    val avatarUri by userPreferencesManager.getAiAvatarForCharacterGroupFlow(group.id)
-        .collectAsState(initial = null)
+    val avatarUri by remember(group.id, draftAvatarUri) {
+        if (group.id.isNotBlank()) {
+            userPreferencesManager.getAiAvatarForCharacterGroupFlow(group.id)
+        } else {
+            kotlinx.coroutines.flow.flowOf(draftAvatarUri)
+        }
+    }.collectAsState(initial = null)
 
     Dialog(
         onDismissRequest = onDismiss,

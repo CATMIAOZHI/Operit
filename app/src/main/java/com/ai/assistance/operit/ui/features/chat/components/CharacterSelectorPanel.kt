@@ -342,12 +342,12 @@ fun CharacterItem(
                     .size(36.dp)
                     .clip(CircleShape)
                     .background(
-                        if (avatarUri != null) Color.Transparent 
+                        if (!avatarUri.isNullOrBlank()) Color.Transparent 
                         else MaterialTheme.colorScheme.secondaryContainer
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                if (avatarUri != null) {
+                if (!avatarUri.isNullOrBlank()) {
                     Image(
                         painter = rememberAsyncImagePainter(model = Uri.parse(avatarUri)),
                         contentDescription = "Avatar",
