@@ -4,7 +4,11 @@
 
 ## Operit Ry 个人发行版
 
-**Operit Ry** 是由 [Rainy / CATMIAOZHI](https://github.com/CATMIAOZHI) 维护的非官方个人发行版，开发分支为 [`personal/main`](https://github.com/CATMIAOZHI/Operit/tree/personal/main)。原项目由 [AAswordman](https://github.com/AAswordman/Operit) 创建并维护。准备向上游贡献的修复应从 `upstream/main` 创建分支。
+**Operit Ry** 是由 [Rainy / CATMIAOZHI](https://github.com/CATMIAOZHI) 维护的非官方个人发行版，稳定发行分支为 [`personal/main`](https://github.com/CATMIAOZHI/Operit/tree/personal/main)。本发行版基于 [AAswordman/Operit](https://github.com/AAswordman/Operit) 开发，并保留原项目及其贡献者的著作权与许可证声明。
+
+本发行版致力于在上游项目基础上持续增加实用功能、进行安全修复，并优化操作逻辑与交互细节。代码改动使用 **Codex-Security** 辅助审查，并结合人工复核、自动化检查、构建测试和实际功能验证共同保障质量。
+
+[`personal/dev`](https://github.com/CATMIAOZHI/Operit/tree/personal/dev) 是新功能的集成与测试分支；功能通过可共存 debug APK 验证后，才会晋升到 `personal/main`。开发版以 `Operit Ry Dev` / `com.rainy.operitry.dev` 独立安装，并带有 DEV 角标图标，可与官方 Operit 和 Operit Ry 稳定版共存；同一补丁链内可通过 [`OperitNightlyRelease`](https://github.com/CATMIAOZHI/OperitNightlyRelease) 快速更新，链不匹配时回退到完整开发版 APK。普通用户应从 Releases 下载稳定版，不应将开发分支构建作为正式更新来源。
 
 <div align="center">
   <img src="https://img.shields.io/github/last-commit/CATMIAOZHI/Operit/personal/main" alt="Last Commit">
@@ -13,13 +17,8 @@
   <br>
   <a href="https://github.com/CATMIAOZHI/Operit/stargazers"><img src="https://img.shields.io/github/stars/CATMIAOZHI/Operit" alt="GitHub Stars"></a>
   <a href="https://github.com/CATMIAOZHI/Operit/tree/personal/main/docs"><img src="https://img.shields.io/badge/📖-用户指南-blue.svg" alt="User Guide"></a>
-  <a href="https://www.patreon.com/c/aaswordsman"><img src="https://img.shields.io/badge/🌍-Patreon-f96854.svg" alt="Patreon"></a>
-  <a href="https://afdian.com/a/aaswordsman"><img src="https://img.shields.io/badge/💖-支持开发-ff6b6b.svg" alt="Support Development"></a>
-  <a href="docs/doc-src/dev-core/CONTRIBUTING.md"><img src="https://img.shields.io/badge/contributions-welcome-brightgreen.svg" alt="Contributions Welcome"></a>
   <br>
   <a href="https://github.com/CATMIAOZHI"><img src="https://img.shields.io/badge/Maintainer-Rainy-ff85a2.svg" alt="Maintainer Rainy"></a>
-  <a href="https://qm.qq.com/q/Sa4fKEH7sO"><img src="https://img.shields.io/badge/💬-QQ群-blue.svg" alt="QQ Group"></a>
-  <a href="https://discord.gg/YnV9MWurRF"><img src="https://img.shields.io/badge/🎮-Discord-5865F2.svg" alt="Discord"></a>
   <a href="https://github.com/CATMIAOZHI/Operit/issues"><img src="https://img.shields.io/badge/🐛-Issues-orange.svg" alt="Issues"></a>
 </div>
 
@@ -441,33 +440,22 @@ AI自动分类管理记忆，支持时间查询/导入导出/自动总结，智�
 
 ---
 
-## 👨‍💻 开源共创
+## 👨‍💻 开发与反馈
 
-欢迎加入 Operit 开源生态！我们欢迎各种贡献：第三方脚本、MCP插件、核心功能开发。
+Operit Ry 的问题、建议和个人发行版改动请提交到本仓库的 [Issues](https://github.com/CATMIAOZHI/Operit/issues) 或 Pull Request。提交前请搜索是否已有相同问题，并避免在日志、截图或配置中泄露 API Key、Token、Cookie 等敏感信息。
 
 **开发者须知：**
-- 📚 [开源共创指南](docs/doc-src/dev-core/CONTRIBUTING.md) | [脚本开发指南](docs/SCRIPT_DEV_GUIDE.md)
-- 📦 构建项目需从 [Google Drive](https://drive.google.com/drive/folders/1g-Q_i7cf6Ua4KX9ZM6V282EEZvTVVfF7?usp=sharing) 下载依赖库压缩包（`models.zip`、`subpack.zip`、`jniLibs.zip`、`libs.zip`）
-- 💬 加入社区讨论：[QQ群](https://qm.qq.com/q/Sa4fKEH7sO) | [Discord](https://discord.gg/YnV9MWurRF)
+- 📚 Android 环境与依赖准备请参考 [编译指南](docs/doc-src/dev-core/BUILDING.md)
+- 📦 脚本、Skill 和 ToolPkg 开发请参考 [脚本开发指南](docs/SCRIPT_DEV_GUIDE.md)
+- 🔀 个人版功能先进入 `personal/dev` 验证，通过后再以独立 PR 晋升到 `personal/main`
 
 ### 💖 贡献者
 
-感谢所有为 Operit AI 做出贡献的人！
+感谢所有为 Operit 上游项目和 Operit Ry 个人发行版做出贡献的人！
 
-<a href="https://github.com/AAswordman/Operit/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=AAswordman/Operit" />
+<a href="https://github.com/CATMIAOZHI/Operit/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=CATMIAOZHI/Operit" alt="Operit Ry contributors" />
 </a>
-
-## 💖 支持开发
-
-如果 Operit AI 对您有帮助，欢迎自愿支持项目持续开发与基础运营：
-
-- 海外支持可使用 [Patreon](https://www.patreon.com/c/aaswordsman)
-- 境内支持可使用 [爱发电](https://afdian.com/a/aaswordsman)
-
-- 赞助完全自愿，不与任何功能、额度、更新、答疑或其他权益挂钩
-- 即使不赞助，也不影响正常使用、获取更新或访问开源代码
-- 您也可以直接使用 GitHub 仓库顶部的 `Sponsor` 按钮进入赞助页面
 
 ---
 
@@ -499,5 +487,5 @@ AI自动分类管理记忆，支持时间查询/导入导出/自动总结，智�
   
   <br>
   
-  <sub>Made with ❤️ by the Operit Team</sub>
+  <sub>Operit Ry maintained by Rainy / CATMIAOZHI · Based on Operit</sub>
 </div>
