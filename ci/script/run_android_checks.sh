@@ -3,61 +3,59 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF' >&2
-Usage: run_android_checks.sh --lane <jvm|full> [--instrumentation] [--no-daemon]
+Usage: run_android_checks.sh --lane <jvm|full|build> [options]
 
-Run Android Gradle checks for the given lane.
+Run the shared Android Gradle task set for the given lane.
 
 Options:
-  --lane <jvm|full>    required: select the check lane
+  --lane <lane>         required: select jvm, full, or build
+  --task <task>         add a Gradle task (required for the build lane)
+  --unit-tests          add :app:testDebugUnitTest
+  --lint                add :app:lintDebug
   --instrumentation     also compile Android instrumentation tests
-  --no-daemon           pass --no-daemon to Gradle (default: enabled)
   --continue            pass --continue to Gradle so the build doesn't stop on first failure
-  --stacktrace          pass --stacktrace to Gradle
   --profile             pass --profile to Gradle (generates build reports)
   --console <mode>      pass --console=<mode> to Gradle (e.g. plain)
-  --extra-tasks <...>   additional Gradle tasks to append
 
-Environment:
-  ANDROID_BUILD_TOOLS_VERSION  default: 35.0.0
+The runner always passes --stacktrace and --no-daemon.
 EOF
     exit 2
 }
 
 LANE=""
 INSTRUMENTATION=false
-NO_DAEMON_FLAG="--no-daemon"
+RUN_UNIT_TESTS=false
+RUN_LINT=false
 CONTINUE_FLAG=""
-STACKTRACE_FLAG="--stacktrace"
 PROFILE_FLAG=""
 CONSOLE_FLAG=""
-EXTRA_TASKS=()
+CUSTOM_TASKS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --lane) LANE="$2"; shift 2 ;;
+        --lane)
+            [[ $# -ge 2 ]] || usage
+            LANE="$2"
+            shift 2
+            ;;
+        --task)
+            [[ $# -ge 2 ]] || usage
+            CUSTOM_TASKS+=("$2")
+            shift 2
+            ;;
+        --unit-tests) RUN_UNIT_TESTS=true; shift ;;
+        --lint) RUN_LINT=true; shift ;;
         --instrumentation) INSTRUMENTATION=true; shift ;;
-        --no-daemon) NO_DAEMON_FLAG="--no-daemon"; shift ;;
         --continue) CONTINUE_FLAG="--continue"; shift ;;
-        --stacktrace) STACKTRACE_FLAG="--stacktrace"; shift ;;
         --profile) PROFILE_FLAG="--profile"; shift ;;
-        --console) CONSOLE_FLAG="--console=$2"; shift 2 ;;
-        --extra-tasks)
-            shift
-            while [[ $# -gt 0 && "$1" != --* ]]; do
-                EXTRA_TASKS+=("$1")
-                shift
-            done
+        --console)
+            [[ $# -ge 2 ]] || usage
+            CONSOLE_FLAG="--console=$2"
+            shift 2
             ;;
         *) usage ;;
     esac
 done
-
-if [[ "$LANE" != "jvm" && "$LANE" != "full" ]]; then
-    echo "run_android_checks.sh: invalid lane '$LANE' (expected jvm or full)" >&2
-    usage
-fi
-
-chmod +x ./gradlew
 
 tasks=()
 case "$LANE" in
@@ -67,18 +65,34 @@ case "$LANE" in
     full)
         tasks=(":app:assembleDebug" ":app:testDebugUnitTest" ":app:lintDebug")
         ;;
+    build)
+        if (( ${#CUSTOM_TASKS[@]} == 0 )); then
+            echo "run_android_checks.sh: build lane requires at least one --task" >&2
+            exit 2
+        fi
+        tasks=("${CUSTOM_TASKS[@]}")
+        ;;
+    *)
+        echo "run_android_checks.sh: invalid lane '$LANE' (expected jvm, full, or build)" >&2
+        exit 2
+        ;;
 esac
 
+if [[ "$RUN_UNIT_TESTS" == "true" ]]; then
+    tasks+=(":app:testDebugUnitTest")
+fi
+if [[ "$RUN_LINT" == "true" ]]; then
+    tasks+=(":app:lintDebug")
+fi
 if [[ "$INSTRUMENTATION" == "true" ]]; then
     tasks+=(":app:compileDebugAndroidTestKotlin" ":app:compileDebugAndroidTestJavaWithJavac")
 fi
 
-tasks+=("${EXTRA_TASKS[@]}")
-
-gradle_flags=("$STACKTRACE_FLAG" "$NO_DAEMON_FLAG")
+gradle_flags=("--stacktrace" "--no-daemon")
 [[ -n "$CONTINUE_FLAG" ]] && gradle_flags+=("$CONTINUE_FLAG")
 [[ -n "$PROFILE_FLAG" ]] && gradle_flags+=("$PROFILE_FLAG")
 [[ -n "$CONSOLE_FLAG" ]] && gradle_flags+=("$CONSOLE_FLAG")
 
+chmod +x ./gradlew
 echo "run_android_checks.sh: lane=$LANE tasks=${tasks[*]}"
 ./gradlew "${tasks[@]}" "${gradle_flags[@]}"

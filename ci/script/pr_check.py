@@ -40,8 +40,6 @@ TOOLPKG_PATTERNS = (
 )
 ANDROID_FULL_PATTERNS = (
     ".github/actions/android-checks/**",
-    ".github/workflows/android-build.yml",
-    ".github/workflows/pr-check.yml",
     ".gitmodules",
     "app/build.gradle.kts",
     "app/src/main/cpp/**",

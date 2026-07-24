@@ -109,7 +109,7 @@ class ScopeClassificationTest(unittest.TestCase):
         self.assertFalse(plan.web)
         self.assertFalse(plan.android_full)
 
-    def test_workflow_change_triggers_android_full(self) -> None:
+    def test_workflow_change_uses_fast_yaml_checks(self) -> None:
         plan = classify_paths(
             [
                 ".github/workflows/android-build.yml",
@@ -117,7 +117,8 @@ class ScopeClassificationTest(unittest.TestCase):
             ]
         )
 
-        self.assertTrue(plan.android_full)
+        self.assertFalse(plan.android_full)
+        self.assertFalse(plan.android_jvm)
         self.assertTrue(plan.yaml)
         self.assertTrue(plan.ci)
 

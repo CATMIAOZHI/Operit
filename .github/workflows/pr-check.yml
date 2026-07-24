@@ -222,7 +222,7 @@ jobs:
     name: Android resources
     needs: [plan, fast-checks]
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 15
     if: needs.plan.outputs.android_resources == 'true'
 
     steps:
@@ -255,7 +255,7 @@ jobs:
     name: WebChat
     needs: plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 30
     if: needs.plan.outputs.web == 'true'
 
     steps:
@@ -291,7 +291,7 @@ jobs:
     name: ToolPkg
     needs: plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 30
     if: needs.plan.outputs.toolpkg == 'true'
 
     steps:
@@ -308,7 +308,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            examples/toolpkg_wasm_demo/package-lock.json
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -340,7 +342,7 @@ jobs:
     name: Android JVM checks
     needs: [plan, fast-checks]
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 120
     if: needs.plan.outputs.android_jvm == 'true'
 
     steps:
@@ -358,6 +360,8 @@ jobs:
           lane: jvm
           java-version: ${{ env.JAVA_VERSION }}
           android-build-tools-version: ${{ env.ANDROID_BUILD_TOOLS_VERSION }}
+          gradle-cache-read-only: 'true'
+          dependency-cache-read-only: 'true'
 
       - name: Run Android JVM checks
         env:
@@ -386,7 +390,7 @@ jobs:
     name: Full Android checks
     needs: [plan, fast-checks]
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 180
     if: needs.plan.outputs.android_full == 'true'
 
     steps:
@@ -404,6 +408,8 @@ jobs:
           lane: full
           java-version: ${{ env.JAVA_VERSION }}
           android-build-tools-version: ${{ env.ANDROID_BUILD_TOOLS_VERSION }}
+          gradle-cache-read-only: 'true'
+          dependency-cache-read-only: 'true'
 
       - name: Run full Android checks
         env:
