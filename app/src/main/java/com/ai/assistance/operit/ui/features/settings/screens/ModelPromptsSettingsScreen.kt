@@ -1802,6 +1802,9 @@ fun ModelPromptsSettingsScreen(
     }
 
     if (showExportDialog) {
+        val imageSavedMessage = stringResource(R.string.image_saved)
+        val imageSaveFailedMessage = stringResource(R.string.save_failed)
+
         LaunchedEffect(exportCharacterCardId) {
             if (exportCharacterCardId.isBlank()) return@LaunchedEffect
             isExportGenerating = true
@@ -1931,7 +1934,7 @@ fun ModelPromptsSettingsScreen(
                             val ok = saveBitmapToGallery(context, bmp, fileName)
                             Toast.makeText(
                                 context,
-                                if (ok) context.getString(R.string.image_saved) else context.getString(R.string.save_failed),
+                                if (ok) imageSavedMessage else imageSaveFailedMessage,
                                 Toast.LENGTH_SHORT
                             ).show()
                         }
