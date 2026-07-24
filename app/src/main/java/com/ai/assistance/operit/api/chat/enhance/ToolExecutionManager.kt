@@ -299,7 +299,7 @@ object ToolExecutionManager {
      */
     suspend fun extractToolInvocations(response: String): List<ToolInvocation> {
         val invocations = mutableListOf<ToolInvocation>()
-        val content = response
+        val content = removeThinkingContent(response)
 
         val charStream = content.stream()
         val plugins = listOf(StreamXmlPlugin())
@@ -341,6 +341,18 @@ object ToolExecutionManager {
             "Found ${invocations.size} tool invocations: ${invocations.map { resolveDisplayToolName(it.tool) }}"
         )
         return invocations
+    }
+
+    /**
+     * Removes display-only thinking blocks before scanning for executable tool markup.
+     * Reasoning text can be provider-controlled and may contain literal XML-looking text;
+     * it must not become a tool-call channel.
+     */
+    private fun removeThinkingContent(response: String): String {
+        return response
+            .replace(ChatMarkupRegex.thinkTag, "")
+            .replace(ChatMarkupRegex.thinkSelfClosingTag, "")
+            .replace(Regex("<think(?:ing)?\\b[\\s\\S]*$", RegexOption.IGNORE_CASE), "")
     }
 
     /**
