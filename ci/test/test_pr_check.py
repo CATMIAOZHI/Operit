@@ -94,6 +94,59 @@ class ScopeClassificationTest(unittest.TestCase):
         self.assertTrue(plan.android_jvm)
         self.assertTrue(plan.android_instrumentation)
 
+    def test_real_whitelist_path_triggers_toolpkg(self) -> None:
+        plan = classify_paths(["tools/example_packages/packages_whitelist.txt"])
+
+        self.assertTrue(plan.toolpkg)
+        self.assertFalse(plan.web)
+        self.assertFalse(plan.android_full)
+        self.assertFalse(plan.android_jvm)
+
+    def test_bogus_whitelist_path_does_not_trigger_toolpkg(self) -> None:
+        plan = classify_paths(["tools/packages_whitelist.txt"])
+
+        self.assertFalse(plan.toolpkg)
+        self.assertFalse(plan.web)
+        self.assertFalse(plan.android_full)
+
+    def test_workflow_change_triggers_android_full(self) -> None:
+        plan = classify_paths(
+            [
+                ".github/workflows/android-build.yml",
+                ".github/workflows/pr-check.yml",
+            ]
+        )
+
+        self.assertTrue(plan.android_full)
+        self.assertTrue(plan.yaml)
+        self.assertTrue(plan.ci)
+
+    def test_shared_android_action_triggers_full_lane(self) -> None:
+        plan = classify_paths(
+            [
+                ".github/actions/android-checks/action.yml",
+                "ci/script/run_android_checks.sh",
+            ]
+        )
+
+        self.assertTrue(plan.android_full)
+        self.assertTrue(plan.ci)
+        self.assertTrue(plan.yaml)
+
+    def test_native_only_change_does_not_trigger_javascript_lanes(self) -> None:
+        plan = classify_paths(["cmake/operit_git_source.cmake"])
+
+        self.assertFalse(plan.web)
+        self.assertFalse(plan.toolpkg)
+        self.assertTrue(plan.android_full)
+
+    def test_app_resource_change_triggers_jvm_not_full(self) -> None:
+        plan = classify_paths(["app/src/main/res/layout/activity_main.xml"])
+
+        self.assertFalse(plan.android_full)
+        self.assertTrue(plan.android_jvm)
+        self.assertFalse(plan.android_resources)
+
 
 class CandidateContractTest(unittest.TestCase):
     def test_stale_branch_uses_candidate_first_parent_diff(self) -> None:
