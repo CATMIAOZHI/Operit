@@ -114,9 +114,10 @@ yes | sdkmanager --licenses
 ```
 
 2. 安装平台工具、SDK 平台和构建工具:  
-Operit 项目依赖于 android-34 平台和 34.0.0 构建工具。  
+Operit 当前使用 `compileSdk = 36`，CI 使用 Android SDK 36 和 35.0.0 构建工具；同时保留 Android SDK 34 以匹配现有目标版本和检查环境。
+
 ```bash
-sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+sdkmanager "platform-tools" "platforms;android-34" "platforms;android-36" "build-tools;35.0.0"
 ```
 3. 安装项目指定的 NDK 版本:  
 本项目要求使用 NDK 25.1.8937393。  
