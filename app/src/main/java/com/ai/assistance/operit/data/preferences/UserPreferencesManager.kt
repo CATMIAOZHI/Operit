@@ -37,8 +37,8 @@ fun initUserPreferencesManager(context: Context, defaultProfileName: String = "D
     val manager = UserPreferencesManager.getInstance(context)
 
     // Serialized launch: theme migration must complete before the default memory space is
-    // created so that the fresh-install detection in performThemeMigration() is not polluted
-    // by memory-space writes to the same DataStore.
+    // created so that other DataStore writes don't interfere with the migration's key-state
+    // inspection.
     GlobalScope.launch {
         manager.performThemeMigration()
         UserProfileDocumentRepository.getInstance(context).initialize()
@@ -277,9 +277,14 @@ class UserPreferencesManager private constructor(private val context: Context) {
         const val BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE = "tiled_nine_slice"
         const val BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH = "nine_patch"
 
-        // Rainy 粉色强调色默认值（ARGB int）
-        const val DEFAULT_CUSTOM_PRIMARY_COLOR = 0xFFFED1EE.toInt()
-        const val DEFAULT_CUSTOM_SECONDARY_COLOR = 0xFFF8B6D9.toInt()
+        // Defaults shown by the custom color editor, aligned with OpenCode Rainy light mode.
+        const val DEFAULT_CUSTOM_PRIMARY_COLOR = 0xFFFF6B8E.toInt()
+        const val DEFAULT_CUSTOM_SECONDARY_COLOR = 0xFFFF85A2.toInt()
+        internal const val LEGACY_RAINY_PRIMARY_COLOR = 0xFFFED1EE.toInt()
+        internal const val LEGACY_RAINY_SECONDARY_COLOR = 0xFFF8B6D9.toInt()
+
+        private const val FLOATING_CHAT_PREFERENCES = "floating_chat_prefs"
+        private const val FLOATING_COLOR_SCHEME_KEY = "floating_color_scheme_json"
 
         /**
          * 从存储键名中解析主题前缀。
@@ -321,17 +326,21 @@ class UserPreferencesManager private constructor(private val context: Context) {
         }
 
         /**
-         * 主题迁移新安装判定：除 [migrationDoneKeyName] 自身外没有其他已发布键 →
-         * 全新安装；否则为老用户升级。
+         * v2 迁移检测：v1 错误写入的 Rainy 自定义颜色状态。
          *
-         * [migrationDoneKeyName] 在迁移事务末尾才写入，第一次进入时也不存在，
-         * 因此空集等价于完全空白的 DataStore。
+         * 当 useCustomColors=true 且主色、辅色恰好等于 Rainy 常量时，
+         * 认为该状态为 v1 对全新安装的过时写入，需要纠正为关闭自定义、信任基础色方案。
+         *
+         * 非 Rainy 色的自定义颜色或未开启自定义颜色均不受影响。
          */
-        internal fun isFreshInstallMigration(
-            keyNames: Set<String>,
-            migrationDoneKeyName: String = "theme_migration_v1_done"
+        internal fun isErroneousV1RainyState(
+            useCustomColors: Boolean?,
+            primaryColor: Int?,
+            secondaryColor: Int?,
         ): Boolean {
-            return keyNames.none { it != migrationDoneKeyName }
+            return useCustomColors == true &&
+                primaryColor == LEGACY_RAINY_PRIMARY_COLOR &&
+                secondaryColor == LEGACY_RAINY_SECONDARY_COLOR
         }
 
         private val KEY_BACKGROUND_BLUR_RADIUS = floatPreferencesKey("background_blur_radius")
@@ -1664,7 +1673,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
             preferences.remove(USE_SYSTEM_THEME)
             preferences.remove(CUSTOM_PRIMARY_COLOR)
             preferences.remove(CUSTOM_SECONDARY_COLOR)
-            preferences.remove(USE_CUSTOM_COLORS)
+            preferences[USE_CUSTOM_COLORS] = false
             preferences.remove(USE_BACKGROUND_IMAGE)
             preferences.remove(BACKGROUND_IMAGE_URI)
             preferences.remove(BACKGROUND_IMAGE_OPACITY)
@@ -1672,6 +1681,8 @@ class UserPreferencesManager private constructor(private val context: Context) {
             preferences.remove(VIDEO_BACKGROUND_MUTED)
             preferences.remove(VIDEO_BACKGROUND_LOOP)
             preferences.remove(TOOLBAR_TRANSPARENT)
+            preferences.remove(USE_CUSTOM_APP_BAR_COLOR)
+            preferences.remove(CUSTOM_APP_BAR_COLOR)
             preferences.remove(NAVIGATION_DRAWER_WATER_GLASS)
             preferences.remove(NAVIGATION_DRAWER_BUTTON_LIQUID_GLASS)
             preferences.remove(USE_CUSTOM_NAVIGATION_DRAWER_BACKGROUND_COLOR)
@@ -1771,6 +1782,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
             preferences.remove(CUSTOM_FONT_PATH)
             preferences.remove(FONT_SCALE)
         }
+        clearFloatingColorSchemeCache()
     }
 
     // ========== 角色卡/群组主题绑定功能 ==========
@@ -1965,76 +1977,29 @@ class UserPreferencesManager private constructor(private val context: Context) {
     }
 
     /**
-     * 一次性迁移：将升级前已保存的主题中的缺键补写为旧版默认值，
-     * 避免被新默认值（Rainy 粉色、气泡样式等）静默改写。
+     * v3 主题迁移：纠正旧版本写入的 Rainy 自定义状态，并废弃旧的派生颜色缓存。
      *
-     * 迁移范围：
-     * 1. 全新安装：显式写入 Rainy 出厂主色/辅色和 useCustomColors=true，
-     *    确保新用户首帧即获得 Rainy 配色。
-     * 2. 角色卡/群组主题（前缀键）：对每个已保存主题前缀，补写缺键为旧默认值。
-     * 3. 全局主题（无前缀键）：仅对老用户补写缺键为旧默认值。
-     *
-     * 全新安装 vs 老用户判定：第一次进入时 DataStore 除 theme_migration_v1_done
-     * 自身外不存在任何已发布键 → 全新安装；否则为老用户。不再依赖
-     * asMap().isNotEmpty() 以避免被其他启动写入污染。
-     *
-     * 迁移仅执行一次，通过 theme_migration_v1_done 标记控制。
+     * v2 标记已被错误实现提前消费，因此必须使用新的 v3 标记。只有精确匹配
+     * useCustomColors=true + Rainy 主辅色的状态会被规范化；其他用户颜色保持不变。
      */
     internal suspend fun performThemeMigration() {
-        val migrationDoneKey = booleanPreferencesKey("theme_migration_v1_done")
-        // 在 edit 块外构建键名集合（避免 MutablePreferences receiver 干扰实例方法解析）
+        val v3DoneKey = booleanPreferencesKey("theme_rainy_defaults_v3_done")
         val allThemeKeyNames = buildThemeKeyNameSet()
+        var appliedV3 = false
 
         context.userPreferencesDataStore.edit { preferences ->
-            if (preferences[migrationDoneKey] == true) return@edit
+            if (preferences[v3DoneKey] == true) return@edit
 
-            // ========== 全新安装 vs 老用户判定 ==========
-            // 第一次进入迁移时 DataStore 除 migrationDoneKey 自身外不应有
-            // 任何已发布键（initUserPreferencesManager 已串行化，memory space
-            // 写入在此事务之后）。
-            val knownKeyNames = preferences.asMap().keys.map { it.name }.toSet()
-            val isFreshInstall = isFreshInstallMigration(knownKeyNames)
+            val globalUcc = preferences[USE_CUSTOM_COLORS]
+            val globalPrimary = preferences[CUSTOM_PRIMARY_COLOR]
+            val globalSecondary = preferences[CUSTOM_SECONDARY_COLOR]
 
-            if (isFreshInstall) {
-                // ========== 全新安装：显式写入 Rainy 出厂配色 ==========
-                // 颜色键必须在事务内显式写入以覆盖步骤 3 的“缺键 = null”语义；
-                // 其他出厂默认（CHAT_STYLE=BUBBLE, INPUT_STYLE=CLASSIC 等）走
-                // 缺键回退即可。
-                preferences[USE_CUSTOM_COLORS] = true
-                preferences[CUSTOM_PRIMARY_COLOR] = DEFAULT_CUSTOM_PRIMARY_COLOR
-                preferences[CUSTOM_SECONDARY_COLOR] = DEFAULT_CUSTOM_SECONDARY_COLOR
-            } else {
-                // ========== 老用户：全局主题补键（旧默认值）==========
-                // Boolean 全局键 — 旧默认值
-                if (!preferences.contains(USE_CUSTOM_COLORS))
-                    preferences[USE_CUSTOM_COLORS] = false
-                if (!preferences.contains(CHAT_INPUT_FLOATING))
-                    preferences[CHAT_INPUT_FLOATING] = false
-                if (!preferences.contains(BUBBLE_WIDE_LAYOUT_ENABLED))
-                    preferences[BUBBLE_WIDE_LAYOUT_ENABLED] = false
-                if (!preferences.contains(BUBBLE_USER_ROUNDED_CORNERS_ENABLED))
-                    preferences[BUBBLE_USER_ROUNDED_CORNERS_ENABLED] = true
-                if (!preferences.contains(BUBBLE_AI_ROUNDED_CORNERS_ENABLED))
-                    preferences[BUBBLE_AI_ROUNDED_CORNERS_ENABLED] = true
-                if (!preferences.contains(KEY_SHOW_MODEL_PROVIDER))
-                    preferences[KEY_SHOW_MODEL_PROVIDER] = false
-                if (!preferences.contains(KEY_SHOW_MODEL_NAME))
-                    preferences[KEY_SHOW_MODEL_NAME] = false
-                if (!preferences.contains(KEY_SHOW_MESSAGE_TOKEN_STATS))
-                    preferences[KEY_SHOW_MESSAGE_TOKEN_STATS] = false
-                if (!preferences.contains(KEY_SHOW_MESSAGE_TIMING_STATS))
-                    preferences[KEY_SHOW_MESSAGE_TIMING_STATS] = false
-                if (!preferences.contains(KEY_SHOW_MESSAGE_TIMESTAMP))
-                    preferences[KEY_SHOW_MESSAGE_TIMESTAMP] = false
-
-                // String 全局键 — 旧默认值
-                if (!preferences.contains(CHAT_STYLE))
-                    preferences[CHAT_STYLE] = CHAT_STYLE_CURSOR
-                if (!preferences.contains(INPUT_STYLE))
-                    preferences[INPUT_STYLE] = INPUT_STYLE_AGENT
+            if (isErroneousV1RainyState(globalUcc, globalPrimary, globalSecondary)) {
+                preferences.remove(CUSTOM_PRIMARY_COLOR)
+                preferences.remove(CUSTOM_SECONDARY_COLOR)
+                preferences[USE_CUSTOM_COLORS] = false
             }
 
-            // ========== 角色卡/群组主题迁移（老数据前缀补键）==========
             val allKeys = preferences.asMap().keys
             val prefixes = mutableSetOf<String>()
 
@@ -2045,39 +2010,34 @@ class UserPreferencesManager private constructor(private val context: Context) {
                 }
             }
 
-            // 对每个已有的主题前缀，将缺键补写为旧默认值，使升级后切换主题保持原外观
             for (prefix in prefixes) {
-                // Boolean 键 — 旧默认值
-                if (!preferences.contains(booleanPreferencesKey("${prefix}${USE_CUSTOM_COLORS.name}")))
-                    preferences[booleanPreferencesKey("${prefix}${USE_CUSTOM_COLORS.name}")] = false
-                if (!preferences.contains(booleanPreferencesKey("${prefix}${CHAT_INPUT_FLOATING.name}")))
-                    preferences[booleanPreferencesKey("${prefix}${CHAT_INPUT_FLOATING.name}")] = false
-                if (!preferences.contains(booleanPreferencesKey("${prefix}${BUBBLE_WIDE_LAYOUT_ENABLED.name}")))
-                    preferences[booleanPreferencesKey("${prefix}${BUBBLE_WIDE_LAYOUT_ENABLED.name}")] = false
-                if (!preferences.contains(booleanPreferencesKey("${prefix}${BUBBLE_USER_ROUNDED_CORNERS_ENABLED.name}")))
-                    preferences[booleanPreferencesKey("${prefix}${BUBBLE_USER_ROUNDED_CORNERS_ENABLED.name}")] = true
-                if (!preferences.contains(booleanPreferencesKey("${prefix}${BUBBLE_AI_ROUNDED_CORNERS_ENABLED.name}")))
-                    preferences[booleanPreferencesKey("${prefix}${BUBBLE_AI_ROUNDED_CORNERS_ENABLED.name}")] = true
-                if (!preferences.contains(booleanPreferencesKey("${prefix}${KEY_SHOW_MODEL_PROVIDER.name}")))
-                    preferences[booleanPreferencesKey("${prefix}${KEY_SHOW_MODEL_PROVIDER.name}")] = false
-                if (!preferences.contains(booleanPreferencesKey("${prefix}${KEY_SHOW_MODEL_NAME.name}")))
-                    preferences[booleanPreferencesKey("${prefix}${KEY_SHOW_MODEL_NAME.name}")] = false
-                if (!preferences.contains(booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TOKEN_STATS.name}")))
-                    preferences[booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TOKEN_STATS.name}")] = false
-                if (!preferences.contains(booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TIMING_STATS.name}")))
-                    preferences[booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TIMING_STATS.name}")] = false
-                if (!preferences.contains(booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TIMESTAMP.name}")))
-                    preferences[booleanPreferencesKey("${prefix}${KEY_SHOW_MESSAGE_TIMESTAMP.name}")] = false
+                val prefixUccKey = booleanPreferencesKey("${prefix}${USE_CUSTOM_COLORS.name}")
+                val prefixPrimaryKey = intPreferencesKey("${prefix}${CUSTOM_PRIMARY_COLOR.name}")
+                val prefixSecondaryKey = intPreferencesKey("${prefix}${CUSTOM_SECONDARY_COLOR.name}")
 
-                // String 键 — 旧默认值
-                if (!preferences.contains(stringPreferencesKey("${prefix}${CHAT_STYLE.name}")))
-                    preferences[stringPreferencesKey("${prefix}${CHAT_STYLE.name}")] = CHAT_STYLE_CURSOR
-                if (!preferences.contains(stringPreferencesKey("${prefix}${INPUT_STYLE.name}")))
-                    preferences[stringPreferencesKey("${prefix}${INPUT_STYLE.name}")] = INPUT_STYLE_AGENT
+                val prefixUcc = preferences[prefixUccKey]
+                val prefixPrimary = preferences[prefixPrimaryKey]
+                val prefixSecondary = preferences[prefixSecondaryKey]
+
+                if (isErroneousV1RainyState(prefixUcc, prefixPrimary, prefixSecondary)) {
+                    preferences.remove(prefixPrimaryKey)
+                    preferences.remove(prefixSecondaryKey)
+                    preferences[prefixUccKey] = false
+                }
             }
 
-            preferences[migrationDoneKey] = true
+            preferences[v3DoneKey] = true
+            appliedV3 = true
         }
+
+        if (appliedV3) clearFloatingColorSchemeCache()
+    }
+
+    private fun clearFloatingColorSchemeCache() {
+        context.getSharedPreferences(FLOATING_CHAT_PREFERENCES, Context.MODE_PRIVATE)
+            .edit()
+            .remove(FLOATING_COLOR_SCHEME_KEY)
+            .apply()
     }
 
     /**

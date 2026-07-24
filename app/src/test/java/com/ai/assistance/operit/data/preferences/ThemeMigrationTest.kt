@@ -5,70 +5,23 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 测试 [UserPreferencesManager.isFreshInstallMigration] 的新安装判定逻辑，
- * 并记录迁移行为契约供后续回归验证。
+ * v3 主题迁移行为契约（[UserPreferencesManager.performThemeMigration]）与纯判定函数测试。
  *
- * 迁移行为契约（[UserPreferencesManager.performThemeMigration]）：
+ * 迁移行为契约（v2 正确语义）：
  *
- * 1. 全新安装：DataStore 首次打开，除 theme_migration_v1_done 自身外无任何键。
- *    迁移后应写入 USE_CUSTOM_COLORS=true, CUSTOM_PRIMARY_COLOR=DEFAULT_CUSTOM_PRIMARY_COLOR,
- *    CUSTOM_SECONDARY_COLOR=DEFAULT_CUSTOM_SECONDARY_COLOR, theme_migration_v1_done=true。
+ * 1. 关闭自定义颜色时，默认显示 Rainy 粉色（通过 Material 基础色方案）。
+ *    useCustomColors 默认为 false；Flow/快照颜色缺键返回 null。
  *
- * 2. 老用户（USE_CUSTOM_COLORS=true 但无颜色键）：升级前用户只开了自定义颜色开关
- *    但从未保存颜色。迁移不覆盖 USE_CUSTOM_COLORS（已存在），不补颜色键 → 快照中
- *    customPrimaryColor=null, customSecondaryColor=null → ThemeColorSchemeResolver 的
- *    `customPrimaryColor?.let { }` 守卫跳过自定义配色 → 保持旧版行为。
+ * 2. 旧版错误写入纠正：旧版对全新安装写入了 useCustomColors=true + Rainy 颜色。
+ *    v3 检测到这种精确组合时，删除颜色键并设置 useCustomColors=false。
  *
- * 3. 老用户（仅保存主色，无辅色）：辅色缺键 → 快照 customSecondaryColor=null →
- *    resolver 辅色跟随系统 colorScheme.secondary → 保持旧版行为。
+ * 3. 非 Rainy 色的自定义颜色不受影响，完整保留。
  *
- * 4. 老用户（USE_CUSTOM_COLORS 缺键）：迁移补 false → useCustomColors=false →
- *    不应用自定义配色 → 保持旧版行为。
- *
- * 5. 重复启动：theme_migration_v1_done=true → 直接 return → 幂等。
+ * 4. 幂等：theme_rainy_defaults_v3_done=true 后不再执行。
  */
 class ThemeMigrationTest {
 
-    @Test
-    fun `empty key set is fresh install`() {
-        assertTrue(UserPreferencesManager.isFreshInstallMigration(emptySet()))
-    }
-
-    @Test
-    fun `only migration key is fresh install`() {
-        assertTrue(
-            UserPreferencesManager.isFreshInstallMigration(
-                setOf("theme_migration_v1_done")
-            )
-        )
-    }
-
-    @Test
-    fun `any other key means existing user`() {
-        assertFalse(
-            UserPreferencesManager.isFreshInstallMigration(
-                setOf("active_memory_space_id")
-            )
-        )
-    }
-
-    @Test
-    fun `mix of migration key and other key means existing user`() {
-        assertFalse(
-            UserPreferencesManager.isFreshInstallMigration(
-                setOf("theme_migration_v1_done", "use_custom_colors")
-            )
-        )
-    }
-
-    @Test
-    fun `multiple non migration keys means existing user`() {
-        assertFalse(
-            UserPreferencesManager.isFreshInstallMigration(
-                setOf("chat_style", "use_custom_colors", "custom_primary_color")
-            )
-        )
-    }
+    // ========== 基础常量测试 ==========
 
     @Test
     fun `Rainy default colors are non zero and distinct`() {
@@ -79,19 +32,103 @@ class ThemeMigrationTest {
         assertTrue("primary and secondary must be distinct", primary != secondary)
     }
 
+    // ========== isErroneousV1RainyState 纯判定函数测试 ==========
+
     @Test
-    fun `fresh install detection ignores custom migration key name`() {
-        // Custom key name for testing flexibility
+    fun `true plus Rainy colors is erroneous v1 state`() {
         assertTrue(
-            UserPreferencesManager.isFreshInstallMigration(
-                keyNames = setOf("custom_migration_flag"),
-                migrationDoneKeyName = "custom_migration_flag"
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = true,
+                primaryColor = UserPreferencesManager.LEGACY_RAINY_PRIMARY_COLOR,
+                secondaryColor = UserPreferencesManager.LEGACY_RAINY_SECONDARY_COLOR,
             )
         )
+    }
+
+    @Test
+    fun `false plus Rainy colors is NOT erroneous`() {
         assertFalse(
-            UserPreferencesManager.isFreshInstallMigration(
-                keyNames = setOf("custom_migration_flag", "user_data"),
-                migrationDoneKeyName = "custom_migration_flag"
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = false,
+                primaryColor = UserPreferencesManager.LEGACY_RAINY_PRIMARY_COLOR,
+                secondaryColor = UserPreferencesManager.LEGACY_RAINY_SECONDARY_COLOR,
+            )
+        )
+    }
+
+    @Test
+    fun `true plus null colors is NOT erroneous`() {
+        assertFalse(
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = true,
+                primaryColor = null,
+                secondaryColor = null,
+            )
+        )
+    }
+
+    @Test
+    fun `true plus non Rainy primary is NOT erroneous`() {
+        assertFalse(
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = true,
+                primaryColor = 0xFF0000FF.toInt(),
+                secondaryColor = UserPreferencesManager.LEGACY_RAINY_SECONDARY_COLOR,
+            )
+        )
+    }
+
+    @Test
+    fun `true plus non Rainy secondary is NOT erroneous`() {
+        assertFalse(
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = true,
+                primaryColor = UserPreferencesManager.LEGACY_RAINY_PRIMARY_COLOR,
+                secondaryColor = 0xFF00FF00.toInt(),
+            )
+        )
+    }
+
+    @Test
+    fun `true plus only primary Rainy is NOT erroneous`() {
+        assertFalse(
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = true,
+                primaryColor = UserPreferencesManager.LEGACY_RAINY_PRIMARY_COLOR,
+                secondaryColor = null,
+            )
+        )
+    }
+
+    @Test
+    fun `true plus only secondary Rainy is NOT erroneous`() {
+        assertFalse(
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = true,
+                primaryColor = null,
+                secondaryColor = UserPreferencesManager.LEGACY_RAINY_SECONDARY_COLOR,
+            )
+        )
+    }
+
+    @Test
+    fun `false plus null colors is NOT erroneous`() {
+        assertFalse(
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = false,
+                primaryColor = null,
+                secondaryColor = null,
+            )
+        )
+    }
+
+    @Test
+    fun `null useCustomColors plus Rainy colors is NOT erroneous`() {
+        assertFalse(
+            UserPreferencesManager.isErroneousV1RainyState(
+                useCustomColors = null,
+                primaryColor = UserPreferencesManager.LEGACY_RAINY_PRIMARY_COLOR,
+                secondaryColor = UserPreferencesManager.LEGACY_RAINY_SECONDARY_COLOR,
             )
         )
     }

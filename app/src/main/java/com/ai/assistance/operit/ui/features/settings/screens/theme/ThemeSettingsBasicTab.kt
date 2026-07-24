@@ -177,17 +177,17 @@ private fun ThemeSettingsBasicColorPanel(
 ) {
     val preferencesManager = shared.preferencesManager
     val navigationDrawerAppearance = rememberNavigationDrawerAppearance()
-    val defaultPrimaryColor = Color.Magenta.toArgb()
-    val defaultSecondaryColor = Color.Blue.toArgb()
+    val defaultPrimaryColor = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR
+    val defaultSecondaryColor = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR
     val defaultNavigationDrawerBackgroundColor = MaterialTheme.colorScheme.surface.toArgb()
     val defaultNavigationDrawerAccentColor = navigationDrawerAppearance.titleColor.toArgb()
     val defaultStatusBarColor = MaterialTheme.colorScheme.surface.toArgb()
     val defaultAppBarColor = MaterialTheme.colorScheme.surface.toArgb()
     val defaultHeaderIconColor = Color.Gray.toArgb()
 
-    val useCustomColors by preferencesManager.useCustomColors.collectAsState(initial = true)
-    val primaryColor by preferencesManager.customPrimaryColor.collectAsState(initial = UserPreferencesManager.DEFAULT_CUSTOM_PRIMARY_COLOR)
-    val secondaryColor by preferencesManager.customSecondaryColor.collectAsState(initial = UserPreferencesManager.DEFAULT_CUSTOM_SECONDARY_COLOR)
+    val useCustomColors by preferencesManager.useCustomColors.collectAsState(initial = false)
+    val primaryColor by preferencesManager.customPrimaryColor.collectAsState(initial = null)
+    val secondaryColor by preferencesManager.customSecondaryColor.collectAsState(initial = null)
     val statusBarHidden by preferencesManager.statusBarHidden.collectAsState(initial = false)
     val statusBarTransparent by preferencesManager.statusBarTransparent.collectAsState(initial = false)
     val useCustomStatusBarColor by preferencesManager.useCustomStatusBarColor.collectAsState(initial = false)

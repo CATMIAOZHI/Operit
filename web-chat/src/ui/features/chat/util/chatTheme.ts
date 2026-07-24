@@ -128,19 +128,25 @@ export function buildChatThemeStyle(theme: WebThemeSnapshot | null): ThemeStyle 
   const isLight = theme.theme_mode === 'light';
   const palette = theme.palette;
   const hasBackgroundAsset = Boolean(theme.background.asset_url);
-  const primary = theme.primary_color || palette.primary_color || '#8ca9ff';
-  const secondary = theme.secondary_color || palette.secondary_color || '#67d4c8';
-  const backgroundColor = palette.background_color || (isLight ? '#faf8ff' : '#101520');
-  const surfaceColor = palette.surface_color || (isLight ? '#ffffff' : '#1b202b');
+  const primary =
+    (theme.use_custom_colors ? theme.primary_color : null) ||
+    palette.primary_color ||
+    (isLight ? '#FF6B8E' : '#FFB3C6');
+  const secondary =
+    (theme.use_custom_colors ? theme.secondary_color : null) ||
+    palette.secondary_color ||
+    '#FF85A2';
+  const backgroundColor = palette.background_color || (isLight ? '#FFF0F5' : '#1F1419');
+  const surfaceColor = palette.surface_color || (isLight ? '#FFFFFF' : '#2A1F25');
   const surfaceVariantColor =
-    palette.surface_variant_color || (isLight ? '#ece8f1' : '#45464f');
+    palette.surface_variant_color || (isLight ? '#FAF6F8' : '#3D2A33');
   const surfaceContainerColor =
     palette.surface_container_color || surfaceColor;
   const surfaceContainerHighColor =
     palette.surface_container_high_color || surfaceContainerColor;
-  const outlineColor = palette.outline_color || (isLight ? '#7a7a85' : '#8f909a');
+  const outlineColor = palette.outline_color || (isLight ? '#D9CFD3' : '#4D3A42');
   const outlineVariantColor =
-    palette.outline_variant_color || (isLight ? '#c8c4cf' : '#45464f');
+    palette.outline_variant_color || (isLight ? '#FFD1DC' : '#3D2A33');
   const primaryContainerColor =
     palette.primary_container_color || (toRgba(primary, isLight ? 0.24 : 0.28) ?? primary);
   const onPrimaryContainerColor =

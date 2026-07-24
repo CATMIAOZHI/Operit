@@ -20,8 +20,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,6 +43,7 @@ import com.ai.assistance.operit.ui.features.chat.components.ChatStyle
 import com.ai.assistance.operit.ui.features.chat.components.style.bubble.BubbleStyleChatMessage
 import com.ai.assistance.operit.ui.features.chat.components.style.cursor.CursorStyleChatMessage
 import com.ai.assistance.operit.ui.theme.AppBackgroundLayer
+import com.ai.assistance.operit.ui.theme.rainyBaseColorScheme
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -123,12 +122,7 @@ object MessageImageGenerator {
                     Configuration.UI_MODE_NIGHT_MASK) == 
                     Configuration.UI_MODE_NIGHT_YES
                 
-                // 根据暗色模式选择颜色方案
-                val colorScheme = if (isDarkTheme) {
-                    darkColorScheme()
-                } else {
-                    lightColorScheme()
-                }
+                val colorScheme = rainyBaseColorScheme(isDarkTheme)
                 
                 // 创建 ComposeView，包含所有消息内容
                 val composeView = ComposeView(context).apply {

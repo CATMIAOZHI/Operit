@@ -2,11 +2,8 @@ package com.ai.assistance.operit.ui.theme
 
 import android.content.Context
 import android.content.res.Configuration
-import android.os.Build
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import com.ai.assistance.operit.data.preferences.ThemePreferenceSnapshot
@@ -15,15 +12,86 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companio
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_DARK
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_LIGHT
 
-private val ResolvedDarkColorScheme =
-    darkColorScheme(primary = Purple80, secondary = PurpleGrey80, tertiary = Pink80)
-
-private val ResolvedLightColorScheme =
-    lightColorScheme(
-        primary = Purple40,
-        secondary = PurpleGrey40,
-        tertiary = Pink40
+private val RainyDarkColorScheme =
+    darkColorScheme(
+        primary = RainySakura,
+        onPrimary = RainyDarkBackground,
+        primaryContainer = RainyDarkElement,
+        onPrimaryContainer = RainySakura,
+        inversePrimary = RainyPinkHover,
+        secondary = RainyPink,
+        onSecondary = RainyDarkBackground,
+        secondaryContainer = RainyDarkElement,
+        onSecondaryContainer = RainyDarkText,
+        tertiary = RainyPinkHover,
+        onTertiary = RainyDarkBackground,
+        tertiaryContainer = Color(0xFF512035),
+        onTertiaryContainer = RainySakura,
+        error = RainyRose,
+        onError = RainyDarkBackground,
+        errorContainer = Color(0xFF3A1B28),
+        onErrorContainer = RainySakura,
+        background = RainyDarkBackground,
+        onBackground = RainyDarkText,
+        surface = RainyDarkPanel,
+        onSurface = RainyDarkText,
+        surfaceVariant = RainyDarkElement,
+        onSurfaceVariant = RainyDarkMuted,
+        surfaceTint = RainySakura,
+        inverseSurface = RainyLightPanel,
+        inverseOnSurface = RainyLightText,
+        outline = RainyDarkBorder,
+        outlineVariant = RainyDarkElement,
+        surfaceBright = RainyDarkElement,
+        surfaceDim = RainyDarkBackground,
+        surfaceContainerLowest = RainyDarkBackground,
+        surfaceContainerLow = RainyDarkPanel,
+        surfaceContainer = RainyDarkPanel,
+        surfaceContainerHigh = RainyDarkElement,
+        surfaceContainerHighest = RainyDarkBorder,
     )
+
+private val RainyLightColorScheme =
+    lightColorScheme(
+        primary = RainyPinkHover,
+        onPrimary = RainyLightBackground,
+        primaryContainer = RainyLightHover,
+        onPrimaryContainer = RainyLightText,
+        inversePrimary = RainySakura,
+        secondary = RainyPink,
+        onSecondary = RainyLightText,
+        secondaryContainer = RainyLightHover,
+        onSecondaryContainer = RainyLightText,
+        tertiary = RainyRose,
+        onTertiary = RainyLightBackground,
+        tertiaryContainer = Color(0xFFFDE8EF),
+        onTertiaryContainer = RainyLightText,
+        error = RainyRose,
+        onError = RainyLightBackground,
+        errorContainer = Color(0xFFFDE8EF),
+        onErrorContainer = RainyLightText,
+        background = RainyLightBackground,
+        onBackground = RainyLightText,
+        surface = RainyLightPanel,
+        onSurface = RainyLightText,
+        surfaceVariant = RainyLightElement,
+        onSurfaceVariant = RainyLightMuted,
+        surfaceTint = RainyPinkHover,
+        inverseSurface = RainyDarkPanel,
+        inverseOnSurface = RainyDarkText,
+        outline = RainyLightBorder,
+        outlineVariant = RainyLightHover,
+        surfaceBright = RainyLightPanel,
+        surfaceDim = RainyLightBackground,
+        surfaceContainerLowest = RainyLightPanel,
+        surfaceContainerLow = RainyLightPanel,
+        surfaceContainer = RainyLightElement,
+        surfaceContainerHigh = RainyLightBackground,
+        surfaceContainerHighest = RainyLightHover,
+    )
+
+internal fun rainyBaseColorScheme(darkTheme: Boolean): ColorScheme =
+    if (darkTheme) RainyDarkColorScheme else RainyLightColorScheme
 
 fun resolveThemeColorScheme(
     context: Context,
@@ -39,18 +107,14 @@ fun resolveThemeColorScheme(
             snapshot.themeMode == UserPreferencesManager.THEME_MODE_DARK
         }
 
-    var colorScheme =
-        when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
-                if (darkTheme) {
-                    dynamicDarkColorScheme(context)
-                } else {
-                    dynamicLightColorScheme(context)
-                }
+    return resolveThemeColorScheme(snapshot, darkTheme)
+}
 
-            darkTheme -> ResolvedDarkColorScheme
-            else -> ResolvedLightColorScheme
-        }
+internal fun resolveThemeColorScheme(
+    snapshot: ThemePreferenceSnapshot,
+    darkTheme: Boolean
+): ColorScheme {
+    var colorScheme = rainyBaseColorScheme(darkTheme)
 
     if (snapshot.useCustomColors) {
         snapshot.customPrimaryColor?.let { primaryArgb ->
@@ -91,7 +155,7 @@ private fun generateResolvedLightColorScheme(
     val secondaryContainer = lightenResolvedColor(secondaryColor, 0.7f)
     val onSecondaryContainer = getResolvedContrastingTextColor(secondaryContainer)
 
-    return ResolvedLightColorScheme.copy(
+    return RainyLightColorScheme.copy(
         primary = primaryColor,
         onPrimary = onPrimary,
         primaryContainer = primaryContainer,
@@ -133,7 +197,7 @@ private fun generateResolvedDarkColorScheme(
     val onSecondaryContainer =
         getResolvedContrastingTextColor(secondaryContainer, forceLight = true)
 
-    return ResolvedDarkColorScheme.copy(
+    return RainyDarkColorScheme.copy(
         primary = adjustedPrimaryColor,
         onPrimary = onPrimary,
         primaryContainer = primaryContainer,
