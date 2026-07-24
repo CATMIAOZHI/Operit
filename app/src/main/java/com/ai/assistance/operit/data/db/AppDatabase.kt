@@ -4,21 +4,32 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.ai.assistance.operit.data.converter.ChatFolderScopeConverter
 import com.ai.assistance.operit.data.dao.ChatDao
+import com.ai.assistance.operit.data.dao.ChatFolderDao
+import com.ai.assistance.operit.data.dao.ChatPlacementDao
 import com.ai.assistance.operit.data.dao.MessageDao
 import com.ai.assistance.operit.data.dao.MessageVariantDao
 import com.ai.assistance.operit.data.model.ChatEntity
+import com.ai.assistance.operit.data.model.ChatFolderEntity
+import com.ai.assistance.operit.data.model.ChatPlacementEntity
 import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.MessageVariantEntity
+import java.util.UUID
 
 /** 应用数据库，包含聊天表和消息表 */
 @Database(
-    entities = [ChatEntity::class, MessageEntity::class, MessageVariantEntity::class],
-    version = 20,
+    entities = [
+        ChatEntity::class, MessageEntity::class, MessageVariantEntity::class,
+        ChatFolderEntity::class, ChatPlacementEntity::class,
+    ],
+    version = 21,
     exportSchema = false
 )
+@TypeConverters(ChatFolderScopeConverter::class)
 abstract class AppDatabase : RoomDatabase() {
 
     /** 获取聊天DAO */
@@ -28,6 +39,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
 
     abstract fun messageVariantDao(): MessageVariantDao
+
+    abstract fun chatFolderDao(): ChatFolderDao
+
+    abstract fun chatPlacementDao(): ChatPlacementDao
 
     companion object {
         @Volatile
@@ -218,6 +233,115 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        private val MIGRATION_20_21 =
+            object : Migration(20, 21) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    // 1. 创建 chat_folders 表（不含 DEFAULT，与 Room 自动 schema 对齐）
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `chat_folders` (
+                            `id` TEXT NOT NULL,
+                            `scope` TEXT NOT NULL,
+                            `name` TEXT NOT NULL,
+                            `parentFolderId` TEXT,
+                            `displayOrder` INTEGER NOT NULL,
+                            `pinned` INTEGER NOT NULL,
+                            PRIMARY KEY(`id`),
+                            FOREIGN KEY(`parentFolderId`) REFERENCES `chat_folders`(`id`) ON DELETE SET NULL
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_folders_scope` ON `chat_folders` (`scope`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_folders_parentFolderId` ON `chat_folders` (`parentFolderId`)")
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_chat_folders_scope_parentFolderId_displayOrder` ON `chat_folders` (`scope`, `parentFolderId`, `displayOrder`)"
+                    )
+
+                    // 2. 创建 chat_placements 表（不含 DEFAULT，与 Room 自动 schema 对齐）
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `chat_placements` (
+                            `chatId` TEXT NOT NULL,
+                            `scope` TEXT NOT NULL,
+                            `folderId` TEXT,
+                            `displayOrder` INTEGER NOT NULL,
+                            PRIMARY KEY(`chatId`, `scope`),
+                            FOREIGN KEY(`chatId`) REFERENCES `chats`(`id`) ON DELETE CASCADE,
+                            FOREIGN KEY(`folderId`) REFERENCES `chat_folders`(`id`) ON DELETE SET NULL
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_placements_chatId` ON `chat_placements` (`chatId`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_placements_folderId` ON `chat_placements` (`folderId`)")
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_chat_placements_scope_folderId_displayOrder` ON `chat_placements` (`scope`, `folderId`, `displayOrder`)"
+                    )
+
+                    // 3. 向 chats 增加 lastMessageAt 列
+                    db.execSQL("ALTER TABLE chats ADD COLUMN `lastMessageAt` INTEGER")
+
+                    // 4. 为每个不同的非空/非 blank 旧 group 创建一个 ALL 根文件夹
+                    //    使用 UUIDv5 确定性 ID（输入 "ALL:" + TRIM(group)），便于跨设备迁移
+                    val distinctGroups = db.query(
+                        "SELECT TRIM(\"group\") AS g FROM chats WHERE \"group\" IS NOT NULL AND TRIM(\"group\") != '' GROUP BY g ORDER BY MIN(displayOrder), g"
+                    ).use { cursor ->
+                        val groups = mutableListOf<String>()
+                        while (cursor.moveToNext()) {
+                            groups.add(cursor.getString(0))
+                        }
+                        groups
+                    }
+                    val folderIds = mutableMapOf<String, String>()
+                    for (group in distinctGroups) {
+                        val folderId = UUID.nameUUIDFromBytes(("ALL:$group").toByteArray()).toString()
+                        folderIds[group] = folderId
+                        db.execSQL(
+                            "INSERT INTO chat_folders (id, scope, name, parentFolderId, displayOrder, pinned) VALUES (?, 'ALL', ?, NULL, 0, 0)",
+                            arrayOf(folderId, group)
+                        )
+                    }
+                    // 4b. 用每个文件夹成员的 MIN(displayOrder) 更新文件夹顺序
+                    for ((group, folderId) in folderIds) {
+                        db.execSQL(
+                            "UPDATE chat_folders SET displayOrder = COALESCE((SELECT MIN(c.displayOrder) FROM chats c WHERE c.\"group\" = ?), 0) WHERE id = ?",
+                            arrayOf(group, folderId)
+                        )
+                    }
+
+                    // 5. 为每个对话创建 ALL placement，使用稠密 displayOrder（按 folder 分区）
+                    val allChats = db.query(
+                        "SELECT id, TRIM(\"group\") AS g FROM chats ORDER BY displayOrder ASC, createdAt ASC, id ASC"
+                    ).use { cursor ->
+                        val chats = mutableListOf<Pair<String, String?>>()
+                        while (cursor.moveToNext()) {
+                            chats.add(cursor.getString(0) to cursor.getString(1)?.trim()?.takeIf { it.isNotEmpty() })
+                        }
+                        chats
+                    }
+                    // 按 folder 分区重新编号
+                    val folderOrderCounters = mutableMapOf<String?, Long>()
+                    for ((chatId, groupName) in allChats) {
+                        val fid = if (groupName != null) folderIds[groupName] else null
+                        val displayOrder = (folderOrderCounters[fid] ?: 0L) + 1
+                        folderOrderCounters[fid] = displayOrder
+                        db.execSQL(
+                            "INSERT INTO chat_placements (chatId, scope, folderId, displayOrder) VALUES (?, 'ALL', ?, ?)",
+                            arrayOf(chatId, fid, displayOrder)
+                        )
+                    }
+
+                    // 6. 使用相关子查询回填 lastMessageAt
+                    db.execSQL(
+                        """
+                        UPDATE chats SET lastMessageAt = (
+                            SELECT MAX(messages.timestamp) FROM messages
+                            WHERE messages.chatId = chats.id
+                        )
+                        """.trimIndent()
+                    )
+                }
+            }
+
         // 定义从版本2到3的迁移
         private val MIGRATION_2_3 =
             object : Migration(2, 3) {
@@ -334,7 +458,8 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_16_17,
                                 MIGRATION_17_18,
                                 MIGRATION_18_19,
-                                MIGRATION_19_20
+                                MIGRATION_19_20,
+                                MIGRATION_20_21
                             ) // 添加新的迁移
                             .build()
                     INSTANCE = instance

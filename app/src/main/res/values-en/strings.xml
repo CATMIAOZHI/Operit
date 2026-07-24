@@ -3457,6 +3457,9 @@
     <string name="drag_item">Drag item %1$s</string>
     <string name="new_title">New title</string>
     <string name="new_group">New Group</string>
+    <string name="all_messages">All Messages</string>
+    <string name="recent_messages">Recent Messages</string>
+    <string name="favorites">Favorites</string>
     <string name="group_name">Group name</string>
     <string name="create_new_group">Create new group</string>
     <string name="target_group_optional">Target Group (Optional)</string>

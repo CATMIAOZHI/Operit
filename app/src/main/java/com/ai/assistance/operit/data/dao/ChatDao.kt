@@ -32,6 +32,10 @@ interface ChatDao {
     /** 插入或更新聊天 */
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertChat(chat: ChatEntity)
 
+    /** 更新已存在的聊天实体（不使用 REPLACE，避免级联删除外键行） */
+    @Update
+    suspend fun updateChat(chat: ChatEntity)
+
     /** 删除聊天 */
     @Query("DELETE FROM chats WHERE id = :chatId") suspend fun deleteChat(chatId: String)
 
@@ -284,4 +288,24 @@ interface ChatDao {
         """
     )
     fun getCharacterGroupChatStats(): Flow<List<CharacterGroupChatStats>>
+
+    // ---- IDEA 3: lastMessageAt 维护 ----
+
+    /** 获取所有聊天按最近消息时间降序（最近消息页专用） */
+    @Query("SELECT * FROM chats ORDER BY COALESCE(lastMessageAt, createdAt) DESC, createdAt DESC, id ASC")
+    fun observeRecentChats(): Flow<List<ChatEntity>>
+
+    /** 更新聊天的 lastMessageAt 缓存 */
+    @Query("UPDATE chats SET lastMessageAt = :lastMessageAt WHERE id = :chatId")
+    suspend fun updateLastMessageAt(chatId: String, lastMessageAt: Long?)
+
+    /** 从消息表重新计算指定聊天的 lastMessageAt */
+    @Query(
+        """
+        UPDATE chats SET lastMessageAt = (
+            SELECT MAX(timestamp) FROM messages WHERE chatId = :chatId
+        ) WHERE id = :chatId
+        """
+    )
+    suspend fun recalculateLastMessageAt(chatId: String)
 }

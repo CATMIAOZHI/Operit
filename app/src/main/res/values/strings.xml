@@ -3368,6 +3368,9 @@
     <string name="drag_item">拖动项目 %1$s</string>
     <string name="new_title">新标题</string>
     <string name="new_group">新建分组</string>
+    <string name="all_messages">所有消息</string>
+    <string name="recent_messages">最近消息</string>
+    <string name="favorites">收藏</string>
     <string name="group_name">分组名称</string>
     <string name="create_new_group">新建分组</string>
     <string name="target_group_optional">目标分组（可选）</string>
