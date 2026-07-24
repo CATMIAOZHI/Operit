@@ -3,15 +3,20 @@ package com.ai.assistance.operit.ui.permissions
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.graphics.Point
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.Gravity
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowManager
+import android.view.WindowMetrics
 import android.widget.Toast
 import com.ai.assistance.operit.util.AppLogger
-import android.view.Gravity
-import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -20,6 +25,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,11 +38,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -45,13 +53,15 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,12 +69,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -79,6 +92,8 @@ import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.services.ServiceLifecycleOwner
 import com.ai.assistance.operit.ui.floating.FloatingWindowTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
+import kotlin.math.roundToInt
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,11 +101,15 @@ import kotlinx.coroutines.delay
 private fun PermissionRequestContent(
     toolName: String,
     operationDescription: String,
+    conversationLabel: String?,
     onAllow: () -> Unit,
     onDeny: () -> Unit,
     onAlwaysAllow: () -> Unit,
+    onMinimize: () -> Unit,
+    pendingRequestCount: Int,
     colorScheme: ColorScheme? = null,
-    tool: AITool? = null
+    tool: AITool? = null,
+    scrollState: androidx.compose.foundation.ScrollState
 ) {
     var visible by remember { mutableStateOf(false) }
 
@@ -98,8 +117,6 @@ private fun PermissionRequestContent(
         delay(100)
         visible = true
     }
-
-    val contentScrollState = rememberScrollState()
 
     FloatingWindowTheme(colorScheme = colorScheme) {
         Box(
@@ -127,47 +144,79 @@ private fun PermissionRequestContent(
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                                .verticalScroll(contentScrollState),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                        // Header with shield centered and minimize button in top-right
+                        Box(
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Shield,
                                 contentDescription = "Permission Icon",
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .align(Alignment.Center)
                             )
+                            IconButton(
+                                onClick = onMinimize,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Remove,
+                                    contentDescription = stringResource(R.string.permission_request_minimize),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
 
-                            Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                            Text(
-                                text = stringResource(R.string.permission_request),
-                                style = MaterialTheme.typography.titleLarge.copy(
-                                    fontSize = 20.sp
-                                ),
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                        Text(
+                            text = stringResource(R.string.permission_request),
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontSize = 20.sp
+                            ),
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
 
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = stringResource(R.string.ai_assistant_requests_operation),
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 15.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+
+                        if (pendingRequestCount > 1) {
                             Spacer(modifier = Modifier.height(4.dp))
-
                             Text(
-                                text = stringResource(R.string.ai_assistant_requests_operation),
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontSize = 15.sp
+                                text = stringResource(
+                                    R.string.permission_request_queue_count,
+                                    pendingRequestCount
                                 ),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
                             )
+                        }
 
-                            Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
 
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .verticalScroll(scrollState),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
                             PermissionDetails(
                                 operationDescription = operationDescription,
                                 toolName = toolName,
+                                conversationLabel = conversationLabel,
                                 toolParameters = tool?.parameters
                             )
                         }
@@ -247,6 +296,7 @@ private fun PermissionRequestContent(
 private fun PermissionDetails(
     operationDescription: String,
     toolName: String,
+    conversationLabel: String?,
     toolParameters: List<ToolParameter>? = null
 ) {
     Column(
@@ -256,34 +306,40 @@ private fun PermissionDetails(
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        DetailItem(label = stringResource(R.string.requested_operation), value = operationDescription)
-        DetailItem(label = stringResource(R.string.used_tool), value = toolName)
-        
-        if (!toolParameters.isNullOrEmpty()) {
-            Text(
-                text = stringResource(R.string.parameter_details),
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontSize = 17.sp
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Medium
-            )
+        ) {
+            if (!conversationLabel.isNullOrBlank()) {
+                DetailItem(
+                    label = stringResource(R.string.permission_request_conversation_source),
+                    value = conversationLabel
+                )
+            }
+            DetailItem(label = stringResource(R.string.requested_operation), value = operationDescription)
+            DetailItem(label = stringResource(R.string.used_tool), value = toolName)
             
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                    .padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                toolParameters.forEach { param ->
-                    ParameterItem(param = param)
+            if (!toolParameters.isNullOrEmpty()) {
+                Text(
+                    text = stringResource(R.string.parameter_details),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = 17.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Medium
+                )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    toolParameters.forEach { param ->
+                        ParameterItem(param = param)
+                    }
                 }
             }
         }
-    }
 }
 
 @Composable
@@ -329,12 +385,119 @@ private fun ParameterItem(param: ToolParameter) {
     }
 }
 
+@Composable
+private fun PermissionRequestMinimizedIndicator(
+    accessibilityLabel: String,
+    pendingRequestCount: Int,
+    onRestore: () -> Unit,
+    onDragBy: (dx: Int, dy: Int) -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+
+    val dragModifier = Modifier.pointerInput(Unit) {
+        detectDragGestures { _, dragAmount ->
+            onDragBy(dragAmount.x.roundToInt(), dragAmount.y.roundToInt())
+        }
+    }
+
+    val primaryColor = MaterialTheme.colorScheme.primary
+
+    Surface(
+        shape = CircleShape,
+        color = Color.Transparent,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(CircleShape)
+            .then(dragModifier)
+            .semantics {
+                this.contentDescription = accessibilityLabel
+            }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null
+            ) {
+                onRestore()
+            }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .border(
+                    width = 1.dp,
+                    color = Color.White.copy(alpha = 0.35f),
+                    shape = CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            // Light background layer for visibility on both light/dark backgrounds
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        color = primaryColor.copy(alpha = 0.12f),
+                        shape = CircleShape
+                    )
+            )
+            Icon(
+                imageVector = Icons.Default.Shield,
+                contentDescription = null, // Decorative; parent Surface has the label.
+                tint = primaryColor.copy(alpha = 0.76f),
+                modifier = Modifier.size(28.dp)
+            )
+            if (pendingRequestCount > 1) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(18.dp)
+                        .background(MaterialTheme.colorScheme.error, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (pendingRequestCount > 9) "9+" else pendingRequestCount.toString(),
+                        color = MaterialTheme.colorScheme.onError,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
 class PermissionRequestOverlay(private val context: Context) {
     private val TAG = "PermissionRequestOverlay"
     private var windowManager: WindowManager? = null
     private var overlayView: ComposeView? = null
     private var lifecycleOwner: ServiceLifecycleOwner? = null
     private var colorScheme: ColorScheme? = null
+    // Currently active request data — held here, not in Composable remember
+    private var currentTool: AITool? = null
+    private var currentOpDesc: String? = null
+    private var currentOnResult: ((PermissionRequestResult) -> Unit)? = null
+    private var currentOnMinimized: (() -> Unit)? = null
+    private var currentLayoutParams: WindowManager.LayoutParams? = null
+
+    // Minimized state — use MutableState for Compose reactivity
+    private var isMinimizedState = mutableStateOf(false)
+    // Drag position cache for same-request re-minimize
+    private var cachedMinimizedX = 0
+    private var cachedMinimizedY = 0
+    // Shield size in pixels (48dp)
+    private val shieldSizePx by lazy {
+        (48 * context.resources.displayMetrics.density + 0.5f).toInt()
+    }
+    // Default inset from edges
+    private val defaultInsetPx by lazy {
+        (16 * context.resources.displayMetrics.density + 0.5f).toInt()
+    }
+
+    // Request-specific data as MutableState for Compose UI binding
+    private var toolNameState = mutableStateOf("")
+    private var opDescState = mutableStateOf("")
+    private var toolState = mutableStateOf<AITool?>(null)
+    private var conversationLabelState = mutableStateOf<String?>(null)
 
     /**
      * 设置颜色方案
@@ -356,7 +519,6 @@ class PermissionRequestOverlay(private val context: Context) {
     fun requestOverlayPermission() {
         if (!hasOverlayPermission()) {
             try {
-                // 不使用对话框，直接跳转到设置页面
                 val intent = Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:${context.packageName}")
@@ -364,7 +526,6 @@ class PermissionRequestOverlay(private val context: Context) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
                 
-                // 可选：使用Toast提示用户
                 Handler(Looper.getMainLooper()).post {
                     Toast.makeText(
                         context,
@@ -381,15 +542,37 @@ class PermissionRequestOverlay(private val context: Context) {
     fun show(
         tool: AITool,
         operationDescription: String,
-        onResult: (PermissionRequestResult) -> Unit
+        conversationLabel: String?,
+        pendingRequestCount: StateFlow<Int>,
+        onResult: (PermissionRequestResult) -> Unit,
+        onMinimized: (() -> Unit)? = null
     ) {
-        if (overlayView != null) return
+        if (overlayView != null) {
+            AppLogger.e(TAG, "Cannot show permission request while an overlay is still attached")
+            onResult(PermissionRequestResult.DENY)
+            return
+        }
 
         if (!hasOverlayPermission()) {
             AppLogger.e(TAG, "Cannot show overlay without permission")
             onResult(PermissionRequestResult.DENY)
             return
         }
+
+        // Reset minimized state for new request
+        isMinimizedState.value = false
+        cachedMinimizedX = 0
+        cachedMinimizedY = 0
+
+        currentTool = tool
+        currentOpDesc = operationDescription
+        currentOnResult = onResult
+        currentOnMinimized = onMinimized
+
+        toolNameState.value = tool.name
+        opDescState.value = operationDescription
+        toolState.value = tool
+        conversationLabelState.value = conversationLabel
 
         windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
@@ -407,28 +590,65 @@ class PermissionRequestOverlay(private val context: Context) {
             format = android.graphics.PixelFormat.TRANSLUCENT
             gravity = Gravity.TOP or Gravity.START
         }
+        currentLayoutParams = params
+
+        // Capture Compose state holders for setContent closure
+        val minimizedState = isMinimizedState
+        val toolName = toolNameState
+        val opDesc = opDescState
+        val aTool = toolState
+        val sourceConversation = conversationLabelState
+        val scheme = colorScheme
+        val onRes = currentOnResult
+        val onMin = currentOnMinimized
 
         overlayView = ComposeView(context).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setContent {
-                PermissionRequestContent(
-                    toolName = tool.name,
-                    operationDescription = operationDescription,
-                    colorScheme = colorScheme,
-                    tool = tool,
-                    onAllow = {
-                        onResult(PermissionRequestResult.ALLOW)
-                        dismiss()
-                    },
-                    onDeny = {
-                        onResult(PermissionRequestResult.DENY)
-                        dismiss()
-                    },
-                    onAlwaysAllow = {
-                        onResult(PermissionRequestResult.ALWAYS_ALLOW)
-                        dismiss()
-                    }
-                )
+                // Scroll state lifted to root so it survives minimize/restore
+                val contentScrollState = rememberScrollState()
+                val pendingCount by pendingRequestCount.collectAsState()
+
+                if (minimizedState.value) {
+                    // Minimized shield
+                    PermissionRequestMinimizedIndicator(
+                        accessibilityLabel = if (pendingCount > 1) {
+                            context.getString(
+                                R.string.permission_request_restore_with_count,
+                                pendingCount
+                            )
+                        } else {
+                            context.getString(R.string.permission_request_restore)
+                        },
+                        pendingRequestCount = pendingCount,
+                        onRestore = { restore() },
+                        onDragBy = { dx, dy -> handleDrag(dx, dy) }
+                    )
+                } else {
+                    // Expanded request content
+                    PermissionRequestContent(
+                        toolName = toolName.value,
+                        operationDescription = opDesc.value,
+                        conversationLabel = sourceConversation.value,
+                        colorScheme = scheme,
+                        tool = aTool.value,
+                        scrollState = contentScrollState,
+                        onAllow = {
+                            onRes?.invoke(PermissionRequestResult.ALLOW)
+                        },
+                        onDeny = {
+                            onRes?.invoke(PermissionRequestResult.DENY)
+                        },
+                        onAlwaysAllow = {
+                            onRes?.invoke(PermissionRequestResult.ALWAYS_ALLOW)
+                        },
+                        pendingRequestCount = pendingCount,
+                        onMinimize = {
+                            onMin?.invoke()
+                            minimize()
+                        }
+                    )
+                }
             }
         }
 
@@ -449,27 +669,164 @@ class PermissionRequestOverlay(private val context: Context) {
             AppLogger.d(TAG, "Overlay view added successfully")
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error adding overlay view", e)
-            onResult(PermissionRequestResult.DENY)
             dismiss()
+            onResult(PermissionRequestResult.DENY)
+        }
+    }
+
+    private fun minimize() {
+        val view = overlayView ?: return
+        val wm = windowManager ?: return
+        val params = currentLayoutParams ?: return
+
+        // Use cached position for same-request re-minimize, or compute default
+        if (cachedMinimizedX == 0 && cachedMinimizedY == 0) {
+            val displayBounds = getDisplayBounds()
+            cachedMinimizedX = displayBounds.right - shieldSizePx - defaultInsetPx
+            cachedMinimizedY = displayBounds.top + defaultInsetPx
+        }
+
+        params.width = shieldSizePx
+        params.height = shieldSizePx
+        params.gravity = Gravity.TOP or Gravity.START
+        params.x = cachedMinimizedX
+        params.y = cachedMinimizedY
+        // Remove touch-modal flag so touches pass through outside the shield
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        try {
+            wm.updateViewLayout(view, params)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Error updating layout for minimize", e)
+        }
+
+        isMinimizedState.value = true
+
+        AppLogger.d(TAG, "Overlay minimized to (${cachedMinimizedX}, ${cachedMinimizedY})")
+    }
+
+    private fun restore() {
+        val view = overlayView ?: return
+        val wm = windowManager ?: return
+        val params = currentLayoutParams ?: return
+
+        // Restore to fullscreen size first
+        params.width = WindowManager.LayoutParams.MATCH_PARENT
+        params.height = WindowManager.LayoutParams.MATCH_PARENT
+        params.x = 0
+        params.y = 0
+        params.gravity = Gravity.TOP or Gravity.START
+        // Restore original flags (remove touch-pass-through)
+        params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL.inv()
+        try {
+            wm.updateViewLayout(view, params)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Error updating layout for restore", e)
+        }
+
+        isMinimizedState.value = false
+
+        AppLogger.d(TAG, "Overlay restored to fullscreen")
+    }
+
+    private fun handleDrag(dx: Int, dy: Int) {
+        val view = overlayView ?: return
+        val wm = windowManager ?: return
+        val params = currentLayoutParams ?: return
+        if (!isMinimizedState.value) return
+
+        val bounds = getDisplayBounds()
+        val minX = bounds.left
+        val maxX = bounds.right - shieldSizePx
+        val minY = bounds.top
+        val maxY = bounds.bottom - shieldSizePx
+
+        val newX = (params.x + dx).coerceIn(minX, maxX)
+        val newY = (params.y + dy).coerceIn(minY, maxY)
+
+        params.x = newX
+        params.y = newY
+        try {
+            wm.updateViewLayout(view, params)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Error updating layout for drag", e)
+        }
+
+        // Remember position for same-request re-minimize
+        cachedMinimizedX = newX
+        cachedMinimizedY = newY
+    }
+
+    private fun getDisplayBounds(): Rect {
+        val wm = windowManager ?: context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+            ?: return Rect(
+                0, 0,
+                context.resources.displayMetrics.widthPixels,
+                context.resources.displayMetrics.heightPixels
+            )
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val metrics: WindowMetrics = wm.currentWindowMetrics
+            val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
+                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
+            )
+            val bounds = metrics.bounds
+            return Rect(
+                bounds.left + insets.left,
+                bounds.top + insets.top,
+                bounds.right - insets.right,
+                bounds.bottom - insets.bottom
+            )
+        } else {
+            val display = wm.defaultDisplay
+                ?: return Rect(
+                    0, 0,
+                    context.resources.displayMetrics.widthPixels,
+                    context.resources.displayMetrics.heightPixels
+                )
+            val size = Point()
+            @Suppress("DEPRECATION")
+            display.getRealSize(size)
+            return Rect(0, 0, size.x, size.y)
         }
     }
 
     fun dismiss() {
-        try {
-            overlayView?.let { view ->
-                // 清理生命周期资源
-                lifecycleOwner?.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
-                lifecycleOwner?.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
-                lifecycleOwner?.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        val viewToRemove: View? = overlayView
+        val wm = windowManager
+        val owner = lifecycleOwner
 
-                windowManager?.removeView(view)
-                overlayView = null
-                lifecycleOwner = null
-                AppLogger.d(TAG, "Overlay view dismissed")
+        // Clear references first so no stale state lingers
+        overlayView = null
+        lifecycleOwner = null
+        currentLayoutParams = null
+        currentTool = null
+        currentOpDesc = null
+        currentOnResult = null
+        currentOnMinimized = null
+        conversationLabelState.value = null
+        isMinimizedState.value = false
+        cachedMinimizedX = 0
+        cachedMinimizedY = 0
+
+        try {
+            owner?.let {
+                it.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+                it.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+                it.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
             }
+
+            viewToRemove?.let { view ->
+                try {
+                    wm?.removeView(view)
+                } catch (e: Exception) {
+                    AppLogger.e(TAG, "Error removing overlay view", e)
+                }
+            }
+            AppLogger.d(TAG, "Overlay view dismissed")
         } catch (e: Exception) {
-            AppLogger.e(TAG, "Error dismissing overlay view", e)
+            AppLogger.e(TAG, "Error during overlay dismiss lifecycle", e)
+        } finally {
+            windowManager = null
         }
-        windowManager = null
     }
 }

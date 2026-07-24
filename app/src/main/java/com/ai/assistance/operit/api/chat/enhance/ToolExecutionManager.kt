@@ -46,7 +46,8 @@ object ToolExecutionManager {
 
     data class ToolRuntimeContext(
         val callerCardId: String? = null,
-        val toolExposureMode: ToolExposureMode = ToolExposureMode.FULL
+        val toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
+        val conversationLabel: String? = null
     )
 
     private data class ResolvedToolTarget(
@@ -422,7 +423,8 @@ object ToolExecutionManager {
     suspend fun checkToolPermission(
         toolHandler: AIToolHandler,
         invocation: ToolInvocation,
-        toolExposureMode: ToolExposureMode = ToolExposureMode.FULL
+        toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
+        conversationLabel: String? = null
     ): Pair<Boolean, ToolResult?> {
         val resolvedTarget = resolveToolTarget(invocation.tool)
         val permissionTool =
@@ -452,7 +454,8 @@ object ToolExecutionManager {
         if (hasPromptForPermission) {
             // 检查权限，如果需要则弹出权限请求界面
             val toolPermissionSystem = toolHandler.getToolPermissionSystem()
-            val hasPermission = toolPermissionSystem.checkToolPermission(permissionTool)
+            val hasPermission =
+                toolPermissionSystem.checkToolPermission(permissionTool, conversationLabel)
 
             // 如果权限被拒绝，创建错误结果
             if (!hasPermission) {
@@ -501,7 +504,8 @@ object ToolExecutionManager {
         toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
         callerName: String? = null,
         callerChatId: String? = null,
-        callerCardId: String? = null
+        callerCardId: String? = null,
+        conversationLabel: String? = null
     ): List<ToolResult> = coroutineScope {
         // 默认工具注册现在可能在启动阶段被延后；这里确保在真正执行工具前已完成注册
         // registerDefaultTools() 是幂等且线程安全的，可安全重复调用
@@ -523,7 +527,8 @@ object ToolExecutionManager {
         val toolRuntimeContext =
             ToolRuntimeContext(
                 callerCardId = callerCardId,
-                toolExposureMode = toolExposureMode
+                toolExposureMode = toolExposureMode,
+                conversationLabel = conversationLabel
             )
 
         // 1. 顶层工具暴露模式拦截
@@ -575,7 +580,12 @@ object ToolExecutionManager {
             when (val interception = toolHandler.checkToolInterception(interceptionTool)) {
                 AIToolHookDecision.Allow -> {
                     val (hasPermission, errorResult) =
-                        checkToolPermission(toolHandler, invocation, toolExposureMode)
+                        checkToolPermission(
+                            toolHandler,
+                            invocation,
+                            toolExposureMode,
+                            conversationLabel
+                        )
                     if (hasPermission) {
                         permittedInvocations.add(invocation)
                     } else {

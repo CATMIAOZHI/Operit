@@ -1818,6 +1818,11 @@
     <string name="permission_change_reminder">* 您可以在设置中随时更改权限</string>
     <string name="overlay_permission_grant_hint">需要悬浮窗权限，请在设置中允许此权限</string>
     <string name="parameter_details">参数详情</string>
+    <string name="permission_request_minimize">最小化权限请求</string>
+    <string name="permission_request_restore">权限请求已最小化，点击恢复</string>
+    <string name="permission_request_restore_with_count">权限请求已最小化，%1$d 个待审批，点击恢复</string>
+    <string name="permission_request_queue_count">%1$d 个权限请求待审批</string>
+    <string name="permission_request_conversation_source">来源会话</string>
     <string name="floating_window_attachment_note">注意: 在浮动窗口中只支持特殊附件\n要添加文件或图片，请打开完整聊天界面</string>
     <string name="ai_assistant">AI助手</string>
     <string name="send_message">发送消息</string>

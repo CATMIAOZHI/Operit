@@ -12,16 +12,19 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.ai.assistance.operit.data.model.AITool
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 
 // Define DataStore
@@ -81,6 +84,13 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     private val permissionRequestOverlay = PermissionRequestOverlay(context)
     private var currentPermissionCallback: ((PermissionRequestResult) -> Unit)? = null
     private var permissionRequestInfo: Pair<AITool, String>? = null
+    private var currentRequestToken: Long = -1L
+
+    // Request token generator
+    private val requestTokenGenerator = AtomicLong(0)
+
+    // Mutex for serializing ASK requests
+    private val askMutex = Mutex()
     
     // 存储当前颜色方案
     private var currentColorScheme: ColorScheme? = null
@@ -96,6 +106,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     // Permission request state flow
     private val _permissionRequestState = MutableStateFlow<Pair<AITool, String>?>(null)
     val permissionRequestState = _permissionRequestState.asStateFlow()
+
+    private val _pendingPermissionRequestCount = MutableStateFlow(0)
+    private val pendingPermissionRequestCount = _pendingPermissionRequestCount.asStateFlow()
     
     // Permission level flows
     val masterSwitchFlow: Flow<PermissionLevel> = context.toolPermissionsDataStore.data.map { preferences ->
@@ -188,92 +201,140 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     /**
      * Check if a tool is allowed to execute
      */
-    suspend fun checkToolPermission(tool: AITool): Boolean {
+    suspend fun checkToolPermission(tool: AITool, conversationLabel: String? = null): Boolean {
         AppLogger.d(TAG, "Starting permission check: ${tool.name}")
-        
-        val preferences = context.toolPermissionsDataStore.data.first()
-        val masterSwitch = PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
-        val key = toolPermissionKey(tool.name)
-        val overrideLevel = preferences[key]?.let { PermissionLevel.fromString(it) }
-        
-        val permissionLevel = overrideLevel ?: masterSwitch
-        
-        return when (permissionLevel) {
+
+        return when (getEffectivePermissionLevel(tool.name)) {
             PermissionLevel.ALLOW -> true
-            PermissionLevel.ASK -> requestPermission(tool)
+            PermissionLevel.ASK -> requestPermission(tool, conversationLabel)
             PermissionLevel.FORBID -> false
         }
     }
+
+    private suspend fun getEffectivePermissionLevel(toolName: String): PermissionLevel {
+        val preferences = context.toolPermissionsDataStore.data.first()
+        val masterSwitch = PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
+        val key = toolPermissionKey(toolName)
+        val overrideLevel = preferences[key]?.let { PermissionLevel.fromString(it) }
+        return overrideLevel ?: masterSwitch
+    }
     
     /**
-     * Request permission from the user to execute a tool
+     * Request permission from the user to execute a tool.
+     * ASK requests are serialized via askMutex.
      */
-    private suspend fun requestPermission(tool: AITool): Boolean {
-        // Get operation description
-        val operationDescription = getOperationDescription(tool)
-        
-        AppLogger.d(TAG, "Requesting permission: ${tool.name}")
-        
-        // Clear existing request
-        currentPermissionCallback = null
-        permissionRequestInfo = null
-        _permissionRequestState.value = null
-        
-        // Set up new request
-        val requestInfo = Pair(tool, operationDescription)
-        permissionRequestInfo = requestInfo
-        _permissionRequestState.value = requestInfo
-        
-        AppLogger.d(TAG, "Permission request state updated: ${tool.name}")
-        
-        return withTimeoutOrNull(PERMISSION_REQUEST_TIMEOUT_MS) {
-            suspendCancellableCoroutine { continuation ->
-                // Set callback
-                currentPermissionCallback = { result ->
-                    AppLogger.d(TAG, "Permission result received: $result for ${tool.name}")
-                    // Clean up state
-                    currentPermissionCallback = null
-                    permissionRequestInfo = null
-                    _permissionRequestState.value = null
-                    
-                    // Handle result
-                    when (result) {
-                        PermissionRequestResult.ALLOW -> continuation.resume(true)
-                        PermissionRequestResult.DENY -> continuation.resume(false)
-                        PermissionRequestResult.ALWAYS_ALLOW -> {
-                            // Save the permission and resume
-                            tool.let {
-                                val toolScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
-                                toolScope.launch {
-                                    saveToolPermission(it.name, PermissionLevel.ALLOW)
-                                }
-                            }
-                            continuation.resume(true)
+    private suspend fun requestPermission(tool: AITool, conversationLabel: String?): Boolean {
+        _pendingPermissionRequestCount.update { it + 1 }
+        try {
+            return askMutex.withLock {
+                // A preceding request may have changed this tool to Always Allow while we waited.
+                when (getEffectivePermissionLevel(tool.name)) {
+                    PermissionLevel.ALLOW -> true
+                    PermissionLevel.ASK -> requestPermissionInternal(tool, conversationLabel)
+                    PermissionLevel.FORBID -> false
+                }
+            }
+        } finally {
+            _pendingPermissionRequestCount.update { count -> (count - 1).coerceAtLeast(0) }
+        }
+    }
+
+    private suspend fun requestPermissionInternal(
+        tool: AITool,
+        conversationLabel: String?
+    ): Boolean {
+        return withContext(Dispatchers.Main.immediate) {
+            val operationDescription = getOperationDescription(tool)
+            AppLogger.d(TAG, "Requesting permission: ${tool.name}")
+
+            val requestInfo = Pair(tool, operationDescription)
+            val token = requestTokenGenerator.incrementAndGet()
+            currentRequestToken = token
+            permissionRequestInfo = requestInfo
+            _permissionRequestState.value = requestInfo
+            AppLogger.d(TAG, "Permission request state updated: ${tool.name} token=$token")
+
+            var timeoutTask: Runnable? = null
+            var timeoutDisabled = false
+
+            try {
+                val result = suspendCancellableCoroutine { continuation ->
+                    currentPermissionCallback = callback@{ permissionResult ->
+                        if (token != currentRequestToken || !continuation.isActive) {
+                            return@callback
+                        }
+                        AppLogger.d(
+                            TAG,
+                            "Permission result received: $permissionResult for ${tool.name} token=$token"
+                        )
+                        currentPermissionCallback = null
+                        continuation.resume(permissionResult)
+                    }
+
+                    val requestTimeoutTask = Runnable {
+                        AppLogger.d(
+                            TAG,
+                            "Timeout runnable fired for ${tool.name} token=$token timeoutDisabled=$timeoutDisabled"
+                        )
+                        if (token == currentRequestToken && !timeoutDisabled && continuation.isActive) {
+                            AppLogger.d(TAG, "Permission request timed out: ${tool.name} token=$token")
+                            currentPermissionCallback = null
+                            permissionRequestOverlay.dismiss()
+                            continuation.resume(PermissionRequestResult.DENY)
                         }
                     }
-                }
-                
-                // Start permission request on main thread
-                mainHandler.post {
-                    // Use overlay to show permission request
+                    timeoutTask = requestTimeoutTask
+                    mainHandler.postDelayed(requestTimeoutTask, PERMISSION_REQUEST_TIMEOUT_MS)
+
                     if (!permissionRequestOverlay.hasOverlayPermission()) {
                         AppLogger.w(TAG, "No overlay permission, requesting...")
                         permissionRequestOverlay.requestOverlayPermission()
-                        currentPermissionCallback?.invoke(PermissionRequestResult.DENY)
-                    } else {
-                        permissionRequestOverlay.show(tool, operationDescription) { result ->
-                            handlePermissionResult(result)
+                        currentPermissionCallback = null
+                        if (continuation.isActive) {
+                            continuation.resume(PermissionRequestResult.DENY)
                         }
+                        return@suspendCancellableCoroutine
+                    }
+
+                    permissionRequestOverlay.show(
+                        tool,
+                        operationDescription,
+                        conversationLabel = conversationLabel,
+                        pendingRequestCount = pendingPermissionRequestCount,
+                        onResult = { permissionResult ->
+                            handlePermissionResult(permissionResult)
+                        },
+                        onMinimized = {
+                            if (token == currentRequestToken && !timeoutDisabled) {
+                                AppLogger.d(TAG, "Request minimized - cancelling timeout token=$token")
+                                timeoutDisabled = true
+                                mainHandler.removeCallbacks(requestTimeoutTask)
+                            }
+                        }
+                    )
+                }
+
+                when (result) {
+                    PermissionRequestResult.ALLOW -> true
+                    PermissionRequestResult.DENY -> false
+                    PermissionRequestResult.ALWAYS_ALLOW -> {
+                        // Persist the choice before releasing the mutex to queued requests.
+                        withContext(NonCancellable + Dispatchers.IO) {
+                            saveToolPermission(tool.name, PermissionLevel.ALLOW)
+                        }
+                        true
                     }
                 }
+            } finally {
+                timeoutTask?.let { mainHandler.removeCallbacks(it) }
+                if (token == currentRequestToken) {
+                    permissionRequestOverlay.dismiss()
+                    currentRequestToken = -1L
+                    currentPermissionCallback = null
+                    permissionRequestInfo = null
+                    _permissionRequestState.value = null
+                }
             }
-        } ?: run {
-            // Timeout handling
-            AppLogger.d(TAG, "Permission request timed out: ${tool.name}")
-            currentPermissionCallback = null
-            permissionRequestInfo = null
-            _permissionRequestState.value = null
-            false
         }
     }
     
