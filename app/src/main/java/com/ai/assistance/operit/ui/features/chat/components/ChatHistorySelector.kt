@@ -69,6 +69,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatHistoryCategory
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatHistoryDisplayMode
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
@@ -448,7 +451,12 @@ fun ChatHistorySelector(
         autoSwitchChatOnCharacterSelect: Boolean,
         onAutoSwitchChatOnCharacterSelectChange: (Boolean) -> Unit,
         onQuickScrollInteractionChange: (Boolean) -> Unit = {},
-        activePrompt: ActivePrompt
+        activePrompt: ActivePrompt,
+        // IDEA 3: category
+        historyCategory: ChatHistoryCategory = ChatHistoryCategory.ALL,
+        onCategoryChange: (ChatHistoryCategory) -> Unit = {},
+        favoriteChatIds: Set<String> = emptySet(),
+        recentChatHistories: List<ChatHistory> = emptyList(),
 ) {
     var chatToEdit by remember { mutableStateOf<ChatHistory?>(null) }
     var chatToDelete by remember { mutableStateOf<ChatHistory?>(null) }
@@ -475,6 +483,14 @@ fun ChatHistorySelector(
     val characterGroupCardManager = remember { CharacterGroupCardManager.getInstance(context) }
     val coroutineScope = rememberCoroutineScope()
     val deleteAnimationDurationMs = 220L
+
+    // IDEA 3 (P1-8 fix): 根据分类标签页过滤数据
+    val effectiveChatHistories = when (historyCategory) {
+        ChatHistoryCategory.RECENT -> recentChatHistories
+        ChatHistoryCategory.FAVORITE -> chatHistories.filter { it.id in favoriteChatIds }
+        ChatHistoryCategory.ALL -> chatHistories
+    }
+    val isDraggingEnabled = historyCategory != ChatHistoryCategory.RECENT && searchQuery.isBlank()
     var deletingChatIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var availableCharacterCards by remember { mutableStateOf<List<CharacterCard>>(emptyList()) }
     var availableCharacterGroups by remember { mutableStateOf<List<CharacterGroupCard>>(emptyList()) }
@@ -599,17 +615,17 @@ fun ChatHistorySelector(
         }
     }
 
-    val filteredHistories = remember(chatHistories, searchQuery, matchedChatIdsByContent) {
+    val filteredHistories = remember(effectiveChatHistories, searchQuery, matchedChatIdsByContent) {
         val trimmedQuery = searchQuery.trim()
         if (trimmedQuery.isNotBlank()) {
-            chatHistories.filter { history ->
+            effectiveChatHistories.filter { history ->
                 val matchesTitleOrGroup = history.title.contains(trimmedQuery, ignoreCase = true) ||
                         (history.group?.contains(trimmedQuery, ignoreCase = true) == true)
                 val matchesContent = matchedChatIdsByContent.contains(history.id)
                 matchesTitleOrGroup || matchesContent
             }
         } else {
-            chatHistories
+            effectiveChatHistories
         }
     }
     val groupIdsInFilteredHistories = remember(filteredHistories) {
@@ -1922,6 +1938,31 @@ fun ChatHistorySelector(
                         }
                     }
                 }
+            }
+        }
+
+        // IDEA 3: 分类标签页
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                Triple(ChatHistoryCategory.ALL, stringResource(R.string.all_messages), stringResource(R.string.all_messages)),
+                Triple(ChatHistoryCategory.RECENT, stringResource(R.string.recent_messages), stringResource(R.string.recent_messages)),
+                Triple(ChatHistoryCategory.FAVORITE, stringResource(R.string.favorites), stringResource(R.string.favorites)),
+            ).forEach { (cat, label, _) ->
+                val selected = historyCategory == cat
+                FilterChip(
+                    selected = selected,
+                    onClick = { onCategoryChange(cat) },
+                    label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                    modifier = Modifier.height(32.dp),
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    ),
+                )
             }
         }
 

@@ -10,12 +10,32 @@ data class OperitChatArchive(
     val formatVersion: Int = CURRENT_FORMAT_VERSION,
     val exportedAt: Long = System.currentTimeMillis(),
     val chats: List<OperitArchivedChat>,
+    val folders: List<OperitArchivedFolder> = emptyList(),
+    val placements: List<OperitArchivedPlacement> = emptyList(),
 ) {
     companion object {
         const val ARCHIVE_TYPE = "operit_chat_archive"
-        const val CURRENT_FORMAT_VERSION = 2
+        const val CURRENT_FORMAT_VERSION = 3
     }
 }
+
+@Serializable
+data class OperitArchivedFolder(
+    val id: String,
+    val scope: String,
+    val name: String,
+    val parentFolderId: String? = null,
+    val displayOrder: Long = 0L,
+    val pinned: Boolean = false,
+)
+
+@Serializable
+data class OperitArchivedPlacement(
+    val chatId: String,
+    val scope: String,
+    val folderId: String? = null,
+    val displayOrder: Long = 0L,
+)
 
 @Serializable
 data class OperitArchivedChat(

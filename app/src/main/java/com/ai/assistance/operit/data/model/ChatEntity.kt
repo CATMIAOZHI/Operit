@@ -24,7 +24,8 @@ data class ChatEntity(
         val characterCardName: String? = null,
         val characterGroupId: String? = null,
         val locked: Boolean = false,
-        val pinned: Boolean = false
+        val pinned: Boolean = false,
+        val lastMessageAt: Long? = null
 ) {
     /** 转换为ChatHistory对象（供UI层使用） */
     fun toChatHistory(messages: List<ChatMessage>): ChatHistory {
@@ -35,6 +36,12 @@ data class ChatEntity(
         val updatedAt = Instant.ofEpochMilli(this.updatedAt)
             .atZone(ZoneId.systemDefault())
             .toLocalDateTime()
+
+        val lastMessageAtLocal = lastMessageAt?.let {
+            Instant.ofEpochMilli(it)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDateTime()
+        }
 
         return ChatHistory(
                 id = id,
@@ -53,7 +60,8 @@ data class ChatEntity(
                 characterCardName = characterCardName,
                 characterGroupId = characterGroupId,
                 locked = locked,
-                pinned = pinned
+                pinned = pinned,
+                lastMessageAt = lastMessageAtLocal
         )
     }
 
