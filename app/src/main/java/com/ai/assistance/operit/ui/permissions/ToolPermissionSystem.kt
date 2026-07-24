@@ -201,12 +201,12 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     /**
      * Check if a tool is allowed to execute
      */
-    suspend fun checkToolPermission(tool: AITool): Boolean {
+    suspend fun checkToolPermission(tool: AITool, conversationLabel: String? = null): Boolean {
         AppLogger.d(TAG, "Starting permission check: ${tool.name}")
 
         return when (getEffectivePermissionLevel(tool.name)) {
             PermissionLevel.ALLOW -> true
-            PermissionLevel.ASK -> requestPermission(tool)
+            PermissionLevel.ASK -> requestPermission(tool, conversationLabel)
             PermissionLevel.FORBID -> false
         }
     }
@@ -223,14 +223,14 @@ class ToolPermissionSystem private constructor(private val context: Context) {
      * Request permission from the user to execute a tool.
      * ASK requests are serialized via askMutex.
      */
-    private suspend fun requestPermission(tool: AITool): Boolean {
+    private suspend fun requestPermission(tool: AITool, conversationLabel: String?): Boolean {
         _pendingPermissionRequestCount.update { it + 1 }
         try {
             return askMutex.withLock {
                 // A preceding request may have changed this tool to Always Allow while we waited.
                 when (getEffectivePermissionLevel(tool.name)) {
                     PermissionLevel.ALLOW -> true
-                    PermissionLevel.ASK -> requestPermissionInternal(tool)
+                    PermissionLevel.ASK -> requestPermissionInternal(tool, conversationLabel)
                     PermissionLevel.FORBID -> false
                 }
             }
@@ -239,7 +239,10 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         }
     }
 
-    private suspend fun requestPermissionInternal(tool: AITool): Boolean {
+    private suspend fun requestPermissionInternal(
+        tool: AITool,
+        conversationLabel: String?
+    ): Boolean {
         return withContext(Dispatchers.Main.immediate) {
             val operationDescription = getOperationDescription(tool)
             AppLogger.d(TAG, "Requesting permission: ${tool.name}")
@@ -296,6 +299,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                     permissionRequestOverlay.show(
                         tool,
                         operationDescription,
+                        conversationLabel = conversationLabel,
                         pendingRequestCount = pendingPermissionRequestCount,
                         onResult = { permissionResult ->
                             handlePermissionResult(permissionResult)

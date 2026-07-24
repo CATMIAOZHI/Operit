@@ -101,6 +101,7 @@ import kotlin.math.roundToInt
 private fun PermissionRequestContent(
     toolName: String,
     operationDescription: String,
+    conversationLabel: String?,
     onAllow: () -> Unit,
     onDeny: () -> Unit,
     onAlwaysAllow: () -> Unit,
@@ -215,6 +216,7 @@ private fun PermissionRequestContent(
                             PermissionDetails(
                                 operationDescription = operationDescription,
                                 toolName = toolName,
+                                conversationLabel = conversationLabel,
                                 toolParameters = tool?.parameters
                             )
                         }
@@ -294,6 +296,7 @@ private fun PermissionRequestContent(
 private fun PermissionDetails(
     operationDescription: String,
     toolName: String,
+    conversationLabel: String?,
     toolParameters: List<ToolParameter>? = null
 ) {
     Column(
@@ -304,6 +307,12 @@ private fun PermissionDetails(
             .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (!conversationLabel.isNullOrBlank()) {
+                DetailItem(
+                    label = stringResource(R.string.permission_request_conversation_source),
+                    value = conversationLabel
+                )
+            }
             DetailItem(label = stringResource(R.string.requested_operation), value = operationDescription)
             DetailItem(label = stringResource(R.string.used_tool), value = toolName)
             
@@ -488,6 +497,7 @@ class PermissionRequestOverlay(private val context: Context) {
     private var toolNameState = mutableStateOf("")
     private var opDescState = mutableStateOf("")
     private var toolState = mutableStateOf<AITool?>(null)
+    private var conversationLabelState = mutableStateOf<String?>(null)
 
     /**
      * 设置颜色方案
@@ -532,6 +542,7 @@ class PermissionRequestOverlay(private val context: Context) {
     fun show(
         tool: AITool,
         operationDescription: String,
+        conversationLabel: String?,
         pendingRequestCount: StateFlow<Int>,
         onResult: (PermissionRequestResult) -> Unit,
         onMinimized: (() -> Unit)? = null
@@ -561,6 +572,7 @@ class PermissionRequestOverlay(private val context: Context) {
         toolNameState.value = tool.name
         opDescState.value = operationDescription
         toolState.value = tool
+        conversationLabelState.value = conversationLabel
 
         windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
@@ -585,6 +597,7 @@ class PermissionRequestOverlay(private val context: Context) {
         val toolName = toolNameState
         val opDesc = opDescState
         val aTool = toolState
+        val sourceConversation = conversationLabelState
         val scheme = colorScheme
         val onRes = currentOnResult
         val onMin = currentOnMinimized
@@ -616,6 +629,7 @@ class PermissionRequestOverlay(private val context: Context) {
                     PermissionRequestContent(
                         toolName = toolName.value,
                         operationDescription = opDesc.value,
+                        conversationLabel = sourceConversation.value,
                         colorScheme = scheme,
                         tool = aTool.value,
                         scrollState = contentScrollState,
@@ -789,6 +803,7 @@ class PermissionRequestOverlay(private val context: Context) {
         currentOpDesc = null
         currentOnResult = null
         currentOnMinimized = null
+        conversationLabelState.value = null
         isMinimizedState.value = false
         cachedMinimizedX = 0
         cachedMinimizedY = 0
