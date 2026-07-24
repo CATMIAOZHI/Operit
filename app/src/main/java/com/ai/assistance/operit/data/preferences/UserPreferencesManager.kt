@@ -23,6 +23,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import com.ai.assistance.operit.data.db.ObjectBoxManager
 import com.ai.assistance.operit.util.LocaleUtils.LanguageCodes
+import java.io.File
 
 private val Context.userPreferencesDataStore: DataStore<Preferences> by
         preferencesDataStore(name = "user_preferences")
@@ -276,6 +277,69 @@ class UserPreferencesManager private constructor(private val context: Context) {
         const val INPUT_STYLE_AGENT = "agent"
         const val BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE = "tiled_nine_slice"
         const val BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH = "nine_patch"
+        const val DEFAULT_CHARACTER_AVATAR_URI = "file:///android_asset/operit.png"
+
+        /** 角色卡头像前缀规则：avatar_<characterCardId>_<uuid>.<ext>
+         * 群组头像前缀规则：group_avatar_<groupId>_<uuid>.<ext>
+         */
+        private val AVATAR_FILE_PATTERN = Regex("^(?:avatar_|group_avatar_)[\\w-]+_.+\\.\\w+$")
+
+        /**
+         * 规范化应用内部头像 [file://] URI。
+         *
+         * - `null` 或 blank → 无自定义头像；
+         * - 当前包下文件存在 → 原样返回；
+         * - 旧包绝对路径但同名文件在当前 [filesDir] 存在 → 重写为当前包 URI；
+         * - asset URI 与 content URI 不参与文件系统重写。
+         *
+         * 不接受 `..`、子路径注入或非头像命名规则的文件，防止路径穿越。
+         *
+         * 本方法使用 [java.net.URI] 进行解析，可在 JVM 单元测试中直接使用。
+         */
+        fun resolveAppInternalAvatarUri(
+            rawUri: String?,
+            filesDir: File,
+        ): String? {
+            if (rawUri.isNullOrBlank()) return null
+
+            val uri = try {
+                java.net.URI(rawUri)
+            } catch (_: Exception) {
+                return null
+            }
+
+            val scheme = uri.scheme?.lowercase() ?: return null
+
+            if (scheme == "android.resource" || scheme == "content") {
+                return rawUri
+            }
+
+            if (scheme != "file") return null
+
+            val path = uri.path ?: return null
+            if (path.startsWith("/android_asset/")) {
+                return rawUri
+            }
+
+            val file = File(path)
+            val fileName = file.name
+
+            // 防止路径穿越：只接受安全的文件名
+            if (fileName.isEmpty() || fileName.contains("..") || fileName.contains("/")) return null
+
+            if (!AVATAR_FILE_PATTERN.matches(fileName)) return null
+
+            // 文件已在当前路径存在 → 直接使用
+            if (file.exists() && file.canRead()) return rawUri
+
+            // 检查当前 filesDir 下同名文件
+            val currentFile = File(filesDir, fileName)
+            if (currentFile.exists() && currentFile.canRead()) {
+                return currentFile.toURI().toString()
+            }
+
+            return null
+        }
 
         // Defaults shown by the custom color editor, aligned with OpenCode Rainy light mode.
         const val DEFAULT_CUSTOM_PRIMARY_COLOR = 0xFFFF6B8E.toInt()
@@ -1305,6 +1369,35 @@ class UserPreferencesManager private constructor(private val context: Context) {
             preferences[key]
         }
     }
+
+    /**
+     * 与 [getAiAvatarForCharacterCardFlow] 相同，但对默认角色卡增加了
+     * 内置 asset 回退：键缺失或 blank 时返回默认头像 URI，
+     * 不写入 DataStore。
+     *
+     * 对非默认角色卡，键缺失或 blank 时返回 null（无自定义头像）。
+     */
+    fun getResolvedAiAvatarForCharacterCardFlow(characterCardId: String): Flow<String?> {
+        return context.userPreferencesDataStore.data.map { preferences ->
+            val prefix = getCharacterCardThemePrefix(characterCardId)
+            val key = stringPreferencesKey("${prefix}${KEY_CUSTOM_AI_AVATAR_URI.name}")
+            val savedUri = preferences[key]
+            if (!savedUri.isNullOrBlank()) {
+                val resolved = resolveAppInternalAvatarUri(savedUri, context.filesDir)
+                if (resolved != null) {
+                    resolved
+                } else if (characterCardId == CharacterCardManager.DEFAULT_CHARACTER_CARD_ID) {
+                    DEFAULT_CHARACTER_AVATAR_URI
+                } else {
+                    null
+                }
+            } else if (characterCardId == CharacterCardManager.DEFAULT_CHARACTER_CARD_ID) {
+                DEFAULT_CHARACTER_AVATAR_URI
+            } else {
+                null
+            }
+        }
+    }
     
     suspend fun saveAiAvatarForCharacterCard(characterCardId: String, avatarUri: String?) {
         context.userPreferencesDataStore.edit { preferences ->
@@ -1336,6 +1429,30 @@ class UserPreferencesManager private constructor(private val context: Context) {
                 preferences.remove(key)
             }
         }
+    }
+
+    // ========== 头像显式生命周期管理（独立于主题） ==========
+
+    /** 显式复制角色卡 AI 头像到目标角色卡，不再依赖主题克隆。 */
+    suspend fun copyAiAvatarBetweenCharacterCards(sourceCardId: String, targetCardId: String) {
+        val sourceUri = getAiAvatarForCharacterCardFlow(sourceCardId).first()
+        saveAiAvatarForCharacterCard(targetCardId, sourceUri)
+    }
+
+    /** 显式复制角色群组 AI 头像到目标群组，不再依赖主题克隆。 */
+    suspend fun copyAiAvatarBetweenCharacterGroups(sourceGroupId: String, targetGroupId: String) {
+        val sourceUri = getAiAvatarForCharacterGroupFlow(sourceGroupId).first()
+        saveAiAvatarForCharacterGroup(targetGroupId, sourceUri)
+    }
+
+    /** 显式删除角色卡 AI 头像偏好。 */
+    suspend fun deleteAiAvatarForCharacterCard(characterCardId: String) {
+        saveAiAvatarForCharacterCard(characterCardId, null)
+    }
+
+    /** 显式删除角色群组 AI 头像偏好。 */
+    suspend fun deleteAiAvatarForCharacterGroup(characterGroupId: String) {
+        saveAiAvatarForCharacterGroup(characterGroupId, null)
     }
 
     fun getCustomChatTitleForCharacterCardFlow(characterCardId: String): Flow<String?> {
@@ -1767,7 +1884,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
             preferences.remove(KEY_SHOW_MESSAGE_TIMING_STATS)
             preferences.remove(KEY_SHOW_MESSAGE_TIMESTAMP)
             preferences.remove(KEY_CUSTOM_USER_AVATAR_URI)
-            preferences.remove(KEY_CUSTOM_AI_AVATAR_URI)
+            // KEY_CUSTOM_AI_AVATAR_URI is now managed independently of theme lifecycle; not removed here.
             preferences.remove(KEY_AVATAR_SHAPE)
             preferences.remove(KEY_AVATAR_CORNER_RADIUS)
             preferences.remove(KEY_ON_COLOR_MODE)
@@ -1796,7 +1913,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
     private fun getAllStringThemeKeys(): List<Preferences.Key<String>> {
         return listOf(
             THEME_MODE, BACKGROUND_IMAGE_URI, BACKGROUND_MEDIA_TYPE, APP_BAR_CONTENT_COLOR_MODE,
-            CHAT_STYLE, KEY_CUSTOM_USER_AVATAR_URI, KEY_CUSTOM_AI_AVATAR_URI, KEY_AVATAR_SHAPE,
+            CHAT_STYLE, KEY_CUSTOM_USER_AVATAR_URI, KEY_AVATAR_SHAPE,
             KEY_ON_COLOR_MODE, KEY_CUSTOM_CHAT_TITLE, INPUT_STYLE, FONT_TYPE, SYSTEM_FONT_NAME,
             CUSTOM_FONT_PATH, BUBBLE_USER_FONT_TYPE, BUBBLE_USER_SYSTEM_FONT_NAME,
             BUBBLE_USER_CUSTOM_FONT_PATH, BUBBLE_AI_FONT_TYPE, BUBBLE_AI_SYSTEM_FONT_NAME,

@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.data.preferences
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -243,5 +244,41 @@ class ThemeMigrationPrefixResolutionTest {
         val result = UserPreferencesManager.resolveThemePrefix(key, themeKeyNames)
         assertNotNull(result)
         assertEquals("character_group_theme_long_group_id_", result)
+    }
+
+    // ========== AI avatar key exclusion regression ==========
+    // custom_ai_avatar_uri should NOT be in the theme key name set after the fix;
+    // prefix resolution must not classify avatar-only keys as theme prefixes.
+
+    @Test
+    fun `custom_ai_avatar_uri is not in theme key name set`() {
+        // Verify that KEY_CUSTOM_AI_AVATAR_URI is not in the candidate set.
+        // If it is, deleteThemeByPrefix / copyCurrentThemeToPrefix will touch avatars.
+        assertFalse(
+            "KEY_CUSTOM_AI_AVATAR_URI must not be treated as a theme key",
+            themeKeyNames.contains("custom_ai_avatar_uri"),
+        )
+    }
+
+    @Test
+    fun `avatar-only prefix key is not resolved as theme prefix`() {
+        // A key like character_card_theme_X_custom_ai_avatar_uri
+        // should NOT be resolved to a theme prefix when the avatar key is excluded.
+        val key = "character_card_theme_abc_custom_ai_avatar_uri"
+        val result = UserPreferencesManager.resolveThemePrefix(key, themeKeyNames)
+        assertNull(
+            "Avatar-only prefix key should not be resolved to a character card theme prefix",
+            result,
+        )
+    }
+
+    @Test
+    fun `avatar-only group prefix key is not resolved as theme prefix`() {
+        val key = "character_group_theme_grp_custom_ai_avatar_uri"
+        val result = UserPreferencesManager.resolveThemePrefix(key, themeKeyNames)
+        assertNull(
+            "Avatar-only group prefix key should not be resolved to a character group theme prefix",
+            result,
+        )
     }
 }

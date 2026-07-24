@@ -156,6 +156,7 @@ class CharacterGroupCardManager private constructor(private val context: Context
         }
 
         runCatching { userPreferencesManager.deleteCharacterGroupTheme(groupId) }
+        runCatching { userPreferencesManager.deleteAiAvatarForCharacterGroup(groupId) }
         runCatching { waifuPreferences.deleteCharacterGroupWaifuSettings(groupId) }
         runCatching { customEmojiRepository.deleteCharacterGroupEmojis(groupId) }
     }
@@ -194,6 +195,11 @@ class CharacterGroupCardManager private constructor(private val context: Context
     suspend fun cloneBindingsFromCharacterGroup(sourceGroupId: String, targetGroupId: String) {
         runCatching {
             userPreferencesManager.cloneThemeBetweenCharacterGroups(sourceGroupId, targetGroupId)
+        }
+        runCatching {
+            // 显式复制头像：覆盖 createDefaultBindingsForCharacterGroup 写入的默认拼图头像，
+            // 写入源群组的头像 URI（自定义头像或拼图文件均可）
+            userPreferencesManager.copyAiAvatarBetweenCharacterGroups(sourceGroupId, targetGroupId)
         }
         runCatching {
             waifuPreferences.cloneWaifuSettingsBetweenCharacterGroups(sourceGroupId, targetGroupId)

@@ -304,7 +304,7 @@ private fun RecentChatSelectorOverlay(
                                     .background(MaterialTheme.colorScheme.secondaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (avatarUri != null) {
+                                if (!avatarUri.isNullOrBlank()) {
                                     Image(
                                         painter = rememberAsyncImagePainter(model = Uri.parse(avatarUri)),
                                         contentDescription = null,

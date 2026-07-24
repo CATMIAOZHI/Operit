@@ -13,13 +13,16 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
+import coil.request.ImageRequest
 import com.ai.assistance.operit.R
 
 @Composable
@@ -48,9 +51,14 @@ fun AvatarPicker(
                 .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            if (avatarUri != null) {
+            if (!avatarUri.isNullOrBlank()) {
                 Image(
-                    painter = rememberAsyncImagePainter(model = Uri.parse(avatarUri)),
+                    painter = rememberAsyncImagePainter(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(Uri.parse(avatarUri))
+                            .crossfade(true)
+                            .build()
+                    ),
                     contentDescription = "$label Avatar",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
@@ -67,7 +75,7 @@ fun AvatarPicker(
 
         OutlinedButton(
             onClick = onAvatarReset,
-            enabled = avatarUri != null,
+            enabled = !avatarUri.isNullOrBlank(),
             modifier = Modifier
                 .height(32.dp)
                 .padding(horizontal = 4.dp)

@@ -216,6 +216,13 @@ class CharacterCardManager private constructor(private val context: Context) {
         }
 
         try {
+            // 显式复制头像，独立于主题克隆（避免头像被纳入主题键集合）
+            userPreferencesManager.copyAiAvatarBetweenCharacterCards(sourceCharacterCardId, targetCharacterCardId)
+        } catch (e: Exception) {
+            AppLogger.e("CharacterCardManager", "克隆角色卡头像失败", e)
+        }
+
+        try {
             waifuPreferences.cloneWaifuSettingsBetweenCharacterCards(sourceCharacterCardId, targetCharacterCardId)
         } catch (e: Exception) {
             AppLogger.e("CharacterCardManager", "克隆角色卡Waifu配置失败", e)
@@ -375,6 +382,8 @@ class CharacterCardManager private constructor(private val context: Context) {
 
         // 删除角色卡对应的主题配置
         userPreferencesManager.deleteCharacterCardTheme(id)
+        // 显式删除角色卡 AI 头像偏好（头像已独立于主题）
+        userPreferencesManager.deleteAiAvatarForCharacterCard(id)
         // 删除角色卡对应的Waifu模式配置
         waifuPreferences.deleteCharacterCardWaifuSettings(id)
         // 删除角色卡对应的自定义表情配置
@@ -476,7 +485,7 @@ class CharacterCardManager private constructor(private val context: Context) {
             // We should migrate their existing theme settings to the default character card.
             AppLogger.d("CharacterCardManager", "First initialization detected. Migrating current theme to default character card.")
             userPreferencesManager.copyCurrentThemeToCharacterCard(DEFAULT_CHARACTER_CARD_ID)
-            userPreferencesManager.saveAiAvatarForCharacterCard(DEFAULT_CHARACTER_CARD_ID, "file:///android_asset/operit.png")
+            userPreferencesManager.saveAiAvatarForCharacterCard(DEFAULT_CHARACTER_CARD_ID, UserPreferencesManager.DEFAULT_CHARACTER_AVATAR_URI)
         }
 
         // 清理历史内置功能标签（chat/voice/desktop pet）
