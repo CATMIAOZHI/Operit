@@ -221,7 +221,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     fun executeProxyTargetWithPermissionCheck(
         targetToolName: String,
         forwardedParameters: List<ToolParameter>,
-        useEnglish: Boolean
+        useEnglish: Boolean,
+        conversationLabel: String? = null
     ): ToolResult {
         val proxiedTool = AITool(
             name = targetToolName,
@@ -238,7 +239,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         }
 
         val hasPermission = runBlocking {
-            handler.getToolPermissionSystem().checkToolPermission(proxiedTool)
+            handler.getToolPermissionSystem().checkToolPermission(proxiedTool, conversationLabel)
         }
         if (!hasPermission) {
             val errorMessage = "User cancelled the tool execution."
@@ -1026,7 +1027,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 executeProxyTargetWithPermissionCheck(
                     targetToolName = resolvedInvocation.targetToolName,
                     forwardedParameters = resolvedInvocation.forwardedParameters,
-                    useEnglish = useEnglish
+                    useEnglish = useEnglish,
+                    conversationLabel = runtimeContext.conversationLabel
                 )
             }
     )

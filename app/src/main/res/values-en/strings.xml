@@ -1700,6 +1700,7 @@
     <string name="permission_request_restore">Permission request minimized, tap to restore</string>
     <string name="permission_request_restore_with_count">Permission request minimized, %1$d awaiting approval, tap to restore</string>
     <string name="permission_request_queue_count">%1$d permission requests awaiting approval</string>
+    <string name="permission_request_conversation_source">Conversation</string>
     <string name="floating_window_attachment_note">Note: Only special attachments are supported in floating window\nTo add files or images, please open the full chat interface</string>
     <string name="ai_assistant">AI Assistant</string>
     <string name="send_message">Send Message</string>

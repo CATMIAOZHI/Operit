@@ -79,6 +79,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import com.ai.assistance.operit.data.repository.CustomEmojiRepository
+import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.CharacterCardToolAccessResolver
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
@@ -2088,6 +2089,13 @@ class EnhancedAIService private constructor(private val context: Context) {
         }
 
         val processToolJob = toolProcessingScope.launch {
+            val conversationLabel =
+                chatId
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { ChatHistoryManager.getInstance(this@EnhancedAIService.context).getChatTitle(it) }
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: characterName?.trim()?.takeIf { it.isNotEmpty() }
             val modelSnapshot = getModelExecutionSnapshot(
                 context,
                 functionType,
@@ -2104,7 +2112,8 @@ class EnhancedAIService private constructor(private val context: Context) {
                 toolExposureMode = ToolExposureMode.resolve(config.apiProviderType),
                 callerName = characterName,
                 callerChatId = chatId,
-                callerCardId = roleCardId
+                callerCardId = roleCardId,
+                conversationLabel = conversationLabel
             )
 
             if (allToolResults.isNotEmpty()) {
