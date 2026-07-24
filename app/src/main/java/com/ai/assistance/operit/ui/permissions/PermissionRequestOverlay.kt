@@ -61,6 +61,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,6 +92,7 @@ import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.services.ServiceLifecycleOwner
 import com.ai.assistance.operit.ui.floating.FloatingWindowTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.roundToInt
 
 
@@ -103,6 +105,7 @@ private fun PermissionRequestContent(
     onDeny: () -> Unit,
     onAlwaysAllow: () -> Unit,
     onMinimize: () -> Unit,
+    pendingRequestCount: Int,
     colorScheme: ColorScheme? = null,
     tool: AITool? = null,
     scrollState: androidx.compose.foundation.ScrollState
@@ -187,6 +190,18 @@ private fun PermissionRequestContent(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
                         )
+
+                        if (pendingRequestCount > 1) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = stringResource(
+                                    R.string.permission_request_queue_count,
+                                    pendingRequestCount
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
 
                         Spacer(modifier = Modifier.height(16.dp))
 
@@ -364,6 +379,7 @@ private fun ParameterItem(param: ToolParameter) {
 @Composable
 private fun PermissionRequestMinimizedIndicator(
     accessibilityLabel: String,
+    pendingRequestCount: Int,
     onRestore: () -> Unit,
     onDragBy: (dx: Int, dy: Int) -> Unit
 ) {
@@ -417,10 +433,26 @@ private fun PermissionRequestMinimizedIndicator(
             )
             Icon(
                 imageVector = Icons.Default.Shield,
-                contentDescription = null, // decorative — parent Surface has the label
+                contentDescription = null, // Decorative; parent Surface has the label.
                 tint = primaryColor.copy(alpha = 0.76f),
                 modifier = Modifier.size(28.dp)
             )
+            if (pendingRequestCount > 1) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(18.dp)
+                        .background(MaterialTheme.colorScheme.error, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (pendingRequestCount > 9) "9+" else pendingRequestCount.toString(),
+                        color = MaterialTheme.colorScheme.onError,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
     }
 }
@@ -500,10 +532,15 @@ class PermissionRequestOverlay(private val context: Context) {
     fun show(
         tool: AITool,
         operationDescription: String,
+        pendingRequestCount: StateFlow<Int>,
         onResult: (PermissionRequestResult) -> Unit,
         onMinimized: (() -> Unit)? = null
     ) {
-        if (overlayView != null) return
+        if (overlayView != null) {
+            AppLogger.e(TAG, "Cannot show permission request while an overlay is still attached")
+            onResult(PermissionRequestResult.DENY)
+            return
+        }
 
         if (!hasOverlayPermission()) {
             AppLogger.e(TAG, "Cannot show overlay without permission")
@@ -557,11 +594,20 @@ class PermissionRequestOverlay(private val context: Context) {
             setContent {
                 // Scroll state lifted to root so it survives minimize/restore
                 val contentScrollState = rememberScrollState()
+                val pendingCount by pendingRequestCount.collectAsState()
 
                 if (minimizedState.value) {
                     // Minimized shield
                     PermissionRequestMinimizedIndicator(
-                        accessibilityLabel = context.getString(R.string.permission_request_restore),
+                        accessibilityLabel = if (pendingCount > 1) {
+                            context.getString(
+                                R.string.permission_request_restore_with_count,
+                                pendingCount
+                            )
+                        } else {
+                            context.getString(R.string.permission_request_restore)
+                        },
+                        pendingRequestCount = pendingCount,
                         onRestore = { restore() },
                         onDragBy = { dx, dy -> handleDrag(dx, dy) }
                     )
@@ -575,16 +621,14 @@ class PermissionRequestOverlay(private val context: Context) {
                         scrollState = contentScrollState,
                         onAllow = {
                             onRes?.invoke(PermissionRequestResult.ALLOW)
-                            dismiss()
                         },
                         onDeny = {
                             onRes?.invoke(PermissionRequestResult.DENY)
-                            dismiss()
                         },
                         onAlwaysAllow = {
                             onRes?.invoke(PermissionRequestResult.ALWAYS_ALLOW)
-                            dismiss()
                         },
+                        pendingRequestCount = pendingCount,
                         onMinimize = {
                             onMin?.invoke()
                             minimize()
@@ -611,8 +655,8 @@ class PermissionRequestOverlay(private val context: Context) {
             AppLogger.d(TAG, "Overlay view added successfully")
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error adding overlay view", e)
-            onResult(PermissionRequestResult.DENY)
             dismiss()
+            onResult(PermissionRequestResult.DENY)
         }
     }
 
