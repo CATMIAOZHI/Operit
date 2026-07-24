@@ -316,7 +316,7 @@ private fun PermissionDetails(
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.Medium
                 )
-                
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
