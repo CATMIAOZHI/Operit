@@ -761,7 +761,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     /** 收藏的对话 ID 集合 flow */
     val favoriteChatIdsFlow: Flow<Set<String>> =
-        chatPlacementDao.observePlacementsInFolder(ChatFolderScope.FAVORITE, null)
+        chatPlacementDao.observeAllPlacements(ChatFolderScope.FAVORITE)
             .map { placements -> placements.map { it.chatId }.toSet() }
             .catch { emit(emptySet()) }
 
@@ -771,6 +771,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
      */
     fun observeFolders(scope: ChatFolderScope): Flow<List<ChatFolderEntity>> =
         chatFolderDao.observeAllFolders(scope)
+
+    fun observePlacements(scope: ChatFolderScope): Flow<List<ChatPlacementEntity>> =
+        chatPlacementDao.observeAllPlacements(scope)
 
     // ---- 文件夹操作 ----
 
@@ -815,51 +818,42 @@ class ChatHistoryManager private constructor(private val context: Context) {
      * 拒绝跨 scope、移入自身和移入后代。
      */
     suspend fun moveFolder(folderId: String, targetParentFolderId: String?, targetIndex: Int) {
-        val folder = chatFolderDao.getFolderById(folderId)
-            ?: throw IllegalArgumentException("Folder not found: $folderId")
-        // 拒绝跨 scope
-        if (targetParentFolderId != null) {
-            val targetFolder = chatFolderDao.getFolderById(targetParentFolderId)
-                ?: throw IllegalArgumentException("Target folder not found")
-            if (targetFolder.scope != folder.scope) {
-                throw IllegalArgumentException("Cannot move folder across scopes")
+        database.withTransaction {
+            val folder = chatFolderDao.getFolderById(folderId)
+                ?: throw IllegalArgumentException("Folder not found: $folderId")
+            if (targetParentFolderId != null) {
+                val targetFolder = chatFolderDao.getFolderById(targetParentFolderId)
+                    ?: throw IllegalArgumentException("Target folder not found")
+                if (targetFolder.scope != folder.scope) {
+                    throw IllegalArgumentException("Cannot move folder across scopes")
+                }
+                if (
+                    folderId == targetParentFolderId ||
+                        isAncestor(folderId, targetParentFolderId)
+                ) {
+                    throw IllegalArgumentException("Cannot move folder into itself or descendant")
+                }
             }
-            // 拒绝移入自身或后代（防环）
-            if (folderId == targetParentFolderId || isDescendant(targetParentFolderId, folderId, folder.scope)) {
-                throw IllegalArgumentException("Cannot move folder into itself or descendant")
+            val siblings = chatFolderDao.getChildFolders(folder.scope, targetParentFolderId)
+                .filter { it.id != folderId }
+                .toMutableList()
+            val destination = targetIndex.coerceIn(0, siblings.size)
+            siblings.add(destination, folder.copy(parentFolderId = targetParentFolderId))
+            siblings.forEachIndexed { index, sibling ->
+                chatFolderDao.moveFolder(
+                    sibling.id,
+                    targetParentFolderId,
+                    index.toLong(),
+                )
             }
-        }
-        val siblings = chatFolderDao.getChildFolders(folder.scope, targetParentFolderId)
-            .filter { it.id != folderId }
-            .toMutableList()
-        val newOrder = (targetIndex + 1).coerceAtLeast(1).toLong()
-        val reordered = mutableListOf<ChatFolderEntity>()
-        for ((i, sib) in siblings.withIndex()) {
-            val order = if (i < targetIndex) (i + 1).toLong() else (i + 2).toLong()
-            if (i == 0 && newOrder <= 1L) {
-                reordered.add(sib.copy(displayOrder = order + 1))
-            } else {
-                reordered.add(sib.copy(displayOrder = order))
-            }
-        }
-        // 简单实现：用递增稠密顺序
-        val denseSiblings = (siblings + listOf(folder.copy(parentFolderId = targetParentFolderId)))
-            .sortedBy { it.displayOrder }
-        val targetIdx = targetIndex.coerceIn(0, denseSiblings.size - 1)
-        val updated = denseSiblings.toMutableList()
-        val moved = updated.removeAt(updated.indexOfFirst { it.id == folderId })
-        updated.add(targetIdx, moved.copy(parentFolderId = targetParentFolderId))
-        for ((i, f) in updated.withIndex()) {
-            chatFolderDao.moveFolder(f.id, f.parentFolderId, (i + 1).toLong())
         }
     }
 
-    /** 检查 ancestor 是否是 descendant 的祖先（防环） */
-    private suspend fun isDescendant(ancestor: String, descendant: String, scope: ChatFolderScope): Boolean {
-        var current: String? = descendant
+    private suspend fun isAncestor(ancestorId: String, nodeId: String): Boolean {
+        var current: String? = nodeId
         val visited = mutableSetOf<String>()
         while (current != null && visited.add(current)) {
-            if (current == ancestor) return true
+            if (current == ancestorId) return true
             current = chatFolderDao.getFolderById(current)?.parentFolderId
         }
         return false
@@ -904,16 +898,77 @@ class ChatHistoryManager private constructor(private val context: Context) {
      * scope 内完整 sibling 集合参与重排；不修改 updatedAt。
      */
     suspend fun moveChat(chatId: String, scope: ChatFolderScope, targetFolderId: String?, targetIndex: Int) {
-        val siblings = chatPlacementDao.getPlacementsInFolder(scope, targetFolderId)
-        val current = siblings.firstOrNull { it.chatId == chatId }
-            ?: throw IllegalArgumentException("Placement not found for chat $chatId in scope $scope")
-        val withoutTarget = siblings.filter { it.chatId != chatId }.toMutableList()
-        val adjustedIndex = targetIndex.coerceIn(0, withoutTarget.size)
-        val reordered = withoutTarget.toMutableList()
-        reordered.add(adjustedIndex, current.copy(folderId = targetFolderId))
-        for ((i, pl) in reordered.withIndex()) {
-            chatPlacementDao.movePlacement(pl.chatId, pl.scope, pl.folderId, (i + 1).toLong())
+        database.withTransaction {
+            val current = chatPlacementDao.getPlacement(chatId, scope)
+                ?: throw IllegalArgumentException("Placement not found for chat $chatId in scope $scope")
+            if (targetFolderId != null) {
+                val targetFolder = chatFolderDao.getFolderById(targetFolderId)
+                    ?: throw IllegalArgumentException("Target folder not found")
+                require(targetFolder.scope == scope) { "Cannot move chat across scopes" }
+            }
+            val siblings = chatPlacementDao.getPlacementsInFolder(scope, targetFolderId)
+                .filter { it.chatId != chatId }
+                .toMutableList()
+            siblings.add(
+                targetIndex.coerceIn(0, siblings.size),
+                current.copy(folderId = targetFolderId),
+            )
+            siblings.forEachIndexed { index, placement ->
+                chatPlacementDao.movePlacement(
+                    placement.chatId,
+                    placement.scope,
+                    targetFolderId,
+                    index.toLong(),
+                )
+            }
         }
+    }
+
+    /** 删除整个文件夹子树及其中未锁定的真实对话；锁定对话会保留并回到根目录。 */
+    suspend fun deleteFolderAndChats(folderId: String) {
+        val root = chatFolderDao.getFolderById(folderId)
+            ?: throw IllegalArgumentException("Folder not found: $folderId")
+        val allFolders = chatFolderDao.getAllFolders(root.scope)
+        val childrenByParent = allFolders.groupBy { it.parentFolderId }
+        val folderIds = mutableSetOf<String>()
+        fun collect(id: String) {
+            if (!folderIds.add(id)) return
+            childrenByParent[id].orEmpty().forEach { collect(it.id) }
+        }
+        collect(folderId)
+
+        val affectedChatIds = chatPlacementDao.getAllPlacements(root.scope)
+            .filter { it.folderId in folderIds }
+            .map { it.chatId }
+            .distinct()
+
+        if (root.scope == ChatFolderScope.FAVORITE) {
+            database.withTransaction {
+                affectedChatIds.forEach { chatId ->
+                    chatPlacementDao.deletePlacement(chatId, ChatFolderScope.FAVORITE)
+                }
+            }
+        } else {
+            affectedChatIds.forEach { deleteChatHistory(it) }
+        }
+
+        database.withTransaction {
+            allFolders
+                .filter { it.id in folderIds }
+                .sortedByDescending { folderDepth(it, allFolders.associateBy { folder -> folder.id }) }
+                .forEach { chatFolderDao.deleteFolder(it.id) }
+        }
+    }
+
+    private fun folderDepth(folder: ChatFolderEntity, foldersById: Map<String, ChatFolderEntity>): Int {
+        var depth = 0
+        var parentId = folder.parentFolderId
+        val visited = mutableSetOf(folder.id)
+        while (parentId != null && visited.add(parentId)) {
+            depth++
+            parentId = foldersById[parentId]?.parentFolderId
+        }
+        return depth
     }
 
     /** 收藏/取消收藏对话 */

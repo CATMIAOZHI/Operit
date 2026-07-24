@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
@@ -107,6 +108,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatHistory
+import com.ai.assistance.operit.data.model.ChatFolderScope
+import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.CharacterCard
 import com.ai.assistance.operit.data.model.CharacterGroupCard
 import com.ai.assistance.operit.data.model.ActivePrompt
@@ -469,6 +472,11 @@ fun ChatHistorySelector(
     var groupActionTarget by remember { mutableStateOf<GroupTarget?>(null) }
     var groupToRename by remember { mutableStateOf<GroupTarget?>(null) }
     var groupToDelete by remember { mutableStateOf<GroupTarget?>(null) }
+    var groupPendingDeleteWithChats by remember { mutableStateOf<GroupTarget?>(null) }
+    var folderActionTarget by remember { mutableStateOf<ChatFolderEntity?>(null) }
+    var folderToRename by remember { mutableStateOf<ChatFolderEntity?>(null) }
+    var folderToDelete by remember { mutableStateOf<ChatFolderEntity?>(null) }
+    var folderPendingDeleteWithChats by remember { mutableStateOf<ChatFolderEntity?>(null) }
     var hasLongPressedGroup by rememberLocal("has_long_pressed_group", defaultValue = false)
     
     // 搜索相关状态
@@ -664,9 +672,13 @@ fun ChatHistorySelector(
                     availableCharacterGroups,
                     groupNameById,
                     groupPrefix,
-                    historyDisplayMode,
-                    activeCharacterCardName
-            ) {
+                     historyDisplayMode,
+                     activeCharacterCardName,
+                     historyCategory,
+             ) {
+                if (historyCategory == ChatHistoryCategory.RECENT) {
+                    return@remember filteredHistories.map { HistoryListItem.Item(it) }
+                }
                 fun characterKey(name: String) = "character::$name"
                 fun groupKey(characterName: String?, groupValue: String?): String {
                     val characterPart = characterName ?: "all"
@@ -1086,6 +1098,55 @@ fun ChatHistorySelector(
                         }
                     }
 
+                    // 收藏/取消收藏选项
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clip(MaterialTheme.shapes.medium)
+                            .semantics {
+                                contentDescription = if (resolvedTargetChat?.id in favoriteChatIds) {
+                                    context.getString(R.string.unfavorite_chat)
+                                } else {
+                                    context.getString(R.string.favorite_chat)
+                                }
+                            }
+                            .clickable {
+                                val targetChat = resolvedTargetChat ?: chatItemActionTarget!!
+                                coroutineScope.launch {
+                                    chatHistoryManager.setChatFavorite(
+                                        targetChat.id,
+                                        targetChat.id !in favoriteChatIds,
+                                    )
+                                }
+                                chatItemActionTarget = null
+                            },
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp).clearAndSetSemantics {},
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(
+                                text = if (resolvedTargetChat?.id in favoriteChatIds) {
+                                    stringResource(R.string.unfavorite_chat)
+                                } else {
+                                    stringResource(R.string.favorite_chat)
+                                },
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.clearAndSetSemantics {},
+                            )
+                        }
+                    }
+
                     // 锁定/解锁选项
                     Surface(
                         modifier = Modifier
@@ -1397,11 +1458,7 @@ fun ChatHistorySelector(
 
                     TextButton(
                         onClick = {
-                            onDeleteGroup(
-                                groupToDelete!!.groupName, 
-                                true,
-                                groupToDelete!!.characterCardName
-                            )
+                            groupPendingDeleteWithChats = groupToDelete
                             groupToDelete = null
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -1482,6 +1539,204 @@ fun ChatHistorySelector(
                 }
             }
         }
+    }
+
+    if (folderActionTarget != null) {
+        val target = folderActionTarget!!
+        AlertDialog(
+            onDismissRequest = { folderActionTarget = null },
+            title = { Text(stringResource(R.string.manage_group)) },
+            text = { Text(target.name) },
+            confirmButton = {
+                TextButton(onClick = {
+                    folderToRename = target
+                    folderActionTarget = null
+                }) {
+                    Text(stringResource(R.string.rename_group))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        folderToDelete = target
+                        folderActionTarget = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                ) {
+                    Text(stringResource(R.string.delete_group))
+                }
+            },
+        )
+    }
+
+    if (folderToRename != null) {
+        val target = folderToRename!!
+        var name by remember(target.id) { mutableStateOf(target.name) }
+        AlertDialog(
+            onDismissRequest = { folderToRename = null },
+            title = { Text(stringResource(R.string.rename_group)) },
+            text = {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.folder_name)) },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    coroutineScope.launch { chatHistoryManager.renameFolder(target.id, name) }
+                    folderToRename = null
+                }) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { folderToRename = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    if (folderToDelete != null) {
+        val target = folderToDelete!!
+        Dialog(onDismissRequest = { folderToDelete = null }) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        stringResource(R.string.confirm_delete_group),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(target.name, style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(16.dp))
+                    TextButton(
+                        onClick = {
+                            folderPendingDeleteWithChats = target
+                            folderToDelete = null
+                        },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        ),
+                    ) {
+                        Text(
+                            stringResource(
+                                if (target.scope == ChatFolderScope.FAVORITE) {
+                                    R.string.delete_folder_and_favorites
+                                } else {
+                                    R.string.delete_group_and_chats
+                                }
+                            )
+                        )
+                    }
+                    TextButton(onClick = {
+                        coroutineScope.launch { chatHistoryManager.deleteFolder(target.id) }
+                        folderToDelete = null
+                    }) {
+                        Text(stringResource(R.string.delete_group_only))
+                    }
+                    TextButton(onClick = { folderToDelete = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            }
+        }
+    }
+
+    if (folderPendingDeleteWithChats != null) {
+        val target = folderPendingDeleteWithChats!!
+        AlertDialog(
+            onDismissRequest = { folderPendingDeleteWithChats = null },
+            title = {
+                Text(
+                    stringResource(
+                        if (target.scope == ChatFolderScope.FAVORITE) {
+                            R.string.delete_folder_and_favorites
+                        } else {
+                            R.string.confirm_delete_group_and_chats_title
+                        }
+                    )
+                )
+            },
+            text = {
+                Text(
+                    stringResource(
+                        if (target.scope == ChatFolderScope.FAVORITE) {
+                            R.string.confirm_delete_folder_and_favorites_message
+                        } else {
+                            R.string.confirm_delete_group_and_chats_message
+                        },
+                        target.name,
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        coroutineScope.launch { chatHistoryManager.deleteFolderAndChats(target.id) }
+                        folderPendingDeleteWithChats = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                ) {
+                    Text(
+                        stringResource(
+                            if (target.scope == ChatFolderScope.FAVORITE) {
+                                R.string.delete_folder_and_favorites
+                            } else {
+                                R.string.delete_group_and_chats
+                            }
+                        )
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { folderPendingDeleteWithChats = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    if (groupPendingDeleteWithChats != null) {
+        val target = groupPendingDeleteWithChats!!
+        AlertDialog(
+            onDismissRequest = { groupPendingDeleteWithChats = null },
+            title = { Text(stringResource(R.string.confirm_delete_group_and_chats_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.confirm_delete_group_and_chats_message,
+                        target.groupName,
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteGroup(target.groupName, true, target.characterCardName)
+                        groupPendingDeleteWithChats = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                ) {
+                    Text(stringResource(R.string.delete_group_and_chats))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { groupPendingDeleteWithChats = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 
     if (chatToEdit != null) {
@@ -1841,14 +2096,18 @@ fun ChatHistorySelector(
     }
 
     if (showNewGroupDialog) {
+        val folderScope = when (historyCategory) {
+            ChatHistoryCategory.FAVORITE -> ChatFolderScope.FAVORITE
+            else -> ChatFolderScope.ALL
+        }
         AlertDialog(
                 onDismissRequest = { showNewGroupDialog = false },
-                title = { Text(stringResource(R.string.new_group)) },
+                title = { Text(stringResource(R.string.new_folder)) },
                 text = {
                     OutlinedTextField(
                             value = newGroupName,
                             onValueChange = { newGroupName = it },
-                            label = { Text(stringResource(R.string.group_name)) },
+                            label = { Text(stringResource(R.string.folder_name)) },
                             modifier = Modifier.fillMaxWidth()
                     )
                 },
@@ -1860,12 +2119,13 @@ fun ChatHistorySelector(
                                     if (normalizedGroupName.isBlank()) {
                                         return@Button
                                     }
-                                    val (characterCardName, characterGroupId) = resolveBindingForCreate(
-                                        historyDisplayMode = historyDisplayMode,
-                                        activePrompt = activePrompt,
-                                        activeCharacterCardName = activeCharacterCardName
-                                    )
-                                    onCreateGroup(normalizedGroupName, characterCardName, characterGroupId)
+                                    coroutineScope.launch {
+                                        chatHistoryManager.createFolder(
+                                            folderScope,
+                                            parentFolderId = null,
+                                            name = normalizedGroupName,
+                                        )
+                                    }
                                     newGroupName = ""
                                     showNewGroupDialog = false
                                 }
@@ -1989,16 +2249,18 @@ fun ChatHistorySelector(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.new_chat))
             }
-            IconButton(
-                onClick = { showNewGroupDialog = true },
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    Icons.Default.AddCircleOutline,
-                    contentDescription = stringResource(R.string.new_group),
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
-                )
+            if (historyCategory != ChatHistoryCategory.RECENT) {
+                IconButton(
+                    onClick = { showNewGroupDialog = true },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.Default.AddCircleOutline,
+                        contentDescription = stringResource(R.string.new_folder),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
 
@@ -2067,6 +2329,25 @@ fun ChatHistorySelector(
                 .fillMaxWidth()
                 .padding(end = 2.dp)
         ) {
+            if (historyCategory != ChatHistoryCategory.RECENT) {
+                ChatFolderTreeList(
+                    manager = chatHistoryManager,
+                    scope = if (historyCategory == ChatHistoryCategory.FAVORITE) {
+                        ChatFolderScope.FAVORITE
+                    } else {
+                        ChatFolderScope.ALL
+                    },
+                    histories = effectiveChatHistories,
+                    searchQuery = searchQuery,
+                    matchedChatIdsByContent = matchedChatIdsByContent,
+                    currentId = currentId,
+                    activeStreamingChatIds = activeStreamingChatIds,
+                    lazyListState = actualLazyListState,
+                    onSelectChat = onSelectChat,
+                    onChatLongPress = { chatItemActionTarget = it },
+                    onFolderLongPress = { folderActionTarget = it },
+                )
+            } else {
             LazyColumn(
                 state = actualLazyListState,
                 modifier = Modifier
@@ -2445,7 +2726,7 @@ fun ChatHistorySelector(
                                                         val dragDescription = stringResource(R.string.drag_item, item.history.title)
                                                         IconButton(
                                                             modifier = Modifier
-                                                                .draggableHandle()
+                                                                .draggableHandle(enabled = isDraggingEnabled)
                                                                 .semantics {
                                                                     contentDescription = dragDescription
                                                                 },
@@ -2536,15 +2817,18 @@ fun ChatHistorySelector(
                 }
             }
             }
+            }
 
-            HistoryQuickScroller(
-                listState = actualLazyListState,
-                itemCount = flatItems.size,
-                onInteractionChange = onQuickScrollInteractionChange,
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 2.dp, top = 12.dp, bottom = 12.dp)
-            )
+            if (historyCategory == ChatHistoryCategory.RECENT) {
+                HistoryQuickScroller(
+                    listState = actualLazyListState,
+                    itemCount = flatItems.size,
+                    onInteractionChange = onQuickScrollInteractionChange,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 2.dp, top = 12.dp, bottom = 12.dp)
+                )
+            }
         }
     }
 }

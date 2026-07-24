@@ -3371,6 +3371,12 @@
     <string name="all_messages">所有消息</string>
     <string name="recent_messages">最近消息</string>
     <string name="favorites">收藏</string>
+    <string name="favorite_chat">收藏对话</string>
+    <string name="unfavorite_chat">取消收藏对话</string>
+    <string name="confirm_delete_group_and_chats_title">再次确认删除分组和所有对话</string>
+    <string name="confirm_delete_group_and_chats_message">将永久删除分组“%1$s”及其中的所有对话，此操作无法撤销。</string>
+    <string name="delete_folder_and_favorites">删除文件夹和全部收藏</string>
+    <string name="confirm_delete_folder_and_favorites_message">将删除收藏文件夹“%1$s”及其中的全部收藏记录，但不会删除真实对话。</string>
     <string name="group_name">分组名称</string>
     <string name="create_new_group">新建分组</string>
     <string name="target_group_optional">目标分组（可选）</string>

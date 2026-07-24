@@ -3460,6 +3460,12 @@
     <string name="all_messages">All Messages</string>
     <string name="recent_messages">Recent Messages</string>
     <string name="favorites">Favorites</string>
+    <string name="favorite_chat">Favorite chat</string>
+    <string name="unfavorite_chat">Remove chat from favorites</string>
+    <string name="confirm_delete_group_and_chats_title">Confirm group and chat deletion</string>
+    <string name="confirm_delete_group_and_chats_message">This permanently deletes the group “%1$s” and every chat in it. This action cannot be undone.</string>
+    <string name="delete_folder_and_favorites">Delete folder and all favorites</string>
+    <string name="confirm_delete_folder_and_favorites_message">This deletes the favorite folder “%1$s” and all favorite entries in it, but keeps the actual chats.</string>
     <string name="group_name">Group name</string>
     <string name="create_new_group">Create new group</string>
     <string name="target_group_optional">Target Group (Optional)</string>

@@ -22,6 +22,9 @@ interface ChatPlacementDao {
     @Query("SELECT * FROM chat_placements WHERE scope = :scope ORDER BY displayOrder ASC")
     suspend fun getAllPlacements(scope: ChatFolderScope): List<ChatPlacementEntity>
 
+    @Query("SELECT * FROM chat_placements WHERE scope = :scope ORDER BY displayOrder ASC")
+    fun observeAllPlacements(scope: ChatFolderScope): Flow<List<ChatPlacementEntity>>
+
     @Query("SELECT * FROM chat_placements WHERE chatId = :chatId AND scope = :scope LIMIT 1")
     suspend fun getPlacement(chatId: String, scope: ChatFolderScope): ChatPlacementEntity?
 
