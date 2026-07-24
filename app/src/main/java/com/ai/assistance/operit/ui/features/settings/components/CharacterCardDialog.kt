@@ -64,7 +64,8 @@ fun CharacterCardDialog(
     onDismiss: () -> Unit,
     onSave: (CharacterCard) -> Unit,
     onAvatarChange: () -> Unit,
-    onAvatarReset: () -> Unit
+    onAvatarReset: () -> Unit,
+    draftAvatarUri: String? = null,
 ) {
     var name by remember(characterCard.id) { mutableStateOf(characterCard.name) }
     var description by remember(characterCard.id) { mutableStateOf(characterCard.description) }
@@ -131,8 +132,14 @@ fun CharacterCardDialog(
     var mcpOptions by remember(characterCard.id) {
         mutableStateOf<List<CharacterCardToolAccessOption>>(emptyList())
     }
-    val avatarUri by userPreferencesManager.getAiAvatarForCharacterCardFlow(characterCard.id)
-        .collectAsState(initial = null)
+    val avatarUri by remember(characterCard.id, draftAvatarUri) {
+        if (characterCard.id.isNotEmpty()) {
+            userPreferencesManager.getResolvedAiAvatarForCharacterCardFlow(characterCard.id)
+        } else {
+            // 新建角色卡：优先使用草稿头像，不使用空 ID 查询
+            kotlinx.coroutines.flow.flowOf(draftAvatarUri)
+        }
+    }.collectAsState(initial = null)
 
     LaunchedEffect(Unit) {
         modelConfigManager.initializeIfNeeded()
@@ -1810,7 +1817,7 @@ fun CompactAvatarPicker(
                 .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            if (avatarUri != null) {
+            if (!avatarUri.isNullOrBlank()) {
                 Image(
                     painter = rememberAsyncImagePainter(model = Uri.parse(avatarUri)),
                     contentDescription = stringResource(R.string.character_card_avatar),
@@ -1828,7 +1835,7 @@ fun CompactAvatarPicker(
         }
 
         // 重置按钮
-        if (avatarUri != null) {
+        if (!avatarUri.isNullOrBlank()) {
             TextButton(
                 onClick = onAvatarReset,
                 modifier = Modifier.height(24.dp),

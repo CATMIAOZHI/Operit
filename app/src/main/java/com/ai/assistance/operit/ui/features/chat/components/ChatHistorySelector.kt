@@ -2121,12 +2121,12 @@ fun ChatHistorySelector(
                                         .size(24.dp)
                                         .clip(CircleShape)
                                         .background(
-                                            if (avatarUri != null) Color.Transparent 
+                                            if (!avatarUri.isNullOrBlank()) Color.Transparent
                                             else MaterialTheme.colorScheme.primaryContainer
                                         ),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (avatarUri != null) {
+                                    if (!avatarUri.isNullOrBlank()) {
                                         Image(
                                             painter = rememberAsyncImagePainter(model = Uri.parse(avatarUri)),
                                             contentDescription = null,
