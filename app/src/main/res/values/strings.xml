@@ -3377,6 +3377,11 @@
     <string name="confirm_delete_group_and_chats_message">将永久删除分组“%1$s”及其中的所有对话，此操作无法撤销。</string>
     <string name="delete_folder_and_favorites">删除文件夹和全部收藏</string>
     <string name="confirm_delete_folder_and_favorites_message">将删除收藏文件夹“%1$s”及其中的全部收藏记录，但不会删除真实对话。</string>
+    <string name="manage_folder">管理文件夹</string>
+    <string name="rename_folder">重命名文件夹</string>
+    <string name="delete_folder">删除文件夹</string>
+    <string name="pin_folder">置顶文件夹</string>
+    <string name="unpin_folder">取消置顶文件夹</string>
     <string name="group_name">分组名称</string>
     <string name="create_new_group">新建分组</string>
     <string name="target_group_optional">目标分组（可选）</string>

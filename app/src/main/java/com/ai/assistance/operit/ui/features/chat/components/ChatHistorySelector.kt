@@ -1543,32 +1543,133 @@ fun ChatHistorySelector(
 
     if (folderActionTarget != null) {
         val target = folderActionTarget!!
-        AlertDialog(
-            onDismissRequest = { folderActionTarget = null },
-            title = { Text(stringResource(R.string.manage_group)) },
-            text = { Text(target.name) },
-            confirmButton = {
-                TextButton(onClick = {
-                    folderToRename = target
-                    folderActionTarget = null
-                }) {
-                    Text(stringResource(R.string.rename_group))
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        folderToDelete = target
-                        folderActionTarget = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    ),
+        Dialog(onDismissRequest = { folderActionTarget = null }) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+            ) {
+                Column(
+                    modifier = Modifier.padding(vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text(stringResource(R.string.delete_group))
+                    Text(
+                        text = stringResource(R.string.manage_folder),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 24.dp),
+                    )
+                    Text(
+                        text = target.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clip(MaterialTheme.shapes.medium)
+                            .clickable {
+                                folderToRename = target
+                                folderActionTarget = null
+                            },
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Outlined.DriveFileRenameOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp),
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(
+                                stringResource(R.string.rename_folder),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clip(MaterialTheme.shapes.medium)
+                            .clickable {
+                                coroutineScope.launch {
+                                    chatHistoryManager.setFolderPinned(target.id, !target.pinned)
+                                }
+                                folderActionTarget = null
+                            },
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Default.PushPin,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp),
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(
+                                stringResource(if (target.pinned) R.string.unpin_folder else R.string.pin_folder),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clip(MaterialTheme.shapes.medium)
+                            .clickable {
+                                folderToDelete = target
+                                folderActionTarget = null
+                            },
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Outlined.Delete,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(24.dp),
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(
+                                stringResource(R.string.delete_folder),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(
+                        onClick = { folderActionTarget = null },
+                        modifier = Modifier.align(Alignment.End).padding(horizontal = 16.dp),
+                    ) {
+                        Text(stringResource(R.string.cancel))
+                    }
                 }
-            },
-        )
+            }
+        }
     }
 
     if (folderToRename != null) {
@@ -1576,7 +1677,7 @@ fun ChatHistorySelector(
         var name by remember(target.id) { mutableStateOf(target.name) }
         AlertDialog(
             onDismissRequest = { folderToRename = null },
-            title = { Text(stringResource(R.string.rename_group)) },
+            title = { Text(stringResource(R.string.rename_folder)) },
             text = {
                 OutlinedTextField(
                     value = name,

@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -72,7 +75,32 @@ private sealed interface FolderTreeItem {
     ) : FolderTreeItem {
         override val key = "chat:${history.id}"
     }
+
+    data class FolderInsertion(
+        val parentFolderId: String?,
+        val siblingIndex: Int,
+        override val depth: Int,
+    ) : FolderTreeItem {
+        override val key = "folder-insertion:${parentFolderId ?: "root"}:$siblingIndex"
+    }
 }
+
+private sealed interface PendingTreeMove {
+    data class Folder(val id: String, val parentId: String?, val index: Int) : PendingTreeMove
+    data class Chat(val id: String, val parentId: String?, val index: Int) : PendingTreeMove
+}
+
+private fun folderStateMatches(
+    authoritative: List<ChatFolderEntity>,
+    draft: List<ChatFolderEntity>,
+): Boolean = authoritative.associate { it.id to (it.parentFolderId to it.displayOrder) } ==
+    draft.associate { it.id to (it.parentFolderId to it.displayOrder) }
+
+private fun placementStateMatches(
+    authoritative: List<ChatPlacementEntity>,
+    draft: List<ChatPlacementEntity>,
+): Boolean = authoritative.associate { it.chatId to (it.folderId to it.displayOrder) } ==
+    draft.associate { it.chatId to (it.folderId to it.displayOrder) }
 
 @Composable
 internal fun ChatFolderTreeList(
@@ -95,6 +123,26 @@ internal fun ChatFolderTreeList(
     var collapsedFolderIds by remember(scope) { mutableStateOf(emptySet<String>()) }
     val draggingEnabled = searchQuery.isBlank()
     val coroutineScope = rememberCoroutineScope()
+    var draftFolders by remember(scope) { mutableStateOf<List<ChatFolderEntity>>(emptyList()) }
+    var draftPlacements by remember(scope) { mutableStateOf<List<ChatPlacementEntity>>(emptyList()) }
+    var useDraft by remember(scope) { mutableStateOf(false) }
+    var dragActive by remember(scope) { mutableStateOf(false) }
+    var waitingForCommit by remember(scope) { mutableStateOf(false) }
+    var draggingFolderId by remember(scope) { mutableStateOf<String?>(null) }
+    var activeInsertionKey by remember(scope) { mutableStateOf<String?>(null) }
+    var activeFolderTargetId by remember(scope) { mutableStateOf<String?>(null) }
+    val pendingMove = remember(scope) { mutableStateOf<PendingTreeMove?>(null) }
+    val visibleFolders = if (useDraft) draftFolders else folders
+    val visiblePlacements = if (useDraft) draftPlacements else placements
+    val forbiddenFolderDropIds = remember(visibleFolders, draggingFolderId) {
+        val draggedId = draggingFolderId ?: return@remember emptySet()
+        visibleFolders.mapNotNullTo(mutableSetOf()) { folder ->
+            val isDescendant = generateSequence(folder.parentFolderId) { parentId ->
+                visibleFolders.firstOrNull { it.id == parentId }?.parentFolderId
+            }.any { it == draggedId }
+            folder.id.takeIf { isDescendant }
+        } + draggedId
+    }
     val normalizedQuery = searchQuery.trim()
     val matchingHistoryIds = remember(histories, normalizedQuery, matchedChatIdsByContent) {
         if (normalizedQuery.isBlank()) {
@@ -106,20 +154,29 @@ internal fun ChatFolderTreeList(
             }.mapTo(mutableSetOf()) { it.id }
         }
     }
-    val treeItems = remember(folders, placements, histories, collapsedFolderIds, matchingHistoryIds) {
+    val treeItems = remember(visibleFolders, visiblePlacements, histories, collapsedFolderIds, matchingHistoryIds) {
         val historiesById = histories.associateBy { it.id }
-        val foldersByParent = folders.groupBy { it.parentFolderId }
-        val placementsByFolder = placements.groupBy { it.folderId }
+        val foldersByParent = visibleFolders.groupBy { it.parentFolderId }
+        val placementsByFolder = visiblePlacements.groupBy { it.folderId }
         val result = mutableListOf<FolderTreeItem>()
         val visited = mutableSetOf<String>()
 
-        fun appendFolder(folder: ChatFolderEntity, depth: Int) {
-            if (!visited.add(folder.id)) return
-            result += FolderTreeItem.Folder(folder, depth)
-            if (folder.id in collapsedFolderIds) return
-            foldersByParent[folder.id].orEmpty()
+        lateinit var appendFolder: (ChatFolderEntity, Int) -> Unit
+        fun appendFolderChildren(parentFolderId: String?, depth: Int) {
+            val siblings = foldersByParent[parentFolderId].orEmpty()
                 .sortedWith(compareByDescending<ChatFolderEntity> { it.pinned }.thenBy { it.displayOrder })
-                .forEach { appendFolder(it, depth + 1) }
+            siblings.forEachIndexed { index, folder ->
+                result += FolderTreeItem.FolderInsertion(parentFolderId, index, depth)
+                appendFolder(folder, depth)
+            }
+            result += FolderTreeItem.FolderInsertion(parentFolderId, siblings.size, depth)
+        }
+
+        appendFolder = append@ { folder, depth ->
+            if (!visited.add(folder.id)) return@append
+            result += FolderTreeItem.Folder(folder, depth)
+            if (folder.id in collapsedFolderIds) return@append
+            appendFolderChildren(folder.id, depth + 1)
             placementsByFolder[folder.id].orEmpty()
                 .sortedBy { it.displayOrder }
                 .forEach { placement ->
@@ -129,9 +186,7 @@ internal fun ChatFolderTreeList(
                 }
         }
 
-        foldersByParent[null].orEmpty()
-            .sortedWith(compareByDescending<ChatFolderEntity> { it.pinned }.thenBy { it.displayOrder })
-            .forEach { appendFolder(it, 0) }
+        appendFolderChildren(null, 0)
         placementsByFolder[null].orEmpty()
             .sortedBy { it.displayOrder }
             .forEach { placement ->
@@ -142,65 +197,150 @@ internal fun ChatFolderTreeList(
         result
     }
 
+    LaunchedEffect(folders, placements, useDraft, dragActive, waitingForCommit) {
+        if (!useDraft) {
+            draftFolders = folders
+            draftPlacements = placements
+        } else if (
+            waitingForCommit && !dragActive &&
+                folderStateMatches(folders, draftFolders) &&
+                placementStateMatches(placements, draftPlacements)
+        ) {
+            useDraft = false
+            waitingForCommit = false
+            pendingMove.value = null
+        }
+    }
+
+    fun beginDrag(folderId: String? = null) {
+        if (!useDraft) {
+            draftFolders = folders
+            draftPlacements = placements
+        }
+        useDraft = true
+        dragActive = true
+        waitingForCommit = false
+        draggingFolderId = folderId
+        activeInsertionKey = null
+        activeFolderTargetId = null
+        pendingMove.value = null
+    }
+
+    fun finishDrag() {
+        dragActive = false
+        draggingFolderId = null
+        activeInsertionKey = null
+        activeFolderTargetId = null
+        val move = pendingMove.value
+        if (move == null) {
+            useDraft = false
+            return
+        }
+        waitingForCommit = true
+        coroutineScope.launch {
+            runCatching {
+                when (move) {
+                    is PendingTreeMove.Folder -> manager.moveFolder(move.id, move.parentId, move.index)
+                    is PendingTreeMove.Chat -> manager.moveChat(move.id, scope, move.parentId, move.index)
+                }
+            }.onFailure {
+                useDraft = false
+                waitingForCommit = false
+                pendingMove.value = null
+            }
+        }
+    }
+
     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
         val moved = treeItems.getOrNull(from.index) ?: return@rememberReorderableLazyListState
         val target = treeItems.getOrNull(to.index) ?: return@rememberReorderableLazyListState
-        coroutineScope.launch {
-            runCatching {
-                when (moved) {
-                    is FolderTreeItem.Folder -> {
-                        val targetParentId = when {
-                            target is FolderTreeItem.Folder &&
-                                target.value.parentFolderId == moved.value.parentFolderId &&
-                                target.value.id !in collapsedFolderIds -> {
-                                target.value.parentFolderId
-                            }
-                            target is FolderTreeItem.Folder -> target.value.id
-                            target is FolderTreeItem.Chat -> target.placement.folderId
-                            else -> null
+        when (moved) {
+            is FolderTreeItem.Folder -> {
+                val targetParentId = when (target) {
+                    is FolderTreeItem.Folder -> target.value.id
+                    is FolderTreeItem.Chat -> target.placement.folderId
+                    is FolderTreeItem.FolderInsertion -> target.parentFolderId
+                }
+                val targetIsDescendant = generateSequence(targetParentId) { id ->
+                    draftFolders.firstOrNull { it.id == id }?.parentFolderId
+                }.any { it == moved.value.id }
+                if (targetIsDescendant) return@rememberReorderableLazyListState
+
+                val currentSiblings = draftFolders
+                    .filter { it.parentFolderId == targetParentId }
+                    .sortedWith(compareByDescending<ChatFolderEntity> { it.pinned }.thenBy { it.displayOrder })
+                val withoutMoved = currentSiblings.filter { it.id != moved.value.id }.toMutableList()
+                val destination = when (target) {
+                    is FolderTreeItem.FolderInsertion -> {
+                        val sourceIndex = currentSiblings.indexOfFirst { it.id == moved.value.id }
+                        val adjustedIndex = if (
+                            moved.value.parentFolderId == targetParentId &&
+                                sourceIndex >= 0 && sourceIndex < target.siblingIndex
+                        ) {
+                            target.siblingIndex - 1
+                        } else {
+                            target.siblingIndex
                         }
-                        val siblingFolders = folders
-                            .filter {
-                                it.parentFolderId == targetParentId && it.id != moved.value.id
-                            }
-                            .sortedWith(
-                                compareByDescending<ChatFolderEntity> { it.pinned }
-                                    .thenBy { it.displayOrder }
-                            )
-                        val targetIndex = when {
-                            target is FolderTreeItem.Folder && target.value.parentFolderId == targetParentId -> {
-                                siblingFolders.indexOfFirst { it.id == target.value.id }
-                                    .takeIf { it >= 0 } ?: siblingFolders.size
-                            }
-                            else -> siblingFolders.size
-                        }
-                        manager.moveFolder(moved.value.id, targetParentId, targetIndex)
-                        if (target is FolderTreeItem.Folder && targetParentId == target.value.id) {
-                            collapsedFolderIds = collapsedFolderIds - target.value.id
-                        }
+                        adjustedIndex.coerceIn(0, withoutMoved.size)
                     }
-                    is FolderTreeItem.Chat -> {
-                        val targetFolderId = when (target) {
-                            is FolderTreeItem.Folder -> target.value.id
-                            is FolderTreeItem.Chat -> target.placement.folderId
-                        }
-                        val siblingIds = placements
-                            .filter { it.folderId == targetFolderId }
-                            .sortedBy { it.displayOrder }
-                            .map { it.chatId }
-                            .filter { it != moved.history.id }
-                        val targetIndex = when (target) {
-                            is FolderTreeItem.Folder -> siblingIds.size
-                            is FolderTreeItem.Chat -> siblingIds.indexOf(target.history.id)
-                                .takeIf { it >= 0 } ?: siblingIds.size
-                        }
-                        manager.moveChat(moved.history.id, scope, targetFolderId, targetIndex)
-                        if (target is FolderTreeItem.Folder) {
-                            collapsedFolderIds = collapsedFolderIds - target.value.id
-                        }
-                    }
+                    else -> withoutMoved.size
+                }
+                val reordered = withoutMoved.apply {
+                    add(destination, moved.value.copy(parentFolderId = targetParentId))
+                }
+                val updates = reordered.mapIndexed { index, folder ->
+                    folder.copy(parentFolderId = targetParentId, displayOrder = index.toLong())
+                }.associateBy { it.id }
+                draftFolders = draftFolders.map { updates[it.id] ?: it }
+                val targetIndex = reordered.indexOfFirst { it.id == moved.value.id }
+                pendingMove.value = PendingTreeMove.Folder(moved.value.id, targetParentId, targetIndex)
+                activeInsertionKey = (target as? FolderTreeItem.FolderInsertion)?.key
+                activeFolderTargetId = (target as? FolderTreeItem.Folder)?.value?.id
+                if (target is FolderTreeItem.Folder) {
+                    collapsedFolderIds = collapsedFolderIds - target.value.id
                 }
             }
+            is FolderTreeItem.Chat -> {
+                val targetFolderId = when (target) {
+                    is FolderTreeItem.Folder -> target.value.id
+                    is FolderTreeItem.Chat -> target.placement.folderId
+                    is FolderTreeItem.FolderInsertion -> target.parentFolderId
+                }
+                val currentSiblings = draftPlacements
+                    .filter { it.folderId == targetFolderId }
+                    .sortedBy { it.displayOrder }
+                val reordered = if (
+                    moved.placement.folderId == targetFolderId && target is FolderTreeItem.Chat
+                ) {
+                    val fromIndex = currentSiblings.indexOfFirst { it.chatId == moved.history.id }
+                    val toIndex = currentSiblings.indexOfFirst { it.chatId == target.history.id }
+                    if (fromIndex < 0 || toIndex < 0) return@rememberReorderableLazyListState
+                    currentSiblings.toMutableList().apply { add(toIndex, removeAt(fromIndex)) }
+                } else {
+                    val withoutMoved = currentSiblings.filter { it.chatId != moved.history.id }.toMutableList()
+                    val destination = if (target is FolderTreeItem.Chat) {
+                        withoutMoved.indexOfFirst { it.chatId == target.history.id }.takeIf { it >= 0 }
+                            ?: withoutMoved.size
+                    } else {
+                        withoutMoved.size
+                    }
+                    withoutMoved.apply {
+                        add(destination, moved.placement.copy(folderId = targetFolderId))
+                    }
+                }
+                val updates = reordered.mapIndexed { index, placement ->
+                    placement.copy(folderId = targetFolderId, displayOrder = index.toLong())
+                }.associateBy { it.chatId }
+                draftPlacements = draftPlacements.map { updates[it.chatId] ?: it }
+                val targetIndex = reordered.indexOfFirst { it.chatId == moved.history.id }
+                pendingMove.value = PendingTreeMove.Chat(moved.history.id, targetFolderId, targetIndex)
+                activeInsertionKey = null
+                activeFolderTargetId = (target as? FolderTreeItem.Folder)?.value?.id
+                if (target is FolderTreeItem.Folder) {
+                    collapsedFolderIds = collapsedFolderIds - target.value.id
+                }
+            }
+            is FolderTreeItem.FolderInsertion -> return@rememberReorderableLazyListState
         }
     }
 
@@ -209,29 +349,59 @@ internal fun ChatFolderTreeList(
         modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 22.dp),
     ) {
         items(treeItems, key = { it.key }) { item ->
-            ReorderableItem(reorderableState, key = item.key) { isDragging ->
+            ReorderableItem(
+                reorderableState,
+                key = item.key,
+                enabled = when (item) {
+                    is FolderTreeItem.FolderInsertion -> dragActive && draggingFolderId != null &&
+                        item.parentFolderId !in forbiddenFolderDropIds
+                    is FolderTreeItem.Folder -> item.value.id !in
+                        (forbiddenFolderDropIds - draggingFolderId)
+                    is FolderTreeItem.Chat -> true
+                },
+            ) { isDragging ->
                 when (item) {
+                    is FolderTreeItem.FolderInsertion -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(7.dp)
+                                .padding(start = (item.depth * 14 + 8).dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (activeInsertionKey == item.key) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(2.dp)
+                                        .background(MaterialTheme.colorScheme.primary)
+                                )
+                            }
+                        }
+                    }
                     is FolderTreeItem.Folder -> {
                         val expanded = item.value.id !in collapsedFolderIds
                         Surface(
-                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            color = if (activeFolderTargetId == item.value.id) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainer
+                            },
                             shadowElevation = if (isDragging) 8.dp else 1.dp,
                             shape = MaterialTheme.shapes.medium,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(start = (item.depth * 14).dp, top = 3.dp, bottom = 3.dp)
-                                .pointerInput(item.value.id) {
-                                    detectTapGestures(
-                                        onTap = {
-                                            collapsedFolderIds = if (expanded) {
-                                                collapsedFolderIds + item.value.id
-                                            } else {
-                                                collapsedFolderIds - item.value.id
-                                            }
-                                        },
-                                        onLongPress = { onFolderLongPress(item.value) },
-                                    )
-                                },
+                                .combinedClickable(
+                                    onClick = {
+                                        collapsedFolderIds = if (item.value.id in collapsedFolderIds) {
+                                            collapsedFolderIds - item.value.id
+                                        } else {
+                                            collapsedFolderIds + item.value.id
+                                        }
+                                    },
+                                    onLongClick = { onFolderLongPress(item.value) },
+                                ),
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
@@ -241,7 +411,11 @@ internal fun ChatFolderTreeList(
                                     onClick = {},
                                     modifier = Modifier
                                         .size(36.dp)
-                                        .draggableHandle(enabled = draggingEnabled)
+                                        .draggableHandle(
+                                            enabled = draggingEnabled && !waitingForCommit,
+                                            onDragStarted = { beginDrag(item.value.id) },
+                                            onDragStopped = { finishDrag() },
+                                        )
                                         .semantics {
                                             contentDescription = item.value.name
                                         },
@@ -303,7 +477,11 @@ internal fun ChatFolderTreeList(
                                     onClick = {},
                                     modifier = Modifier
                                         .size(36.dp)
-                                        .draggableHandle(enabled = draggingEnabled),
+                                        .draggableHandle(
+                                            enabled = draggingEnabled && !waitingForCommit,
+                                            onDragStarted = { beginDrag() },
+                                            onDragStopped = { finishDrag() },
+                                        ),
                                 ) {
                                     Icon(Icons.Default.DragHandle, contentDescription = stringResource(R.string.drag_item, item.history.title))
                                 }
