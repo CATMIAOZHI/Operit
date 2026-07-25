@@ -1802,6 +1802,9 @@ fun ModelPromptsSettingsScreen(
     }
 
     if (showExportDialog) {
+        val imageLoadFailedMessage = stringResource(R.string.image_load_failed)
+        val imageSavedMessage = stringResource(R.string.image_saved)
+        val saveFailedMessage = stringResource(R.string.save_failed)
         LaunchedEffect(exportCharacterCardId) {
             if (exportCharacterCardId.isBlank()) return@LaunchedEffect
             isExportGenerating = true
@@ -1923,7 +1926,11 @@ fun ModelPromptsSettingsScreen(
                     onClick = {
                         val bmp = exportQrBitmap
                         if (bmp == null) {
-                            Toast.makeText(context, context.getString(R.string.image_load_failed), Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                imageLoadFailedMessage,
+                                Toast.LENGTH_SHORT,
+                            ).show()
                             return@Button
                         }
                         scope.launch {
@@ -1931,7 +1938,7 @@ fun ModelPromptsSettingsScreen(
                             val ok = saveBitmapToGallery(context, bmp, fileName)
                             Toast.makeText(
                                 context,
-                                if (ok) context.getString(R.string.image_saved) else context.getString(R.string.save_failed),
+                                if (ok) imageSavedMessage else saveFailedMessage,
                                 Toast.LENGTH_SHORT
                             ).show()
                         }

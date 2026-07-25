@@ -1313,6 +1313,8 @@ fun ChatHistorySelector(
     }
 
     if (groupActionTarget != null) {
+        val renameGroupDescription = stringResource(R.string.rename_group)
+        val deleteGroupDescription = stringResource(R.string.delete_group)
         Dialog(onDismissRequest = { groupActionTarget = null }) {
             Card(
                 modifier = Modifier
@@ -1353,7 +1355,7 @@ fun ChatHistorySelector(
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .clip(MaterialTheme.shapes.medium)
                             .semantics {
-                                contentDescription = context.getString(R.string.rename_group)
+                                contentDescription = renameGroupDescription
                             }
                             .clickable {
                                 groupToRename = groupActionTarget
@@ -1392,7 +1394,7 @@ fun ChatHistorySelector(
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .clip(MaterialTheme.shapes.medium)
                             .semantics {
-                                contentDescription = context.getString(R.string.delete_group)
+                                contentDescription = deleteGroupDescription
                             }
                             .clickable {
                                 groupToDelete = groupActionTarget
@@ -2122,6 +2124,12 @@ fun ChatHistorySelector(
         val bindingLabel = stringResource(R.string.bind_character_card)
         val bindingHint = stringResource(R.string.chat_binding_scope_hint)
         val groupPrefix = stringResource(R.string.character_group_binding_prefix)
+        val normalizedSelectedGroupId =
+            selectedCharacterGroupId?.trim()?.takeIf { it.isNotBlank() }
+        val missingCharacterGroupLabel = stringResource(
+            R.string.missing_character_group_id,
+            normalizedSelectedGroupId.orEmpty(),
+        )
         val bindingOptions = remember(availableCharacterCards, availableCharacterGroups, unboundLabel, groupPrefix) {
             buildList {
                 add(ChatBindingOption(unboundLabel, null, null))
@@ -2138,16 +2146,20 @@ fun ChatHistorySelector(
             selectedCharacterGroupId,
             groupNameById,
             unboundLabel,
-            groupPrefix
+            groupPrefix,
+            normalizedSelectedGroupId,
+            missingCharacterGroupLabel,
         ) {
             when {
                 !selectedCharacterGroupId.isNullOrBlank() -> {
-                    val normalizedGroupId = selectedCharacterGroupId?.trim()?.takeIf { it.isNotBlank() }
-                    val groupName = normalizedGroupId?.let { groupNameById[it] }?.takeIf { it.isNotBlank() }
+                    val groupName =
+                        normalizedSelectedGroupId
+                            ?.let { groupNameById[it] }
+                            ?.takeIf { it.isNotBlank() }
                     if (!groupName.isNullOrBlank()) {
                         "$groupPrefix: $groupName"
                     } else {
-                        context.getString(R.string.missing_character_group_id, normalizedGroupId ?: "")
+                        missingCharacterGroupLabel
                     }
                 }
                 !selectedCharacterCardName.isNullOrBlank() -> selectedCharacterCardName!!
