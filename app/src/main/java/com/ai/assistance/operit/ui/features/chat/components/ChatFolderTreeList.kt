@@ -51,7 +51,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -131,87 +132,30 @@ private data class DropFeedback(
 
 private data class DragSession(
     val source: FolderTreeItem,
-    val pointerInRoot: Offset,
-    val initialPointerXInRoot: Float,
     val grabOffsetY: Float,
-    val sourceHeightPx: Float,
+    val sourceBoundsInRoot: Rect,
 )
 
 @Composable
 private fun TreeDragHandle(
     sourceKey: String,
-    enabled: Boolean,
     contentDescription: String,
-    onBeginDrag: (String, Offset) -> Boolean,
-    onUpdateDrag: (Offset) -> Unit,
-    onFinishDrag: (Boolean) -> Unit,
+    onBoundsChanged: (Rect?) -> Unit,
 ) {
-    var handlePositionInRoot by remember(sourceKey) {
-        mutableStateOf<Offset?>(null)
+    val currentOnBoundsChanged by rememberUpdatedState(onBoundsChanged)
+
+    DisposableEffect(sourceKey) {
+        onDispose {
+            currentOnBoundsChanged(null)
+        }
     }
-    val currentOnBeginDrag by rememberUpdatedState(onBeginDrag)
-    val currentOnUpdateDrag by rememberUpdatedState(onUpdateDrag)
-    val currentOnFinishDrag by rememberUpdatedState(onFinishDrag)
 
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .size(48.dp)
             .onGloballyPositioned { coordinates ->
-                handlePositionInRoot = coordinates.positionInRoot()
-            }
-            .pointerInput(sourceKey, enabled) {
-                if (!enabled) return@pointerInput
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val initialHandlePosition =
-                        handlePositionInRoot ?: return@awaitEachGesture
-                    val initialPointerInRoot = initialHandlePosition + down.position
-                    val pointerId = down.id
-                    var accumulatedMovement = Offset.Zero
-                    var previousPosition = down.position
-                    var dragStarted = false
-                    var releasedNormally = false
-
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change =
-                            event.changes.firstOrNull { it.id == pointerId }
-                                ?: break
-                        val pointerInRoot =
-                            (handlePositionInRoot ?: initialHandlePosition) +
-                                change.position
-
-                        if (change.changedToUp()) {
-                            if (dragStarted) {
-                                currentOnUpdateDrag(pointerInRoot)
-                                change.consume()
-                                releasedNormally = true
-                            }
-                            break
-                        }
-                        if (!change.pressed) break
-
-                        accumulatedMovement += change.position - previousPosition
-                        previousPosition = change.position
-                        if (
-                            !dragStarted &&
-                                accumulatedMovement.getDistance() >=
-                                viewConfiguration.touchSlop
-                        ) {
-                            dragStarted =
-                                currentOnBeginDrag(sourceKey, initialPointerInRoot)
-                        }
-                        if (dragStarted) {
-                            currentOnUpdateDrag(pointerInRoot)
-                            change.consume()
-                        }
-                    }
-
-                    if (dragStarted) {
-                        currentOnFinishDrag(releasedNormally)
-                    }
-                }
+                currentOnBoundsChanged(coordinates.boundsInRoot())
             }
             .semantics {
                 this.contentDescription = contentDescription
@@ -259,6 +203,7 @@ internal fun ChatFolderTreeList(
         .collectAsState(initial = emptyList())
     var collapsedFolderIds by remember(scope) { mutableStateOf(emptySet<String>()) }
     var dragSession by remember(scope) { mutableStateOf<DragSession?>(null) }
+    var dragPointerInRoot by remember(scope) { mutableStateOf(Offset.Zero) }
     var dropFeedback by remember(scope) { mutableStateOf<DropFeedback?>(null) }
     var pendingCommitKeys by remember(scope) { mutableStateOf(emptySet<String>()) }
     var commitInProgress by remember(scope) { mutableStateOf(false) }
@@ -267,6 +212,7 @@ internal fun ChatFolderTreeList(
     var parentDropBoundsInRoot by remember(scope) { mutableStateOf<Rect?>(null) }
     var rootDropBoundsInRoot by remember(scope) { mutableStateOf<Rect?>(null) }
     val rowBoundsInRoot = remember(scope) { mutableMapOf<String, Rect>() }
+    val handleBoundsInRoot = remember(scope) { mutableMapOf<String, Rect>() }
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val hapticFeedback = LocalHapticFeedback.current
@@ -347,6 +293,7 @@ internal fun ChatFolderTreeList(
 
         result
     }
+    val treeItemsByKey = remember(treeItems) { treeItems.associateBy { it.key } }
 
     val draggedFolderSubtreeIds = remember(dragSession?.source, folders) {
         val sourceFolder = (dragSession?.source as? FolderTreeItem.Folder)?.value
@@ -476,11 +423,13 @@ internal fun ChatFolderTreeList(
             return
         }
 
-        val target = treeItems.firstOrNull { item ->
-            rowBoundsInRoot[item.key]?.let { bounds ->
-                pointerInRoot.y in bounds.top..bounds.bottom
-            } == true
-        }
+        val targetKey =
+            rowBoundsInRoot.entries
+                .firstOrNull { (_, bounds) ->
+                    pointerInRoot.y in bounds.top..bounds.bottom
+                }
+                ?.key
+        val target = targetKey?.let(treeItemsByKey::get)
         val nextFeedback = when (target) {
             null -> null
             is FolderTreeItem.Chat -> {
@@ -634,24 +583,23 @@ internal fun ChatFolderTreeList(
 
     fun beginDrag(sourceKey: String, pointerInRoot: Offset): Boolean {
         if (!dragEnabled) return false
-        val source = treeItems.firstOrNull { it.key == sourceKey } ?: return false
+        val source = treeItemsByKey[sourceKey] ?: return false
         val sourceBounds = rowBoundsInRoot[sourceKey] ?: return false
         dragSession = DragSession(
             source = source,
-            pointerInRoot = pointerInRoot,
-            initialPointerXInRoot = pointerInRoot.x,
             grabOffsetY = (pointerInRoot.y - sourceBounds.top)
                 .coerceIn(0f, sourceBounds.height),
-            sourceHeightPx = sourceBounds.height,
+            sourceBoundsInRoot = sourceBounds,
         )
+        dragPointerInRoot = pointerInRoot
         dropFeedback = null
         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
         return true
     }
 
     fun updateDrag(pointerInRoot: Offset) {
-        val current = dragSession ?: return
-        dragSession = current.copy(pointerInRoot = pointerInRoot)
+        if (dragSession == null) return
+        dragPointerInRoot = pointerInRoot
         updateDropTarget(pointerInRoot)
     }
 
@@ -746,14 +694,15 @@ internal fun ChatFolderTreeList(
     val currentUpdateDrag by rememberUpdatedState<(Offset) -> Unit>(::updateDrag)
     val currentFinishDrag by rememberUpdatedState<(Boolean) -> Unit>(::finishDrag)
     val currentUpdateDropTarget by rememberUpdatedState<(Offset) -> Unit>(::updateDropTarget)
+    val currentDragEnabled by rememberUpdatedState(dragEnabled)
 
     LaunchedEffect(dragSession != null, lazyListState) {
         if (dragSession == null) return@LaunchedEffect
         val edgeSizePx = with(density) { 72.dp.toPx() }
         val maximumStepPx = with(density) { 18.dp.toPx() }
         while (dragSession != null) {
-            val current = dragSession ?: break
-            val pointerY = current.pointerInRoot.y - containerPositionInRoot.y
+            val currentPointer = dragPointerInRoot
+            val pointerY = currentPointer.y - containerPositionInRoot.y
             val isUsingExitTarget =
                 dropFeedback?.kind in
                     setOf(
@@ -774,7 +723,7 @@ internal fun ChatFolderTreeList(
             if (scrollFactor != 0f) {
                 val consumed = lazyListState.scrollBy(scrollFactor * maximumStepPx)
                 if (consumed != 0f) {
-                    currentUpdateDropTarget(current.pointerInRoot)
+                    currentUpdateDropTarget(currentPointer)
                 }
             }
             delay(16)
@@ -794,18 +743,81 @@ internal fun ChatFolderTreeList(
             .onGloballyPositioned { coordinates ->
                 containerPositionInRoot = coordinates.positionInRoot()
                 containerHeightPx = coordinates.size.height.toFloat()
+            }
+            .pointerInput(scope) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(
+                        requireUnconsumed = false,
+                        pass = PointerEventPass.Initial,
+                    )
+                    if (!currentDragEnabled) return@awaitEachGesture
+
+                    val downInRoot = containerPositionInRoot + down.position
+                    val sourceKey =
+                        handleBoundsInRoot.entries
+                            .firstOrNull { (_, bounds) -> bounds.contains(downInRoot) }
+                            ?.key
+                            ?: return@awaitEachGesture
+                    val pointerId = down.id
+                    var accumulatedMovement = Offset.Zero
+                    var previousPosition = down.position
+                    var dragStarted = false
+                    var releasedNormally = false
+
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change =
+                                event.changes.firstOrNull { it.id == pointerId }
+                                    ?: break
+                            val pointerInRoot =
+                                containerPositionInRoot + change.position
+
+                            if (change.changedToUpIgnoreConsumed()) {
+                                if (dragStarted) {
+                                    currentUpdateDrag(pointerInRoot)
+                                    change.consume()
+                                    releasedNormally = true
+                                }
+                                break
+                            }
+                            if (!change.pressed) break
+
+                            accumulatedMovement += change.position - previousPosition
+                            previousPosition = change.position
+                            if (
+                                !dragStarted &&
+                                    accumulatedMovement.getDistance() >=
+                                    viewConfiguration.touchSlop
+                            ) {
+                                dragStarted =
+                                    currentBeginDrag(sourceKey, downInRoot)
+                            }
+                            if (dragStarted) {
+                                currentUpdateDrag(pointerInRoot)
+                                change.consume()
+                            }
+                        }
+                    } finally {
+                        if (dragStarted) {
+                            currentFinishDrag(releasedNormally)
+                        }
+                    }
+                }
             },
     ) {
         LazyColumn(
             state = lazyListState,
+            userScrollEnabled = dragSession == null,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 10.dp, end = 22.dp),
         ) {
             items(treeItems, key = { item -> item.key }) { item ->
-                DisposableEffect(item.key, dragEnabled) {
+                DisposableEffect(item.key) {
                     onDispose {
                         rowBoundsInRoot.remove(item.key)
+                        handleBoundsInRoot.remove(item.key)
                     }
                 }
 
@@ -888,14 +900,17 @@ internal fun ChatFolderTreeList(
                             ) {
                                 TreeDragHandle(
                                     sourceKey = item.key,
-                                    enabled = dragEnabled,
                                     contentDescription = stringResource(
                                         R.string.drag_item,
                                         item.value.name,
                                     ),
-                                    onBeginDrag = currentBeginDrag,
-                                    onUpdateDrag = currentUpdateDrag,
-                                    onFinishDrag = currentFinishDrag,
+                                    onBoundsChanged = { bounds ->
+                                        if (bounds == null) {
+                                            handleBoundsInRoot.remove(item.key)
+                                        } else {
+                                            handleBoundsInRoot[item.key] = bounds
+                                        }
+                                    },
                                 )
                                 Icon(
                                     Icons.Default.Folder,
@@ -995,14 +1010,17 @@ internal fun ChatFolderTreeList(
                             ) {
                                 TreeDragHandle(
                                     sourceKey = item.key,
-                                    enabled = dragEnabled,
                                     contentDescription = stringResource(
                                         R.string.drag_item,
                                         item.history.title,
                                     ),
-                                    onBeginDrag = currentBeginDrag,
-                                    onUpdateDrag = currentUpdateDrag,
-                                    onFinishDrag = currentFinishDrag,
+                                    onBoundsChanged = { bounds ->
+                                        if (bounds == null) {
+                                            handleBoundsInRoot.remove(item.key)
+                                        } else {
+                                            handleBoundsInRoot[item.key] = bounds
+                                        }
+                                    },
                                 )
                                 Text(
                                     text = item.history.title,
@@ -1191,9 +1209,11 @@ internal fun ChatFolderTreeList(
             }
 
             val overlayTop =
-                activeDrag.pointerInRoot.y -
+                dragPointerInRoot.y -
                     containerPositionInRoot.y -
                     activeDrag.grabOffsetY
+            val overlayLeft =
+                activeDrag.sourceBoundsInRoot.left - containerPositionInRoot.x
             val hint = when (dropFeedback?.kind) {
                 DropFeedbackKind.REORDER ->
                     stringResource(R.string.release_to_reorder_here)
@@ -1238,16 +1258,15 @@ internal fun ChatFolderTreeList(
                 shadowElevation = 12.dp,
                 shape = MaterialTheme.shapes.medium,
                 modifier = Modifier
-                    .offset { IntOffset(0, overlayTop.roundToInt()) }
+                    .offset {
+                        IntOffset(
+                            overlayLeft.roundToInt(),
+                            overlayTop.roundToInt(),
+                        )
+                    }
                     .zIndex(25f)
-                    .fillMaxWidth()
-                    .padding(start = 10.dp, end = 56.dp)
-                    .height(with(density) { activeDrag.sourceHeightPx.toDp() })
-                    .graphicsLayer {
-                        translationX =
-                            activeDrag.pointerInRoot.x -
-                                activeDrag.initialPointerXInRoot
-                    },
+                    .width(with(density) { activeDrag.sourceBoundsInRoot.width.toDp() })
+                    .height(with(density) { activeDrag.sourceBoundsInRoot.height.toDp() }),
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 8.dp),
