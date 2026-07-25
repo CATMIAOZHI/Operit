@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeOut
@@ -464,6 +465,8 @@ fun ChatHistorySelector(
 ) {
     var chatToEdit by remember { mutableStateOf<ChatHistory?>(null) }
     var chatToDelete by remember { mutableStateOf<ChatHistory?>(null) }
+    var foldersDeletedWithChat by remember { mutableStateOf<List<ChatFolderEntity>>(emptyList()) }
+    var deleteImpactLoadingChatId by remember { mutableStateOf<String?>(null) }
     var chatItemActionTarget by remember { mutableStateOf<ChatHistory?>(null) }
     var showNewGroupDialog by remember { mutableStateOf(false) }
     var newGroupName by remember { mutableStateOf("") }
@@ -514,7 +517,30 @@ fun ChatHistorySelector(
         if (deletingChatIds.contains(history.id)) {
             return
         }
-        chatToDelete = history
+        deleteImpactLoadingChatId = history.id
+        coroutineScope.launch {
+            val affectedFolders =
+                runCatching { chatHistoryManager.foldersDeletedWithChat(history.id) }
+                    .getOrElse {
+                        if (deleteImpactLoadingChatId == history.id) {
+                            deleteImpactLoadingChatId = null
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.folder_operation_failed),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        return@launch
+                    }
+            if (
+                deleteImpactLoadingChatId == history.id &&
+                    history.id !in deletingChatIds
+            ) {
+                foldersDeletedWithChat = affectedFolders
+                chatToDelete = history
+                deleteImpactLoadingChatId = null
+            }
+        }
     }
 
     fun requestDeleteChat(history: ChatHistory) {
@@ -535,18 +561,41 @@ fun ChatHistorySelector(
     if (chatToDelete != null) {
         val deletingChat = chatToDelete!!
         AlertDialog(
-            onDismissRequest = { chatToDelete = null },
+            onDismissRequest = {
+                chatToDelete = null
+                foldersDeletedWithChat = emptyList()
+            },
             title = { Text(stringResource(R.string.confirm_delete_chat)) },
             text = {
-                Text(
-                    text = stringResource(R.string.delete_chat_confirmation, deletingChat.title)
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = stringResource(
+                            R.string.delete_chat_confirmation,
+                            deletingChat.title,
+                        )
+                    )
+                    if (foldersDeletedWithChat.isNotEmpty()) {
+                        Text(
+                            text = stringResource(
+                                R.string.delete_chat_removes_folders_warning,
+                                foldersDeletedWithChat.joinToString(
+                                    separator = stringResource(R.string.folder_name_separator),
+                                ) { folder ->
+                                    "“${folder.name}”"
+                                },
+                            ),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
                         requestDeleteChat(deletingChat)
                         chatToDelete = null
+                        foldersDeletedWithChat = emptyList()
                     },
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
@@ -556,7 +605,10 @@ fun ChatHistorySelector(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { chatToDelete = null }) {
+                TextButton(onClick = {
+                    chatToDelete = null
+                    foldersDeletedWithChat = emptyList()
+                }) {
                     Text(stringResource(R.string.cancel))
                 }
             }
@@ -2428,14 +2480,23 @@ fun ChatHistorySelector(
                                 if (newGroupName.isNotBlank()) {
                                     coroutineScope.launch {
                                         try {
-                                            chatHistoryManager.createFolder(
-                                                folderScope,
+                                            val (characterCardName, characterGroupId) =
+                                                resolveBindingForCreate(
+                                                    historyDisplayMode = historyDisplayMode,
+                                                    activePrompt = activePrompt,
+                                                    activeCharacterCardName = activeCharacterCardName,
+                                                )
+                                            val created = chatHistoryManager.createFolderWithChat(
+                                                scope = folderScope,
                                                 parentFolderId = null,
                                                 name = newGroupName,
+                                                characterCardName = characterCardName,
+                                                characterGroupId = characterGroupId,
                                             )
                                             newGroupName = ""
                                             newFolderError = null
                                             showNewGroupDialog = false
+                                            onSelectChat(created.chat.id)
                                         } catch (_: FolderNameConflictException) {
                                             newFolderError = nameConflictMessage
                                         } catch (_: Exception) {

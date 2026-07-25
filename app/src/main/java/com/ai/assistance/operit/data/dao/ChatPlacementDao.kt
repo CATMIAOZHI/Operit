@@ -28,6 +28,9 @@ interface ChatPlacementDao {
     @Query("SELECT * FROM chat_placements WHERE chatId = :chatId AND scope = :scope LIMIT 1")
     suspend fun getPlacement(chatId: String, scope: ChatFolderScope): ChatPlacementEntity?
 
+    @Query("SELECT * FROM chat_placements WHERE chatId = :chatId")
+    suspend fun getPlacementsForChat(chatId: String): List<ChatPlacementEntity>
+
     @Query("SELECT chatId FROM chat_placements WHERE scope = :scope")
     suspend fun getAllChatIdsInScope(scope: ChatFolderScope): List<String>
 

@@ -83,6 +83,69 @@ class FolderNameConflictException : IllegalArgumentException()
 
 class InvalidFolderNameException : IllegalArgumentException()
 
+data class CreatedFolderWithChat(
+    val folder: ChatFolderEntity,
+    val chat: ChatHistory,
+)
+
+internal fun calculateEmptyFoldersAffectedBySources(
+    folders: List<ChatFolderEntity>,
+    placements: List<ChatPlacementEntity>,
+    sourceFolderIds: Set<String>,
+): List<ChatFolderEntity> {
+    if (sourceFolderIds.isEmpty()) return emptyList()
+
+    val foldersById = folders.associateBy { it.id }
+    val childrenByParent = folders.groupBy { it.parentFolderId }
+    val candidateIds = mutableSetOf<String>()
+    sourceFolderIds.forEach { sourceId ->
+        var currentId: String? = sourceId
+        val visited = mutableSetOf<String>()
+        while (currentId != null && visited.add(currentId)) {
+            candidateIds += currentId
+            currentId = foldersById[currentId]?.parentFolderId
+        }
+    }
+
+    val occupiedFolderIds = placements.mapNotNullTo(mutableSetOf()) { it.folderId }
+    val subtreeCache = mutableMapOf<String, Set<String>>()
+    fun subtreeIds(rootId: String): Set<String> =
+        subtreeCache.getOrPut(rootId) {
+            buildSet {
+                val pending = mutableListOf(rootId)
+                while (pending.isNotEmpty()) {
+                    val id = pending.removeAt(pending.lastIndex)
+                    if (!add(id)) continue
+                    childrenByParent[id].orEmpty().forEach { pending += it.id }
+                }
+            }
+        }
+
+    val emptyCandidateIds = candidateIds.filterTo(mutableSetOf()) { candidateId ->
+        subtreeIds(candidateId).none { it in occupiedFolderIds }
+    }
+    val deletionIds = mutableSetOf<String>()
+    emptyCandidateIds.forEach { deletionIds += subtreeIds(it) }
+
+    fun depth(folder: ChatFolderEntity): Int {
+        var value = 0
+        var parentId = folder.parentFolderId
+        val visited = mutableSetOf(folder.id)
+        while (parentId != null && visited.add(parentId)) {
+            value++
+            parentId = foldersById[parentId]?.parentFolderId
+        }
+        return value
+    }
+
+    return folders
+        .filter { it.id in deletionIds }
+        .sortedWith(
+            compareByDescending<ChatFolderEntity> { depth(it) }
+                .thenBy { it.displayOrder },
+        )
+}
+
 class ChatHistoryManager private constructor(private val context: Context) {
         companion object {
             private const val TAG = "ChatHistoryManager"
@@ -671,6 +734,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
             try {
                 // 预先尝试执行一个简单查询
                 val chats = chatDao.getAllChats().first()
+                database.withTransaction {
+                    ChatFolderScope.entries.forEach { scope ->
+                        val folderIds =
+                            chatFolderDao.getAllFolders(scope).mapTo(mutableSetOf()) { it.id }
+                        pruneEmptyFoldersAffectedBy(scope, folderIds)
+                    }
+                }
                 AppLogger.d(TAG, "数据库预加载完成，现有聊天数：${chats.size}")
             } catch (e: Exception) {
                 AppLogger.e(TAG, "数据库预加载失败", e)
@@ -850,9 +920,41 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     // ---- 文件夹操作 ----
 
-    /** 创建文件夹，校验重名和名称有效性 */
-    suspend fun createFolder(scope: ChatFolderScope, parentFolderId: String?, name: String): ChatFolderEntity {
+    private fun createBlankChatHistory(
+        characterCardName: String?,
+        characterGroupId: String?,
+    ): ChatHistory {
+        val dateTime = LocalDateTime.now()
+        val formattedTime =
+            "${dateTime.hour}:${
+                dateTime.minute.toString().padStart(2, '0')
+            }:${dateTime.second.toString().padStart(2, '0')}"
+        val localizedContext = LocaleUtils.getLocalizedContext(context)
+        return ChatHistory(
+            title = "${localizedContext.getString(R.string.new_conversation)} $formattedTime",
+            messages = emptyList(),
+            inputTokens = 0,
+            outputTokens = 0,
+            characterCardName = characterCardName,
+            characterGroupId = characterGroupId,
+        )
+    }
+
+    /**
+     * 创建文件夹及其首个对话。
+     *
+     * 文件夹在产品语义上不能以空状态存在，因此文件夹、聊天实体和 placement
+     * 必须在同一事务内创建。FAVORITE scope 仍会为真实聊天保留根级 ALL placement。
+     */
+    suspend fun createFolderWithChat(
+        scope: ChatFolderScope,
+        parentFolderId: String?,
+        name: String,
+        characterCardName: String?,
+        characterGroupId: String?,
+    ): CreatedFolderWithChat {
         if (name.isBlank()) throw InvalidFolderNameException()
+        val newHistory = createBlankChatHistory(characterCardName, characterGroupId)
         return database.withTransaction {
             if (parentFolderId != null) {
                 val parent = chatFolderDao.getFolderById(parentFolderId)
@@ -862,15 +964,35 @@ class ChatHistoryManager private constructor(private val context: Context) {
             if (chatFolderDao.folderNameExistsInParent(scope, parentFolderId, name)) {
                 throw FolderNameConflictException()
             }
-            val siblings = chatFolderDao.getChildFolders(scope, parentFolderId)
+
+            val folderSiblings = chatFolderDao.getChildFolders(scope, parentFolderId)
             val folder = ChatFolderEntity(
                 scope = scope,
                 name = name,
                 parentFolderId = parentFolderId,
-                displayOrder = siblings.maxOfOrNull { it.displayOrder }?.let { it + 1 } ?: 0L,
+                displayOrder = folderSiblings.maxOfOrNull { it.displayOrder }?.plus(1) ?: 0L,
             )
+            val chatEntity = ChatEntity.fromChatHistory(newHistory)
+
             chatFolderDao.insertFolder(folder)
-            folder
+            chatDao.insertChat(chatEntity)
+            ensureAllPlacement(chatEntity.id)
+
+            val destinationOrder =
+                chatPlacementDao.getPlacementsInFolder(scope, folder.id)
+                    .maxOfOrNull { it.displayOrder }?.plus(1) ?: 0L
+            chatPlacementDao.upsertPlacements(
+                listOf(
+                    ChatPlacementEntity(
+                        chatId = chatEntity.id,
+                        scope = scope,
+                        folderId = folder.id,
+                        displayOrder = destinationOrder,
+                    )
+                )
+            )
+
+            CreatedFolderWithChat(folder = folder, chat = newHistory)
         }
     }
 
@@ -940,6 +1062,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         database.withTransaction {
             val folder = chatFolderDao.getFolderById(folderId)
                 ?: throw IllegalArgumentException("Folder not found: $folderId")
+            val sourceParentFolderId = folder.parentFolderId
             if (targetParentFolderId != null) {
                 val targetFolder = chatFolderDao.getFolderById(targetParentFolderId)
                     ?: throw IllegalArgumentException("Target folder not found")
@@ -975,6 +1098,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     index.toLong(),
                 )
             }
+            if (sourceParentFolderId != null && sourceParentFolderId != targetParentFolderId) {
+                pruneEmptyFoldersAffectedBy(folder.scope, setOf(sourceParentFolderId))
+            }
         }
     }
 
@@ -987,6 +1113,38 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
         return false
     }
+
+    private suspend fun pruneEmptyFoldersAffectedBy(
+        scope: ChatFolderScope,
+        sourceFolderIds: Set<String>,
+    ): List<ChatFolderEntity> {
+        val folders = chatFolderDao.getAllFolders(scope)
+        val placements = chatPlacementDao.getAllPlacements(scope)
+        val deleted =
+            calculateEmptyFoldersAffectedBySources(folders, placements, sourceFolderIds)
+        deleted.forEach { folder -> chatFolderDao.deleteFolder(folder.id) }
+        return deleted
+    }
+
+    /** 返回删除该聊天后会因整个子树无聊天而被清理的文件夹，供 UI 预先确认。 */
+    suspend fun foldersDeletedWithChat(chatId: String): List<ChatFolderEntity> =
+        database.withTransaction {
+            val placementsForChat = chatPlacementDao.getPlacementsForChat(chatId)
+            placementsForChat
+                .groupBy { it.scope }
+                .flatMap { (scope, chatPlacements) ->
+                    val folders = chatFolderDao.getAllFolders(scope)
+                    val remainingPlacements =
+                        chatPlacementDao.getAllPlacements(scope).filter { it.chatId != chatId }
+                    calculateEmptyFoldersAffectedBySources(
+                        folders = folders,
+                        placements = remainingPlacements,
+                        sourceFolderIds =
+                            chatPlacements.mapNotNullTo(mutableSetOf()) { it.folderId },
+                    )
+                }
+                .distinctBy { it.id }
+        }
 
     /**
      * 删除文件夹，将直属子文件夹和 placement 提升到父级。
@@ -1034,6 +1192,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         database.withTransaction {
             val current = chatPlacementDao.getPlacement(chatId, scope)
                 ?: throw IllegalArgumentException("Placement not found for chat $chatId in scope $scope")
+            val sourceFolderId = current.folderId
             if (targetFolderId != null) {
                 val targetFolder = chatFolderDao.getFolderById(targetFolderId)
                     ?: throw IllegalArgumentException("Target folder not found")
@@ -1053,6 +1212,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     targetFolderId,
                     index.toLong(),
                 )
+            }
+            if (sourceFolderId != null && sourceFolderId != targetFolderId) {
+                pruneEmptyFoldersAffectedBy(scope, setOf(sourceFolderId))
             }
         }
     }
@@ -2102,16 +2264,31 @@ class ChatHistoryManager private constructor(private val context: Context) {
     suspend fun deleteChatHistory(chatId: String): Boolean {
         chatMutex(chatId).withLock {
             try {
-                val chat = chatDao.getChatById(chatId)
-                if (chat?.locked == true) {
-                    AppLogger.w(TAG, "Chat $chatId is locked; skip deletion")
-                    return false
+                val deleted = database.withTransaction {
+                    val chat = chatDao.getChatById(chatId)
+                    if (chat?.locked == true) {
+                        AppLogger.w(TAG, "Chat $chatId is locked; skip deletion")
+                        return@withTransaction false
+                    }
+                    if (chat == null) {
+                        return@withTransaction false
+                    }
+
+                    val sourceFoldersByScope =
+                        chatPlacementDao.getPlacementsForChat(chatId)
+                            .groupBy { it.scope }
+                            .mapValues { (_, placements) ->
+                                placements.mapNotNullTo(mutableSetOf()) { it.folderId }
+                            }
+
+                    // 删除聊天实体会通过外键级联删除消息和 placements。
+                    chatDao.deleteChat(chatId)
+                    sourceFoldersByScope.forEach { (scope, sourceFolderIds) ->
+                        pruneEmptyFoldersAffectedBy(scope, sourceFolderIds)
+                    }
+                    true
                 }
-                if (chat == null) {
-                    return false
-                }
-                // 删除聊天实体（级联删除所有消息）
-                chatDao.deleteChat(chatId)
+                if (!deleted) return false
 
                 // 如果删除的是当前聊天，清除当前聊天ID
                 val currentChatId = currentChatIdFlow.first()

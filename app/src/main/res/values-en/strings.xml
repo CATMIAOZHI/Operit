@@ -3481,6 +3481,12 @@
     <string name="release_to_move_into_folder">Release to move into this folder</string>
     <string name="hold_to_insert_chat_here">Hold briefly to insert here</string>
     <string name="release_to_insert_chat_here">Release to insert here</string>
+    <string name="move_into_folder_named">Move into \"%1$s\"</string>
+    <string name="expand_folder_before_drop">Expand the folder before moving an item into it</string>
+    <string name="release_to_reorder_here">Release to place here</string>
+    <string name="move_to_parent_level">Move up one level</string>
+    <string name="cannot_move_here">Cannot move here</string>
+    <string name="history_move_failed">Move failed. The list was not changed.</string>
     <string name="move_to_root_level">Move to the top level</string>
     <string name="move_to_folder_level">Move to the “%1$s” level</string>
     <string name="pin_folder">Pin folder</string>
@@ -5103,6 +5109,8 @@
     <string name="deleted_residual_chats_with_skipped_locked">Deleted %1$d residual chat(s), skipped %2$d locked chat(s)</string>
     <string name="confirm_delete_chat">Confirm Delete Chat</string>
     <string name="delete_chat_confirmation">Are you sure you want to delete chat \"%1$s\"?\n\nThis action cannot be undone.</string>
+    <string name="delete_chat_removes_folders_warning">The following folders will no longer contain any chats and will also be deleted: %1$s</string>
+    <string name="folder_name_separator">, </string>
     <string name="click_to_manage_missing_card">Click to manage this missing-card entry</string>
     <string name="character_fallback">C</string>
     <string name="selected_chats_count">Selected %1$d / %2$d</string>

@@ -3392,6 +3392,12 @@
     <string name="release_to_move_into_folder">松开，移入此文件夹</string>
     <string name="hold_to_insert_chat_here">停留片刻以插入到此处</string>
     <string name="release_to_insert_chat_here">松开，插入到此处</string>
+    <string name="move_into_folder_named">移入“%1$s”</string>
+    <string name="expand_folder_before_drop">请先展开文件夹，再拖入其中</string>
+    <string name="release_to_reorder_here">松开，放到此位置</string>
+    <string name="move_to_parent_level">移到上一级</string>
+    <string name="cannot_move_here">不能移动到这里</string>
+    <string name="history_move_failed">移动失败，列表未发生变化</string>
     <string name="move_to_root_level">移动到顶层</string>
     <string name="move_to_folder_level">移动到“%1$s”这一层</string>
     <string name="pin_folder">置顶文件夹</string>
@@ -5534,6 +5540,8 @@
     <string name="deleted_residual_chats_with_skipped_locked">已删除 %1$d 条残留对话，跳过 %2$d 条锁定对话</string>
     <string name="confirm_delete_chat">确认删除聊天</string>
     <string name="delete_chat_confirmation">确定要删除聊天“%1$s”吗？\n\n此操作不可撤销。</string>
+    <string name="delete_chat_removes_folders_warning">删除后，以下不再包含任何对话的文件夹也会被删除：%1$s</string>
+    <string name="folder_name_separator">、</string>
     <string name="click_to_manage_missing_card">点击处理缺失角色卡条目</string>
     <string name="missing_group_entry_action_title">缺失角色群聊条目</string>
     <string name="missing_group_entry_action_message">「%1$s」下共有 %2$d 条对话，请选择操作：</string>
