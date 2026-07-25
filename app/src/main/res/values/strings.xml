@@ -3382,6 +3382,13 @@
     <string name="manage_folder">管理文件夹</string>
     <string name="rename_folder">重命名文件夹</string>
     <string name="delete_folder">删除文件夹</string>
+    <string name="confirm_delete_folder">确认删除文件夹</string>
+    <string name="delete_folder_only">仅删除文件夹</string>
+    <string name="delete_folder_and_chats">删除文件夹和其中对话</string>
+    <string name="confirm_delete_folder_and_chats_title">再次确认删除文件夹和对话</string>
+    <string name="confirm_delete_folder_and_chats_message">将永久删除文件夹“%1$s”、其所有子文件夹和其中的对话，此操作无法撤销。</string>
+    <string name="folder_contents_move_to_parent">其中内容将移至上级目录</string>
+    <string name="release_to_move_into_folder">松开移入</string>
     <string name="pin_folder">置顶文件夹</string>
     <string name="unpin_folder">取消置顶文件夹</string>
     <string name="group_name">分组名称</string>

@@ -1726,55 +1726,159 @@ fun ChatHistorySelector(
     if (folderToDelete != null) {
         val target = folderToDelete!!
         var error by remember(target.id) { mutableStateOf<String?>(null) }
+        var deletingFolderOnly by remember(target.id) { mutableStateOf(false) }
         val operationFailedMessage = stringResource(R.string.folder_operation_failed)
-        Dialog(onDismissRequest = { folderToDelete = null }) {
+        Dialog(onDismissRequest = {
+            if (!deletingFolderOnly) folderToDelete = null
+        }) {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
             ) {
-                Column(Modifier.padding(16.dp)) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(48.dp),
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        stringResource(R.string.confirm_delete_group),
+                        stringResource(R.string.confirm_delete_folder),
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                     )
-                    Text(target.name, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        target.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     error?.let { message ->
-                        Text(message, color = MaterialTheme.colorScheme.error)
+                        Text(
+                            message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
                     }
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = stringResource(R.string.choose_delete_method),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     TextButton(
                         onClick = {
                             folderPendingDeleteWithChats = target
                             folderToDelete = null
                         },
+                        enabled = !deletingFolderOnly,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium,
                         colors = ButtonDefaults.textButtonColors(
                             contentColor = MaterialTheme.colorScheme.error
                         ),
                     ) {
-                        Text(
-                            stringResource(
-                                if (target.scope == ChatFolderScope.FAVORITE) {
-                                    R.string.delete_folder_and_favorites
-                                } else {
-                                    R.string.delete_group_and_chats
-                                }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Delete,
+                                contentDescription = null,
+                                modifier = Modifier.size(24.dp),
                             )
-                        )
-                    }
-                    TextButton(onClick = {
-                        coroutineScope.launch {
-                            try {
-                                chatHistoryManager.deleteFolder(target.id)
-                                folderToDelete = null
-                            } catch (_: Exception) {
-                                error = operationFailedMessage
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(horizontalAlignment = Alignment.Start) {
+                                Text(
+                                    stringResource(
+                                        if (target.scope == ChatFolderScope.FAVORITE) {
+                                            R.string.delete_folder_and_favorites
+                                        } else {
+                                            R.string.delete_folder_and_chats
+                                        }
+                                    ),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    stringResource(R.string.delete_operation_irreversible),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                                )
                             }
                         }
-                    }) {
-                        Text(stringResource(R.string.delete_group_only))
                     }
-                    TextButton(onClick = { folderToDelete = null }) {
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    TextButton(
+                        onClick = {
+                            deletingFolderOnly = true
+                            error = null
+                            coroutineScope.launch {
+                                try {
+                                    chatHistoryManager.deleteFolder(target.id)
+                                    folderToDelete = null
+                                } catch (_: Exception) {
+                                    error = operationFailedMessage
+                                    deletingFolderOnly = false
+                                }
+                            }
+                        },
+                        enabled = !deletingFolderOnly,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (deletingFolderOnly) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Folder,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(horizontalAlignment = Alignment.Start) {
+                                Text(
+                                    stringResource(R.string.delete_folder_only),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
+                                Text(
+                                    stringResource(R.string.folder_contents_move_to_parent),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    TextButton(
+                        onClick = { folderToDelete = null },
+                        enabled = !deletingFolderOnly,
+                        modifier = Modifier.align(Alignment.End),
+                    ) {
                         Text(stringResource(R.string.cancel))
                     }
                 }
@@ -1785,70 +1889,121 @@ fun ChatHistorySelector(
     if (folderPendingDeleteWithChats != null) {
         val target = folderPendingDeleteWithChats!!
         var error by remember(target.id) { mutableStateOf<String?>(null) }
+        var deleteInProgress by remember(target.id) { mutableStateOf(false) }
         val operationFailedMessage = stringResource(R.string.folder_operation_failed)
-        AlertDialog(
-            onDismissRequest = { folderPendingDeleteWithChats = null },
-            title = {
-                Text(
-                    stringResource(
-                        if (target.scope == ChatFolderScope.FAVORITE) {
-                            R.string.delete_folder_and_favorites
-                        } else {
-                            R.string.confirm_delete_group_and_chats_title
-                        }
-                    )
-                )
-            },
-            text = {
-                Column {
-                    Text(
-                        stringResource(
-                            if (target.scope == ChatFolderScope.FAVORITE) {
-                                R.string.confirm_delete_folder_and_favorites_message
-                            } else {
-                                R.string.confirm_delete_group_and_chats_message
-                            },
-                            target.name,
-                        )
-                    )
-                    error?.let { message ->
-                        Text(message, color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        coroutineScope.launch {
-                            try {
-                                chatHistoryManager.deleteFolderAndChats(target.id)
-                                folderPendingDeleteWithChats = null
-                            } catch (_: Exception) {
-                                error = operationFailedMessage
-                            }
-                        }
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    ),
+        Dialog(onDismissRequest = {
+            if (!deleteInProgress) folderPendingDeleteWithChats = null
+        }) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(48.dp),
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         stringResource(
                             if (target.scope == ChatFolderScope.FAVORITE) {
                                 R.string.delete_folder_and_favorites
                             } else {
-                                R.string.delete_group_and_chats
+                                R.string.confirm_delete_folder_and_chats_title
                             }
-                        )
+                        ),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        stringResource(
+                            if (target.scope == ChatFolderScope.FAVORITE) {
+                                R.string.confirm_delete_folder_and_favorites_message
+                            } else {
+                                R.string.confirm_delete_folder_and_chats_message
+                            },
+                            target.name,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    error?.let { message ->
+                        Text(
+                            message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            deleteInProgress = true
+                            error = null
+                            coroutineScope.launch {
+                                try {
+                                    chatHistoryManager.deleteFolderAndChats(target.id)
+                                    folderPendingDeleteWithChats = null
+                                } catch (_: Exception) {
+                                    error = operationFailedMessage
+                                    deleteInProgress = false
+                                }
+                            }
+                        },
+                        enabled = !deleteInProgress,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError,
+                        ),
+                    ) {
+                        if (deleteInProgress) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onError,
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        } else {
+                            Icon(
+                                imageVector = Icons.Outlined.Delete,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Text(
+                            stringResource(
+                                if (target.scope == ChatFolderScope.FAVORITE) {
+                                    R.string.delete_folder_and_favorites
+                                } else {
+                                    R.string.delete_folder_and_chats
+                                }
+                            )
+                        )
+                    }
+                    TextButton(
+                        onClick = { folderPendingDeleteWithChats = null },
+                        enabled = !deleteInProgress,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.cancel))
+                    }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { folderPendingDeleteWithChats = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
+            }
+        }
     }
 
     if (groupPendingDeleteWithChats != null) {
