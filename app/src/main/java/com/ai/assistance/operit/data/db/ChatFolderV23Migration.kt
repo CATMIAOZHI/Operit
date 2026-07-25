@@ -237,9 +237,11 @@ internal val MIGRATION_22_23 =
                             }
                     }
 
+            db.execSQL("DROP TABLE `chat_placements`")
+            db.execSQL("DROP TABLE `chat_folders`")
             db.execSQL(
                 """
-                CREATE TABLE `chat_folders_v23` (
+                CREATE TABLE `chat_folders` (
                     `id` TEXT NOT NULL,
                     `scope` TEXT NOT NULL,
                     `name` TEXT NOT NULL,
@@ -249,13 +251,13 @@ internal val MIGRATION_22_23 =
                     `pinned` INTEGER NOT NULL,
                     PRIMARY KEY(`id`),
                     FOREIGN KEY(`parentFolderId`, `scope`)
-                        REFERENCES `chat_folders_v23`(`id`, `scope`)
+                        REFERENCES `chat_folders`(`id`, `scope`)
                         ON UPDATE NO ACTION ON DELETE NO ACTION
                 )
                 """.trimIndent()
             )
             db.execSQL(
-                "CREATE UNIQUE INDEX `index_chat_folders_id_scope` ON `chat_folders_v23` (`id`, `scope`)"
+                "CREATE UNIQUE INDEX `index_chat_folders_id_scope` ON `chat_folders` (`id`, `scope`)"
             )
 
             fun folderDepth(folder: V23FolderRecord): Int {
@@ -272,7 +274,7 @@ internal val MIGRATION_22_23 =
                 .forEach { folder ->
                     db.execSQL(
                         """
-                        INSERT INTO `chat_folders_v23`
+                        INSERT INTO `chat_folders`
                             (`id`, `scope`, `name`, `parentFolderId`, `parentKey`, `displayOrder`, `pinned`)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                         """.trimIndent(),
@@ -290,7 +292,7 @@ internal val MIGRATION_22_23 =
 
             db.execSQL(
                 """
-                CREATE TABLE `chat_placements_v23` (
+                CREATE TABLE `chat_placements` (
                     `chatId` TEXT NOT NULL,
                     `scope` TEXT NOT NULL,
                     `folderId` TEXT,
@@ -299,7 +301,7 @@ internal val MIGRATION_22_23 =
                     FOREIGN KEY(`chatId`) REFERENCES `chats`(`id`)
                         ON UPDATE NO ACTION ON DELETE CASCADE,
                     FOREIGN KEY(`folderId`, `scope`)
-                        REFERENCES `chat_folders_v23`(`id`, `scope`)
+                        REFERENCES `chat_folders`(`id`, `scope`)
                         ON UPDATE NO ACTION ON DELETE NO ACTION
                 )
                 """.trimIndent()
@@ -307,7 +309,7 @@ internal val MIGRATION_22_23 =
             repairedPlacements.forEach { placement ->
                 db.execSQL(
                     """
-                    INSERT INTO `chat_placements_v23`
+                    INSERT INTO `chat_placements`
                         (`chatId`, `scope`, `folderId`, `displayOrder`)
                     VALUES (?, ?, ?, ?)
                     """.trimIndent(),
@@ -319,11 +321,6 @@ internal val MIGRATION_22_23 =
                     ),
                 )
             }
-
-            db.execSQL("DROP TABLE `chat_placements`")
-            db.execSQL("DROP TABLE `chat_folders`")
-            db.execSQL("ALTER TABLE `chat_folders_v23` RENAME TO `chat_folders`")
-            db.execSQL("ALTER TABLE `chat_placements_v23` RENAME TO `chat_placements`")
 
             db.execSQL(
                 "CREATE UNIQUE INDEX `index_chat_folders_scope_parentKey_name` ON `chat_folders` (`scope`, `parentKey`, `name`)"
@@ -348,7 +345,9 @@ internal val MIGRATION_22_23 =
 
             db.query("PRAGMA foreign_key_check").use { cursor ->
                 check(!cursor.moveToFirst()) {
-                    "Foreign-key violation after chat folder migration: table=${cursor.getString(0)}, rowId=${cursor.getLong(1)}"
+                    "Foreign-key violation after chat folder migration: " +
+                        "table=${cursor.getString(0)}, rowId=${cursor.getLong(1)}, " +
+                        "parent=${cursor.getString(2)}, foreignKeyIndex=${cursor.getInt(3)}"
                 }
             }
         }
