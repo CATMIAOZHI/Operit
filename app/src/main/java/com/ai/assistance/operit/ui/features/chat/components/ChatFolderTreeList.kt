@@ -29,7 +29,6 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -52,7 +51,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
@@ -139,6 +137,93 @@ private data class DragSession(
     val sourceHeightPx: Float,
 )
 
+@Composable
+private fun TreeDragHandle(
+    sourceKey: String,
+    enabled: Boolean,
+    contentDescription: String,
+    onBeginDrag: (String, Offset) -> Boolean,
+    onUpdateDrag: (Offset) -> Unit,
+    onFinishDrag: (Boolean) -> Unit,
+) {
+    var handlePositionInRoot by remember(sourceKey) {
+        mutableStateOf<Offset?>(null)
+    }
+    val currentOnBeginDrag by rememberUpdatedState(onBeginDrag)
+    val currentOnUpdateDrag by rememberUpdatedState(onUpdateDrag)
+    val currentOnFinishDrag by rememberUpdatedState(onFinishDrag)
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(48.dp)
+            .onGloballyPositioned { coordinates ->
+                handlePositionInRoot = coordinates.positionInRoot()
+            }
+            .pointerInput(sourceKey, enabled) {
+                if (!enabled) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val initialHandlePosition =
+                        handlePositionInRoot ?: return@awaitEachGesture
+                    val initialPointerInRoot = initialHandlePosition + down.position
+                    val pointerId = down.id
+                    var accumulatedMovement = Offset.Zero
+                    var previousPosition = down.position
+                    var dragStarted = false
+                    var releasedNormally = false
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change =
+                            event.changes.firstOrNull { it.id == pointerId }
+                                ?: break
+                        val pointerInRoot =
+                            (handlePositionInRoot ?: initialHandlePosition) +
+                                change.position
+
+                        if (change.changedToUp()) {
+                            if (dragStarted) {
+                                currentOnUpdateDrag(pointerInRoot)
+                                change.consume()
+                                releasedNormally = true
+                            }
+                            break
+                        }
+                        if (!change.pressed) break
+
+                        accumulatedMovement += change.position - previousPosition
+                        previousPosition = change.position
+                        if (
+                            !dragStarted &&
+                                accumulatedMovement.getDistance() >=
+                                viewConfiguration.touchSlop
+                        ) {
+                            dragStarted =
+                                currentOnBeginDrag(sourceKey, initialPointerInRoot)
+                        }
+                        if (dragStarted) {
+                            currentOnUpdateDrag(pointerInRoot)
+                            change.consume()
+                        }
+                    }
+
+                    if (dragStarted) {
+                        currentOnFinishDrag(releasedNormally)
+                    }
+                }
+            }
+            .semantics {
+                this.contentDescription = contentDescription
+            },
+    ) {
+        Icon(
+            Icons.Default.DragHandle,
+            contentDescription = null,
+        )
+    }
+}
+
 private fun folderSubtreeIds(
     folders: List<ChatFolderEntity>,
     rootId: String,
@@ -182,7 +267,6 @@ internal fun ChatFolderTreeList(
     var parentDropBoundsInRoot by remember(scope) { mutableStateOf<Rect?>(null) }
     var rootDropBoundsInRoot by remember(scope) { mutableStateOf<Rect?>(null) }
     val rowBoundsInRoot = remember(scope) { mutableMapOf<String, Rect>() }
-    val handleBoundsInRoot = remember(scope) { mutableMapOf<String, Rect>() }
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val hapticFeedback = LocalHapticFeedback.current
@@ -658,7 +742,6 @@ internal fun ChatFolderTreeList(
         }
     }
 
-    val currentDragEnabled by rememberUpdatedState(dragEnabled)
     val currentBeginDrag by rememberUpdatedState<(String, Offset) -> Boolean>(::beginDrag)
     val currentUpdateDrag by rememberUpdatedState<(Offset) -> Unit>(::updateDrag)
     val currentFinishDrag by rememberUpdatedState<(Boolean) -> Unit>(::finishDrag)
@@ -711,56 +794,6 @@ internal fun ChatFolderTreeList(
             .onGloballyPositioned { coordinates ->
                 containerPositionInRoot = coordinates.positionInRoot()
                 containerHeightPx = coordinates.size.height.toFloat()
-            }
-            .pointerInput(scope, dragEnabled) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(
-                        requireUnconsumed = false,
-                        pass = PointerEventPass.Initial,
-                    )
-                    if (!currentDragEnabled) return@awaitEachGesture
-                    val downInRoot = containerPositionInRoot + down.position
-                    val sourceKey =
-                        handleBoundsInRoot.entries
-                            .firstOrNull { (_, bounds) -> bounds.contains(downInRoot) }
-                            ?.key
-                            ?: return@awaitEachGesture
-                    val pointerId = down.id
-                    var accumulatedMovement = Offset.Zero
-                    var previousPosition = down.position
-                    var dragStarted = false
-                    var releasedNormally = false
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-                        val pointerInRoot = containerPositionInRoot + change.position
-                        if (change.changedToUp()) {
-                            if (dragStarted) {
-                                currentUpdateDrag(pointerInRoot)
-                                change.consume()
-                                releasedNormally = true
-                            }
-                            break
-                        }
-                        if (!change.pressed) break
-                        accumulatedMovement += change.position - previousPosition
-                        previousPosition = change.position
-                        if (
-                            !dragStarted &&
-                                accumulatedMovement.getDistance() >=
-                                viewConfiguration.touchSlop
-                        ) {
-                            dragStarted = currentBeginDrag(sourceKey, pointerInRoot)
-                        }
-                        if (dragStarted) {
-                            currentUpdateDrag(pointerInRoot)
-                            change.consume()
-                        }
-                    }
-                    if (dragStarted) {
-                        currentFinishDrag(releasedNormally)
-                    }
-                }
             },
     ) {
         LazyColumn(
@@ -773,7 +806,6 @@ internal fun ChatFolderTreeList(
                 DisposableEffect(item.key, dragEnabled) {
                     onDispose {
                         rowBoundsInRoot.remove(item.key)
-                        handleBoundsInRoot.remove(item.key)
                     }
                 }
 
@@ -854,28 +886,17 @@ internal fun ChatFolderTreeList(
                                     .padding(horizontal = 6.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                IconButton(
-                                    onClick = {},
+                                TreeDragHandle(
+                                    sourceKey = item.key,
                                     enabled = dragEnabled,
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .onGloballyPositioned { coordinates ->
-                                            if (dragEnabled) {
-                                                handleBoundsInRoot[item.key] =
-                                                    coordinates.boundsInRoot()
-                                            } else {
-                                                handleBoundsInRoot.remove(item.key)
-                                            }
-                                        }
-                                        .semantics {
-                                            contentDescription = item.value.name
-                                        },
-                                ) {
-                                    Icon(
-                                        Icons.Default.DragHandle,
-                                        contentDescription = null,
-                                    )
-                                }
+                                    contentDescription = stringResource(
+                                        R.string.drag_item,
+                                        item.value.name,
+                                    ),
+                                    onBeginDrag = currentBeginDrag,
+                                    onUpdateDrag = currentUpdateDrag,
+                                    onFinishDrag = currentFinishDrag,
+                                )
                                 Icon(
                                     Icons.Default.Folder,
                                     contentDescription = null,
@@ -972,32 +993,17 @@ internal fun ChatFolderTreeList(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                IconButton(
-                                    onClick = {},
+                                TreeDragHandle(
+                                    sourceKey = item.key,
                                     enabled = dragEnabled,
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .onGloballyPositioned { coordinates ->
-                                            if (dragEnabled) {
-                                                handleBoundsInRoot[item.key] =
-                                                    coordinates.boundsInRoot()
-                                            } else {
-                                                handleBoundsInRoot.remove(item.key)
-                                            }
-                                        }
-                                        .semantics {
-                                            contentDescription =
-                                                item.history.title
-                                        },
-                                ) {
-                                    Icon(
-                                        Icons.Default.DragHandle,
-                                        contentDescription = stringResource(
-                                            R.string.drag_item,
-                                            item.history.title,
-                                        ),
-                                    )
-                                }
+                                    contentDescription = stringResource(
+                                        R.string.drag_item,
+                                        item.history.title,
+                                    ),
+                                    onBeginDrag = currentBeginDrag,
+                                    onUpdateDrag = currentUpdateDrag,
+                                    onFinishDrag = currentFinishDrag,
+                                )
                                 Text(
                                     text = item.history.title,
                                     modifier = Modifier.weight(1f),
