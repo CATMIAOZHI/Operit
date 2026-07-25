@@ -21,9 +21,9 @@ import androidx.room.Index
         ),
         ForeignKey(
             entity = ChatFolderEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["folderId"],
-            onDelete = ForeignKey.SET_NULL,
+            parentColumns = ["id", "scope"],
+            childColumns = ["folderId", "scope"],
+            onDelete = ForeignKey.NO_ACTION,
         ),
     ],
 )

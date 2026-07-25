@@ -13,16 +13,16 @@ interface ChatPlacementDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPlacement(placement: ChatPlacementEntity)
 
-    @Query("SELECT * FROM chat_placements WHERE scope = :scope AND folderId IS :folderId ORDER BY displayOrder ASC")
+    @Query("SELECT * FROM chat_placements WHERE scope = :scope AND folderId IS :folderId ORDER BY displayOrder ASC, chatId ASC")
     suspend fun getPlacementsInFolder(scope: ChatFolderScope, folderId: String?): List<ChatPlacementEntity>
 
-    @Query("SELECT * FROM chat_placements WHERE scope = :scope AND folderId IS NULL ORDER BY displayOrder ASC")
+    @Query("SELECT * FROM chat_placements WHERE scope = :scope AND folderId IS NULL ORDER BY displayOrder ASC, chatId ASC")
     suspend fun getPlacementsInRoot(scope: ChatFolderScope): List<ChatPlacementEntity>
 
-    @Query("SELECT * FROM chat_placements WHERE scope = :scope ORDER BY displayOrder ASC")
+    @Query("SELECT * FROM chat_placements WHERE scope = :scope ORDER BY displayOrder ASC, chatId ASC")
     suspend fun getAllPlacements(scope: ChatFolderScope): List<ChatPlacementEntity>
 
-    @Query("SELECT * FROM chat_placements WHERE scope = :scope ORDER BY displayOrder ASC")
+    @Query("SELECT * FROM chat_placements WHERE scope = :scope ORDER BY displayOrder ASC, chatId ASC")
     fun observeAllPlacements(scope: ChatFolderScope): Flow<List<ChatPlacementEntity>>
 
     @Query("SELECT * FROM chat_placements WHERE chatId = :chatId AND scope = :scope LIMIT 1")
@@ -34,10 +34,10 @@ interface ChatPlacementDao {
     @Query("SELECT chatId FROM chat_placements WHERE scope = :scope")
     suspend fun getAllChatIdsInScope(scope: ChatFolderScope): List<String>
 
-    @Query("SELECT * FROM chat_placements WHERE scope = :scope AND folderId IS :folderId ORDER BY displayOrder ASC")
+    @Query("SELECT * FROM chat_placements WHERE scope = :scope AND folderId IS :folderId ORDER BY displayOrder ASC, chatId ASC")
     fun observePlacementsInFolder(scope: ChatFolderScope, folderId: String?): Flow<List<ChatPlacementEntity>>
 
-    @Query("SELECT * FROM chat_placements WHERE scope = :scope AND folderId IS NULL ORDER BY displayOrder ASC")
+    @Query("SELECT * FROM chat_placements WHERE scope = :scope AND folderId IS NULL ORDER BY displayOrder ASC, chatId ASC")
     fun observePlacementsInRoot(scope: ChatFolderScope): Flow<List<ChatPlacementEntity>>
 
     @Query("UPDATE chat_placements SET folderId = :folderId, displayOrder = :displayOrder WHERE chatId = :chatId AND scope = :scope")

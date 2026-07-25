@@ -27,8 +27,8 @@ import java.util.UUID
         ChatEntity::class, MessageEntity::class, MessageVariantEntity::class,
         ChatFolderEntity::class, ChatPlacementEntity::class,
     ],
-    version = 22,
-    exportSchema = false
+    version = 23,
+    exportSchema = true
 )
 @TypeConverters(ChatFolderScopeConverter::class)
 abstract class AppDatabase : RoomDatabase() {
@@ -542,8 +542,10 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_18_19,
                                 MIGRATION_19_20,
                                 MIGRATION_20_21,
-                                MIGRATION_21_22
+                                MIGRATION_21_22,
+                                MIGRATION_22_23,
                             ) // 添加新的迁移
+                            .addCallback(CHAT_FOLDER_INTEGRITY_CALLBACK)
                             .build()
                     INSTANCE = instance
                     instance

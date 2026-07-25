@@ -13,10 +13,10 @@ interface ChatFolderDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertFolder(folder: ChatFolderEntity)
 
-    @Query("SELECT * FROM chat_folders WHERE scope = :scope ORDER BY pinned DESC, displayOrder ASC")
+    @Query("SELECT * FROM chat_folders WHERE scope = :scope ORDER BY pinned DESC, displayOrder ASC, id ASC")
     fun observeAllFolders(scope: ChatFolderScope): Flow<List<ChatFolderEntity>>
 
-    @Query("SELECT * FROM chat_folders WHERE scope = :scope AND parentFolderId IS :parentFolderId ORDER BY pinned DESC, displayOrder ASC")
+    @Query("SELECT * FROM chat_folders WHERE scope = :scope AND parentFolderId IS :parentFolderId ORDER BY pinned DESC, displayOrder ASC, id ASC")
     suspend fun getChildFolders(scope: ChatFolderScope, parentFolderId: String?): List<ChatFolderEntity>
 
     @Query("SELECT * FROM chat_folders WHERE id = :folderId")
@@ -38,7 +38,7 @@ interface ChatFolderDao {
     suspend fun moveFolder(folderId: String, parentFolderId: String?, parentKey: String, displayOrder: Long)
 
     suspend fun moveFolder(folderId: String, parentFolderId: String?, displayOrder: Long) =
-        moveFolder(folderId, parentFolderId, parentFolderId ?: ChatFolderEntity.ROOT_PARENT_KEY, displayOrder)
+        moveFolder(folderId, parentFolderId, ChatFolderEntity.parentKeyFor(parentFolderId), displayOrder)
 
     @Query("DELETE FROM chat_folders WHERE id = :folderId")
     suspend fun deleteFolder(folderId: String)
@@ -47,7 +47,12 @@ interface ChatFolderDao {
     suspend fun reparentFolder(folderId: String, newParentFolderId: String?, parentKey: String, displayOrder: Long)
 
     suspend fun reparentFolder(folderId: String, newParentFolderId: String?, displayOrder: Long) =
-        reparentFolder(folderId, newParentFolderId, newParentFolderId ?: ChatFolderEntity.ROOT_PARENT_KEY, displayOrder)
+        reparentFolder(
+            folderId,
+            newParentFolderId,
+            ChatFolderEntity.parentKeyFor(newParentFolderId),
+            displayOrder,
+        )
 
     @Query("SELECT EXISTS(SELECT 1 FROM chat_folders WHERE scope = :scope AND parentFolderId IS :parentFolderId AND name = :name)")
     suspend fun folderNameExistsInParent(scope: ChatFolderScope, parentFolderId: String?, name: String): Boolean

@@ -1304,6 +1304,24 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
 
         database.withTransaction {
+            val remainingPlacements =
+                chatPlacementDao.getAllPlacements(root.scope)
+                    .filter { it.folderId in folderIds }
+            val remainingChatIds =
+                remainingPlacements.mapTo(mutableSetOf()) { placement -> placement.chatId }
+            val rootPlacements =
+                chatPlacementDao.getPlacementsInRoot(root.scope)
+                    .filter { it.chatId !in remainingChatIds }
+            var nextRootOrder =
+                (rootPlacements.maxOfOrNull { it.displayOrder } ?: -1L) + 1L
+            remainingPlacements.forEach { placement ->
+                chatPlacementDao.movePlacement(
+                    chatId = placement.chatId,
+                    scope = placement.scope,
+                    folderId = null,
+                    displayOrder = nextRootOrder++,
+                )
+            }
             allFolders
                 .filter { it.id in folderIds }
                 .sortedByDescending { folderDepth(it, allFolders.associateBy { folder -> folder.id }) }

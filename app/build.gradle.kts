@@ -204,6 +204,12 @@ kotlin {
     }
 }
 
+kapt {
+    arguments {
+        arg("room.schemaLocation", file("schemas").path)
+    }
+}
+
 dependencies {
     implementation("com.github.jelmerk:hnswlib-core:1.2.1")
     implementation(project(":dragonbones"))

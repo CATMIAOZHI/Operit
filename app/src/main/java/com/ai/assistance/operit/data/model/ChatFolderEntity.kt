@@ -12,15 +12,16 @@ import java.util.UUID
     indices = [
         Index("scope"),
         Index("parentFolderId"),
+        Index(value = ["id", "scope"], unique = true),
         Index(value = ["scope", "parentFolderId", "displayOrder"]),
         Index(value = ["scope", "parentKey", "name"], unique = true),
     ],
     foreignKeys = [
         ForeignKey(
             entity = ChatFolderEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["parentFolderId"],
-            onDelete = ForeignKey.SET_NULL,
+            parentColumns = ["id", "scope"],
+            childColumns = ["parentFolderId", "scope"],
+            onDelete = ForeignKey.NO_ACTION,
         ),
     ],
 )
@@ -31,12 +32,15 @@ data class ChatFolderEntity(
     val parentFolderId: String?,
     // Non-null mirror used because SQLite UNIQUE permits repeated NULL values.
     // All parent changes must update this through ChatFolderDao.
-    @ColumnInfo(defaultValue = "''")
-    val parentKey: String = parentFolderId ?: ROOT_PARENT_KEY,
+    @ColumnInfo(defaultValue = "'root:'")
+    val parentKey: String = parentKeyFor(parentFolderId),
     val displayOrder: Long,
     val pinned: Boolean = false,
 ) {
     companion object {
-        const val ROOT_PARENT_KEY = ""
+        const val ROOT_PARENT_KEY = "root:"
+
+        fun parentKeyFor(parentFolderId: String?): String =
+            parentFolderId?.let { "id:$it" } ?: ROOT_PARENT_KEY
     }
 }
