@@ -1152,6 +1152,8 @@
     <!-- File Operations -->
     <string name="new_folder">New Folder</string>
     <string name="folder_name">Folder name</string>
+    <string name="folder_name_already_exists">A folder with this name already exists here</string>
+    <string name="folder_operation_failed">Folder operation failed. Please try again.</string>
     <string name="create_folder">Create folder</string>
     <string name="open">Open</string>
     <string name="copy">Copy</string>

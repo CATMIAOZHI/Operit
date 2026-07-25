@@ -119,6 +119,12 @@ interface ChatDao {
     @Query("UPDATE chats SET `group` = :newName WHERE `group` = :oldName AND characterCardName = :characterCardName")
     suspend fun updateGroupNameForCharacter(oldName: String, newName: String, characterCardName: String)
 
+    @Query("SELECT * FROM chats WHERE `group` = :groupName")
+    suspend fun getChatsInGroup(groupName: String): List<ChatEntity>
+
+    @Query("SELECT * FROM chats WHERE `group` = :groupName AND characterCardName = :characterCardName")
+    suspend fun getChatsInGroupForCharacter(groupName: String, characterCardName: String): List<ChatEntity>
+
     /** 删除分组下的所有聊天 */
     @Query("DELETE FROM chats WHERE `group` = :groupName AND locked = 0")
     suspend fun deleteChatsInGroup(groupName: String)

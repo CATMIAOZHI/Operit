@@ -114,6 +114,7 @@ import com.ai.assistance.operit.data.model.CharacterCard
 import com.ai.assistance.operit.data.model.CharacterGroupCard
 import com.ai.assistance.operit.data.model.ActivePrompt
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
+import com.ai.assistance.operit.data.repository.FolderNameConflictException
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.CharacterGroupCardManager
 import com.ai.assistance.operit.ui.common.rememberLocal
@@ -466,6 +467,7 @@ fun ChatHistorySelector(
     var chatItemActionTarget by remember { mutableStateOf<ChatHistory?>(null) }
     var showNewGroupDialog by remember { mutableStateOf(false) }
     var newGroupName by remember { mutableStateOf("") }
+    var newFolderError by remember { mutableStateOf<String?>(null) }
     var collapsedGroups by rememberLocal("chat_history_collapsed_groups", emptySet<String>())
     var collapsedCharacters by rememberLocal("chat_history_collapsed_characters", emptySet<String>())
 
@@ -1675,22 +1677,41 @@ fun ChatHistorySelector(
     if (folderToRename != null) {
         val target = folderToRename!!
         var name by remember(target.id) { mutableStateOf(target.name) }
+        var error by remember(target.id) { mutableStateOf<String?>(null) }
+        val nameConflictMessage = stringResource(R.string.folder_name_already_exists)
+        val operationFailedMessage = stringResource(R.string.folder_operation_failed)
         AlertDialog(
             onDismissRequest = { folderToRename = null },
             title = { Text(stringResource(R.string.rename_folder)) },
             text = {
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it },
+                    onValueChange = {
+                        name = it
+                        error = null
+                    },
                     label = { Text(stringResource(R.string.folder_name)) },
                     singleLine = true,
+                    isError = error != null,
+                    supportingText = error?.let { message -> { Text(message) } },
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    coroutineScope.launch { chatHistoryManager.renameFolder(target.id, name) }
-                    folderToRename = null
-                }) {
+                TextButton(
+                    enabled = name.isNotBlank(),
+                    onClick = {
+                        coroutineScope.launch {
+                            try {
+                                chatHistoryManager.renameFolder(target.id, name)
+                                folderToRename = null
+                            } catch (_: FolderNameConflictException) {
+                                error = nameConflictMessage
+                            } catch (_: Exception) {
+                                error = operationFailedMessage
+                            }
+                        }
+                    },
+                ) {
                     Text(stringResource(R.string.save))
                 }
             },
@@ -1704,6 +1725,8 @@ fun ChatHistorySelector(
 
     if (folderToDelete != null) {
         val target = folderToDelete!!
+        var error by remember(target.id) { mutableStateOf<String?>(null) }
+        val operationFailedMessage = stringResource(R.string.folder_operation_failed)
         Dialog(onDismissRequest = { folderToDelete = null }) {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -1716,6 +1739,9 @@ fun ChatHistorySelector(
                         fontWeight = FontWeight.Bold,
                     )
                     Text(target.name, style = MaterialTheme.typography.titleMedium)
+                    error?.let { message ->
+                        Text(message, color = MaterialTheme.colorScheme.error)
+                    }
                     Spacer(Modifier.height(16.dp))
                     TextButton(
                         onClick = {
@@ -1737,8 +1763,14 @@ fun ChatHistorySelector(
                         )
                     }
                     TextButton(onClick = {
-                        coroutineScope.launch { chatHistoryManager.deleteFolder(target.id) }
-                        folderToDelete = null
+                        coroutineScope.launch {
+                            try {
+                                chatHistoryManager.deleteFolder(target.id)
+                                folderToDelete = null
+                            } catch (_: Exception) {
+                                error = operationFailedMessage
+                            }
+                        }
                     }) {
                         Text(stringResource(R.string.delete_group_only))
                     }
@@ -1752,6 +1784,8 @@ fun ChatHistorySelector(
 
     if (folderPendingDeleteWithChats != null) {
         val target = folderPendingDeleteWithChats!!
+        var error by remember(target.id) { mutableStateOf<String?>(null) }
+        val operationFailedMessage = stringResource(R.string.folder_operation_failed)
         AlertDialog(
             onDismissRequest = { folderPendingDeleteWithChats = null },
             title = {
@@ -1766,22 +1800,33 @@ fun ChatHistorySelector(
                 )
             },
             text = {
-                Text(
-                    stringResource(
-                        if (target.scope == ChatFolderScope.FAVORITE) {
-                            R.string.confirm_delete_folder_and_favorites_message
-                        } else {
-                            R.string.confirm_delete_group_and_chats_message
-                        },
-                        target.name,
+                Column {
+                    Text(
+                        stringResource(
+                            if (target.scope == ChatFolderScope.FAVORITE) {
+                                R.string.confirm_delete_folder_and_favorites_message
+                            } else {
+                                R.string.confirm_delete_group_and_chats_message
+                            },
+                            target.name,
+                        )
                     )
-                )
+                    error?.let { message ->
+                        Text(message, color = MaterialTheme.colorScheme.error)
+                    }
+                }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        coroutineScope.launch { chatHistoryManager.deleteFolderAndChats(target.id) }
-                        folderPendingDeleteWithChats = null
+                        coroutineScope.launch {
+                            try {
+                                chatHistoryManager.deleteFolderAndChats(target.id)
+                                folderPendingDeleteWithChats = null
+                            } catch (_: Exception) {
+                                error = operationFailedMessage
+                            }
+                        }
                     },
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
@@ -2201,42 +2246,59 @@ fun ChatHistorySelector(
             ChatHistoryCategory.FAVORITE -> ChatFolderScope.FAVORITE
             else -> ChatFolderScope.ALL
         }
+        val nameConflictMessage = stringResource(R.string.folder_name_already_exists)
+        val operationFailedMessage = stringResource(R.string.folder_operation_failed)
         AlertDialog(
-                onDismissRequest = { showNewGroupDialog = false },
+                onDismissRequest = {
+                    newFolderError = null
+                    showNewGroupDialog = false
+                },
                 title = { Text(stringResource(R.string.new_folder)) },
                 text = {
                     OutlinedTextField(
                             value = newGroupName,
-                            onValueChange = { newGroupName = it },
+                            onValueChange = {
+                                newGroupName = it
+                                newFolderError = null
+                            },
                             label = { Text(stringResource(R.string.folder_name)) },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            isError = newFolderError != null,
+                            supportingText = newFolderError?.let { message -> { Text(message) } },
                     )
                 },
                 confirmButton = {
                     Button(
                             onClick = {
                                 if (newGroupName.isNotBlank()) {
-                                    val normalizedGroupName = newGroupName.trim()
-                                    if (normalizedGroupName.isBlank()) {
-                                        return@Button
-                                    }
                                     coroutineScope.launch {
-                                        chatHistoryManager.createFolder(
-                                            folderScope,
-                                            parentFolderId = null,
-                                            name = normalizedGroupName,
-                                        )
+                                        try {
+                                            chatHistoryManager.createFolder(
+                                                folderScope,
+                                                parentFolderId = null,
+                                                name = newGroupName,
+                                            )
+                                            newGroupName = ""
+                                            newFolderError = null
+                                            showNewGroupDialog = false
+                                        } catch (_: FolderNameConflictException) {
+                                            newFolderError = nameConflictMessage
+                                        } catch (_: Exception) {
+                                            newFolderError = operationFailedMessage
+                                        }
                                     }
-                                    newGroupName = ""
-                                    showNewGroupDialog = false
                                 }
-                            }
+                            },
+                            enabled = newGroupName.isNotBlank(),
                     ) {
                         Text(stringResource(R.string.create))
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showNewGroupDialog = false }) {
+                    TextButton(onClick = {
+                        newFolderError = null
+                        showNewGroupDialog = false
+                    }) {
                         Text(stringResource(R.string.cancel))
                     }
                 }

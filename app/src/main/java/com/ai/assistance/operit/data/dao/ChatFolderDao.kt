@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ChatFolderDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertFolder(folder: ChatFolderEntity)
 
     @Query("SELECT * FROM chat_folders WHERE scope = :scope ORDER BY pinned DESC, displayOrder ASC")
@@ -34,15 +34,36 @@ interface ChatFolderDao {
     @Query("UPDATE chat_folders SET pinned = :pinned WHERE id = :folderId")
     suspend fun setFolderPinned(folderId: String, pinned: Boolean)
 
-    @Query("UPDATE chat_folders SET parentFolderId = :parentFolderId, displayOrder = :displayOrder WHERE id = :folderId")
-    suspend fun moveFolder(folderId: String, parentFolderId: String?, displayOrder: Long)
+    @Query("UPDATE chat_folders SET parentFolderId = :parentFolderId, parentKey = :parentKey, displayOrder = :displayOrder WHERE id = :folderId")
+    suspend fun moveFolder(folderId: String, parentFolderId: String?, parentKey: String, displayOrder: Long)
+
+    suspend fun moveFolder(folderId: String, parentFolderId: String?, displayOrder: Long) =
+        moveFolder(folderId, parentFolderId, parentFolderId ?: ChatFolderEntity.ROOT_PARENT_KEY, displayOrder)
 
     @Query("DELETE FROM chat_folders WHERE id = :folderId")
     suspend fun deleteFolder(folderId: String)
 
-    @Query("UPDATE chat_folders SET parentFolderId = :newParentFolderId, displayOrder = :displayOrder WHERE id = :folderId")
-    suspend fun reparentFolder(folderId: String, newParentFolderId: String?, displayOrder: Long)
+    @Query("UPDATE chat_folders SET parentFolderId = :newParentFolderId, parentKey = :parentKey, displayOrder = :displayOrder WHERE id = :folderId")
+    suspend fun reparentFolder(folderId: String, newParentFolderId: String?, parentKey: String, displayOrder: Long)
+
+    suspend fun reparentFolder(folderId: String, newParentFolderId: String?, displayOrder: Long) =
+        reparentFolder(folderId, newParentFolderId, newParentFolderId ?: ChatFolderEntity.ROOT_PARENT_KEY, displayOrder)
 
     @Query("SELECT EXISTS(SELECT 1 FROM chat_folders WHERE scope = :scope AND parentFolderId IS :parentFolderId AND name = :name)")
     suspend fun folderNameExistsInParent(scope: ChatFolderScope, parentFolderId: String?, name: String): Boolean
+
+    @Query("SELECT EXISTS(SELECT 1 FROM chat_folders WHERE scope = :scope AND parentFolderId IS :parentFolderId AND name = :name AND id != :excludedFolderId)")
+    suspend fun folderNameExistsInParentExcluding(
+        scope: ChatFolderScope,
+        parentFolderId: String?,
+        name: String,
+        excludedFolderId: String,
+    ): Boolean
+
+    @Query("SELECT * FROM chat_folders WHERE scope = :scope AND parentFolderId IS :parentFolderId AND name = :name LIMIT 1")
+    suspend fun getFolderByNameInParent(
+        scope: ChatFolderScope,
+        parentFolderId: String?,
+        name: String,
+    ): ChatFolderEntity?
 }
