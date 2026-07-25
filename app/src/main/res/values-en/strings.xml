@@ -3477,7 +3477,12 @@
     <string name="confirm_delete_folder_and_chats_title">Confirm folder and chat deletion</string>
     <string name="confirm_delete_folder_and_chats_message">This permanently deletes the folder “%1$s”, its subfolders, and every chat in them. This action cannot be undone.</string>
     <string name="folder_contents_move_to_parent">Its contents will move to the parent folder</string>
-    <string name="release_to_move_into_folder">Release to move</string>
+    <string name="hold_to_move_into_folder">Hold briefly to move into this folder</string>
+    <string name="release_to_move_into_folder">Release to move into this folder</string>
+    <string name="hold_to_insert_chat_here">Hold briefly to insert here</string>
+    <string name="release_to_insert_chat_here">Release to insert here</string>
+    <string name="move_to_root_level">Move to the top level</string>
+    <string name="move_to_folder_level">Move to the “%1$s” level</string>
     <string name="pin_folder">Pin folder</string>
     <string name="unpin_folder">Unpin folder</string>
     <string name="group_name">Group name</string>

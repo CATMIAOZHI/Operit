@@ -3388,7 +3388,12 @@
     <string name="confirm_delete_folder_and_chats_title">再次确认删除文件夹和对话</string>
     <string name="confirm_delete_folder_and_chats_message">将永久删除文件夹“%1$s”、其所有子文件夹和其中的对话，此操作无法撤销。</string>
     <string name="folder_contents_move_to_parent">其中内容将移至上级目录</string>
-    <string name="release_to_move_into_folder">松开移入</string>
+    <string name="hold_to_move_into_folder">停留片刻以移入此文件夹</string>
+    <string name="release_to_move_into_folder">松开，移入此文件夹</string>
+    <string name="hold_to_insert_chat_here">停留片刻以插入到此处</string>
+    <string name="release_to_insert_chat_here">松开，插入到此处</string>
+    <string name="move_to_root_level">移动到顶层</string>
+    <string name="move_to_folder_level">移动到“%1$s”这一层</string>
     <string name="pin_folder">置顶文件夹</string>
     <string name="unpin_folder">取消置顶文件夹</string>
     <string name="group_name">分组名称</string>

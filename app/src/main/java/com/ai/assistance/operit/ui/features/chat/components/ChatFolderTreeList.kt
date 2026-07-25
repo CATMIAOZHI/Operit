@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,7 +41,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -53,6 +56,7 @@ import com.ai.assistance.operit.data.model.ChatFolderScope
 import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.ChatPlacementEntity
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -161,14 +165,22 @@ internal fun ChatFolderTreeList(
     var collapsedFolderIds by remember(scope) { mutableStateOf(emptySet<String>()) }
     val draggingEnabled = searchQuery.isBlank()
     val coroutineScope = rememberCoroutineScope()
+    val hapticFeedback = LocalHapticFeedback.current
     var draftFolders by remember(scope) { mutableStateOf<List<ChatFolderEntity>>(emptyList()) }
     var draftPlacements by remember(scope) { mutableStateOf<List<ChatPlacementEntity>>(emptyList()) }
     var useDraft by remember(scope) { mutableStateOf(false) }
     var dragActive by remember(scope) { mutableStateOf(false) }
     var commitInProgress by remember(scope) { mutableStateOf(false) }
     var draggingFolderId by remember(scope) { mutableStateOf<String?>(null) }
+    var draggingChatId by remember(scope) { mutableStateOf<String?>(null) }
     var activeInsertionKey by remember(scope) { mutableStateOf<String?>(null) }
+    var activeChatTargetId by remember(scope) { mutableStateOf<String?>(null) }
+    var candidateChatTargetId by remember(scope) { mutableStateOf<String?>(null) }
+    var candidateChatMove by remember(scope) { mutableStateOf<PendingTreeMove.Chat?>(null) }
+    var candidateFolderTargetId by remember(scope) { mutableStateOf<String?>(null) }
+    var candidateFolderMove by remember(scope) { mutableStateOf<PendingTreeMove?>(null) }
     var activeFolderTargetId by remember(scope) { mutableStateOf<String?>(null) }
+    var lastInsertionFeedbackKey by remember(scope) { mutableStateOf<String?>(null) }
     val pendingMove = remember(scope) { mutableStateOf<PendingTreeMove?>(null) }
     val visibleFolders = if (useDraft) draftFolders else folders
     val visiblePlacements = if (useDraft) draftPlacements else placements
@@ -250,7 +262,39 @@ internal fun ChatFolderTreeList(
         }
     }
 
-    fun beginDrag(folderId: String? = null) {
+    LaunchedEffect(candidateFolderTargetId, candidateFolderMove, dragActive) {
+        val targetId = candidateFolderTargetId
+        val move = candidateFolderMove
+        if (!dragActive || targetId == null || move == null) return@LaunchedEffect
+        delay(200)
+        if (
+            dragActive &&
+                candidateFolderTargetId == targetId &&
+                candidateFolderMove == move
+        ) {
+            activeFolderTargetId = targetId
+            pendingMove.value = move
+            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
+
+    LaunchedEffect(candidateChatTargetId, candidateChatMove, dragActive) {
+        val targetId = candidateChatTargetId
+        val move = candidateChatMove
+        if (!dragActive || targetId == null || move == null) return@LaunchedEffect
+        delay(160)
+        if (
+            dragActive &&
+                candidateChatTargetId == targetId &&
+                candidateChatMove == move
+        ) {
+            activeChatTargetId = targetId
+            pendingMove.value = move
+            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+
+    fun beginDrag(folderId: String? = null, chatId: String? = null) {
         if (!useDraft) {
             draftFolders = folders
             draftPlacements = placements
@@ -258,21 +302,38 @@ internal fun ChatFolderTreeList(
         useDraft = true
         dragActive = true
         draggingFolderId = folderId
+        draggingChatId = chatId
         activeInsertionKey = null
+        activeChatTargetId = null
+        candidateChatTargetId = null
+        candidateChatMove = null
+        candidateFolderTargetId = null
+        candidateFolderMove = null
         activeFolderTargetId = null
+        lastInsertionFeedbackKey = null
         pendingMove.value = null
+        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
     fun finishDrag() {
         dragActive = false
         draggingFolderId = null
+        draggingChatId = null
+        candidateChatTargetId = null
+        candidateChatMove = null
+        candidateFolderTargetId = null
+        candidateFolderMove = null
         val move = pendingMove.value
         if (move == null) {
             useDraft = false
             activeInsertionKey = null
+            activeChatTargetId = null
             activeFolderTargetId = null
             return
         }
+        activeInsertionKey = null
+        activeChatTargetId = null
+        activeFolderTargetId = null
         when (move) {
             is PendingTreeMove.Folder -> {
                 draftFolders = applyFolderMove(visibleFolders, move)
@@ -298,26 +359,64 @@ internal fun ChatFolderTreeList(
                 useDraft = false
             }.also {
                 commitInProgress = false
-                activeInsertionKey = null
-                activeFolderTargetId = null
             }
         }
     }
 
     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
-        val moved = treeItems.getOrNull(from.index) ?: return@rememberReorderableLazyListState
         val target = treeItems.getOrNull(to.index) ?: return@rememberReorderableLazyListState
+        val moved: FolderTreeItem = draggingFolderId
+            ?.let { id ->
+                treeItems.firstOrNull { it is FolderTreeItem.Folder && it.value.id == id }
+            }
+            ?: draggingChatId?.let { id ->
+                treeItems.firstOrNull { it is FolderTreeItem.Chat && it.history.id == id }
+            }
+            ?: treeItems.getOrNull(from.index)
+            ?: return@rememberReorderableLazyListState
+        if (target.key == moved.key) {
+            candidateFolderTargetId = null
+            candidateFolderMove = null
+            candidateChatTargetId = null
+            candidateChatMove = null
+            activeFolderTargetId = null
+            activeInsertionKey = null
+            activeChatTargetId = null
+            pendingMove.value = null
+            return@rememberReorderableLazyListState
+        }
+
         when (moved) {
             is FolderTreeItem.Folder -> {
+                if (target is FolderTreeItem.Chat) {
+                    candidateFolderTargetId = null
+                    candidateFolderMove = null
+                    candidateChatTargetId = null
+                    candidateChatMove = null
+                    activeFolderTargetId = null
+                    activeInsertionKey = null
+                    activeChatTargetId = null
+                    pendingMove.value = null
+                    return@rememberReorderableLazyListState
+                }
                 val targetParentId = when (target) {
                     is FolderTreeItem.Folder -> target.value.id
-                    is FolderTreeItem.Chat -> target.placement.folderId
                     is FolderTreeItem.FolderInsertion -> target.parentFolderId
+                    is FolderTreeItem.Chat -> error("handled above")
                 }
                 val targetIsDescendant = generateSequence(targetParentId) { id ->
-                    draftFolders.firstOrNull { it.id == id }?.parentFolderId
+                    visibleFolders.firstOrNull { it.id == id }?.parentFolderId
                 }.any { it == moved.value.id }
-                if (targetIsDescendant) return@rememberReorderableLazyListState
+                if (targetIsDescendant) {
+                    candidateFolderTargetId = null
+                    candidateFolderMove = null
+                    candidateChatTargetId = null
+                    candidateChatMove = null
+                    activeFolderTargetId = null
+                    activeInsertionKey = null
+                    pendingMove.value = null
+                    return@rememberReorderableLazyListState
+                }
 
                 val currentSiblings = visibleFolders
                     .filter { it.parentFolderId == targetParentId }
@@ -338,11 +437,56 @@ internal fun ChatFolderTreeList(
                     }
                     else -> withoutMoved.size
                 }
-                pendingMove.value = PendingTreeMove.Folder(moved.value.id, targetParentId, destination)
-                activeInsertionKey = (target as? FolderTreeItem.FolderInsertion)?.key
-                activeFolderTargetId = (target as? FolderTreeItem.Folder)?.value?.id
+                val move = PendingTreeMove.Folder(moved.value.id, targetParentId, destination)
+                when (target) {
+                    is FolderTreeItem.Folder -> {
+                        activeInsertionKey = null
+                        activeChatTargetId = null
+                        candidateChatTargetId = null
+                        candidateChatMove = null
+                        val alreadyArmed = activeFolderTargetId == target.value.id
+                        pendingMove.value = move.takeIf { alreadyArmed }
+                        if (!alreadyArmed) {
+                            activeFolderTargetId = null
+                        }
+                        candidateFolderTargetId = target.value.id
+                        candidateFolderMove = move
+                    }
+                    is FolderTreeItem.FolderInsertion -> {
+                        candidateFolderTargetId = null
+                        candidateFolderMove = null
+                        candidateChatTargetId = null
+                        candidateChatMove = null
+                        activeFolderTargetId = null
+                        activeChatTargetId = null
+                        pendingMove.value = move
+                        activeInsertionKey = target.key
+                        if (lastInsertionFeedbackKey != target.key) {
+                            lastInsertionFeedbackKey = target.key
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        if (moved.value.parentFolderId == targetParentId) {
+                            draftFolders = applyFolderMove(visibleFolders, move)
+                        }
+                    }
+                    is FolderTreeItem.Chat -> Unit
+                }
             }
             is FolderTreeItem.Chat -> {
+                if (
+                    target is FolderTreeItem.FolderInsertion &&
+                        target.parentFolderId != null
+                ) {
+                    candidateFolderTargetId = null
+                    candidateFolderMove = null
+                    candidateChatTargetId = null
+                    candidateChatMove = null
+                    activeFolderTargetId = null
+                    activeInsertionKey = null
+                    activeChatTargetId = null
+                    pendingMove.value = null
+                    return@rememberReorderableLazyListState
+                }
                 val targetFolderId = when (target) {
                     is FolderTreeItem.Folder -> target.value.id
                     is FolderTreeItem.Chat -> target.placement.folderId
@@ -375,7 +519,56 @@ internal fun ChatFolderTreeList(
                     destination.coerceIn(0, withoutMoved.size),
                 )
                 activeInsertionKey = null
-                activeFolderTargetId = (target as? FolderTreeItem.Folder)?.value?.id
+                when (target) {
+                    is FolderTreeItem.Folder -> {
+                        val move = pendingMove.value
+                        activeChatTargetId = null
+                        candidateChatTargetId = null
+                        candidateChatMove = null
+                        val alreadyArmed = activeFolderTargetId == target.value.id
+                        pendingMove.value = move.takeIf { alreadyArmed }
+                        if (!alreadyArmed) {
+                            activeFolderTargetId = null
+                        }
+                        candidateFolderTargetId = target.value.id
+                        candidateFolderMove = move
+                    }
+                    is FolderTreeItem.Chat -> {
+                        candidateFolderTargetId = null
+                        candidateFolderMove = null
+                        activeFolderTargetId = null
+                        val move = pendingMove.value as? PendingTreeMove.Chat
+                        if (moved.placement.folderId == targetFolderId) {
+                            candidateChatTargetId = null
+                            candidateChatMove = null
+                            activeChatTargetId = target.history.id
+                            if (move != null) {
+                                draftPlacements = applyChatMove(visiblePlacements, move)
+                            }
+                        } else {
+                            val alreadyArmed = activeChatTargetId == target.history.id
+                            pendingMove.value = move.takeIf { alreadyArmed }
+                            if (!alreadyArmed) {
+                                activeChatTargetId = null
+                            }
+                            candidateChatTargetId = target.history.id
+                            candidateChatMove = move
+                        }
+                    }
+                    is FolderTreeItem.FolderInsertion -> {
+                        candidateFolderTargetId = null
+                        candidateFolderMove = null
+                        candidateChatTargetId = null
+                        candidateChatMove = null
+                        activeFolderTargetId = null
+                        activeChatTargetId = null
+                        activeInsertionKey = target.key
+                        if (lastInsertionFeedbackKey != target.key) {
+                            lastInsertionFeedbackKey = target.key
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                    }
+                }
             }
             is FolderTreeItem.FolderInsertion -> return@rememberReorderableLazyListState
         }
@@ -389,9 +582,17 @@ internal fun ChatFolderTreeList(
             ReorderableItem(
                 reorderableState,
                 key = item.key,
+                animateItemModifier = Modifier.animateItem(
+                    placementSpec = if (dragActive) null else tween(durationMillis = 220)
+                ),
                 enabled = when (item) {
-                    is FolderTreeItem.FolderInsertion -> dragActive && draggingFolderId != null &&
-                        item.parentFolderId !in forbiddenFolderDropIds
+                    is FolderTreeItem.FolderInsertion -> dragActive && (
+                        (
+                            draggingFolderId != null &&
+                                item.parentFolderId !in forbiddenFolderDropIds
+                            ) ||
+                            (draggingChatId != null && item.parentFolderId == null)
+                        )
                     is FolderTreeItem.Folder -> item.value.id !in
                         (forbiddenFolderDropIds - draggingFolderId)
                     is FolderTreeItem.Chat -> true
@@ -399,38 +600,82 @@ internal fun ChatFolderTreeList(
             ) { isDragging ->
                 when (item) {
                     is FolderTreeItem.FolderInsertion -> {
+                        val isInsertionDrag = dragActive && (
+                            draggingFolderId != null ||
+                                (draggingChatId != null && item.parentFolderId == null)
+                            )
+                        val isActive = activeInsertionKey == item.key
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(7.dp)
+                                .height(if (isInsertionDrag) 24.dp else 4.dp)
                                 .padding(start = (item.depth * 14 + 8).dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            if (activeInsertionKey == item.key) {
-                                Box(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .height(2.dp)
-                                        .background(MaterialTheme.colorScheme.primary)
-                                )
+                            if (isInsertionDrag) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .weight(1f)
+                                            .height(if (isActive) 3.dp else 1.dp)
+                                            .background(
+                                                if (isActive) {
+                                                    MaterialTheme.colorScheme.primary
+                                                } else {
+                                                    MaterialTheme.colorScheme.outlineVariant
+                                                }
+                                            )
+                                    )
+                                    if (isActive) {
+                                        val parentName = item.parentFolderId?.let { parentId ->
+                                            visibleFolders.firstOrNull { it.id == parentId }?.name
+                                        }
+                                        Text(
+                                            text = if (parentName == null) {
+                                                stringResource(R.string.move_to_root_level)
+                                            } else {
+                                                stringResource(R.string.move_to_folder_level, parentName)
+                                            },
+                                            color = MaterialTheme.colorScheme.primary,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                     is FolderTreeItem.Folder -> {
                         val expanded = item.value.id !in collapsedFolderIds
                         val isDropTarget = activeFolderTargetId == item.value.id
+                        val isCandidateTarget =
+                            candidateFolderTargetId == item.value.id && !isDropTarget
                         Surface(
                             color = if (isDropTarget) {
                                 MaterialTheme.colorScheme.primaryContainer
+                            } else if (isCandidateTarget) {
+                                MaterialTheme.colorScheme.secondaryContainer
                             } else {
                                 MaterialTheme.colorScheme.surfaceContainer
                             },
                             border = if (isDropTarget) {
                                 BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                            } else if (isCandidateTarget) {
+                                BorderStroke(1.dp, MaterialTheme.colorScheme.secondary)
                             } else {
                                 null
                             },
-                            shadowElevation = if (isDragging) 8.dp else if (isDropTarget) 4.dp else 1.dp,
+                            shadowElevation = when {
+                                isDragging -> 8.dp
+                                isDropTarget -> 5.dp
+                                isCandidateTarget -> 3.dp
+                                else -> 1.dp
+                            },
                             shape = MaterialTheme.shapes.medium,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -447,12 +692,12 @@ internal fun ChatFolderTreeList(
                                 ),
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 9.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(40.dp)
+                                        .size(48.dp)
                                         .draggableHandle(
                                             enabled = draggingEnabled && !commitInProgress,
                                             onDragStarted = { beginDrag(item.value.id) },
@@ -471,26 +716,36 @@ internal fun ChatFolderTreeList(
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                                 Spacer(Modifier.width(8.dp))
-                                Text(
-                                    item.value.name,
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        item.value.name,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (isCandidateTarget || isDropTarget) {
+                                        Text(
+                                            text = stringResource(
+                                                if (isDropTarget) {
+                                                    R.string.release_to_move_into_folder
+                                                } else {
+                                                    R.string.hold_to_move_into_folder
+                                                }
+                                            ),
+                                            color = if (isDropTarget) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSecondaryContainer
+                                            },
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
                                 if (item.value.pinned) {
                                     Icon(Icons.Default.PushPin, contentDescription = null, modifier = Modifier.size(15.dp))
-                                }
-                                if (isDropTarget) {
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        text = stringResource(R.string.release_to_move_into_folder),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                    )
                                 }
                                 Icon(
                                     if (expanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowRight,
@@ -501,11 +756,25 @@ internal fun ChatFolderTreeList(
                     }
                     is FolderTreeItem.Chat -> {
                         val selected = item.history.id == currentId
+                        val isChatTarget = activeChatTargetId == item.history.id
+                        val isCandidateChatTarget =
+                            candidateChatTargetId == item.history.id && !isChatTarget
                         Surface(
-                            color = if (selected) {
+                            color = if (isChatTarget) {
+                                MaterialTheme.colorScheme.secondaryContainer
+                            } else if (isCandidateChatTarget) {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            } else if (selected) {
                                 MaterialTheme.colorScheme.primaryContainer
                             } else {
                                 MaterialTheme.colorScheme.surface
+                            },
+                            border = if (isChatTarget) {
+                                BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                            } else if (isCandidateChatTarget) {
+                                BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            } else {
+                                null
                             },
                             shadowElevation = if (isDragging) 8.dp else 0.dp,
                             shape = MaterialTheme.shapes.medium,
@@ -528,10 +797,10 @@ internal fun ChatFolderTreeList(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(40.dp)
+                                        .size(48.dp)
                                         .draggableHandle(
                                             enabled = draggingEnabled && !commitInProgress,
-                                            onDragStarted = { beginDrag() },
+                                            onDragStarted = { beginDrag(chatId = item.history.id) },
                                             onDragStopped = { finishDrag() },
                                         ),
                                     contentAlignment = Alignment.Center,
@@ -545,6 +814,25 @@ internal fun ChatFolderTreeList(
                                         overflow = TextOverflow.Ellipsis,
                                         style = MaterialTheme.typography.bodyMedium,
                                     )
+                                    if (isCandidateChatTarget || isChatTarget) {
+                                        Text(
+                                            text = stringResource(
+                                                if (isChatTarget) {
+                                                    R.string.release_to_insert_chat_here
+                                                } else {
+                                                    R.string.hold_to_insert_chat_here
+                                                }
+                                            ),
+                                            color = if (isChatTarget) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                        )
+                                    }
                                 }
                                 if (scope == ChatFolderScope.FAVORITE) {
                                     Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(16.dp))
