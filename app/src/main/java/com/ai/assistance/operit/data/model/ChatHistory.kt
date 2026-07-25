@@ -25,7 +25,5 @@ data class ChatHistory(
     val characterCardName: String? = null,
     val characterGroupId: String? = null,
     val locked: Boolean = false,
-    val pinned: Boolean = false,
-    @Serializable(with = LocalDateTimeSerializer::class)
-    val lastMessageAt: LocalDateTime? = null
+    val pinned: Boolean = false
 )

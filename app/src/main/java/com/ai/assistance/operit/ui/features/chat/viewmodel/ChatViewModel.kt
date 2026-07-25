@@ -99,13 +99,6 @@ enum class ChatHistoryDisplayMode {
     CURRENT_CHARACTER_ONLY
 }
 
-/** IDEA 3: 消息分类（分类对象是对话） */
-enum class ChatHistoryCategory {
-    ALL,
-    RECENT,
-    FAVORITE
-}
-
 class ChatViewModel(private val context: Context) : ViewModel() {
 
     companion object {
@@ -249,9 +242,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         chatHistoryDelegate.showChatHistorySelector
     }
     val chatHistories: StateFlow<List<ChatHistory>> by lazy { chatHistoryDelegate.chatHistories }
-    // IDEA 3: 收藏和最近数据
-    val favoriteChatIds: StateFlow<Set<String>> by lazy { chatHistoryDelegate.favoriteChatIds }
-    val recentChatHistories: StateFlow<List<ChatHistory>> by lazy { chatHistoryDelegate.recentChatHistories }
     val currentChatId: StateFlow<String?> by lazy { chatHistoryDelegate.currentChatId }
     val hasOlderDisplayHistory: StateFlow<Boolean> by lazy {
         chatHistoryDelegate.hasOlderDisplayHistory
@@ -332,14 +322,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun setHistoryDisplayMode(mode: ChatHistoryDisplayMode) {
         _historyDisplayMode.value = mode
-    }
-
-    // ---- IDEA 3: category state ----
-    private val _historyCategory = MutableStateFlow(ChatHistoryCategory.ALL)
-    val historyCategory: StateFlow<ChatHistoryCategory> = _historyCategory.asStateFlow()
-
-    fun setHistoryCategory(category: ChatHistoryCategory) {
-        _historyCategory.value = category
     }
 
     fun setAutoSwitchCharacterCard(enabled: Boolean) {

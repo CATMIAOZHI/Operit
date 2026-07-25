@@ -1,7 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
 import android.net.Uri
-import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeOut
@@ -51,7 +50,6 @@ import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
@@ -71,9 +69,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatHistoryCategory
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatHistoryDisplayMode
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
@@ -109,13 +104,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatHistory
-import com.ai.assistance.operit.data.model.ChatFolderScope
-import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.CharacterCard
 import com.ai.assistance.operit.data.model.CharacterGroupCard
 import com.ai.assistance.operit.data.model.ActivePrompt
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
-import com.ai.assistance.operit.data.repository.FolderNameConflictException
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.CharacterGroupCardManager
 import com.ai.assistance.operit.ui.common.rememberLocal
@@ -456,32 +448,19 @@ fun ChatHistorySelector(
         autoSwitchChatOnCharacterSelect: Boolean,
         onAutoSwitchChatOnCharacterSelectChange: (Boolean) -> Unit,
         onQuickScrollInteractionChange: (Boolean) -> Unit = {},
-        activePrompt: ActivePrompt,
-        // IDEA 3: category
-        historyCategory: ChatHistoryCategory = ChatHistoryCategory.ALL,
-        onCategoryChange: (ChatHistoryCategory) -> Unit = {},
-        favoriteChatIds: Set<String> = emptySet(),
-        recentChatHistories: List<ChatHistory> = emptyList(),
+        activePrompt: ActivePrompt
 ) {
     var chatToEdit by remember { mutableStateOf<ChatHistory?>(null) }
     var chatToDelete by remember { mutableStateOf<ChatHistory?>(null) }
-    var foldersDeletedWithChat by remember { mutableStateOf<List<ChatFolderEntity>>(emptyList()) }
-    var deleteImpactLoadingChatId by remember { mutableStateOf<String?>(null) }
     var chatItemActionTarget by remember { mutableStateOf<ChatHistory?>(null) }
     var showNewGroupDialog by remember { mutableStateOf(false) }
     var newGroupName by remember { mutableStateOf("") }
-    var newFolderError by remember { mutableStateOf<String?>(null) }
     var collapsedGroups by rememberLocal("chat_history_collapsed_groups", emptySet<String>())
     var collapsedCharacters by rememberLocal("chat_history_collapsed_characters", emptySet<String>())
 
     var groupActionTarget by remember { mutableStateOf<GroupTarget?>(null) }
     var groupToRename by remember { mutableStateOf<GroupTarget?>(null) }
     var groupToDelete by remember { mutableStateOf<GroupTarget?>(null) }
-    var groupPendingDeleteWithChats by remember { mutableStateOf<GroupTarget?>(null) }
-    var folderActionTarget by remember { mutableStateOf<ChatFolderEntity?>(null) }
-    var folderToRename by remember { mutableStateOf<ChatFolderEntity?>(null) }
-    var folderToDelete by remember { mutableStateOf<ChatFolderEntity?>(null) }
-    var folderPendingDeleteWithChats by remember { mutableStateOf<ChatFolderEntity?>(null) }
     var hasLongPressedGroup by rememberLocal("has_long_pressed_group", defaultValue = false)
     
     // 搜索相关状态
@@ -496,14 +475,6 @@ fun ChatHistorySelector(
     val characterGroupCardManager = remember { CharacterGroupCardManager.getInstance(context) }
     val coroutineScope = rememberCoroutineScope()
     val deleteAnimationDurationMs = 220L
-
-    // IDEA 3 (P1-8 fix): 根据分类标签页过滤数据
-    val effectiveChatHistories = when (historyCategory) {
-        ChatHistoryCategory.RECENT -> recentChatHistories
-        ChatHistoryCategory.FAVORITE -> chatHistories.filter { it.id in favoriteChatIds }
-        ChatHistoryCategory.ALL -> chatHistories
-    }
-    val isDraggingEnabled = historyCategory != ChatHistoryCategory.RECENT && searchQuery.isBlank()
     var deletingChatIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var availableCharacterCards by remember { mutableStateOf<List<CharacterCard>>(emptyList()) }
     var availableCharacterGroups by remember { mutableStateOf<List<CharacterGroupCard>>(emptyList()) }
@@ -517,30 +488,7 @@ fun ChatHistorySelector(
         if (deletingChatIds.contains(history.id)) {
             return
         }
-        deleteImpactLoadingChatId = history.id
-        coroutineScope.launch {
-            val affectedFolders =
-                runCatching { chatHistoryManager.foldersDeletedWithChat(history.id) }
-                    .getOrElse {
-                        if (deleteImpactLoadingChatId == history.id) {
-                            deleteImpactLoadingChatId = null
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.folder_operation_failed),
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-                        return@launch
-                    }
-            if (
-                deleteImpactLoadingChatId == history.id &&
-                    history.id !in deletingChatIds
-            ) {
-                foldersDeletedWithChat = affectedFolders
-                chatToDelete = history
-                deleteImpactLoadingChatId = null
-            }
-        }
+        chatToDelete = history
     }
 
     fun requestDeleteChat(history: ChatHistory) {
@@ -561,41 +509,18 @@ fun ChatHistorySelector(
     if (chatToDelete != null) {
         val deletingChat = chatToDelete!!
         AlertDialog(
-            onDismissRequest = {
-                chatToDelete = null
-                foldersDeletedWithChat = emptyList()
-            },
+            onDismissRequest = { chatToDelete = null },
             title = { Text(stringResource(R.string.confirm_delete_chat)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = stringResource(
-                            R.string.delete_chat_confirmation,
-                            deletingChat.title,
-                        )
-                    )
-                    if (foldersDeletedWithChat.isNotEmpty()) {
-                        Text(
-                            text = stringResource(
-                                R.string.delete_chat_removes_folders_warning,
-                                foldersDeletedWithChat.joinToString(
-                                    separator = stringResource(R.string.folder_name_separator),
-                                ) { folder ->
-                                    "“${folder.name}”"
-                                },
-                            ),
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
+                Text(
+                    text = stringResource(R.string.delete_chat_confirmation, deletingChat.title)
+                )
             },
             confirmButton = {
                 TextButton(
                     onClick = {
                         requestDeleteChat(deletingChat)
                         chatToDelete = null
-                        foldersDeletedWithChat = emptyList()
                     },
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
@@ -605,10 +530,7 @@ fun ChatHistorySelector(
                 }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    chatToDelete = null
-                    foldersDeletedWithChat = emptyList()
-                }) {
+                TextButton(onClick = { chatToDelete = null }) {
                     Text(stringResource(R.string.cancel))
                 }
             }
@@ -677,17 +599,17 @@ fun ChatHistorySelector(
         }
     }
 
-    val filteredHistories = remember(effectiveChatHistories, searchQuery, matchedChatIdsByContent) {
+    val filteredHistories = remember(chatHistories, searchQuery, matchedChatIdsByContent) {
         val trimmedQuery = searchQuery.trim()
         if (trimmedQuery.isNotBlank()) {
-            effectiveChatHistories.filter { history ->
+            chatHistories.filter { history ->
                 val matchesTitleOrGroup = history.title.contains(trimmedQuery, ignoreCase = true) ||
                         (history.group?.contains(trimmedQuery, ignoreCase = true) == true)
                 val matchesContent = matchedChatIdsByContent.contains(history.id)
                 matchesTitleOrGroup || matchesContent
             }
         } else {
-            effectiveChatHistories
+            chatHistories
         }
     }
     val groupIdsInFilteredHistories = remember(filteredHistories) {
@@ -726,13 +648,9 @@ fun ChatHistorySelector(
                     availableCharacterGroups,
                     groupNameById,
                     groupPrefix,
-                     historyDisplayMode,
-                     activeCharacterCardName,
-                     historyCategory,
-             ) {
-                if (historyCategory == ChatHistoryCategory.RECENT) {
-                    return@remember filteredHistories.map { HistoryListItem.Item(it) }
-                }
+                    historyDisplayMode,
+                    activeCharacterCardName
+            ) {
                 fun characterKey(name: String) = "character::$name"
                 fun groupKey(characterName: String?, groupValue: String?): String {
                     val characterPart = characterName ?: "all"
@@ -929,37 +847,6 @@ fun ChatHistorySelector(
                 chatHistories.firstOrNull { it.id == target.id } ?: target
             }
         }
-        val actionScope =
-            when (historyCategory) {
-                ChatHistoryCategory.ALL -> ChatFolderScope.ALL
-                ChatHistoryCategory.FAVORITE -> ChatFolderScope.FAVORITE
-                ChatHistoryCategory.RECENT -> null
-            }
-        val canMoveTarget = actionScope != null && searchQuery.isBlank()
-        val moveFailedMessage = stringResource(R.string.history_move_failed)
-
-        fun moveTargetWithinCurrentFolder(delta: Int) {
-            if (!canMoveTarget) return
-            val target = resolvedTargetChat ?: chatItemActionTarget ?: return
-            val scope = actionScope ?: return
-            chatItemActionTarget = null
-            coroutineScope.launch {
-                runCatching {
-                    chatHistoryManager.moveChatWithinCurrentFolder(
-                        chatId = target.id,
-                        scope = scope,
-                        delta = delta,
-                    )
-                }.onFailure {
-                    Toast.makeText(
-                        context,
-                        moveFailedMessage,
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
-            }
-        }
-
         Dialog(onDismissRequest = { chatItemActionTarget = null }) {
             Card(
                 modifier = Modifier
@@ -1037,7 +924,6 @@ fun ChatHistorySelector(
                         }
                     }
                     
-                    if (canMoveTarget) {
                     // 上移选项
                     Surface(
                         modifier = Modifier
@@ -1048,7 +934,18 @@ fun ChatHistorySelector(
                                 contentDescription = context.getString(R.string.move_up)
                             }
                             .clickable {
-                                moveTargetWithinCurrentFolder(delta = -1)
+                                val targetChat = chatItemActionTarget!!
+                                val currentIndex = filteredHistories.indexOfFirst { it.id == targetChat.id }
+                                if (currentIndex > 0) {
+                                    val newHistories = filteredHistories.toMutableList()
+                                    newHistories.removeAt(currentIndex)
+                                    newHistories.add(currentIndex - 1, targetChat)
+                                    val reorderedHistories = newHistories.mapIndexed { index, history ->
+                                        history.copy(displayOrder = index.toLong())
+                                    }
+                                    onUpdateChatOrderAndGroup(reorderedHistories, targetChat, targetChat.group)
+                                }
+                                chatItemActionTarget = null
                             },
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     ) {
@@ -1086,7 +983,18 @@ fun ChatHistorySelector(
                                 contentDescription = context.getString(R.string.move_down)
                             }
                             .clickable {
-                                moveTargetWithinCurrentFolder(delta = 1)
+                                val targetChat = chatItemActionTarget!!
+                                val currentIndex = filteredHistories.indexOfFirst { it.id == targetChat.id }
+                                if (currentIndex >= 0 && currentIndex < filteredHistories.size - 1) {
+                                    val newHistories = filteredHistories.toMutableList()
+                                    newHistories.removeAt(currentIndex)
+                                    newHistories.add(currentIndex + 1, targetChat)
+                                    val reorderedHistories = newHistories.mapIndexed { index, history ->
+                                        history.copy(displayOrder = index.toLong())
+                                    }
+                                    onUpdateChatOrderAndGroup(reorderedHistories, targetChat, targetChat.group)
+                                }
+                                chatItemActionTarget = null
                             },
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     ) {
@@ -1112,7 +1020,6 @@ fun ChatHistorySelector(
                                 modifier = Modifier.clearAndSetSemantics {}
                             )
                         }
-                    }
                     }
 
                     // 置顶/取消置顶选项
@@ -1159,55 +1066,6 @@ fun ChatHistorySelector(
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.clearAndSetSemantics {}
-                            )
-                        }
-                    }
-
-                    // 收藏/取消收藏选项
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                            .clip(MaterialTheme.shapes.medium)
-                            .semantics {
-                                contentDescription = if (resolvedTargetChat?.id in favoriteChatIds) {
-                                    context.getString(R.string.unfavorite_chat)
-                                } else {
-                                    context.getString(R.string.favorite_chat)
-                                }
-                            }
-                            .clickable {
-                                val targetChat = resolvedTargetChat ?: chatItemActionTarget!!
-                                coroutineScope.launch {
-                                    chatHistoryManager.setChatFavorite(
-                                        targetChat.id,
-                                        targetChat.id !in favoriteChatIds,
-                                    )
-                                }
-                                chatItemActionTarget = null
-                            },
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Star,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp).clearAndSetSemantics {},
-                            )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(
-                                text = if (resolvedTargetChat?.id in favoriteChatIds) {
-                                    stringResource(R.string.unfavorite_chat)
-                                } else {
-                                    stringResource(R.string.favorite_chat)
-                                },
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.clearAndSetSemantics {},
                             )
                         }
                     }
@@ -1313,8 +1171,6 @@ fun ChatHistorySelector(
     }
 
     if (groupActionTarget != null) {
-        val renameGroupDescription = stringResource(R.string.rename_group)
-        val deleteGroupDescription = stringResource(R.string.delete_group)
         Dialog(onDismissRequest = { groupActionTarget = null }) {
             Card(
                 modifier = Modifier
@@ -1355,7 +1211,7 @@ fun ChatHistorySelector(
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .clip(MaterialTheme.shapes.medium)
                             .semantics {
-                                contentDescription = renameGroupDescription
+                                contentDescription = context.getString(R.string.rename_group)
                             }
                             .clickable {
                                 groupToRename = groupActionTarget
@@ -1394,7 +1250,7 @@ fun ChatHistorySelector(
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .clip(MaterialTheme.shapes.medium)
                             .semantics {
-                                contentDescription = deleteGroupDescription
+                                contentDescription = context.getString(R.string.delete_group)
                             }
                             .clickable {
                                 groupToDelete = groupActionTarget
@@ -1525,7 +1381,11 @@ fun ChatHistorySelector(
 
                     TextButton(
                         onClick = {
-                            groupPendingDeleteWithChats = groupToDelete
+                            onDeleteGroup(
+                                groupToDelete!!.groupName,
+                                true,
+                                groupToDelete!!.characterCardName
+                            )
                             groupToDelete = null
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -1608,503 +1468,6 @@ fun ChatHistorySelector(
         }
     }
 
-    if (folderActionTarget != null) {
-        val target = folderActionTarget!!
-        Dialog(onDismissRequest = { folderActionTarget = null }) {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-            ) {
-                Column(
-                    modifier = Modifier.padding(vertical = 16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        text = stringResource(R.string.manage_folder),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 24.dp),
-                    )
-                    Text(
-                        text = target.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                            .clip(MaterialTheme.shapes.medium)
-                            .clickable {
-                                folderToRename = target
-                                folderActionTarget = null
-                            },
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                Icons.Outlined.DriveFileRenameOutline,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp),
-                            )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(
-                                stringResource(R.string.rename_folder),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                            .clip(MaterialTheme.shapes.medium)
-                            .clickable {
-                                coroutineScope.launch {
-                                    chatHistoryManager.setFolderPinned(target.id, !target.pinned)
-                                }
-                                folderActionTarget = null
-                            },
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                Icons.Default.PushPin,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp),
-                            )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(
-                                stringResource(if (target.pinned) R.string.unpin_folder else R.string.pin_folder),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                            .clip(MaterialTheme.shapes.medium)
-                            .clickable {
-                                folderToDelete = target
-                                folderActionTarget = null
-                            },
-                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                Icons.Outlined.Delete,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(24.dp),
-                            )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(
-                                stringResource(R.string.delete_folder),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    TextButton(
-                        onClick = { folderActionTarget = null },
-                        modifier = Modifier.align(Alignment.End).padding(horizontal = 16.dp),
-                    ) {
-                        Text(stringResource(R.string.cancel))
-                    }
-                }
-            }
-        }
-    }
-
-    if (folderToRename != null) {
-        val target = folderToRename!!
-        var name by remember(target.id) { mutableStateOf(target.name) }
-        var error by remember(target.id) { mutableStateOf<String?>(null) }
-        val nameConflictMessage = stringResource(R.string.folder_name_already_exists)
-        val operationFailedMessage = stringResource(R.string.folder_operation_failed)
-        AlertDialog(
-            onDismissRequest = { folderToRename = null },
-            title = { Text(stringResource(R.string.rename_folder)) },
-            text = {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = {
-                        name = it
-                        error = null
-                    },
-                    label = { Text(stringResource(R.string.folder_name)) },
-                    singleLine = true,
-                    isError = error != null,
-                    supportingText = error?.let { message -> { Text(message) } },
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = name.isNotBlank(),
-                    onClick = {
-                        coroutineScope.launch {
-                            try {
-                                chatHistoryManager.renameFolder(target.id, name)
-                                folderToRename = null
-                            } catch (_: FolderNameConflictException) {
-                                error = nameConflictMessage
-                            } catch (_: Exception) {
-                                error = operationFailedMessage
-                            }
-                        }
-                    },
-                ) {
-                    Text(stringResource(R.string.save))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { folderToRename = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
-
-    if (folderToDelete != null) {
-        val target = folderToDelete!!
-        var error by remember(target.id) { mutableStateOf<String?>(null) }
-        var deletingFolderOnly by remember(target.id) { mutableStateOf(false) }
-        val operationFailedMessage = stringResource(R.string.folder_operation_failed)
-        Dialog(onDismissRequest = {
-            if (!deletingFolderOnly) folderToDelete = null
-        }) {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Delete,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(48.dp),
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        stringResource(R.string.confirm_delete_folder),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        target.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    error?.let { message ->
-                        Text(
-                            message,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    HorizontalDivider()
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = stringResource(R.string.choose_delete_method),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    TextButton(
-                        onClick = {
-                            folderPendingDeleteWithChats = target
-                            folderToDelete = null
-                        },
-                        enabled = !deletingFolderOnly,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = MaterialTheme.shapes.medium,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        ),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Delete,
-                                contentDescription = null,
-                                modifier = Modifier.size(24.dp),
-                            )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column(horizontalAlignment = Alignment.Start) {
-                                Text(
-                                    stringResource(
-                                        if (target.scope == ChatFolderScope.FAVORITE) {
-                                            R.string.delete_folder_and_favorites
-                                        } else {
-                                            R.string.delete_folder_and_chats
-                                        }
-                                    ),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                                Text(
-                                    stringResource(R.string.delete_operation_irreversible),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    TextButton(
-                        onClick = {
-                            deletingFolderOnly = true
-                            error = null
-                            coroutineScope.launch {
-                                try {
-                                    chatHistoryManager.deleteFolder(target.id)
-                                    folderToDelete = null
-                                } catch (_: Exception) {
-                                    error = operationFailedMessage
-                                    deletingFolderOnly = false
-                                }
-                            }
-                        },
-                        enabled = !deletingFolderOnly,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = MaterialTheme.shapes.medium,
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            if (deletingFolderOnly) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    strokeWidth = 2.dp,
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Folder,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(24.dp),
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column(horizontalAlignment = Alignment.Start) {
-                                Text(
-                                    stringResource(R.string.delete_folder_only),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                                Text(
-                                    stringResource(R.string.folder_contents_move_to_parent),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    TextButton(
-                        onClick = { folderToDelete = null },
-                        enabled = !deletingFolderOnly,
-                        modifier = Modifier.align(Alignment.End),
-                    ) {
-                        Text(stringResource(R.string.cancel))
-                    }
-                }
-            }
-        }
-    }
-
-    if (folderPendingDeleteWithChats != null) {
-        val target = folderPendingDeleteWithChats!!
-        var error by remember(target.id) { mutableStateOf<String?>(null) }
-        var deleteInProgress by remember(target.id) { mutableStateOf(false) }
-        val operationFailedMessage = stringResource(R.string.folder_operation_failed)
-        Dialog(onDismissRequest = {
-            if (!deleteInProgress) folderPendingDeleteWithChats = null
-        }) {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Delete,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(48.dp),
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        stringResource(
-                            if (target.scope == ChatFolderScope.FAVORITE) {
-                                R.string.delete_folder_and_favorites
-                            } else {
-                                R.string.confirm_delete_folder_and_chats_title
-                            }
-                        ),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        stringResource(
-                            if (target.scope == ChatFolderScope.FAVORITE) {
-                                R.string.confirm_delete_folder_and_favorites_message
-                            } else {
-                                R.string.confirm_delete_folder_and_chats_message
-                            },
-                            target.name,
-                        ),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    error?.let { message ->
-                        Text(
-                            message,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    HorizontalDivider()
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = {
-                            deleteInProgress = true
-                            error = null
-                            coroutineScope.launch {
-                                try {
-                                    chatHistoryManager.deleteFolderAndChats(target.id)
-                                    folderPendingDeleteWithChats = null
-                                } catch (_: Exception) {
-                                    error = operationFailedMessage
-                                    deleteInProgress = false
-                                }
-                            }
-                        },
-                        enabled = !deleteInProgress,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error,
-                            contentColor = MaterialTheme.colorScheme.onError,
-                        ),
-                    ) {
-                        if (deleteInProgress) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onError,
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                        } else {
-                            Icon(
-                                imageVector = Icons.Outlined.Delete,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                        }
-                        Text(
-                            stringResource(
-                                if (target.scope == ChatFolderScope.FAVORITE) {
-                                    R.string.delete_folder_and_favorites
-                                } else {
-                                    R.string.delete_folder_and_chats
-                                }
-                            )
-                        )
-                    }
-                    TextButton(
-                        onClick = { folderPendingDeleteWithChats = null },
-                        enabled = !deleteInProgress,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(stringResource(R.string.cancel))
-                    }
-                }
-            }
-        }
-    }
-
-    if (groupPendingDeleteWithChats != null) {
-        val target = groupPendingDeleteWithChats!!
-        AlertDialog(
-            onDismissRequest = { groupPendingDeleteWithChats = null },
-            title = { Text(stringResource(R.string.confirm_delete_group_and_chats_title)) },
-            text = {
-                Text(
-                    stringResource(
-                        R.string.confirm_delete_group_and_chats_message,
-                        target.groupName,
-                    )
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDeleteGroup(target.groupName, true, target.characterCardName)
-                        groupPendingDeleteWithChats = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    ),
-                ) {
-                    Text(stringResource(R.string.delete_group_and_chats))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { groupPendingDeleteWithChats = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
-
     if (chatToEdit != null) {
         val editingChat = chatToEdit!!
         var newTitle by remember(editingChat) { mutableStateOf(editingChat.title) }
@@ -2124,12 +1487,6 @@ fun ChatHistorySelector(
         val bindingLabel = stringResource(R.string.bind_character_card)
         val bindingHint = stringResource(R.string.chat_binding_scope_hint)
         val groupPrefix = stringResource(R.string.character_group_binding_prefix)
-        val normalizedSelectedGroupId =
-            selectedCharacterGroupId?.trim()?.takeIf { it.isNotBlank() }
-        val missingCharacterGroupLabel = stringResource(
-            R.string.missing_character_group_id,
-            normalizedSelectedGroupId.orEmpty(),
-        )
         val bindingOptions = remember(availableCharacterCards, availableCharacterGroups, unboundLabel, groupPrefix) {
             buildList {
                 add(ChatBindingOption(unboundLabel, null, null))
@@ -2146,20 +1503,16 @@ fun ChatHistorySelector(
             selectedCharacterGroupId,
             groupNameById,
             unboundLabel,
-            groupPrefix,
-            normalizedSelectedGroupId,
-            missingCharacterGroupLabel,
+            groupPrefix
         ) {
             when {
                 !selectedCharacterGroupId.isNullOrBlank() -> {
-                    val groupName =
-                        normalizedSelectedGroupId
-                            ?.let { groupNameById[it] }
-                            ?.takeIf { it.isNotBlank() }
+                    val normalizedGroupId = selectedCharacterGroupId?.trim()?.takeIf { it.isNotBlank() }
+                    val groupName = normalizedGroupId?.let { groupNameById[it] }?.takeIf { it.isNotBlank() }
                     if (!groupName.isNullOrBlank()) {
                         "$groupPrefix: $groupName"
                     } else {
-                        missingCharacterGroupLabel
+                        context.getString(R.string.missing_character_group_id, normalizedGroupId ?: "")
                     }
                 }
                 !selectedCharacterCardName.isNullOrBlank() -> selectedCharacterCardName!!
@@ -2472,72 +1825,41 @@ fun ChatHistorySelector(
     }
 
     if (showNewGroupDialog) {
-        val folderScope = when (historyCategory) {
-            ChatHistoryCategory.FAVORITE -> ChatFolderScope.FAVORITE
-            else -> ChatFolderScope.ALL
-        }
-        val nameConflictMessage = stringResource(R.string.folder_name_already_exists)
-        val operationFailedMessage = stringResource(R.string.folder_operation_failed)
         AlertDialog(
-                onDismissRequest = {
-                    newFolderError = null
-                    showNewGroupDialog = false
-                },
-                title = { Text(stringResource(R.string.new_folder)) },
+                onDismissRequest = { showNewGroupDialog = false },
+                title = { Text(stringResource(R.string.new_group)) },
                 text = {
                     OutlinedTextField(
                             value = newGroupName,
-                            onValueChange = {
-                                newGroupName = it
-                                newFolderError = null
-                            },
-                            label = { Text(stringResource(R.string.folder_name)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            isError = newFolderError != null,
-                            supportingText = newFolderError?.let { message -> { Text(message) } },
+                            onValueChange = { newGroupName = it },
+                            label = { Text(stringResource(R.string.group_name)) },
+                            modifier = Modifier.fillMaxWidth()
                     )
                 },
                 confirmButton = {
                     Button(
                             onClick = {
                                 if (newGroupName.isNotBlank()) {
-                                    coroutineScope.launch {
-                                        try {
-                                            val (characterCardName, characterGroupId) =
-                                                resolveBindingForCreate(
-                                                    historyDisplayMode = historyDisplayMode,
-                                                    activePrompt = activePrompt,
-                                                    activeCharacterCardName = activeCharacterCardName,
-                                                )
-                                            val created = chatHistoryManager.createFolderWithChat(
-                                                scope = folderScope,
-                                                parentFolderId = null,
-                                                name = newGroupName,
-                                                characterCardName = characterCardName,
-                                                characterGroupId = characterGroupId,
-                                            )
-                                            newGroupName = ""
-                                            newFolderError = null
-                                            showNewGroupDialog = false
-                                            onSelectChat(created.chat.id)
-                                        } catch (_: FolderNameConflictException) {
-                                            newFolderError = nameConflictMessage
-                                        } catch (_: Exception) {
-                                            newFolderError = operationFailedMessage
-                                        }
+                                    val normalizedGroupName = newGroupName.trim()
+                                    if (normalizedGroupName.isBlank()) {
+                                        return@Button
                                     }
+                                    val (characterCardName, characterGroupId) = resolveBindingForCreate(
+                                        historyDisplayMode = historyDisplayMode,
+                                        activePrompt = activePrompt,
+                                        activeCharacterCardName = activeCharacterCardName
+                                    )
+                                    onCreateGroup(normalizedGroupName, characterCardName, characterGroupId)
+                                    newGroupName = ""
+                                    showNewGroupDialog = false
                                 }
-                            },
-                            enabled = newGroupName.isNotBlank(),
+                            }
                     ) {
                         Text(stringResource(R.string.create))
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = {
-                        newFolderError = null
-                        showNewGroupDialog = false
-                    }) {
+                    TextButton(onClick = { showNewGroupDialog = false }) {
                         Text(stringResource(R.string.cancel))
                     }
                 }
@@ -2603,31 +1925,6 @@ fun ChatHistorySelector(
             }
         }
 
-        // IDEA 3: 分类标签页
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            listOf(
-                Triple(ChatHistoryCategory.ALL, stringResource(R.string.all_messages), stringResource(R.string.all_messages)),
-                Triple(ChatHistoryCategory.RECENT, stringResource(R.string.recent_messages), stringResource(R.string.recent_messages)),
-                Triple(ChatHistoryCategory.FAVORITE, stringResource(R.string.favorites), stringResource(R.string.favorites)),
-            ).forEach { (cat, label, _) ->
-                val selected = historyCategory == cat
-                FilterChip(
-                    selected = selected,
-                    onClick = { onCategoryChange(cat) },
-                    label = { Text(label, style = MaterialTheme.typography.labelMedium) },
-                    modifier = Modifier.height(32.dp),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    ),
-                )
-            }
-        }
-
         // 新建对话按钮
         Row(
             modifier = Modifier
@@ -2651,18 +1948,16 @@ fun ChatHistorySelector(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.new_chat))
             }
-            if (historyCategory != ChatHistoryCategory.RECENT) {
-                IconButton(
-                    onClick = { showNewGroupDialog = true },
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        Icons.Default.AddCircleOutline,
-                        contentDescription = stringResource(R.string.new_folder),
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+            IconButton(
+                onClick = { showNewGroupDialog = true },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    Icons.Default.AddCircleOutline,
+                    contentDescription = stringResource(R.string.new_group),
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
             }
         }
 
@@ -2731,25 +2026,6 @@ fun ChatHistorySelector(
                 .fillMaxWidth()
                 .padding(end = 2.dp)
         ) {
-            if (historyCategory != ChatHistoryCategory.RECENT) {
-                ChatFolderTreeList(
-                    manager = chatHistoryManager,
-                    scope = if (historyCategory == ChatHistoryCategory.FAVORITE) {
-                        ChatFolderScope.FAVORITE
-                    } else {
-                        ChatFolderScope.ALL
-                    },
-                    histories = effectiveChatHistories,
-                    searchQuery = searchQuery,
-                    matchedChatIdsByContent = matchedChatIdsByContent,
-                    currentId = currentId,
-                    activeStreamingChatIds = activeStreamingChatIds,
-                    lazyListState = actualLazyListState,
-                    onSelectChat = onSelectChat,
-                    onChatLongPress = { chatItemActionTarget = it },
-                    onFolderLongPress = { folderActionTarget = it },
-                )
-            } else {
             LazyColumn(
                 state = actualLazyListState,
                 modifier = Modifier
@@ -3128,7 +2404,7 @@ fun ChatHistorySelector(
                                                         val dragDescription = stringResource(R.string.drag_item, item.history.title)
                                                         IconButton(
                                                             modifier = Modifier
-                                                                .draggableHandle(enabled = isDraggingEnabled)
+                                                                .draggableHandle()
                                                                 .semantics {
                                                                     contentDescription = dragDescription
                                                                 },
@@ -3219,18 +2495,15 @@ fun ChatHistorySelector(
                 }
             }
             }
-            }
 
-            if (historyCategory == ChatHistoryCategory.RECENT) {
-                HistoryQuickScroller(
-                    listState = actualLazyListState,
-                    itemCount = flatItems.size,
-                    onInteractionChange = onQuickScrollInteractionChange,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 2.dp, top = 12.dp, bottom = 12.dp)
-                )
-            }
+            HistoryQuickScroller(
+                listState = actualLazyListState,
+                itemCount = flatItems.size,
+                onInteractionChange = onQuickScrollInteractionChange,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 2.dp, top = 12.dp, bottom = 12.dp)
+            )
         }
     }
 }

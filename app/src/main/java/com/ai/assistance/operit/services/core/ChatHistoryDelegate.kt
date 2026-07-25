@@ -18,8 +18,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -525,13 +523,6 @@ class ChatHistoryDelegate(
 
     private val _chatHistories = MutableStateFlow<List<ChatHistory>>(emptyList())
     val chatHistories: StateFlow<List<ChatHistory>> = _chatHistories.asStateFlow()
-
-    // IDEA 3: 收藏和最近 flow
-    val favoriteChatIds: StateFlow<Set<String>> = chatHistoryManager.favoriteChatIdsFlow
-        .stateIn(coroutineScope, SharingStarted.Lazily, emptySet())
-
-    val recentChatHistories: StateFlow<List<ChatHistory>> = chatHistoryManager.recentChatsFlow
-        .stateIn(coroutineScope, SharingStarted.Lazily, emptyList())
 
     private val _currentChatId = MutableStateFlow<String?>(null)
     val currentChatId: StateFlow<String?> = _currentChatId.asStateFlow()

@@ -1079,10 +1079,6 @@ fun ChatHistorySelectorPanel(
                             )
     ) {
         val activeStreamingChatIds by actualViewModel.activeStreamingChatIds.collectAsState()
-        // IDEA 3: category, favorites, recent
-        val historyCategory by actualViewModel.historyCategory.collectAsState()
-        val favoriteChatIds by actualViewModel.favoriteChatIds.collectAsState()
-        val recentChatHistories by actualViewModel.recentChatHistories.collectAsState()
         // 直接使用ChatHistorySelector
         ChatHistorySelector(
                 modifier = Modifier.fillMaxSize().padding(top = 8.dp),
@@ -1136,12 +1132,7 @@ fun ChatHistorySelectorPanel(
                     GestureStateHolder.isChatScreenGestureConsumed = consumed
                     onChatScreenGestureConsumed(consumed)
                 },
-                activePrompt = activePrompt,
-                // IDEA 3: category
-                historyCategory = historyCategory,
-                onCategoryChange = { actualViewModel.setHistoryCategory(it) },
-                favoriteChatIds = favoriteChatIds,
-                recentChatHistories = recentChatHistories,
+                activePrompt = activePrompt
         )
     }
 }
