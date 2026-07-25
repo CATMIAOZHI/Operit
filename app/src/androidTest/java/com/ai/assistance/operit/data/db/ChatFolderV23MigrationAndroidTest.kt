@@ -109,7 +109,80 @@ class ChatFolderV23MigrationAndroidTest {
         database.close()
     }
 
-    private fun createCurrentDatabaseWithChats() {
+    @Test
+    fun migrate20To23_preservesChatsAndCreatesValidFolderState() {
+        createCurrentDatabaseWithChats(includeLegacyGroups = true)
+        replaceCurrentTablesWithV20Fixture()
+
+        val database =
+            Room.databaseBuilder(context, AppDatabase::class.java, databaseName)
+                .addMigrations(
+                    AppDatabase.MIGRATION_20_21,
+                    AppDatabase.MIGRATION_21_22,
+                    MIGRATION_22_23,
+                )
+                .addCallback(CHAT_FOLDER_INTEGRITY_CALLBACK)
+                .allowMainThreadQueries()
+                .build()
+        val sqlite = database.openHelper.writableDatabase
+
+        assertEquals(23, sqlite.version)
+        assertEquals(
+            3,
+            sqlite.query("SELECT COUNT(*) FROM chats").use {
+                it.moveToFirst()
+                it.getInt(0)
+            },
+        )
+        assertEquals(
+            3,
+            sqlite.query("SELECT COUNT(*) FROM chat_placements WHERE scope = 'ALL'").use {
+                it.moveToFirst()
+                it.getInt(0)
+            },
+        )
+        assertEquals(
+            "Work",
+            sqlite.query(
+                """
+                SELECT f.name
+                FROM chat_placements p
+                JOIN chat_folders f ON f.id = p.folderId AND f.scope = p.scope
+                WHERE p.chatId = 'chat-1' AND p.scope = 'ALL'
+                """.trimIndent()
+            ).use {
+                it.moveToFirst()
+                it.getString(0)
+            },
+        )
+        assertTrue(
+            sqlite.query(
+                "SELECT folderId FROM chat_placements WHERE chatId = 'chat-2' AND scope = 'ALL'"
+            ).use {
+                it.moveToFirst()
+                it.isNull(0)
+            }
+        )
+        assertEquals(
+            "研发",
+            sqlite.query(
+                """
+                SELECT f.name
+                FROM chat_placements p
+                JOIN chat_folders f ON f.id = p.folderId AND f.scope = p.scope
+                WHERE p.chatId = 'chat-3' AND p.scope = 'ALL'
+                """.trimIndent()
+            ).use {
+                it.moveToFirst()
+                it.getString(0)
+            },
+        )
+        assertFalse(sqlite.query("PRAGMA foreign_key_check").use { it.moveToFirst() })
+
+        database.close()
+    }
+
+    private fun createCurrentDatabaseWithChats(includeLegacyGroups: Boolean = false) {
         val database =
             Room.databaseBuilder(context, AppDatabase::class.java, databaseName)
                 .addCallback(CHAT_FOLDER_INTEGRITY_CALLBACK)
@@ -117,11 +190,87 @@ class ChatFolderV23MigrationAndroidTest {
                 .build()
         database.openHelper.writableDatabase
         runBlocking {
-            database.chatDao().insertChat(ChatEntity(id = "chat-1", title = "One", displayOrder = 1))
-            database.chatDao().insertChat(ChatEntity(id = "chat-2", title = "Two", displayOrder = 2))
-            database.chatDao().insertChat(ChatEntity(id = "chat-3", title = "Three", displayOrder = 3))
+            database.chatDao().insertChat(
+                ChatEntity(
+                    id = "chat-1",
+                    title = "One",
+                    group = if (includeLegacyGroups) "Work" else null,
+                    displayOrder = 1,
+                )
+            )
+            database.chatDao().insertChat(
+                ChatEntity(
+                    id = "chat-2",
+                    title = "Two",
+                    group = if (includeLegacyGroups) "   " else null,
+                    displayOrder = 2,
+                )
+            )
+            database.chatDao().insertChat(
+                ChatEntity(
+                    id = "chat-3",
+                    title = "Three",
+                    group = if (includeLegacyGroups) "研发" else null,
+                    displayOrder = 3,
+                )
+            )
         }
         database.close()
+    }
+
+    private fun replaceCurrentTablesWithV20Fixture() {
+        val sqlite =
+            SQLiteDatabase.openDatabase(
+                databaseFile.absolutePath,
+                null,
+                SQLiteDatabase.OPEN_READWRITE,
+            )
+        sqlite.execSQL("PRAGMA foreign_keys = OFF")
+        sqlite.execSQL("DROP TRIGGER IF EXISTS chat_folders_sync_parent_key_after_insert")
+        sqlite.execSQL("DROP TRIGGER IF EXISTS chat_folders_sync_parent_key_after_update")
+        sqlite.execSQL("DROP TABLE chat_placements")
+        sqlite.execSQL("DROP TABLE chat_folders")
+        sqlite.execSQL(
+            """
+            CREATE TABLE chats_v20 (
+                id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL,
+                inputTokens INTEGER NOT NULL,
+                outputTokens INTEGER NOT NULL,
+                currentWindowSize INTEGER NOT NULL,
+                `group` TEXT,
+                displayOrder INTEGER NOT NULL,
+                workspace TEXT,
+                workspaceEnv TEXT,
+                parentChatId TEXT,
+                characterCardName TEXT,
+                characterGroupId TEXT,
+                locked INTEGER NOT NULL,
+                pinned INTEGER NOT NULL,
+                PRIMARY KEY(id)
+            )
+            """.trimIndent()
+        )
+        sqlite.execSQL(
+            """
+            INSERT INTO chats_v20 (
+                id, title, createdAt, updatedAt, inputTokens, outputTokens,
+                currentWindowSize, `group`, displayOrder, workspace, workspaceEnv,
+                parentChatId, characterCardName, characterGroupId, locked, pinned
+            )
+            SELECT
+                id, title, createdAt, updatedAt, inputTokens, outputTokens,
+                currentWindowSize, `group`, displayOrder, workspace, workspaceEnv,
+                parentChatId, characterCardName, characterGroupId, locked, pinned
+            FROM chats
+            """.trimIndent()
+        )
+        sqlite.execSQL("DROP TABLE chats")
+        sqlite.execSQL("ALTER TABLE chats_v20 RENAME TO chats")
+        sqlite.version = 20
+        sqlite.close()
     }
 
     private fun replaceFolderTablesWithDirtyV22Fixture() {

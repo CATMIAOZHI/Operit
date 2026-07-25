@@ -234,7 +234,7 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
-        private val MIGRATION_20_21 =
+        internal val MIGRATION_20_21 =
             object : Migration(20, 21) {
                 override fun migrate(db: SupportSQLiteDatabase) {
                     // 1. 创建 chat_folders 表（不含 DEFAULT，与 Room 自动 schema 对齐）
@@ -342,7 +342,7 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
-        private val MIGRATION_21_22 =
+        internal val MIGRATION_21_22 =
             object : Migration(21, 22) {
                 override fun migrate(db: SupportSQLiteDatabase) {
                     db.execSQL("ALTER TABLE chat_folders ADD COLUMN `parentKey` TEXT NOT NULL DEFAULT ''")
