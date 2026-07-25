@@ -146,6 +146,26 @@ internal fun calculateEmptyFoldersAffectedBySources(
         )
 }
 
+internal fun reorderPlacementWithinCurrentFolder(
+    placements: List<ChatPlacementEntity>,
+    chatId: String,
+    delta: Int,
+): List<ChatPlacementEntity>? {
+    require(delta == -1 || delta == 1) { "delta must be -1 or 1" }
+    val siblings = placements.sortedBy { it.displayOrder }.toMutableList()
+    val sourceIndex = siblings.indexOfFirst { it.chatId == chatId }
+    if (sourceIndex < 0) return null
+
+    val targetIndex = sourceIndex + delta
+    if (targetIndex !in siblings.indices) return null
+
+    val moved = siblings.removeAt(sourceIndex)
+    siblings.add(targetIndex, moved)
+    return siblings.mapIndexed { index, placement ->
+        placement.copy(displayOrder = index.toLong())
+    }
+}
+
 class ChatHistoryManager private constructor(private val context: Context) {
         companion object {
             private const val TAG = "ChatHistoryManager"
@@ -1216,6 +1236,42 @@ class ChatHistoryManager private constructor(private val context: Context) {
             if (sourceFolderId != null && sourceFolderId != targetFolderId) {
                 pruneEmptyFoldersAffectedBy(scope, setOf(sourceFolderId))
             }
+        }
+    }
+
+    /**
+     * 在对话当前所在文件夹内移动一个相邻位置。
+     *
+     * 查询和重排处于同一事务中，并且只更新 placement 顺序，避免旧版 group 排序链路
+     * 改写 folderId 或其他 scope 的 placement。
+     */
+    suspend fun moveChatWithinCurrentFolder(
+        chatId: String,
+        scope: ChatFolderScope,
+        delta: Int,
+    ): Boolean {
+        require(delta == -1 || delta == 1) { "delta must be -1 or 1" }
+        return database.withTransaction {
+            val current =
+                chatPlacementDao.getPlacement(chatId, scope)
+                    ?: return@withTransaction false
+            val reordered =
+                reorderPlacementWithinCurrentFolder(
+                    placements =
+                        chatPlacementDao.getPlacementsInFolder(scope, current.folderId),
+                    chatId = chatId,
+                    delta = delta,
+                )
+                    ?: return@withTransaction false
+
+            reordered.forEach { placement ->
+                chatPlacementDao.updatePlacementOrder(
+                    chatId = placement.chatId,
+                    scope = scope,
+                    displayOrder = placement.displayOrder,
+                )
+            }
+            true
         }
     }
 

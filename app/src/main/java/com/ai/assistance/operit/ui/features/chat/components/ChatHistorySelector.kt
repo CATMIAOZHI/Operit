@@ -929,6 +929,37 @@ fun ChatHistorySelector(
                 chatHistories.firstOrNull { it.id == target.id } ?: target
             }
         }
+        val actionScope =
+            when (historyCategory) {
+                ChatHistoryCategory.ALL -> ChatFolderScope.ALL
+                ChatHistoryCategory.FAVORITE -> ChatFolderScope.FAVORITE
+                ChatHistoryCategory.RECENT -> null
+            }
+        val canMoveTarget = actionScope != null && searchQuery.isBlank()
+        val moveFailedMessage = stringResource(R.string.history_move_failed)
+
+        fun moveTargetWithinCurrentFolder(delta: Int) {
+            if (!canMoveTarget) return
+            val target = resolvedTargetChat ?: chatItemActionTarget ?: return
+            val scope = actionScope ?: return
+            chatItemActionTarget = null
+            coroutineScope.launch {
+                runCatching {
+                    chatHistoryManager.moveChatWithinCurrentFolder(
+                        chatId = target.id,
+                        scope = scope,
+                        delta = delta,
+                    )
+                }.onFailure {
+                    Toast.makeText(
+                        context,
+                        moveFailedMessage,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
+
         Dialog(onDismissRequest = { chatItemActionTarget = null }) {
             Card(
                 modifier = Modifier
@@ -1006,6 +1037,7 @@ fun ChatHistorySelector(
                         }
                     }
                     
+                    if (canMoveTarget) {
                     // 上移选项
                     Surface(
                         modifier = Modifier
@@ -1016,18 +1048,7 @@ fun ChatHistorySelector(
                                 contentDescription = context.getString(R.string.move_up)
                             }
                             .clickable {
-                                val targetChat = chatItemActionTarget!!
-                                val currentIndex = filteredHistories.indexOfFirst { it.id == targetChat.id }
-                                if (currentIndex > 0) {
-                                    val newHistories = filteredHistories.toMutableList()
-                                    newHistories.removeAt(currentIndex)
-                                    newHistories.add(currentIndex - 1, targetChat)
-                                    val reorderedHistories = newHistories.mapIndexed { index, history ->
-                                        history.copy(displayOrder = index.toLong())
-                                    }
-                                    onUpdateChatOrderAndGroup(reorderedHistories, targetChat, targetChat.group)
-                                }
-                                chatItemActionTarget = null
+                                moveTargetWithinCurrentFolder(delta = -1)
                             },
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     ) {
@@ -1065,18 +1086,7 @@ fun ChatHistorySelector(
                                 contentDescription = context.getString(R.string.move_down)
                             }
                             .clickable {
-                                val targetChat = chatItemActionTarget!!
-                                val currentIndex = filteredHistories.indexOfFirst { it.id == targetChat.id }
-                                if (currentIndex >= 0 && currentIndex < filteredHistories.size - 1) {
-                                    val newHistories = filteredHistories.toMutableList()
-                                    newHistories.removeAt(currentIndex)
-                                    newHistories.add(currentIndex + 1, targetChat)
-                                    val reorderedHistories = newHistories.mapIndexed { index, history ->
-                                        history.copy(displayOrder = index.toLong())
-                                    }
-                                    onUpdateChatOrderAndGroup(reorderedHistories, targetChat, targetChat.group)
-                                }
-                                chatItemActionTarget = null
+                                moveTargetWithinCurrentFolder(delta = 1)
                             },
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     ) {
@@ -1102,6 +1112,7 @@ fun ChatHistorySelector(
                                 modifier = Modifier.clearAndSetSemantics {}
                             )
                         }
+                    }
                     }
 
                     // 置顶/取消置顶选项

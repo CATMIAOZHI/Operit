@@ -758,6 +758,7 @@ internal fun ChatFolderTreeList(
                             .firstOrNull { (_, bounds) -> bounds.contains(downInRoot) }
                             ?.key
                             ?: return@awaitEachGesture
+                    down.consume()
                     val pointerId = down.id
                     var accumulatedMovement = Offset.Zero
                     var previousPosition = down.position
@@ -776,13 +777,14 @@ internal fun ChatFolderTreeList(
                             if (change.changedToUpIgnoreConsumed()) {
                                 if (dragStarted) {
                                     currentUpdateDrag(pointerInRoot)
-                                    change.consume()
                                     releasedNormally = true
                                 }
+                                change.consume()
                                 break
                             }
                             if (!change.pressed) break
 
+                            change.consume()
                             accumulatedMovement += change.position - previousPosition
                             previousPosition = change.position
                             if (
@@ -795,7 +797,6 @@ internal fun ChatFolderTreeList(
                             }
                             if (dragStarted) {
                                 currentUpdateDrag(pointerInRoot)
-                                change.consume()
                             }
                         }
                     } finally {
