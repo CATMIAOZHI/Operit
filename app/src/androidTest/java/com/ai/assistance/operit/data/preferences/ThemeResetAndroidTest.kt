@@ -35,7 +35,7 @@ class ThemeResetAndroidTest {
     }
 
     @Test
-    fun `reset clears custom colors and sets useCustomColors false`() = runBlocking {
+    fun resetClearsCustomColorsAndDisablesCustomColors() = runBlocking {
         val manager = UserPreferencesManager.getInstance(context)
 
         // 先写入自定义颜色和 useCustomColors=true，模拟 v1 错误状态
@@ -74,7 +74,7 @@ class ThemeResetAndroidTest {
     }
 
     @Test
-    fun `snapshot has useCustomColors false and null colors after reset`() = runBlocking {
+    fun snapshotHasDisabledAndNullCustomColorsAfterReset() = runBlocking {
         val manager = UserPreferencesManager.getInstance(context)
         manager.resetThemeSettings()
 
@@ -99,7 +99,7 @@ class ThemeResetAndroidTest {
     }
 
     @Test
-    fun `reset preserves non color defaults like chat style`() = runBlocking {
+    fun resetPreservesNonColorDefaultsLikeChatStyle() = runBlocking {
         val manager = UserPreferencesManager.getInstance(context)
 
         // 先写入非默认的聊天样式
