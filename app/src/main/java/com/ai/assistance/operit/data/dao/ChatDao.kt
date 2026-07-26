@@ -4,7 +4,6 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import androidx.room.Update
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.CharacterCardChatStats
 import com.ai.assistance.operit.data.model.CharacterGroupChatStats
@@ -24,6 +23,12 @@ interface ChatDao {
     /** 获取所有聊天（挂起函数版本） */
     @Query("SELECT * FROM chats ORDER BY pinned DESC, displayOrder ASC")
     suspend fun getAllChatsDirectly(): List<ChatEntity>
+
+    /** 获取所有聊天，按真实最后消息时间排列；空聊天回退到创建时间。 */
+    @Query(
+        "SELECT * FROM chats ORDER BY COALESCE(lastMessageAt, createdAt) DESC, createdAt DESC, id ASC"
+    )
+    fun getRecentChats(): Flow<List<ChatEntity>>
 
     /** 根据ID获取单个聊天 */
     @Query("SELECT * FROM chats WHERE id = :chatId")
@@ -47,6 +52,34 @@ interface ChatDao {
             outputTokens: Int,
             currentWindowSize: Int
     )
+
+    /** 插入消息后只向前推进派生缓存，不允许较旧消息倒退最近时间。 */
+    @Query(
+        """
+        UPDATE chats
+        SET lastMessageAt = CASE
+            WHEN lastMessageAt IS NULL OR :messageTimestamp > lastMessageAt
+                THEN :messageTimestamp
+            ELSE lastMessageAt
+        END
+        WHERE id = :chatId
+        """
+    )
+    suspend fun advanceLastMessageAt(chatId: String, messageTimestamp: Long)
+
+    /** 删除、替换、导入或分支后从消息事实表重新计算派生缓存。 */
+    @Query(
+        """
+        UPDATE chats
+        SET lastMessageAt = (
+            SELECT MAX(timestamp)
+            FROM messages
+            WHERE messages.chatId = :chatId
+        )
+        WHERE id = :chatId
+        """
+    )
+    suspend fun recalculateLastMessageAt(chatId: String)
 
     /** 更新聊天标题 */
     @Query("UPDATE chats SET title = :title, updatedAt = :timestamp WHERE id = :chatId")
@@ -99,13 +132,13 @@ interface ChatDao {
     @Query("UPDATE chats SET pinned = :pinned, updatedAt = :timestamp WHERE id = :chatId")
     suspend fun updateChatPinned(chatId: String, pinned: Boolean, timestamp: Long = System.currentTimeMillis())
 
+    /** 对话收藏独立于消息收藏，且不得污染 updatedAt 或 lastMessageAt。 */
+    @Query("UPDATE chats SET isFavorite = :isFavorite WHERE id = :chatId")
+    suspend fun updateChatFavorite(chatId: String, isFavorite: Boolean)
+
     /** 更新单个聊天的顺序和分组 */
     @Query("UPDATE chats SET displayOrder = :displayOrder, `group` = :group, updatedAt = :timestamp WHERE id = :chatId")
     suspend fun updateChatOrderAndGroup(chatId: String, displayOrder: Long, group: String?, timestamp: Long = System.currentTimeMillis())
-
-    /** 批量更新聊天的顺序和分组 */
-    @Update
-    suspend fun updateChats(chats: List<ChatEntity>)
 
     /** 重命名分组 */
     @Query("UPDATE chats SET `group` = :newName WHERE `group` = :oldName")

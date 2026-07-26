@@ -16,8 +16,8 @@ import com.ai.assistance.operit.data.model.MessageVariantEntity
 /** 应用数据库，包含聊天表和消息表 */
 @Database(
     entities = [ChatEntity::class, MessageEntity::class, MessageVariantEntity::class],
-    version = 20,
-    exportSchema = false
+    version = 24,
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -218,6 +218,26 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        internal val MIGRATION_20_24 =
+            object : Migration(20, 24) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "ALTER TABLE chats ADD COLUMN `isFavorite` INTEGER NOT NULL DEFAULT 0"
+                    )
+                    db.execSQL("ALTER TABLE chats ADD COLUMN `lastMessageAt` INTEGER")
+                    db.execSQL(
+                        """
+                        UPDATE chats
+                        SET lastMessageAt = (
+                            SELECT MAX(messages.timestamp)
+                            FROM messages
+                            WHERE messages.chatId = chats.id
+                        )
+                        """.trimIndent()
+                    )
+                }
+            }
+
         // 定义从版本2到3的迁移
         private val MIGRATION_2_3 =
             object : Migration(2, 3) {
@@ -334,12 +354,12 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_16_17,
                                 MIGRATION_17_18,
                                 MIGRATION_18_19,
-                                MIGRATION_19_20
+                                MIGRATION_19_20,
+                                MIGRATION_20_24
                             ) // 添加新的迁移
-                            // personal/dev briefly shipped schema 21-23 for the reverted folder
-                            // experiment. Development data is intentionally discarded when an
-                            // installed build returns to schema 20.
-                            .fallbackToDestructiveMigrationOnDowngrade(true)
+                            // personal/dev briefly shipped experimental schemas 21-23. Only those
+                            // development inputs are intentionally rebuilt; stable v20 is migrated.
+                            .fallbackToDestructiveMigrationFrom(true, 21, 22, 23)
                             .build()
                     INSTANCE = instance
                     instance

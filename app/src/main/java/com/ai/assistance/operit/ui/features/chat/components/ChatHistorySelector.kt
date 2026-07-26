@@ -47,6 +47,8 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PushPin
@@ -69,6 +71,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
+import androidx.compose.material3.FilterChip
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatHistoryDisplayMode
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
@@ -78,6 +81,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -99,6 +103,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -468,6 +473,12 @@ fun ChatHistorySelector(
     var matchedChatIdsByContent by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isSearching by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var selectedCategoryName by rememberSaveable {
+        mutableStateOf(ChatHistoryCategory.ALL.name)
+    }
+    val selectedCategory =
+        runCatching { ChatHistoryCategory.valueOf(selectedCategoryName) }
+            .getOrDefault(ChatHistoryCategory.ALL)
 
     val context = LocalContext.current
     val chatHistoryManager = remember { ChatHistoryManager.getInstance(context) }
@@ -563,9 +574,14 @@ fun ChatHistorySelector(
     }
     val actualLazyListState = lazyListState ?: rememberLazyListState()
     val ungroupedText = stringResource(R.string.ungrouped)
+    val categoryHistories =
+        remember(chatHistories, selectedCategory) {
+            selectChatHistoriesForCategory(chatHistories, selectedCategory)
+        }
+    val canReorder = canReorderChatHistory(selectedCategory, searchQuery)
 
     // 当搜索查询改变时，执行内容搜索（带防抖延迟）
-    LaunchedEffect(searchQuery, chatHistories) {
+    LaunchedEffect(searchQuery, categoryHistories) {
         val trimmedQuery = searchQuery.trim()
         if (trimmedQuery.isBlank()) {
             matchedChatIdsByContent = emptySet()
@@ -574,7 +590,7 @@ fun ChatHistorySelector(
         }
 
         val hasTitleOrGroupMatch =
-            chatHistories.any { history ->
+            categoryHistories.any { history ->
                 history.title.contains(trimmedQuery, ignoreCase = true) ||
                     (history.group?.contains(trimmedQuery, ignoreCase = true) == true)
             }
@@ -599,17 +615,24 @@ fun ChatHistorySelector(
         }
     }
 
-    val filteredHistories = remember(chatHistories, searchQuery, matchedChatIdsByContent) {
+    val filteredHistories = remember(categoryHistories, searchQuery, matchedChatIdsByContent) {
         val trimmedQuery = searchQuery.trim()
         if (trimmedQuery.isNotBlank()) {
-            chatHistories.filter { history ->
+            categoryHistories.filter { history ->
                 val matchesTitleOrGroup = history.title.contains(trimmedQuery, ignoreCase = true) ||
                         (history.group?.contains(trimmedQuery, ignoreCase = true) == true)
                 val matchesContent = matchedChatIdsByContent.contains(history.id)
                 matchesTitleOrGroup || matchesContent
             }
         } else {
-            chatHistories
+            categoryHistories
+        }
+    }
+    fun mergeWithHiddenHistories(reorderedVisibleHistories: List<ChatHistory>): List<ChatHistory> {
+        return if (selectedCategory == ChatHistoryCategory.FAVORITES) {
+            mergeVisibleChatOrder(chatHistories, reorderedVisibleHistories)
+        } else {
+            reorderedVisibleHistories
         }
     }
     val groupIdsInFilteredHistories = remember(filteredHistories) {
@@ -647,9 +670,10 @@ fun ChatHistorySelector(
                     unboundCharacterText,
                     availableCharacterGroups,
                     groupNameById,
-                    groupPrefix,
-                    historyDisplayMode,
-                    activeCharacterCardName
+                     groupPrefix,
+                     historyDisplayMode,
+                     activeCharacterCardName,
+                     selectedCategory
             ) {
                 fun characterKey(name: String) = "character::$name"
                 fun groupKey(characterName: String?, groupValue: String?): String {
@@ -658,7 +682,9 @@ fun ChatHistorySelector(
                     return "group::$characterPart::$groupPart"
                 }
 
-                when (historyDisplayMode) {
+                if (selectedCategory == ChatHistoryCategory.RECENT) {
+                    filteredHistories.map { HistoryListItem.Item(it) }
+                } else when (historyDisplayMode) {
                     ChatHistoryDisplayMode.BY_CHARACTER_CARD -> {
                         data class BindingBucket(
                             val key: String,
@@ -775,6 +801,9 @@ fun ChatHistorySelector(
             }
 
     val reorderableState = rememberReorderableLazyListState(actualLazyListState) { from, to ->
+        if (!canReorder) {
+            return@rememberReorderableLazyListState
+        }
         val movedItem = flatItems.getOrNull(from.index) as? HistoryListItem.Item
                 ?: return@rememberReorderableLazyListState
 
@@ -835,7 +864,11 @@ fun ChatHistorySelector(
             )
         }
 
-        onUpdateChatOrderAndGroup(newOrderedHistories, finalMovedItem, finalMovedItem.group)
+        onUpdateChatOrderAndGroup(
+            mergeWithHiddenHistories(newOrderedHistories),
+            finalMovedItem,
+            finalMovedItem.group,
+        )
     }
 
     if (chatItemActionTarget != null) {
@@ -924,6 +957,7 @@ fun ChatHistorySelector(
                         }
                     }
                     
+                    if (canReorder) {
                     // 上移选项
                     Surface(
                         modifier = Modifier
@@ -943,7 +977,11 @@ fun ChatHistorySelector(
                                     val reorderedHistories = newHistories.mapIndexed { index, history ->
                                         history.copy(displayOrder = index.toLong())
                                     }
-                                    onUpdateChatOrderAndGroup(reorderedHistories, targetChat, targetChat.group)
+                                    onUpdateChatOrderAndGroup(
+                                        mergeWithHiddenHistories(reorderedHistories),
+                                        targetChat,
+                                        targetChat.group,
+                                    )
                                 }
                                 chatItemActionTarget = null
                             },
@@ -992,7 +1030,11 @@ fun ChatHistorySelector(
                                     val reorderedHistories = newHistories.mapIndexed { index, history ->
                                         history.copy(displayOrder = index.toLong())
                                     }
-                                    onUpdateChatOrderAndGroup(reorderedHistories, targetChat, targetChat.group)
+                                    onUpdateChatOrderAndGroup(
+                                        mergeWithHiddenHistories(reorderedHistories),
+                                        targetChat,
+                                        targetChat.group,
+                                    )
                                 }
                                 chatItemActionTarget = null
                             },
@@ -1020,6 +1062,7 @@ fun ChatHistorySelector(
                                 modifier = Modifier.clearAndSetSemantics {}
                             )
                         }
+                    }
                     }
 
                     // 置顶/取消置顶选项
@@ -1063,6 +1106,66 @@ fun ChatHistorySelector(
                             Spacer(modifier = Modifier.width(16.dp))
                             Text(
                                 text = if (resolvedTargetChat?.pinned == true) stringResource(R.string.unpin_chat) else stringResource(R.string.pin_chat),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.clearAndSetSemantics {}
+                            )
+                        }
+                    }
+
+                    // 收藏/取消收藏选项
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clip(MaterialTheme.shapes.medium)
+                            .semantics {
+                                contentDescription =
+                                    if (resolvedTargetChat?.isFavorite == true) {
+                                        context.getString(R.string.remove_from_favorites)
+                                    } else {
+                                        context.getString(R.string.add_to_favorites)
+                                    }
+                            }
+                            .clickable {
+                                val targetChat = resolvedTargetChat!!
+                                coroutineScope.launch {
+                                    chatHistoryManager.updateChatFavorite(
+                                        targetChat.id,
+                                        !targetChat.isFavorite,
+                                    )
+                                }
+                                chatItemActionTarget = null
+                            },
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector =
+                                    if (resolvedTargetChat?.isFavorite == true) {
+                                        Icons.Filled.Star
+                                    } else {
+                                        Icons.Outlined.StarOutline
+                                    },
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clearAndSetSemantics {}
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(
+                                text =
+                                    if (resolvedTargetChat?.isFavorite == true) {
+                                        stringResource(R.string.remove_from_favorites)
+                                    } else {
+                                        stringResource(R.string.add_to_favorites)
+                                    },
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.clearAndSetSemantics {}
@@ -1119,13 +1222,14 @@ fun ChatHistorySelector(
                     }
                     
                     // 删除选项
+                    val deleteChatDescription = stringResource(R.string.delete)
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .clip(MaterialTheme.shapes.medium)
                             .semantics {
-                                contentDescription = context.getString(R.string.delete)
+                                contentDescription = deleteChatDescription
                             }
                             .clickable {
                                 promptDeleteChat(chatItemActionTarget!!)
@@ -1244,13 +1348,14 @@ fun ChatHistorySelector(
                     }
                     
                     // 删除选项
+                    val deleteGroupDescription = stringResource(R.string.delete_group)
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .clip(MaterialTheme.shapes.medium)
                             .semantics {
-                                contentDescription = context.getString(R.string.delete_group)
+                                contentDescription = deleteGroupDescription
                             }
                             .clickable {
                                 groupToDelete = groupActionTarget
@@ -1498,21 +1603,31 @@ fun ChatHistorySelector(
                 }
             }
         }
+        val normalizedSelectedCharacterGroupId =
+            selectedCharacterGroupId?.trim()?.takeIf { it.isNotBlank() }
+        val missingCharacterGroupLabel =
+            stringResource(
+                R.string.missing_character_group_id,
+                normalizedSelectedCharacterGroupId ?: "",
+            )
         val selectedBindingLabel = remember(
             selectedCharacterCardName,
-            selectedCharacterGroupId,
+            normalizedSelectedCharacterGroupId,
             groupNameById,
             unboundLabel,
-            groupPrefix
+            groupPrefix,
+            missingCharacterGroupLabel,
         ) {
             when {
-                !selectedCharacterGroupId.isNullOrBlank() -> {
-                    val normalizedGroupId = selectedCharacterGroupId?.trim()?.takeIf { it.isNotBlank() }
-                    val groupName = normalizedGroupId?.let { groupNameById[it] }?.takeIf { it.isNotBlank() }
+                normalizedSelectedCharacterGroupId != null -> {
+                    val groupName =
+                        groupNameById[normalizedSelectedCharacterGroupId]?.takeIf {
+                            it.isNotBlank()
+                        }
                     if (!groupName.isNullOrBlank()) {
                         "$groupPrefix: $groupName"
                     } else {
-                        context.getString(R.string.missing_character_group_id, normalizedGroupId ?: "")
+                        missingCharacterGroupLabel
                     }
                 }
                 !selectedCharacterCardName.isNullOrBlank() -> selectedCharacterCardName!!
@@ -1925,6 +2040,42 @@ fun ChatHistorySelector(
             }
         }
 
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            listOf(
+                ChatHistoryCategory.ALL to stringResource(R.string.chat_category_all),
+                ChatHistoryCategory.RECENT to stringResource(R.string.chat_category_recent),
+                ChatHistoryCategory.FAVORITES to stringResource(R.string.chat_category_favorites),
+            ).forEach { (category, label) ->
+                FilterChip(
+                    modifier = Modifier.weight(1f),
+                    selected = selectedCategory == category,
+                    onClick = {
+                        selectedCategoryName = category.name
+                        coroutineScope.launch {
+                            actualLazyListState.scrollToItem(0)
+                        }
+                    },
+                    label = {
+                        Text(
+                            text = label,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
         // 新建对话按钮
         Row(
             modifier = Modifier
@@ -1948,16 +2099,18 @@ fun ChatHistorySelector(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.new_chat))
             }
-            IconButton(
-                onClick = { showNewGroupDialog = true },
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    Icons.Default.AddCircleOutline,
-                    contentDescription = stringResource(R.string.new_group),
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
-                )
+            if (selectedCategory == ChatHistoryCategory.ALL) {
+                IconButton(
+                    onClick = { showNewGroupDialog = true },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.Default.AddCircleOutline,
+                        contentDescription = stringResource(R.string.new_group),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
 
@@ -2220,7 +2373,7 @@ fun ChatHistorySelector(
                                     .semantics {
                                         contentDescription = "${item.name}, $stateDescription"
                                     }
-                                    .pointerInput(Unit) {
+                                    .pointerInput(selectedCategory) {
                                         detectTapGestures(
                                             onTap = {
                                                 collapsedGroups = if (collapsedGroups.contains(item.key)) {
@@ -2230,7 +2383,10 @@ fun ChatHistorySelector(
                                                 }
                                             },
                                             onLongPress = {
-                                                if (item.name != ungroupedText) {
+                                                if (
+                                                    canManageChatFolders(selectedCategory) &&
+                                                        item.name != ungroupedText
+                                                ) {
                                                     groupActionTarget = GroupTarget(
                                                         groupName = item.name,
                                                         characterCardName = item.characterCardName
@@ -2268,7 +2424,11 @@ fun ChatHistorySelector(
                                                 color = MaterialTheme.colorScheme.onSurface,
                                                 modifier = Modifier.clearAndSetSemantics {}
                                             )
-                                            if (item.name != ungroupedText && !hasLongPressedGroup) {
+                                            if (
+                                                canManageChatFolders(selectedCategory) &&
+                                                    item.name != ungroupedText &&
+                                                    !hasLongPressedGroup
+                                            ) {
                                                 Text(
                                                     text = " (" + stringResource(R.string.long_press_manage) + ")",
                                                     style = MaterialTheme.typography.bodySmall,
@@ -2346,7 +2506,10 @@ fun ChatHistorySelector(
                                         .padding(vertical = 2.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (historyDisplayMode == ChatHistoryDisplayMode.BY_CHARACTER_CARD) {
+                                    if (
+                                        selectedCategory != ChatHistoryCategory.RECENT &&
+                                            historyDisplayMode == ChatHistoryDisplayMode.BY_CHARACTER_CARD
+                                    ) {
                                         Box(
                                             modifier = Modifier
                                                 .width(32.dp)
@@ -2386,10 +2549,11 @@ fun ChatHistorySelector(
                                                 ) {
                                                     val titlePreview = item.history.title.take(20)
                                                     val groupName = item.history.group ?: ungroupedText
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .padding(horizontal = 10.dp)
+                                                     Row(
+                                                         modifier = Modifier
+                                                             .fillMaxWidth()
+                                                             .heightIn(min = 48.dp)
+                                                             .padding(horizontal = 10.dp)
                                                             .semantics(mergeDescendants = false) {
                                                                 contentDescription = "$titlePreview, $groupName"
                                                             }
@@ -2401,22 +2565,29 @@ fun ChatHistorySelector(
                                                             },
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
-                                                        val dragDescription = stringResource(R.string.drag_item, item.history.title)
-                                                        IconButton(
-                                                            modifier = Modifier
-                                                                .draggableHandle()
-                                                                .semantics {
-                                                                    contentDescription = dragDescription
-                                                                },
-                                                            onClick = {}
-                                                        ) {
-                                                            Icon(
-                                                                imageVector = Icons.Default.DragHandle,
-                                                                contentDescription = null,
-                                                                tint = contentColor
-                                                            )
+                                                        if (canReorder) {
+                                                            val dragDescription =
+                                                                stringResource(
+                                                                    R.string.drag_item,
+                                                                    item.history.title,
+                                                                )
+                                                            IconButton(
+                                                                modifier = Modifier
+                                                                    .draggableHandle()
+                                                                    .semantics {
+                                                                        contentDescription =
+                                                                            dragDescription
+                                                                    },
+                                                                onClick = {}
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.DragHandle,
+                                                                    contentDescription = null,
+                                                                    tint = contentColor
+                                                                )
+                                                            }
+                                                            Spacer(modifier = Modifier.width(8.dp))
                                                         }
-                                                        Spacer(modifier = Modifier.width(8.dp))
                                                         Column(
                                                             modifier = Modifier
                                                                 .weight(1f)

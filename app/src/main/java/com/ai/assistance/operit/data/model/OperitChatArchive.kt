@@ -13,7 +13,7 @@ data class OperitChatArchive(
 ) {
     companion object {
         const val ARCHIVE_TYPE = "operit_chat_archive"
-        const val CURRENT_FORMAT_VERSION = 2
+        const val CURRENT_FORMAT_VERSION = 3
     }
 }
 
@@ -38,8 +38,9 @@ data class OperitArchivedChat(
     val characterGroupId: String? = null,
     val locked: Boolean = false,
     val pinned: Boolean = false,
+    val isFavorite: Boolean? = null,
 ) {
-    fun toChatHistory(): ChatHistory {
+    fun toChatHistory(resolvedFavorite: Boolean): ChatHistory {
         return ChatHistory(
             id = id,
             title = title,
@@ -58,6 +59,7 @@ data class OperitArchivedChat(
             characterGroupId = characterGroupId,
             locked = locked,
             pinned = pinned,
+            isFavorite = resolvedFavorite,
         )
     }
 
@@ -84,6 +86,7 @@ data class OperitArchivedChat(
                 characterGroupId = history.characterGroupId,
                 locked = history.locked,
                 pinned = history.pinned,
+                isFavorite = history.isFavorite,
             )
         }
     }

@@ -8022,4 +8022,9 @@
     <string name="notification_kind_review_changes">需要修改</string>
     <string name="notification_kind_entry_curated">入选精选</string>
 
+    <string name="chat_category_all">所有</string>
+    <string name="chat_category_recent">最近</string>
+    <string name="chat_category_favorites">收藏</string>
+    <string name="add_to_favorites">收藏对话</string>
+    <string name="remove_from_favorites">取消收藏</string>
 </resources>
