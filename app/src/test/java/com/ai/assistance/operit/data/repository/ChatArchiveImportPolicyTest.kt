@@ -58,15 +58,16 @@ class ChatArchiveImportPolicyTest {
     }
 
     @Test
-    fun headerValidation_acceptsOnlyOperitV2AndV3() {
+    fun headerValidation_acceptsOperitV2ThroughV4() {
         ChatArchiveImportPolicy.validateHeader(OperitChatArchive.ARCHIVE_TYPE, 2)
         ChatArchiveImportPolicy.validateHeader(OperitChatArchive.ARCHIVE_TYPE, 3)
+        ChatArchiveImportPolicy.validateHeader(OperitChatArchive.ARCHIVE_TYPE, 4)
 
         assertThrows(IllegalArgumentException::class.java) {
             ChatArchiveImportPolicy.validateHeader("other", 3)
         }
         assertThrows(IllegalArgumentException::class.java) {
-            ChatArchiveImportPolicy.validateHeader(OperitChatArchive.ARCHIVE_TYPE, 4)
+            ChatArchiveImportPolicy.validateHeader(OperitChatArchive.ARCHIVE_TYPE, 5)
         }
     }
 }

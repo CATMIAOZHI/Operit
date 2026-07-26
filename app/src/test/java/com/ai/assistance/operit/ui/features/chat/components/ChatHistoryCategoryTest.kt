@@ -39,7 +39,7 @@ class ChatHistoryCategoryTest {
     }
 
     @Test
-    fun reorder_isAvailableForAllAndFavoritesButNeverRecentOrSearch() {
+    fun reorder_isAvailableOutsideRecentAndSearch() {
         assertEquals(true, canReorderChatHistory(ChatHistoryCategory.ALL, ""))
         assertEquals(false, canReorderChatHistory(ChatHistoryCategory.ALL, "query"))
         assertEquals(false, canReorderChatHistory(ChatHistoryCategory.RECENT, ""))

@@ -17,7 +17,9 @@ data class ChatHistory(
     val inputTokens: Int = 0,
     val outputTokens: Int = 0,
     val currentWindowSize: Int = 0,
+    /** 仅供 v2/v3 旧归档转换器使用；v25 运行时组织不得读取。 */
     val group: String? = null,
+    val folderId: String? = null,
     val displayOrder: Long = 0L,
     val workspace: String? = null,
     val workspaceEnv: String? = null,

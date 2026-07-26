@@ -5,13 +5,13 @@ import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.data.model.ChatHistory
+import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.ChatMessageLocatorPreview
 import com.ai.assistance.operit.data.model.WorkspaceRenameResult
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import java.time.LocalDateTime
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,8 +55,6 @@ class ChatHistoryDelegate(
     private val allowAddMessage = AtomicBoolean(true) // 控制是否允许添加消息，切换对话时设为false
     private var beforeDestructiveHistoryMutation: (suspend (String) -> Unit)? = null
     private var afterDestructiveHistoryMutation: (suspend (String) -> Unit)? = null
-
-    private var pendingPersistChatOrderJob: Job? = null
 
     // This is no longer needed here as summary logic is moved.
     // private val apiPreferences = ApiPreferences(context)
@@ -523,6 +521,8 @@ class ChatHistoryDelegate(
 
     private val _chatHistories = MutableStateFlow<List<ChatHistory>>(emptyList())
     val chatHistories: StateFlow<List<ChatHistory>> = _chatHistories.asStateFlow()
+    private val _chatFolders = MutableStateFlow<List<ChatFolderEntity>>(emptyList())
+    val chatFolders: StateFlow<List<ChatFolderEntity>> = _chatFolders.asStateFlow()
 
     private val _currentChatId = MutableStateFlow<String?>(null)
     val currentChatId: StateFlow<String?> = _currentChatId.asStateFlow()
@@ -555,6 +555,11 @@ class ChatHistoryDelegate(
                         clearCurrentChatHistoryInMemory()
                     }
                 }
+            }
+        }
+        coroutineScope.launch {
+            chatHistoryManager.chatFoldersFlow.collect { folders ->
+                _chatFolders.value = folders
             }
         }
 
@@ -775,7 +780,7 @@ class ChatHistoryDelegate(
     fun createNewChat(
         characterCardName: String? = null,
         characterGroupId: String? = null,
-        group: String? = null,
+        folderId: String? = null,
         inheritGroupFromCurrent: Boolean = true,
         setAsCurrentChat: Boolean = true,
         characterCardId: String? = null
@@ -817,7 +822,7 @@ class ChatHistoryDelegate(
 
             // 创建新对话，如果有当前对话则继承其分组，并绑定角色卡
             val newChat = chatHistoryManager.createNewChat(
-                group = group,
+                folderId = folderId,
                 inheritGroupFromChatId = inheritGroupFromChatId,
                 characterCardName = effectiveCharacterCardName,
                 characterGroupId = characterGroupId,
@@ -1489,79 +1494,6 @@ class ChatHistoryDelegate(
                 reloadCurrentChatDisplayHistory(chatIdSnapshot)
             }
             true
-        }
-    }
-
-    /**
-     * 更新聊天记录的顺序和分组
-     * @param reorderedHistories 重新排序后的完整聊天历史列表
-     * @param movedItem 移动的聊天项
-     * @param targetGroup 目标分组的名称，如果拖拽到分组上
-     */
-    fun updateChatOrderAndGroup(
-        reorderedHistories: List<ChatHistory>,
-        movedItem: ChatHistory,
-        targetGroup: String?
-    ) {
-        coroutineScope.launch {
-            try {
-                // The list is already reordered. We just need to update displayOrder and group.
-                val updatedList = reorderedHistories.mapIndexed { index, history ->
-                    var newGroup = history.group
-                    if (history.id == movedItem.id && targetGroup != null) {
-                        newGroup = targetGroup
-                    }
-                    history.copy(displayOrder = index.toLong(), group = newGroup)
-                }
-
-                // Update UI immediately
-                _chatHistories.value = updatedList
-
-                // Persist changes (debounced) to avoid emitting intermediate ordering states.
-                // Drag-and-drop reordering can trigger many moves; persisting each move causes
-                // Room Flow to emit multiple intermediate lists, leading to visible jumping.
-                pendingPersistChatOrderJob?.cancel()
-                pendingPersistChatOrderJob = coroutineScope.launch {
-                    delay(350)
-                    chatHistoryManager.updateChatOrderAndGroup(updatedList)
-                }
-
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "Failed to update chat order and group", e)
-                // Optionally revert UI changes or show an error
-            }
-        }
-    }
-
-    /** 重命名分组 */
-    fun updateGroupName(oldName: String, newName: String, characterCardName: String?) {
-        coroutineScope.launch {
-            chatHistoryManager.updateGroupName(oldName, newName, characterCardName)
-        }
-    }
-
-    /** 删除分组 */
-    fun deleteGroup(groupName: String, deleteChats: Boolean, characterCardName: String?) {
-        coroutineScope.launch {
-            chatHistoryManager.deleteGroup(groupName, deleteChats, characterCardName)
-        }
-    }
-
-    /** 创建新分组（通过创建新聊天实现） */
-    fun createGroup(groupName: String, characterCardName: String?, characterGroupId: String? = null) {
-        coroutineScope.launch {
-            val (inputTokens, outputTokens, windowSize) = getChatStatistics()
-            saveCurrentChat(inputTokens, outputTokens, windowSize)
-
-            val newChat = chatHistoryManager.createNewChat(
-                group = groupName,
-                characterCardName = characterCardName,
-                characterGroupId = characterGroupId
-            )
-            _currentChatId.value = newChat.id
-            loadChatMessages(newChat.id)
-
-            onTokenStatisticsLoaded(newChat.id, 0, 0, 0)
         }
     }
 

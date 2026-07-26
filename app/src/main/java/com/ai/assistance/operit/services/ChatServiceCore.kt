@@ -303,14 +303,14 @@ class ChatServiceCore(
     /** 创建新的聊天 */
     fun createNewChat(
         characterCardName: String? = null,
-        group: String? = null,
+        folderId: String? = null,
         inheritGroupFromCurrent: Boolean = true,
         setAsCurrentChat: Boolean = true,
         characterCardId: String? = null
     ) {
         chatHistoryDelegate.createNewChat(
             characterCardName = characterCardName,
-            group = group,
+            folderId = folderId,
             inheritGroupFromCurrent = inheritGroupFromCurrent,
             setAsCurrentChat = setAsCurrentChat,
             characterCardId = characterCardId

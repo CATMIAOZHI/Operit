@@ -42,12 +42,12 @@ class ChatClassificationV24MigrationAndroidTest {
 
         val database =
             Room.databaseBuilder(context, AppDatabase::class.java, databaseName)
-                .addMigrations(AppDatabase.MIGRATION_20_24)
+                .addMigrations(AppDatabase.MIGRATION_20_24, AppDatabase.MIGRATION_24_25)
                 .allowMainThreadQueries()
                 .build()
         val sqlite = database.openHelper.writableDatabase
 
-        assertEquals(24, sqlite.version)
+        assertEquals(25, sqlite.version)
         assertEquals(3, database.chatDao().getTotalChatCount())
         assertEquals(3, database.messageDao().getTotalMessageCount())
 
@@ -112,15 +112,15 @@ class ChatClassificationV24MigrationAndroidTest {
             database.messageDao().getMessageByTimestamp("chat", 200L)?.isFavorite,
         )
 
-        database.chatDao().updateChatOrderAndGroup(
+        database.chatDao().updateChatOrderAndFolder(
             chatId = "chat",
             displayOrder = 42L,
-            group = "Reordered",
+            folderId = null,
             timestamp = 123L,
         )
         val reorderedChat = requireNotNull(database.chatDao().getChatById("chat"))
         assertEquals(42L, reorderedChat.displayOrder)
-        assertEquals("Reordered", reorderedChat.group)
+        assertEquals(null, reorderedChat.folderId)
         assertEquals(123L, reorderedChat.updatedAt)
         assertEquals(true, reorderedChat.isFavorite)
         assertEquals(200L, reorderedChat.lastMessageAt)
@@ -145,13 +145,13 @@ class ChatClassificationV24MigrationAndroidTest {
 
             val database =
                 Room.databaseBuilder(context, AppDatabase::class.java, databaseName)
-                    .addMigrations(AppDatabase.MIGRATION_20_24)
+                    .addMigrations(AppDatabase.MIGRATION_20_24, AppDatabase.MIGRATION_24_25)
                     .fallbackToDestructiveMigrationFrom(true, 21, 22, 23)
                     .allowMainThreadQueries()
                     .build()
             val sqlite = database.openHelper.writableDatabase
 
-            assertEquals(24, sqlite.version)
+            assertEquals(25, sqlite.version)
             assertEquals(0, sqlite.query("SELECT COUNT(*) FROM chats").use {
                 it.moveToFirst()
                 it.getInt(0)

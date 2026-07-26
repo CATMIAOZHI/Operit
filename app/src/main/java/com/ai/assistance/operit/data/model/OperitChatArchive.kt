@@ -9,11 +9,41 @@ data class OperitChatArchive(
     val archiveType: String = ARCHIVE_TYPE,
     val formatVersion: Int = CURRENT_FORMAT_VERSION,
     val exportedAt: Long = System.currentTimeMillis(),
+    val folders: List<OperitArchivedFolder> = emptyList(),
     val chats: List<OperitArchivedChat>,
 ) {
     companion object {
         const val ARCHIVE_TYPE = "operit_chat_archive"
-        const val CURRENT_FORMAT_VERSION = 3
+        const val CURRENT_FORMAT_VERSION = 4
+    }
+}
+
+@Serializable
+data class OperitArchivedFolder(
+    val id: String,
+    val name: String,
+    val parentFolderId: String? = null,
+    val displayOrder: Long = 0L,
+    val createdAt: Long,
+) {
+    fun toEntity(): ChatFolderEntity =
+        ChatFolderEntity(
+            id = id,
+            name = name,
+            parentFolderId = parentFolderId,
+            displayOrder = displayOrder,
+            createdAt = createdAt,
+        )
+
+    companion object {
+        fun fromEntity(entity: ChatFolderEntity): OperitArchivedFolder =
+            OperitArchivedFolder(
+                id = entity.id,
+                name = entity.name,
+                parentFolderId = entity.parentFolderId,
+                displayOrder = entity.displayOrder,
+                createdAt = entity.createdAt,
+            )
     }
 }
 
@@ -30,6 +60,7 @@ data class OperitArchivedChat(
     val outputTokens: Int = 0,
     val currentWindowSize: Int = 0,
     val group: String? = null,
+    val folderId: String? = null,
     val displayOrder: Long = 0L,
     val workspace: String? = null,
     val workspaceEnv: String? = null,
@@ -40,7 +71,7 @@ data class OperitArchivedChat(
     val pinned: Boolean = false,
     val isFavorite: Boolean? = null,
 ) {
-    fun toChatHistory(resolvedFavorite: Boolean): ChatHistory {
+    fun toChatHistory(resolvedFavorite: Boolean, folderId: String? = this.folderId): ChatHistory {
         return ChatHistory(
             id = id,
             title = title,
@@ -50,7 +81,7 @@ data class OperitArchivedChat(
             inputTokens = inputTokens,
             outputTokens = outputTokens,
             currentWindowSize = currentWindowSize,
-            group = group,
+            folderId = folderId,
             displayOrder = displayOrder,
             workspace = workspace,
             workspaceEnv = workspaceEnv,
@@ -77,7 +108,8 @@ data class OperitArchivedChat(
                 inputTokens = history.inputTokens,
                 outputTokens = history.outputTokens,
                 currentWindowSize = history.currentWindowSize,
-                group = history.group,
+                group = null,
+                folderId = history.folderId,
                 displayOrder = history.displayOrder,
                 workspace = history.workspace,
                 workspaceEnv = history.workspaceEnv,

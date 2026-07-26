@@ -1336,7 +1336,11 @@ fun ChatBackupSettingsScreen() {
                         operationState = ChatHistoryOperation.IMPORTING
                         try {
                             val importResult = chatHistoryManager.importChatHistoriesFromUri(uri, selectedImportFormat)
-                            operationMessage = if (importResult.total > 0) {
+                            operationMessage =
+                                if (
+                                    importResult.total > 0 ||
+                                        importResult.foldersCreated > 0
+                                ) {
                                 operationState = ChatHistoryOperation.IMPORTED
                                 val formatName = when (selectedImportFormat) {
                                     ChatFormat.OPERIT -> context.getString(R.string.backup_format_operit)
@@ -1355,12 +1359,29 @@ fun ChatBackupSettingsScreen() {
                                 } else {
                                     ""
                                 }
+                                val foldersCreatedText =
+                                    if (importResult.foldersCreated > 0) {
+                                        context.getString(
+                                            R.string.backup_import_result_folders_created,
+                                            importResult.foldersCreated,
+                                        )
+                                    } else {
+                                        ""
+                                    }
+                                val emptyFoldersWarning =
+                                    if (importResult.mayLeavePreviousEmptyFolders) {
+                                        context.getString(
+                                            R.string.backup_import_result_empty_folders_warning
+                                        )
+                                    } else {
+                                        ""
+                                    }
                                 context.getString(
                                     R.string.backup_import_result_success,
                                     formatName,
                                     importResult.new,
                                     importResult.updated,
-                                    skippedText
+                                    skippedText + foldersCreatedText + emptyFoldersWarning
                                 )
                             } else {
                                 operationState = ChatHistoryOperation.FAILED

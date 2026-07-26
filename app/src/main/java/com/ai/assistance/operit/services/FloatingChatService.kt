@@ -461,10 +461,10 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                             }
                         }
 
-                        val group = wakePrefs.autoNewChatGroupFlow.first().trim().ifBlank {
-                            WakeWordPreferences.DEFAULT_AUTO_NEW_CHAT_GROUP
-                        }
-                        chatCore.createNewChat(group = group, inheritGroupFromCurrent = false)
+                        // The legacy preference stores a folder name, which cannot identify one of
+                        // multiple same-name v25 folders. Until it is migrated to an ID picker,
+                        // wake-created chats are placed at the root.
+                        chatCore.createNewChat(inheritGroupFromCurrent = false)
                     }
                 }
             }

@@ -47,8 +47,8 @@ data class WebChatSummary(
     val title: String,
     @SerialName("updated_at")
     val updatedAt: Long,
-    @SerialName("group")
-    val group: String? = null,
+    @SerialName("folder_id")
+    val folderId: String? = null,
     @SerialName("character_card_name")
     val characterCardName: String? = null,
     @SerialName("character_group_id")
@@ -541,6 +541,8 @@ data class WebCreateChatRequest(
     val title: String? = null,
     @SerialName("group")
     val group: String? = null,
+    @SerialName("folder_id")
+    val folderId: String? = null,
     @SerialName("character_card_name")
     val characterCardName: String? = null,
     @SerialName("character_group_id")
@@ -557,6 +559,10 @@ data class WebUpdateChatRequest(
     val group: String? = null,
     @SerialName("update_group")
     val updateGroup: Boolean = false,
+    @SerialName("folder_id")
+    val folderId: String? = null,
+    @SerialName("update_folder")
+    val updateFolder: Boolean = false,
     @SerialName("locked")
     val locked: Boolean? = null,
     @SerialName("update_locked")

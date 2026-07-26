@@ -242,6 +242,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         chatHistoryDelegate.showChatHistorySelector
     }
     val chatHistories: StateFlow<List<ChatHistory>> by lazy { chatHistoryDelegate.chatHistories }
+    val chatFolders by lazy { chatHistoryDelegate.chatFolders }
     val currentChatId: StateFlow<String?> by lazy { chatHistoryDelegate.currentChatId }
     val hasOlderDisplayHistory: StateFlow<Boolean> by lazy {
         chatHistoryDelegate.hasOlderDisplayHistory
@@ -2762,30 +2763,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private fun isPathLikeToolParameter(name: String): Boolean {
         val lowered = name.lowercase()
         return lowered.contains("path") || lowered.contains("file") || lowered.contains("dir")
-    }
-
-    /** 更新聊天顺序和分组 */
-    fun updateChatOrderAndGroup(
-        reorderedHistories: List<ChatHistory>,
-        movedItem: ChatHistory,
-        targetGroup: String?
-    ) {
-        chatHistoryDelegate.updateChatOrderAndGroup(reorderedHistories, movedItem, targetGroup)
-    }
-
-    /** 创建新分组（通过创建新聊天实现） */
-    fun createGroup(groupName: String, characterCardName: String?, characterGroupId: String? = null) {
-        chatHistoryDelegate.createGroup(groupName, characterCardName, characterGroupId)
-    }
-
-    /** 重命名分组 */
-    fun updateGroupName(oldName: String, newName: String, characterCardName: String?) {
-        chatHistoryDelegate.updateGroupName(oldName, newName, characterCardName)
-    }
-
-    /** 删除分组 */
-    fun deleteGroup(groupName: String, deleteChats: Boolean, characterCardName: String?) {
-        chatHistoryDelegate.deleteGroup(groupName, deleteChats, characterCardName)
     }
 
     fun onWorkspaceButtonClick() {

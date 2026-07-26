@@ -302,7 +302,7 @@ fun ChatHistorySettingsScreen() {
                     chatHistories = chatHistories,
                     characterCards = availableCharacterCards,
                     characterGroups = availableCharacterGroups,
-                    onApply = { selectedIds, targetCharacterName, targetCharacterGroupId, targetGroupName, shouldUnbindCharacterCard, shouldUnbindCharacterGroup ->
+                    onApply = { selectedIds, targetCharacterName, targetCharacterGroupId, shouldUnbindCharacterCard, shouldUnbindCharacterGroup ->
                         if (selectedIds.isEmpty()) {
                             Toast.makeText(context, context.getString(R.string.please_select_chats_first), Toast.LENGTH_SHORT).show()
                             return@ChatHistoryBatchSelectorCard false
@@ -313,7 +313,6 @@ fun ChatHistorySettingsScreen() {
                             // 更新角色卡绑定（仅在明确指定时更新）
                             // shouldUnbindCharacterCard 为 true 表示移除绑定
                             // targetCharacterName 不为 null 表示设置新的角色卡
-                            // 如果两者都为 false/null，且提供了分组，则只更新分组，不更新角色卡
                             val shouldUpdateCharacterGroup = shouldUnbindCharacterGroup || targetCharacterGroupId != null
                             val shouldUpdateCharacterCard =
                                 !shouldUpdateCharacterGroup && (shouldUnbindCharacterCard || targetCharacterName != null)
@@ -351,15 +350,6 @@ fun ChatHistorySettingsScreen() {
                                         )
                                     )
                                 }
-                            }
-                            
-                            // 更新分组
-                            if (targetGroupName != null) {
-                                chatHistoryManager.assignGroupToChats(
-                                    chatIds = selectedIds,
-                                    groupName = targetGroupName
-                                )
-                                messageParts.add(context.getString(R.string.assigned_chats_to_group, selectedIds.size, targetGroupName))
                             }
                             
                             val message = messageParts.joinToString("；")
@@ -1183,7 +1173,6 @@ private fun ChatHistoryBatchSelectorCard(
         selectedChatIds: List<String>,
         targetCharacterCardName: String?,
         targetCharacterGroupId: String?,
-        targetGroupName: String?,
         shouldUnbindCharacterCard: Boolean,
         shouldUnbindCharacterGroup: Boolean
     ) -> Boolean
@@ -1198,7 +1187,6 @@ private fun ChatHistoryBatchSelectorCard(
     var groupDropdownExpanded by remember { mutableStateOf(false) }
     var selectedTargetGroupId by remember { mutableStateOf<String?>(null) }
     var targetGroupIsUnbind by remember { mutableStateOf(false) }
-    var targetGroupName by remember { mutableStateOf("") }
     var submitting by remember { mutableStateOf(false) }
     var deleteInProgress by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
@@ -1214,7 +1202,6 @@ private fun ChatHistoryBatchSelectorCard(
             chatHistories.filter { history ->
                 val groupName = history.characterGroupId?.let { characterGroupNameById[it] }
                 history.title.contains(normalizedQuery, ignoreCase = true) ||
-                        (history.group?.contains(normalizedQuery, ignoreCase = true) == true) ||
                         (history.characterCardName?.contains(normalizedQuery, ignoreCase = true) == true) ||
                         (groupName?.contains(normalizedQuery, ignoreCase = true) == true)
             }
@@ -1232,11 +1219,6 @@ private fun ChatHistoryBatchSelectorCard(
                 it.characterCardName.isNullOrBlank()
             }.thenBy {
                 it.characterCardName ?: ""
-            }.thenBy {
-                // 然后按分组名称排序（空分组排在后面）
-                it.group.isNullOrBlank()
-            }.thenBy {
-                it.group ?: ""
             }.thenByDescending {
                 // 同一角色卡+分组内按最近更新时间倒序
                 it.updatedAt
@@ -1263,10 +1245,9 @@ private fun ChatHistoryBatchSelectorCard(
     val hasSelection = selectedChatIds.isNotEmpty()
     val hasTargetSelection = targetIsUnbind || !selectedTargetName.isNullOrBlank()
     val hasTargetGroupSelection = targetGroupIsUnbind || !selectedTargetGroupId.isNullOrBlank()
-    val hasTargetGroup = targetGroupName.isNotBlank()
     val canSubmit =
         hasSelection &&
-            (hasTargetSelection || hasTargetGroupSelection || hasTargetGroup) &&
+            (hasTargetSelection || hasTargetGroupSelection) &&
             !submitting &&
             !deleteInProgress
 
@@ -1512,21 +1493,6 @@ private fun ChatHistoryBatchSelectorCard(
                         }
                     }
                 }
-                OutlinedTextField(
-                    value = targetGroupName,
-                    onValueChange = { targetGroupName = it },
-                    singleLine = true,
-                    maxLines = 1,
-                    label = { Text(stringResource(R.string.target_group_optional)) },
-                    placeholder = { Text(stringResource(R.string.enter_group_name_hint)) },
-                    leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    text = stringResource(R.string.batch_assign_description),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -1536,18 +1502,15 @@ private fun ChatHistoryBatchSelectorCard(
                             if (!canSubmit) return@Button
                             scope.launch {
                                 submitting = true
-                                val groupName = targetGroupName.takeIf { it.isNotBlank() }
                                 val success = onApply(
                                     selectedChatIds.toList(),
                                     if (targetIsUnbind) null else selectedTargetName,
                                     if (targetGroupIsUnbind) null else selectedTargetGroupId,
-                                    groupName,
                                     targetIsUnbind,
                                     targetGroupIsUnbind
                                 )
                                 if (success) {
                                     selectedChatIds = emptySet()
-                                    targetGroupName = ""
                                     selectedTargetName = null
                                     targetIsUnbind = false
                                     selectedTargetGroupId = null
@@ -1568,12 +1531,9 @@ private fun ChatHistoryBatchSelectorCard(
                             Spacer(modifier = Modifier.width(8.dp))
                         }
                         val buttonText = when {
-                            targetGroupIsUnbind && targetGroupName.isNotBlank() -> context.getString(R.string.apply_changes)
                             targetGroupIsUnbind -> context.getString(R.string.remove_character_group_binding)
-                            targetIsUnbind && targetGroupName.isNotBlank() -> context.getString(R.string.apply_changes)
                             targetIsUnbind -> context.getString(R.string.remove_character_card_binding)
                             !selectedTargetGroupId.isNullOrBlank() -> context.getString(R.string.apply_character_group)
-                            targetGroupName.isNotBlank() && selectedTargetName.isNullOrBlank() -> context.getString(R.string.apply_group)
                             else -> context.getString(R.string.apply_character_card)
                         }
                         Text(buttonText)
@@ -1702,10 +1662,6 @@ private fun ChatHistorySelectableRow(
                 overflow = TextOverflow.Ellipsis
             )
             val subtitle = buildString {
-                history.group?.let { group ->
-                    append(context.getString(R.string.group_label, group))
-                    append(" · ")
-                }
                 val groupId = history.characterGroupId?.trim()
                 if (!groupId.isNullOrBlank()) {
                     val resolvedGroupName =
