@@ -64,7 +64,8 @@ fun buildVisibleHistoryTree(
             .thenBy { it.createdAt }
             .thenBy { it.id }
     val chatComparator =
-        compareBy<ChatHistory> { it.displayOrder }
+        compareByDescending<ChatHistory> { it.pinned }
+            .thenBy { it.displayOrder }
             .thenBy { it.createdAt }
             .thenBy { it.id }
 
@@ -136,7 +137,8 @@ fun buildVisibleHistoryTree(
             childrenByParent[parentId].orEmpty().map { SortableHistorySibling(folder = it) } +
                 chatsByFolder[parentId].orEmpty().map { SortableHistorySibling(history = it) }
         ).sortedWith(
-            compareBy<SortableHistorySibling> { it.displayOrder }
+            compareByDescending<SortableHistorySibling> { it.history?.pinned == true }
+                .thenBy { it.displayOrder }
                 .thenBy { it.kindOrder }
                 .thenBy { it.id }
         )

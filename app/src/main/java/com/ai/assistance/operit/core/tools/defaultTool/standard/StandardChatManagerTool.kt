@@ -1021,19 +1021,18 @@ class StandardChatManagerTool(private val context: Context) {
             val previousChatIds = core.chatHistories.value.map { it.id }.toSet()
 
             val group = tool.parameters.find { it.name == "group" }?.value?.trim()
-            if (!group.isNullOrBlank()) {
+            val requestedFolderId =
+                tool.parameters.find { it.name == "folder_id" }?.value?.trim()?.takeIf {
+                    it.isNotBlank()
+                }
+            if (!group.isNullOrBlank() && requestedFolderId != null) {
                 return ToolResult(
                     toolName = tool.name,
                     success = false,
                     result = ChatCreationResultData(chatId = ""),
-                    error = "The group parameter is deprecated and unsupported; use folder_id"
+                    error = "Use either group or folder_id, not both"
                 )
             }
-            val folderId =
-                tool.parameters.find { it.name == "folder_id" }?.value?.trim()?.takeIf {
-                    it.isNotBlank()
-                }
-
             val rawSetAsCurrent = tool.parameters.find { it.name == "set_as_current_chat" }?.value?.trim()
             val setAsCurrentChat =
                 when (rawSetAsCurrent?.lowercase()) {
@@ -1053,6 +1052,7 @@ class StandardChatManagerTool(private val context: Context) {
 
             val characterCardId =
                 tool.parameters.find { it.name == "character_card_id" }?.value?.trim()
+            var characterCardName: String? = null
             if (!characterCardId.isNullOrBlank()) {
                 val roleCardManager = CharacterCardManager.getInstance(appContext)
                 val targetCard = roleCardManager.getCharacterCard(characterCardId)
@@ -1064,7 +1064,15 @@ class StandardChatManagerTool(private val context: Context) {
                         error = "Invalid parameter: character_card_id not found"
                     )
                 }
+                characterCardName = targetCard.name
             }
+            val folderId =
+                if (!group.isNullOrBlank()) {
+                    ChatHistoryManager.getInstance(appContext)
+                        .resolveOrCreateLegacyFolderId(group, characterCardName)
+                } else {
+                    requestedFolderId
+                }
             
             // 创建新对话（不切换当前对话）
             core.createNewChat(

@@ -658,6 +658,8 @@ class ChatHistoryManager private constructor(private val context: Context) {
         } else if (trimmed.startsWith("[")) {
             // Legacy unversioned arrays remain importable, but are fully parsed before writes.
             val histories = operitArchiveJson.decodeFromString<List<ChatHistory>>(content)
+            val importedFolderIdsByLegacyName = mutableMapOf<String, String>()
+            val existingFolderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
             histories.forEachIndexed { index, history ->
                 if (history.messages.isEmpty()) {
                     counters.skippedCount++
@@ -667,7 +669,25 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         counters.newCount++
                         existingIds.add(history.id)
                     }
-                    saveChatHistory(history)
+                    val legacyFolderName = history.group?.trim()?.takeIf { it.isNotEmpty() }
+                    val normalizedHistory =
+                        if (history.folderId == null && legacyFolderName != null) {
+                            val folderId =
+                                importedFolderIdsByLegacyName[legacyFolderName]
+                                    ?: resolveOrCreateLegacyFolderId(legacyFolderName).also {
+                                        importedFolderIdsByLegacyName[legacyFolderName] = it
+                                    }
+                            if (existingFolderIds.add(folderId)) {
+                                counters.folderCount++
+                            }
+                            history.copy(group = null, folderId = folderId)
+                        } else {
+                            history.copy(group = null)
+                        }
+                    saveChatHistoryInternal(
+                        history = normalizedHistory,
+                        preserveStructure = false,
+                    )
                 }
                 if ((index + 1) % 20 == 0) {
                     AppLogger.d(TAG, "旧版聊天数组导入进度: ${index + 1}/${histories.size}")
@@ -763,6 +783,57 @@ class ChatHistoryManager private constructor(private val context: Context) {
     suspend fun createFolder(parentFolderId: String?, name: String): String =
         chatFolderRepository.createFolder(parentFolderId, name)
 
+    suspend fun findLegacyFolderId(
+        groupName: String,
+        characterCardName: String? = null,
+    ): String? =
+        withContext(Dispatchers.IO) {
+            val normalizedName = groupName.trim()
+            if (normalizedName.isEmpty()) {
+                return@withContext null
+            }
+            val candidates =
+                chatFolderDao.getFolders().filter {
+                    it.id != SYSTEM_UNGROUPED_FOLDER_ID && it.name == normalizedName
+                }
+            if (candidates.isEmpty()) {
+                return@withContext null
+            }
+            val normalizedCharacterCardName =
+                characterCardName?.trim()?.takeIf { it.isNotEmpty() }
+            if (normalizedCharacterCardName == null) {
+                return@withContext candidates.minWithOrNull(
+                    compareBy<ChatFolderEntity> { it.displayOrder }
+                        .thenBy { it.createdAt }
+                        .thenBy { it.id }
+                )?.id
+            }
+            val matchingFolderIds =
+                chatDao.getAllChatsDirectly()
+                    .asSequence()
+                    .filter { it.characterCardName == normalizedCharacterCardName }
+                    .mapNotNull { normalizeChatFolderId(it.folderId) }
+                    .toSet()
+            candidates
+                .filter { it.id in matchingFolderIds }
+                .minWithOrNull(
+                    compareBy<ChatFolderEntity> { it.displayOrder }
+                        .thenBy { it.createdAt }
+                        .thenBy { it.id }
+                )
+                ?.id
+        }
+
+    suspend fun resolveOrCreateLegacyFolderId(
+        groupName: String,
+        characterCardName: String? = null,
+    ): String {
+        val normalizedName = groupName.trim()
+        require(normalizedName.isNotEmpty()) { "Group name must not be blank" }
+        return findLegacyFolderId(normalizedName, characterCardName)
+            ?: createFolder(parentFolderId = null, name = normalizedName)
+    }
+
     suspend fun renameFolder(folderId: String, newName: String) =
         chatFolderRepository.renameFolder(folderId, newName)
 
@@ -808,6 +879,36 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     suspend fun deleteFolder(folderId: String) =
         chatFolderRepository.deleteFolder(folderId)
+
+    suspend fun updateChatOrderAndFolders(histories: List<ChatHistory>): Boolean =
+        database.withTransaction {
+            if (histories.map { it.id }.distinct().size != histories.size) {
+                return@withTransaction false
+            }
+            val currentById = chatDao.getAllChatsDirectly().associateBy { it.id }
+            if (histories.any { it.id !in currentById }) {
+                return@withTransaction false
+            }
+            val folderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
+            if (
+                histories.any {
+                    val folderId = normalizeChatFolderId(it.folderId)
+                    folderId != null && folderId !in folderIds
+                }
+            ) {
+                return@withTransaction false
+            }
+            val timestamp = System.currentTimeMillis()
+            histories.forEach { history ->
+                chatDao.updateChatOrderAndFolder(
+                    chatId = history.id,
+                    displayOrder = history.displayOrder,
+                    folderId = normalizeChatFolderId(history.folderId),
+                    timestamp = timestamp,
+                )
+            }
+            true
+        }
 
     suspend fun getTotalChatCount(): Int {
         return withContext(Dispatchers.IO) { chatDao.getTotalChatCount() }

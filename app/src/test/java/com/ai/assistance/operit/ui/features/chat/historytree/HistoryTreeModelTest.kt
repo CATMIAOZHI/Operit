@@ -83,8 +83,8 @@ class HistoryTreeModelTest {
         assertEquals(
             listOf(
                 UNGROUPED_FOLDER_STABLE_KEY,
-                "chat:unpinned",
                 "chat:pinned",
+                "chat:unpinned",
                 "folder:folder",
             ),
             nodes.map { it.stableKey },
@@ -92,6 +92,38 @@ class HistoryTreeModelTest {
         assertEquals(
             listOf(2, 2),
             nodes.filterIsInstance<HistoryTreeNode.Chat>().map { it.depth },
+        )
+    }
+
+    @Test
+    fun `pinned chats sort before persisted order at root and inside folders`() {
+        val folder = folder("folder", "Folder")
+        val histories =
+            listOf(
+                chat("root-unpinned", null, order = 0),
+                chat("root-pinned", null, order = 10, pinned = true),
+                chat("nested-unpinned", "folder", order = 0),
+                chat("nested-pinned", "folder", order = 10, pinned = true),
+            )
+
+        val nodes =
+            buildVisibleHistoryTree(
+                folders = listOf(folder),
+                histories = histories,
+                projection = HistoryTreeProjection.ALL,
+                includeUngroupedFolder = true,
+            ).nodes
+
+        assertEquals(
+            listOf(
+                UNGROUPED_FOLDER_STABLE_KEY,
+                "chat:root-pinned",
+                "chat:root-unpinned",
+                "folder:folder",
+                "chat:nested-pinned",
+                "chat:nested-unpinned",
+            ),
+            nodes.map { it.stableKey },
         )
     }
 

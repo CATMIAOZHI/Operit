@@ -49,6 +49,8 @@ data class WebChatSummary(
     val updatedAt: Long,
     @SerialName("folder_id")
     val folderId: String? = null,
+    @SerialName("group")
+    val group: String? = null,
     @SerialName("character_card_name")
     val characterCardName: String? = null,
     @SerialName("character_group_id")
