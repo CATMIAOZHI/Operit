@@ -122,6 +122,13 @@ fun buildVisibleHistoryTree(
 
     val result = mutableListOf<HistoryTreeNode>()
     val visited = linkedSetOf<String>()
+    fun markHiddenDescendantsVisited(folderId: String) {
+        childrenByParent[folderId].orEmpty().forEach { child ->
+            if (visited.add(child.id)) {
+                markHiddenDescendantsVisited(child.id)
+            }
+        }
+    }
     fun sortedSiblings(
         parentId: String?,
     ): List<SortableHistorySibling> =
@@ -147,7 +154,11 @@ fun buildVisibleHistoryTree(
         }
         val currentPath = path + folder
         result += HistoryTreeNode.Folder(folder, depth, currentPath)
-        if (folder.id in collapsedFolderIds) return
+        val isCollapsed = collapsedFolderIds.contains(folder.id)
+        if (isCollapsed) {
+            markHiddenDescendantsVisited(folder.id)
+            return
+        }
         sortedSiblings(folder.id).forEach { sibling ->
             sibling.folder?.let { child ->
                 appendFolder(child, depth + 1, currentPath)

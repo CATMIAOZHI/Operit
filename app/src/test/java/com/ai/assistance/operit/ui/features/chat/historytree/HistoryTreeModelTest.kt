@@ -159,6 +159,27 @@ class HistoryTreeModelTest {
     }
 
     @Test
+    fun `collapsing a folder hides its complete subtree`() {
+        val root = folder("root", "A")
+        val child = folder("child", "B", parentId = "root")
+        val grandchild = folder("grandchild", "C", parentId = "child")
+
+        val nodes =
+            buildVisibleHistoryTree(
+                folders = listOf(root, child, grandchild),
+                histories = listOf(chat("nested-chat", "grandchild")),
+                projection = HistoryTreeProjection.ALL,
+                collapsedFolderIds = setOf("root"),
+                includeUngroupedFolder = true,
+            ).nodes
+
+        assertEquals(
+            listOf(UNGROUPED_FOLDER_STABLE_KEY, "folder:root"),
+            nodes.map { it.stableKey },
+        )
+    }
+
+    @Test
     fun `persisted ungrouped order positions its root container`() {
         val ungrouped = folder(SYSTEM_UNGROUPED_FOLDER_ID, "internal", order = 2)
         val before = folder("before", "Before", order = 0)

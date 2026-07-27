@@ -7,6 +7,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -39,10 +40,11 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Lock
@@ -91,6 +93,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -98,6 +101,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -108,6 +112,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.window.Dialog
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatHistory
@@ -219,6 +224,30 @@ private sealed interface HistoryListItem {
         val depth: Int = 1,
     ) : HistoryListItem
     data class Item(val history: ChatHistory, val depth: Int = 0) : HistoryListItem
+}
+
+@Composable
+private fun HistoryHierarchyGuide(modifier: Modifier = Modifier) {
+    Box(
+        modifier =
+            Modifier
+                .width(16.dp)
+                .padding(end = 8.dp),
+    ) {
+        Box(
+            modifier =
+                modifier
+                    .width(2.dp)
+                    .align(Alignment.Center)
+                    .background(
+                        color =
+                            MaterialTheme.colorScheme.primaryContainer.copy(
+                                alpha = 0.6f
+                            ),
+                        shape = RoundedCornerShape(1.dp),
+                    ),
+        )
+    }
 }
 
 @Composable
@@ -1063,14 +1092,82 @@ fun ChatHistorySelector(
             mutableStateListOf<HistoryListItem>().apply { addAll(flatItems) }
         }
     var dragInProgress by remember { mutableStateOf(false) }
+    var suppressedFolderDragDescendantKeys by
+        remember { mutableStateOf<Set<String>>(emptySet()) }
+    var suppressedFolderDragRootId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(flatItems) {
+        val currentSuppressedKeys =
+            buildSet {
+                addAll(suppressedFolderDragDescendantKeys)
+                val rootId = suppressedFolderDragRootId
+                val rootIndex =
+                    rootId?.let { folderId ->
+                        flatItems.indexOfFirst { item ->
+                            item is HistoryListItem.Header && item.folderId == folderId
+                        }
+                    } ?: -1
+                val root = flatItems.getOrNull(rootIndex) as? HistoryListItem.Header
+                if (root != null) {
+                    var index = rootIndex + 1
+                    while (index < flatItems.size) {
+                        val descendant = flatItems[index]
+                        val depth =
+                            when (descendant) {
+                                is HistoryListItem.CharacterHeader -> 0
+                                is HistoryListItem.Header -> descendant.depth
+                                is HistoryListItem.Item -> descendant.depth
+                            }
+                        if (depth <= root.depth) break
+                        add(
+                            when (descendant) {
+                                is HistoryListItem.CharacterHeader -> descendant.key
+                                is HistoryListItem.Header -> descendant.key
+                                is HistoryListItem.Item -> "chat:${descendant.history.id}"
+                            }
+                        )
+                        index++
+                    }
+                }
+            }
+        val visibleDragItems =
+            if (dragInProgress && currentSuppressedKeys.isNotEmpty()) {
+                flatItems.filterNot { item ->
+                    val key =
+                        when (item) {
+                            is HistoryListItem.CharacterHeader -> item.key
+                            is HistoryListItem.Header -> item.key
+                            is HistoryListItem.Item -> "chat:${item.history.id}"
+                        }
+                    key in currentSuppressedKeys
+                }
+            } else {
+                flatItems
+            }
         if (!dragInProgress) {
             reorderItems.clear()
             reorderItems.addAll(flatItems)
         } else {
             // Keep the optimistic order if another visible-tree update happens mid-drag.
-            // Merge new rows next to their canonical predecessor without discarding it.
-            flatItems.forEach { item ->
+            // Remove rows hidden by collapsing, then merge new rows next to their canonical
+            // predecessor without discarding the optimistic order.
+            val visibleKeys =
+                visibleDragItems.mapTo(hashSetOf()) { item ->
+                    when (item) {
+                        is HistoryListItem.CharacterHeader -> item.key
+                        is HistoryListItem.Header -> item.key
+                        is HistoryListItem.Item -> "chat:${item.history.id}"
+                    }
+                }
+            reorderItems.removeAll { item ->
+                val key =
+                    when (item) {
+                        is HistoryListItem.CharacterHeader -> item.key
+                        is HistoryListItem.Header -> item.key
+                        is HistoryListItem.Item -> "chat:${item.history.id}"
+                }
+                key !in visibleKeys
+            }
+            visibleDragItems.forEach { item ->
                 val key =
                     when (item) {
                         is HistoryListItem.CharacterHeader -> item.key
@@ -1086,9 +1183,9 @@ fun ChatHistorySelector(
                         } == key
                     }
                 ) {
-                    val canonicalIndex = flatItems.indexOf(item)
+                    val canonicalIndex = visibleDragItems.indexOf(item)
                     val predecessor =
-                        flatItems
+                        visibleDragItems
                             .subList(0, canonicalIndex)
                             .asReversed()
                             .firstOrNull { candidate ->
@@ -1130,8 +1227,40 @@ fun ChatHistorySelector(
         }
     }
     fun resetOptimisticOrder() {
+        suppressedFolderDragDescendantKeys = emptySet()
+        suppressedFolderDragRootId = null
         reorderItems.clear()
         reorderItems.addAll(flatItems)
+    }
+    fun prepareOptimisticFolderDrag(folderId: String) {
+        suppressedFolderDragRootId = folderId
+        val headerIndex =
+            reorderItems.indexOfFirst { item ->
+                item is HistoryListItem.Header && item.folderId == folderId
+            }
+        val header =
+            reorderItems.getOrNull(headerIndex) as? HistoryListItem.Header
+                ?: return
+        val descendantIndex = headerIndex + 1
+        val suppressedKeys = mutableSetOf<String>()
+        while (descendantIndex < reorderItems.size) {
+            val descendant = reorderItems[descendantIndex]
+            val depth =
+                when (descendant) {
+                    is HistoryListItem.CharacterHeader -> 0
+                    is HistoryListItem.Header -> descendant.depth
+                    is HistoryListItem.Item -> descendant.depth
+                }
+            if (depth <= header.depth) break
+            suppressedKeys +=
+                when (descendant) {
+                    is HistoryListItem.CharacterHeader -> descendant.key
+                    is HistoryListItem.Header -> descendant.key
+                    is HistoryListItem.Item -> "chat:${descendant.history.id}"
+                }
+            reorderItems.removeAt(descendantIndex)
+        }
+        suppressedFolderDragDescendantKeys = suppressedKeys
     }
     fun applyOptimisticMove(fromIndex: Int, toIndex: Int) {
         if (fromIndex !in reorderItems.indices) return
@@ -1532,6 +1661,8 @@ fun ChatHistorySelector(
         pendingFolderDragTarget = null
         folderDragSnapshots = emptyMap()
         dragInProgress = false
+        suppressedFolderDragDescendantKeys = emptySet()
+        suppressedFolderDragRootId = null
         if (folderId == null || target == null) {
             resetOptimisticOrder()
             return
@@ -3285,6 +3416,15 @@ fun ChatHistorySelector(
                                 item.folderId?.let { "folder:$it" } ?: item.key
                             }
                         val isExpanded = !collapsedGroups.contains(collapseKey)
+                        val layoutDirection = LocalLayoutDirection.current
+                        val expandedIndicatorRotation =
+                            if (layoutDirection == LayoutDirection.Ltr) 90f else -90f
+                        val expansionIndicatorRotation by
+                            animateFloatAsState(
+                                targetValue = if (isExpanded) expandedIndicatorRotation else 0f,
+                                animationSpec = tween(durationMillis = 150),
+                                label = "folderExpansionIndicator",
+                            )
                         val stateDescription = if (isExpanded) {
                             stringResource(R.string.expanded)
                         } else {
@@ -3306,23 +3446,11 @@ fun ChatHistorySelector(
                                     ),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                            if (historyDisplayMode == ChatHistoryDisplayMode.BY_CHARACTER_CARD) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(32.dp)
-                                        .padding(start = 16.dp, end = 8.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(2.dp)
-                                            .height(40.dp)
-                                            .align(Alignment.Center)
-                                            .background(
-                                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                                                shape = RoundedCornerShape(1.dp)
-                                            )
-                                    )
-                                }
+                            if (
+                                historyDisplayMode == ChatHistoryDisplayMode.BY_CHARACTER_CARD ||
+                                    historyDisplayMode == ChatHistoryDisplayMode.BY_FOLDER
+                            ) {
+                                HistoryHierarchyGuide(modifier = Modifier.height(40.dp))
                             }
                             if (
                                 canManageFolders &&
@@ -3347,6 +3475,14 @@ fun ChatHistorySelector(
                                                     pendingFolderDragTarget = null
                                                     folderDragSnapshots =
                                                         captureHistorySiblingSnapshots()
+                                                    // The reorderable list moves one row at a
+                                                    // time. Temporarily hide this folder's
+                                                    // descendants so the whole subtree behaves
+                                                    // as one draggable row instead of repeatedly
+                                                    // snapping against its own children.
+                                                    prepareOptimisticFolderDrag(
+                                                        item.folderId
+                                                    )
                                                 }
                                             },
                                             onDragStopped = ::commitFolderDrag,
@@ -3420,7 +3556,12 @@ fun ChatHistorySelector(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.Folder,
+                                        imageVector =
+                                            if (isExpanded) {
+                                                Icons.Default.FolderOpen
+                                            } else {
+                                                Icons.Default.Folder
+                                            },
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.clearAndSetSemantics {}
@@ -3453,9 +3594,14 @@ fun ChatHistorySelector(
                                         }
                                     }
                                     Icon(
-                                        imageVector = if (collapsedGroups.contains(collapseKey)) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+                                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                         contentDescription = null,
-                                        modifier = Modifier.clearAndSetSemantics {}
+                                        modifier =
+                                            Modifier
+                                                .graphicsLayer {
+                                                    rotationZ = expansionIndicatorRotation
+                                                }
+                                                .clearAndSetSemantics {},
                                     )
                                 }
                             }
@@ -3527,24 +3673,14 @@ fun ChatHistorySelector(
                                 ) {
                                     if (
                                         selectedCategory != ChatHistoryCategory.RECENT &&
-                                            historyDisplayMode == ChatHistoryDisplayMode.BY_CHARACTER_CARD
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .width(32.dp)
-                                                .padding(start = 16.dp, end = 8.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .width(2.dp)
-                                                    .height(50.dp)
-                                                    .align(Alignment.Center)
-                                                    .background(
-                                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                                                        shape = RoundedCornerShape(1.dp)
-                                                    )
+                                            (
+                                                historyDisplayMode ==
+                                                    ChatHistoryDisplayMode.BY_CHARACTER_CARD ||
+                                                    historyDisplayMode ==
+                                                        ChatHistoryDisplayMode.BY_FOLDER
                                             )
-                                        }
+                                    ) {
+                                        HistoryHierarchyGuide(modifier = Modifier.height(50.dp))
                                     }
                                     if (canReorder) {
                                         val dragDescription =
