@@ -1621,11 +1621,12 @@ private fun ConfigSelectDialog(
     onToggleConfigCollapsed: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
+    var orderedSummaries by remember(configSummaries) { mutableStateOf(configSummaries) }
+    val pendingOrder = remember { mutableStateOf<List<String>?>(null) }
 
     // 分区分割
-    val (normalConfigs, collapsedConfigs) = remember(configSummaries, collapsedConfigIds) {
-        partitionConfigsByCollapsedIds(configSummaries, collapsedConfigIds)
+    val (normalConfigs, collapsedConfigs) = remember(orderedSummaries, collapsedConfigIds) {
+        partitionConfigsByCollapsedIds(orderedSummaries, collapsedConfigIds)
     }
 
     var collapsedSectionExpanded by remember { mutableStateOf(false) }
@@ -1666,9 +1667,9 @@ private fun ConfigSelectDialog(
         val collapsedOrderIds = collapsedConfigs.map { it.id }
         val newGlobalOrder = newNormalIds + collapsedOrderIds
 
-        scope.launch {
-            onReorder(newGlobalOrder)
-        }
+        val summariesById = orderedSummaries.associateBy { it.id }
+        orderedSummaries = newGlobalOrder.mapNotNull(summariesById::get)
+        pendingOrder.value = newGlobalOrder
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -1707,6 +1708,7 @@ private fun ConfigSelectDialog(
                                 ReorderableItem(
                                     reorderableState,
                                     key = "cfg-${config.id}",
+                                    enabled = !isCollapsed,
                                 ) { isDragging ->
                                     val elevation = if (isDragging) 4.dp else 0.dp
                                     Surface(
@@ -1734,7 +1736,13 @@ private fun ConfigSelectDialog(
                                                     contentDescription = stringResource(R.string.drag_to_reorder),
                                                     modifier = Modifier
                                                         .size(20.dp)
-                                                        .draggableHandle(),
+                                                        .draggableHandle(
+                                                            onDragStarted = { pendingOrder.value = null },
+                                                            onDragStopped = {
+                                                                pendingOrder.value?.let(onReorder)
+                                                                pendingOrder.value = null
+                                                            },
+                                                        ),
                                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 )
                                                 Spacer(modifier = Modifier.width(8.dp))
