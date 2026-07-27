@@ -1489,6 +1489,10 @@ fun ChatBackupSettingsScreen() {
 
     if (showRawSnapshotRestoreConfirmDialog) {
         val targetName = pendingRawSnapshotRestoreUri?.lastPathSegment ?: "-"
+        val replacingDatabasesProgressText =
+            stringResource(R.string.backup_raw_snapshot_progress_replacing_databases)
+        val finalizingProgressText =
+            stringResource(R.string.backup_raw_snapshot_progress_finalizing)
 
         AlertDialog(
             onDismissRequest = {
@@ -1542,10 +1546,10 @@ fun ChatBackupSettingsScreen() {
                                                     context.getString(R.string.backup_raw_snapshot_progress_replacing_datastore)
 
                                                 RawSnapshotBackupManager.RestoreProgress.REPLACING_DATABASES ->
-                                                    context.getString(R.string.backup_raw_snapshot_progress_replacing_databases)
+                                                    replacingDatabasesProgressText
 
                                                 RawSnapshotBackupManager.RestoreProgress.FINALIZING ->
-                                                    context.getString(R.string.backup_raw_snapshot_progress_finalizing)
+                                                    finalizingProgressText
                                             }
                                         }
                                     )
