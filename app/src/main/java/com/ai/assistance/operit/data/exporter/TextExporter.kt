@@ -16,7 +16,7 @@ object TextExporter {
     /**
      * 导出单个对话为纯文本
      */
-    fun exportSingle(context: Context, chatHistory: ChatHistory): String {
+    fun exportSingle(context: Context, chatHistory: ChatHistory, folderPath: String? = null): String {
         val sb = StringBuilder()
         
         // 标题
@@ -38,8 +38,8 @@ object TextExporter {
                 chatHistory.updatedAt.format(dateFormatter)
             )
         )
-        if (chatHistory.group != null) {
-            sb.appendLine(context.getString(R.string.export_group, chatHistory.group))
+        if (folderPath != null) {
+            sb.appendLine(context.getString(R.string.export_group, folderPath))
         }
         sb.appendLine(context.getString(R.string.export_message_count, chatHistory.messages.size))
         sb.appendLine()
@@ -63,7 +63,11 @@ object TextExporter {
     /**
      * 导出多个对话为纯文本
      */
-    fun exportMultiple(context: Context, chatHistories: List<ChatHistory>): String {
+    fun exportMultiple(
+        context: Context,
+        chatHistories: List<ChatHistory>,
+        folderPathsByChatId: Map<String, String> = emptyMap(),
+    ): String {
         val sb = StringBuilder()
         
         // 总览信息
@@ -95,7 +99,7 @@ object TextExporter {
                 sb.appendLine()
             }
             
-            sb.append(exportSingle(context, chatHistory))
+            sb.append(exportSingle(context, chatHistory, folderPathsByChatId[chatHistory.id]))
         }
         
         sb.appendLine()

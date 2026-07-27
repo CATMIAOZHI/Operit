@@ -185,6 +185,7 @@ mediapipe-tasks-text = { group = "com.google.mediapipe", name = "tasks-text", ve
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
 
 # Archive
 commons-compress-v2 = { group = "org.apache.commons", name = "commons-compress", version.ref = "commons-compress-v2" }

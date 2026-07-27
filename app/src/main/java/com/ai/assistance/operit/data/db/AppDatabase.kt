@@ -7,22 +7,26 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.ai.assistance.operit.data.dao.ChatDao
+import com.ai.assistance.operit.data.dao.ChatFolderDao
 import com.ai.assistance.operit.data.dao.MessageDao
 import com.ai.assistance.operit.data.dao.MessageVariantDao
 import com.ai.assistance.operit.data.model.ChatEntity
+import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.MessageVariantEntity
 
 /** 应用数据库，包含聊天表和消息表 */
 @Database(
-    entities = [ChatEntity::class, MessageEntity::class, MessageVariantEntity::class],
-    version = 20,
-    exportSchema = false
+    entities = [ChatEntity::class, ChatFolderEntity::class, MessageEntity::class, MessageVariantEntity::class],
+    version = 25,
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
     /** 获取聊天DAO */
     abstract fun chatDao(): ChatDao
+
+    abstract fun chatFolderDao(): ChatFolderDao
 
     /** 获取消息DAO */
     abstract fun messageDao(): MessageDao
@@ -218,6 +222,172 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        internal val MIGRATION_20_24 =
+            object : Migration(20, 24) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "ALTER TABLE chats ADD COLUMN `isFavorite` INTEGER NOT NULL DEFAULT 0"
+                    )
+                    db.execSQL("ALTER TABLE chats ADD COLUMN `lastMessageAt` INTEGER")
+                    db.execSQL(
+                        """
+                        UPDATE chats
+                        SET lastMessageAt = (
+                            SELECT MAX(messages.timestamp)
+                            FROM messages
+                            WHERE messages.chatId = chats.id
+                        )
+                        """.trimIndent()
+                    )
+                }
+            }
+
+        internal val MIGRATION_24_25 =
+            object : Migration(24, 25) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `chat_folders` (
+                            `id` TEXT NOT NULL,
+                            `name` TEXT NOT NULL,
+                            `parentFolderId` TEXT,
+                            `displayOrder` INTEGER NOT NULL,
+                            `createdAt` INTEGER NOT NULL,
+                            PRIMARY KEY(`id`),
+                            FOREIGN KEY(`parentFolderId`) REFERENCES `chat_folders`(`id`)
+                                ON UPDATE NO ACTION ON DELETE SET NULL
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_chat_folders_parentFolderId_displayOrder` " +
+                            "ON `chat_folders` (`parentFolderId`, `displayOrder`)"
+                    )
+                    db.execSQL(
+                        "ALTER TABLE `chats` ADD COLUMN `folderId` TEXT " +
+                            "REFERENCES `chat_folders`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL"
+                    )
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_chats_folderId` ON `chats` (`folderId`)"
+                    )
+
+                    data class BucketKey(
+                        val characterCardName: String?,
+                        val characterGroupId: String?,
+                        val rawGroup: String,
+                    )
+                    data class BucketValue(
+                        val chatIds: MutableList<String> = mutableListOf(),
+                        var minimumDisplayOrder: Long = Long.MAX_VALUE,
+                        var minimumCreatedAt: Long = Long.MAX_VALUE,
+                    )
+
+                    val buckets = linkedMapOf<BucketKey, BucketValue>()
+                    db.query(
+                        """
+                        SELECT `id`, `characterCardName`, `characterGroupId`, `group`,
+                               `displayOrder`, `createdAt`
+                        FROM `chats`
+                        WHERE `group` IS NOT NULL
+                        """.trimIndent()
+                    ).use { cursor ->
+                        val idColumn = cursor.getColumnIndexOrThrow("id")
+                        val cardColumn = cursor.getColumnIndexOrThrow("characterCardName")
+                        val characterGroupColumn = cursor.getColumnIndexOrThrow("characterGroupId")
+                        val rawGroupColumn = cursor.getColumnIndexOrThrow("group")
+                        val orderColumn = cursor.getColumnIndexOrThrow("displayOrder")
+                        val createdColumn = cursor.getColumnIndexOrThrow("createdAt")
+                        while (cursor.moveToNext()) {
+                            val rawGroup = cursor.getString(rawGroupColumn)
+                            if (rawGroup.isBlank()) continue
+                            val key =
+                                BucketKey(
+                                    characterCardName =
+                                        if (cursor.isNull(cardColumn)) null else cursor.getString(cardColumn),
+                                    characterGroupId =
+                                        if (cursor.isNull(characterGroupColumn)) {
+                                            null
+                                        } else {
+                                            cursor.getString(characterGroupColumn)
+                                        },
+                                    rawGroup = rawGroup,
+                                )
+                            val bucket = buckets.getOrPut(key) { BucketValue() }
+                            bucket.chatIds += cursor.getString(idColumn)
+                            bucket.minimumDisplayOrder =
+                                minOf(bucket.minimumDisplayOrder, cursor.getLong(orderColumn))
+                            bucket.minimumCreatedAt =
+                                minOf(bucket.minimumCreatedAt, cursor.getLong(createdColumn))
+                        }
+                    }
+
+                    fun compareNullable(left: String?, right: String?): Int =
+                        when {
+                            left == null && right == null -> 0
+                            left == null -> -1
+                            right == null -> 1
+                            else -> left.compareTo(right)
+                        }
+
+                    val typedBucketComparator =
+                        Comparator<BucketKey> { left, right ->
+                            compareNullable(left.characterCardName, right.characterCardName)
+                                .takeIf { it != 0 }
+                                ?: compareNullable(left.characterGroupId, right.characterGroupId)
+                                    .takeIf { it != 0 }
+                                ?: left.rawGroup.compareTo(right.rawGroup)
+                        }
+                    val sortedBuckets =
+                        buckets.entries.sortedWith(
+                            Comparator { left, right ->
+                                left.value.minimumDisplayOrder.compareTo(right.value.minimumDisplayOrder)
+                                    .takeIf { it != 0 }
+                                    ?: left.value.minimumCreatedAt.compareTo(right.value.minimumCreatedAt)
+                                        .takeIf { it != 0 }
+                                    ?: typedBucketComparator.compare(left.key, right.key)
+                            }
+                        )
+
+                    val allocatedIds = hashSetOf<String>()
+                    sortedBuckets.forEachIndexed { index, (key, bucket) ->
+                        var folderId: String
+                        do {
+                            folderId = java.util.UUID.randomUUID().toString()
+                        } while (!allocatedIds.add(folderId))
+                        db.execSQL(
+                            """
+                            INSERT INTO `chat_folders`
+                                (`id`, `name`, `parentFolderId`, `displayOrder`, `createdAt`)
+                            VALUES (?, ?, NULL, ?, ?)
+                            """.trimIndent(),
+                            arrayOf(
+                                folderId,
+                                key.rawGroup.trim(),
+                                index.toLong(),
+                                bucket.minimumCreatedAt,
+                            )
+                        )
+                        bucket.chatIds.forEach { chatId ->
+                            db.execSQL(
+                                "UPDATE `chats` SET `folderId` = ? WHERE `id` = ?",
+                                arrayOf(folderId, chatId),
+                            )
+                        }
+                    }
+
+                    db.query("PRAGMA foreign_key_check").use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val violations = mutableListOf<String>()
+                            do {
+                                violations +=
+                                    "${cursor.getString(0)}:${cursor.getLong(1)}:${cursor.getString(2)}"
+                            } while (cursor.moveToNext())
+                            error("Foreign key violations after v24 to v25 migration: $violations")
+                        }
+                    }
+                }
+            }
+
         // 定义从版本2到3的迁移
         private val MIGRATION_2_3 =
             object : Migration(2, 3) {
@@ -334,8 +504,13 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_16_17,
                                 MIGRATION_17_18,
                                 MIGRATION_18_19,
-                                MIGRATION_19_20
+                                MIGRATION_19_20,
+                                MIGRATION_20_24,
+                                MIGRATION_24_25
                             ) // 添加新的迁移
+                            // personal/dev briefly shipped experimental schemas 21-23. Only those
+                            // development inputs are intentionally rebuilt; stable v20 is migrated.
+                            .fallbackToDestructiveMigrationFrom(true, 21, 22, 23)
                             .build()
                     INSTANCE = instance
                     instance

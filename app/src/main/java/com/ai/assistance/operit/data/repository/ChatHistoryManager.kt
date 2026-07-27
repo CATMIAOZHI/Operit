@@ -2,6 +2,7 @@ package com.ai.assistance.operit.data.repository
 
 import android.content.Context
 import android.net.Uri
+import androidx.room.withTransaction
 import com.ai.assistance.operit.util.AppLogger
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
@@ -11,6 +12,7 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.backup.OperitBackupDirs
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ChatEntity
+import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.ChatMessageLocatorPreview
@@ -18,7 +20,9 @@ import com.ai.assistance.operit.data.model.CharacterCardChatStats
 import com.ai.assistance.operit.data.model.CharacterGroupChatStats
 import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.MessageVariantEntity
+import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
 import com.ai.assistance.operit.data.model.OperitArchivedChat
+import com.ai.assistance.operit.data.model.OperitArchivedFolder
 import com.ai.assistance.operit.data.model.OperitArchivedMessage
 import com.ai.assistance.operit.data.model.OperitArchivedMessageVariant
 import com.ai.assistance.operit.data.model.OperitChatArchive
@@ -27,14 +31,10 @@ import com.ai.assistance.operit.util.LocaleUtils
 import com.ai.assistance.operit.data.converter.*
 import com.ai.assistance.operit.data.exporter.*
 import com.google.gson.GsonBuilder
-import com.google.gson.internal.Streams
-import com.google.gson.stream.JsonReader
-import com.google.gson.stream.JsonToken
 import com.google.gson.reflect.TypeToken
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
-import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.util.Date
@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -56,13 +57,14 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
 import java.io.InputStream
-import java.io.InputStreamReader
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -70,6 +72,9 @@ import java.util.zip.ZipOutputStream
 
 // 仅保留这个DataStore用于存储当前聊天ID
 private val Context.currentChatIdDataStore by preferencesDataStore(name = "current_chat_id")
+
+internal fun normalizeChatFolderId(folderId: String?): String? =
+    folderId.takeUnless { it == SYSTEM_UNGROUPED_FOLDER_ID }
 
 class ChatHistoryManager private constructor(private val context: Context) {
     companion object {
@@ -92,6 +97,8 @@ class ChatHistoryManager private constructor(private val context: Context) {
     // 使用Room数据库
     private val database = AppDatabase.getDatabase(context)
     private val chatDao = database.chatDao()
+    private val chatFolderDao = database.chatFolderDao()
+    private val chatFolderRepository = ChatFolderRepository(database)
     private val messageDao = database.messageDao()
     private val messageVariantDao = database.messageVariantDao()
     private val operitArchiveJson =
@@ -106,12 +113,87 @@ class ChatHistoryManager private constructor(private val context: Context) {
         var newCount: Int = 0,
         var updatedCount: Int = 0,
         var skippedCount: Int = 0,
+        var folderCount: Int = 0,
     )
 
-    private sealed interface StreamImportedChat {
-        data class Archive(val chat: OperitArchivedChat) : StreamImportedChat
+    private data class LegacyFolderBucketKey(
+        val characterCardName: String?,
+        val characterGroupId: String?,
+        val rawGroup: String,
+    )
 
-        data class Legacy(val history: ChatHistory) : StreamImportedChat
+    private fun OperitArchivedChat.legacyFolderBucketKey(): LegacyFolderBucketKey? {
+        val rawGroup = group ?: return null
+        if (rawGroup.isBlank()) return null
+        return LegacyFolderBucketKey(characterCardName, characterGroupId, rawGroup)
+    }
+
+    private suspend fun createLegacyImportFolders(
+        chats: List<OperitArchivedChat>,
+    ): Map<LegacyFolderBucketKey, String> {
+        val grouped = chats.mapNotNull { chat ->
+            chat.legacyFolderBucketKey()?.let { it to chat }
+        }.groupBy({ it.first }, { it.second })
+        if (grouped.isEmpty()) return emptyMap()
+
+        fun compareNullable(left: String?, right: String?): Int =
+            when {
+                left == null && right == null -> 0
+                left == null -> -1
+                right == null -> 1
+                else -> left.compareTo(right)
+            }
+        val keyComparator =
+            Comparator<LegacyFolderBucketKey> { left, right ->
+                compareNullable(left.characterCardName, right.characterCardName)
+                    .takeIf { it != 0 }
+                    ?: compareNullable(left.characterGroupId, right.characterGroupId)
+                        .takeIf { it != 0 }
+                    ?: left.rawGroup.compareTo(right.rawGroup)
+            }
+        val sorted =
+            grouped.entries.sortedWith(
+                Comparator { left, right ->
+                    left.value.minOf { it.displayOrder }
+                        .compareTo(right.value.minOf { it.displayOrder })
+                        .takeIf { it != 0 }
+                        ?: left.value.minOf {
+                            it.createdAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        }.compareTo(
+                            right.value.minOf {
+                                it.createdAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                            }
+                        ).takeIf { it != 0 }
+                        ?: keyComparator.compare(left.key, right.key)
+                }
+            )
+        val existingFolders = chatFolderDao.getFolders()
+        val allocatedIds = existingFolders.mapTo(hashSetOf()) { it.id }
+        var nextOrder =
+            existingFolders.filter { it.parentFolderId == null }.maxOfOrNull { it.displayOrder }
+                ?.plus(1) ?: 0L
+        return buildMap {
+            sorted.forEach { (key, bucketChats) ->
+                var id: String
+                do {
+                    id = java.util.UUID.randomUUID().toString()
+                } while (!allocatedIds.add(id))
+                val createdAt =
+                    bucketChats.minOf {
+                        it.createdAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                    }
+                chatFolderDao.insertFolder(
+                    ChatFolderEntity(
+                        id = id,
+                        name = key.rawGroup.trim(),
+                        parentFolderId = null,
+                        displayOrder = nextOrder++,
+                        createdAt = createdAt,
+                    )
+                )
+                put(key, id)
+            }
+        }
     }
 
     private fun hydrateMessages(
@@ -161,6 +243,27 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return completeHistories
     }
 
+    private suspend fun buildFolderPathsByChatId(
+        chatHistories: List<ChatHistory>,
+    ): Map<String, String> {
+        val folderById = chatFolderDao.getFolders().associateBy { it.id }
+        val pathMemo = mutableMapOf<String, String?>()
+        fun resolve(folderId: String, visiting: MutableSet<String>): String? {
+            pathMemo[folderId]?.let { return it }
+            val folder = folderById[folderId] ?: return null
+            if (!visiting.add(folderId)) return null
+            val parentPath = folder.parentFolderId?.let { resolve(it, visiting) }
+            visiting.remove(folderId)
+            val path = if (parentPath.isNullOrBlank()) folder.name else "$parentPath / ${folder.name}"
+            pathMemo[folderId] = path
+            return path
+        }
+        return chatHistories.mapNotNull { history ->
+            val path = history.folderId?.let { resolve(it, mutableSetOf()) }
+            if (path == null) null else history.id to path
+        }.toMap()
+    }
+
     private suspend fun buildOperitArchivedChat(chatHistory: ChatHistory): OperitArchivedChat {
         val messageEntities = messageDao.getMessagesForChat(chatHistory.id)
         val variantsByTimestamp =
@@ -181,21 +284,35 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     private suspend fun exportOperitArchiveJsonStream(
         file: File,
-        chatHistories: List<ChatHistory>,
     ) {
-        AppLogger.d(TAG, "开始流式导出 Operit 聊天记录，共 ${chatHistories.size} 个会话，目标=${file.absolutePath}")
-        BufferedWriter(
-            OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8),
-        ).use { writer ->
+        AppLogger.d(TAG, "开始流式导出 Operit 聊天记录，目标=${file.absolutePath}")
+        var exportedCount = 0
+        database.withTransaction {
+            val snapshotHistories =
+                chatDao.getAllChatsDirectly().map {
+                    it.toChatHistory().copy(folderId = normalizeChatFolderId(it.folderId))
+                }
+            exportedCount = snapshotHistories.size
+            BufferedWriter(
+                OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8),
+            ).use { writer ->
             writer.append("{\n")
             writer.append("  \"archiveType\": ")
             writer.append(operitArchiveJson.encodeToString(OperitChatArchive.ARCHIVE_TYPE))
             writer.append(",\n")
             writer.append("  \"formatVersion\": ${OperitChatArchive.CURRENT_FORMAT_VERSION},\n")
             writer.append("  \"exportedAt\": ${System.currentTimeMillis()},\n")
+            val archivedFolders =
+                chatFolderDao
+                    .getFolders()
+                    .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
+                    .map(OperitArchivedFolder::fromEntity)
+            writer.append("  \"folders\": ")
+            writer.append(operitArchiveJson.encodeToString(archivedFolders))
+            writer.append(",\n")
             writer.append("  \"chats\": [")
 
-            chatHistories.forEachIndexed { index, chatHistory ->
+            snapshotHistories.forEachIndexed { index, chatHistory ->
                 val archivedChat = buildOperitArchivedChat(chatHistory)
                 if (index == 0) {
                     writer.append('\n')
@@ -204,165 +321,378 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 }
                 writer.append(operitArchiveJson.encodeToString(archivedChat))
                 writer.flush()
-                if ((index + 1) % 20 == 0 || index == chatHistories.lastIndex) {
+                if ((index + 1) % 20 == 0 || index == snapshotHistories.lastIndex) {
                     AppLogger.d(
                         TAG,
-                        "流式导出进度: ${index + 1}/${chatHistories.size}，chatId=${archivedChat.id}，messages=${archivedChat.messages.size}",
+                        "流式导出进度: ${index + 1}/${snapshotHistories.size}，chatId=${archivedChat.id}，messages=${archivedChat.messages.size}",
                     )
                 }
             }
 
-            if (chatHistories.isNotEmpty()) {
+            if (snapshotHistories.isNotEmpty()) {
                 writer.append('\n')
             }
             writer.append("  ]\n")
             writer.append("}\n")
+            }
         }
-        AppLogger.d(TAG, "流式导出 Operit 聊天记录完成，共 ${chatHistories.size} 个会话，目标=${file.absolutePath}")
+        AppLogger.d(TAG, "流式导出 Operit 聊天记录完成，共 $exportedCount 个会话，目标=${file.absolutePath}")
     }
 
-    private fun <T> decodeStreamElement(
-        reader: JsonReader,
-        decode: (String) -> T,
-    ): T {
-        val element = Streams.parse(reader)
-        return decode(element.toString())
-    }
-
-    private suspend fun consumeImportedChat(
-        imported: StreamImportedChat,
+    private suspend fun consumeImportedArchiveChat(
+        archivedChat: OperitArchivedChat,
+        folderId: String?,
+        formatVersion: Int,
         existingIds: MutableSet<String>,
         counters: ImportCounters,
         importedIndex: Int,
     ) {
-        when (imported) {
-            is StreamImportedChat.Archive -> {
-                val archivedChat = imported.chat
-                if (archivedChat.messages.isEmpty()) {
-                    counters.skippedCount++
-                    AppLogger.w(TAG, "流式导入跳过空归档会话: index=$importedIndex, chatId=${archivedChat.id}")
-                    return
-                }
+        val existed = existingIds.contains(archivedChat.id)
+        if (existed) {
+            counters.updatedCount++
+        } else {
+            counters.newCount++
+            existingIds.add(archivedChat.id)
+        }
 
-                val existed = existingIds.contains(archivedChat.id)
-                if (existed) {
-                    counters.updatedCount++
-                } else {
-                    counters.newCount++
-                    existingIds.add(archivedChat.id)
-                }
+        saveArchivedChatInCurrentTransaction(archivedChat, formatVersion, folderId)
 
-                saveArchivedChat(archivedChat)
+        if (importedIndex % 20 == 0) {
+            AppLogger.d(
+                TAG,
+                "导入进度: index=$importedIndex, archive chatId=${archivedChat.id}, messages=${archivedChat.messages.size}, new=${counters.newCount}, updated=${counters.updatedCount}, skipped=${counters.skippedCount}",
+            )
+        }
+    }
 
-                if (importedIndex % 20 == 0) {
-                    AppLogger.d(
-                        TAG,
-                        "流式导入进度: index=$importedIndex, archive chatId=${archivedChat.id}, messages=${archivedChat.messages.size}, new=${counters.newCount}, updated=${counters.updatedCount}, skipped=${counters.skippedCount}",
-                    )
-                }
-            }
+    private data class StagedV4Archive(
+        val folders: List<OperitArchivedFolder>,
+        val chats: List<OperitArchivedChat>,
+        val orphanParentCount: Int,
+        val orphanChatFolderCount: Int,
+    )
 
-            is StreamImportedChat.Legacy -> {
-                val chatHistory = imported.history
-                if (chatHistory.messages.isEmpty()) {
-                    counters.skippedCount++
-                    AppLogger.w(TAG, "流式导入跳过空会话: index=$importedIndex, chatId=${chatHistory.id}")
-                    return
-                }
-
-                val existed = existingIds.contains(chatHistory.id)
-                if (existed) {
-                    counters.updatedCount++
-                } else {
-                    counters.newCount++
-                    existingIds.add(chatHistory.id)
-                }
-
-                saveChatHistory(chatHistory)
-
-                if (importedIndex % 20 == 0) {
-                    AppLogger.d(
-                        TAG,
-                        "流式导入进度: index=$importedIndex, legacy chatId=${chatHistory.id}, messages=${chatHistory.messages.size}, new=${counters.newCount}, updated=${counters.updatedCount}, skipped=${counters.skippedCount}",
-                    )
-                }
+    private fun stageV4Archive(archive: OperitChatArchive): StagedV4Archive {
+        fun requireCanonicalUuid(value: String, field: String) {
+            require(
+                runCatching { java.util.UUID.fromString(value).toString() == value }.getOrDefault(false)
+            ) {
+                "$field must be a canonical UUID"
             }
         }
+
+        val folderIds = archive.folders.map { it.id }
+        require(folderIds.distinct().size == folderIds.size) {
+            "Archive v4 contains duplicate folder IDs"
+        }
+        archive.folders.forEach { folder ->
+            requireCanonicalUuid(folder.id, "Folder ID")
+            folder.parentFolderId?.let { requireCanonicalUuid(it, "Parent folder ID") }
+            require(folder.name.trim().isNotEmpty()) { "Folder name must not be blank" }
+        }
+        val chatIds = archive.chats.map { it.id }
+        require(chatIds.all { it.isNotBlank() }) { "Chat ID must not be blank" }
+        require(chatIds.distinct().size == chatIds.size) {
+            "Archive v4 contains duplicate chat IDs"
+        }
+
+        val folderIdSet = folderIds.toSet()
+        var orphanParentCount = 0
+        val normalizedFolders =
+            archive.folders.map { folder ->
+                val normalizedParent =
+                    folder.parentFolderId?.takeIf { parentId ->
+                        (parentId in folderIdSet).also { exists ->
+                            if (!exists) orphanParentCount++
+                        }
+                    }
+                folder.copy(
+                    name = folder.name.trim(),
+                    parentFolderId = normalizedParent,
+                )
+            }
+        var orphanChatFolderCount = 0
+        val normalizedChats =
+            archive.chats.map { chat ->
+                val normalizedFolderId =
+                    chat.folderId?.takeIf { folderId ->
+                        (folderId in folderIdSet).also { exists ->
+                            if (!exists) orphanChatFolderCount++
+                        }
+                    }
+                chat.copy(folderId = normalizedFolderId)
+            }
+        validateFolderGraph(normalizedFolders)
+        return StagedV4Archive(
+            folders = normalizedFolders,
+            chats = normalizedChats,
+            orphanParentCount = orphanParentCount,
+            orphanChatFolderCount = orphanChatFolderCount,
+        )
+    }
+
+    private fun validateFolderGraph(folders: List<OperitArchivedFolder>) {
+        val byId = folders.associateBy { it.id }
+        fun depth(folderId: String, visiting: MutableSet<String>): Int {
+            require(visiting.add(folderId)) { "Archive v4 folder graph contains a cycle" }
+            val parentId = byId.getValue(folderId).parentFolderId
+            val depth = if (parentId == null) 1 else depth(parentId, visiting) + 1
+            visiting.remove(folderId)
+            require(depth <= 3) { "Archive v4 folder depth exceeds 3" }
+            return depth
+        }
+        folders.forEach { depth(it.id, hashSetOf()) }
+    }
+
+    private fun topologicallySortFolders(
+        folders: List<OperitArchivedFolder>,
+    ): List<OperitArchivedFolder> {
+        val remaining = folders.associateByTo(linkedMapOf()) { it.id }
+        val emitted = hashSetOf<String>()
+        val result = mutableListOf<OperitArchivedFolder>()
+        while (remaining.isNotEmpty()) {
+            val ready =
+                remaining.values
+                    .filter { it.parentFolderId == null || it.parentFolderId in emitted }
+                    .sortedWith(
+                        compareBy<OperitArchivedFolder> { it.displayOrder }
+                            .thenBy { it.createdAt }
+                            .thenBy { it.id }
+                    )
+            require(ready.isNotEmpty()) { "Archive v4 folder graph is not acyclic" }
+            ready.forEach { folder ->
+                result += folder
+                emitted += folder.id
+                remaining.remove(folder.id)
+            }
+        }
+        return result
+    }
+
+    private suspend fun importV4Archive(
+        staged: StagedV4Archive,
+        existingIds: MutableSet<String>,
+        counters: ImportCounters,
+    ): Int {
+        var importedFolderCount = 0
+        database.withTransaction {
+            existingIds.clear()
+            existingIds.addAll(chatDao.getAllChatsDirectly().map { it.id })
+            val localFolderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
+            val archiveFolderIds = staged.folders.mapTo(hashSetOf()) { it.id }
+            val allocated = hashSetOf<String>().apply {
+                addAll(localFolderIds)
+                addAll(archiveFolderIds)
+            }
+            val folderIdRemap =
+                staged.folders.associate { folder ->
+                    val resolvedId =
+                        if (folder.id !in localFolderIds) {
+                            folder.id
+                        } else {
+                            var candidate: String
+                            do {
+                                candidate = java.util.UUID.randomUUID().toString()
+                            } while (!allocated.add(candidate))
+                            candidate
+                        }
+                    folder.id to resolvedId
+                }
+            val remappedFolders =
+                staged.folders.map { folder ->
+                    folder.copy(
+                        id = folderIdRemap.getValue(folder.id),
+                        parentFolderId = folder.parentFolderId?.let(folderIdRemap::getValue),
+                    )
+                }
+            val remappedFolderIds = remappedFolders.map { it.id }
+            require(remappedFolderIds.distinct().size == remappedFolderIds.size) {
+                "Remapped archive contains duplicate folder IDs"
+            }
+            val remappedFolderIdSet = remappedFolderIds.toSet()
+            remappedFolders.forEach { folder ->
+                require(
+                    runCatching {
+                        java.util.UUID.fromString(folder.id).toString() == folder.id
+                    }.getOrDefault(false)
+                ) { "Remapped folder ID must be a canonical UUID" }
+                require(folder.name.isNotBlank() && folder.name == folder.name.trim()) {
+                    "Remapped folder name is invalid"
+                }
+                require(
+                    folder.parentFolderId == null ||
+                        folder.parentFolderId in remappedFolderIdSet
+                ) { "Remapped parent folder reference is invalid" }
+            }
+            staged.chats.forEach { chat ->
+                val remappedFolderId = chat.folderId?.let(folderIdRemap::getValue)
+                require(remappedFolderId == null || remappedFolderId in remappedFolderIdSet) {
+                    "Remapped chat folder reference is invalid"
+                }
+            }
+            validateFolderGraph(remappedFolders)
+            topologicallySortFolders(remappedFolders).forEach { folder ->
+                chatFolderDao.insertFolder(folder.toEntity())
+                importedFolderCount++
+            }
+            staged.chats.forEachIndexed { index, archivedChat ->
+                consumeImportedArchiveChat(
+                    archivedChat = archivedChat,
+                    folderId = archivedChat.folderId?.let(folderIdRemap::getValue),
+                    formatVersion = 4,
+                    existingIds = existingIds,
+                    counters = counters,
+                    importedIndex = index + 1,
+                )
+            }
+            val foreignKeyViolation =
+                database.openHelper.writableDatabase
+                    .query("PRAGMA foreign_key_check")
+                    .use { cursor -> cursor.moveToFirst() }
+            check(!foreignKeyViolation) { "Archive v4 import violates foreign keys" }
+        }
+        if (staged.orphanParentCount > 0 || staged.orphanChatFolderCount > 0) {
+            AppLogger.w(
+                TAG,
+                "Archive v4 normalized structural references: parents=${staged.orphanParentCount}, chats=${staged.orphanChatFolderCount}",
+            )
+        }
+        return importedFolderCount
     }
 
     private suspend fun importOperitChatHistoriesStream(
         inputStream: InputStream,
         existingIds: MutableSet<String>,
     ): ChatImportResult {
+        val content = inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+        if (content.isBlank()) {
+            throw Exception(context.getString(R.string.chat_history_imported_file_empty))
+        }
+
         val counters = ImportCounters()
-        var importedIndex = 0
-
-        JsonReader(InputStreamReader(inputStream, StandardCharsets.UTF_8)).use { reader ->
-            reader.isLenient = true
-            when (reader.peek()) {
-                JsonToken.END_DOCUMENT -> {
-                    throw Exception(context.getString(R.string.chat_history_imported_file_empty))
-                }
-
-                JsonToken.BEGIN_OBJECT -> {
-                    AppLogger.d(TAG, "检测到 Operit 归档对象，开始流式导入")
-                    reader.beginObject()
-                    while (reader.hasNext()) {
-                        when (reader.nextName()) {
-                            "chats" -> {
-                                reader.beginArray()
-                                while (reader.hasNext()) {
-                                    importedIndex++
-                                    val archivedChat =
-                                        decodeStreamElement(reader) {
-                                            operitArchiveJson.decodeFromString<OperitArchivedChat>(it)
-                                        }
-                                    consumeImportedChat(
-                                        StreamImportedChat.Archive(archivedChat),
-                                        existingIds,
-                                        counters,
-                                        importedIndex,
-                                    )
-                                }
-                                reader.endArray()
-                            }
-
-                            else -> reader.skipValue()
-                        }
-                    }
-                    reader.endObject()
-                }
-
-                JsonToken.BEGIN_ARRAY -> {
-                    AppLogger.d(TAG, "检测到旧版聊天数组，开始流式导入")
-                    reader.beginArray()
-                    while (reader.hasNext()) {
-                        importedIndex++
-                        val chatHistory =
-                            decodeStreamElement(reader) {
-                                operitArchiveJson.decodeFromString<ChatHistory>(it)
-                            }
-                        consumeImportedChat(
-                            StreamImportedChat.Legacy(chatHistory),
-                            existingIds,
-                            counters,
-                            importedIndex,
-                        )
-                    }
-                    reader.endArray()
-                }
-
-                else -> {
-                    throw Exception(context.getString(R.string.chat_history_parse_backup_failed, "unexpected json token"))
+        val trimmed = content.trimStart()
+        if (trimmed.startsWith("{")) {
+            // Decode and validate the complete archive before the first database write.
+            val root =
+                operitArchiveJson.parseToJsonElement(content) as? JsonObject
+                    ?: throw IllegalArgumentException("Operit archive root must be an object")
+            require("archiveType" in root) { "Operit archive is missing archiveType" }
+            require("formatVersion" in root) { "Operit archive is missing formatVersion" }
+            val archive = operitArchiveJson.decodeFromString<OperitChatArchive>(content)
+            ChatArchiveImportPolicy.validateHeader(archive.archiveType, archive.formatVersion)
+            val archivedChatObjects =
+                (root["chats"] as? JsonArray)?.map { element ->
+                    element as? JsonObject
+                        ?: throw IllegalArgumentException("Operit archive contains a non-object chat")
+                } ?: throw IllegalArgumentException("Operit archive is missing chats")
+            require(archivedChatObjects.size == archive.chats.size) {
+                "Operit archive chat metadata does not match decoded chats"
+            }
+            if (archive.formatVersion >= 3) {
+                require(archive.chats.all { it.isFavorite != null }) {
+                    "Archive v${archive.formatVersion} contains a chat without isFavorite"
                 }
             }
+            archive.chats.forEach { archivedChat ->
+                archivedChat.messages.forEach { archivedMessage ->
+                    if (archivedMessage.variants.isNotEmpty()) {
+                        validateArchivedMessageVariants(
+                            archivedMessage.baseMessage,
+                            archivedMessage.variants,
+                        )
+                    }
+                }
+            }
+            if (archive.formatVersion == 4) {
+                val archivedFolderElements = root["folders"] as? JsonArray
+                require(archivedFolderElements != null) {
+                    "Archive v4 is missing folders"
+                }
+                val archivedFolderObjects =
+                    archivedFolderElements.map { element ->
+                        element as? JsonObject
+                            ?: throw IllegalArgumentException(
+                                "Archive v4 contains a non-object folder"
+                            )
+                    }
+                require(archivedFolderObjects.size == archive.folders.size) {
+                    "Archive v4 folder metadata does not match decoded folders"
+                }
+                val requiredFolderFields =
+                    setOf("id", "name", "parentFolderId", "displayOrder", "createdAt")
+                require(
+                    archivedFolderObjects.all { folder ->
+                        requiredFolderFields.all(folder::containsKey)
+                    }
+                ) { "Archive v4 contains a folder with missing fields" }
+                require(archivedChatObjects.all { "folderId" in it }) {
+                    "Archive v4 contains a chat without folderId"
+                }
+                counters.folderCount = importV4Archive(
+                    staged = stageV4Archive(archive),
+                    existingIds = existingIds,
+                    counters = counters,
+                )
+            } else {
+                database.withTransaction {
+                    val folderIdByBucket = createLegacyImportFolders(archive.chats)
+                    archive.chats.forEachIndexed { index, archivedChat ->
+                        // v2/v3 distinguish a missing legacy group field from explicit null/blank.
+                        val folderId =
+                            if ("group" in archivedChatObjects[index]) {
+                                archivedChat.legacyFolderBucketKey()?.let(folderIdByBucket::get)
+                            } else {
+                                chatDao.getChatById(archivedChat.id)?.folderId
+                            }
+                        consumeImportedArchiveChat(
+                            archivedChat = archivedChat,
+                            folderId = folderId,
+                            formatVersion = archive.formatVersion,
+                            existingIds = existingIds,
+                            counters = counters,
+                            importedIndex = index + 1,
+                        )
+                    }
+                }
+            }
+        } else if (trimmed.startsWith("[")) {
+            // Legacy unversioned arrays remain importable, but are fully parsed before writes.
+            val histories = operitArchiveJson.decodeFromString<List<ChatHistory>>(content)
+            histories.forEachIndexed { index, history ->
+                if (history.messages.isEmpty()) {
+                    counters.skippedCount++
+                } else {
+                    val existed = existingIds.contains(history.id)
+                    if (existed) counters.updatedCount++ else {
+                        counters.newCount++
+                        existingIds.add(history.id)
+                    }
+                    saveChatHistory(history)
+                }
+                if ((index + 1) % 20 == 0) {
+                    AppLogger.d(TAG, "旧版聊天数组导入进度: ${index + 1}/${histories.size}")
+                }
+            }
+        } else {
+            throw Exception(
+                context.getString(
+                    R.string.chat_history_parse_backup_failed,
+                    "unexpected json token",
+                )
+            )
         }
 
         AppLogger.d(
             TAG,
-            "流式导入完成: total=$importedIndex, new=${counters.newCount}, updated=${counters.updatedCount}, skipped=${counters.skippedCount}",
+            "导入完成: new=${counters.newCount}, updated=${counters.updatedCount}, skipped=${counters.skippedCount}",
         )
-        return ChatImportResult(counters.newCount, counters.updatedCount, counters.skippedCount)
+        return ChatImportResult(
+            new = counters.newCount,
+            updated = counters.updatedCount,
+            skipped = counters.skippedCount,
+            foldersCreated = counters.folderCount,
+            mayLeavePreviousEmptyFolders = counters.folderCount > 0,
+        )
     }
 
     init {
@@ -395,33 +725,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     // 辅助函数：将ChatEntity转换为ChatHistory
     private fun ChatEntity.toChatHistory(): ChatHistory {
-        val createdAt = Instant.ofEpochMilli(this.createdAt)
-            .atZone(ZoneId.systemDefault())
-            .toLocalDateTime()
-
-        val updatedAt = Instant.ofEpochMilli(this.updatedAt)
-            .atZone(ZoneId.systemDefault())
-            .toLocalDateTime()
-
-        return ChatHistory(
-            id = this.id,
-            title = this.title,
-            messages = emptyList(), // 关键改动：不加载完整消息，以提高侧边栏性能
-            createdAt = createdAt,
-            updatedAt = updatedAt,
-            inputTokens = this.inputTokens,
-            outputTokens = this.outputTokens,
-            currentWindowSize = this.currentWindowSize,
-            group = this.group, // 映射group字段
-            displayOrder = this.displayOrder,
-            workspace = this.workspace, // 映射workspace字段
-            workspaceEnv = this.workspaceEnv, // 映射workspaceEnv字段
-            parentChatId = this.parentChatId, // 映射parentChatId字段
-            characterCardName = this.characterCardName, // 映射characterCardName字段
-            characterGroupId = this.characterGroupId, // 映射characterGroupId字段
-            locked = this.locked,
-            pinned = this.pinned
-        )
+        return toChatHistory(emptyList())
     }
 
     // 获取所有聊天历史（转换为UI层需要的ChatHistory对象）
@@ -432,7 +736,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
             // 使用withContext将处理移至IO线程
             kotlinx.coroutines.withContext(Dispatchers.IO) {
-                chatEntities.map { it.toChatHistory() }
+                chatEntities.map {
+                    it.toChatHistory().copy(folderId = normalizeChatFolderId(it.folderId))
+                }
             }
         }
 
@@ -443,6 +749,65 @@ class ChatHistoryManager private constructor(private val context: Context) {
             SharingStarted.Lazily,
             emptyList()
         )
+
+    val chatFoldersFlow =
+        chatFolderDao
+            .observeFolders()
+            .onStart { chatFolderRepository.ensureUngroupedFolder() }
+            .stateIn(
+            CoroutineScope(Dispatchers.IO + SupervisorJob()),
+            SharingStarted.Lazily,
+            emptyList(),
+        )
+
+    suspend fun createFolder(parentFolderId: String?, name: String): String =
+        chatFolderRepository.createFolder(parentFolderId, name)
+
+    suspend fun renameFolder(folderId: String, newName: String) =
+        chatFolderRepository.renameFolder(folderId, newName)
+
+    suspend fun moveFolder(
+        folderId: String,
+        targetParentFolderId: String?,
+        expectedSourceSiblings: List<HistorySiblingSnapshot>,
+        expectedTargetSiblings: List<HistorySiblingSnapshot>,
+        beforeNodeKey: String? = null,
+        afterNodeKey: String? = null,
+        allowAppendToNonEmptyTarget: Boolean = true,
+    ) =
+        chatFolderRepository.moveFolder(
+            folderId = folderId,
+            targetParentFolderId = targetParentFolderId,
+            expectedSourceSiblings = expectedSourceSiblings,
+            expectedTargetSiblings = expectedTargetSiblings,
+            beforeNodeKey = beforeNodeKey,
+            afterNodeKey = afterNodeKey,
+            allowAppendToNonEmptyTarget = allowAppendToNonEmptyTarget,
+        )
+
+    suspend fun moveChat(
+        chatId: String,
+        targetFolderId: String?,
+        expectedSourceSiblings: List<HistorySiblingSnapshot>,
+        expectedTargetSiblings: List<HistorySiblingSnapshot>,
+        orderedVisibleNodeKeys: List<String>? = null,
+        beforeNodeKey: String? = null,
+        afterNodeKey: String? = null,
+        allowAppendToNonEmptyTarget: Boolean = true,
+    ) =
+        chatFolderRepository.moveChat(
+            chatId = chatId,
+            targetFolderId = targetFolderId,
+            orderedVisibleNodeKeys = orderedVisibleNodeKeys,
+            beforeNodeKey = beforeNodeKey,
+            afterNodeKey = afterNodeKey,
+            expectedSourceSiblings = expectedSourceSiblings,
+            expectedTargetSiblings = expectedTargetSiblings,
+            allowAppendToNonEmptyTarget = allowAppendToNonEmptyTarget,
+        )
+
+    suspend fun deleteFolder(folderId: String) =
+        chatFolderRepository.deleteFolder(folderId)
 
     suspend fun getTotalChatCount(): Int {
         return withContext(Dispatchers.IO) { chatDao.getTotalChatCount() }
@@ -489,7 +854,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
         return sourceFlow.map { chatEntities ->
             kotlinx.coroutines.withContext(Dispatchers.IO) {
-                chatEntities.map { it.toChatHistory() }
+                chatEntities.map {
+                    it.toChatHistory().copy(folderId = normalizeChatFolderId(it.folderId))
+                }
             }
         }
     }
@@ -547,60 +914,101 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private suspend fun saveChatHistoryInternal(
         history: ChatHistory,
         variantsByTimestamp: Map<Long, List<OperitArchivedMessageVariant>> = emptyMap(),
+        archiveFormatVersion: Int? = null,
+        archivedFavorite: Boolean? = null,
+        preserveStructure: Boolean = true,
     ) {
         chatMutex(history.id).withLock {
-            try {
-                // 创建聊天实体
-                val chatEntity = ChatEntity.fromChatHistory(history)
-
-                // 保存聊天实体
-                chatDao.insertChat(chatEntity)
-
-                // 先删除该聊天的所有现有消息
-                messageDao.deleteAllMessagesForChat(chatEntity.id)
-                messageVariantDao.deleteAllVariantsForChat(chatEntity.id)
-
-                // 批量插入所有消息
-                val messageEntities =
-                    history.messages.mapIndexed { index, message ->
-                        val archivedVariants =
-                            variantsByTimestamp[message.timestamp]
-                                .orEmpty()
-                                .sortedBy { it.variantIndex }
-                        if (archivedVariants.isNotEmpty()) {
-                            validateArchivedMessageVariants(message, archivedVariants)
-                        }
-                        MessageEntity.fromChatMessage(
-                            chatEntity.id,
-                            if (archivedVariants.isEmpty()) {
-                                message.copy(selectedVariantIndex = 0, variantCount = 1)
-                            } else {
-                                message.copy(variantCount = archivedVariants.size + 1)
-                            },
-                            index,
-                        )
-                    }
-                messageDao.insertMessages(messageEntities)
-
-                val variantEntities =
-                    history.messages.flatMap { message ->
-                        variantsByTimestamp[message.timestamp]
-                            .orEmpty()
-                            .sortedBy { it.variantIndex }
-                            .map { variant ->
-                                variant.toEntity(
-                                    chatId = chatEntity.id,
-                                    messageTimestamp = message.timestamp,
-                                )
-                            }
-                    }
-                if (variantEntities.isNotEmpty()) {
-                    messageVariantDao.insertVariants(variantEntities)
-                }
-            } catch (e: Exception) {
-                throw e
+            database.withTransaction {
+                persistChatHistoryInCurrentTransaction(
+                    history = history,
+                    variantsByTimestamp = variantsByTimestamp,
+                    archiveFormatVersion = archiveFormatVersion,
+                    archivedFavorite = archivedFavorite,
+                    preserveStructure = preserveStructure,
+                )
             }
         }
+    }
+
+    private suspend fun persistChatHistoryInCurrentTransaction(
+        history: ChatHistory,
+        variantsByTimestamp: Map<Long, List<OperitArchivedMessageVariant>> = emptyMap(),
+        archiveFormatVersion: Int? = null,
+        archivedFavorite: Boolean? = null,
+        preserveStructure: Boolean = true,
+    ) {
+        val resolvedHistory =
+            (
+                if (archiveFormatVersion != null) {
+                    val localFavorite = chatDao.getChatById(history.id)?.isFavorite ?: false
+                    history.copy(
+                        isFavorite =
+                            ChatArchiveImportPolicy.resolveFavorite(
+                                formatVersion = archiveFormatVersion,
+                                archivedFavorite = archivedFavorite,
+                                localFavorite = localFavorite,
+                            )
+                    )
+                } else {
+                    history
+                }
+            ).copy(folderId = normalizeChatFolderId(history.folderId))
+        val chatEntity = ChatEntity.fromChatHistory(resolvedHistory)
+        val existingEntity = chatDao.getChatById(chatEntity.id)
+        if (existingEntity == null) {
+            chatDao.insertChat(chatEntity)
+        } else {
+            val merged =
+                mergePersistedChatEntity(
+                    incoming = chatEntity,
+                    existing = existingEntity,
+                    preserveStructure = preserveStructure && archiveFormatVersion == null,
+                )
+            chatDao.updateChat(
+                merged.copy(folderId = normalizeChatFolderId(merged.folderId))
+            )
+        }
+
+        messageDao.deleteAllMessagesForChat(chatEntity.id)
+        messageVariantDao.deleteAllVariantsForChat(chatEntity.id)
+        val messageEntities =
+            resolvedHistory.messages.mapIndexed { index, message ->
+                val archivedVariants =
+                    variantsByTimestamp[message.timestamp]
+                        .orEmpty()
+                        .sortedBy { it.variantIndex }
+                if (archivedVariants.isNotEmpty()) {
+                    validateArchivedMessageVariants(message, archivedVariants)
+                }
+                MessageEntity.fromChatMessage(
+                    chatEntity.id,
+                    if (archivedVariants.isEmpty()) {
+                        message.copy(selectedVariantIndex = 0, variantCount = 1)
+                    } else {
+                        message.copy(variantCount = archivedVariants.size + 1)
+                    },
+                    index,
+                )
+            }
+        messageDao.insertMessages(messageEntities)
+
+        val variantEntities =
+            resolvedHistory.messages.flatMap { message ->
+                variantsByTimestamp[message.timestamp]
+                    .orEmpty()
+                    .sortedBy { it.variantIndex }
+                    .map { variant ->
+                        variant.toEntity(
+                            chatId = chatEntity.id,
+                            messageTimestamp = message.timestamp,
+                        )
+                    }
+            }
+        if (variantEntities.isNotEmpty()) {
+            messageVariantDao.insertVariants(variantEntities)
+        }
+        chatDao.recalculateLastMessageAt(chatEntity.id)
     }
 
     // 保存聊天历史
@@ -608,12 +1016,38 @@ class ChatHistoryManager private constructor(private val context: Context) {
         saveChatHistoryInternal(history)
     }
 
-    private suspend fun saveArchivedChat(history: OperitArchivedChat) {
+    private suspend fun saveArchivedChat(
+        history: OperitArchivedChat,
+        formatVersion: Int,
+        folderId: String?,
+    ) {
         val variantsByTimestamp =
             history.messages.associate { archivedMessage ->
                 archivedMessage.baseMessage.timestamp to archivedMessage.variants
             }
-        saveChatHistoryInternal(history.toChatHistory(), variantsByTimestamp)
+        saveChatHistoryInternal(
+            history.toChatHistory(history.isFavorite ?: false, folderId),
+            variantsByTimestamp,
+            archiveFormatVersion = formatVersion,
+            archivedFavorite = history.isFavorite,
+        )
+    }
+
+    private suspend fun saveArchivedChatInCurrentTransaction(
+        history: OperitArchivedChat,
+        formatVersion: Int,
+        folderId: String?,
+    ) {
+        val variantsByTimestamp =
+            history.messages.associate { archivedMessage ->
+                archivedMessage.baseMessage.timestamp to archivedMessage.variants
+            }
+        persistChatHistoryInCurrentTransaction(
+            history = history.toChatHistory(history.isFavorite ?: false, folderId),
+            variantsByTimestamp = variantsByTimestamp,
+            archiveFormatVersion = formatVersion,
+            archivedFavorite = history.isFavorite,
+        )
     }
 
     /** 更新聊天锁定状态 */
@@ -640,25 +1074,35 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
     }
 
-    private suspend fun persistMessageLocked(chatId: String, messageToPersist: ChatMessage): ChatMessage {
-        val nextOrderIndex = (messageDao.getMaxOrderIndex(chatId) ?: -1) + 1
-        val messageEntity =
-            MessageEntity.fromChatMessage(
-                chatId = chatId,
-                message = messageToPersist,
-                orderIndex = nextOrderIndex,
-            )
-        messageDao.insertMessage(messageEntity)
+    /** 收藏状态不修改消息收藏、updatedAt 或 lastMessageAt。 */
+    suspend fun updateChatFavorite(chatId: String, isFavorite: Boolean) {
+        chatMutex(chatId).withLock {
+            chatDao.updateChatFavorite(chatId, isFavorite)
+        }
+    }
 
-        chatDao.getChatById(chatId)?.let { chat ->
-            chatDao.updateChatMetadata(
-                chatId = chatId,
-                title = chat.title,
-                timestamp = System.currentTimeMillis(),
-                inputTokens = chat.inputTokens,
-                outputTokens = chat.outputTokens,
-                currentWindowSize = chat.currentWindowSize
-            )
+    private suspend fun persistMessageLocked(chatId: String, messageToPersist: ChatMessage): ChatMessage {
+        database.withTransaction {
+            val nextOrderIndex = (messageDao.getMaxOrderIndex(chatId) ?: -1) + 1
+            val messageEntity =
+                MessageEntity.fromChatMessage(
+                    chatId = chatId,
+                    message = messageToPersist,
+                    orderIndex = nextOrderIndex,
+                )
+            messageDao.insertMessage(messageEntity)
+            chatDao.advanceLastMessageAt(chatId, messageToPersist.timestamp)
+
+            chatDao.getChatById(chatId)?.let { chat ->
+                chatDao.updateChatMetadata(
+                    chatId = chatId,
+                    title = chat.title,
+                    timestamp = System.currentTimeMillis(),
+                    inputTokens = chat.inputTokens,
+                    outputTokens = chat.outputTokens,
+                    currentWindowSize = chat.currentWindowSize
+                )
+            }
         }
 
         return messageToPersist
@@ -834,97 +1278,6 @@ class ChatHistoryManager private constructor(private val context: Context) {
     }
 
     /**
-     * 批量更新聊天记录的顺序和分组
-     * @param updatedHistories 包含更新信息的ChatHistory列表
-     */
-    suspend fun updateChatOrderAndGroup(updatedHistories: List<ChatHistory>) {
-        globalMutex.withLock {
-            try {
-                val timestamp = System.currentTimeMillis()
-                val entitiesToUpdate = updatedHistories.map { history ->
-                    // Find the original entity to keep other fields intact
-                    val originalEntity = chatDao.getChatById(history.id)
-                    originalEntity?.copy(
-                        displayOrder = history.displayOrder,
-                        group = history.group,
-                        updatedAt = timestamp
-                    ) ?: ChatEntity.fromChatHistory(history.copy(updatedAt = LocalDateTime.now()))
-                }
-                chatDao.updateChats(entitiesToUpdate)
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "Failed to update chat order and group", e)
-                throw e
-            }
-        }
-    }
-
-    /**
-     * 重命名分组
-     * @param oldName 旧的分组名称
-     * @param newName 新的分组名称
-     * @param characterCardName 角色卡名称，如果为null则更新所有同名分组
-     */
-    suspend fun updateGroupName(oldName: String, newName: String, characterCardName: String?) {
-        globalMutex.withLock {
-            try {
-                if (characterCardName != null) {
-                    // 只更新指定角色卡下的分组（使用 SQL 批量操作）
-                    chatDao.updateGroupNameForCharacter(oldName, newName, characterCardName)
-                } else {
-                    // 更新所有同名分组
-                    chatDao.updateGroupName(oldName, newName)
-                }
-            } catch (e: Exception) {
-                AppLogger.e(
-                    TAG,
-                    "Failed to rename group from $oldName to $newName (character: $characterCardName)",
-                    e
-                )
-                throw e
-            }
-        }
-    }
-
-    /**
-     * 删除分组
-     * @param groupName 要删除的分组名称
-     * @param deleteChats 是否同时删除分组下的聊天记录
-     * @param characterCardName 角色卡名称，如果为null则删除所有同名分组
-     */
-    suspend fun deleteGroup(groupName: String, deleteChats: Boolean, characterCardName: String?) {
-        globalMutex.withLock {
-            try {
-                if (characterCardName != null) {
-                    // 只删除指定角色卡下的分组（使用 SQL 批量操作）
-                    if (deleteChats) {
-                        chatDao.deleteChatsInGroupForCharacter(groupName, characterCardName)
-                        // 保留被锁定的聊天：仅清除锁定聊天的分组
-                        chatDao.removeGroupFromLockedChatsForCharacter(groupName, characterCardName)
-                    } else {
-                        chatDao.removeGroupFromChatsForCharacter(groupName, characterCardName)
-                    }
-                } else {
-                    // 删除所有同名分组
-                    if (deleteChats) {
-                        chatDao.deleteChatsInGroup(groupName)
-                        // 保留被锁定的聊天：仅清除锁定聊天的分组
-                        chatDao.removeGroupFromLockedChats(groupName)
-                    } else {
-                        chatDao.removeGroupFromChats(groupName)
-                    }
-                }
-            } catch (e: Exception) {
-                AppLogger.e(
-                    TAG,
-                    "Failed to delete group $groupName (deleteChats: $deleteChats, character: $characterCardName)",
-                    e
-                )
-                throw e
-            }
-        }
-    }
-
-    /**
      * 删除单条消息.
      * @param chatId 聊天ID
      * @param timestamp 消息时间戳
@@ -933,21 +1286,24 @@ class ChatHistoryManager private constructor(private val context: Context) {
         chatMutex(chatId).withLock {
             try {
                 AppLogger.d(TAG, "正在从数据库删除消息. ChatId: $chatId, Timestamp: $timestamp")
-                messageVariantDao.deleteVariantsForMessage(chatId, timestamp)
-                messageDao.deleteMessageByTimestamp(chatId, timestamp)
-                AppLogger.d(TAG, "消息从数据库删除成功.")
+                database.withTransaction {
+                    messageVariantDao.deleteVariantsForMessage(chatId, timestamp)
+                    messageDao.deleteMessageByTimestamp(chatId, timestamp)
+                    chatDao.recalculateLastMessageAt(chatId)
 
-                // Update chat metadata
-                chatDao.getChatById(chatId)?.let { chat ->
-                    chatDao.updateChatMetadata(
-                        chatId = chatId,
-                        title = chat.title,
-                        timestamp = System.currentTimeMillis(),
-                        inputTokens = chat.inputTokens,
-                        outputTokens = chat.outputTokens,
-                        currentWindowSize = chat.currentWindowSize
-                    )
+                    // Update chat metadata
+                    chatDao.getChatById(chatId)?.let { chat ->
+                        chatDao.updateChatMetadata(
+                            chatId = chatId,
+                            title = chat.title,
+                            timestamp = System.currentTimeMillis(),
+                            inputTokens = chat.inputTokens,
+                            outputTokens = chat.outputTokens,
+                            currentWindowSize = chat.currentWindowSize
+                        )
+                    }
                 }
+                AppLogger.d(TAG, "消息从数据库删除成功.")
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Failed to delete message with timestamp $timestamp for chat $chatId", e)
                 throw e
@@ -962,97 +1318,99 @@ class ChatHistoryManager private constructor(private val context: Context) {
     ) {
         chatMutex(chatId).withLock {
             try {
-                val baseMessage =
-                    messageDao.getMessageByTimestamp(chatId, messageTimestamp)
-                        ?: throw IllegalArgumentException(
-                            "Message $messageTimestamp does not exist in chat $chatId",
-                        )
-                if (baseMessage.sender != "ai") {
-                    throw IllegalArgumentException("Only AI messages can delete variants")
-                }
-
-                val variants =
-                    messageVariantDao.getVariantsForMessage(chatId, messageTimestamp)
-                        .sortedBy { it.variantIndex }
-                if (variants.isEmpty()) {
-                    throw IllegalStateException("Message $messageTimestamp has no deletable variants")
-                }
-
-                if (variantIndex == 0) {
-                    val replacementVariant =
-                        variants.firstOrNull()
-                            ?: throw IllegalStateException(
-                                "Message $messageTimestamp has no replacement variant",
-                            )
-                    val promotedBaseMessage =
-                        baseMessage.copy(
-                            content = replacementVariant.content,
-                            roleName = replacementVariant.roleName.ifBlank { baseMessage.roleName },
-                            selectedVariantIndex = 0,
-                            provider = replacementVariant.provider,
-                            modelName = replacementVariant.modelName,
-                            inputTokens = replacementVariant.inputTokens,
-                            outputTokens = replacementVariant.outputTokens,
-                            cachedInputTokens = replacementVariant.cachedInputTokens,
-                            sentAt = replacementVariant.sentAt,
-                            outputDurationMs = replacementVariant.outputDurationMs,
-                            waitDurationMs = replacementVariant.waitDurationMs,
-                            completedAt = replacementVariant.completedAt,
-                        )
-                    messageDao.updateMessage(promotedBaseMessage)
-                    messageVariantDao.deleteVariant(
-                        chatId = chatId,
-                        messageTimestamp = messageTimestamp,
-                        variantIndex = replacementVariant.variantIndex,
-                    )
-                    variants
-                        .asSequence()
-                        .filter { it.variantIndex > replacementVariant.variantIndex }
-                        .forEach { variant ->
-                            messageVariantDao.updateVariant(
-                                variant.copy(variantIndex = variant.variantIndex - 1),
-                            )
-                        }
-                } else {
-                    val targetVariant =
-                        variants.firstOrNull { it.variantIndex == variantIndex }
+                database.withTransaction {
+                    val baseMessage =
+                        messageDao.getMessageByTimestamp(chatId, messageTimestamp)
                             ?: throw IllegalArgumentException(
-                                "Variant $variantIndex does not exist for message $messageTimestamp",
+                                "Message $messageTimestamp does not exist in chat $chatId",
                             )
-                    messageVariantDao.deleteVariant(
-                        chatId = chatId,
-                        messageTimestamp = messageTimestamp,
-                        variantIndex = targetVariant.variantIndex,
-                    )
-                    variants
-                        .asSequence()
-                        .filter { it.variantIndex > targetVariant.variantIndex }
-                        .forEach { variant ->
-                            messageVariantDao.updateVariant(
-                                variant.copy(variantIndex = variant.variantIndex - 1),
-                            )
-                        }
-                    val newSelectedVariantIndex =
-                        when {
-                            variants.any { it.variantIndex > targetVariant.variantIndex } -> targetVariant.variantIndex
-                            else -> (targetVariant.variantIndex - 1).coerceAtLeast(0)
-                        }
-                    messageDao.updateSelectedVariantIndex(
-                        chatId = chatId,
-                        timestamp = messageTimestamp,
-                        selectedVariantIndex = newSelectedVariantIndex,
-                    )
-                }
+                    if (baseMessage.sender != "ai") {
+                        throw IllegalArgumentException("Only AI messages can delete variants")
+                    }
 
-                chatDao.getChatById(chatId)?.let { chat ->
-                    chatDao.updateChatMetadata(
-                        chatId = chatId,
-                        title = chat.title,
-                        timestamp = System.currentTimeMillis(),
-                        inputTokens = chat.inputTokens,
-                        outputTokens = chat.outputTokens,
-                        currentWindowSize = chat.currentWindowSize,
-                    )
+                    val variants =
+                        messageVariantDao.getVariantsForMessage(chatId, messageTimestamp)
+                            .sortedBy { it.variantIndex }
+                    if (variants.isEmpty()) {
+                        throw IllegalStateException("Message $messageTimestamp has no deletable variants")
+                    }
+
+                    if (variantIndex == 0) {
+                        val replacementVariant =
+                            variants.firstOrNull()
+                                ?: throw IllegalStateException(
+                                    "Message $messageTimestamp has no replacement variant",
+                                )
+                        val promotedBaseMessage =
+                            baseMessage.copy(
+                                content = replacementVariant.content,
+                                roleName = replacementVariant.roleName.ifBlank { baseMessage.roleName },
+                                selectedVariantIndex = 0,
+                                provider = replacementVariant.provider,
+                                modelName = replacementVariant.modelName,
+                                inputTokens = replacementVariant.inputTokens,
+                                outputTokens = replacementVariant.outputTokens,
+                                cachedInputTokens = replacementVariant.cachedInputTokens,
+                                sentAt = replacementVariant.sentAt,
+                                outputDurationMs = replacementVariant.outputDurationMs,
+                                waitDurationMs = replacementVariant.waitDurationMs,
+                                completedAt = replacementVariant.completedAt,
+                            )
+                        messageDao.updateMessage(promotedBaseMessage)
+                        messageVariantDao.deleteVariant(
+                            chatId = chatId,
+                            messageTimestamp = messageTimestamp,
+                            variantIndex = replacementVariant.variantIndex,
+                        )
+                        variants
+                            .asSequence()
+                            .filter { it.variantIndex > replacementVariant.variantIndex }
+                            .forEach { variant ->
+                                messageVariantDao.updateVariant(
+                                    variant.copy(variantIndex = variant.variantIndex - 1),
+                                )
+                            }
+                    } else {
+                        val targetVariant =
+                            variants.firstOrNull { it.variantIndex == variantIndex }
+                                ?: throw IllegalArgumentException(
+                                    "Variant $variantIndex does not exist for message $messageTimestamp",
+                                )
+                        messageVariantDao.deleteVariant(
+                            chatId = chatId,
+                            messageTimestamp = messageTimestamp,
+                            variantIndex = targetVariant.variantIndex,
+                        )
+                        variants
+                            .asSequence()
+                            .filter { it.variantIndex > targetVariant.variantIndex }
+                            .forEach { variant ->
+                                messageVariantDao.updateVariant(
+                                    variant.copy(variantIndex = variant.variantIndex - 1),
+                                )
+                            }
+                        val newSelectedVariantIndex =
+                            when {
+                                variants.any { it.variantIndex > targetVariant.variantIndex } -> targetVariant.variantIndex
+                                else -> (targetVariant.variantIndex - 1).coerceAtLeast(0)
+                            }
+                        messageDao.updateSelectedVariantIndex(
+                            chatId = chatId,
+                            timestamp = messageTimestamp,
+                            selectedVariantIndex = newSelectedVariantIndex,
+                        )
+                    }
+
+                    chatDao.getChatById(chatId)?.let { chat ->
+                        chatDao.updateChatMetadata(
+                            chatId = chatId,
+                            title = chat.title,
+                            timestamp = System.currentTimeMillis(),
+                            inputTokens = chat.inputTokens,
+                            outputTokens = chat.outputTokens,
+                            currentWindowSize = chat.currentWindowSize,
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 AppLogger.e(
@@ -1069,33 +1427,81 @@ class ChatHistoryManager private constructor(private val context: Context) {
     suspend fun updateMessage(chatId: String, message: ChatMessage) {
         chatMutex(chatId).withLock {
             try {
-                // 找到相应的消息实体
-                val existingMessage = messageDao.getMessageByTimestamp(chatId, message.timestamp)
+                database.withTransaction {
+                    val existingMessage = messageDao.getMessageByTimestamp(chatId, message.timestamp)
 
-                if (existingMessage != null) {
-                    if (message.selectedVariantIndex > 0) {
-                        val existingVariant =
-                            messageVariantDao.getVariantForMessage(
+                    if (existingMessage != null) {
+                        if (message.selectedVariantIndex > 0) {
+                            val existingVariant =
+                                messageVariantDao.getVariantForMessage(
+                                    chatId,
+                                    message.timestamp,
+                                    message.selectedVariantIndex,
+                                ) ?: throw IllegalStateException(
+                                    "Missing variant ${message.selectedVariantIndex} for message ${message.timestamp}",
+                                )
+                            messageVariantDao.updateVariant(
+                                MessageVariantEntity.fromChatMessage(
+                                    chatId = chatId,
+                                    messageTimestamp = message.timestamp,
+                                    variantIndex = message.selectedVariantIndex,
+                                    message = message,
+                                    variantId = existingVariant.variantId,
+                                )
+                            )
+                            messageDao.updateSelectedVariantIndex(
                                 chatId,
                                 message.timestamp,
                                 message.selectedVariantIndex,
-                            ) ?: throw IllegalStateException(
-                                "Missing variant ${message.selectedVariantIndex} for message ${message.timestamp}",
                             )
-                        messageVariantDao.updateVariant(
-                            MessageVariantEntity.fromChatMessage(
+                            chatDao.getChatById(chatId)?.let { chat ->
+                                chatDao.updateChatMetadata(
+                                    chatId = chatId,
+                                    title = chat.title,
+                                    timestamp = System.currentTimeMillis(),
+                                    inputTokens = chat.inputTokens,
+                                    outputTokens = chat.outputTokens,
+                                    currentWindowSize = chat.currentWindowSize
+                                )
+                            }
+                            return@withTransaction
+                        }
+
+                        val shouldUpdateChatMetadata =
+                            message.contentStream == null ||
+                                (existingMessage.content.isEmpty() && message.content.isNotEmpty())
+                        val updatedMessageEntity =
+                            MessageEntity.fromChatMessage(
                                 chatId = chatId,
-                                messageTimestamp = message.timestamp,
-                                variantIndex = message.selectedVariantIndex,
                                 message = message,
-                                variantId = existingVariant.variantId,
+                                orderIndex = existingMessage.orderIndex,
+                                messageId = existingMessage.messageId
                             )
-                        )
-                        messageDao.updateSelectedVariantIndex(
-                            chatId,
-                            message.timestamp,
-                            message.selectedVariantIndex,
-                        )
+                        messageDao.updateMessage(updatedMessageEntity)
+
+                        if (shouldUpdateChatMetadata) {
+                            chatDao.getChatById(chatId)?.let { chat ->
+                                chatDao.updateChatMetadata(
+                                    chatId = chatId,
+                                    title = chat.title,
+                                    timestamp = System.currentTimeMillis(),
+                                    inputTokens = chat.inputTokens,
+                                    outputTokens = chat.outputTokens,
+                                    currentWindowSize = chat.currentWindowSize
+                                )
+                            }
+                        }
+                    } else {
+                        val nextOrderIndex = (messageDao.getMaxOrderIndex(chatId) ?: -1) + 1
+                        val messageEntity =
+                            MessageEntity.fromChatMessage(
+                                chatId = chatId,
+                                message = message,
+                                orderIndex = nextOrderIndex,
+                            )
+                        messageDao.insertMessage(messageEntity)
+                        chatDao.advanceLastMessageAt(chatId, message.timestamp)
+
                         chatDao.getChatById(chatId)?.let { chat ->
                             chatDao.updateChatMetadata(
                                 chatId = chatId,
@@ -1106,56 +1512,6 @@ class ChatHistoryManager private constructor(private val context: Context) {
                                 currentWindowSize = chat.currentWindowSize
                             )
                         }
-                        return@withLock
-                    }
-
-                    val shouldUpdateChatMetadata =
-                        message.contentStream == null ||
-                            (existingMessage.content.isEmpty() && message.content.isNotEmpty())
-                    val updatedMessageEntity =
-                        MessageEntity.fromChatMessage(
-                            chatId = chatId,
-                            message = message,
-                            orderIndex = existingMessage.orderIndex,
-                            messageId = existingMessage.messageId
-                        )
-                    messageDao.updateMessage(updatedMessageEntity)
-
-                    if (shouldUpdateChatMetadata) {
-                        // 更新聊天元数据时间戳
-                        val chat = chatDao.getChatById(chatId)
-                        if (chat != null) {
-                            chatDao.updateChatMetadata(
-                                chatId = chatId,
-                                title = chat.title,
-                                timestamp = System.currentTimeMillis(),
-                                inputTokens = chat.inputTokens,
-                                outputTokens = chat.outputTokens,
-                                currentWindowSize = chat.currentWindowSize
-                            )
-                        }
-                    }
-                } else {
-                    // 如果找不到现有消息，则插入新消息（避免在同一互斥锁下递归调用 addMessage）
-                    val nextOrderIndex = (messageDao.getMaxOrderIndex(chatId) ?: -1) + 1
-                    val messageEntity = MessageEntity.fromChatMessage(
-                        chatId = chatId,
-                        message = message,
-                        orderIndex = nextOrderIndex,
-                    )
-                    messageDao.insertMessage(messageEntity)
-
-                    // 更新聊天元数据
-                    val chat = chatDao.getChatById(chatId)
-                    if (chat != null) {
-                        chatDao.updateChatMetadata(
-                            chatId = chatId,
-                            title = chat.title,
-                            timestamp = System.currentTimeMillis(),
-                            inputTokens = chat.inputTokens,
-                            outputTokens = chat.outputTokens,
-                            currentWindowSize = chat.currentWindowSize
-                        )
                     }
                 }
             } catch (e: Exception) {
@@ -1190,34 +1546,36 @@ class ChatHistoryManager private constructor(private val context: Context) {
         message: ChatMessage,
     ): Int {
         return chatMutex(chatId).withLock {
-            val baseMessage =
-                messageDao.getMessageByTimestamp(chatId, messageTimestamp)
-                    ?: throw IllegalArgumentException("Message $messageTimestamp does not exist in chat $chatId")
-            if (baseMessage.sender != "ai") {
-                throw IllegalArgumentException("Only AI messages can have regenerated variants")
-            }
-            val nextVariantIndex =
-                messageVariantDao.getVariantsForMessage(chatId, messageTimestamp).size + 1
-            messageVariantDao.insertVariant(
-                MessageVariantEntity.fromChatMessage(
-                    chatId = chatId,
-                    messageTimestamp = messageTimestamp,
-                    variantIndex = nextVariantIndex,
-                    message = message.copy(selectedVariantIndex = nextVariantIndex, variantCount = 1),
+            database.withTransaction {
+                val baseMessage =
+                    messageDao.getMessageByTimestamp(chatId, messageTimestamp)
+                        ?: throw IllegalArgumentException("Message $messageTimestamp does not exist in chat $chatId")
+                if (baseMessage.sender != "ai") {
+                    throw IllegalArgumentException("Only AI messages can have regenerated variants")
+                }
+                val nextVariantIndex =
+                    messageVariantDao.getVariantsForMessage(chatId, messageTimestamp).size + 1
+                messageVariantDao.insertVariant(
+                    MessageVariantEntity.fromChatMessage(
+                        chatId = chatId,
+                        messageTimestamp = messageTimestamp,
+                        variantIndex = nextVariantIndex,
+                        message = message.copy(selectedVariantIndex = nextVariantIndex, variantCount = 1),
+                    )
                 )
-            )
-            messageDao.updateSelectedVariantIndex(chatId, messageTimestamp, nextVariantIndex)
-            chatDao.getChatById(chatId)?.let { chat ->
-                chatDao.updateChatMetadata(
-                    chatId = chatId,
-                    title = chat.title,
-                    timestamp = System.currentTimeMillis(),
-                    inputTokens = chat.inputTokens,
-                    outputTokens = chat.outputTokens,
-                    currentWindowSize = chat.currentWindowSize
-                )
+                messageDao.updateSelectedVariantIndex(chatId, messageTimestamp, nextVariantIndex)
+                chatDao.getChatById(chatId)?.let { chat ->
+                    chatDao.updateChatMetadata(
+                        chatId = chatId,
+                        title = chat.title,
+                        timestamp = System.currentTimeMillis(),
+                        inputTokens = chat.inputTokens,
+                        outputTokens = chat.outputTokens,
+                        currentWindowSize = chat.currentWindowSize
+                    )
+                }
+                nextVariantIndex
             }
-            nextVariantIndex
         }
     }
 
@@ -1227,15 +1585,17 @@ class ChatHistoryManager private constructor(private val context: Context) {
         selectedVariantIndex: Int,
     ) {
         chatMutex(chatId).withLock {
-            messageDao.getMessageByTimestamp(chatId, messageTimestamp)
-                ?: throw IllegalArgumentException("Message $messageTimestamp does not exist in chat $chatId")
-            if (selectedVariantIndex > 0) {
-                messageVariantDao.getVariantForMessage(chatId, messageTimestamp, selectedVariantIndex)
-                    ?: throw IllegalArgumentException(
-                        "Variant $selectedVariantIndex does not exist for message $messageTimestamp",
-                    )
+            database.withTransaction {
+                messageDao.getMessageByTimestamp(chatId, messageTimestamp)
+                    ?: throw IllegalArgumentException("Message $messageTimestamp does not exist in chat $chatId")
+                if (selectedVariantIndex > 0) {
+                    messageVariantDao.getVariantForMessage(chatId, messageTimestamp, selectedVariantIndex)
+                        ?: throw IllegalArgumentException(
+                            "Variant $selectedVariantIndex does not exist for message $messageTimestamp",
+                        )
+                }
+                messageDao.updateSelectedVariantIndex(chatId, messageTimestamp, selectedVariantIndex)
             }
-            messageDao.updateSelectedVariantIndex(chatId, messageTimestamp, selectedVariantIndex)
         }
     }
 
@@ -1252,20 +1612,23 @@ class ChatHistoryManager private constructor(private val context: Context) {
         chatMutex(chatId).withLock {
             try {
                 AppLogger.d(TAG, "正在从数据库删除消息. ChatId: $chatId, Timestamp >=: $timestamp")
-                messageVariantDao.deleteVariantsFrom(chatId, timestamp)
-                messageDao.deleteMessagesFrom(chatId, timestamp)
-                AppLogger.d(TAG, "后续消息从数据库删除成功.")
-                // 更新聊天元数据时间戳
-                chatDao.getChatById(chatId)?.let { chat ->
-                    chatDao.updateChatMetadata(
-                        chatId = chatId,
-                        title = chat.title,
-                        timestamp = System.currentTimeMillis(),
-                        inputTokens = chat.inputTokens,
-                        outputTokens = chat.outputTokens,
-                        currentWindowSize = chat.currentWindowSize
-                    )
+                database.withTransaction {
+                    messageVariantDao.deleteVariantsFrom(chatId, timestamp)
+                    messageDao.deleteMessagesFrom(chatId, timestamp)
+                    chatDao.recalculateLastMessageAt(chatId)
+                    // 更新聊天元数据时间戳
+                    chatDao.getChatById(chatId)?.let { chat ->
+                        chatDao.updateChatMetadata(
+                            chatId = chatId,
+                            title = chat.title,
+                            timestamp = System.currentTimeMillis(),
+                            inputTokens = chat.inputTokens,
+                            outputTokens = chat.outputTokens,
+                            currentWindowSize = chat.currentWindowSize
+                        )
+                    }
                 }
+                AppLogger.d(TAG, "后续消息从数据库删除成功.")
             } catch (e: Exception) {
                 AppLogger.e(TAG, "从 $timestamp 开始为聊天 $chatId 删除消息失败", e)
                 throw e
@@ -1285,18 +1648,21 @@ class ChatHistoryManager private constructor(private val context: Context) {
     suspend fun clearChatMessages(chatId: String) {
         chatMutex(chatId).withLock {
             try {
-                messageVariantDao.deleteAllVariantsForChat(chatId)
-                messageDao.deleteAllMessagesForChat(chatId)
-                // 更新聊天元数据
-                chatDao.getChatById(chatId)?.let { chat ->
-                    chatDao.updateChatMetadata(
-                        chatId = chatId,
-                        title = chat.title,
-                        timestamp = System.currentTimeMillis(),
-                        inputTokens = 0,
-                        outputTokens = 0,
-                        currentWindowSize = 0
-                    )
+                database.withTransaction {
+                    messageVariantDao.deleteAllVariantsForChat(chatId)
+                    messageDao.deleteAllMessagesForChat(chatId)
+                    chatDao.recalculateLastMessageAt(chatId)
+                    // 更新聊天元数据
+                    chatDao.getChatById(chatId)?.let { chat ->
+                        chatDao.updateChatMetadata(
+                            chatId = chatId,
+                            title = chat.title,
+                            timestamp = System.currentTimeMillis(),
+                            inputTokens = 0,
+                            outputTokens = 0,
+                            currentWindowSize = 0
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "为聊天 $chatId 清除消息失败", e)
@@ -1424,7 +1790,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     // 创建新对话
     suspend fun createNewChat(
-        group: String? = null,
+        folderId: String? = null,
         inheritGroupFromChatId: String? = null,
         characterCardName: String? = null,
         characterGroupId: String? = null,
@@ -1438,15 +1804,20 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
         val localizedContext = LocaleUtils.getLocalizedContext(context)
 
-        // 确定新对话的分组
-        val finalGroup = when {
-            // 如果显式指定了分组，使用指定的分组
-            group != null -> group
-            // 如果要继承分组，尝试从指定的对话获取分组
-            inheritGroupFromChatId != null -> {
-                chatDao.getChatById(inheritGroupFromChatId)?.group
+        val requestedFolderId = normalizeChatFolderId(folderId)
+        if (requestedFolderId != null) {
+            require(chatFolderDao.getFolder(requestedFolderId) != null) {
+                "Unknown folderId: $requestedFolderId"
             }
-            // 默认为空分组（不分组）
+        }
+        val finalFolderId = when {
+            folderId != null -> requestedFolderId
+            inheritGroupFromChatId != null -> {
+                chatDao
+                    .getChatById(inheritGroupFromChatId)
+                    ?.folderId
+                    .let(::normalizeChatFolderId)
+            }
             else -> null
         }
 
@@ -1456,7 +1827,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 messages = listOf<ChatMessage>(),
                 inputTokens = 0,
                 outputTokens = 0,
-                group = finalGroup,
+                folderId = finalFolderId,
                 characterCardName = characterCardName, // 使用传入的角色卡名称，如果为null则不绑定
                 characterGroupId = characterGroupId // 绑定群组角色卡ID（可选）
             )
@@ -1551,14 +1922,63 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
     }
 
-    // 更新聊天分组
-    suspend fun updateChatGroup(chatId: String, group: String?) {
+    suspend fun updateChatFolder(chatId: String, folderId: String?) {
         chatMutex(chatId).withLock {
             try {
-                chatDao.updateChatGroup(chatId, group)
+                val normalizedFolderId =
+                    normalizeChatFolderId(folderId)
+                if (normalizedFolderId != null) {
+                    require(chatFolderDao.getFolder(normalizedFolderId) != null) {
+                        "Unknown folderId: $normalizedFolderId"
+                    }
+                }
+                chatDao.updateChatFolder(chatId, normalizedFolderId)
             } catch (e: Exception) {
-                AppLogger.e(TAG, "Failed to update chat group for chat $chatId", e)
+                AppLogger.e(TAG, "Failed to update chat folder for chat $chatId", e)
                 throw e
+            }
+        }
+    }
+
+    suspend fun updateChatFromWeb(
+        chatId: String,
+        title: String?,
+        updateFolder: Boolean,
+        folderId: String?,
+        locked: Boolean?,
+        pinned: Boolean?,
+        updateBinding: Boolean,
+        characterCardName: String?,
+        characterGroupId: String?,
+    ): Boolean {
+        return chatMutex(chatId).withLock {
+            database.withTransaction {
+                if (chatDao.getChatById(chatId) == null) {
+                    return@withTransaction false
+                }
+                val normalizedFolderId =
+                    normalizeChatFolderId(folderId)
+                if (updateFolder && normalizedFolderId != null) {
+                    require(chatFolderDao.getFolder(normalizedFolderId) != null) {
+                        "Unknown folderId: $normalizedFolderId"
+                    }
+                }
+                val timestamp = System.currentTimeMillis()
+                title?.let { chatDao.updateChatTitle(chatId, it, timestamp) }
+                if (updateFolder) {
+                    chatDao.updateChatFolder(chatId, normalizedFolderId, timestamp)
+                }
+                locked?.let { chatDao.updateChatLocked(chatId, it, timestamp) }
+                pinned?.let { chatDao.updateChatPinned(chatId, it, timestamp) }
+                if (updateBinding) {
+                    chatDao.updateChatCharacterBinding(
+                        chatId = chatId,
+                        characterCardName = characterCardName,
+                        characterGroupId = characterGroupId,
+                        timestamp = timestamp,
+                    )
+                }
+                true
             }
         }
     }
@@ -1694,7 +2114,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         inputTokens = parentChat.inputTokens,
                         outputTokens = parentChat.outputTokens,
                         currentWindowSize = parentChat.currentWindowSize,
-                        group = parentChat.group,
+                        folderId = normalizeChatFolderId(parentChat.folderId),
                         workspace = parentChat.workspace,
                         workspaceEnv = parentChat.workspaceEnv,
                         parentChatId = parentChatId,
@@ -1704,24 +2124,44 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         pinned = false,
                     )
 
-                chatDao.insertChat(branchEntity)
+                val copiedMessageCount = database.withTransaction {
+                    chatDao.insertChat(branchEntity)
 
-                val copiedMessageCount =
-                    messageDao.countMessagesForChatUpToTimestamp(parentChatId, upToMessageTimestamp)
-                if (copiedMessageCount > 0) {
-                    messageDao.copyMessagesToChat(
-                        sourceChatId = parentChatId,
-                        targetChatId = branchEntity.id,
-                        upToTimestampInclusive = upToMessageTimestamp,
-                    )
-                    messageVariantDao.copyVariantsToChat(
-                        sourceChatId = parentChatId,
-                        targetChatId = branchEntity.id,
-                        upToTimestampInclusive = upToMessageTimestamp,
-                    )
+                    val count =
+                        messageDao.countMessagesForChatUpToTimestamp(
+                            parentChatId,
+                            upToMessageTimestamp,
+                        )
+                    if (count > 0) {
+                        messageDao.copyMessagesToChat(
+                            sourceChatId = parentChatId,
+                            targetChatId = branchEntity.id,
+                            upToTimestampInclusive = upToMessageTimestamp,
+                        )
+                        messageVariantDao.copyVariantsToChat(
+                            sourceChatId = parentChatId,
+                            targetChatId = branchEntity.id,
+                            upToTimestampInclusive = upToMessageTimestamp,
+                        )
+                    }
+                    chatDao.recalculateLastMessageAt(branchEntity.id)
+                    count
                 }
 
-                val branchHistory = branchEntity.toChatHistory(emptyList())
+                val branchHistory =
+                    branchEntity
+                        .copy(
+                            lastMessageAt =
+                                if (copiedMessageCount > 0) {
+                                    messageDao
+                                        .getMessagesForChatDesc(branchEntity.id, 1)
+                                        .firstOrNull()
+                                        ?.timestamp
+                                } else {
+                                    null
+                                },
+                        )
+                        .toChatHistory(emptyList())
 
                 // 设置为当前聊天
                 setCurrentChatId(branchHistory.id)
@@ -1747,33 +2187,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
                 val branchEntities = chatDao.getBranchesByParentId(parentChatId)
-                branchEntities.map { entity ->
-                    val createdAt = Instant.ofEpochMilli(entity.createdAt)
-                        .atZone(ZoneId.systemDefault())
-                        .toLocalDateTime()
-                    val updatedAt = Instant.ofEpochMilli(entity.updatedAt)
-                        .atZone(ZoneId.systemDefault())
-                        .toLocalDateTime()
-
-                    ChatHistory(
-                        id = entity.id,
-                        title = entity.title,
-                        messages = emptyList(), // 不加载消息以提高性能
-                        createdAt = createdAt,
-                        updatedAt = updatedAt,
-                        inputTokens = entity.inputTokens,
-                        outputTokens = entity.outputTokens,
-                        currentWindowSize = entity.currentWindowSize,
-                        group = entity.group,
-                        displayOrder = entity.displayOrder,
-                        workspace = entity.workspace,
-                        parentChatId = entity.parentChatId,
-                        characterCardName = entity.characterCardName,
-                        characterGroupId = entity.characterGroupId,
-                        locked = entity.locked,
-                        pinned = entity.pinned
-                    )
-                }
+                branchEntities.map { it.toChatHistory() }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "获取分支对话失败: $parentChatId", e)
                 emptyList()
@@ -1788,33 +2202,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
      */
     fun getBranchesFlow(parentChatId: String): Flow<List<ChatHistory>> {
         return chatDao.getBranchesByParentIdFlow(parentChatId).map { branchEntities ->
-            branchEntities.map { entity ->
-                val createdAt = Instant.ofEpochMilli(entity.createdAt)
-                    .atZone(ZoneId.systemDefault())
-                    .toLocalDateTime()
-                val updatedAt = Instant.ofEpochMilli(entity.updatedAt)
-                    .atZone(ZoneId.systemDefault())
-                    .toLocalDateTime()
-
-                ChatHistory(
-                    id = entity.id,
-                    title = entity.title,
-                    messages = emptyList(), // 不加载消息以提高性能
-                    createdAt = createdAt,
-                    updatedAt = updatedAt,
-                    inputTokens = entity.inputTokens,
-                    outputTokens = entity.outputTokens,
-                    currentWindowSize = entity.currentWindowSize,
-                    group = entity.group,
-                    displayOrder = entity.displayOrder,
-                    workspace = entity.workspace,
-                    parentChatId = entity.parentChatId,
-                    characterCardName = entity.characterCardName,
-                    characterGroupId = entity.characterGroupId,
-                    locked = entity.locked,
-                    pinned = entity.pinned
-                )
-            }
+            branchEntities.map { it.toChatHistory() }
         }
     }
 
@@ -1834,6 +2222,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         withContext(Dispatchers.IO) {
             try {
                 val chatHistoriesBasic = chatHistoriesFlow.first()
+                val folderPathsByChatId = buildFolderPathsByChatId(chatHistoriesBasic)
 
                 val exportDir = OperitBackupDirs.chatDir()
 
@@ -1847,7 +2236,12 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         val usedNames = HashSet<String>()
                         ZipOutputStream(BufferedOutputStream(FileOutputStream(zipFile))).use { zos ->
                             for (history in completeHistories) {
-                                val content = MarkdownExporter.exportSingle(context, history)
+                                val content =
+                                    MarkdownExporter.exportSingle(
+                                        context,
+                                        history,
+                                        folderPathsByChatId[history.id],
+                                    )
                                 // 处理文件名中的非法字符
                                 var safeTitle = history.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
                                 // 避免文件名过长
@@ -1875,27 +2269,39 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
                     ExportFormat.JSON -> {
                         val file = File(exportDir, "chat_backup_$timestamp.json")
-                        exportOperitArchiveJsonStream(file, chatHistoriesBasic)
+                        exportOperitArchiveJsonStream(file)
                         file
                     }
 
                     ExportFormat.HTML -> {
                         val completeHistories = loadDisplayHistories(chatHistoriesBasic)
                         val file = File(exportDir, "chat_backup_$timestamp.html")
-                        file.writeText(HtmlExporter.exportMultiple(context, completeHistories))
+                        file.writeText(
+                            HtmlExporter.exportMultiple(
+                                context,
+                                completeHistories,
+                                folderPathsByChatId,
+                            )
+                        )
                         file
                     }
 
                     ExportFormat.TXT -> {
                         val completeHistories = loadDisplayHistories(chatHistoriesBasic)
                         val file = File(exportDir, "chat_backup_$timestamp.txt")
-                        file.writeText(TextExporter.exportMultiple(context, completeHistories))
+                        file.writeText(
+                            TextExporter.exportMultiple(
+                                context,
+                                completeHistories,
+                                folderPathsByChatId,
+                            )
+                        )
                         file
                     }
 
                     ExportFormat.CSV -> {
                         val file = File(exportDir, "chat_backup_$timestamp.json")
-                        exportOperitArchiveJsonStream(file, chatHistoriesBasic)
+                        exportOperitArchiveJsonStream(file)
                         file
                     }
                 }
@@ -1989,6 +2395,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 var newCount = 0
                 var updatedCount = 0
                 var skippedCount = 0
+                val importedFolderIdsByLegacyName = mutableMapOf<String, String>()
 
                 for (chatHistory in chatHistories) {
                     if (chatHistory.messages.isEmpty()) {
@@ -2003,7 +2410,21 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         existingIds.add(chatHistory.id)
                     }
 
-                    saveChatHistory(chatHistory)
+                    val legacyFolderName = chatHistory.group?.trim()?.takeIf { it.isNotEmpty() }
+                    val normalizedHistory =
+                        if (chatHistory.folderId == null && legacyFolderName != null) {
+                            val folderId =
+                                importedFolderIdsByLegacyName.getOrPut(legacyFolderName) {
+                                    createFolder(parentFolderId = null, name = legacyFolderName)
+                                }
+                            chatHistory.copy(group = null, folderId = folderId)
+                        } else {
+                            chatHistory.copy(group = null)
+                        }
+                    saveChatHistoryInternal(
+                        history = normalizedHistory,
+                        preserveStructure = false,
+                    )
                 }
 
                 AppLogger.d(TAG, "导入完成: 新增=$newCount, 更新=$updatedCount, 跳过=$skippedCount")
@@ -2583,23 +3004,6 @@ class ChatHistoryManager private constructor(private val context: Context) {
      * 批量为特定聊天更新分组
      * @return 受影响的对话数量
      */
-    suspend fun assignGroupToChats(
-        chatIds: List<String>,
-        groupName: String?
-    ): Int {
-        if (chatIds.isEmpty()) {
-            return 0
-        }
-        return withContext(Dispatchers.IO) {
-            try {
-                chatDao.updateGroupForChats(chatIds, groupName)
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "批量更新聊天分组失败: $groupName, chatIds=$chatIds", e)
-                throw e
-            }
-        }
-    }
-
     /**
      * 批量重命名对话中绑定的角色卡名称
      * @return 受影响的对话数量
@@ -2631,10 +3035,26 @@ class ChatHistoryManager private constructor(private val context: Context) {
     }
 }
 
+internal fun mergePersistedChatEntity(
+    incoming: ChatEntity,
+    existing: ChatEntity,
+    preserveStructure: Boolean,
+): ChatEntity =
+    incoming.copy(
+        // The v24 group column is diagnostic-only and must never be revived by a normal save.
+        group = existing.group,
+        // Folder placement is repository-owned. A streaming/current-chat save may carry a stale
+        // UI snapshot and must not undo a completed structural move.
+        folderId = if (preserveStructure) existing.folderId else incoming.folderId,
+        displayOrder = if (preserveStructure) existing.displayOrder else incoming.displayOrder,
+    )
+
 data class ChatImportResult(
     val new: Int,
     val updated: Int,
-    val skipped: Int
+    val skipped: Int,
+    val foldersCreated: Int = 0,
+    val mayLeavePreviousEmptyFolders: Boolean = false,
 ) {
     val total: Int
         get() = new + updated

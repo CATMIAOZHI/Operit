@@ -1430,10 +1430,10 @@ fun getJsToolsDefinition(): String {
                     return toolCall("start_chat_service", params);
                 },
                 // 创建新对话
-                createNew: (group, setAsCurrentChat, characterCardId) => {
+                createNew: (folderId, setAsCurrentChat, characterCardId) => {
                     const params = {};
-                    if (group !== undefined && group !== null && String(group).trim() !== "") {
-                        params.group = String(group);
+                    if (folderId !== undefined && folderId !== null && String(folderId).trim() !== "") {
+                        params.folder_id = String(folderId);
                     }
                     if (setAsCurrentChat !== undefined && setAsCurrentChat !== null) {
                         params.set_as_current_chat = String(setAsCurrentChat);

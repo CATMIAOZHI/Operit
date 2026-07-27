@@ -67,7 +67,6 @@ fun AssistantConfigScreen() {
     val wakeCreateNewChatOnWakeEnabled by wakePrefs.wakeCreateNewChatOnWakeEnabledFlow.collectAsState(
         initial = WakeWordPreferences.DEFAULT_WAKE_CREATE_NEW_CHAT_ON_WAKE_ENABLED
     )
-    val autoNewChatGroup by wakePrefs.autoNewChatGroupFlow.collectAsState(initial = WakeWordPreferences.DEFAULT_AUTO_NEW_CHAT_GROUP)
     val voiceAutoAttachEnabled by wakePrefs.voiceAutoAttachEnabledFlow.collectAsState(initial = WakeWordPreferences.DEFAULT_VOICE_AUTO_ATTACH_ENABLED)
     val voiceAutoAttachItems by wakePrefs.voiceAutoAttachItemsFlow.collectAsState(initial = WakeWordPreferences.getDefaultVoiceAutoAttachItems(context))
     val coroutineScope = rememberCoroutineScope()
@@ -97,7 +96,6 @@ fun AssistantConfigScreen() {
     var wakePhraseInput by remember { mutableStateOf("") }
     var inactivityTimeoutInput by remember { mutableStateOf("") }
     var wakeGreetingTextInput by remember { mutableStateOf("") }
-    var autoNewChatGroupInput by remember { mutableStateOf("") }
 
     var selectedConfigTab by rememberSaveable { mutableStateOf(0) }
     var isAvatarPreviewCollapsed by rememberSaveable { mutableStateOf(false) }
@@ -119,12 +117,6 @@ fun AssistantConfigScreen() {
     LaunchedEffect(wakeGreetingText) {
         if (wakeGreetingTextInput.isBlank()) {
             wakeGreetingTextInput = wakeGreetingText
-        }
-    }
-
-    LaunchedEffect(autoNewChatGroup) {
-        if (autoNewChatGroupInput.isBlank()) {
-            autoNewChatGroupInput = autoNewChatGroup
         }
     }
 
@@ -520,37 +512,6 @@ fun AssistantConfigScreen() {
                                     wakePrefs.saveWakeCreateNewChatOnWakeEnabled(enabled)
                                 }
                             }
-                        )
-
-                        OutlinedTextField(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp),
-                            value = autoNewChatGroupInput,
-                            onValueChange = { newValue ->
-                                autoNewChatGroupInput = newValue
-                                coroutineScope.launch {
-                                    wakePrefs.saveAutoNewChatGroup(
-                                        newValue.ifBlank { WakeWordPreferences.DEFAULT_AUTO_NEW_CHAT_GROUP }
-                                    )
-                                }
-                            },
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyMedium,
-                            label = { Text(stringResource(R.string.voice_wakeup_auto_new_chat_group_label)) },
-                            placeholder = {
-                                Text(
-                                    stringResource(
-                                        R.string.voice_wakeup_auto_new_chat_group_supporting,
-                                        WakeWordPreferences.DEFAULT_AUTO_NEW_CHAT_GROUP
-                                    )
-                                )
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent
-                            )
                         )
 
                         HorizontalDivider(modifier = Modifier.padding(vertical = 0.dp))

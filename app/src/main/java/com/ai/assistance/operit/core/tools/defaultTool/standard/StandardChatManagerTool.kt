@@ -1021,7 +1021,18 @@ class StandardChatManagerTool(private val context: Context) {
             val previousChatIds = core.chatHistories.value.map { it.id }.toSet()
 
             val group = tool.parameters.find { it.name == "group" }?.value?.trim()
-            val effectiveGroup = group?.takeIf { it.isNotBlank() }
+            if (!group.isNullOrBlank()) {
+                return ToolResult(
+                    toolName = tool.name,
+                    success = false,
+                    result = ChatCreationResultData(chatId = ""),
+                    error = "The group parameter is deprecated and unsupported; use folder_id"
+                )
+            }
+            val folderId =
+                tool.parameters.find { it.name == "folder_id" }?.value?.trim()?.takeIf {
+                    it.isNotBlank()
+                }
 
             val rawSetAsCurrent = tool.parameters.find { it.name == "set_as_current_chat" }?.value?.trim()
             val setAsCurrentChat =
@@ -1057,7 +1068,7 @@ class StandardChatManagerTool(private val context: Context) {
             
             // 创建新对话（不切换当前对话）
             core.createNewChat(
-                group = effectiveGroup,
+                folderId = folderId,
                 setAsCurrentChat = setAsCurrentChat,
                 characterCardId = characterCardId
             )

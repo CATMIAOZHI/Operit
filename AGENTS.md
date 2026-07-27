@@ -20,6 +20,7 @@
 - 完整 Android 构建需要 README/编译指南列出的 `models.zip`、`subpack.zip`、`jniLibs.zip` 和 `libs.zip` 内容；这些本地依赖不得提交。
 - 原生第三方依赖（MNN、llama.cpp、ncnn、sherpa-ncnn、WAMR、QuickJS、Saba、Bullet3、ufbx、KleidiAI）已固定到具体 commit SHA，锁定清单见 `cmake/NATIVE_DEPENDENCY_LOCK.md`；升级时更新该清单和对应 `CMakeLists.txt`，不要通过 `OPERIT_*_GIT_REF` 命令行参数覆盖（已不再生效）。
 - 根据改动范围主动运行最小充分验证。Kotlin 改动优先运行 `./gradlew :app:compileDebugKotlin` 和相关 `:app:testDebugUnitTest`；资源或构建输入改动再运行 lint/assemble。
+- Windows 本地执行 `lintDebug` 或其他会构建原生模块的任务时，仓库原始绝对路径可能使 MNN/KleidiAI 中间文件超过 260 字符，并出现 `Filename longer than 260 characters`。这属于路径环境限制，不能报告为 Kotlin/Lint 代码失败，也不能因此跳过验证；先确认一个未占用的临时盘符，用 `subst` 将仓库根目录映射为短路径，必须把工作目录切换到该短盘符根目录后重新运行 Gradle，完成后使用 `subst <盘符>: /d` 移除映射。
 - 完整 APK 构建、release 构建和原生依赖升级后的验证优先使用 GitHub Actions（Nightly workflow 或手动触发），不要在本地执行完整 `assembleRelease`。本地构建仅用于快速迭代测试（`compileDebugKotlin`、`testDebugUnitTest`、`lintDebug`、`assembleDebug` 等），验证通过后再推送让 CI 做完整构建。
 - 原生依赖 SHA 升级必须先推送 `personal/dev`，由 Nightly 构建验证 ccache 命中率和编译成功后，再考虑合并到 `personal/main`。
 - Web Chat、ToolPkg 和仓库检查命令以 `docs/doc-src/dev-core/CONTRIBUTING.md` 与 `ci/README.md` 为准。
