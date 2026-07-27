@@ -587,6 +587,8 @@ data class WebChatReorderItem(
     val chatId: String,
     @SerialName("display_order")
     val displayOrder: Long,
+    @SerialName("folder_id")
+    val folderId: String? = null,
     @SerialName("group")
     val group: String? = null
 )

@@ -83,20 +83,22 @@ internal class WebChatManagementBridge(
         val reordered =
             items.map { item ->
                 val history = historiesById.getValue(item.chatId)
+                val stableFolderId = item.folderId?.trim()?.takeIf { it.isNotBlank() }
                 val folderId =
-                    item.group
-                        ?.trim()
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let {
-                            val bucket = it to history.characterCardName
-                            folderIdsByLegacyBucket[bucket]
-                                ?: chatHistoryManager.resolveOrCreateLegacyFolderId(
-                                    groupName = it,
-                                    characterCardName = history.characterCardName,
-                                ).also { folderId ->
-                                    folderIdsByLegacyBucket[bucket] = folderId
-                                }
-                        }
+                    stableFolderId
+                        ?: item.group
+                            ?.trim()
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let {
+                                val bucket = it to history.characterCardName
+                                folderIdsByLegacyBucket[bucket]
+                                    ?: chatHistoryManager.resolveOrCreateLegacyFolderId(
+                                        groupName = it,
+                                        characterCardName = history.characterCardName,
+                                    ).also { folderId ->
+                                        folderIdsByLegacyBucket[bucket] = folderId
+                                    }
+                            }
                 history.copy(
                     displayOrder = item.displayOrder,
                     group = null,

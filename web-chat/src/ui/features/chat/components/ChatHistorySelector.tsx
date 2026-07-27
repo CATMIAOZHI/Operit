@@ -423,6 +423,7 @@ function buildReorderItems(chats: WebChatSummary[]): WebChatReorderItem[] {
   return chats.map((chat, index) => ({
     chat_id: chat.id,
     display_order: index,
+    folder_id: chat.folder_id ?? null,
     group: chat.group ?? null
   }));
 }
