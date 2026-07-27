@@ -33,6 +33,7 @@ import com.ai.assistance.operit.data.model.AttachmentInfo
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.preferences.WakeWordPreferences
+import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.data.model.SerializableColorScheme
 import com.ai.assistance.operit.data.model.SerializableTypography
 import com.ai.assistance.operit.data.model.toComposeColorScheme
@@ -461,10 +462,16 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                             }
                         }
 
-                        // The legacy preference stores a folder name, which cannot identify one of
-                        // multiple same-name v25 folders. Until it is migrated to an ID picker,
-                        // wake-created chats are placed at the root.
-                        chatCore.createNewChat(inheritGroupFromCurrent = false)
+                        val group = wakePrefs.autoNewChatGroupFlow.first().trim().ifBlank {
+                            WakeWordPreferences.DEFAULT_AUTO_NEW_CHAT_GROUP
+                        }
+                        val folderId =
+                            ChatHistoryManager.getInstance(applicationContext)
+                                .resolveOrCreateLegacyFolderId(group)
+                        chatCore.createNewChat(
+                            folderId = folderId,
+                            inheritGroupFromCurrent = false
+                        )
                     }
                 }
             }

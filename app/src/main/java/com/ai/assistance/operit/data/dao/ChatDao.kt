@@ -251,6 +251,16 @@ interface ChatDao {
         timestamp: Long = System.currentTimeMillis()
     ): Int
 
+    /** 批量为指定聊天更新文件夹归属。 */
+    @Query(
+        "UPDATE chats SET folderId = :folderId, updatedAt = :timestamp WHERE id IN (:chatIds)"
+    )
+    suspend fun updateFolderForChats(
+        chatIds: List<String>,
+        folderId: String?,
+        timestamp: Long = System.currentTimeMillis(),
+    ): Int
+
     /** 批量清理绑定特定角色群组ID的对话（将characterGroupId设为null） */
     @Query("UPDATE chats SET characterGroupId = NULL, updatedAt = :timestamp WHERE characterGroupId = :sourceGroupId")
     suspend fun clearCharacterGroupBinding(

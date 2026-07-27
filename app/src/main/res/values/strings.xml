@@ -3365,6 +3365,8 @@
     <string name="delete_operation_irreversible">此操作无法撤销</string>
     <string name="delete_group_only">仅删除分组</string>
     <string name="chats_move_to_ungrouped">对话将移至"未分组"</string>
+    <string name="folder_contents_move_to_parent">直属对话和子文件夹将移至父文件夹“%1$s”</string>
+    <string name="folder_contents_move_to_root">直属对话将移至“未分组”，子文件夹将提升到根层级</string>
     <string name="edit_title">编辑标题</string>
     <string name="move_up">上移</string>
     <string name="move_down">下移</string>
@@ -5493,6 +5495,10 @@
     <string name="assigned_chats_to_group">已将 %1$d 条对话分组到「%2$s」</string>
     <string name="removed_character_group_binding">已移除 %1$d 条对话的角色群聊绑定</string>
     <string name="assigned_chats_to_character_group">已将 %1$d 条对话归类到角色群聊「%2$s」</string>
+    <string name="target_chat_folder_optional">目标对话文件夹（可选）</string>
+    <string name="select_folder_or_ungrouped">选择文件夹或未分组</string>
+    <string name="apply_chat_folder">应用对话文件夹</string>
+    <string name="assigned_chats_to_folder">已将 %1$d 条对话移动到「%2$s」</string>
     <string name="deleted_unbound_workspaces">已删除 %1$d 个无绑定工作区</string>
     <string name="delete_failed">删除失败: %1$s</string>
     <string name="character_card_statistics">角色卡统计</string>

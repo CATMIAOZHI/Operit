@@ -281,6 +281,7 @@ export async function renameGroup(
     old_name: string;
     new_name: string;
     character_card_name?: string | null;
+    folder_id?: string | null;
   }
 ): Promise<void> {
   await requestJson('/api/web/chat-groups/rename', token, { method: 'POST' }, payload);
@@ -292,6 +293,7 @@ export async function deleteGroup(
     group_name: string;
     delete_chats: boolean;
     character_card_name?: string | null;
+    folder_id?: string | null;
   }
 ): Promise<void> {
   await requestJson('/api/web/chat-groups/delete', token, { method: 'POST' }, payload);

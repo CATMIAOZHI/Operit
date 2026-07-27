@@ -27,6 +27,7 @@ export interface WebChatSummary {
   id: string;
   title: string;
   updated_at: number;
+  folder_id?: string | null;
   group: string | null;
   character_card_name?: string | null;
   character_group_id?: string | null;
@@ -343,5 +344,6 @@ export interface WebInputSettingsState {
 export interface WebChatReorderItem {
   chat_id: string;
   display_order: number;
+  folder_id?: string | null;
   group?: string | null;
 }

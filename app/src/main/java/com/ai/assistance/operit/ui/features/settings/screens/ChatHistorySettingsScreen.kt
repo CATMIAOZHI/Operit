@@ -42,12 +42,14 @@ import androidx.compose.ui.res.stringResource
 import coil.compose.rememberAsyncImagePainter
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatHistory
+import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.CharacterCard
 import com.ai.assistance.operit.data.model.CharacterCardChatStats
 import com.ai.assistance.operit.data.model.CharacterGroupCard
 import com.ai.assistance.operit.data.model.CharacterGroupChatStats
 import com.ai.assistance.operit.data.model.ImportStrategy
 import com.ai.assistance.operit.data.model.MemorySpace
+import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.CharacterGroupCardManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
@@ -71,6 +73,20 @@ data class UnboundWorkspaceInfo(
     val fullPath: String,
     val location: String // "内部存储" 或 "外部存储"
 )
+
+private fun buildChatFolderLabels(folders: List<ChatFolderEntity>): Map<String, String> {
+    val byId = folders.associateBy { it.id }
+    return folders.associate { folder ->
+        val names = mutableListOf<String>()
+        val visited = hashSetOf<String>()
+        var current: ChatFolderEntity? = folder
+        while (current != null && visited.add(current.id)) {
+            names += current.name
+            current = current.parentFolderId?.let(byId::get)
+        }
+        folder.id to names.asReversed().joinToString(" / ")
+    }
+}
 
 @Composable
 fun ChatHistorySettingsScreen() {
@@ -121,6 +137,8 @@ fun ChatHistorySettingsScreen() {
 
     var chatHistories by remember { mutableStateOf<List<ChatHistory>>(emptyList()) }
     var totalChatCount by remember { mutableStateOf(0) }
+    val chatFolders by chatHistoryManager.chatFoldersFlow.collectAsState()
+    val chatFolderLabels = remember(chatFolders) { buildChatFolderLabels(chatFolders) }
     LaunchedEffect(Unit) {
         chatHistoryManager.chatHistoriesFlow.collect { histories ->
             chatHistories = histories
@@ -300,9 +318,10 @@ fun ChatHistorySettingsScreen() {
             item {
                 ChatHistoryBatchSelectorCard(
                     chatHistories = chatHistories,
+                    chatFolders = chatFolders,
                     characterCards = availableCharacterCards,
                     characterGroups = availableCharacterGroups,
-                    onApply = { selectedIds, targetCharacterName, targetCharacterGroupId, shouldUnbindCharacterCard, shouldUnbindCharacterGroup ->
+                    onApply = { selectedIds, targetCharacterName, targetCharacterGroupId, targetFolderId, shouldUpdateFolder, shouldUnbindCharacterCard, shouldUnbindCharacterGroup ->
                         if (selectedIds.isEmpty()) {
                             Toast.makeText(context, context.getString(R.string.please_select_chats_first), Toast.LENGTH_SHORT).show()
                             return@ChatHistoryBatchSelectorCard false
@@ -350,6 +369,23 @@ fun ChatHistorySettingsScreen() {
                                         )
                                     )
                                 }
+                            }
+
+                            if (shouldUpdateFolder) {
+                                chatHistoryManager.assignFolderToChats(
+                                    chatIds = selectedIds,
+                                    targetFolderId = targetFolderId,
+                                )
+                                val targetFolderLabel =
+                                    targetFolderId?.let(chatFolderLabels::get)
+                                        ?: context.getString(R.string.ungrouped)
+                                messageParts.add(
+                                    context.getString(
+                                        R.string.assigned_chats_to_folder,
+                                        selectedIds.size,
+                                        targetFolderLabel,
+                                    )
+                                )
                             }
                             
                             val message = messageParts.joinToString("；")
@@ -1167,12 +1203,15 @@ private fun CharacterCardStatRow(
 @Composable
 private fun ChatHistoryBatchSelectorCard(
     chatHistories: List<ChatHistory>,
+    chatFolders: List<ChatFolderEntity>,
     characterCards: List<CharacterCard>,
     characterGroups: List<CharacterGroupCard>,
     onApply: suspend (
         selectedChatIds: List<String>,
         targetCharacterCardName: String?,
         targetCharacterGroupId: String?,
+        targetFolderId: String?,
+        shouldUpdateFolder: Boolean,
         shouldUnbindCharacterCard: Boolean,
         shouldUnbindCharacterGroup: Boolean
     ) -> Boolean
@@ -1187,6 +1226,9 @@ private fun ChatHistoryBatchSelectorCard(
     var groupDropdownExpanded by remember { mutableStateOf(false) }
     var selectedTargetGroupId by remember { mutableStateOf<String?>(null) }
     var targetGroupIsUnbind by remember { mutableStateOf(false) }
+    var folderDropdownExpanded by remember { mutableStateOf(false) }
+    var selectedTargetFolderId by remember { mutableStateOf<String?>(null) }
+    var hasTargetFolderSelection by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
     var deleteInProgress by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
@@ -1195,7 +1237,13 @@ private fun ChatHistoryBatchSelectorCard(
     val characterGroupNameById = remember(characterGroups) {
         characterGroups.associate { it.id to it.name }
     }
-    val filteredHistories = remember(chatHistories, normalizedQuery, characterGroupNameById) {
+    val folderLabels = remember(chatFolders) { buildChatFolderLabels(chatFolders) }
+    val filteredHistories = remember(
+        chatHistories,
+        normalizedQuery,
+        characterGroupNameById,
+        folderLabels,
+    ) {
         val base = if (normalizedQuery.isBlank()) {
             chatHistories
         } else {
@@ -1203,7 +1251,12 @@ private fun ChatHistoryBatchSelectorCard(
                 val groupName = history.characterGroupId?.let { characterGroupNameById[it] }
                 history.title.contains(normalizedQuery, ignoreCase = true) ||
                         (history.characterCardName?.contains(normalizedQuery, ignoreCase = true) == true) ||
-                        (groupName?.contains(normalizedQuery, ignoreCase = true) == true)
+                        (groupName?.contains(normalizedQuery, ignoreCase = true) == true) ||
+                        (
+                            history.folderId
+                                ?.let(folderLabels::get)
+                                ?.contains(normalizedQuery, ignoreCase = true) == true
+                        )
             }
         }
         // 先按是否有角色卡、分组分区，再按角色卡名称和分组名称排序，方便成批管理
@@ -1219,6 +1272,8 @@ private fun ChatHistoryBatchSelectorCard(
                 it.characterCardName.isNullOrBlank()
             }.thenBy {
                 it.characterCardName ?: ""
+            }.thenBy {
+                it.folderId?.let(folderLabels::get) ?: ""
             }.thenByDescending {
                 // 同一角色卡+分组内按最近更新时间倒序
                 it.updatedAt
@@ -1241,13 +1296,23 @@ private fun ChatHistoryBatchSelectorCard(
             selectedTargetGroupId = null
         }
     }
+    LaunchedEffect(chatFolders) {
+        if (
+            hasTargetFolderSelection &&
+                selectedTargetFolderId != null &&
+                chatFolders.none { it.id == selectedTargetFolderId }
+        ) {
+            selectedTargetFolderId = null
+            hasTargetFolderSelection = false
+        }
+    }
 
     val hasSelection = selectedChatIds.isNotEmpty()
     val hasTargetSelection = targetIsUnbind || !selectedTargetName.isNullOrBlank()
     val hasTargetGroupSelection = targetGroupIsUnbind || !selectedTargetGroupId.isNullOrBlank()
     val canSubmit =
         hasSelection &&
-            (hasTargetSelection || hasTargetGroupSelection) &&
+            (hasTargetSelection || hasTargetGroupSelection || hasTargetFolderSelection) &&
             !submitting &&
             !deleteInProgress
 
@@ -1493,6 +1558,74 @@ private fun ChatHistoryBatchSelectorCard(
                         }
                     }
                 }
+                ExposedDropdownMenuBox(
+                    expanded = folderDropdownExpanded,
+                    onExpandedChange = { folderDropdownExpanded = it }
+                ) {
+                    val targetFolderLabel =
+                        when {
+                            !hasTargetFolderSelection -> ""
+                            selectedTargetFolderId == null ->
+                                context.getString(R.string.ungrouped)
+                            else ->
+                                folderLabels[selectedTargetFolderId] ?: selectedTargetFolderId!!
+                        }
+                    OutlinedTextField(
+                        value = targetFolderLabel,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = {
+                            Text(context.getString(R.string.target_chat_folder_optional))
+                        },
+                        placeholder = {
+                            Text(context.getString(R.string.select_folder_or_ungrouped))
+                        },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(
+                                expanded = folderDropdownExpanded
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.Folder, contentDescription = null)
+                        },
+                        modifier = Modifier
+                            .menuAnchor()
+                            .fillMaxWidth(),
+                        colors = ExposedDropdownMenuDefaults.textFieldColors()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = folderDropdownExpanded,
+                        onDismissRequest = { folderDropdownExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(context.getString(R.string.ungrouped)) },
+                            onClick = {
+                                selectedTargetFolderId = null
+                                hasTargetFolderSelection = true
+                                folderDropdownExpanded = false
+                            }
+                        )
+                        chatFolders
+                            .asSequence()
+                            .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
+                            .sortedWith(
+                                compareBy<ChatFolderEntity> { folderLabels[it.id] }
+                                    .thenBy { it.id }
+                            )
+                            .forEach { folder ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(folderLabels[folder.id] ?: folder.name)
+                                    },
+                                    onClick = {
+                                        selectedTargetFolderId = folder.id
+                                        hasTargetFolderSelection = true
+                                        folderDropdownExpanded = false
+                                    }
+                                )
+                            }
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -1506,6 +1639,8 @@ private fun ChatHistoryBatchSelectorCard(
                                     selectedChatIds.toList(),
                                     if (targetIsUnbind) null else selectedTargetName,
                                     if (targetGroupIsUnbind) null else selectedTargetGroupId,
+                                    selectedTargetFolderId,
+                                    hasTargetFolderSelection,
                                     targetIsUnbind,
                                     targetGroupIsUnbind
                                 )
@@ -1515,6 +1650,8 @@ private fun ChatHistoryBatchSelectorCard(
                                     targetIsUnbind = false
                                     selectedTargetGroupId = null
                                     targetGroupIsUnbind = false
+                                    selectedTargetFolderId = null
+                                    hasTargetFolderSelection = false
                                 }
                                 submitting = false
                             }
@@ -1531,6 +1668,8 @@ private fun ChatHistoryBatchSelectorCard(
                             Spacer(modifier = Modifier.width(8.dp))
                         }
                         val buttonText = when {
+                            hasTargetFolderSelection ->
+                                context.getString(R.string.apply_chat_folder)
                             targetGroupIsUnbind -> context.getString(R.string.remove_character_group_binding)
                             targetIsUnbind -> context.getString(R.string.remove_character_card_binding)
                             !selectedTargetGroupId.isNullOrBlank() -> context.getString(R.string.apply_character_group)
@@ -1903,7 +2042,8 @@ private fun UnboundWorkspaceRow(
     selected: Boolean,
     onSelectionChange: (Boolean) -> Unit
 ) {
-    val context = LocalContext.current
+    val notUsedByAnyChatText = stringResource(R.string.not_used_by_any_chat)
+    val internalStorageLabel = stringResource(R.string.chathistory_internal_storage)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1939,14 +2079,14 @@ private fun UnboundWorkspaceRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = context.getString(R.string.not_used_by_any_chat),
+                    text = notUsedByAnyChatText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
         Icon(
-            imageVector = if (workspaceInfo.location == context.getString(R.string.chathistory_internal_storage)) Icons.Default.Folder else Icons.Default.FolderOpen,
+            imageVector = if (workspaceInfo.location == internalStorageLabel) Icons.Default.Folder else Icons.Default.FolderOpen,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(24.dp)
