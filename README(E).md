@@ -213,9 +213,10 @@ Import and manage MCP, Skill, and tool packages
 <tr><th>Version</th><th>Release Date</th><th>Core Updates</th></tr>
 
 <tr>
-<td><b>v1.12.0</b><br><sub>Latest</sub></td>
-<td>2026-07-01</td>
+<td><b>v1.12.0+4-ry.1</b><br><sub>Latest</sub></td>
+<td>2026-07-22</td>
 <td>
+• <b>First Operit Ry Personal Release</b>: Uses an independent app identity and release signature, can coexist with official Operit, and supports migrating official-version data through raw snapshots<br>
 • <b>Marketplace & Creation Ecosystem</b>: Unified marketplace flows, added the Artifact marketplace, project management and publishing, and improved marketplace search, GitHub OAuth login, example repositories, and sidebar entry points<br>
 • <b>Toolkits & Workspaces</b>: Extracted ToolPkg IPC/runtime management, added the hook runner, plan-mode runtime IPC, workspace change tracking/attachments/templates, and the zip include_root_directory option<br>
 • <b>Languages, Voice & Media</b>: Added Korean, Spanish, and Portuguese localization; introduced MIMO/Mimo, VITS, ONNX, and Doubao TTS, music playback queues, better image attachments, and attachment filename deduplication<br>
