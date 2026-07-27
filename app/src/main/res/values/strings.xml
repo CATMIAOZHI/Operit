@@ -3365,6 +3365,8 @@
     <string name="delete_operation_irreversible">此操作无法撤销</string>
     <string name="delete_group_only">仅删除分组</string>
     <string name="chats_move_to_ungrouped">对话将移至"未分组"</string>
+    <string name="folder_contents_move_to_parent">直属对话和子文件夹将移至父文件夹“%1$s”</string>
+    <string name="folder_contents_move_to_root">直属对话将移至“未分组”，子文件夹将提升到根层级</string>
     <string name="edit_title">编辑标题</string>
     <string name="move_up">上移</string>
     <string name="move_down">下移</string>

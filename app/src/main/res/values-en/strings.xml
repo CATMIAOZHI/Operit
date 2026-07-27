@@ -3454,6 +3454,8 @@
     <string name="delete_operation_irreversible">This operation cannot be undone</string>
     <string name="delete_group_only">Delete group only</string>
     <string name="chats_move_to_ungrouped">Chats will be moved to \"Ungrouped\"</string>
+    <string name="folder_contents_move_to_parent">Direct chats and subfolders will be moved to the parent folder “%1$s”</string>
+    <string name="folder_contents_move_to_root">Direct chats will be moved to “Ungrouped”, and subfolders will be promoted to the root level</string>
     <string name="edit_title">Edit Title</string>
     <string name="move_up">Move Up</string>
     <string name="move_down">Move Down</string>

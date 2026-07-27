@@ -2042,7 +2042,8 @@ private fun UnboundWorkspaceRow(
     selected: Boolean,
     onSelectionChange: (Boolean) -> Unit
 ) {
-    val context = LocalContext.current
+    val notUsedByAnyChatText = stringResource(R.string.not_used_by_any_chat)
+    val internalStorageLabel = stringResource(R.string.chathistory_internal_storage)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2078,14 +2079,14 @@ private fun UnboundWorkspaceRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = context.getString(R.string.not_used_by_any_chat),
+                    text = notUsedByAnyChatText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
         Icon(
-            imageVector = if (workspaceInfo.location == context.getString(R.string.chathistory_internal_storage)) Icons.Default.Folder else Icons.Default.FolderOpen,
+            imageVector = if (workspaceInfo.location == internalStorageLabel) Icons.Default.Folder else Icons.Default.FolderOpen,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(24.dp)

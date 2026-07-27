@@ -2405,6 +2405,10 @@ fun ChatHistorySelector(
                     )
                 ) {
                     fun moveTo(folderId: String?) {
+                        if (folderId == targetChat.folderId) {
+                            chatToMove = null
+                            return
+                        }
                         coroutineScope.launch {
                             runCatching {
                                 chatHistoryManager.moveChat(
@@ -2581,6 +2585,11 @@ fun ChatHistorySelector(
 
     if (groupToDelete != null) {
         val target = groupToDelete!!
+        val targetFolder = chatFolders.firstOrNull { it.id == target.folderId }
+        val parentFolder =
+            targetFolder?.parentFolderId?.let { parentId ->
+                chatFolders.firstOrNull { it.id == parentId }
+            }
         AlertDialog(
             onDismissRequest = { groupToDelete = null },
             title = { Text(stringResource(R.string.confirm_delete_group)) },
@@ -2588,7 +2597,14 @@ fun ChatHistorySelector(
                 Text(
                     text =
                         "${target.groupName}\n\n" +
-                            stringResource(R.string.chats_move_to_ungrouped),
+                            if (parentFolder != null) {
+                                stringResource(
+                                    R.string.folder_contents_move_to_parent,
+                                    parentFolder.name,
+                                )
+                            } else {
+                                stringResource(R.string.folder_contents_move_to_root)
+                            },
                 )
             },
             confirmButton = {
