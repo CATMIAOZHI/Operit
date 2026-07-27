@@ -3102,9 +3102,36 @@ class ChatHistoryManager private constructor(private val context: Context) {
     }
 
     /**
-     * 批量为特定聊天更新分组
+     * 批量为特定聊天更新文件夹归属。
      * @return 受影响的对话数量
      */
+    suspend fun assignFolderToChats(
+        chatIds: List<String>,
+        targetFolderId: String?,
+    ): Int {
+        if (chatIds.isEmpty()) {
+            return 0
+        }
+        return withContext(Dispatchers.IO) {
+            try {
+                val normalizedFolderId = normalizeChatFolderId(targetFolderId)
+                if (normalizedFolderId != null) {
+                    require(chatFolderDao.getFolder(normalizedFolderId) != null) {
+                        "Unknown folderId: $normalizedFolderId"
+                    }
+                }
+                chatDao.updateFolderForChats(chatIds, normalizedFolderId)
+            } catch (e: Exception) {
+                AppLogger.e(
+                    TAG,
+                    "批量更新聊天文件夹失败: folderId=$targetFolderId, chatIds=$chatIds",
+                    e,
+                )
+                throw e
+            }
+        }
+    }
+
     /**
      * 批量重命名对话中绑定的角色卡名称
      * @return 受影响的对话数量

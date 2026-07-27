@@ -116,15 +116,6 @@ class ExternalChatRequestExecutor(context: Context) {
     private suspend fun prepareRequest(request: ExternalChatRequest): PreparationResult {
         val requestId = request.requestId?.trim()?.takeIf { it.isNotBlank() }
         val resolvedRequestId = requestId ?: UUID.randomUUID().toString()
-        if (!request.group.isNullOrBlank()) {
-            return PreparationResult.Failed(
-                ExternalChatResult(
-                    requestId = requestId,
-                    success = false,
-                    error = "The group field is deprecated and unsupported; use folder_id",
-                )
-            )
-        }
         val message = request.message?.trim()
         if (message.isNullOrBlank()) {
             return PreparationResult.Failed(
@@ -181,6 +172,9 @@ class ExternalChatRequestExecutor(context: Context) {
         var createdChatId: String? = null
         if (request.createNewChat) {
             val params = mutableListOf<ToolParameter>()
+            request.group?.trim()?.takeIf { it.isNotBlank() }?.let {
+                params += ToolParameter(name = "group", value = it)
+            }
             request.folderId?.trim()?.takeIf { it.isNotBlank() }?.let {
                 params += ToolParameter(name = "folder_id", value = it)
             }

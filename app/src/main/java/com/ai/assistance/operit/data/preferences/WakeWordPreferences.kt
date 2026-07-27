@@ -54,6 +54,7 @@ class WakeWordPreferences(private val context: Context) {
 
         private val KEY_WAKE_CREATE_NEW_CHAT_ON_WAKE_ENABLED =
             booleanPreferencesKey("wake_create_new_chat_on_wake_enabled")
+        private val KEY_AUTO_NEW_CHAT_GROUP = stringPreferencesKey("auto_new_chat_group")
 
         private val KEY_VOICE_AUTO_ATTACH_ENABLED = booleanPreferencesKey("voice_auto_attach_enabled")
         private val KEY_VOICE_AUTO_ATTACH_ITEMS_JSON = stringPreferencesKey("voice_auto_attach_items_json")
@@ -75,6 +76,10 @@ class WakeWordPreferences(private val context: Context) {
         }
         val DEFAULT_WAKE_GREETING_TEXT: String by lazy {
             runCatching { OperitApplication.instance.getString(R.string.wake_word_response) }
+                .getOrDefault("")
+        }
+        val DEFAULT_AUTO_NEW_CHAT_GROUP: String by lazy {
+            runCatching { OperitApplication.instance.getString(R.string.wake_word_global_assistant) }
                 .getOrDefault("")
         }
         const val DEFAULT_VOICE_AUTO_ATTACH_ENABLED = true
@@ -185,6 +190,11 @@ class WakeWordPreferences(private val context: Context) {
                 ?: DEFAULT_WAKE_CREATE_NEW_CHAT_ON_WAKE_ENABLED
         }
 
+    val autoNewChatGroupFlow: Flow<String> =
+        dataStore.data.map { prefs ->
+            prefs[KEY_AUTO_NEW_CHAT_GROUP] ?: DEFAULT_AUTO_NEW_CHAT_GROUP
+        }
+
     val voiceAutoAttachEnabledFlow: Flow<Boolean> =
         dataStore.data.map { prefs ->
             prefs[KEY_VOICE_AUTO_ATTACH_ENABLED] ?: DEFAULT_VOICE_AUTO_ATTACH_ENABLED
@@ -292,6 +302,12 @@ class WakeWordPreferences(private val context: Context) {
     suspend fun saveWakeCreateNewChatOnWakeEnabled(enabled: Boolean) {
         dataStore.edit { prefs ->
             prefs[KEY_WAKE_CREATE_NEW_CHAT_ON_WAKE_ENABLED] = enabled
+        }
+    }
+
+    suspend fun saveAutoNewChatGroup(group: String) {
+        dataStore.edit { prefs ->
+            prefs[KEY_AUTO_NEW_CHAT_GROUP] = group
         }
     }
 

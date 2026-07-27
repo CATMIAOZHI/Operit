@@ -7503,6 +7503,10 @@
     <string name="apply_character_group">Apply Character Group</string>
     <string name="assign_to_character_group_title">Assign to Character Group</string>
     <string name="assigned_chats_to_character_group">Assigned %1$d chat(s) to character group "%2$s"</string>
+    <string name="target_chat_folder_optional">Target chat folder (optional)</string>
+    <string name="select_folder_or_ungrouped">Select a folder or ungrouped</string>
+    <string name="apply_chat_folder">Apply chat folder</string>
+    <string name="assigned_chats_to_folder">Moved %1$d chat(s) to "%2$s"</string>
     <string name="assigned_to_character_group">Assigned to character group "%1$s"</string>
     <string name="character_group_avatar">Group Avatar</string>
     <string name="character_group_binding_prefix">Group</string>
