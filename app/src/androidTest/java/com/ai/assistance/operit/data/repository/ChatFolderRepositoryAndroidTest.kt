@@ -11,6 +11,8 @@ import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
@@ -79,6 +81,50 @@ class ChatFolderRepositoryAndroidTest {
                 .sortedBy { it.displayOrder }
                 .map { it.id }
         assertEquals(listOf("favorite-c", "hidden-b", "favorite-a"), ordered)
+        assertEquals(
+            mapOf("favorite-a" to 0L, "hidden-b" to 1L, "favorite-c" to 2L),
+            database.chatDao().getAllChatsDirectly().associate { it.id to it.updatedAt },
+        )
+    }
+
+    @Test
+    fun projectedWebReorderPreservesFolderSlots() = runBlocking {
+        database.chatFolderDao().insertFolder(folder("hidden-folder", null, 1))
+        insertChat("a", null, 0, favorite = false)
+        insertChat("b", null, 2, favorite = false)
+
+        val reordered =
+            repository.reorderProjectedChats(
+                expectedChatIds = listOf("a", "b"),
+                orderedChatIds = listOf("b", "a"),
+                expectedFolderIdsByChatId = mapOf("a" to null, "b" to null),
+                expectedDisplayOrdersByChatId = mapOf("a" to 0L, "b" to 2L),
+            )
+
+        assertTrue(reordered)
+        assertEquals(
+            listOf("chat:b", "folder:hidden-folder", "chat:a"),
+            siblingSnapshot(null).map { it.stableKey },
+        )
+    }
+
+    @Test
+    fun projectedWebReorderRejectsStaleFolderSnapshot() = runBlocking {
+        val folderId = repository.createFolder(null, "Folder")
+        insertChat("a", null, 0, favorite = false)
+        insertChat("b", null, 1, favorite = false)
+        database.chatDao().updateChatOrderAndFolder("b", 0, folderId)
+
+        val reordered =
+            repository.reorderProjectedChats(
+                expectedChatIds = listOf("a", "b"),
+                orderedChatIds = listOf("b", "a"),
+                expectedFolderIdsByChatId = mapOf("a" to null, "b" to null),
+                expectedDisplayOrdersByChatId = mapOf("a" to 0L, "b" to 1L),
+            )
+
+        assertFalse(reordered)
+        assertEquals(folderId, database.chatDao().getChatById("b")?.folderId)
     }
 
     @Test
@@ -146,6 +192,66 @@ class ChatFolderRepositoryAndroidTest {
                 .sortedBy { it.displayOrder }
                 .map { it.id },
         )
+    }
+
+    @Test
+    fun deletingFolderWithChatsDeletesDescendantChatsButPreservesLockedChats() = runBlocking {
+        database.chatFolderDao().insertFolders(
+            listOf(
+                folder("root", null, 0),
+                folder("child", "root", 0),
+                folder("grandchild", "child", 0),
+            )
+        )
+        insertChat("direct", "root", 0, favorite = false)
+        insertChat("nested", "child", 0, favorite = false)
+        insertChat("deep", "grandchild", 0, favorite = false)
+        insertChat("locked", "grandchild", 1, favorite = false, locked = true)
+
+        val deleted =
+            repository.deleteFolderWithChats(
+                "root",
+                characterCardName = null,
+                characterGroupId = null,
+            )
+
+        assertEquals(setOf("direct", "nested", "deep"), deleted.toSet())
+        assertEquals(null, database.chatFolderDao().getFolder("root"))
+        assertEquals(null, database.chatFolderDao().getFolder("child")?.parentFolderId)
+        assertEquals("grandchild", database.chatDao().getChatById("locked")?.folderId)
+        assertEquals(1, database.chatDao().getTotalChatCount())
+    }
+
+    @Test
+    fun deletingFolderWithChatsHonorsCharacterGroupFilter() = runBlocking {
+        database.chatFolderDao().insertFolders(
+            listOf(folder("root", null, 0), folder("child", "root", 0))
+        )
+        insertChat(
+            "matching",
+            "child",
+            0,
+            favorite = false,
+            characterGroupId = "group-a",
+        )
+        insertChat(
+            "other",
+            "child",
+            1,
+            favorite = false,
+            characterGroupId = "group-b",
+        )
+
+        val deleted =
+            repository.deleteFolderWithChats(
+                "root",
+                characterCardName = null,
+                characterGroupId = "group-a",
+            )
+
+        assertEquals(listOf("matching"), deleted)
+        assertEquals(null, database.chatFolderDao().getFolder("child")?.parentFolderId)
+        assertEquals("child", database.chatDao().getChatById("other")?.folderId)
     }
 
     @Test
@@ -344,6 +450,8 @@ class ChatFolderRepositoryAndroidTest {
         folderId: String?,
         order: Long,
         favorite: Boolean,
+        locked: Boolean = false,
+        characterGroupId: String? = null,
     ) {
         database.chatDao().insertChat(
             ChatEntity(
@@ -354,6 +462,8 @@ class ChatFolderRepositoryAndroidTest {
                 folderId = folderId,
                 displayOrder = order,
                 isFavorite = favorite,
+                locked = locked,
+                characterGroupId = characterGroupId,
             )
         )
     }

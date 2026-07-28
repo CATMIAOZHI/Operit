@@ -131,6 +131,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private data class LegacyFolderResolutionKey(
         val groupName: String,
         val characterCardName: String?,
+        val characterGroupId: String?,
     )
 
     private data class ArchivedChatMetadata(
@@ -1339,12 +1340,26 @@ class ChatHistoryManager private constructor(private val context: Context) {
             emptyList(),
         )
 
+    suspend fun getChatHistoriesSnapshot(): List<ChatHistory> =
+        withContext(Dispatchers.IO) {
+            chatDao.getAllChatsDirectly().map {
+                it.toChatHistory().copy(folderId = normalizeChatFolderId(it.folderId))
+            }
+        }
+
+    suspend fun getChatFoldersSnapshot(): List<ChatFolderEntity> =
+        withContext(Dispatchers.IO) {
+            chatFolderRepository.ensureUngroupedFolder()
+            chatFolderDao.getFolders()
+        }
+
     suspend fun createFolder(parentFolderId: String?, name: String): String =
         chatFolderRepository.createFolder(parentFolderId, name)
 
     suspend fun findLegacyFolderId(
         groupName: String,
         characterCardName: String? = null,
+        characterGroupId: String? = null,
     ): String? =
         withContext(Dispatchers.IO) {
             val normalizedName = groupName.trim()
@@ -1360,7 +1375,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
             }
             val normalizedCharacterCardName =
                 characterCardName?.trim()?.takeIf { it.isNotEmpty() }
-            if (normalizedCharacterCardName == null) {
+            val normalizedCharacterGroupId =
+                characterGroupId?.trim()?.takeIf { it.isNotEmpty() }
+            if (normalizedCharacterCardName == null && normalizedCharacterGroupId == null) {
                 return@withContext candidates.minWithOrNull(
                     compareBy<ChatFolderEntity> { it.displayOrder }
                         .thenBy { it.createdAt }
@@ -1370,7 +1387,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
             val matchingFolderIds =
                 chatDao.getAllChatsDirectly()
                     .asSequence()
-                    .filter { it.characterCardName == normalizedCharacterCardName }
+                    .filter {
+                        when {
+                            normalizedCharacterGroupId != null ->
+                                it.characterGroupId == normalizedCharacterGroupId
+                            else ->
+                                it.characterCardName == normalizedCharacterCardName &&
+                                    it.characterGroupId == null
+                        }
+                    }
                     .mapNotNull { normalizeChatFolderId(it.folderId) }
                     .toSet()
             candidates
@@ -1386,12 +1411,20 @@ class ChatHistoryManager private constructor(private val context: Context) {
     suspend fun resolveOrCreateLegacyFolderId(
         groupName: String,
         characterCardName: String? = null,
+        characterGroupId: String? = null,
     ): String {
         val normalizedName = groupName.trim()
         require(normalizedName.isNotEmpty()) { "Group name must not be blank" }
         val normalizedCharacterCardName =
             characterCardName?.trim()?.takeIf { it.isNotEmpty() }
-        val key = LegacyFolderResolutionKey(normalizedName, normalizedCharacterCardName)
+        val normalizedCharacterGroupId =
+            characterGroupId?.trim()?.takeIf { it.isNotEmpty() }
+        val key =
+            LegacyFolderResolutionKey(
+                normalizedName,
+                normalizedCharacterCardName,
+                normalizedCharacterGroupId,
+            )
         return legacyFolderResolutionMutex.withLock {
             resolveOrCreateLegacyFolderIdLocked(key)
         }
@@ -1400,7 +1433,11 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private suspend fun resolveOrCreateLegacyFolderIdLocked(
         key: LegacyFolderResolutionKey,
     ): String {
-        findLegacyFolderId(key.groupName, key.characterCardName)?.let { folderId ->
+        findLegacyFolderId(
+            key.groupName,
+            key.characterCardName,
+            key.characterGroupId,
+        )?.let { folderId ->
             reservedLegacyFolderIds.remove(key)
             return folderId
         }
@@ -1497,6 +1534,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
     suspend fun deleteFolderWithChatsIfExists(
         folderId: String,
         characterCardName: String?,
+        characterGroupId: String?,
     ): Boolean =
         folderStructureMutex.withLock {
             if (
@@ -1507,28 +1545,14 @@ class ChatHistoryManager private constructor(private val context: Context) {
             }
             val normalizedCharacterCardName =
                 characterCardName?.trim()?.takeIf { it.isNotEmpty() }
+            val normalizedCharacterGroupId =
+                characterGroupId?.trim()?.takeIf { it.isNotEmpty() }
             val deletedChatIds =
-                database.withTransaction {
-                    val chatsToDelete =
-                        chatDao.getAllChatsDirectly().filter {
-                            normalizeChatFolderId(it.folderId) == folderId &&
-                                (
-                                    normalizedCharacterCardName == null ||
-                                        it.characterCardName == normalizedCharacterCardName
-                                ) &&
-                                !it.locked
-                        }
-                    chatsToDelete.forEach { chatDao.deleteChat(it.id) }
-                    val hasRemainingContent =
-                        chatDao.getAllChatsDirectly().any {
-                            normalizeChatFolderId(it.folderId) == folderId
-                        } ||
-                            chatFolderDao.getFolders().any { it.parentFolderId == folderId }
-                    if (normalizedCharacterCardName == null || !hasRemainingContent) {
-                        chatFolderRepository.deleteFolder(folderId)
-                    }
-                    chatsToDelete.map { it.id }
-                }
+                chatFolderRepository.deleteFolderWithChats(
+                    folderId = folderId,
+                    characterCardName = normalizedCharacterCardName,
+                    characterGroupId = normalizedCharacterGroupId,
+                )
             context.currentChatIdDataStore.edit { preferences ->
                 if (preferences[PreferencesKeys.CURRENT_CHAT_ID] in deletedChatIds) {
                     preferences.remove(PreferencesKeys.CURRENT_CHAT_ID)
@@ -1542,87 +1566,33 @@ class ChatHistoryManager private constructor(private val context: Context) {
             chatFolderRepository.deleteFolder(folderId)
         }
 
-    suspend fun updateChatOrderAndFolders(
-        histories: List<ChatHistory>,
-        legacyGroupNamesByChatId: Map<String, String> = emptyMap(),
-    ): Boolean {
-        val updated = legacyFolderResolutionMutex.withLock {
-            val reservationsBeforeTransaction = reservedLegacyFolderIds.toMap()
-            try {
-                database.withTransaction {
-                    if (
-                        histories.map { it.id }.distinct().size != histories.size ||
-                            legacyGroupNamesByChatId.keys.any { legacyChatId ->
-                                histories.none { it.id == legacyChatId }
-                            }
-                    ) {
-                        return@withTransaction false
+    suspend fun reorderProjectedChats(
+        expectedHistories: List<ChatHistory>,
+        orderedHistories: List<ChatHistory>,
+    ): Boolean =
+        folderStructureMutex.withLock {
+            val expectedFolderIdsByChatId =
+                expectedHistories.associate { it.id to normalizeChatFolderId(it.folderId) }
+            val expectedDisplayOrdersByChatId =
+                expectedHistories.associate { it.id to it.displayOrder }
+            if (
+                expectedFolderIdsByChatId.size != expectedHistories.size ||
+                    orderedHistories.mapTo(hashSetOf()) { it.id } !=
+                        expectedFolderIdsByChatId.keys ||
+                    orderedHistories.any {
+                        normalizeChatFolderId(it.folderId) !=
+                            expectedFolderIdsByChatId[it.id]
                     }
-                    val currentById = chatDao.getAllChatsDirectly().associateBy { it.id }
-                    if (histories.any { it.id !in currentById }) {
-                        return@withTransaction false
-                    }
-                    val folderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
-                    if (
-                        histories.any {
-                            val folderId = normalizeChatFolderId(it.folderId)
-                            it.id !in legacyGroupNamesByChatId &&
-                                folderId != null &&
-                                folderId !in folderIds
-                        }
-                    ) {
-                        return@withTransaction false
-                    }
-                    val resolvedLegacyFolderIds =
-                        mutableMapOf<LegacyFolderResolutionKey, String>()
-                    val timestamp = System.currentTimeMillis()
-                    histories.forEach { history ->
-                        val legacyGroupName =
-                            legacyGroupNamesByChatId[history.id]
-                                ?.trim()
-                                ?.takeIf { it.isNotEmpty() }
-                        val folderId =
-                            if (legacyGroupName == null) {
-                                normalizeChatFolderId(history.folderId)
-                            } else {
-                                val key =
-                                    LegacyFolderResolutionKey(
-                                        groupName = legacyGroupName,
-                                        characterCardName =
-                                            history.characterCardName
-                                                ?.trim()
-                                                ?.takeIf { it.isNotEmpty() },
-                                    )
-                                resolvedLegacyFolderIds[key]
-                                    ?: resolveOrCreateLegacyFolderIdLocked(key).also {
-                                        resolvedLegacyFolderIds[key] = it
-                                    }
-                            }
-                        chatDao.updateChatOrderAndFolder(
-                            chatId = history.id,
-                            displayOrder = history.displayOrder,
-                            folderId = folderId,
-                            timestamp = timestamp,
-                        )
-                    }
-                    true
-                }
-            } catch (error: Throwable) {
-                reservedLegacyFolderIds.clear()
-                reservedLegacyFolderIds.putAll(reservationsBeforeTransaction)
-                throw error
+            ) {
+                return@withLock false
             }
-        }
-        if (updated) {
-            releaseLegacyFolderReservations(
-                histories.map { it.folderId } +
-                    legacyGroupNamesByChatId.keys.mapNotNull { chatId ->
-                        chatDao.getChatById(chatId)?.folderId
-                    }
+            chatFolderRepository.reorderProjectedChats(
+                expectedChatIds = expectedHistories.map { it.id },
+                orderedChatIds = orderedHistories.map { it.id },
+                expectedFolderIdsByChatId = expectedFolderIdsByChatId,
+                expectedDisplayOrdersByChatId = expectedDisplayOrdersByChatId,
             )
         }
-        return updated
-    }
 
     suspend fun getTotalChatCount(): Int {
         return withContext(Dispatchers.IO) { chatDao.getTotalChatCount() }

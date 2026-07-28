@@ -303,6 +303,113 @@ class ChatFolderRepository(
         }
     }
 
+    /** Reorders an observed chat projection while preserving hidden chat and folder slots. */
+    suspend fun reorderProjectedChats(
+        expectedChatIds: List<String>,
+        orderedChatIds: List<String>,
+        expectedFolderIdsByChatId: Map<String, String?>,
+        expectedDisplayOrdersByChatId: Map<String, Long>,
+    ): Boolean =
+        database.withTransaction {
+            val expectedIds = expectedChatIds.toSet()
+            if (
+                expectedIds.isEmpty() ||
+                expectedIds.size != expectedChatIds.size ||
+                    orderedChatIds.toSet() != expectedIds ||
+                    expectedFolderIdsByChatId.keys != expectedIds ||
+                    expectedDisplayOrdersByChatId.keys != expectedIds
+            ) {
+                return@withTransaction false
+            }
+
+            val folders = folderDao.getFolders()
+            val chats = chatDao.getAllChatsDirectly()
+            val currentById = chats.associateBy { it.id }
+            if (
+                expectedIds.any { it !in currentById } ||
+                    expectedIds.any { chatId ->
+                        val current = currentById.getValue(chatId)
+                        current.folderId != expectedFolderIdsByChatId.getValue(chatId) ||
+                            current.displayOrder != expectedDisplayOrdersByChatId.getValue(chatId)
+                    }
+            ) {
+                return@withTransaction false
+            }
+
+            val parentFolderIds = expectedChatIds.mapTo(linkedSetOf()) {
+                expectedFolderIdsByChatId.getValue(it)
+            }
+            for (parentFolderId in parentFolderIds) {
+                val source = siblings(parentFolderId, folders, chats)
+                val expectedProjectedIds =
+                    expectedChatIds.filter {
+                        expectedFolderIdsByChatId.getValue(it) == parentFolderId
+                    }
+                val orderedProjectedIds =
+                    orderedChatIds.filter {
+                        expectedFolderIdsByChatId.getValue(it) == parentFolderId
+                    }
+                val projectedKeys = expectedProjectedIds.mapTo(hashSetOf()) { "chat:$it" }
+                val siblingsByKey = source.associateBy { it.stableKey }
+                val orderedIterator = orderedProjectedIds.iterator()
+                val merged =
+                    source.map { sibling ->
+                        if (sibling.stableKey in projectedKeys) {
+                            requireNotNull(siblingsByKey["chat:${orderedIterator.next()}"])
+                        } else {
+                            sibling
+                        }
+                    }
+                updateSiblingOrders(merged, parentFolderId)
+            }
+            true
+        }
+
+    suspend fun deleteFolderWithChats(
+        folderId: String,
+        characterCardName: String?,
+        characterGroupId: String?,
+    ): List<String> =
+        database.withTransaction {
+            require(folderId != SYSTEM_UNGROUPED_FOLDER_ID) {
+                "The ungrouped folder cannot be deleted"
+            }
+            val folders = folderDao.getFolders()
+            require(folders.any { it.id == folderId }) { "Folder does not exist" }
+            val descendantFolderIds = linkedSetOf(folderId)
+            var addedDescendant: Boolean
+            do {
+                addedDescendant = false
+                folders.forEach { folder ->
+                    if (
+                        folder.parentFolderId in descendantFolderIds &&
+                            descendantFolderIds.add(folder.id)
+                    ) {
+                        addedDescendant = true
+                    }
+                }
+            } while (addedDescendant)
+
+            val chatsToDelete =
+                chatDao.getAllChatsDirectly().filter {
+                    it.folderId in descendantFolderIds &&
+                        (
+                            when {
+                                characterGroupId != null ->
+                                    it.characterGroupId == characterGroupId
+                                characterCardName != null ->
+                                    it.characterGroupId == null &&
+                                        it.characterCardName == characterCardName
+                                else -> true
+                            }
+                        ) &&
+                        !it.locked
+                }
+            chatsToDelete.forEach { chatDao.deleteChat(it.id) }
+            deleteFolder(folderId)
+            chatsToDelete.map { it.id }
+        }
+
     suspend fun deleteFolder(folderId: String) {
         database.withTransaction {
             require(folderId != SYSTEM_UNGROUPED_FOLDER_ID) {
@@ -336,7 +443,6 @@ class ChatFolderRepository(
         siblings: List<OrderedSibling>,
         parentFolderId: String?,
     ) {
-        val timestamp = System.currentTimeMillis()
         val folderUpdates = mutableListOf<ChatFolderEntity>()
         siblings.forEachIndexed { index, sibling ->
             sibling.folder?.let { folder ->
@@ -351,7 +457,6 @@ class ChatFolderRepository(
                     chatId = chat.id,
                     displayOrder = index.toLong(),
                     folderId = parentFolderId,
-                    timestamp = timestamp,
                 )
             }
         }

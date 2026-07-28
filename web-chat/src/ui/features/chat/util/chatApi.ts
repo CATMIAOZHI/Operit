@@ -277,9 +277,15 @@ export async function toggleMessageFavorite(
 
 export async function reorderChats(
   token: string,
+  expectedItems: WebChatReorderItem[],
   items: WebChatReorderItem[]
 ): Promise<void> {
-  await requestJson('/api/web/chats/reorder', token, { method: 'POST' }, { items });
+  await requestJson(
+    '/api/web/chats/reorder',
+    token,
+    { method: 'POST' },
+    { expected_items: expectedItems, items }
+  );
 }
 
 export async function renameGroup(
@@ -288,6 +294,7 @@ export async function renameGroup(
     old_name: string;
     new_name: string;
     character_card_name?: string | null;
+    character_group_id?: string | null;
     folder_id?: string | null;
   }
 ): Promise<void> {
@@ -300,6 +307,7 @@ export async function deleteGroup(
     group_name: string;
     delete_chats: boolean;
     character_card_name?: string | null;
+    character_group_id?: string | null;
     folder_id?: string | null;
   }
 ): Promise<void> {

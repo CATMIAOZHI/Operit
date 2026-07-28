@@ -552,18 +552,23 @@ export interface ChatViewModelActions {
       update_binding?: boolean;
     }
   ) => Promise<WebChatSummary | null>;
-  reorderConversations: (items: WebChatReorderItem[]) => Promise<void>;
+  reorderConversations: (
+    expectedItems: WebChatReorderItem[],
+    items: WebChatReorderItem[]
+  ) => Promise<void>;
   renameGroup: (
     oldName: string,
     newName: string,
     characterCardName?: string | null,
-    folderId?: string | null
+    folderId?: string | null,
+    characterGroupId?: string | null
   ) => Promise<void>;
   deleteGroup: (
     groupName: string,
     deleteChats: boolean,
     characterCardName?: string | null,
-    folderId?: string | null
+    folderId?: string | null,
+    characterGroupId?: string | null
   ) => Promise<void>;
   updateInputSettings: (
     payload: Partial<{
@@ -1460,13 +1465,16 @@ export function useChatViewModel(): ChatViewModel {
     }
   }
 
-  async function reorderConversations(items: WebChatReorderItem[]) {
+  async function reorderConversations(
+    expectedItems: WebChatReorderItem[],
+    items: WebChatReorderItem[]
+  ) {
     if (!token || items.length === 0) {
       return;
     }
 
     try {
-      await reorderChatsOnServer(token, items);
+      await reorderChatsOnServer(token, expectedItems, items);
       await refreshChats(token);
     } catch (actionError: unknown) {
       handleApiFailure(actionError);
@@ -1477,7 +1485,8 @@ export function useChatViewModel(): ChatViewModel {
     oldName: string,
     newName: string,
     characterCardName?: string | null,
-    folderId?: string | null
+    folderId?: string | null,
+    characterGroupId?: string | null
   ) {
     if (!token) {
       return;
@@ -1494,6 +1503,7 @@ export function useChatViewModel(): ChatViewModel {
         old_name: normalizedOldName,
         new_name: normalizedNewName,
         character_card_name: characterCardName ?? null,
+        character_group_id: characterGroupId ?? null,
         folder_id: folderId ?? null
       });
       await refreshChats(token);
@@ -1506,7 +1516,8 @@ export function useChatViewModel(): ChatViewModel {
     groupName: string,
     deleteChats: boolean,
     characterCardName?: string | null,
-    folderId?: string | null
+    folderId?: string | null,
+    characterGroupId?: string | null
   ) {
     if (!token) {
       return;
@@ -1522,6 +1533,7 @@ export function useChatViewModel(): ChatViewModel {
         group_name: normalizedGroupName,
         delete_chats: deleteChats,
         character_card_name: characterCardName ?? null,
+        character_group_id: characterGroupId ?? null,
         folder_id: folderId ?? null
       });
       const refreshedChats = await refreshChats(token);

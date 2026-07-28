@@ -530,7 +530,7 @@ class StandardChatManagerTool(private val context: Context) {
 
             val targetIndex = index ?: 0
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val chatHistories = chatHistoryManager.chatHistoriesFlow.first()
+            val chatHistories = chatHistoryManager.getChatHistoriesSnapshot()
             val currentChatId = chatHistoryManager.currentChatIdFlow.first()
             val messageCounts = chatHistoryManager.getMessageCountsByChatId()
 
@@ -645,7 +645,7 @@ class StandardChatManagerTool(private val context: Context) {
             }
 
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val chat = chatHistoryManager.chatHistoriesFlow.first().find { it.id == chatId }
+            val chat = chatHistoryManager.getChatHistoriesSnapshot().find { it.id == chatId }
             if (chat == null) {
                 return ToolResult(
                     toolName = tool.name,
@@ -1149,10 +1149,9 @@ class StandardChatManagerTool(private val context: Context) {
     suspend fun listChats(tool: AITool): ToolResult {
         return try {
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val chatHistories = chatHistoryManager.chatHistoriesFlow.first()
+            val chatHistories = chatHistoryManager.getChatHistoriesSnapshot()
             val folders =
-                chatHistoryManager.chatFoldersFlow
-                    .first()
+                chatHistoryManager.getChatFoldersSnapshot()
                     .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
                     .map {
                         ChatListResultData.FolderInfo(

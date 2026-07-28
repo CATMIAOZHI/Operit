@@ -116,12 +116,11 @@ class ChatClassificationV24MigrationAndroidTest {
             chatId = "chat",
             displayOrder = 42L,
             folderId = null,
-            timestamp = 123L,
         )
         val reorderedChat = requireNotNull(database.chatDao().getChatById("chat"))
         assertEquals(42L, reorderedChat.displayOrder)
         assertEquals(null, reorderedChat.folderId)
-        assertEquals(123L, reorderedChat.updatedAt)
+        assertEquals(99L, reorderedChat.updatedAt)
         assertEquals(true, reorderedChat.isFavorite)
         assertEquals(200L, reorderedChat.lastMessageAt)
 
