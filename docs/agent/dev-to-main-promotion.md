@@ -165,6 +165,8 @@ CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并�
 
 晋升 PR 合并后，将稳定分支回合并到开发分支。由于晋升 PR 可能经过 squash，出现等价代码冲突时，通用代码以通过审查的 `personal/main` 为准，同时保留 dev 专属身份、Nightly 和热更新配置：
 
+如果 dev 仍有未包含在本轮晋升 PR 中的通用改动，合并前必须记录这些文件和提交。检查点提交本身只允许包含“最新 main 通用代码 + dev 专属设施”：解决冲突时暂时采用 main 版本，在该合并提交上创建标签，然后将尚未晋升的通用改动重新落成标签之后的独立提交。不得把它们吞进检查点，也不得在解决冲突时丢弃。
+
 ```bash
 git fetch origin personal/main personal/dev --tags
 git checkout personal/dev
@@ -194,7 +196,7 @@ git push origin personal/dev
 git push origin "$CHECKPOINT"
 ```
 
-最后确认远端标签指向本次回合并提交，并且标签说明记录了准确的 main SHA。若 dev 推送成功但标签推送失败，不得把该轮视为已建立检查点，应修复标签推送后再结束。
+最后确认远端标签指向本次回合并提交，并且标签说明记录了准确的 main SHA；`git diff "$CHECKPOINT"..origin/personal/dev` 应只显示标签之后尚未晋升的改动。若 dev 推送成功但标签推送失败，不得把该轮视为已建立检查点，应修复标签推送后再结束。
 
 ## 注意事项
 
