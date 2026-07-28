@@ -829,7 +829,6 @@ class ChatHistoryDelegate(
                 characterGroupId = characterGroupId,
                 setAsCurrentChat = shouldSyncCurrentChatToGlobal
             )
-            onCreated?.invoke(newChat.id)
 
             // --- 新增：检查并添加开场白（群组模式跳过） ---
             if (characterGroupId.isNullOrBlank() && characterCardName == null && resolvedCard != null && resolvedCard.openingStatement.isNotBlank()) {
@@ -864,6 +863,7 @@ class ChatHistoryDelegate(
                 }
                 onTokenStatisticsLoaded(newChat.id, 0, 0, 0)
             }
+            onCreated?.invoke(newChat.id)
         }
     }
 

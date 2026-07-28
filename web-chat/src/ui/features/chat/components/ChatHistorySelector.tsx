@@ -1064,17 +1064,28 @@ export function ChatHistorySelector({
   }
 
   async function moveChat(chat: WebChatSummary, delta: number) {
-    const currentIndex = chats.findIndex((item) => item.id === chat.id);
-    if (currentIndex < 0) {
+    const bindingKey =
+      historyDisplayMode === 'BY_CHARACTER_CARD' ? buildBindingLabel(chat).key : null;
+    const siblings = visibleChats.filter(
+      (item) =>
+        groupBucketKey(item) === groupBucketKey(chat) &&
+        (bindingKey === null || buildBindingLabel(item).key === bindingKey)
+    );
+    const siblingIndex = siblings.findIndex((item) => item.id === chat.id);
+    const neighbor = siblings[siblingIndex + delta];
+    if (siblingIndex < 0 || !neighbor) {
       return;
     }
-    const nextIndex = currentIndex + delta;
-    if (nextIndex < 0 || nextIndex >= chats.length) {
+    const currentIndex = chats.findIndex((item) => item.id === chat.id);
+    const neighborIndex = chats.findIndex((item) => item.id === neighbor.id);
+    if (currentIndex < 0 || neighborIndex < 0) {
       return;
     }
     const reordered = [...chats];
-    const [movedChat] = reordered.splice(currentIndex, 1);
-    reordered.splice(nextIndex, 0, movedChat);
+    [reordered[currentIndex], reordered[neighborIndex]] = [
+      reordered[neighborIndex],
+      reordered[currentIndex]
+    ];
     await onReorderChats(buildReorderItems(reordered));
   }
 
