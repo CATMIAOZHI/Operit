@@ -22,6 +22,7 @@ import {
 import type {
   HistoryDisplayMode,
   WebCharacterSelectorResponse,
+  WebChatFolderSummary,
   WebChatReorderItem,
   WebChatSummary
 } from '../util/chatTypes';
@@ -807,6 +808,7 @@ function SwipeableHistoryChatRow({
 export function ChatHistorySelector({
   open,
   chats,
+  chatFolders,
   search,
   selectedChatId,
   busy,
@@ -831,6 +833,7 @@ export function ChatHistorySelector({
 }: {
   open: boolean;
   chats: WebChatSummary[];
+  chatFolders: WebChatFolderSummary[];
   search: string;
   selectedChatId: string | null;
   busy: boolean;
@@ -853,6 +856,8 @@ export function ChatHistorySelector({
     payload: {
       title?: string;
       group?: string | null;
+      folder_id?: string | null;
+      update_folder?: boolean;
       update_group?: boolean;
       locked?: boolean;
       update_locked?: boolean;
@@ -885,7 +890,7 @@ export function ChatHistorySelector({
   const [draftTitle, setDraftTitle] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
   const [groupRenameDraft, setGroupRenameDraft] = useState('');
-  const [moveGroupDraft, setMoveGroupDraft] = useState('');
+  const [moveFolderDraft, setMoveFolderDraft] = useState('');
   const [showSearchBox, setShowSearchBox] = useState(Boolean(search));
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [showNewGroupDialog, setShowNewGroupDialog] = useState(false);
@@ -920,6 +925,30 @@ export function ChatHistorySelector({
     () => chats.find((chat) => chat.id === selectedChatId) ?? null,
     [chats, selectedChatId]
   );
+
+  const folderLabels = useMemo(() => {
+    const foldersById = new Map(chatFolders.map((folder) => [folder.id, folder] as const));
+    const pathFor = (folder: WebChatFolderSummary) => {
+      const names: string[] = [];
+      const visited = new Set<string>();
+      let current: WebChatFolderSummary | undefined = folder;
+      while (current && !visited.has(current.id)) {
+        visited.add(current.id);
+        names.unshift(current.name);
+        current = current.parent_folder_id ? foldersById.get(current.parent_folder_id) : undefined;
+      }
+      return names.join(' / ');
+    };
+    const labels = chatFolders.map((folder) => ({ folder, label: pathFor(folder) }));
+    const counts = new Map<string, number>();
+    labels.forEach(({ label }) => counts.set(label, (counts.get(label) ?? 0) + 1));
+    return labels
+      .map(({ folder, label }) => ({
+        id: folder.id,
+        label: (counts.get(label) ?? 0) > 1 ? `${label} (${folder.id.slice(0, 8)})` : label
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [chatFolders]);
 
   const filteredChats = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -1292,7 +1321,7 @@ export function ChatHistorySelector({
                 className="history-action-item"
                 onClick={() => {
                   setMoveTarget(actionTarget);
-                  setMoveGroupDraft(actionTarget.group ?? '');
+                  setMoveFolderDraft(actionTarget.folder_id ?? '');
                   setActionTarget(null);
                 }}
                 type="button"
@@ -1614,17 +1643,23 @@ export function ChatHistorySelector({
               <h3>移动分组</h3>
               <p>{moveTarget.title}</p>
             </header>
-            <input
+            <select
               autoFocus
-              onChange={(event) => setMoveGroupDraft(event.target.value)}
-              placeholder="留空表示未分组"
-              value={moveGroupDraft}
-            />
+              onChange={(event) => setMoveFolderDraft(event.target.value)}
+              value={moveFolderDraft}
+            >
+              <option value="">未分组</option>
+              {folderLabels.map((folder) => (
+                <option key={folder.id} value={folder.id}>
+                  {folder.label}
+                </option>
+              ))}
+            </select>
             <footer>
               <button
                 onClick={() => {
                   setMoveTarget(null);
-                  setMoveGroupDraft('');
+                  setMoveFolderDraft('');
                 }}
                 type="button"
               >
@@ -1634,11 +1669,11 @@ export function ChatHistorySelector({
                 onClick={() => {
                   void (async () => {
                     await onUpdateChat(moveTarget, {
-                      group: normalizeGroupName(moveGroupDraft),
-                      update_group: true
+                      folder_id: moveFolderDraft || null,
+                      update_folder: true
                     });
                     setMoveTarget(null);
-                    setMoveGroupDraft('');
+                    setMoveFolderDraft('');
                   })();
                 }}
                 type="button"

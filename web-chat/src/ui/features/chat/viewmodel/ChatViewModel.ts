@@ -11,6 +11,7 @@ import {
   getMessages,
   getModelSelector,
   getTheme,
+  listChatFolders,
   listChats,
   renameGroup as renameGroupOnServer,
   reorderChats as reorderChatsOnServer,
@@ -42,6 +43,7 @@ import type {
   WebActivePromptSnapshot,
   WebActivePromptTarget,
   WebBootstrapResponse,
+  WebChatFolderSummary,
   WebChatMessage,
   WebChatMessageLocatorPreview,
   WebChatReorderItem,
@@ -464,6 +466,7 @@ export interface ChatViewModelState {
   modelSelector: WebModelSelectorState | null;
   modelSelectorLoading: boolean;
   chats: WebChatSummary[];
+  chatFolders: WebChatFolderSummary[];
   visibleChats: WebChatSummary[];
   selectedChatId: string | null;
   selectedChat: WebChatSummary | null;
@@ -539,6 +542,8 @@ export interface ChatViewModelActions {
     payload: {
       title?: string;
       group?: string | null;
+      folder_id?: string | null;
+      update_folder?: boolean;
       update_group?: boolean;
       locked?: boolean;
       update_locked?: boolean;
@@ -597,6 +602,7 @@ export function useChatViewModel(): ChatViewModel {
   const [modelSelector, setModelSelector] = useState<WebModelSelectorState | null>(null);
   const [modelSelectorLoading, setModelSelectorLoading] = useState(false);
   const [chats, setChats] = useState<WebChatSummary[]>([]);
+  const [chatFolders, setChatFolders] = useState<WebChatFolderSummary[]>([]);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<WebChatMessage[]>([]);
   const [messageInput, setMessageInput] = useState('');
@@ -722,8 +728,12 @@ export function useChatViewModel(): ChatViewModel {
   }
 
   async function refreshChats(currentToken: string) {
-    const chatList = await listChats(currentToken);
+    const [chatList, folderList] = await Promise.all([
+      listChats(currentToken),
+      listChatFolders(currentToken)
+    ]);
     setChats(chatList);
+    setChatFolders(folderList);
     setHistoryLoaded(true);
     return chatList;
   }
@@ -822,6 +832,7 @@ export function useChatViewModel(): ChatViewModel {
       setModelSelector(null);
       setModelSelectorLoading(false);
       setChats([]);
+      setChatFolders([]);
       resetChatDrafts();
       setMessages([]);
       setPendingUploads([]);
@@ -1415,6 +1426,8 @@ export function useChatViewModel(): ChatViewModel {
     payload: {
       title?: string;
       group?: string | null;
+      folder_id?: string | null;
+      update_folder?: boolean;
       update_group?: boolean;
       locked?: boolean;
       update_locked?: boolean;
@@ -1698,6 +1711,7 @@ export function useChatViewModel(): ChatViewModel {
     modelSelector,
     modelSelectorLoading,
     chats,
+    chatFolders,
     visibleChats,
     selectedChatId,
     selectedChat,

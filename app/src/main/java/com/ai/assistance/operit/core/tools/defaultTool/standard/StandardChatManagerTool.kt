@@ -32,6 +32,7 @@ import com.ai.assistance.operit.data.model.ActivePrompt
 import com.ai.assistance.operit.data.model.ChatTurnOptions
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.PromptFunctionType
+import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
 import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
@@ -155,7 +156,8 @@ class StandardChatManagerTool(private val context: Context) {
             isCurrent = currentChatId != null && chat.id == currentChatId,
             inputTokens = chat.inputTokens,
             outputTokens = chat.outputTokens,
-            characterCardName = chat.characterCardName
+            characterCardName = chat.characterCardName,
+            folderId = chat.folderId,
         )
     }
 
@@ -1019,9 +1021,6 @@ class StandardChatManagerTool(private val context: Context) {
                 error = "ChatServiceCore not initialized"
             )
 
-            // 获取创建前的 chat list
-            val previousChatIds = core.chatHistories.value.map { it.id }.toSet()
-
             val group = tool.parameters.find { it.name == "group" }?.value?.trim()
             val requestedFolderId =
                 tool.parameters.find { it.name == "folder_id" }?.value?.trim()?.takeIf {
@@ -1084,24 +1083,16 @@ class StandardChatManagerTool(private val context: Context) {
                 }
             
             // 创建新对话（不切换当前对话）
+            val createdChatId = CompletableDeferred<String>()
             core.createNewChat(
                 folderId = folderId,
                 setAsCurrentChat = setAsCurrentChat,
-                characterCardId = characterCardId
+                characterCardId = characterCardId,
+                onCreated = createdChatId::complete,
             )
 
             val newChatId = try {
-                withTimeout(5000L) {
-                    var newId: String? = null
-                    while (newId == null) {
-                        val newChat = core.chatHistories.value.firstOrNull { it.id !in previousChatIds }
-                        newId = newChat?.id
-                        if (newId == null) {
-                            delay(50)
-                        }
-                    }
-                    newId
-                }
+                withTimeout(5000L) { createdChatId.await() }
             } catch (_: TimeoutCancellationException) {
                 null
             }
@@ -1159,6 +1150,17 @@ class StandardChatManagerTool(private val context: Context) {
         return try {
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
             val chatHistories = chatHistoryManager.chatHistoriesFlow.first()
+            val folders =
+                chatHistoryManager.chatFoldersFlow
+                    .first()
+                    .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
+                    .map {
+                        ChatListResultData.FolderInfo(
+                            id = it.id,
+                            name = it.name,
+                            parentFolderId = it.parentFolderId,
+                        )
+                    }
             val currentChatId = chatHistoryManager.currentChatIdFlow.first()
             val messageCounts = chatHistoryManager.getMessageCountsByChatId()
 
@@ -1240,7 +1242,8 @@ class StandardChatManagerTool(private val context: Context) {
                 result = ChatListResultData(
                     totalCount = matched.size,
                     currentChatId = currentChatId,
-                    chats = chatInfoList
+                    chats = chatInfoList,
+                    folders = folders,
                 )
             )
         } catch (e: Exception) {

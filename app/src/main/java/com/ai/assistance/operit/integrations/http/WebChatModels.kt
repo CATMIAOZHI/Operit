@@ -70,6 +70,16 @@ data class WebChatSummary(
 )
 
 @Serializable
+data class WebChatFolderSummary(
+    @SerialName("id")
+    val id: String,
+    @SerialName("name")
+    val name: String,
+    @SerialName("parent_folder_id")
+    val parentFolderId: String? = null,
+)
+
+@Serializable
 data class WebMessageAttachment(
     @SerialName("id")
     val id: String,

@@ -382,7 +382,8 @@ const HistoryChat = (function () {
         let chatId = (params?.chat_id ?? '').toString().trim();
         if (!chatId) {
             const lang = (getLang() || '').toLowerCase();
-            const creation = await Tools.Chat.createNew(null, false, characterCardId);
+            const group = lang === 'zh' ? '子任务' : 'subTask';
+            const creation = await Tools.Chat.createNew(group, false, characterCardId);
             chatId = (creation?.chatId ?? '').toString().trim();
             if (!chatId) {
                 throw new Error('Failed to create new chat');

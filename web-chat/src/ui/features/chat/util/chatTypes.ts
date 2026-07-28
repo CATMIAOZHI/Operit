@@ -38,6 +38,12 @@ export interface WebChatSummary {
   locked: boolean;
 }
 
+export interface WebChatFolderSummary {
+  id: string;
+  name: string;
+  parent_folder_id?: string | null;
+}
+
 export interface WebMessageAttachment {
   id: string;
   file_name: string;

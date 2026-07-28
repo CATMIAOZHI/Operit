@@ -1,6 +1,7 @@
 import type {
   WebActivePromptTarget,
   WebBootstrapResponse,
+  WebChatFolderSummary,
   WebChatReorderItem,
   WebChatMessageLocatorPreview,
   WebChatMessagesPage,
@@ -105,6 +106,10 @@ export async function getCharacterSelector(token: string): Promise<WebCharacterS
   return requestJson<WebCharacterSelectorResponse>('/api/web/character-selector', token);
 }
 
+export async function listChatFolders(token: string): Promise<WebChatFolderSummary[]> {
+  return requestJson<WebChatFolderSummary[]>('/api/web/chat-folders', token);
+}
+
 export async function setActivePrompt(
   token: string,
   target: WebActivePromptTarget
@@ -170,6 +175,8 @@ export async function updateChat(
   payload: {
     title?: string;
     group?: string | null;
+    folder_id?: string | null;
+    update_folder?: boolean;
     update_group?: boolean;
     locked?: boolean;
     update_locked?: boolean;

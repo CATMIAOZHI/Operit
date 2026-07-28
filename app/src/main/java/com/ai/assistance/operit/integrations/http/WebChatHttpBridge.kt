@@ -20,6 +20,7 @@ import com.ai.assistance.operit.data.model.CharacterCardChatModelBindingMode
 import com.ai.assistance.operit.data.model.CharacterGroupCard
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.InputProcessingState
+import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
 import com.ai.assistance.operit.data.model.getModelByIndex
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.getValidModelIndex
@@ -150,6 +151,9 @@ class WebChatHttpBridge(
 
             session.uri == CHATS_PATH && session.method == NanoHTTPD.Method.GET ->
                 handleListChats()
+
+            session.uri == CHAT_FOLDERS_PATH && session.method == NanoHTTPD.Method.GET ->
+                handleListChatFolders()
 
             session.uri == CHATS_PATH && session.method == NanoHTTPD.Method.POST ->
                 handleCreateChat(session)
@@ -291,6 +295,23 @@ class WebChatHttpBridge(
     private fun handleCharacterSelector(): NanoHTTPD.Response {
         val response = runBlocking { buildCharacterSelectorResponse() }
         return jsonResponse(NanoHTTPD.Response.Status.OK, response)
+    }
+
+    private fun handleListChatFolders(): NanoHTTPD.Response {
+        val folders =
+            runBlocking {
+                chatHistoryManager.chatFoldersFlow
+                    .first()
+                    .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
+                    .map {
+                        WebChatFolderSummary(
+                            id = it.id,
+                            name = it.name,
+                            parentFolderId = it.parentFolderId,
+                        )
+                    }
+            }
+        return jsonResponse(NanoHTTPD.Response.Status.OK, folders)
     }
 
     private fun handleSetActivePrompt(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
@@ -2834,6 +2855,7 @@ class WebChatHttpBridge(
         private const val MANUAL_CONVERSATION_SUMMARY_PATH =
             "/api/web/actions/manual-conversation-summary"
         private const val CHATS_PATH = "/api/web/chats"
+        private const val CHAT_FOLDERS_PATH = "/api/web/chat-folders"
         private const val CHATS_REORDER_PATH = "/api/web/chats/reorder"
         private const val CHAT_GROUP_RENAME_PATH = "/api/web/chat-groups/rename"
         private const val CHAT_GROUP_DELETE_PATH = "/api/web/chat-groups/delete"

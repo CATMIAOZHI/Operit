@@ -783,7 +783,8 @@ class ChatHistoryDelegate(
         folderId: String? = null,
         inheritGroupFromCurrent: Boolean = true,
         setAsCurrentChat: Boolean = true,
-        characterCardId: String? = null
+        characterCardId: String? = null,
+        onCreated: ((String) -> Unit)? = null,
     ) {
         coroutineScope.launch {
             val (inputTokens, outputTokens, windowSize) = getChatStatistics()
@@ -828,6 +829,7 @@ class ChatHistoryDelegate(
                 characterGroupId = characterGroupId,
                 setAsCurrentChat = shouldSyncCurrentChatToGlobal
             )
+            onCreated?.invoke(newChat.id)
 
             // --- 新增：检查并添加开场白（群组模式跳过） ---
             if (characterGroupId.isNullOrBlank() && characterCardName == null && resolvedCard != null && resolvedCard.openingStatement.isNotBlank()) {

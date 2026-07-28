@@ -306,14 +306,16 @@ class ChatServiceCore(
         folderId: String? = null,
         inheritGroupFromCurrent: Boolean = true,
         setAsCurrentChat: Boolean = true,
-        characterCardId: String? = null
+        characterCardId: String? = null,
+        onCreated: ((String) -> Unit)? = null,
     ) {
         chatHistoryDelegate.createNewChat(
             characterCardName = characterCardName,
             folderId = folderId,
             inheritGroupFromCurrent = inheritGroupFromCurrent,
             setAsCurrentChat = setAsCurrentChat,
-            characterCardId = characterCardId
+            characterCardId = characterCardId,
+            onCreated = onCreated,
         )
     }
 

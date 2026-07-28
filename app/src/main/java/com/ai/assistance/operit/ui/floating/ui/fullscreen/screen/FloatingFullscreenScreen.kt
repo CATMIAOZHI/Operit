@@ -419,10 +419,14 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
                         }
                         val folderId =
                             ChatHistoryManager.getInstance(context.applicationContext)
-                                .resolveOrCreateLegacyFolderId(group)
+                                .resolveOrCreateLegacyFolderId(
+                                    group,
+                                    activeCharacterCard?.name,
+                                )
                         floatContext.chatService?.getChatCore()?.createNewChat(
                             folderId = folderId,
-                            inheritGroupFromCurrent = false
+                            inheritGroupFromCurrent = false,
+                            characterCardId = activeCharacterCard?.id,
                         )
                     }
                 }

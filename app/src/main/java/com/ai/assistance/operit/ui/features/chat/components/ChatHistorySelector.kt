@@ -158,6 +158,8 @@ private data class GroupTarget(
     val groupName: String,
 )
 
+private const val MAX_CHAT_FOLDER_DEPTH = 3
+
 private data class FolderDragTarget(
     val targetParentFolderId: String?,
     val anchorNodeKey: String? = null,
@@ -833,6 +835,37 @@ fun ChatHistorySelector(
     val canReorder = canReorderChatHistory(selectedCategory, searchQuery)
     val canManageFolders =
         canManageChatFolders(selectedCategory) && searchQuery.isBlank()
+    val folderById = remember(chatFolders) { chatFolders.associateBy { it.id } }
+    fun canMoveFolderToParent(folderId: String, targetParentFolderId: String?): Boolean {
+        if (targetParentFolderId == null) return true
+        if (
+            targetParentFolderId == folderId ||
+                targetParentFolderId == SYSTEM_UNGROUPED_FOLDER_ID
+        ) {
+            return false
+        }
+        var targetDepth = 0
+        var cursor: String? = targetParentFolderId
+        val visitedParents = hashSetOf<String>()
+        while (cursor != null && visitedParents.add(cursor)) {
+            if (cursor == folderId) return false
+            targetDepth++
+            cursor = folderById[cursor]?.parentFolderId
+        }
+        fun subtreeHeight(currentId: String, visiting: MutableSet<String>): Int {
+            if (!visiting.add(currentId)) return MAX_CHAT_FOLDER_DEPTH + 1
+            val childHeight =
+                chatFolders
+                    .asSequence()
+                    .filter { it.parentFolderId == currentId }
+                    .maxOfOrNull { subtreeHeight(it.id, visiting) }
+                    ?: 0
+            visiting.remove(currentId)
+            return childHeight + 1
+        }
+        return targetDepth + subtreeHeight(folderId, hashSetOf()) <=
+            MAX_CHAT_FOLDER_DEPTH
+    }
     val systemUngroupedReady =
         chatFolders.any { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
     LaunchedEffect(chatFolders) {
@@ -1365,6 +1398,12 @@ fun ChatHistorySelector(
                         when (target) {
                             is HistoryListItem.Item -> {
                             if (
+                                !canManageFolders &&
+                                    moved.history.folderId != target.history.folderId
+                            ) {
+                                return@rememberReorderableLazyListState
+                            }
+                            if (
                                 historyDisplayMode ==
                                     ChatHistoryDisplayMode.BY_CHARACTER_CARD &&
                                     (
@@ -1383,6 +1422,9 @@ fun ChatHistorySelector(
                             )
                         }
                         is HistoryListItem.Header -> {
+                            if (!canManageFolders) {
+                                return@rememberReorderableLazyListState
+                            }
                             val targetFolder =
                                 target.folderId?.let {
                                     chatFolders.firstOrNull { folder -> folder.id == it }
@@ -1693,6 +1735,10 @@ fun ChatHistorySelector(
                 SystemClock.uptimeMillis() - target.hoverStartedAt >= 650L
         val resolvedParent =
             if (shouldNest) target.nestFolderId else target.targetParentFolderId
+        if (!canMoveFolderToParent(folderId, resolvedParent)) {
+            resetOptimisticOrder()
+            return
+        }
         val resolvedAnchorNodeKey = target.anchorNodeKey.takeUnless { shouldNest }
         val resolvedInsertBeforeAnchor = target.insertBeforeAnchor.takeUnless { shouldNest }
         val sourceParent =
@@ -2545,7 +2591,8 @@ fun ChatHistorySelector(
                         .asSequence()
                         .filter {
                             it.id != targetFolder.folderId &&
-                                it.id != SYSTEM_UNGROUPED_FOLDER_ID
+                                it.id != SYSTEM_UNGROUPED_FOLDER_ID &&
+                                canMoveFolderToParent(targetFolder.folderId, it.id)
                         }
                         .sortedWith(
                             compareBy<ChatFolderEntity> { folderChoiceLabels[it.id] }

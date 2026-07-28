@@ -1,6 +1,8 @@
 package com.ai.assistance.operit.data.repository
 
 import android.content.Context
+import android.database.Cursor
+import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import androidx.room.withTransaction
 import com.ai.assistance.operit.util.AppLogger
@@ -104,6 +106,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private val chatFolderRepository = ChatFolderRepository(database)
     private val messageDao = database.messageDao()
     private val messageVariantDao = database.messageVariantDao()
+    private val operitArchiveExportMutex = Mutex()
     private val operitArchiveJson =
         Json {
             prettyPrint = true
@@ -333,83 +336,277 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }.toMap()
     }
 
-    private suspend fun buildOperitArchivedChat(chatHistory: ChatHistory): OperitArchivedChat {
-        return database.withTransaction {
-            val messageEntities = messageDao.getMessagesForChat(chatHistory.id)
-            val variantsByTimestamp =
-                messageVariantDao.getVariantsForChat(chatHistory.id).groupBy { it.messageTimestamp }
-            val archivedMessages =
-                messageEntities.map { messageEntity ->
-                    val messageVariants = variantsByTimestamp[messageEntity.timestamp].orEmpty()
-                    OperitArchivedMessage(
-                        baseMessage =
-                            messageEntity.toChatMessage().copy(
-                                variantCount = messageVariants.size + 1,
-                            ),
-                        variants = messageVariants.map(OperitArchivedMessageVariant::fromEntity),
-                    )
+    private fun Cursor.stringOrNull(column: String): String? =
+        getColumnIndexOrThrow(column).let { index -> if (isNull(index)) null else getString(index) }
+
+    private fun Cursor.longOrNull(column: String): Long? =
+        getColumnIndexOrThrow(column).let { index -> if (isNull(index)) null else getLong(index) }
+
+    private fun Cursor.toSnapshotChatEntity(): ChatEntity =
+        ChatEntity(
+            id = getString(getColumnIndexOrThrow("id")),
+            title = getString(getColumnIndexOrThrow("title")),
+            createdAt = getLong(getColumnIndexOrThrow("createdAt")),
+            updatedAt = getLong(getColumnIndexOrThrow("updatedAt")),
+            inputTokens = getInt(getColumnIndexOrThrow("inputTokens")),
+            outputTokens = getInt(getColumnIndexOrThrow("outputTokens")),
+            currentWindowSize = getInt(getColumnIndexOrThrow("currentWindowSize")),
+            group = stringOrNull("group"),
+            folderId = stringOrNull("folderId"),
+            displayOrder = getLong(getColumnIndexOrThrow("displayOrder")),
+            workspace = stringOrNull("workspace"),
+            workspaceEnv = stringOrNull("workspaceEnv"),
+            parentChatId = stringOrNull("parentChatId"),
+            characterCardName = stringOrNull("characterCardName"),
+            characterGroupId = stringOrNull("characterGroupId"),
+            locked = getInt(getColumnIndexOrThrow("locked")) != 0,
+            pinned = getInt(getColumnIndexOrThrow("pinned")) != 0,
+            isFavorite = getInt(getColumnIndexOrThrow("isFavorite")) != 0,
+            lastMessageAt = longOrNull("lastMessageAt"),
+        )
+
+    private fun Cursor.toSnapshotMessageEntity(): MessageEntity =
+        MessageEntity(
+            messageId = getLong(getColumnIndexOrThrow("messageId")),
+            chatId = getString(getColumnIndexOrThrow("chatId")),
+            sender = getString(getColumnIndexOrThrow("sender")),
+            content = getString(getColumnIndexOrThrow("content")),
+            timestamp = getLong(getColumnIndexOrThrow("timestamp")),
+            orderIndex = getInt(getColumnIndexOrThrow("orderIndex")),
+            roleName = getString(getColumnIndexOrThrow("roleName")),
+            selectedVariantIndex = getInt(getColumnIndexOrThrow("selectedVariantIndex")),
+            provider = getString(getColumnIndexOrThrow("provider")),
+            modelName = getString(getColumnIndexOrThrow("modelName")),
+            inputTokens = getInt(getColumnIndexOrThrow("inputTokens")),
+            outputTokens = getInt(getColumnIndexOrThrow("outputTokens")),
+            cachedInputTokens = getInt(getColumnIndexOrThrow("cachedInputTokens")),
+            sentAt = getLong(getColumnIndexOrThrow("sentAt")),
+            outputDurationMs = getLong(getColumnIndexOrThrow("outputDurationMs")),
+            waitDurationMs = getLong(getColumnIndexOrThrow("waitDurationMs")),
+            completedAt = getLong(getColumnIndexOrThrow("completedAt")),
+            displayMode = getString(getColumnIndexOrThrow("displayMode")),
+            isFavorite = getInt(getColumnIndexOrThrow("isFavorite")) != 0,
+        )
+
+    private fun Cursor.toSnapshotMessageVariantEntity(): MessageVariantEntity =
+        MessageVariantEntity(
+            variantId = getLong(getColumnIndexOrThrow("variantId")),
+            chatId = getString(getColumnIndexOrThrow("chatId")),
+            messageTimestamp = getLong(getColumnIndexOrThrow("messageTimestamp")),
+            variantIndex = getInt(getColumnIndexOrThrow("variantIndex")),
+            content = getString(getColumnIndexOrThrow("content")),
+            roleName = getString(getColumnIndexOrThrow("roleName")),
+            provider = getString(getColumnIndexOrThrow("provider")),
+            modelName = getString(getColumnIndexOrThrow("modelName")),
+            inputTokens = getInt(getColumnIndexOrThrow("inputTokens")),
+            outputTokens = getInt(getColumnIndexOrThrow("outputTokens")),
+            cachedInputTokens = getInt(getColumnIndexOrThrow("cachedInputTokens")),
+            sentAt = getLong(getColumnIndexOrThrow("sentAt")),
+            outputDurationMs = getLong(getColumnIndexOrThrow("outputDurationMs")),
+            waitDurationMs = getLong(getColumnIndexOrThrow("waitDurationMs")),
+            completedAt = getLong(getColumnIndexOrThrow("completedAt")),
+        )
+
+    private fun buildOperitArchivedChatFromSnapshot(
+        snapshot: SQLiteDatabase,
+        chatEntity: ChatEntity,
+    ): OperitArchivedChat {
+        val messageEntities =
+            snapshot.rawQuery(
+                "SELECT * FROM messages WHERE chatId = ? ORDER BY orderIndex",
+                arrayOf(chatEntity.id),
+            ).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) add(cursor.toSnapshotMessageEntity())
                 }
-            OperitArchivedChat.fromChatHistory(chatHistory, archivedMessages)
+            }
+        val variantsByTimestamp =
+            snapshot.rawQuery(
+                "SELECT * FROM message_variants WHERE chatId = ? ORDER BY messageTimestamp, variantIndex",
+                arrayOf(chatEntity.id),
+            ).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) add(cursor.toSnapshotMessageVariantEntity())
+                }
+            }.groupBy { it.messageTimestamp }
+        val archivedMessages =
+            messageEntities.map { messageEntity ->
+                val messageVariants = variantsByTimestamp[messageEntity.timestamp].orEmpty()
+                OperitArchivedMessage(
+                    baseMessage =
+                        messageEntity.toChatMessage().copy(
+                            variantCount = messageVariants.size + 1,
+                        ),
+                    variants = messageVariants.map(OperitArchivedMessageVariant::fromEntity),
+                )
+            }
+        val history =
+            chatEntity.toChatHistory(emptyList()).copy(
+                folderId = normalizeChatFolderId(chatEntity.folderId),
+            )
+        return OperitArchivedChat.fromChatHistory(history, archivedMessages)
+    }
+
+    private fun createOperitArchiveSqliteSnapshot(snapshotFile: File) {
+        val sourceFile = context.getDatabasePath("app_database")
+        require(sourceFile.isFile) { "Chat database does not exist" }
+        SQLiteDatabase.openOrCreateDatabase(snapshotFile, null).use { sqliteDb ->
+            sqliteDb.execSQL(
+                "ATTACH DATABASE ? AS operit_export_source",
+                arrayOf(sourceFile.absolutePath),
+            )
+            try {
+                sqliteDb.beginTransaction()
+                try {
+                    sqliteDb.execSQL(
+                        """
+                        CREATE TABLE chats AS
+                        SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens,
+                               currentWindowSize, `group`, folderId, displayOrder, workspace,
+                               workspaceEnv, parentChatId, characterCardName, characterGroupId,
+                               locked, pinned, isFavorite, lastMessageAt
+                        FROM operit_export_source.chats
+                        """.trimIndent(),
+                    )
+                    sqliteDb.execSQL(
+                        """
+                        CREATE TABLE chat_folders AS
+                        SELECT id, name, parentFolderId, displayOrder, createdAt
+                        FROM operit_export_source.chat_folders
+                        """.trimIndent(),
+                    )
+                    sqliteDb.execSQL(
+                        """
+                        CREATE TABLE messages AS
+                        SELECT messageId, chatId, sender, content, timestamp, orderIndex, roleName,
+                               selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
+                               cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
+                               completedAt, displayMode, isFavorite
+                        FROM operit_export_source.messages
+                        """.trimIndent(),
+                    )
+                    sqliteDb.execSQL(
+                        """
+                        CREATE TABLE message_variants AS
+                        SELECT variantId, chatId, messageTimestamp, variantIndex, content, roleName,
+                               provider, modelName, inputTokens, outputTokens, cachedInputTokens,
+                               sentAt, outputDurationMs, waitDurationMs, completedAt
+                        FROM operit_export_source.message_variants
+                        """.trimIndent(),
+                    )
+                    sqliteDb.execSQL(
+                        "CREATE INDEX messages_export_order ON messages(chatId, orderIndex)"
+                    )
+                    sqliteDb.execSQL(
+                        "CREATE INDEX variants_export_order ON " +
+                            "message_variants(chatId, messageTimestamp, variantIndex)"
+                    )
+                    sqliteDb.setTransactionSuccessful()
+                } finally {
+                    sqliteDb.endTransaction()
+                }
+            } finally {
+                sqliteDb.execSQL("DETACH DATABASE operit_export_source")
+            }
         }
     }
 
     private suspend fun exportOperitArchiveJsonStream(
         file: File,
-    ) {
+    ) = operitArchiveExportMutex.withLock {
         AppLogger.d(TAG, "开始流式导出 Operit 聊天记录，目标=${file.absolutePath}")
-        val (snapshotHistories, archivedFolders) =
-            database.withTransaction {
-                val histories =
-                chatDao.getAllChatsDirectly().map {
-                    it.toChatHistory().copy(folderId = normalizeChatFolderId(it.folderId))
-                }
-                val folders =
-                    chatFolderDao
-                        .getFolders()
-                        .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
-                        .map(OperitArchivedFolder::fromEntity)
-                histories to folders
-            }
-        BufferedWriter(
-            OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8),
-        ).use { writer ->
-            writer.append("{\n")
-            writer.append("  \"archiveType\": ")
-            writer.append(operitArchiveJson.encodeToString(OperitChatArchive.ARCHIVE_TYPE))
-            writer.append(",\n")
-            writer.append("  \"formatVersion\": ${OperitChatArchive.CURRENT_FORMAT_VERSION},\n")
-            writer.append("  \"exportedAt\": ${System.currentTimeMillis()},\n")
-            writer.append("  \"folders\": ")
-            writer.append(operitArchiveJson.encodeToString(archivedFolders))
-            writer.append(",\n")
-            writer.append("  \"chats\": [")
-
-            snapshotHistories.forEachIndexed { index, chatHistory ->
-                val archivedChat = buildOperitArchivedChat(chatHistory)
-                if (index == 0) {
-                    writer.append('\n')
-                } else {
+        val snapshotFile =
+            File(context.cacheDir, "operit_chat_export_${java.util.UUID.randomUUID()}.db")
+        try {
+            createOperitArchiveSqliteSnapshot(snapshotFile)
+            SQLiteDatabase.openDatabase(
+                snapshotFile.absolutePath,
+                null,
+                SQLiteDatabase.OPEN_READONLY,
+            ).use { snapshot ->
+                val archivedFolders =
+                    snapshot.rawQuery(
+                        "SELECT id, name, parentFolderId, displayOrder, createdAt FROM chat_folders " +
+                            "WHERE id != ? ORDER BY displayOrder, createdAt, id",
+                        arrayOf(SYSTEM_UNGROUPED_FOLDER_ID),
+                    ).use { cursor ->
+                        buildList {
+                            while (cursor.moveToNext()) {
+                                add(
+                                    OperitArchivedFolder(
+                                        id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                                        name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
+                                        parentFolderId = cursor.stringOrNull("parentFolderId"),
+                                        displayOrder =
+                                            cursor.getLong(
+                                                cursor.getColumnIndexOrThrow("displayOrder")
+                                            ),
+                                        createdAt =
+                                            cursor.getLong(cursor.getColumnIndexOrThrow("createdAt")),
+                                    )
+                                )
+                            }
+                        }
+                    }
+                val chatCount =
+                    snapshot.rawQuery("SELECT COUNT(*) FROM chats", emptyArray()).use { cursor ->
+                        check(cursor.moveToFirst())
+                        cursor.getInt(0)
+                    }
+                BufferedWriter(
+                    OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8),
+                ).use { writer ->
+                    writer.append("{\n")
+                    writer.append("  \"archiveType\": ")
+                    writer.append(operitArchiveJson.encodeToString(OperitChatArchive.ARCHIVE_TYPE))
                     writer.append(",\n")
-                }
-                writer.append(operitArchiveJson.encodeToString(archivedChat))
-                if ((index + 1) % 20 == 0 || index == snapshotHistories.lastIndex) {
-                    AppLogger.d(
-                        TAG,
-                        "流式导出进度: ${index + 1}/${snapshotHistories.size}，chatId=${archivedChat.id}，messages=${archivedChat.messages.size}",
-                    )
-                }
-            }
+                    writer.append("  \"formatVersion\": ${OperitChatArchive.CURRENT_FORMAT_VERSION},\n")
+                    writer.append("  \"exportedAt\": ${System.currentTimeMillis()},\n")
+                    writer.append("  \"folders\": ")
+                    writer.append(operitArchiveJson.encodeToString(archivedFolders))
+                    writer.append(",\n")
+                    writer.append("  \"chats\": [")
 
-            if (snapshotHistories.isNotEmpty()) {
-                writer.append('\n')
+                    snapshot.rawQuery(
+                        "SELECT * FROM chats ORDER BY pinned DESC, displayOrder ASC",
+                        emptyArray(),
+                    ).use { cursor ->
+                        var index = 0
+                        while (cursor.moveToNext()) {
+                            val archivedChat =
+                                buildOperitArchivedChatFromSnapshot(
+                                    snapshot,
+                                    cursor.toSnapshotChatEntity(),
+                                )
+                            if (index == 0) writer.append('\n') else writer.append(",\n")
+                            writer.append(operitArchiveJson.encodeToString(archivedChat))
+                            index++
+                            if (index % 20 == 0 || index == chatCount) {
+                                AppLogger.d(
+                                    TAG,
+                                    "流式导出进度: $index/$chatCount，chatId=${archivedChat.id}，messages=${archivedChat.messages.size}",
+                                )
+                            }
+                        }
+                    }
+
+                    if (chatCount > 0) writer.append('\n')
+                    writer.append("  ]\n")
+                    writer.append("}\n")
+                }
+                AppLogger.d(
+                    TAG,
+                    "流式导出 Operit 聊天记录完成，共 $chatCount 个会话，目标=${file.absolutePath}",
+                )
             }
-            writer.append("  ]\n")
-            writer.append("}\n")
+        } finally {
+            listOf(
+                snapshotFile,
+                File("${snapshotFile.absolutePath}-journal"),
+                File("${snapshotFile.absolutePath}-wal"),
+                File("${snapshotFile.absolutePath}-shm"),
+            ).forEach { it.delete() }
         }
-        AppLogger.d(
-            TAG,
-            "流式导出 Operit 聊天记录完成，共 ${snapshotHistories.size} 个会话，目标=${file.absolutePath}",
-        )
     }
 
     private suspend fun consumeImportedArchiveChat(
@@ -625,30 +822,53 @@ class ChatHistoryManager private constructor(private val context: Context) {
             val folderIdRemap = linkedMapOf<String, String>()
             topologicallySortFolders(staged.folders).forEach { folder ->
                 val resolvedParentId = folder.parentFolderId?.let(folderIdRemap::getValue)
-                fun matches(local: ChatFolderEntity): Boolean =
+                fun matchesMetadata(local: ChatFolderEntity): Boolean =
                     local.name == folder.name &&
                         local.parentFolderId == resolvedParentId &&
                         local.displayOrder == folder.displayOrder &&
                         local.createdAt == folder.createdAt
 
-                var reusableCandidates =
+                val parentCandidates =
+                    localFolders
+                        .asSequence()
+                        .filter { it.id !in reusedLocalFolderIds }
+                        .filter { it.parentFolderId == resolvedParentId }
+                        .toList()
+                val archivedChatIds =
+                    staged.chats
+                        .asSequence()
+                        .filter { it.hasMessages && it.folderId in archiveSubtree(folder.id) }
+                        .map { it.id }
+                        .filter { it in existingArchivedChatIds }
+                        .toSet()
+                val identityCandidates =
                     if (folder.id in localFolderIds) {
-                        localFolders
-                            .asSequence()
-                            .filter { it.id !in reusedLocalFolderIds }
-                            .filter(::matches)
-                            .toList()
+                        parentCandidates.filter { candidate ->
+                            if (archivedChatIds.isEmpty()) {
+                                candidate.createdAt == folder.createdAt
+                            } else {
+                                val candidateSubtree = localSubtree(candidate.id)
+                                existingArchivedChatIds
+                                    .filterTo(hashSetOf()) { chatId ->
+                                        localChatFolderIdByChatId.getValue(chatId) in candidateSubtree
+                                    } == archivedChatIds
+                            }
+                        }
                     } else {
                         emptyList()
                     }
+                var reusableCandidates =
+                    if (folder.id in localFolderIds) {
+                        identityCandidates.ifEmpty {
+                            parentCandidates.filter(::matchesMetadata)
+                        }
+                    } else {
+                        emptyList()
+                    }
+                identityCandidates
+                    .firstOrNull { it.id == folder.id }
+                    ?.let { exactIdentity -> reusableCandidates = listOf(exactIdentity) }
                 if (reusableCandidates.size > 1) {
-                    val archivedChatIds =
-                        staged.chats
-                            .asSequence()
-                            .filter { it.hasMessages && it.folderId in archiveSubtree(folder.id) }
-                            .map { it.id }
-                            .filter { it in existingArchivedChatIds }
-                            .toSet()
                     reusableCandidates =
                         reusableCandidates.filter { candidate ->
                             val candidateSubtree = localSubtree(candidate.id)
@@ -720,6 +940,8 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 if (folder.id !in localFolderIds) {
                     chatFolderDao.insertFolder(folder.toEntity())
                     importedFolderCount++
+                } else if (folder.id in reusedLocalFolderIds) {
+                    chatFolderDao.updateFolder(folder.toEntity())
                 }
             }
             forEachArchivedChat(archiveFile) { archivedChat, _, index ->
@@ -1548,7 +1770,14 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     history
                 }
             ).copy(folderId = normalizeChatFolderId(history.folderId))
-        val chatEntity = ChatEntity.fromChatHistory(resolvedHistory)
+        val chatEntity =
+            ChatEntity.fromChatHistory(resolvedHistory).let { entity ->
+                if (archiveFormatVersion == null) {
+                    entity
+                } else {
+                    entity.copy(displayOrder = resolvedHistory.displayOrder)
+                }
+            }
         val existingEntity = chatDao.getChatById(chatEntity.id)
         if (existingEntity == null) {
             chatDao.insertChat(chatEntity)
