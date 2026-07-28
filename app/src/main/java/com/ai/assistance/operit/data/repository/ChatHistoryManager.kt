@@ -449,6 +449,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private data class StagedV4Archive(
         val folders: List<OperitArchivedFolder>,
         val folderIds: Set<String>,
+        val chats: List<ArchivedChatMetadata>,
         val orphanParentCount: Int,
         val orphanChatFolderCount: Int,
     )
@@ -501,6 +502,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return StagedV4Archive(
             folders = normalizedFolders,
             folderIds = folderIdSet,
+            chats = archive.chats,
             orphanParentCount = orphanParentCount,
             orphanChatFolderCount = orphanChatFolderCount,
         )
@@ -552,18 +554,128 @@ class ChatHistoryManager private constructor(private val context: Context) {
     ): Int {
         var importedFolderCount = 0
         database.withTransaction {
+            val localChats = chatDao.getAllChatsDirectly()
             existingIds.clear()
-            existingIds.addAll(chatDao.getAllChatsDirectly().map { it.id })
-            val localFolderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
+            existingIds.addAll(localChats.map { it.id })
+            val localFolders = chatFolderDao.getFolders()
+            val localFolderIds = localFolders.mapTo(hashSetOf()) { it.id }
             val archiveFolderIds = staged.folders.mapTo(hashSetOf()) { it.id }
             val allocated = hashSetOf<String>().apply {
                 addAll(localFolderIds)
                 addAll(archiveFolderIds)
             }
-            val folderIdRemap =
-                staged.folders.associate { folder ->
-                    val resolvedId =
-                        if (folder.id !in localFolderIds) {
+            val archiveFolderById = staged.folders.associateBy { it.id }
+            val localFolderById = localFolders.associateBy { it.id }
+            val archiveChildrenByParent = staged.folders.groupBy { it.parentFolderId }
+            val localChildrenByParent = localFolders.groupBy { it.parentFolderId }
+            val archiveSubtreeIds = mutableMapOf<String, Set<String>>()
+            fun archiveSubtree(folderId: String): Set<String> =
+                archiveSubtreeIds.getOrPut(folderId) {
+                    buildSet {
+                        add(folderId)
+                        archiveChildrenByParent[folderId].orEmpty().forEach { child ->
+                            addAll(archiveSubtree(child.id))
+                        }
+                    }
+                }
+            val localSubtreeIds = mutableMapOf<String, Set<String>>()
+            fun localSubtree(folderId: String): Set<String> =
+                localSubtreeIds.getOrPut(folderId) {
+                    buildSet {
+                        add(folderId)
+                        localChildrenByParent[folderId].orEmpty().forEach { child ->
+                            addAll(localSubtree(child.id))
+                        }
+                    }
+                }
+            val archiveSignatures = mutableMapOf<String, String>()
+            fun archiveSignature(folderId: String): String =
+                archiveSignatures.getOrPut(folderId) {
+                    val folder = archiveFolderById.getValue(folderId)
+                    val children =
+                        archiveChildrenByParent[folderId]
+                            .orEmpty()
+                            .map { archiveSignature(it.id) }
+                            .sorted()
+                            .joinToString(separator = ",", prefix = "[", postfix = "]")
+                    "${folder.name}\u0000${folder.displayOrder}\u0000${folder.createdAt}$children"
+                }
+            val localSignatures = mutableMapOf<String, String>()
+            fun localSignature(folderId: String): String =
+                localSignatures.getOrPut(folderId) {
+                    val folder = localFolderById.getValue(folderId)
+                    val children =
+                        localChildrenByParent[folderId]
+                            .orEmpty()
+                            .map { localSignature(it.id) }
+                            .sorted()
+                            .joinToString(separator = ",", prefix = "[", postfix = "]")
+                    "${folder.name}\u0000${folder.displayOrder}\u0000${folder.createdAt}$children"
+                }
+            val localChatFolderIdByChatId =
+                localChats.associate { it.id to normalizeChatFolderId(it.folderId) }
+            val existingArchivedChatIds =
+                staged.chats
+                    .asSequence()
+                    .filter { it.hasMessages }
+                    .map { it.id }
+                    .filter(localChatFolderIdByChatId::containsKey)
+                    .toSet()
+            val reusedLocalFolderIds = hashSetOf<String>()
+            val folderIdRemap = linkedMapOf<String, String>()
+            topologicallySortFolders(staged.folders).forEach { folder ->
+                val resolvedParentId = folder.parentFolderId?.let(folderIdRemap::getValue)
+                fun matches(local: ChatFolderEntity): Boolean =
+                    local.name == folder.name &&
+                        local.parentFolderId == resolvedParentId &&
+                        local.displayOrder == folder.displayOrder &&
+                        local.createdAt == folder.createdAt
+
+                var reusableCandidates =
+                    if (folder.id in localFolderIds) {
+                        localFolders
+                            .asSequence()
+                            .filter { it.id !in reusedLocalFolderIds }
+                            .filter(::matches)
+                            .toList()
+                    } else {
+                        emptyList()
+                    }
+                if (reusableCandidates.size > 1) {
+                    val archivedChatIds =
+                        staged.chats
+                            .asSequence()
+                            .filter { it.hasMessages && it.folderId in archiveSubtree(folder.id) }
+                            .map { it.id }
+                            .filter { it in existingArchivedChatIds }
+                            .toSet()
+                    reusableCandidates =
+                        reusableCandidates.filter { candidate ->
+                            val candidateSubtree = localSubtree(candidate.id)
+                            existingArchivedChatIds
+                                .filterTo(hashSetOf()) { chatId ->
+                                    localChatFolderIdByChatId.getValue(chatId) in candidateSubtree
+                                } == archivedChatIds
+                        }
+                }
+                if (reusableCandidates.size > 1) {
+                    val expectedSignature = archiveSignature(folder.id)
+                    reusableCandidates =
+                        reusableCandidates.filter {
+                            localSignature(it.id) == expectedSignature
+                        }
+                }
+                val reusableId =
+                    reusableCandidates
+                        .sortedWith(
+                            compareByDescending<ChatFolderEntity> { it.id == folder.id }
+                                .thenBy { it.id }
+                        )
+                        .firstOrNull()
+                        ?.id
+                val resolvedId =
+                    reusableId
+                        ?: if (folder.id !in localFolderIds) {
                             folder.id
                         } else {
                             var candidate: String
@@ -572,8 +684,11 @@ class ChatHistoryManager private constructor(private val context: Context) {
                             } while (!allocated.add(candidate))
                             candidate
                         }
-                    folder.id to resolvedId
+                if (reusableId != null) {
+                    reusedLocalFolderIds += reusableId
                 }
+                folderIdRemap[folder.id] = resolvedId
+            }
             val remappedFolders =
                 staged.folders.map { folder ->
                     folder.copy(
@@ -602,8 +717,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
             }
             validateFolderGraph(remappedFolders)
             topologicallySortFolders(remappedFolders).forEach { folder ->
-                chatFolderDao.insertFolder(folder.toEntity())
-                importedFolderCount++
+                if (folder.id !in localFolderIds) {
+                    chatFolderDao.insertFolder(folder.toEntity())
+                    importedFolderCount++
+                }
             }
             forEachArchivedChat(archiveFile) { archivedChat, _, index ->
                 val normalizedFolderId =
@@ -1180,7 +1297,14 @@ class ChatHistoryManager private constructor(private val context: Context) {
                                 !it.locked
                         }
                     chatsToDelete.forEach { chatDao.deleteChat(it.id) }
-                    chatFolderRepository.deleteFolder(folderId)
+                    val hasRemainingContent =
+                        chatDao.getAllChatsDirectly().any {
+                            normalizeChatFolderId(it.folderId) == folderId
+                        } ||
+                            chatFolderDao.getFolders().any { it.parentFolderId == folderId }
+                    if (normalizedCharacterCardName == null || !hasRemainingContent) {
+                        chatFolderRepository.deleteFolder(folderId)
+                    }
                     chatsToDelete.map { it.id }
                 }
             context.currentChatIdDataStore.edit { preferences ->
