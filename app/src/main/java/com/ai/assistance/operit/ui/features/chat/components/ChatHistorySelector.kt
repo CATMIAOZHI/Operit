@@ -2475,20 +2475,20 @@ fun ChatHistorySelector(
                         rememberScrollState()
                     )
                 ) {
+                    val currentParentFolderId =
+                        chatFolders.firstOrNull { it.id == targetFolder.folderId }?.parentFolderId
                     fun moveTo(parentFolderId: String?) {
+                        if (parentFolderId == currentParentFolderId) {
+                            groupToMove = null
+                            return
+                        }
                         coroutineScope.launch {
                             runCatching {
                                 chatHistoryManager.moveFolder(
                                     folderId = targetFolder.folderId,
                                     targetParentFolderId = parentFolderId,
                                     expectedSourceSiblings =
-                                        historySiblingSnapshot(
-                                            chatFolders
-                                                .firstOrNull {
-                                                    it.id == targetFolder.folderId
-                                                }
-                                                ?.parentFolderId
-                                        ),
+                                        historySiblingSnapshot(currentParentFolderId),
                                     expectedTargetSiblings =
                                         historySiblingSnapshot(parentFolderId),
                                 )

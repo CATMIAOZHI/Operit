@@ -328,48 +328,51 @@ class ChatHistoryManager private constructor(private val context: Context) {
     }
 
     private suspend fun buildOperitArchivedChat(chatHistory: ChatHistory): OperitArchivedChat {
-        val messageEntities = messageDao.getMessagesForChat(chatHistory.id)
-        val variantsByTimestamp =
-            messageVariantDao.getVariantsForChat(chatHistory.id).groupBy { it.messageTimestamp }
-        val archivedMessages =
-            messageEntities.map { messageEntity ->
-                val messageVariants = variantsByTimestamp[messageEntity.timestamp].orEmpty()
-                OperitArchivedMessage(
-                    baseMessage =
-                        messageEntity.toChatMessage().copy(
-                            variantCount = messageVariants.size + 1,
-                        ),
-                    variants = messageVariants.map(OperitArchivedMessageVariant::fromEntity),
-                )
-            }
-        return OperitArchivedChat.fromChatHistory(chatHistory, archivedMessages)
+        return database.withTransaction {
+            val messageEntities = messageDao.getMessagesForChat(chatHistory.id)
+            val variantsByTimestamp =
+                messageVariantDao.getVariantsForChat(chatHistory.id).groupBy { it.messageTimestamp }
+            val archivedMessages =
+                messageEntities.map { messageEntity ->
+                    val messageVariants = variantsByTimestamp[messageEntity.timestamp].orEmpty()
+                    OperitArchivedMessage(
+                        baseMessage =
+                            messageEntity.toChatMessage().copy(
+                                variantCount = messageVariants.size + 1,
+                            ),
+                        variants = messageVariants.map(OperitArchivedMessageVariant::fromEntity),
+                    )
+                }
+            OperitArchivedChat.fromChatHistory(chatHistory, archivedMessages)
+        }
     }
 
     private suspend fun exportOperitArchiveJsonStream(
         file: File,
     ) {
         AppLogger.d(TAG, "开始流式导出 Operit 聊天记录，目标=${file.absolutePath}")
-        var exportedCount = 0
-        database.withTransaction {
-            val snapshotHistories =
+        val (snapshotHistories, archivedFolders) =
+            database.withTransaction {
+                val histories =
                 chatDao.getAllChatsDirectly().map {
                     it.toChatHistory().copy(folderId = normalizeChatFolderId(it.folderId))
                 }
-            exportedCount = snapshotHistories.size
-            BufferedWriter(
-                OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8),
-            ).use { writer ->
+                val folders =
+                    chatFolderDao
+                        .getFolders()
+                        .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
+                        .map(OperitArchivedFolder::fromEntity)
+                histories to folders
+            }
+        BufferedWriter(
+            OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8),
+        ).use { writer ->
             writer.append("{\n")
             writer.append("  \"archiveType\": ")
             writer.append(operitArchiveJson.encodeToString(OperitChatArchive.ARCHIVE_TYPE))
             writer.append(",\n")
             writer.append("  \"formatVersion\": ${OperitChatArchive.CURRENT_FORMAT_VERSION},\n")
             writer.append("  \"exportedAt\": ${System.currentTimeMillis()},\n")
-            val archivedFolders =
-                chatFolderDao
-                    .getFolders()
-                    .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
-                    .map(OperitArchivedFolder::fromEntity)
             writer.append("  \"folders\": ")
             writer.append(operitArchiveJson.encodeToString(archivedFolders))
             writer.append(",\n")
@@ -383,7 +386,6 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     writer.append(",\n")
                 }
                 writer.append(operitArchiveJson.encodeToString(archivedChat))
-                writer.flush()
                 if ((index + 1) % 20 == 0 || index == snapshotHistories.lastIndex) {
                     AppLogger.d(
                         TAG,
@@ -397,9 +399,11 @@ class ChatHistoryManager private constructor(private val context: Context) {
             }
             writer.append("  ]\n")
             writer.append("}\n")
-            }
         }
-        AppLogger.d(TAG, "流式导出 Operit 聊天记录完成，共 $exportedCount 个会话，目标=${file.absolutePath}")
+        AppLogger.d(
+            TAG,
+            "流式导出 Operit 聊天记录完成，共 ${snapshotHistories.size} 个会话，目标=${file.absolutePath}",
+        )
     }
 
     private suspend fun consumeImportedArchiveChat(
