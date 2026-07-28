@@ -8,6 +8,44 @@
 2. 用户已明确同意晋升。
 3. `personal/dev` 工作区干净且与远端同步。
 
+## 晋升检查点
+
+每次晋升完成后，将最新 `personal/main` 回合并到 `personal/dev`，并在合并提交上创建不可复用的 annotated tag：
+
+```bash
+promotion-checkpoint/main-<YYYYMMDD>-<main-short-sha>
+```
+
+该标签同时表示：
+
+- 标签所在提交已经包含当时的 `personal/main`；
+- 标签之前的 dev 通用改动已经完成晋升审查；
+- 下一次晋升默认只需要审查该标签之后的 dev 改动。
+
+开始下一轮晋升时先定位最近检查点：
+
+```bash
+git fetch origin personal/main personal/dev --tags
+CHECKPOINT=$(git describe \
+  --tags \
+  --match 'promotion-checkpoint/*' \
+  --abbrev=0 \
+  origin/personal/dev)
+
+git log --oneline "$CHECKPOINT"..origin/personal/dev
+git diff --stat "$CHECKPOINT"..origin/personal/dev
+git diff "$CHECKPOINT"..origin/personal/dev
+```
+
+检查点只缩小审查范围，不替代以下检查：
+
+- 确认标签可从当前 `personal/dev` 到达；
+- 确认标签说明中记录的 main SHA 与上一轮实际晋升结果一致；
+- 继续排除检查点之后新增或修改的开发版专属文件；
+- 如果 `personal/main` 在检查点之后又有其他改动，先将最新 main 回合并到 dev 并建立新检查点。
+
+检查点标签不得移动、覆盖或复用；每轮晋升创建一个新标签，以保留可审计历史。
+
 ## 步骤
 
 ### 1. 确认状态
@@ -122,6 +160,43 @@ gh run watch <run-id> --exit-status --interval 60 >/dev/null 2>&1
 ```
 
 CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并后 `sync-main-mirror.yml` 会将同一 commit 自动快进到只读 `main` 镜像；也可将 `personal/main` 合并回 `personal/dev` 保持开发线同步。
+
+### 9. 回合并 main 并建立新检查点
+
+晋升 PR 合并后，将稳定分支回合并到开发分支。由于晋升 PR 可能经过 squash，出现等价代码冲突时，通用代码以通过审查的 `personal/main` 为准，同时保留 dev 专属身份、Nightly 和热更新配置：
+
+如果 dev 仍有未包含在本轮晋升 PR 中的通用改动，合并前必须记录这些文件和提交。检查点提交本身只允许包含“最新 main 通用代码 + dev 专属设施”：解决冲突时暂时采用 main 版本，在该合并提交上创建标签，然后将尚未晋升的通用改动重新落成标签之后的独立提交。不得把它们吞进检查点，也不得在解决冲突时丢弃。
+
+```bash
+git fetch origin personal/main personal/dev --tags
+git checkout personal/dev
+git pull --ff-only origin personal/dev
+git merge --no-ff origin/personal/main \
+  -m "chore(dev): sync personal/main checkpoint"
+```
+
+验证 main 已成为 dev 的祖先，并运行与改动相称的构建和测试：
+
+```bash
+git merge-base --is-ancestor origin/personal/main personal/dev
+./gradlew :app:compileDebugKotlin
+./gradlew :app:testDebugUnitTest
+```
+
+确认 dev 专属配置仍然存在后，创建 annotated tag 并与 dev 一起推送：
+
+```bash
+MAIN_SHA=$(git rev-parse origin/personal/main)
+MAIN_SHORT=$(git rev-parse --short=8 origin/personal/main)
+CHECKPOINT="promotion-checkpoint/main-$(date +%Y%m%d)-$MAIN_SHORT"
+
+git tag -a "$CHECKPOINT" \
+  -m "Promotion checkpoint: personal/main $MAIN_SHA"
+git push origin personal/dev
+git push origin "$CHECKPOINT"
+```
+
+最后确认远端标签指向本次回合并提交，并且标签说明记录了准确的 main SHA；`git diff "$CHECKPOINT"..origin/personal/dev` 应只显示标签之后尚未晋升的改动。若 dev 推送成功但标签推送失败，不得把该轮视为已建立检查点，应修复标签推送后再结束。
 
 ## 注意事项
 
