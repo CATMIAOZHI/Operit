@@ -16,11 +16,11 @@ object HtmlExporter {
     /**
      * 导出单个对话为 HTML
      */
-    fun exportSingle(context: Context, chatHistory: ChatHistory): String {
+    fun exportSingle(context: Context, chatHistory: ChatHistory, folderPath: String? = null): String {
         val sb = StringBuilder()
 
         appendHtmlHeader(sb, chatHistory.title)
-        appendChatContent(context, sb, chatHistory)
+        appendChatContent(context, sb, chatHistory, folderPath)
         appendHtmlFooter(context, sb)
 
         return sb.toString()
@@ -29,7 +29,11 @@ object HtmlExporter {
     /**
      * 导出多个对话为 HTML
      */
-    fun exportMultiple(context: Context, chatHistories: List<ChatHistory>): String {
+    fun exportMultiple(
+        context: Context,
+        chatHistories: List<ChatHistory>,
+        folderPathsByChatId: Map<String, String> = emptyMap(),
+    ): String {
         val sb = StringBuilder()
 
         appendHtmlHeader(sb, context.getString(R.string.html_export_title))
@@ -46,7 +50,7 @@ object HtmlExporter {
             if (index > 0) {
                 sb.appendLine("<hr class=\"conversation-divider\">")
             }
-            appendChatContent(context, sb, chatHistory)
+            appendChatContent(context, sb, chatHistory, folderPathsByChatId[chatHistory.id])
         }
 
         appendHtmlFooter(context, sb)
@@ -75,15 +79,20 @@ object HtmlExporter {
     /**
      * 添加对话内容
      */
-    private fun appendChatContent(context: Context, sb: StringBuilder, chatHistory: ChatHistory) {
+    private fun appendChatContent(
+        context: Context,
+        sb: StringBuilder,
+        chatHistory: ChatHistory,
+        folderPath: String?,
+    ) {
         sb.appendLine("<div class=\"conversation\">")
         sb.appendLine("  <div class=\"conversation-header\">")
         sb.appendLine("    <h2>${escapeHtml(chatHistory.title)}</h2>")
         sb.appendLine("    <div class=\"metadata\">")
         sb.appendLine("      <span><strong>${context.getString(R.string.html_export_created)}:</strong> ${chatHistory.createdAt.format(dateFormatter)}</span>")
         sb.appendLine("      <span><strong>${context.getString(R.string.html_export_updated)}:</strong> ${chatHistory.updatedAt.format(dateFormatter)}</span>")
-        if (chatHistory.group != null) {
-            sb.appendLine("      <span><strong>${context.getString(R.string.html_export_group)}:</strong> ${escapeHtml(chatHistory.group)}</span>")
+        if (folderPath != null) {
+            sb.appendLine("      <span><strong>${context.getString(R.string.html_export_group)}:</strong> ${escapeHtml(folderPath)}</span>")
         }
         sb.appendLine("      <span><strong>${context.getString(R.string.html_export_message_count)}:</strong> ${chatHistory.messages.size}</span>")
         sb.appendLine("    </div>")

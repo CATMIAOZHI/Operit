@@ -69,6 +69,7 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.preferences.WakeWordPreferences
 import com.ai.assistance.operit.data.repository.AvatarRepository
 import com.ai.assistance.operit.data.repository.AvatarSettings
+import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.data.repository.getEmotionAnimationMapping
 import com.ai.assistance.operit.data.repository.getMoodAnimationMapping
 import com.ai.assistance.operit.ui.floating.FloatContext
@@ -181,10 +182,11 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
 
     val speechServicesPrefs = SpeechServicesPreferences(context)
     val ttsCleanerRegexs by speechServicesPrefs.ttsCleanerRegexsFlow.collectAsState(initial = emptyList())
-    
     val wakePrefs = remember { WakeWordPreferences(context.applicationContext) }
-    val autoNewChatGroup by wakePrefs.autoNewChatGroupFlow.collectAsState(initial = WakeWordPreferences.DEFAULT_AUTO_NEW_CHAT_GROUP)
-    
+    val autoNewChatGroup by wakePrefs.autoNewChatGroupFlow.collectAsState(
+        initial = WakeWordPreferences.DEFAULT_AUTO_NEW_CHAT_GROUP
+    )
+
     val volumeLevel by viewModel.volumeLevelFlow.collectAsState()
     
     var pendingSpeechPreview by remember { mutableStateOf<String?>(null) }
@@ -411,13 +413,22 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
     ) {
             IconButton(
                 onClick = {
-                    val group = autoNewChatGroup.trim().ifBlank {
-                        WakeWordPreferences.DEFAULT_AUTO_NEW_CHAT_GROUP
+                    coroutineScope.launch {
+                        val group = autoNewChatGroup.trim().ifBlank {
+                            WakeWordPreferences.DEFAULT_AUTO_NEW_CHAT_GROUP
+                        }
+                        val folderId =
+                            ChatHistoryManager.getInstance(context.applicationContext)
+                                .resolveOrCreateLegacyFolderId(
+                                    group,
+                                    activeCharacterCard?.name,
+                                )
+                        floatContext.chatService?.getChatCore()?.createNewChat(
+                            folderId = folderId,
+                            inheritGroupFromCurrent = false,
+                            characterCardId = activeCharacterCard?.id,
+                        )
                     }
-                    floatContext.chatService?.getChatCore()?.createNewChat(
-                        group = group,
-                        inheritGroupFromCurrent = false
-                    )
                 }
             ) {
                 Icon(

@@ -3443,6 +3443,9 @@
     <string name="open_floating_window">Open floating window</string>
     <string name="ungrouped">Ungrouped</string>
     <string name="manage_group">Manage Group</string>
+    <string name="create_subfolder">Create subfolder</string>
+    <string name="move_to_folder">Move to folder…</string>
+    <string name="folder_root">Root</string>
     <string name="rename_group">Rename Group</string>
     <string name="delete_group">Delete Group</string>
     <string name="new_group_name">New group name</string>
@@ -3451,6 +3454,8 @@
     <string name="delete_operation_irreversible">This operation cannot be undone</string>
     <string name="delete_group_only">Delete group only</string>
     <string name="chats_move_to_ungrouped">Chats will be moved to \"Ungrouped\"</string>
+    <string name="folder_contents_move_to_parent">Direct chats and subfolders will be moved to the parent folder “%1$s”</string>
+    <string name="folder_contents_move_to_root">Direct chats will be moved to “Ungrouped”, and subfolders will be promoted to the root level</string>
     <string name="edit_title">Edit Title</string>
     <string name="move_up">Move Up</string>
     <string name="move_down">Move Down</string>
@@ -5280,6 +5285,8 @@
     
     <string name="backup_import_result_success">Successfully imported %1$s format:\n- New records: %2$d\n- Updated records: %3$d%4$s</string>
     <string name="backup_import_result_skipped">\n- Skipped invalid records: %1$d</string>
+    <string name="backup_import_result_folders_created">\n- Folders created: %1$d</string>
+    <string name="backup_import_result_empty_folders_warning">\nNote: The import changed chat folder assignments and may leave empty folders in the previous folder tree.</string>
     <string name="backup_import_result_failed">Import failed: No valid chat history found</string>
     <string name="backup_export_result_success">Successfully exported to: %1$s</string>
 
@@ -7498,6 +7505,10 @@
     <string name="apply_character_group">Apply Character Group</string>
     <string name="assign_to_character_group_title">Assign to Character Group</string>
     <string name="assigned_chats_to_character_group">Assigned %1$d chat(s) to character group "%2$s"</string>
+    <string name="target_chat_folder_optional">Target chat folder (optional)</string>
+    <string name="select_folder_or_ungrouped">Select a folder or ungrouped</string>
+    <string name="apply_chat_folder">Apply chat folder</string>
+    <string name="assigned_chats_to_folder">Moved %1$d chat(s) to "%2$s"</string>
     <string name="assigned_to_character_group">Assigned to character group "%1$s"</string>
     <string name="character_group_avatar">Group Avatar</string>
     <string name="character_group_binding_prefix">Group</string>
@@ -8043,4 +8054,9 @@
     <string name="notification_kind_review_rejected">Rejected</string>
     <string name="notification_kind_review_changes">Changes Required</string>
     <string name="notification_kind_entry_curated">Featured</string>
+    <string name="chat_category_all">All</string>
+    <string name="chat_category_recent">Recent</string>
+    <string name="chat_category_favorites">Favorites</string>
+    <string name="add_to_favorites">Add to favorites</string>
+    <string name="remove_from_favorites">Remove from favorites</string>
 </resources>

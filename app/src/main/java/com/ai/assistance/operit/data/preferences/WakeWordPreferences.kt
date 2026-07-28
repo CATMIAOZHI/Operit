@@ -82,7 +82,6 @@ class WakeWordPreferences(private val context: Context) {
             runCatching { OperitApplication.instance.getString(R.string.wake_word_global_assistant) }
                 .getOrDefault("")
         }
-
         const val DEFAULT_VOICE_AUTO_ATTACH_ENABLED = true
 
         private const val LATEST_VOICE_AUTO_ATTACH_ITEMS_MIGRATION_VERSION = 1

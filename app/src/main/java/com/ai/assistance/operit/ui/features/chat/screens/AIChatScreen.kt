@@ -451,6 +451,24 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     // UI state
     val scrollState = rememberScrollState()
     val historyListState = rememberLazyListState()
+    var selectedHistoryCategoryName by
+        rememberLocal(
+            "chat_history_selected_category",
+            ChatHistoryCategory.ALL.name,
+        )
+    val selectedHistoryCategory =
+        runCatching { ChatHistoryCategory.valueOf(selectedHistoryCategoryName) }
+            .getOrDefault(ChatHistoryCategory.ALL)
+    var collapsedHistoryGroups by
+        rememberLocal(
+            "chat_history_collapsed_groups",
+            emptySet<String>(),
+        )
+    var collapsedHistoryCharacters by
+        rememberLocal(
+            "chat_history_collapsed_characters",
+            emptySet<String>(),
+        )
     val coroutineScope = rememberCoroutineScope()
     val characterCardManager = remember { CharacterCardManager.getInstance(context) }
     val characterGroupCardManager = remember { CharacterGroupCardManager.getInstance(context) }
@@ -1214,6 +1232,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 ChatHistorySelectorPanel(
                                     actualViewModel = actualViewModel,
                                     chatHistories = displayedChatHistories,
+                                    allChatHistories = chatHistories,
                                     currentChatId = currentChatId ?: "",
                                     showChatHistorySelector = showChatHistorySelector,
                                     historyListState = historyListState,
@@ -1228,7 +1247,19 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                     autoSwitchChatOnCharacterSelect = autoSwitchChatOnCharacterSelect,
                                     onAutoSwitchChatOnCharacterSelectChange = {
                                         autoSwitchChatOnCharacterSelect = it
-                                    }
+                                    },
+                                    selectedHistoryCategory = selectedHistoryCategory,
+                                    onSelectedHistoryCategoryChange = {
+                                        selectedHistoryCategoryName = it.name
+                                    },
+                                    collapsedHistoryGroups = collapsedHistoryGroups,
+                                    onCollapsedHistoryGroupsChange = {
+                                        collapsedHistoryGroups = it
+                                    },
+                                    collapsedHistoryCharacters = collapsedHistoryCharacters,
+                                    onCollapsedHistoryCharactersChange = {
+                                        collapsedHistoryCharacters = it
+                                    },
                                 )
                             }
                         }

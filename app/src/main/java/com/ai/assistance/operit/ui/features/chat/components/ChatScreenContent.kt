@@ -1051,6 +1051,7 @@ fun ChatScreenContent(
 fun ChatHistorySelectorPanel(
         actualViewModel: ChatViewModel,
         chatHistories: List<ChatHistory>,
+        allChatHistories: List<ChatHistory>,
         currentChatId: String,
         showChatHistorySelector: Boolean,
         historyListState: LazyListState,
@@ -1063,7 +1064,13 @@ fun ChatHistorySelectorPanel(
         autoSwitchCharacterCard: Boolean,
         onAutoSwitchCharacterCardChange: (Boolean) -> Unit,
         autoSwitchChatOnCharacterSelect: Boolean,
-        onAutoSwitchChatOnCharacterSelectChange: (Boolean) -> Unit
+        onAutoSwitchChatOnCharacterSelectChange: (Boolean) -> Unit,
+        selectedHistoryCategory: ChatHistoryCategory,
+        onSelectedHistoryCategoryChange: (ChatHistoryCategory) -> Unit,
+        collapsedHistoryGroups: Set<String>,
+        onCollapsedHistoryGroupsChange: (Set<String>) -> Unit,
+        collapsedHistoryCharacters: Set<String>,
+        onCollapsedHistoryCharactersChange: (Set<String>) -> Unit,
 ) {
     // 历史选择器面板（不再包含遮罩层，遮罩层已在外部处理）
     Box(
@@ -1079,6 +1086,7 @@ fun ChatHistorySelectorPanel(
                             )
     ) {
         val activeStreamingChatIds by actualViewModel.activeStreamingChatIds.collectAsState()
+        val chatFolders by actualViewModel.chatFolders.collectAsState()
         // 直接使用ChatHistorySelector
         ChatHistorySelector(
                 modifier = Modifier.fillMaxSize().padding(top = 8.dp),
@@ -1099,23 +1107,9 @@ fun ChatHistorySelectorPanel(
                 onUpdateChatBinding = { chatId, characterCardName, characterGroupId ->
                     actualViewModel.updateChatCharacterBinding(chatId, characterCardName, characterGroupId)
                 },
-                onCreateGroup = { groupName, characterCardName, characterGroupId ->
-                    actualViewModel.createGroup(groupName, characterCardName, characterGroupId)
-                },
-                onUpdateChatOrderAndGroup = { reorderedHistories, movedItem, targetGroup ->
-                    actualViewModel.updateChatOrderAndGroup(
-                            reorderedHistories,
-                            movedItem,
-                            targetGroup
-                    )
-                },
-                onUpdateGroupName = { oldName, newName, characterCardName ->
-                    actualViewModel.updateGroupName(oldName, newName, characterCardName)
-                },
-                onDeleteGroup = { groupName, deleteChats, characterCardName ->
-                    actualViewModel.deleteGroup(groupName, deleteChats, characterCardName)
-                },
                 chatHistories = chatHistories,
+                allChatHistories = allChatHistories,
+                chatFolders = chatFolders,
                 currentId = currentChatId,
                 activeStreamingChatIds = activeStreamingChatIds,
                 lazyListState = historyListState,
@@ -1132,7 +1126,13 @@ fun ChatHistorySelectorPanel(
                     GestureStateHolder.isChatScreenGestureConsumed = consumed
                     onChatScreenGestureConsumed(consumed)
                 },
-                activePrompt = activePrompt
+                activePrompt = activePrompt,
+                selectedCategory = selectedHistoryCategory,
+                onSelectedCategoryChange = onSelectedHistoryCategoryChange,
+                collapsedGroups = collapsedHistoryGroups,
+                onCollapsedGroupsChange = onCollapsedHistoryGroupsChange,
+                collapsedCharacters = collapsedHistoryCharacters,
+                onCollapsedCharactersChange = onCollapsedHistoryCharactersChange,
         )
     }
 }
