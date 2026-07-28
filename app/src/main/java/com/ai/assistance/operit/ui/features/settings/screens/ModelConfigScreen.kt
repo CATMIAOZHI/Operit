@@ -1621,11 +1621,22 @@ private fun ConfigSelectDialog(
     onToggleConfigCollapsed: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
+    var orderedSummaries by remember { mutableStateOf(configSummaries) }
+    var isDragInProgress by remember { mutableStateOf(false) }
+    var deferredSummaries by remember { mutableStateOf<List<ModelConfigSummary>?>(null) }
+    val pendingOrder = remember { mutableStateOf<List<String>?>(null) }
+
+    LaunchedEffect(configSummaries) {
+        if (isDragInProgress) {
+            deferredSummaries = configSummaries
+        } else {
+            orderedSummaries = configSummaries
+        }
+    }
 
     // 分区分割
-    val (normalConfigs, collapsedConfigs) = remember(configSummaries, collapsedConfigIds) {
-        partitionConfigsByCollapsedIds(configSummaries, collapsedConfigIds)
+    val (normalConfigs, collapsedConfigs) = remember(orderedSummaries, collapsedConfigIds) {
+        partitionConfigsByCollapsedIds(orderedSummaries, collapsedConfigIds)
     }
 
     var collapsedSectionExpanded by remember { mutableStateOf(false) }
@@ -1666,9 +1677,9 @@ private fun ConfigSelectDialog(
         val collapsedOrderIds = collapsedConfigs.map { it.id }
         val newGlobalOrder = newNormalIds + collapsedOrderIds
 
-        scope.launch {
-            onReorder(newGlobalOrder)
-        }
+        val summariesById = orderedSummaries.associateBy { it.id }
+        orderedSummaries = newGlobalOrder.mapNotNull(summariesById::get)
+        pendingOrder.value = newGlobalOrder
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -1707,6 +1718,7 @@ private fun ConfigSelectDialog(
                                 ReorderableItem(
                                     reorderableState,
                                     key = "cfg-${config.id}",
+                                    enabled = !isCollapsed,
                                 ) { isDragging ->
                                     val elevation = if (isDragging) 4.dp else 0.dp
                                     Surface(
@@ -1734,7 +1746,32 @@ private fun ConfigSelectDialog(
                                                     contentDescription = stringResource(R.string.drag_to_reorder),
                                                     modifier = Modifier
                                                         .size(20.dp)
-                                                        .draggableHandle(),
+                                                        .draggableHandle(
+                                                            onDragStarted = {
+                                                                pendingOrder.value = null
+                                                                deferredSummaries = null
+                                                                isDragInProgress = true
+                                                            },
+                                                            onDragStopped = {
+                                                                val finalOrder = pendingOrder.value
+                                                                deferredSummaries?.let { latestSummaries ->
+                                                                    val latestById = latestSummaries.associateBy { it.id }
+                                                                    val orderedIds =
+                                                                        finalOrder
+                                                                            ?: orderedSummaries.map { it.id }
+                                                                    val orderedIdSet = orderedIds.toSet()
+                                                                    orderedSummaries =
+                                                                        orderedIds.mapNotNull(latestById::get) +
+                                                                            latestSummaries.filter {
+                                                                                it.id !in orderedIdSet
+                                                                            }
+                                                                }
+                                                                isDragInProgress = false
+                                                                deferredSummaries = null
+                                                                finalOrder?.let(onReorder)
+                                                                pendingOrder.value = null
+                                                            },
+                                                        ),
                                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 )
                                                 Spacer(modifier = Modifier.width(8.dp))
