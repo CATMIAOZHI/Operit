@@ -159,6 +159,43 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return LegacyFolderBucketKey(characterCardName, characterGroupId, rawGroup)
     }
 
+    private fun ChatHistory.legacyFolderBucketKey(): LegacyFolderBucketKey? {
+        val rawGroup = group ?: return null
+        if (rawGroup.isBlank()) return null
+        return LegacyFolderBucketKey(characterCardName, characterGroupId, rawGroup)
+    }
+
+    private suspend fun findLegacyFolderId(
+        key: LegacyFolderBucketKey,
+    ): String? =
+        withContext(Dispatchers.IO) {
+            val normalizedName = key.rawGroup.trim()
+            val candidates =
+                chatFolderDao.getFolders().filter {
+                    it.id != SYSTEM_UNGROUPED_FOLDER_ID && it.name == normalizedName
+                }
+            if (candidates.isEmpty()) {
+                return@withContext null
+            }
+            val matchingFolderIds =
+                chatDao.getAllChatsDirectly()
+                    .asSequence()
+                    .filter {
+                        it.characterCardName == key.characterCardName &&
+                            it.characterGroupId == key.characterGroupId
+                    }
+                    .mapNotNull { normalizeChatFolderId(it.folderId) }
+                    .toSet()
+            candidates
+                .filter { it.id in matchingFolderIds }
+                .minWithOrNull(
+                    compareBy<ChatFolderEntity> { it.displayOrder }
+                        .thenBy { it.createdAt }
+                        .thenBy { it.id }
+                )
+                ?.id
+        }
+
     private suspend fun createLegacyImportFolders(
         chats: List<ArchivedChatMetadata>,
     ): Map<LegacyFolderBucketKey, String> {
@@ -745,7 +782,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         existingIds: MutableSet<String>,
         counters: ImportCounters,
     ) {
-        val importedFolderIdsByLegacyName = mutableMapOf<String, String>()
+        val importedFolderIdsByBucket = mutableMapOf<LegacyFolderBucketKey, String>()
         val existingFolderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
         var importedIndex = 0
         JsonReader(InputStreamReader(file.inputStream(), StandardCharsets.UTF_8)).use { reader ->
@@ -765,13 +802,19 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         counters.newCount++
                         existingIds.add(history.id)
                     }
-                    val legacyFolderName = history.group?.trim()?.takeIf { it.isNotEmpty() }
+                    val legacyFolderBucket = history.legacyFolderBucketKey()
                     val normalizedHistory =
-                        if (history.folderId == null && legacyFolderName != null) {
+                        if (history.folderId == null && legacyFolderBucket != null) {
                             val folderId =
-                                importedFolderIdsByLegacyName[legacyFolderName]
-                                    ?: resolveOrCreateLegacyFolderId(legacyFolderName).also {
-                                        importedFolderIdsByLegacyName[legacyFolderName] = it
+                                importedFolderIdsByBucket[legacyFolderBucket]
+                                    ?: (
+                                        findLegacyFolderId(legacyFolderBucket)
+                                            ?: createFolder(
+                                                parentFolderId = null,
+                                                name = legacyFolderBucket.rawGroup.trim(),
+                                            )
+                                    ).also {
+                                        importedFolderIdsByBucket[legacyFolderBucket] = it
                                     }
                             if (existingFolderIds.add(folderId)) {
                                 counters.folderCount++
@@ -2817,7 +2860,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 var newCount = 0
                 var updatedCount = 0
                 var skippedCount = 0
-                val importedFolderIdsByLegacyName = mutableMapOf<String, String>()
+                val importedFolderIdsByBucket = mutableMapOf<LegacyFolderBucketKey, String>()
 
                 for (chatHistory in chatHistories) {
                     if (chatHistory.messages.isEmpty()) {
@@ -2832,13 +2875,20 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         existingIds.add(chatHistory.id)
                     }
 
-                    val legacyFolderName = chatHistory.group?.trim()?.takeIf { it.isNotEmpty() }
+                    val legacyFolderBucket = chatHistory.legacyFolderBucketKey()
                     val normalizedHistory =
-                        if (chatHistory.folderId == null && legacyFolderName != null) {
+                        if (chatHistory.folderId == null && legacyFolderBucket != null) {
                             val folderId =
-                                importedFolderIdsByLegacyName.getOrPut(legacyFolderName) {
-                                    createFolder(parentFolderId = null, name = legacyFolderName)
-                                }
+                                importedFolderIdsByBucket[legacyFolderBucket]
+                                    ?: (
+                                        findLegacyFolderId(legacyFolderBucket)
+                                            ?: createFolder(
+                                                parentFolderId = null,
+                                                name = legacyFolderBucket.rawGroup.trim(),
+                                            )
+                                    ).also {
+                                        importedFolderIdsByBucket[legacyFolderBucket] = it
+                                    }
                             chatHistory.copy(group = null, folderId = folderId)
                         } else {
                             chatHistory.copy(group = null)
