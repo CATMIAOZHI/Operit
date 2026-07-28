@@ -25,7 +25,6 @@ import androidx.compose.material.icons.filled.CodeOff
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -452,22 +451,24 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     // UI state
     val scrollState = rememberScrollState()
     val historyListState = rememberLazyListState()
-    var selectedHistoryCategoryName by rememberSaveable {
-        mutableStateOf(ChatHistoryCategory.ALL.name)
-    }
+    var selectedHistoryCategoryName by
+        rememberLocal(
+            "chat_history_selected_category",
+            ChatHistoryCategory.ALL.name,
+        )
     val selectedHistoryCategory =
         runCatching { ChatHistoryCategory.valueOf(selectedHistoryCategoryName) }
             .getOrDefault(ChatHistoryCategory.ALL)
     var collapsedHistoryGroups by
-        rememberSaveable(
-            stateSaver =
-                listSaver(
-                    save = { it.toList() },
-                    restore = { it.toSet() },
-                )
-        ) {
-            mutableStateOf(emptySet<String>())
-        }
+        rememberLocal(
+            "chat_history_collapsed_groups",
+            emptySet<String>(),
+        )
+    var collapsedHistoryCharacters by
+        rememberLocal(
+            "chat_history_collapsed_characters",
+            emptySet<String>(),
+        )
     val coroutineScope = rememberCoroutineScope()
     val characterCardManager = remember { CharacterCardManager.getInstance(context) }
     val characterGroupCardManager = remember { CharacterGroupCardManager.getInstance(context) }
@@ -1253,6 +1254,10 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                     collapsedHistoryGroups = collapsedHistoryGroups,
                                     onCollapsedHistoryGroupsChange = {
                                         collapsedHistoryGroups = it
+                                    },
+                                    collapsedHistoryCharacters = collapsedHistoryCharacters,
+                                    onCollapsedHistoryCharactersChange = {
+                                        collapsedHistoryCharacters = it
                                     },
                                 )
                             }

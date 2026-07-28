@@ -1068,6 +1068,8 @@ fun ChatHistorySelectorPanel(
         onSelectedHistoryCategoryChange: (ChatHistoryCategory) -> Unit,
         collapsedHistoryGroups: Set<String>,
         onCollapsedHistoryGroupsChange: (Set<String>) -> Unit,
+        collapsedHistoryCharacters: Set<String>,
+        onCollapsedHistoryCharactersChange: (Set<String>) -> Unit,
 ) {
     // 历史选择器面板（不再包含遮罩层，遮罩层已在外部处理）
     Box(
@@ -1127,6 +1129,8 @@ fun ChatHistorySelectorPanel(
                 onSelectedCategoryChange = onSelectedHistoryCategoryChange,
                 collapsedGroups = collapsedHistoryGroups,
                 onCollapsedGroupsChange = onCollapsedHistoryGroupsChange,
+                collapsedCharacters = collapsedHistoryCharacters,
+                onCollapsedCharactersChange = onCollapsedHistoryCharactersChange,
         )
     }
 }
