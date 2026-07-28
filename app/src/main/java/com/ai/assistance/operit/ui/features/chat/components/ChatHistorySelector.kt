@@ -532,6 +532,8 @@ fun ChatHistorySelector(
         onSelectedCategoryChange: (ChatHistoryCategory) -> Unit,
         collapsedGroups: Set<String>,
         onCollapsedGroupsChange: (Set<String>) -> Unit,
+        collapsedCharacters: Set<String>,
+        onCollapsedCharactersChange: (Set<String>) -> Unit,
 ) {
     var chatToEdit by remember { mutableStateOf<ChatHistory?>(null) }
     var chatToDelete by remember { mutableStateOf<ChatHistory?>(null) }
@@ -540,8 +542,6 @@ fun ChatHistorySelector(
     var showNewGroupDialog by remember { mutableStateOf(false) }
     var newGroupName by remember { mutableStateOf("") }
     var newFolderParentId by remember { mutableStateOf<String?>(null) }
-    var collapsedCharacters by rememberLocal("chat_history_collapsed_characters", emptySet<String>())
-
     var groupActionTarget by remember { mutableStateOf<GroupTarget?>(null) }
     var groupToRename by remember { mutableStateOf<GroupTarget?>(null) }
     var groupToDelete by remember { mutableStateOf<GroupTarget?>(null) }
@@ -3332,15 +3332,16 @@ fun ChatHistorySelector(
                                 .semantics {
                                     contentDescription = "${item.name}, $stateDescription"
                                 }
-                                .pointerInput(Unit) {
+                                .pointerInput(collapsedCharacters) {
                                     detectTapGestures(
                                         onTap = {
-                                            collapsedCharacters =
+                                            onCollapsedCharactersChange(
                                                 if (collapsedCharacters.contains(item.key)) {
                                                     collapsedCharacters - item.key
                                                 } else {
                                                     collapsedCharacters + item.key
                                                 }
+                                            )
                                         }
                                     )
                                 },
