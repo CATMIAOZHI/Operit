@@ -198,6 +198,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     private suspend fun createLegacyImportFolders(
         chats: List<ArchivedChatMetadata>,
+        counters: ImportCounters,
     ): Map<LegacyFolderBucketKey, String> {
         val grouped = chats.mapNotNull { metadata ->
             metadata.legacyFolderBucketKey
@@ -240,6 +241,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 ?.plus(1) ?: 0L
         return buildMap {
             sorted.forEach { (key, bucketChats) ->
+                findLegacyFolderId(key)?.let { existingId ->
+                    put(key, existingId)
+                    return@forEach
+                }
                 var id: String
                 do {
                     id = java.util.UUID.randomUUID().toString()
@@ -254,6 +259,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         createdAt = createdAt,
                     )
                 )
+                counters.folderCount++
                 put(key, id)
             }
         }
@@ -871,7 +877,8 @@ class ChatHistoryManager private constructor(private val context: Context) {
                             )
                     } else {
                         database.withTransaction {
-                            val folderIdByBucket = createLegacyImportFolders(archive.chats)
+                            val folderIdByBucket =
+                                createLegacyImportFolders(archive.chats, counters)
                             forEachArchivedChat(importFile) { archivedChat, fields, index ->
                                 // v2/v3 distinguish a missing legacy group field from explicit null/blank.
                                 val folderId =

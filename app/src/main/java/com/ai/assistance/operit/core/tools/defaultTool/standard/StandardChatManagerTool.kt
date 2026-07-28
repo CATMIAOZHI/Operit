@@ -28,10 +28,12 @@ import com.ai.assistance.operit.core.tools.MessageSendStreamEventData
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.AITool
+import com.ai.assistance.operit.data.model.ActivePrompt
 import com.ai.assistance.operit.data.model.ChatTurnOptions
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.PromptFunctionType
 import com.ai.assistance.operit.data.model.ToolResult
+import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.WaifuPreferences
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
@@ -1050,8 +1052,15 @@ class StandardChatManagerTool(private val context: Context) {
                 )
             }
 
-            val characterCardId =
+            val requestedCharacterCardId =
                 tool.parameters.find { it.name == "character_card_id" }?.value?.trim()
+            val characterCardId =
+                requestedCharacterCardId?.takeIf { it.isNotBlank() }
+                    ?: when (val activePrompt =
+                        ActivePromptManager.getInstance(appContext).getActivePrompt()) {
+                        is ActivePrompt.CharacterCard -> activePrompt.id
+                        is ActivePrompt.CharacterGroup -> null
+                    }
             var characterCardName: String? = null
             if (!characterCardId.isNullOrBlank()) {
                 val roleCardManager = CharacterCardManager.getInstance(appContext)
