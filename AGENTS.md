@@ -30,6 +30,7 @@
 ## 分支与发布
 
 - `origin` 指向个人 fork，默认分支为 `personal/main`；`upstream` 指向官方仓库，默认分支为 `main`。
+- 除非用户明确要求同步上游、分析上游或向上游贡献，否则所有规划、开发、审查和验证只以个人版当前目标分支为基线，不主动拉取、对比、合并或兼容 `upstream/main`。
 - `personal/main` 更新后由 `.github/workflows/sync-main-mirror.yml` 单向快进到 `main`，供仅支持 `main` 的安全工具读取。镜像使用仅授权本仓库 **Contents: read and write** 与 **Workflows: read and write** 的 `MAIN_MIRROR_TOKEN`，因为内置 `GITHUB_TOKEN` 不能推进包含 workflow 变更的提交。`main` 是只读兼容镜像，不得直接提交、合并 PR、强推或用作上游贡献分支；同步失败时先排查分叉，不得覆盖历史。
 - 上游贡献以最新 `upstream/main` 为基线，使用独立的 `contrib/<topic>` 分支，并显式目标官方 `main`；不得混入 Operit Ry 的品牌、服务路由或发布配置。
 - `personal/main` 是 Operit Ry 稳定发行分支，受规则保护；改动必须通过 PR 和必需检查，稳定 APK 与 `v*` Release tag 只从该分支发布。
