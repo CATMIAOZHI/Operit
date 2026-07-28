@@ -548,11 +548,17 @@ export interface ChatViewModelActions {
     }
   ) => Promise<WebChatSummary | null>;
   reorderConversations: (items: WebChatReorderItem[]) => Promise<void>;
-  renameGroup: (oldName: string, newName: string, characterCardName?: string | null) => Promise<void>;
+  renameGroup: (
+    oldName: string,
+    newName: string,
+    characterCardName?: string | null,
+    folderId?: string | null
+  ) => Promise<void>;
   deleteGroup: (
     groupName: string,
     deleteChats: boolean,
-    characterCardName?: string | null
+    characterCardName?: string | null,
+    folderId?: string | null
   ) => Promise<void>;
   updateInputSettings: (
     payload: Partial<{
@@ -1457,7 +1463,8 @@ export function useChatViewModel(): ChatViewModel {
   async function renameGroup(
     oldName: string,
     newName: string,
-    characterCardName?: string | null
+    characterCardName?: string | null,
+    folderId?: string | null
   ) {
     if (!token) {
       return;
@@ -1473,7 +1480,8 @@ export function useChatViewModel(): ChatViewModel {
       await renameGroupOnServer(token, {
         old_name: normalizedOldName,
         new_name: normalizedNewName,
-        character_card_name: characterCardName ?? null
+        character_card_name: characterCardName ?? null,
+        folder_id: folderId ?? null
       });
       await refreshChats(token);
     } catch (actionError: unknown) {
@@ -1484,7 +1492,8 @@ export function useChatViewModel(): ChatViewModel {
   async function deleteGroup(
     groupName: string,
     deleteChats: boolean,
-    characterCardName?: string | null
+    characterCardName?: string | null,
+    folderId?: string | null
   ) {
     if (!token) {
       return;
@@ -1499,7 +1508,8 @@ export function useChatViewModel(): ChatViewModel {
       await deleteGroupOnServer(token, {
         group_name: normalizedGroupName,
         delete_chats: deleteChats,
-        character_card_name: characterCardName ?? null
+        character_card_name: characterCardName ?? null,
+        folder_id: folderId ?? null
       });
       const refreshedChats = await refreshChats(token);
       if (selectedChatId && !refreshedChats.some((chat) => chat.id === selectedChatId)) {

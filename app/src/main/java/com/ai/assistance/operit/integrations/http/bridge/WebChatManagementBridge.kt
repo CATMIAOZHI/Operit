@@ -79,67 +79,66 @@ internal class WebChatManagementBridge(
         ) {
             return false
         }
-        val folderIdsByLegacyBucket = mutableMapOf<Pair<String, String?>, String>()
+        val legacyGroupNamesByChatId = mutableMapOf<String, String>()
         val reordered =
             items.map { item ->
                 val history = historiesById.getValue(item.chatId)
                 val stableFolderId = item.folderId?.trim()?.takeIf { it.isNotBlank() }
-                val folderId =
-                    stableFolderId
-                        ?: item.group
-                            ?.trim()
-                            ?.takeIf { it.isNotBlank() }
-                            ?.let {
-                                val bucket = it to history.characterCardName
-                                folderIdsByLegacyBucket[bucket]
-                                    ?: chatHistoryManager.resolveOrCreateLegacyFolderId(
-                                        groupName = it,
-                                        characterCardName = history.characterCardName,
-                                    ).also { folderId ->
-                                        folderIdsByLegacyBucket[bucket] = folderId
-                                    }
-                            }
+                if (stableFolderId == null) {
+                    item.group
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { legacyGroupNamesByChatId[item.chatId] = it }
+                }
                 history.copy(
                     displayOrder = item.displayOrder,
                     group = null,
-                    folderId = folderId,
+                    folderId = stableFolderId,
                 )
             }
-        return chatHistoryManager.updateChatOrderAndFolders(reordered)
+        return chatHistoryManager.updateChatOrderAndFolders(
+            histories = reordered,
+            legacyGroupNamesByChatId = legacyGroupNamesByChatId,
+        )
     }
 
     suspend fun renameGroup(request: WebRenameGroupRequest): Boolean {
-        val folderId =
-            chatHistoryManager.findLegacyFolderId(
-                groupName = request.oldName,
-                characterCardName = request.characterCardName,
-            ) ?: return false
-        chatHistoryManager.renameFolder(folderId, request.newName)
-        return true
+        val folderId = resolveGroupMutationFolderId(
+            stableFolderId = request.folderId,
+            legacyGroupName = request.oldName,
+            characterCardName = request.characterCardName,
+        ) ?: return false
+        return chatHistoryManager.renameFolderIfExists(folderId, request.newName)
     }
 
     suspend fun deleteGroup(request: WebDeleteGroupRequest): Boolean {
-        val folderId =
-            chatHistoryManager.findLegacyFolderId(
-                groupName = request.groupName,
-                characterCardName = request.characterCardName,
-            ) ?: return false
+        val folderId = resolveGroupMutationFolderId(
+            stableFolderId = request.folderId,
+            legacyGroupName = request.groupName,
+            characterCardName = request.characterCardName,
+        ) ?: return false
         if (request.deleteChats) {
-            val normalizedCharacterCardName =
-                request.characterCardName?.trim()?.takeIf { it.isNotBlank() }
-            chatHistoryManager.chatHistoriesFlow.first()
-                .asSequence()
-                .filter { it.folderId == folderId }
-                .filter {
-                    normalizedCharacterCardName == null ||
-                        it.characterCardName == normalizedCharacterCardName
-                }
-                .map { it.id }
-                .toList()
-                .forEach { chatHistoryManager.deleteChatHistory(it) }
+            return chatHistoryManager.deleteFolderWithChatsIfExists(
+                folderId = folderId,
+                characterCardName = request.characterCardName,
+            )
         }
-        chatHistoryManager.deleteFolder(folderId)
-        return true
+        return chatHistoryManager.deleteFolderIfExists(folderId)
+    }
+
+    private suspend fun resolveGroupMutationFolderId(
+        stableFolderId: String?,
+        legacyGroupName: String,
+        characterCardName: String?,
+    ): String? {
+        val normalizedFolderId = stableFolderId?.trim()?.takeIf { it.isNotBlank() }
+        if (normalizedFolderId != null) {
+            return normalizedFolderId
+        }
+        return chatHistoryManager.findLegacyFolderId(
+            groupName = legacyGroupName,
+            characterCardName = characterCardName,
+        )
     }
 
 }

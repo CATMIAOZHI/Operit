@@ -606,7 +606,9 @@ data class WebRenameGroupRequest(
     @SerialName("new_name")
     val newName: String,
     @SerialName("character_card_name")
-    val characterCardName: String? = null
+    val characterCardName: String? = null,
+    @SerialName("folder_id")
+    val folderId: String? = null,
 )
 
 @Serializable
@@ -616,7 +618,9 @@ data class WebDeleteGroupRequest(
     @SerialName("delete_chats")
     val deleteChats: Boolean = false,
     @SerialName("character_card_name")
-    val characterCardName: String? = null
+    val characterCardName: String? = null,
+    @SerialName("folder_id")
+    val folderId: String? = null,
 )
 
 @Serializable

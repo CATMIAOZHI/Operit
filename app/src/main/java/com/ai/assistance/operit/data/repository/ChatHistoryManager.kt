@@ -87,9 +87,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
         fun getInstance(context: Context): ChatHistoryManager {
             return INSTANCE
                 ?: synchronized(this) {
-                    val instance = ChatHistoryManager(context.applicationContext)
-                    INSTANCE = instance
-                    instance
+                    INSTANCE
+                        ?: ChatHistoryManager(context.applicationContext).also { instance ->
+                            INSTANCE = instance
+                        }
                 }
         }
     }
@@ -120,6 +121,11 @@ class ChatHistoryManager private constructor(private val context: Context) {
         val characterCardName: String?,
         val characterGroupId: String?,
         val rawGroup: String,
+    )
+
+    private data class LegacyFolderResolutionKey(
+        val groupName: String,
+        val characterCardName: String?,
     )
 
     private fun OperitArchivedChat.legacyFolderBucketKey(): LegacyFolderBucketKey? {
@@ -732,6 +738,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     // 互斥锁用于同步操作
     private val globalMutex = Mutex()
+    private val folderStructureMutex = Mutex()
+    private val legacyFolderResolutionMutex = Mutex()
+    private val reservedLegacyFolderIds = mutableMapOf<LegacyFolderResolutionKey, String>()
     private val chatMutexes = ConcurrentHashMap<String, Mutex>()
 
     private fun chatMutex(chatId: String): Mutex {
@@ -830,12 +839,58 @@ class ChatHistoryManager private constructor(private val context: Context) {
     ): String {
         val normalizedName = groupName.trim()
         require(normalizedName.isNotEmpty()) { "Group name must not be blank" }
-        return findLegacyFolderId(normalizedName, characterCardName)
-            ?: createFolder(parentFolderId = null, name = normalizedName)
+        val normalizedCharacterCardName =
+            characterCardName?.trim()?.takeIf { it.isNotEmpty() }
+        val key = LegacyFolderResolutionKey(normalizedName, normalizedCharacterCardName)
+        return legacyFolderResolutionMutex.withLock {
+            resolveOrCreateLegacyFolderIdLocked(key)
+        }
     }
 
+    private suspend fun resolveOrCreateLegacyFolderIdLocked(
+        key: LegacyFolderResolutionKey,
+    ): String {
+        findLegacyFolderId(key.groupName, key.characterCardName)?.let { folderId ->
+            reservedLegacyFolderIds.remove(key)
+            return folderId
+        }
+        reservedLegacyFolderIds[key]
+            ?.takeIf { reservedId ->
+                chatFolderDao.getFolder(reservedId)?.name == key.groupName
+            }
+            ?.let { return it }
+        reservedLegacyFolderIds.remove(key)
+        return createFolder(parentFolderId = null, name = key.groupName).also { folderId ->
+            reservedLegacyFolderIds[key] = folderId
+        }
+    }
+
+    private suspend fun releaseLegacyFolderReservations(folderIds: Collection<String?>) {
+        val persistedFolderIds = folderIds.mapNotNull(::normalizeChatFolderId).toSet()
+        if (persistedFolderIds.isEmpty()) {
+            return
+        }
+        legacyFolderResolutionMutex.withLock {
+            reservedLegacyFolderIds.entries.removeAll { it.value in persistedFolderIds }
+        }
+    }
+
+    suspend fun renameFolderIfExists(folderId: String, newName: String): Boolean =
+        folderStructureMutex.withLock {
+            if (
+                folderId == SYSTEM_UNGROUPED_FOLDER_ID ||
+                chatFolderDao.getFolder(folderId) == null
+            ) {
+                return@withLock false
+            }
+            chatFolderRepository.renameFolder(folderId, newName)
+            true
+        }
+
     suspend fun renameFolder(folderId: String, newName: String) =
-        chatFolderRepository.renameFolder(folderId, newName)
+        folderStructureMutex.withLock {
+            chatFolderRepository.renameFolder(folderId, newName)
+        }
 
     suspend fun moveFolder(
         folderId: String,
@@ -877,38 +932,140 @@ class ChatHistoryManager private constructor(private val context: Context) {
             allowAppendToNonEmptyTarget = allowAppendToNonEmptyTarget,
         )
 
-    suspend fun deleteFolder(folderId: String) =
-        chatFolderRepository.deleteFolder(folderId)
-
-    suspend fun updateChatOrderAndFolders(histories: List<ChatHistory>): Boolean =
-        database.withTransaction {
-            if (histories.map { it.id }.distinct().size != histories.size) {
-                return@withTransaction false
-            }
-            val currentById = chatDao.getAllChatsDirectly().associateBy { it.id }
-            if (histories.any { it.id !in currentById }) {
-                return@withTransaction false
-            }
-            val folderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
+    suspend fun deleteFolderIfExists(folderId: String): Boolean =
+        folderStructureMutex.withLock {
             if (
-                histories.any {
-                    val folderId = normalizeChatFolderId(it.folderId)
-                    folderId != null && folderId !in folderIds
-                }
+                folderId == SYSTEM_UNGROUPED_FOLDER_ID ||
+                chatFolderDao.getFolder(folderId) == null
             ) {
-                return@withTransaction false
+                return@withLock false
             }
-            val timestamp = System.currentTimeMillis()
-            histories.forEach { history ->
-                chatDao.updateChatOrderAndFolder(
-                    chatId = history.id,
-                    displayOrder = history.displayOrder,
-                    folderId = normalizeChatFolderId(history.folderId),
-                    timestamp = timestamp,
-                )
+            chatFolderRepository.deleteFolder(folderId)
+            true
+        }
+
+    suspend fun deleteFolderWithChatsIfExists(
+        folderId: String,
+        characterCardName: String?,
+    ): Boolean =
+        folderStructureMutex.withLock {
+            if (
+                folderId == SYSTEM_UNGROUPED_FOLDER_ID ||
+                chatFolderDao.getFolder(folderId) == null
+            ) {
+                return@withLock false
+            }
+            val normalizedCharacterCardName =
+                characterCardName?.trim()?.takeIf { it.isNotEmpty() }
+            val deletedChatIds =
+                database.withTransaction {
+                    val chatsToDelete =
+                        chatDao.getAllChatsDirectly().filter {
+                            normalizeChatFolderId(it.folderId) == folderId &&
+                                (
+                                    normalizedCharacterCardName == null ||
+                                        it.characterCardName == normalizedCharacterCardName
+                                ) &&
+                                !it.locked
+                        }
+                    chatsToDelete.forEach { chatDao.deleteChat(it.id) }
+                    chatFolderRepository.deleteFolder(folderId)
+                    chatsToDelete.map { it.id }
+                }
+            context.currentChatIdDataStore.edit { preferences ->
+                if (preferences[PreferencesKeys.CURRENT_CHAT_ID] in deletedChatIds) {
+                    preferences.remove(PreferencesKeys.CURRENT_CHAT_ID)
+                }
             }
             true
         }
+
+    suspend fun deleteFolder(folderId: String) =
+        folderStructureMutex.withLock {
+            chatFolderRepository.deleteFolder(folderId)
+        }
+
+    suspend fun updateChatOrderAndFolders(
+        histories: List<ChatHistory>,
+        legacyGroupNamesByChatId: Map<String, String> = emptyMap(),
+    ): Boolean {
+        val updated = legacyFolderResolutionMutex.withLock {
+            val reservationsBeforeTransaction = reservedLegacyFolderIds.toMap()
+            try {
+                database.withTransaction {
+                    if (
+                        histories.map { it.id }.distinct().size != histories.size ||
+                            legacyGroupNamesByChatId.keys.any { legacyChatId ->
+                                histories.none { it.id == legacyChatId }
+                            }
+                    ) {
+                        return@withTransaction false
+                    }
+                    val currentById = chatDao.getAllChatsDirectly().associateBy { it.id }
+                    if (histories.any { it.id !in currentById }) {
+                        return@withTransaction false
+                    }
+                    val folderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
+                    if (
+                        histories.any {
+                            val folderId = normalizeChatFolderId(it.folderId)
+                            it.id !in legacyGroupNamesByChatId &&
+                                folderId != null &&
+                                folderId !in folderIds
+                        }
+                    ) {
+                        return@withTransaction false
+                    }
+                    val resolvedLegacyFolderIds =
+                        mutableMapOf<LegacyFolderResolutionKey, String>()
+                    val timestamp = System.currentTimeMillis()
+                    histories.forEach { history ->
+                        val legacyGroupName =
+                            legacyGroupNamesByChatId[history.id]
+                                ?.trim()
+                                ?.takeIf { it.isNotEmpty() }
+                        val folderId =
+                            if (legacyGroupName == null) {
+                                normalizeChatFolderId(history.folderId)
+                            } else {
+                                val key =
+                                    LegacyFolderResolutionKey(
+                                        groupName = legacyGroupName,
+                                        characterCardName =
+                                            history.characterCardName
+                                                ?.trim()
+                                                ?.takeIf { it.isNotEmpty() },
+                                    )
+                                resolvedLegacyFolderIds[key]
+                                    ?: resolveOrCreateLegacyFolderIdLocked(key).also {
+                                        resolvedLegacyFolderIds[key] = it
+                                    }
+                            }
+                        chatDao.updateChatOrderAndFolder(
+                            chatId = history.id,
+                            displayOrder = history.displayOrder,
+                            folderId = folderId,
+                            timestamp = timestamp,
+                        )
+                    }
+                    true
+                }
+            } catch (error: Throwable) {
+                reservedLegacyFolderIds.clear()
+                reservedLegacyFolderIds.putAll(reservationsBeforeTransaction)
+                throw error
+            }
+        }
+        if (updated) {
+            releaseLegacyFolderReservations(
+                histories.map { it.folderId } +
+                    legacyGroupNamesByChatId.keys.mapNotNull { chatId ->
+                        chatDao.getChatById(chatId)?.folderId
+                    }
+            )
+        }
+        return updated
+    }
 
     suspend fun getTotalChatCount(): Int {
         return withContext(Dispatchers.IO) { chatDao.getTotalChatCount() }
@@ -1030,6 +1187,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 )
             }
         }
+        releaseLegacyFolderReservations(listOf(history.folderId))
     }
 
     private suspend fun persistChatHistoryInCurrentTransaction(
@@ -1936,6 +2094,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         // 保存新聊天
         val chatEntity = ChatEntity.fromChatHistory(newHistory)
         chatDao.insertChat(chatEntity)
+        releaseLegacyFolderReservations(listOf(finalFolderId))
 
         // 设置为当前聊天
         if (setAsCurrentChat) {
@@ -2052,36 +2211,41 @@ class ChatHistoryManager private constructor(private val context: Context) {
         characterCardName: String?,
         characterGroupId: String?,
     ): Boolean {
-        return chatMutex(chatId).withLock {
-            database.withTransaction {
-                if (chatDao.getChatById(chatId) == null) {
-                    return@withTransaction false
-                }
-                val normalizedFolderId =
-                    normalizeChatFolderId(folderId)
-                if (updateFolder && normalizedFolderId != null) {
-                    require(chatFolderDao.getFolder(normalizedFolderId) != null) {
-                        "Unknown folderId: $normalizedFolderId"
+        val updated =
+            chatMutex(chatId).withLock {
+                database.withTransaction {
+                    if (chatDao.getChatById(chatId) == null) {
+                        return@withTransaction false
                     }
+                    val normalizedFolderId =
+                        normalizeChatFolderId(folderId)
+                    if (updateFolder && normalizedFolderId != null) {
+                        require(chatFolderDao.getFolder(normalizedFolderId) != null) {
+                            "Unknown folderId: $normalizedFolderId"
+                        }
+                    }
+                    val timestamp = System.currentTimeMillis()
+                    title?.let { chatDao.updateChatTitle(chatId, it, timestamp) }
+                    if (updateFolder) {
+                        chatDao.updateChatFolder(chatId, normalizedFolderId, timestamp)
+                    }
+                    locked?.let { chatDao.updateChatLocked(chatId, it, timestamp) }
+                    pinned?.let { chatDao.updateChatPinned(chatId, it, timestamp) }
+                    if (updateBinding) {
+                        chatDao.updateChatCharacterBinding(
+                            chatId = chatId,
+                            characterCardName = characterCardName,
+                            characterGroupId = characterGroupId,
+                            timestamp = timestamp,
+                        )
+                    }
+                    true
                 }
-                val timestamp = System.currentTimeMillis()
-                title?.let { chatDao.updateChatTitle(chatId, it, timestamp) }
-                if (updateFolder) {
-                    chatDao.updateChatFolder(chatId, normalizedFolderId, timestamp)
-                }
-                locked?.let { chatDao.updateChatLocked(chatId, it, timestamp) }
-                pinned?.let { chatDao.updateChatPinned(chatId, it, timestamp) }
-                if (updateBinding) {
-                    chatDao.updateChatCharacterBinding(
-                        chatId = chatId,
-                        characterCardName = characterCardName,
-                        characterGroupId = characterGroupId,
-                        timestamp = timestamp,
-                    )
-                }
-                true
             }
+        if (updated && updateFolder) {
+            releaseLegacyFolderReservations(listOf(folderId))
         }
+        return updated
     }
 
     suspend fun getChatTitle(chatId: String): String? {
