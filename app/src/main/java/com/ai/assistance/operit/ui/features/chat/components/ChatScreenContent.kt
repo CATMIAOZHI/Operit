@@ -1051,6 +1051,7 @@ fun ChatScreenContent(
 fun ChatHistorySelectorPanel(
         actualViewModel: ChatViewModel,
         chatHistories: List<ChatHistory>,
+        allChatHistories: List<ChatHistory>,
         currentChatId: String,
         showChatHistorySelector: Boolean,
         historyListState: LazyListState,
@@ -1107,6 +1108,7 @@ fun ChatHistorySelectorPanel(
                     actualViewModel.updateChatCharacterBinding(chatId, characterCardName, characterGroupId)
                 },
                 chatHistories = chatHistories,
+                allChatHistories = allChatHistories,
                 chatFolders = chatFolders,
                 currentId = currentChatId,
                 activeStreamingChatIds = activeStreamingChatIds,
