@@ -1232,6 +1232,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 ChatHistorySelectorPanel(
                                     actualViewModel = actualViewModel,
                                     chatHistories = displayedChatHistories,
+                                    allChatHistories = chatHistories,
                                     currentChatId = currentChatId ?: "",
                                     showChatHistorySelector = showChatHistorySelector,
                                     historyListState = historyListState,

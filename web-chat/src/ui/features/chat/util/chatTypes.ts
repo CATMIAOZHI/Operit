@@ -27,6 +27,7 @@ export interface WebChatSummary {
   id: string;
   title: string;
   updated_at: number;
+  display_order: number;
   folder_id?: string | null;
   group: string | null;
   character_card_name?: string | null;
@@ -36,6 +37,13 @@ export interface WebChatSummary {
   parent_chat_id?: string | null;
   active_streaming: boolean;
   locked: boolean;
+}
+
+export interface WebChatFolderSummary {
+  id: string;
+  name: string;
+  parent_folder_id?: string | null;
+  display_order: number;
 }
 
 export interface WebMessageAttachment {

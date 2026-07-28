@@ -783,7 +783,8 @@ class ChatHistoryDelegate(
         folderId: String? = null,
         inheritGroupFromCurrent: Boolean = true,
         setAsCurrentChat: Boolean = true,
-        characterCardId: String? = null
+        characterCardId: String? = null,
+        onCreated: ((String) -> Unit)? = null,
     ) {
         coroutineScope.launch {
             val (inputTokens, outputTokens, windowSize) = getChatStatistics()
@@ -862,6 +863,7 @@ class ChatHistoryDelegate(
                 }
                 onTokenStatisticsLoaded(newChat.id, 0, 0, 0)
             }
+            onCreated?.invoke(newChat.id)
         }
     }
 

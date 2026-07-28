@@ -1,6 +1,8 @@
 package com.ai.assistance.operit.data.repository
 
 import android.content.Context
+import android.database.Cursor
+import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import androidx.room.withTransaction
 import com.ai.assistance.operit.util.AppLogger
@@ -31,7 +33,10 @@ import com.ai.assistance.operit.util.LocaleUtils
 import com.ai.assistance.operit.data.converter.*
 import com.ai.assistance.operit.data.exporter.*
 import com.google.gson.GsonBuilder
+import com.google.gson.internal.Streams
 import com.google.gson.reflect.TypeToken
+import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -57,11 +62,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
+import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
 import java.io.InputStream
@@ -102,6 +106,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private val chatFolderRepository = ChatFolderRepository(database)
     private val messageDao = database.messageDao()
     private val messageVariantDao = database.messageVariantDao()
+    private val operitArchiveExportMutex = Mutex()
     private val operitArchiveJson =
         Json {
             prettyPrint = true
@@ -126,6 +131,30 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private data class LegacyFolderResolutionKey(
         val groupName: String,
         val characterCardName: String?,
+        val characterGroupId: String?,
+    )
+
+    private data class ArchivedChatMetadata(
+        val id: String,
+        val folderId: String?,
+        val legacyFolderBucketKey: LegacyFolderBucketKey?,
+        val displayOrder: Long,
+        val createdAt: Long,
+        val hasMessages: Boolean,
+        val hasFolderIdField: Boolean,
+        val isFavorite: Boolean?,
+    )
+
+    private data class ScannedFolder(
+        val folder: OperitArchivedFolder,
+        val hasRequiredV4Fields: Boolean,
+    )
+
+    private data class ScannedArchive(
+        val archiveType: String,
+        val formatVersion: Int,
+        val folders: List<ScannedFolder>,
+        val chats: List<ArchivedChatMetadata>,
     )
 
     private fun OperitArchivedChat.legacyFolderBucketKey(): LegacyFolderBucketKey? {
@@ -134,11 +163,51 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return LegacyFolderBucketKey(characterCardName, characterGroupId, rawGroup)
     }
 
+    private fun ChatHistory.legacyFolderBucketKey(): LegacyFolderBucketKey? {
+        val rawGroup = group ?: return null
+        if (rawGroup.isBlank()) return null
+        return LegacyFolderBucketKey(characterCardName, characterGroupId, rawGroup)
+    }
+
+    private suspend fun findLegacyFolderId(
+        key: LegacyFolderBucketKey,
+    ): String? =
+        withContext(Dispatchers.IO) {
+            val normalizedName = key.rawGroup.trim()
+            val candidates =
+                chatFolderDao.getFolders().filter {
+                    it.id != SYSTEM_UNGROUPED_FOLDER_ID && it.name == normalizedName
+                }
+            if (candidates.isEmpty()) {
+                return@withContext null
+            }
+            val matchingFolderIds =
+                chatDao.getAllChatsDirectly()
+                    .asSequence()
+                    .filter {
+                        it.characterCardName == key.characterCardName &&
+                            it.characterGroupId == key.characterGroupId
+                    }
+                    .mapNotNull { normalizeChatFolderId(it.folderId) }
+                    .toSet()
+            candidates
+                .filter { it.id in matchingFolderIds }
+                .minWithOrNull(
+                    compareBy<ChatFolderEntity> { it.displayOrder }
+                        .thenBy { it.createdAt }
+                        .thenBy { it.id }
+                )
+                ?.id
+        }
+
     private suspend fun createLegacyImportFolders(
-        chats: List<OperitArchivedChat>,
+        chats: List<ArchivedChatMetadata>,
+        counters: ImportCounters,
     ): Map<LegacyFolderBucketKey, String> {
-        val grouped = chats.mapNotNull { chat ->
-            chat.legacyFolderBucketKey()?.let { it to chat }
+        val grouped = chats.mapNotNull { metadata ->
+            metadata.legacyFolderBucketKey
+                ?.takeIf { metadata.hasMessages }
+                ?.let { it to metadata }
         }.groupBy({ it.first }, { it.second })
         if (grouped.isEmpty()) return emptyMap()
 
@@ -163,13 +232,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     left.value.minOf { it.displayOrder }
                         .compareTo(right.value.minOf { it.displayOrder })
                         .takeIf { it != 0 }
-                        ?: left.value.minOf {
-                            it.createdAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                        }.compareTo(
-                            right.value.minOf {
-                                it.createdAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                            }
-                        ).takeIf { it != 0 }
+                        ?: left.value.minOf { it.createdAt }
+                            .compareTo(right.value.minOf { it.createdAt })
+                            .takeIf { it != 0 }
                         ?: keyComparator.compare(left.key, right.key)
                 }
             )
@@ -180,14 +245,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 ?.plus(1) ?: 0L
         return buildMap {
             sorted.forEach { (key, bucketChats) ->
+                findLegacyFolderId(key)?.let { existingId ->
+                    put(key, existingId)
+                    return@forEach
+                }
                 var id: String
                 do {
                     id = java.util.UUID.randomUUID().toString()
                 } while (!allocatedIds.add(id))
-                val createdAt =
-                    bucketChats.minOf {
-                        it.createdAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                    }
+                val createdAt = bucketChats.minOf { it.createdAt }
                 chatFolderDao.insertFolder(
                     ChatFolderEntity(
                         id = id,
@@ -197,6 +263,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         createdAt = createdAt,
                     )
                 )
+                counters.folderCount++
                 put(key, id)
             }
         }
@@ -270,10 +337,99 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }.toMap()
     }
 
-    private suspend fun buildOperitArchivedChat(chatHistory: ChatHistory): OperitArchivedChat {
-        val messageEntities = messageDao.getMessagesForChat(chatHistory.id)
+    private fun Cursor.stringOrNull(column: String): String? =
+        getColumnIndexOrThrow(column).let { index -> if (isNull(index)) null else getString(index) }
+
+    private fun Cursor.longOrNull(column: String): Long? =
+        getColumnIndexOrThrow(column).let { index -> if (isNull(index)) null else getLong(index) }
+
+    private fun Cursor.toSnapshotChatEntity(): ChatEntity =
+        ChatEntity(
+            id = getString(getColumnIndexOrThrow("id")),
+            title = getString(getColumnIndexOrThrow("title")),
+            createdAt = getLong(getColumnIndexOrThrow("createdAt")),
+            updatedAt = getLong(getColumnIndexOrThrow("updatedAt")),
+            inputTokens = getInt(getColumnIndexOrThrow("inputTokens")),
+            outputTokens = getInt(getColumnIndexOrThrow("outputTokens")),
+            currentWindowSize = getInt(getColumnIndexOrThrow("currentWindowSize")),
+            group = stringOrNull("group"),
+            folderId = stringOrNull("folderId"),
+            displayOrder = getLong(getColumnIndexOrThrow("displayOrder")),
+            workspace = stringOrNull("workspace"),
+            workspaceEnv = stringOrNull("workspaceEnv"),
+            parentChatId = stringOrNull("parentChatId"),
+            characterCardName = stringOrNull("characterCardName"),
+            characterGroupId = stringOrNull("characterGroupId"),
+            locked = getInt(getColumnIndexOrThrow("locked")) != 0,
+            pinned = getInt(getColumnIndexOrThrow("pinned")) != 0,
+            isFavorite = getInt(getColumnIndexOrThrow("isFavorite")) != 0,
+            lastMessageAt = longOrNull("lastMessageAt"),
+        )
+
+    private fun Cursor.toSnapshotMessageEntity(): MessageEntity =
+        MessageEntity(
+            messageId = getLong(getColumnIndexOrThrow("messageId")),
+            chatId = getString(getColumnIndexOrThrow("chatId")),
+            sender = getString(getColumnIndexOrThrow("sender")),
+            content = getString(getColumnIndexOrThrow("content")),
+            timestamp = getLong(getColumnIndexOrThrow("timestamp")),
+            orderIndex = getInt(getColumnIndexOrThrow("orderIndex")),
+            roleName = getString(getColumnIndexOrThrow("roleName")),
+            selectedVariantIndex = getInt(getColumnIndexOrThrow("selectedVariantIndex")),
+            provider = getString(getColumnIndexOrThrow("provider")),
+            modelName = getString(getColumnIndexOrThrow("modelName")),
+            inputTokens = getInt(getColumnIndexOrThrow("inputTokens")),
+            outputTokens = getInt(getColumnIndexOrThrow("outputTokens")),
+            cachedInputTokens = getInt(getColumnIndexOrThrow("cachedInputTokens")),
+            sentAt = getLong(getColumnIndexOrThrow("sentAt")),
+            outputDurationMs = getLong(getColumnIndexOrThrow("outputDurationMs")),
+            waitDurationMs = getLong(getColumnIndexOrThrow("waitDurationMs")),
+            completedAt = getLong(getColumnIndexOrThrow("completedAt")),
+            displayMode = getString(getColumnIndexOrThrow("displayMode")),
+            isFavorite = getInt(getColumnIndexOrThrow("isFavorite")) != 0,
+        )
+
+    private fun Cursor.toSnapshotMessageVariantEntity(): MessageVariantEntity =
+        MessageVariantEntity(
+            variantId = getLong(getColumnIndexOrThrow("variantId")),
+            chatId = getString(getColumnIndexOrThrow("chatId")),
+            messageTimestamp = getLong(getColumnIndexOrThrow("messageTimestamp")),
+            variantIndex = getInt(getColumnIndexOrThrow("variantIndex")),
+            content = getString(getColumnIndexOrThrow("content")),
+            roleName = getString(getColumnIndexOrThrow("roleName")),
+            provider = getString(getColumnIndexOrThrow("provider")),
+            modelName = getString(getColumnIndexOrThrow("modelName")),
+            inputTokens = getInt(getColumnIndexOrThrow("inputTokens")),
+            outputTokens = getInt(getColumnIndexOrThrow("outputTokens")),
+            cachedInputTokens = getInt(getColumnIndexOrThrow("cachedInputTokens")),
+            sentAt = getLong(getColumnIndexOrThrow("sentAt")),
+            outputDurationMs = getLong(getColumnIndexOrThrow("outputDurationMs")),
+            waitDurationMs = getLong(getColumnIndexOrThrow("waitDurationMs")),
+            completedAt = getLong(getColumnIndexOrThrow("completedAt")),
+        )
+
+    private fun buildOperitArchivedChatFromSnapshot(
+        snapshot: SQLiteDatabase,
+        chatEntity: ChatEntity,
+    ): OperitArchivedChat {
+        val messageEntities =
+            snapshot.rawQuery(
+                "SELECT * FROM messages WHERE chatId = ? ORDER BY orderIndex",
+                arrayOf(chatEntity.id),
+            ).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) add(cursor.toSnapshotMessageEntity())
+                }
+            }
         val variantsByTimestamp =
-            messageVariantDao.getVariantsForChat(chatHistory.id).groupBy { it.messageTimestamp }
+            snapshot.rawQuery(
+                "SELECT * FROM message_variants WHERE chatId = ? ORDER BY messageTimestamp, variantIndex",
+                arrayOf(chatEntity.id),
+            ).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) add(cursor.toSnapshotMessageVariantEntity())
+                }
+            }.groupBy { it.messageTimestamp }
         val archivedMessages =
             messageEntities.map { messageEntity ->
                 val messageVariants = variantsByTimestamp[messageEntity.timestamp].orEmpty()
@@ -285,64 +441,173 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     variants = messageVariants.map(OperitArchivedMessageVariant::fromEntity),
                 )
             }
-        return OperitArchivedChat.fromChatHistory(chatHistory, archivedMessages)
+        val history =
+            chatEntity.toChatHistory(emptyList()).copy(
+                folderId = normalizeChatFolderId(chatEntity.folderId),
+            )
+        return OperitArchivedChat.fromChatHistory(history, archivedMessages)
+    }
+
+    private fun createOperitArchiveSqliteSnapshot(snapshotFile: File) {
+        val sourceFile = context.getDatabasePath("app_database")
+        require(sourceFile.isFile) { "Chat database does not exist" }
+        SQLiteDatabase.openOrCreateDatabase(snapshotFile, null).use { sqliteDb ->
+            sqliteDb.execSQL(
+                "ATTACH DATABASE ? AS operit_export_source",
+                arrayOf(sourceFile.absolutePath),
+            )
+            try {
+                sqliteDb.beginTransaction()
+                try {
+                    sqliteDb.execSQL(
+                        """
+                        CREATE TABLE chats AS
+                        SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens,
+                               currentWindowSize, `group`, folderId, displayOrder, workspace,
+                               workspaceEnv, parentChatId, characterCardName, characterGroupId,
+                               locked, pinned, isFavorite, lastMessageAt
+                        FROM operit_export_source.chats
+                        """.trimIndent(),
+                    )
+                    sqliteDb.execSQL(
+                        """
+                        CREATE TABLE chat_folders AS
+                        SELECT id, name, parentFolderId, displayOrder, createdAt
+                        FROM operit_export_source.chat_folders
+                        """.trimIndent(),
+                    )
+                    sqliteDb.execSQL(
+                        """
+                        CREATE TABLE messages AS
+                        SELECT messageId, chatId, sender, content, timestamp, orderIndex, roleName,
+                               selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
+                               cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
+                               completedAt, displayMode, isFavorite
+                        FROM operit_export_source.messages
+                        """.trimIndent(),
+                    )
+                    sqliteDb.execSQL(
+                        """
+                        CREATE TABLE message_variants AS
+                        SELECT variantId, chatId, messageTimestamp, variantIndex, content, roleName,
+                               provider, modelName, inputTokens, outputTokens, cachedInputTokens,
+                               sentAt, outputDurationMs, waitDurationMs, completedAt
+                        FROM operit_export_source.message_variants
+                        """.trimIndent(),
+                    )
+                    sqliteDb.execSQL(
+                        "CREATE INDEX messages_export_order ON messages(chatId, orderIndex)"
+                    )
+                    sqliteDb.execSQL(
+                        "CREATE INDEX variants_export_order ON " +
+                            "message_variants(chatId, messageTimestamp, variantIndex)"
+                    )
+                    sqliteDb.setTransactionSuccessful()
+                } finally {
+                    sqliteDb.endTransaction()
+                }
+            } finally {
+                sqliteDb.execSQL("DETACH DATABASE operit_export_source")
+            }
+        }
     }
 
     private suspend fun exportOperitArchiveJsonStream(
         file: File,
-    ) {
+    ) = operitArchiveExportMutex.withLock {
         AppLogger.d(TAG, "开始流式导出 Operit 聊天记录，目标=${file.absolutePath}")
-        var exportedCount = 0
-        database.withTransaction {
-            val snapshotHistories =
-                chatDao.getAllChatsDirectly().map {
-                    it.toChatHistory().copy(folderId = normalizeChatFolderId(it.folderId))
-                }
-            exportedCount = snapshotHistories.size
-            BufferedWriter(
-                OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8),
-            ).use { writer ->
-            writer.append("{\n")
-            writer.append("  \"archiveType\": ")
-            writer.append(operitArchiveJson.encodeToString(OperitChatArchive.ARCHIVE_TYPE))
-            writer.append(",\n")
-            writer.append("  \"formatVersion\": ${OperitChatArchive.CURRENT_FORMAT_VERSION},\n")
-            writer.append("  \"exportedAt\": ${System.currentTimeMillis()},\n")
-            val archivedFolders =
-                chatFolderDao
-                    .getFolders()
-                    .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
-                    .map(OperitArchivedFolder::fromEntity)
-            writer.append("  \"folders\": ")
-            writer.append(operitArchiveJson.encodeToString(archivedFolders))
-            writer.append(",\n")
-            writer.append("  \"chats\": [")
-
-            snapshotHistories.forEachIndexed { index, chatHistory ->
-                val archivedChat = buildOperitArchivedChat(chatHistory)
-                if (index == 0) {
-                    writer.append('\n')
-                } else {
+        val snapshotFile =
+            File(context.cacheDir, "operit_chat_export_${java.util.UUID.randomUUID()}.db")
+        try {
+            createOperitArchiveSqliteSnapshot(snapshotFile)
+            SQLiteDatabase.openDatabase(
+                snapshotFile.absolutePath,
+                null,
+                SQLiteDatabase.OPEN_READONLY,
+            ).use { snapshot ->
+                val archivedFolders =
+                    snapshot.rawQuery(
+                        "SELECT id, name, parentFolderId, displayOrder, createdAt FROM chat_folders " +
+                            "WHERE id != ? ORDER BY displayOrder, createdAt, id",
+                        arrayOf(SYSTEM_UNGROUPED_FOLDER_ID),
+                    ).use { cursor ->
+                        buildList {
+                            while (cursor.moveToNext()) {
+                                add(
+                                    OperitArchivedFolder(
+                                        id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                                        name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
+                                        parentFolderId = cursor.stringOrNull("parentFolderId"),
+                                        displayOrder =
+                                            cursor.getLong(
+                                                cursor.getColumnIndexOrThrow("displayOrder")
+                                            ),
+                                        createdAt =
+                                            cursor.getLong(cursor.getColumnIndexOrThrow("createdAt")),
+                                    )
+                                )
+                            }
+                        }
+                    }
+                val chatCount =
+                    snapshot.rawQuery("SELECT COUNT(*) FROM chats", emptyArray()).use { cursor ->
+                        check(cursor.moveToFirst())
+                        cursor.getInt(0)
+                    }
+                BufferedWriter(
+                    OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8),
+                ).use { writer ->
+                    writer.append("{\n")
+                    writer.append("  \"archiveType\": ")
+                    writer.append(operitArchiveJson.encodeToString(OperitChatArchive.ARCHIVE_TYPE))
                     writer.append(",\n")
-                }
-                writer.append(operitArchiveJson.encodeToString(archivedChat))
-                writer.flush()
-                if ((index + 1) % 20 == 0 || index == snapshotHistories.lastIndex) {
-                    AppLogger.d(
-                        TAG,
-                        "流式导出进度: ${index + 1}/${snapshotHistories.size}，chatId=${archivedChat.id}，messages=${archivedChat.messages.size}",
-                    )
-                }
-            }
+                    writer.append("  \"formatVersion\": ${OperitChatArchive.CURRENT_FORMAT_VERSION},\n")
+                    writer.append("  \"exportedAt\": ${System.currentTimeMillis()},\n")
+                    writer.append("  \"folders\": ")
+                    writer.append(operitArchiveJson.encodeToString(archivedFolders))
+                    writer.append(",\n")
+                    writer.append("  \"chats\": [")
 
-            if (snapshotHistories.isNotEmpty()) {
-                writer.append('\n')
+                    snapshot.rawQuery(
+                        "SELECT * FROM chats ORDER BY pinned DESC, displayOrder ASC",
+                        emptyArray(),
+                    ).use { cursor ->
+                        var index = 0
+                        while (cursor.moveToNext()) {
+                            val archivedChat =
+                                buildOperitArchivedChatFromSnapshot(
+                                    snapshot,
+                                    cursor.toSnapshotChatEntity(),
+                                )
+                            if (index == 0) writer.append('\n') else writer.append(",\n")
+                            writer.append(operitArchiveJson.encodeToString(archivedChat))
+                            index++
+                            if (index % 20 == 0 || index == chatCount) {
+                                AppLogger.d(
+                                    TAG,
+                                    "流式导出进度: $index/$chatCount，chatId=${archivedChat.id}，messages=${archivedChat.messages.size}",
+                                )
+                            }
+                        }
+                    }
+
+                    if (chatCount > 0) writer.append('\n')
+                    writer.append("  ]\n")
+                    writer.append("}\n")
+                }
+                AppLogger.d(
+                    TAG,
+                    "流式导出 Operit 聊天记录完成，共 $chatCount 个会话，目标=${file.absolutePath}",
+                )
             }
-            writer.append("  ]\n")
-            writer.append("}\n")
-            }
+        } finally {
+            listOf(
+                snapshotFile,
+                File("${snapshotFile.absolutePath}-journal"),
+                File("${snapshotFile.absolutePath}-wal"),
+                File("${snapshotFile.absolutePath}-shm"),
+            ).forEach { it.delete() }
         }
-        AppLogger.d(TAG, "流式导出 Operit 聊天记录完成，共 $exportedCount 个会话，目标=${file.absolutePath}")
     }
 
     private suspend fun consumeImportedArchiveChat(
@@ -353,6 +618,14 @@ class ChatHistoryManager private constructor(private val context: Context) {
         counters: ImportCounters,
         importedIndex: Int,
     ) {
+        if (archivedChat.messages.isEmpty()) {
+            counters.skippedCount++
+            AppLogger.w(
+                TAG,
+                "导入跳过空归档会话: index=$importedIndex, chatId=${archivedChat.id}",
+            )
+            return
+        }
         val existed = existingIds.contains(archivedChat.id)
         if (existed) {
             counters.updatedCount++
@@ -373,12 +646,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     private data class StagedV4Archive(
         val folders: List<OperitArchivedFolder>,
-        val chats: List<OperitArchivedChat>,
+        val folderIds: Set<String>,
+        val chats: List<ArchivedChatMetadata>,
         val orphanParentCount: Int,
         val orphanChatFolderCount: Int,
     )
 
-    private fun stageV4Archive(archive: OperitChatArchive): StagedV4Archive {
+    private fun stageV4Archive(archive: ScannedArchive): StagedV4Archive {
         fun requireCanonicalUuid(value: String, field: String) {
             require(
                 runCatching { java.util.UUID.fromString(value).toString() == value }.getOrDefault(false)
@@ -387,11 +661,12 @@ class ChatHistoryManager private constructor(private val context: Context) {
             }
         }
 
-        val folderIds = archive.folders.map { it.id }
+        val folders = archive.folders.map { it.folder }
+        val folderIds = folders.map { it.id }
         require(folderIds.distinct().size == folderIds.size) {
             "Archive v4 contains duplicate folder IDs"
         }
-        archive.folders.forEach { folder ->
+        folders.forEach { folder ->
             requireCanonicalUuid(folder.id, "Folder ID")
             folder.parentFolderId?.let { requireCanonicalUuid(it, "Parent folder ID") }
             require(folder.name.trim().isNotEmpty()) { "Folder name must not be blank" }
@@ -405,7 +680,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         val folderIdSet = folderIds.toSet()
         var orphanParentCount = 0
         val normalizedFolders =
-            archive.folders.map { folder ->
+            folders.map { folder ->
                 val normalizedParent =
                     folder.parentFolderId?.takeIf { parentId ->
                         (parentId in folderIdSet).also { exists ->
@@ -417,21 +692,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     parentFolderId = normalizedParent,
                 )
             }
-        var orphanChatFolderCount = 0
-        val normalizedChats =
-            archive.chats.map { chat ->
-                val normalizedFolderId =
-                    chat.folderId?.takeIf { folderId ->
-                        (folderId in folderIdSet).also { exists ->
-                            if (!exists) orphanChatFolderCount++
-                        }
-                    }
-                chat.copy(folderId = normalizedFolderId)
+        val orphanChatFolderCount =
+            archive.chats.count { metadata ->
+                metadata.folderId != null && metadata.folderId !in folderIdSet
             }
         validateFolderGraph(normalizedFolders)
         return StagedV4Archive(
             folders = normalizedFolders,
-            chats = normalizedChats,
+            folderIds = folderIdSet,
+            chats = archive.chats,
             orphanParentCount = orphanParentCount,
             orphanChatFolderCount = orphanChatFolderCount,
         )
@@ -477,23 +746,157 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     private suspend fun importV4Archive(
         staged: StagedV4Archive,
+        archiveFile: File,
         existingIds: MutableSet<String>,
         counters: ImportCounters,
     ): Int {
         var importedFolderCount = 0
         database.withTransaction {
+            val localChats = chatDao.getAllChatsDirectly()
             existingIds.clear()
-            existingIds.addAll(chatDao.getAllChatsDirectly().map { it.id })
-            val localFolderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
+            existingIds.addAll(localChats.map { it.id })
+            val localFolders = chatFolderDao.getFolders()
+            val localFolderIds = localFolders.mapTo(hashSetOf()) { it.id }
             val archiveFolderIds = staged.folders.mapTo(hashSetOf()) { it.id }
             val allocated = hashSetOf<String>().apply {
                 addAll(localFolderIds)
                 addAll(archiveFolderIds)
             }
-            val folderIdRemap =
-                staged.folders.associate { folder ->
-                    val resolvedId =
-                        if (folder.id !in localFolderIds) {
+            val archiveFolderById = staged.folders.associateBy { it.id }
+            val localFolderById = localFolders.associateBy { it.id }
+            val archiveChildrenByParent = staged.folders.groupBy { it.parentFolderId }
+            val localChildrenByParent = localFolders.groupBy { it.parentFolderId }
+            val archiveSubtreeIds = mutableMapOf<String, Set<String>>()
+            fun archiveSubtree(folderId: String): Set<String> =
+                archiveSubtreeIds.getOrPut(folderId) {
+                    buildSet {
+                        add(folderId)
+                        archiveChildrenByParent[folderId].orEmpty().forEach { child ->
+                            addAll(archiveSubtree(child.id))
+                        }
+                    }
+                }
+            val localSubtreeIds = mutableMapOf<String, Set<String>>()
+            fun localSubtree(folderId: String): Set<String> =
+                localSubtreeIds.getOrPut(folderId) {
+                    buildSet {
+                        add(folderId)
+                        localChildrenByParent[folderId].orEmpty().forEach { child ->
+                            addAll(localSubtree(child.id))
+                        }
+                    }
+                }
+            val archiveSignatures = mutableMapOf<String, String>()
+            fun archiveSignature(folderId: String): String =
+                archiveSignatures.getOrPut(folderId) {
+                    val folder = archiveFolderById.getValue(folderId)
+                    val children =
+                        archiveChildrenByParent[folderId]
+                            .orEmpty()
+                            .map { archiveSignature(it.id) }
+                            .sorted()
+                            .joinToString(separator = ",", prefix = "[", postfix = "]")
+                    "${folder.name}\u0000${folder.displayOrder}\u0000${folder.createdAt}$children"
+                }
+            val localSignatures = mutableMapOf<String, String>()
+            fun localSignature(folderId: String): String =
+                localSignatures.getOrPut(folderId) {
+                    val folder = localFolderById.getValue(folderId)
+                    val children =
+                        localChildrenByParent[folderId]
+                            .orEmpty()
+                            .map { localSignature(it.id) }
+                            .sorted()
+                            .joinToString(separator = ",", prefix = "[", postfix = "]")
+                    "${folder.name}\u0000${folder.displayOrder}\u0000${folder.createdAt}$children"
+                }
+            val localChatFolderIdByChatId =
+                localChats.associate { it.id to normalizeChatFolderId(it.folderId) }
+            val existingArchivedChatIds =
+                staged.chats
+                    .asSequence()
+                    .filter { it.hasMessages }
+                    .map { it.id }
+                    .filter(localChatFolderIdByChatId::containsKey)
+                    .toSet()
+            val reusedLocalFolderIds = hashSetOf<String>()
+            val folderIdRemap = linkedMapOf<String, String>()
+            topologicallySortFolders(staged.folders).forEach { folder ->
+                val resolvedParentId = folder.parentFolderId?.let(folderIdRemap::getValue)
+                fun matchesMetadata(local: ChatFolderEntity): Boolean =
+                    local.name == folder.name &&
+                        local.parentFolderId == resolvedParentId &&
+                        local.displayOrder == folder.displayOrder &&
+                        local.createdAt == folder.createdAt
+
+                val parentCandidates =
+                    localFolders
+                        .asSequence()
+                        .filter { it.id !in reusedLocalFolderIds }
+                        .filter { it.parentFolderId == resolvedParentId }
+                        .toList()
+                val archivedChatIds =
+                    staged.chats
+                        .asSequence()
+                        .filter { it.hasMessages && it.folderId in archiveSubtree(folder.id) }
+                        .map { it.id }
+                        .filter { it in existingArchivedChatIds }
+                        .toSet()
+                val identityCandidates =
+                    if (folder.id in localFolderIds) {
+                        parentCandidates.filter { candidate ->
+                            if (archivedChatIds.isEmpty()) {
+                                candidate.createdAt == folder.createdAt
+                            } else {
+                                val candidateSubtree = localSubtree(candidate.id)
+                                existingArchivedChatIds
+                                    .filterTo(hashSetOf()) { chatId ->
+                                        localChatFolderIdByChatId.getValue(chatId) in candidateSubtree
+                                    } == archivedChatIds
+                            }
+                        }
+                    } else {
+                        emptyList()
+                    }
+                var reusableCandidates =
+                    if (folder.id in localFolderIds) {
+                        identityCandidates.ifEmpty {
+                            parentCandidates.filter(::matchesMetadata)
+                        }
+                    } else {
+                        emptyList()
+                    }
+                identityCandidates
+                    .firstOrNull { it.id == folder.id }
+                    ?.let { exactIdentity -> reusableCandidates = listOf(exactIdentity) }
+                if (reusableCandidates.size > 1) {
+                    reusableCandidates =
+                        reusableCandidates.filter { candidate ->
+                            val candidateSubtree = localSubtree(candidate.id)
+                            existingArchivedChatIds
+                                .filterTo(hashSetOf()) { chatId ->
+                                    localChatFolderIdByChatId.getValue(chatId) in candidateSubtree
+                                } == archivedChatIds
+                        }
+                }
+                if (reusableCandidates.size > 1) {
+                    val expectedSignature = archiveSignature(folder.id)
+                    reusableCandidates =
+                        reusableCandidates.filter {
+                            localSignature(it.id) == expectedSignature
+                        }
+                }
+                val reusableId =
+                    reusableCandidates
+                        .sortedWith(
+                            compareByDescending<ChatFolderEntity> { it.id == folder.id }
+                                .thenBy { it.id }
+                        )
+                        .firstOrNull()
+                        ?.id
+                val resolvedId =
+                    reusableId
+                        ?: if (folder.id !in localFolderIds) {
                             folder.id
                         } else {
                             var candidate: String
@@ -502,8 +905,11 @@ class ChatHistoryManager private constructor(private val context: Context) {
                             } while (!allocated.add(candidate))
                             candidate
                         }
-                    folder.id to resolvedId
+                if (reusableId != null) {
+                    reusedLocalFolderIds += reusableId
                 }
+                folderIdRemap[folder.id] = resolvedId
+            }
             val remappedFolders =
                 staged.folders.map { folder ->
                     folder.copy(
@@ -530,25 +936,27 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         folder.parentFolderId in remappedFolderIdSet
                 ) { "Remapped parent folder reference is invalid" }
             }
-            staged.chats.forEach { chat ->
-                val remappedFolderId = chat.folderId?.let(folderIdRemap::getValue)
-                require(remappedFolderId == null || remappedFolderId in remappedFolderIdSet) {
-                    "Remapped chat folder reference is invalid"
-                }
-            }
             validateFolderGraph(remappedFolders)
             topologicallySortFolders(remappedFolders).forEach { folder ->
-                chatFolderDao.insertFolder(folder.toEntity())
-                importedFolderCount++
+                if (folder.id !in localFolderIds) {
+                    chatFolderDao.insertFolder(folder.toEntity())
+                    importedFolderCount++
+                } else if (folder.id in reusedLocalFolderIds) {
+                    chatFolderDao.updateFolder(folder.toEntity())
+                }
             }
-            staged.chats.forEachIndexed { index, archivedChat ->
+            forEachArchivedChat(archiveFile) { archivedChat, _, index ->
+                val normalizedFolderId =
+                    archivedChat.folderId
+                        ?.takeIf { it in staged.folderIds }
+                        ?.let(folderIdRemap::getValue)
                 consumeImportedArchiveChat(
                     archivedChat = archivedChat,
-                    folderId = archivedChat.folderId?.let(folderIdRemap::getValue),
+                    folderId = normalizedFolderId,
                     formatVersion = 4,
                     existingIds = existingIds,
                     counters = counters,
-                    importedIndex = index + 1,
+                    importedIndex = index,
                 )
             }
             val foreignKeyViolation =
@@ -566,107 +974,176 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return importedFolderCount
     }
 
-    private suspend fun importOperitChatHistoriesStream(
-        inputStream: InputStream,
-        existingIds: MutableSet<String>,
-    ): ChatImportResult {
-        val content = inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
-        if (content.isBlank()) {
-            throw Exception(context.getString(R.string.chat_history_imported_file_empty))
+    private fun <T> decodeStreamObject(
+        reader: JsonReader,
+        description: String,
+        decode: (String) -> T,
+    ): Pair<T, Set<String>> {
+        val element = Streams.parse(reader)
+        require(element.isJsonObject) { "$description must be an object" }
+        val jsonObject = element.asJsonObject
+        return decode(jsonObject.toString()) to jsonObject.keySet().toSet()
+    }
+
+    private fun scanOperitArchive(file: File): ScannedArchive {
+        var archiveType: String? = null
+        var formatVersion: Int? = null
+        var foldersPresent = false
+        var chatsPresent = false
+        val folders = mutableListOf<ScannedFolder>()
+        val chats = mutableListOf<ArchivedChatMetadata>()
+
+        JsonReader(InputStreamReader(file.inputStream(), StandardCharsets.UTF_8)).use { reader ->
+            reader.isLenient = true
+            require(reader.peek() == JsonToken.BEGIN_OBJECT) {
+                "Operit archive root must be an object"
+            }
+            reader.beginObject()
+            while (reader.hasNext()) {
+                when (reader.nextName()) {
+                    "archiveType" -> archiveType = reader.nextString()
+                    "formatVersion" -> formatVersion = reader.nextInt()
+                    "folders" -> {
+                        foldersPresent = true
+                        val requiredFields =
+                            setOf("id", "name", "parentFolderId", "displayOrder", "createdAt")
+                        reader.beginArray()
+                        while (reader.hasNext()) {
+                            val (folder, fields) =
+                                decodeStreamObject(reader, "Archive folder") {
+                                    operitArchiveJson.decodeFromString<OperitArchivedFolder>(it)
+                                }
+                            folders +=
+                                ScannedFolder(
+                                    folder = folder,
+                                    hasRequiredV4Fields = requiredFields.all(fields::contains),
+                                )
+                        }
+                        reader.endArray()
+                    }
+                    "chats" -> {
+                        chatsPresent = true
+                        reader.beginArray()
+                        while (reader.hasNext()) {
+                            val (chat, fields) =
+                                decodeStreamObject(reader, "Archived chat") {
+                                    operitArchiveJson.decodeFromString<OperitArchivedChat>(it)
+                                }
+                            chat.messages.forEach { message ->
+                                if (message.variants.isNotEmpty()) {
+                                    validateArchivedMessageVariants(
+                                        message.baseMessage,
+                                        message.variants,
+                                    )
+                                }
+                            }
+                            chats +=
+                                ArchivedChatMetadata(
+                                    id = chat.id,
+                                    folderId = chat.folderId,
+                                    legacyFolderBucketKey = chat.legacyFolderBucketKey(),
+                                    displayOrder = chat.displayOrder,
+                                    createdAt =
+                                        chat.createdAt
+                                            .atZone(ZoneId.systemDefault())
+                                            .toInstant()
+                                            .toEpochMilli(),
+                                    hasMessages = chat.messages.isNotEmpty(),
+                                    hasFolderIdField = "folderId" in fields,
+                                    isFavorite = chat.isFavorite,
+                                )
+                        }
+                        reader.endArray()
+                    }
+                    else -> reader.skipValue()
+                }
+            }
+            reader.endObject()
+            require(reader.peek() == JsonToken.END_DOCUMENT) {
+                "Operit archive contains trailing JSON data"
+            }
         }
 
-        val counters = ImportCounters()
-        val trimmed = content.trimStart()
-        if (trimmed.startsWith("{")) {
-            // Decode and validate the complete archive before the first database write.
-            val root =
-                operitArchiveJson.parseToJsonElement(content) as? JsonObject
-                    ?: throw IllegalArgumentException("Operit archive root must be an object")
-            require("archiveType" in root) { "Operit archive is missing archiveType" }
-            require("formatVersion" in root) { "Operit archive is missing formatVersion" }
-            val archive = operitArchiveJson.decodeFromString<OperitChatArchive>(content)
-            ChatArchiveImportPolicy.validateHeader(archive.archiveType, archive.formatVersion)
-            val archivedChatObjects =
-                (root["chats"] as? JsonArray)?.map { element ->
-                    element as? JsonObject
-                        ?: throw IllegalArgumentException("Operit archive contains a non-object chat")
-                } ?: throw IllegalArgumentException("Operit archive is missing chats")
-            require(archivedChatObjects.size == archive.chats.size) {
-                "Operit archive chat metadata does not match decoded chats"
+        val resolvedArchiveType =
+            archiveType ?: throw IllegalArgumentException("Operit archive is missing archiveType")
+        val resolvedFormatVersion =
+            formatVersion
+                ?: throw IllegalArgumentException("Operit archive is missing formatVersion")
+        require(chatsPresent) { "Operit archive is missing chats" }
+        ChatArchiveImportPolicy.validateHeader(
+            resolvedArchiveType,
+            resolvedFormatVersion,
+        )
+        if (resolvedFormatVersion >= 3) {
+            require(chats.all { it.isFavorite != null }) {
+                "Archive v$resolvedFormatVersion contains a chat without isFavorite"
             }
-            if (archive.formatVersion >= 3) {
-                require(archive.chats.all { it.isFavorite != null }) {
-                    "Archive v${archive.formatVersion} contains a chat without isFavorite"
-                }
+        }
+        if (resolvedFormatVersion == 4) {
+            require(foldersPresent) { "Archive v4 is missing folders" }
+            require(folders.all { it.hasRequiredV4Fields }) {
+                "Archive v4 contains a folder with missing fields"
             }
-            archive.chats.forEach { archivedChat ->
-                archivedChat.messages.forEach { archivedMessage ->
-                    if (archivedMessage.variants.isNotEmpty()) {
-                        validateArchivedMessageVariants(
-                            archivedMessage.baseMessage,
-                            archivedMessage.variants,
-                        )
-                    }
-                }
+            require(chats.all { it.hasFolderIdField }) {
+                "Archive v4 contains a chat without folderId"
             }
-            if (archive.formatVersion == 4) {
-                val archivedFolderElements = root["folders"] as? JsonArray
-                require(archivedFolderElements != null) {
-                    "Archive v4 is missing folders"
+        }
+        return ScannedArchive(
+            archiveType = resolvedArchiveType,
+            formatVersion = resolvedFormatVersion,
+            folders = folders,
+            chats = chats,
+        )
+    }
+
+    private suspend fun forEachArchivedChat(
+        file: File,
+        consume: suspend (OperitArchivedChat, Set<String>, Int) -> Unit,
+    ) {
+        var chatsPresent = false
+        var importedIndex = 0
+        JsonReader(InputStreamReader(file.inputStream(), StandardCharsets.UTF_8)).use { reader ->
+            reader.isLenient = true
+            reader.beginObject()
+            while (reader.hasNext()) {
+                if (reader.nextName() != "chats") {
+                    reader.skipValue()
+                    continue
                 }
-                val archivedFolderObjects =
-                    archivedFolderElements.map { element ->
-                        element as? JsonObject
-                            ?: throw IllegalArgumentException(
-                                "Archive v4 contains a non-object folder"
-                            )
-                    }
-                require(archivedFolderObjects.size == archive.folders.size) {
-                    "Archive v4 folder metadata does not match decoded folders"
+                chatsPresent = true
+                reader.beginArray()
+                while (reader.hasNext()) {
+                    importedIndex++
+                    val (chat, fields) =
+                        decodeStreamObject(reader, "Archived chat") {
+                            operitArchiveJson.decodeFromString<OperitArchivedChat>(it)
+                        }
+                    consume(chat, fields, importedIndex)
                 }
-                val requiredFolderFields =
-                    setOf("id", "name", "parentFolderId", "displayOrder", "createdAt")
-                require(
-                    archivedFolderObjects.all { folder ->
-                        requiredFolderFields.all(folder::containsKey)
-                    }
-                ) { "Archive v4 contains a folder with missing fields" }
-                require(archivedChatObjects.all { "folderId" in it }) {
-                    "Archive v4 contains a chat without folderId"
-                }
-                counters.folderCount = importV4Archive(
-                    staged = stageV4Archive(archive),
-                    existingIds = existingIds,
-                    counters = counters,
-                )
-            } else {
-                database.withTransaction {
-                    val folderIdByBucket = createLegacyImportFolders(archive.chats)
-                    archive.chats.forEachIndexed { index, archivedChat ->
-                        // v2/v3 distinguish a missing legacy group field from explicit null/blank.
-                        val folderId =
-                            if ("group" in archivedChatObjects[index]) {
-                                archivedChat.legacyFolderBucketKey()?.let(folderIdByBucket::get)
-                            } else {
-                                chatDao.getChatById(archivedChat.id)?.folderId
-                            }
-                        consumeImportedArchiveChat(
-                            archivedChat = archivedChat,
-                            folderId = folderId,
-                            formatVersion = archive.formatVersion,
-                            existingIds = existingIds,
-                            counters = counters,
-                            importedIndex = index + 1,
-                        )
-                    }
-                }
+                reader.endArray()
             }
-        } else if (trimmed.startsWith("[")) {
-            // Legacy unversioned arrays remain importable, but are fully parsed before writes.
-            val histories = operitArchiveJson.decodeFromString<List<ChatHistory>>(content)
-            val importedFolderIdsByLegacyName = mutableMapOf<String, String>()
-            val existingFolderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
-            histories.forEachIndexed { index, history ->
+            reader.endObject()
+        }
+        require(chatsPresent) { "Operit archive is missing chats" }
+    }
+
+    private suspend fun importLegacyChatArray(
+        file: File,
+        existingIds: MutableSet<String>,
+        counters: ImportCounters,
+    ) {
+        val importedFolderIdsByBucket = mutableMapOf<LegacyFolderBucketKey, String>()
+        val existingFolderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
+        var importedIndex = 0
+        JsonReader(InputStreamReader(file.inputStream(), StandardCharsets.UTF_8)).use { reader ->
+            reader.isLenient = true
+            reader.beginArray()
+            while (reader.hasNext()) {
+                importedIndex++
+                val history =
+                    decodeStreamObject(reader, "Legacy chat") {
+                        operitArchiveJson.decodeFromString<ChatHistory>(it)
+                    }.first
                 if (history.messages.isEmpty()) {
                     counters.skippedCount++
                 } else {
@@ -675,13 +1152,19 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         counters.newCount++
                         existingIds.add(history.id)
                     }
-                    val legacyFolderName = history.group?.trim()?.takeIf { it.isNotEmpty() }
+                    val legacyFolderBucket = history.legacyFolderBucketKey()
                     val normalizedHistory =
-                        if (history.folderId == null && legacyFolderName != null) {
+                        if (history.folderId == null && legacyFolderBucket != null) {
                             val folderId =
-                                importedFolderIdsByLegacyName[legacyFolderName]
-                                    ?: resolveOrCreateLegacyFolderId(legacyFolderName).also {
-                                        importedFolderIdsByLegacyName[legacyFolderName] = it
+                                importedFolderIdsByBucket[legacyFolderBucket]
+                                    ?: (
+                                        findLegacyFolderId(legacyFolderBucket)
+                                            ?: createFolder(
+                                                parentFolderId = null,
+                                                name = legacyFolderBucket.rawGroup.trim(),
+                                            )
+                                    ).also {
+                                        importedFolderIdsByBucket[legacyFolderBucket] = it
                                     }
                             if (existingFolderIds.add(folderId)) {
                                 counters.folderCount++
@@ -695,17 +1178,85 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         preserveStructure = false,
                     )
                 }
-                if ((index + 1) % 20 == 0) {
-                    AppLogger.d(TAG, "旧版聊天数组导入进度: ${index + 1}/${histories.size}")
+                if (importedIndex % 20 == 0) {
+                    AppLogger.d(TAG, "旧版聊天数组导入进度: $importedIndex")
                 }
             }
-        } else {
-            throw Exception(
-                context.getString(
-                    R.string.chat_history_parse_backup_failed,
-                    "unexpected json token",
-                )
-            )
+            reader.endArray()
+        }
+    }
+
+    private suspend fun importOperitChatHistoriesStream(
+        inputStream: InputStream,
+        existingIds: MutableSet<String>,
+    ): ChatImportResult {
+        val counters = ImportCounters()
+        val importFile = File.createTempFile("operit-chat-import-", ".json", context.cacheDir)
+        try {
+            FileOutputStream(importFile).use { output -> inputStream.copyTo(output) }
+            if (importFile.length() == 0L) {
+                throw Exception(context.getString(R.string.chat_history_imported_file_empty))
+            }
+            val rootToken =
+                JsonReader(
+                    InputStreamReader(importFile.inputStream(), StandardCharsets.UTF_8)
+                ).use { reader ->
+                    reader.isLenient = true
+                    reader.peek()
+                }
+            when (rootToken) {
+                JsonToken.BEGIN_OBJECT -> {
+                    val archive = scanOperitArchive(importFile)
+                    if (archive.formatVersion == 4) {
+                        counters.folderCount =
+                            importV4Archive(
+                                staged = stageV4Archive(archive),
+                                archiveFile = importFile,
+                                existingIds = existingIds,
+                                counters = counters,
+                            )
+                    } else {
+                        database.withTransaction {
+                            val folderIdByBucket =
+                                createLegacyImportFolders(archive.chats, counters)
+                            forEachArchivedChat(importFile) { archivedChat, fields, index ->
+                                // v2/v3 distinguish a missing legacy group field from explicit null/blank.
+                                val folderId =
+                                    if ("group" in fields) {
+                                        archivedChat
+                                            .legacyFolderBucketKey()
+                                            ?.let(folderIdByBucket::get)
+                                    } else {
+                                        chatDao.getChatById(archivedChat.id)?.folderId
+                                    }
+                                consumeImportedArchiveChat(
+                                    archivedChat = archivedChat,
+                                    folderId = folderId,
+                                    formatVersion = archive.formatVersion,
+                                    existingIds = existingIds,
+                                    counters = counters,
+                                    importedIndex = index,
+                                )
+                            }
+                        }
+                    }
+                }
+                JsonToken.BEGIN_ARRAY ->
+                    importLegacyChatArray(importFile, existingIds, counters)
+                JsonToken.END_DOCUMENT ->
+                    throw Exception(context.getString(R.string.chat_history_imported_file_empty))
+                else ->
+                    throw Exception(
+                        context.getString(
+                            R.string.chat_history_parse_backup_failed,
+                            "unexpected json token",
+                        )
+                    )
+            }
+        } finally {
+            if (!importFile.delete()) {
+                importFile.deleteOnExit()
+            }
         }
 
         AppLogger.d(
@@ -789,12 +1340,26 @@ class ChatHistoryManager private constructor(private val context: Context) {
             emptyList(),
         )
 
+    suspend fun getChatHistoriesSnapshot(): List<ChatHistory> =
+        withContext(Dispatchers.IO) {
+            chatDao.getAllChatsDirectly().map {
+                it.toChatHistory().copy(folderId = normalizeChatFolderId(it.folderId))
+            }
+        }
+
+    suspend fun getChatFoldersSnapshot(): List<ChatFolderEntity> =
+        withContext(Dispatchers.IO) {
+            chatFolderRepository.ensureUngroupedFolder()
+            chatFolderDao.getFolders()
+        }
+
     suspend fun createFolder(parentFolderId: String?, name: String): String =
         chatFolderRepository.createFolder(parentFolderId, name)
 
     suspend fun findLegacyFolderId(
         groupName: String,
         characterCardName: String? = null,
+        characterGroupId: String? = null,
     ): String? =
         withContext(Dispatchers.IO) {
             val normalizedName = groupName.trim()
@@ -810,7 +1375,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
             }
             val normalizedCharacterCardName =
                 characterCardName?.trim()?.takeIf { it.isNotEmpty() }
-            if (normalizedCharacterCardName == null) {
+            val normalizedCharacterGroupId =
+                characterGroupId?.trim()?.takeIf { it.isNotEmpty() }
+            if (normalizedCharacterCardName == null && normalizedCharacterGroupId == null) {
                 return@withContext candidates.minWithOrNull(
                     compareBy<ChatFolderEntity> { it.displayOrder }
                         .thenBy { it.createdAt }
@@ -820,7 +1387,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
             val matchingFolderIds =
                 chatDao.getAllChatsDirectly()
                     .asSequence()
-                    .filter { it.characterCardName == normalizedCharacterCardName }
+                    .filter {
+                        when {
+                            normalizedCharacterGroupId != null ->
+                                it.characterGroupId == normalizedCharacterGroupId
+                            else ->
+                                it.characterCardName == normalizedCharacterCardName &&
+                                    it.characterGroupId == null
+                        }
+                    }
                     .mapNotNull { normalizeChatFolderId(it.folderId) }
                     .toSet()
             candidates
@@ -836,12 +1411,20 @@ class ChatHistoryManager private constructor(private val context: Context) {
     suspend fun resolveOrCreateLegacyFolderId(
         groupName: String,
         characterCardName: String? = null,
+        characterGroupId: String? = null,
     ): String {
         val normalizedName = groupName.trim()
         require(normalizedName.isNotEmpty()) { "Group name must not be blank" }
         val normalizedCharacterCardName =
             characterCardName?.trim()?.takeIf { it.isNotEmpty() }
-        val key = LegacyFolderResolutionKey(normalizedName, normalizedCharacterCardName)
+        val normalizedCharacterGroupId =
+            characterGroupId?.trim()?.takeIf { it.isNotEmpty() }
+        val key =
+            LegacyFolderResolutionKey(
+                normalizedName,
+                normalizedCharacterCardName,
+                normalizedCharacterGroupId,
+            )
         return legacyFolderResolutionMutex.withLock {
             resolveOrCreateLegacyFolderIdLocked(key)
         }
@@ -850,7 +1433,11 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private suspend fun resolveOrCreateLegacyFolderIdLocked(
         key: LegacyFolderResolutionKey,
     ): String {
-        findLegacyFolderId(key.groupName, key.characterCardName)?.let { folderId ->
+        findLegacyFolderId(
+            key.groupName,
+            key.characterCardName,
+            key.characterGroupId,
+        )?.let { folderId ->
             reservedLegacyFolderIds.remove(key)
             return folderId
         }
@@ -947,6 +1534,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
     suspend fun deleteFolderWithChatsIfExists(
         folderId: String,
         characterCardName: String?,
+        characterGroupId: String?,
     ): Boolean =
         folderStructureMutex.withLock {
             if (
@@ -957,21 +1545,14 @@ class ChatHistoryManager private constructor(private val context: Context) {
             }
             val normalizedCharacterCardName =
                 characterCardName?.trim()?.takeIf { it.isNotEmpty() }
+            val normalizedCharacterGroupId =
+                characterGroupId?.trim()?.takeIf { it.isNotEmpty() }
             val deletedChatIds =
-                database.withTransaction {
-                    val chatsToDelete =
-                        chatDao.getAllChatsDirectly().filter {
-                            normalizeChatFolderId(it.folderId) == folderId &&
-                                (
-                                    normalizedCharacterCardName == null ||
-                                        it.characterCardName == normalizedCharacterCardName
-                                ) &&
-                                !it.locked
-                        }
-                    chatsToDelete.forEach { chatDao.deleteChat(it.id) }
-                    chatFolderRepository.deleteFolder(folderId)
-                    chatsToDelete.map { it.id }
-                }
+                chatFolderRepository.deleteFolderWithChats(
+                    folderId = folderId,
+                    characterCardName = normalizedCharacterCardName,
+                    characterGroupId = normalizedCharacterGroupId,
+                )
             context.currentChatIdDataStore.edit { preferences ->
                 if (preferences[PreferencesKeys.CURRENT_CHAT_ID] in deletedChatIds) {
                     preferences.remove(PreferencesKeys.CURRENT_CHAT_ID)
@@ -985,87 +1566,33 @@ class ChatHistoryManager private constructor(private val context: Context) {
             chatFolderRepository.deleteFolder(folderId)
         }
 
-    suspend fun updateChatOrderAndFolders(
-        histories: List<ChatHistory>,
-        legacyGroupNamesByChatId: Map<String, String> = emptyMap(),
-    ): Boolean {
-        val updated = legacyFolderResolutionMutex.withLock {
-            val reservationsBeforeTransaction = reservedLegacyFolderIds.toMap()
-            try {
-                database.withTransaction {
-                    if (
-                        histories.map { it.id }.distinct().size != histories.size ||
-                            legacyGroupNamesByChatId.keys.any { legacyChatId ->
-                                histories.none { it.id == legacyChatId }
-                            }
-                    ) {
-                        return@withTransaction false
+    suspend fun reorderProjectedChats(
+        expectedHistories: List<ChatHistory>,
+        orderedHistories: List<ChatHistory>,
+    ): Boolean =
+        folderStructureMutex.withLock {
+            val expectedFolderIdsByChatId =
+                expectedHistories.associate { it.id to normalizeChatFolderId(it.folderId) }
+            val expectedDisplayOrdersByChatId =
+                expectedHistories.associate { it.id to it.displayOrder }
+            if (
+                expectedFolderIdsByChatId.size != expectedHistories.size ||
+                    orderedHistories.mapTo(hashSetOf()) { it.id } !=
+                        expectedFolderIdsByChatId.keys ||
+                    orderedHistories.any {
+                        normalizeChatFolderId(it.folderId) !=
+                            expectedFolderIdsByChatId[it.id]
                     }
-                    val currentById = chatDao.getAllChatsDirectly().associateBy { it.id }
-                    if (histories.any { it.id !in currentById }) {
-                        return@withTransaction false
-                    }
-                    val folderIds = chatFolderDao.getFolders().mapTo(hashSetOf()) { it.id }
-                    if (
-                        histories.any {
-                            val folderId = normalizeChatFolderId(it.folderId)
-                            it.id !in legacyGroupNamesByChatId &&
-                                folderId != null &&
-                                folderId !in folderIds
-                        }
-                    ) {
-                        return@withTransaction false
-                    }
-                    val resolvedLegacyFolderIds =
-                        mutableMapOf<LegacyFolderResolutionKey, String>()
-                    val timestamp = System.currentTimeMillis()
-                    histories.forEach { history ->
-                        val legacyGroupName =
-                            legacyGroupNamesByChatId[history.id]
-                                ?.trim()
-                                ?.takeIf { it.isNotEmpty() }
-                        val folderId =
-                            if (legacyGroupName == null) {
-                                normalizeChatFolderId(history.folderId)
-                            } else {
-                                val key =
-                                    LegacyFolderResolutionKey(
-                                        groupName = legacyGroupName,
-                                        characterCardName =
-                                            history.characterCardName
-                                                ?.trim()
-                                                ?.takeIf { it.isNotEmpty() },
-                                    )
-                                resolvedLegacyFolderIds[key]
-                                    ?: resolveOrCreateLegacyFolderIdLocked(key).also {
-                                        resolvedLegacyFolderIds[key] = it
-                                    }
-                            }
-                        chatDao.updateChatOrderAndFolder(
-                            chatId = history.id,
-                            displayOrder = history.displayOrder,
-                            folderId = folderId,
-                            timestamp = timestamp,
-                        )
-                    }
-                    true
-                }
-            } catch (error: Throwable) {
-                reservedLegacyFolderIds.clear()
-                reservedLegacyFolderIds.putAll(reservationsBeforeTransaction)
-                throw error
+            ) {
+                return@withLock false
             }
-        }
-        if (updated) {
-            releaseLegacyFolderReservations(
-                histories.map { it.folderId } +
-                    legacyGroupNamesByChatId.keys.mapNotNull { chatId ->
-                        chatDao.getChatById(chatId)?.folderId
-                    }
+            chatFolderRepository.reorderProjectedChats(
+                expectedChatIds = expectedHistories.map { it.id },
+                orderedChatIds = orderedHistories.map { it.id },
+                expectedFolderIdsByChatId = expectedFolderIdsByChatId,
+                expectedDisplayOrdersByChatId = expectedDisplayOrdersByChatId,
             )
         }
-        return updated
-    }
 
     suspend fun getTotalChatCount(): Int {
         return withContext(Dispatchers.IO) { chatDao.getTotalChatCount() }
@@ -1213,7 +1740,14 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     history
                 }
             ).copy(folderId = normalizeChatFolderId(history.folderId))
-        val chatEntity = ChatEntity.fromChatHistory(resolvedHistory)
+        val chatEntity =
+            ChatEntity.fromChatHistory(resolvedHistory).let { entity ->
+                if (archiveFormatVersion == null) {
+                    entity
+                } else {
+                    entity.copy(displayOrder = resolvedHistory.displayOrder)
+                }
+            }
         val existingEntity = chatDao.getChatById(chatEntity.id)
         if (existingEntity == null) {
             chatDao.insertChat(chatEntity)
@@ -2660,7 +3194,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 var newCount = 0
                 var updatedCount = 0
                 var skippedCount = 0
-                val importedFolderIdsByLegacyName = mutableMapOf<String, String>()
+                val importedFolderIdsByBucket = mutableMapOf<LegacyFolderBucketKey, String>()
 
                 for (chatHistory in chatHistories) {
                     if (chatHistory.messages.isEmpty()) {
@@ -2675,13 +3209,20 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         existingIds.add(chatHistory.id)
                     }
 
-                    val legacyFolderName = chatHistory.group?.trim()?.takeIf { it.isNotEmpty() }
+                    val legacyFolderBucket = chatHistory.legacyFolderBucketKey()
                     val normalizedHistory =
-                        if (chatHistory.folderId == null && legacyFolderName != null) {
+                        if (chatHistory.folderId == null && legacyFolderBucket != null) {
                             val folderId =
-                                importedFolderIdsByLegacyName.getOrPut(legacyFolderName) {
-                                    createFolder(parentFolderId = null, name = legacyFolderName)
-                                }
+                                importedFolderIdsByBucket[legacyFolderBucket]
+                                    ?: (
+                                        findLegacyFolderId(legacyFolderBucket)
+                                            ?: createFolder(
+                                                parentFolderId = null,
+                                                name = legacyFolderBucket.rawGroup.trim(),
+                                            )
+                                    ).also {
+                                        importedFolderIdsByBucket[legacyFolderBucket] = it
+                                    }
                             chatHistory.copy(group = null, folderId = folderId)
                         } else {
                             chatHistory.copy(group = null)

@@ -47,6 +47,8 @@ data class WebChatSummary(
     val title: String,
     @SerialName("updated_at")
     val updatedAt: Long,
+    @SerialName("display_order")
+    val displayOrder: Long,
     @SerialName("folder_id")
     val folderId: String? = null,
     @SerialName("group")
@@ -67,6 +69,18 @@ data class WebChatSummary(
     val locked: Boolean = false,
     @SerialName("pinned")
     val pinned: Boolean = false
+)
+
+@Serializable
+data class WebChatFolderSummary(
+    @SerialName("id")
+    val id: String,
+    @SerialName("name")
+    val name: String,
+    @SerialName("parent_folder_id")
+    val parentFolderId: String? = null,
+    @SerialName("display_order")
+    val displayOrder: Long,
 )
 
 @Serializable
@@ -596,7 +610,9 @@ data class WebChatReorderItem(
 @Serializable
 data class WebReorderChatsRequest(
     @SerialName("items")
-    val items: List<WebChatReorderItem> = emptyList()
+    val items: List<WebChatReorderItem> = emptyList(),
+    @SerialName("expected_items")
+    val expectedItems: List<WebChatReorderItem>? = null,
 )
 
 @Serializable
@@ -607,6 +623,8 @@ data class WebRenameGroupRequest(
     val newName: String,
     @SerialName("character_card_name")
     val characterCardName: String? = null,
+    @SerialName("character_group_id")
+    val characterGroupId: String? = null,
     @SerialName("folder_id")
     val folderId: String? = null,
 )
@@ -619,6 +637,8 @@ data class WebDeleteGroupRequest(
     val deleteChats: Boolean = false,
     @SerialName("character_card_name")
     val characterCardName: String? = null,
+    @SerialName("character_group_id")
+    val characterGroupId: String? = null,
     @SerialName("folder_id")
     val folderId: String? = null,
 )

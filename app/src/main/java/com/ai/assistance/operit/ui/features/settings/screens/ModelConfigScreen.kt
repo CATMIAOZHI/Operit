@@ -1621,8 +1621,18 @@ private fun ConfigSelectDialog(
     onToggleConfigCollapsed: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var orderedSummaries by remember(configSummaries) { mutableStateOf(configSummaries) }
+    var orderedSummaries by remember { mutableStateOf(configSummaries) }
+    var isDragInProgress by remember { mutableStateOf(false) }
+    var deferredSummaries by remember { mutableStateOf<List<ModelConfigSummary>?>(null) }
     val pendingOrder = remember { mutableStateOf<List<String>?>(null) }
+
+    LaunchedEffect(configSummaries) {
+        if (isDragInProgress) {
+            deferredSummaries = configSummaries
+        } else {
+            orderedSummaries = configSummaries
+        }
+    }
 
     // 分区分割
     val (normalConfigs, collapsedConfigs) = remember(orderedSummaries, collapsedConfigIds) {
@@ -1666,6 +1676,7 @@ private fun ConfigSelectDialog(
         // 构建最终全局顺序: 正常区新顺序 + 折叠区原相对顺序（来自完整 collapsedConfigs，不是 flatItems）
         val collapsedOrderIds = collapsedConfigs.map { it.id }
         val newGlobalOrder = newNormalIds + collapsedOrderIds
+
         val summariesById = orderedSummaries.associateBy { it.id }
         orderedSummaries = newGlobalOrder.mapNotNull(summariesById::get)
         pendingOrder.value = newGlobalOrder
@@ -1736,9 +1747,28 @@ private fun ConfigSelectDialog(
                                                     modifier = Modifier
                                                         .size(20.dp)
                                                         .draggableHandle(
-                                                            onDragStarted = { pendingOrder.value = null },
+                                                            onDragStarted = {
+                                                                pendingOrder.value = null
+                                                                deferredSummaries = null
+                                                                isDragInProgress = true
+                                                            },
                                                             onDragStopped = {
-                                                                pendingOrder.value?.let(onReorder)
+                                                                val finalOrder = pendingOrder.value
+                                                                deferredSummaries?.let { latestSummaries ->
+                                                                    val latestById = latestSummaries.associateBy { it.id }
+                                                                    val orderedIds =
+                                                                        finalOrder
+                                                                            ?: orderedSummaries.map { it.id }
+                                                                    val orderedIdSet = orderedIds.toSet()
+                                                                    orderedSummaries =
+                                                                        orderedIds.mapNotNull(latestById::get) +
+                                                                            latestSummaries.filter {
+                                                                                it.id !in orderedIdSet
+                                                                            }
+                                                                }
+                                                                isDragInProgress = false
+                                                                deferredSummaries = null
+                                                                finalOrder?.let(onReorder)
                                                                 pendingOrder.value = null
                                                             },
                                                         ),

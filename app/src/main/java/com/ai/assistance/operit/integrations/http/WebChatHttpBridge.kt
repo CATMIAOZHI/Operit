@@ -20,6 +20,7 @@ import com.ai.assistance.operit.data.model.CharacterCardChatModelBindingMode
 import com.ai.assistance.operit.data.model.CharacterGroupCard
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.InputProcessingState
+import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
 import com.ai.assistance.operit.data.model.getModelByIndex
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.getValidModelIndex
@@ -150,6 +151,9 @@ class WebChatHttpBridge(
 
             session.uri == CHATS_PATH && session.method == NanoHTTPD.Method.GET ->
                 handleListChats()
+
+            session.uri == CHAT_FOLDERS_PATH && session.method == NanoHTTPD.Method.GET ->
+                handleListChatFolders()
 
             session.uri == CHATS_PATH && session.method == NanoHTTPD.Method.POST ->
                 handleCreateChat(session)
@@ -293,6 +297,23 @@ class WebChatHttpBridge(
         return jsonResponse(NanoHTTPD.Response.Status.OK, response)
     }
 
+    private fun handleListChatFolders(): NanoHTTPD.Response {
+        val folders =
+            runBlocking {
+                chatHistoryManager.getChatFoldersSnapshot()
+                    .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
+                    .map {
+                        WebChatFolderSummary(
+                            id = it.id,
+                            name = it.name,
+                            parentFolderId = it.parentFolderId,
+                            displayOrder = it.displayOrder,
+                        )
+                    }
+            }
+        return jsonResponse(NanoHTTPD.Response.Status.OK, folders)
+    }
+
     private fun handleSetActivePrompt(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
         val request = parseJsonRequest<WebSetActivePromptRequest>(session)
             ?: return jsonResponse(
@@ -354,11 +375,11 @@ class WebChatHttpBridge(
 
     private fun handleListChats(): NanoHTTPD.Response {
         val chats = runBlocking {
-            val histories = chatHistoryManager.chatHistoriesFlow.first()
+            val histories = chatHistoryManager.getChatHistoriesSnapshot()
             val characterGroupNamesById = resolveCharacterGroupNames(histories)
             val bindingAvatarUrlByChatId = resolveBindingAvatarUrls(histories)
             val folderNamesById =
-                chatHistoryManager.chatFoldersFlow.first().associate { it.id to it.name }
+                chatHistoryManager.getChatFoldersSnapshot().associate { it.id to it.name }
 
             histories.map { history ->
                 buildChatSummary(
@@ -484,6 +505,7 @@ class WebChatHttpBridge(
                                 chatHistoryManager.resolveOrCreateLegacyFolderId(
                                     groupName = it,
                                     characterCardName = request.characterCardName,
+                                    characterGroupId = request.characterGroupId,
                                 )
                             }
                             ?: request.folderId?.trim()?.takeIf { it.isNotBlank() }
@@ -659,7 +681,13 @@ class WebChatHttpBridge(
                 WebErrorResponse("No reorder items provided")
             )
         }
-        val success = runBlocking { chatManagementBridge.reorderChats(request.items) }
+        val success =
+            runBlocking {
+                chatManagementBridge.reorderChats(
+                    items = request.items,
+                    expectedItems = request.expectedItems,
+                )
+            }
         return if (success) {
             jsonResponse(
                 NanoHTTPD.Response.Status.OK,
@@ -667,8 +695,8 @@ class WebChatHttpBridge(
             )
         } else {
             jsonResponse(
-                NanoHTTPD.Response.Status.NOT_FOUND,
-                WebErrorResponse("One or more chats or folders could not be found")
+                NanoHTTPD.Response.Status.CONFLICT,
+                WebErrorResponse("Chat order changed; refresh and try again")
             )
         }
     }
@@ -1364,7 +1392,7 @@ class WebChatHttpBridge(
         val bindingAvatarUrl = resolveBindingAvatarUrls(listOf(history))[history.id]
         val group =
             history.folderId?.let { folderId ->
-                chatHistoryManager.chatFoldersFlow.first()
+                chatHistoryManager.getChatFoldersSnapshot()
                     .firstOrNull { it.id == folderId }
                     ?.name
             }
@@ -1381,6 +1409,7 @@ class WebChatHttpBridge(
             id = history.id,
             title = history.title,
             updatedAt = history.updatedAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            displayOrder = history.displayOrder,
             folderId = history.folderId,
             group = group,
             characterCardName = history.characterCardName,
@@ -2431,7 +2460,7 @@ class WebChatHttpBridge(
     }
 
     private suspend fun currentChatMeta(chatId: String): ChatHistory? {
-        return chatHistoryManager.chatHistoriesFlow.first().firstOrNull { it.id == chatId }
+        return chatHistoryManager.getChatHistoriesSnapshot().firstOrNull { it.id == chatId }
     }
 
     private suspend fun switchAppChatContext(
@@ -2834,6 +2863,7 @@ class WebChatHttpBridge(
         private const val MANUAL_CONVERSATION_SUMMARY_PATH =
             "/api/web/actions/manual-conversation-summary"
         private const val CHATS_PATH = "/api/web/chats"
+        private const val CHAT_FOLDERS_PATH = "/api/web/chat-folders"
         private const val CHATS_REORDER_PATH = "/api/web/chats/reorder"
         private const val CHAT_GROUP_RENAME_PATH = "/api/web/chat-groups/rename"
         private const val CHAT_GROUP_DELETE_PATH = "/api/web/chat-groups/delete"

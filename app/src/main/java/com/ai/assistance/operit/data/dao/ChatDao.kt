@@ -150,12 +150,11 @@ interface ChatDao {
     suspend fun updateChatFavorite(chatId: String, isFavorite: Boolean)
 
     /** 仅按稳定 ID 更新单个聊天的顺序与文件夹。 */
-    @Query("UPDATE chats SET displayOrder = :displayOrder, folderId = :folderId, updatedAt = :timestamp WHERE id = :chatId")
+    @Query("UPDATE chats SET displayOrder = :displayOrder, folderId = :folderId WHERE id = :chatId")
     suspend fun updateChatOrderAndFolder(
         chatId: String,
         displayOrder: Long,
         folderId: String?,
-        timestamp: Long = System.currentTimeMillis(),
     )
 
     /** 根据parentChatId获取所有分支对话 */

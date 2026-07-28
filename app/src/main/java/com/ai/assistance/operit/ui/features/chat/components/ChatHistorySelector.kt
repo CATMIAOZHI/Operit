@@ -158,6 +158,8 @@ private data class GroupTarget(
     val groupName: String,
 )
 
+private const val MAX_CHAT_FOLDER_DEPTH = 3
+
 private data class FolderDragTarget(
     val targetParentFolderId: String?,
     val anchorNodeKey: String? = null,
@@ -177,6 +179,8 @@ private data class ChatDragTarget(
 
 private data class PendingHistoryMoveAck(
     val expectedSiblingsByParent: Map<String?, List<HistorySiblingSnapshot>>,
+    val previousSiblingsByParent: Map<String?, List<HistorySiblingSnapshot>>,
+    val repositoryCallCompleted: Boolean = false,
 )
 
 private data class HistorySiblingStructure(
@@ -513,6 +517,7 @@ fun ChatHistorySelector(
         onUpdateChatTitle: (chatId: String, newTitle: String) -> Unit,
         onUpdateChatBinding: (chatId: String, characterCardName: String?, characterGroupId: String?) -> Unit,
         chatHistories: List<ChatHistory>,
+        allChatHistories: List<ChatHistory>,
         chatFolders: List<ChatFolderEntity>,
         currentId: String?,
         activeStreamingChatIds: Set<String> = emptySet(),
@@ -601,7 +606,7 @@ fun ChatHistorySelector(
                 .asSequence()
                 .filter { it.parentFolderId == parentFolderId }
                 .map(HistorySiblingSnapshot::fromFolder) +
-                chatHistories
+                allChatHistories
                     .asSequence()
                     .filter { it.folderId == parentFolderId }
                     .map {
@@ -830,6 +835,37 @@ fun ChatHistorySelector(
     val canReorder = canReorderChatHistory(selectedCategory, searchQuery)
     val canManageFolders =
         canManageChatFolders(selectedCategory) && searchQuery.isBlank()
+    val folderById = remember(chatFolders) { chatFolders.associateBy { it.id } }
+    fun canMoveFolderToParent(folderId: String, targetParentFolderId: String?): Boolean {
+        if (targetParentFolderId == null) return true
+        if (
+            targetParentFolderId == folderId ||
+                targetParentFolderId == SYSTEM_UNGROUPED_FOLDER_ID
+        ) {
+            return false
+        }
+        var targetDepth = 0
+        var cursor: String? = targetParentFolderId
+        val visitedParents = hashSetOf<String>()
+        while (cursor != null && visitedParents.add(cursor)) {
+            if (cursor == folderId) return false
+            targetDepth++
+            cursor = folderById[cursor]?.parentFolderId
+        }
+        fun subtreeHeight(currentId: String, visiting: MutableSet<String>): Int {
+            if (!visiting.add(currentId)) return MAX_CHAT_FOLDER_DEPTH + 1
+            val childHeight =
+                chatFolders
+                    .asSequence()
+                    .filter { it.parentFolderId == currentId }
+                    .maxOfOrNull { subtreeHeight(it.id, visiting) }
+                    ?: 0
+            visiting.remove(currentId)
+            return childHeight + 1
+        }
+        return targetDepth + subtreeHeight(folderId, hashSetOf()) <=
+            MAX_CHAT_FOLDER_DEPTH
+    }
     val systemUngroupedReady =
         chatFolders.any { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
     LaunchedEffect(chatFolders) {
@@ -1327,14 +1363,20 @@ fun ChatHistorySelector(
             mutableStateOf<Map<String?, List<HistorySiblingSnapshot>>>(emptyMap())
         }
 
-    LaunchedEffect(chatHistories, chatFolders, pendingHistoryMoveAck) {
+    LaunchedEffect(allChatHistories, chatFolders, pendingHistoryMoveAck) {
         val pending = pendingHistoryMoveAck ?: return@LaunchedEffect
-        if (
+        if (!pending.repositoryCallCompleted) return@LaunchedEffect
+        val matchesExpected =
             pending.expectedSiblingsByParent.all { (parentFolderId, expected) ->
                 historySiblingSnapshot(parentFolderId).map { it.structure() } ==
                     expected.map { it.structure() }
             }
-        ) {
+        val stillAtPreviousState =
+            pending.previousSiblingsByParent.all { (parentFolderId, previous) ->
+                historySiblingSnapshot(parentFolderId).map { it.structure() } ==
+                    previous.map { it.structure() }
+            }
+        if (matchesExpected || !stillAtPreviousState) {
             pendingHistoryMoveAck = null
             historyMoveInFlight = false
         }
@@ -1356,6 +1398,12 @@ fun ChatHistorySelector(
                         when (target) {
                             is HistoryListItem.Item -> {
                             if (
+                                !canManageFolders &&
+                                    moved.history.folderId != target.history.folderId
+                            ) {
+                                return@rememberReorderableLazyListState
+                            }
+                            if (
                                 historyDisplayMode ==
                                     ChatHistoryDisplayMode.BY_CHARACTER_CARD &&
                                     (
@@ -1374,6 +1422,9 @@ fun ChatHistorySelector(
                             )
                         }
                         is HistoryListItem.Header -> {
+                            if (!canManageFolders) {
+                                return@rememberReorderableLazyListState
+                            }
                             val targetFolder =
                                 target.folderId?.let {
                                     chatFolders.firstOrNull { folder -> folder.id == it }
@@ -1605,7 +1656,12 @@ fun ChatHistorySelector(
                 return
             }
         historyMoveInFlight = true
-        pendingHistoryMoveAck = PendingHistoryMoveAck(expectedAfterMove)
+        pendingHistoryMoveAck =
+            PendingHistoryMoveAck(
+                expectedSiblingsByParent = expectedAfterMove,
+                previousSiblingsByParent =
+                    expectedAfterMove.keys.associateWith(expectedSnapshots::getValue),
+            )
         coroutineScope.launch {
             val result = runCatching {
                 if (moving.folderId == resolvedTargetFolderId) {
@@ -1649,6 +1705,9 @@ fun ChatHistorySelector(
             if (result.isFailure) {
                 pendingHistoryMoveAck = null
                 historyMoveInFlight = false
+            } else {
+                pendingHistoryMoveAck =
+                    pendingHistoryMoveAck?.copy(repositoryCallCompleted = true)
             }
         }
     }
@@ -1676,6 +1735,10 @@ fun ChatHistorySelector(
                 SystemClock.uptimeMillis() - target.hoverStartedAt >= 650L
         val resolvedParent =
             if (shouldNest) target.nestFolderId else target.targetParentFolderId
+        if (!canMoveFolderToParent(folderId, resolvedParent)) {
+            resetOptimisticOrder()
+            return
+        }
         val resolvedAnchorNodeKey = target.anchorNodeKey.takeUnless { shouldNest }
         val resolvedInsertBeforeAnchor = target.insertBeforeAnchor.takeUnless { shouldNest }
         val sourceParent =
@@ -1702,7 +1765,12 @@ fun ChatHistorySelector(
                 return
             }
         historyMoveInFlight = true
-        pendingHistoryMoveAck = PendingHistoryMoveAck(expectedAfterMove)
+        pendingHistoryMoveAck =
+            PendingHistoryMoveAck(
+                expectedSiblingsByParent = expectedAfterMove,
+                previousSiblingsByParent =
+                    expectedAfterMove.keys.associateWith(expectedSnapshots::getValue),
+            )
         coroutineScope.launch {
             val result = runCatching {
                 chatHistoryManager.moveFolder(
@@ -1731,6 +1799,9 @@ fun ChatHistorySelector(
             if (result.isFailure) {
                 pendingHistoryMoveAck = null
                 historyMoveInFlight = false
+            } else {
+                pendingHistoryMoveAck =
+                    pendingHistoryMoveAck?.copy(repositoryCallCompleted = true)
             }
         }
     }
@@ -1753,7 +1824,12 @@ fun ChatHistorySelector(
             )
         historyMoveInFlight = true
         pendingHistoryMoveAck =
-            PendingHistoryMoveAck(mapOf(targetChat.folderId to expectedAfterMove))
+            PendingHistoryMoveAck(
+                expectedSiblingsByParent =
+                    mapOf(targetChat.folderId to expectedAfterMove),
+                previousSiblingsByParent =
+                    mapOf(targetChat.folderId to sourceSnapshot),
+            )
         coroutineScope.launch {
             val result = runCatching {
                 chatHistoryManager.moveChat(
@@ -1774,6 +1850,9 @@ fun ChatHistorySelector(
             if (result.isFailure) {
                 pendingHistoryMoveAck = null
                 historyMoveInFlight = false
+            } else {
+                pendingHistoryMoveAck =
+                    pendingHistoryMoveAck?.copy(repositoryCallCompleted = true)
             }
         }
     }
@@ -2179,7 +2258,7 @@ fun ChatHistorySelector(
                             )
                         }
                     }
-                    
+
                     Spacer(modifier = Modifier.height(8.dp))
 
                     TextButton(
@@ -2372,14 +2451,14 @@ fun ChatHistorySelector(
                             )
                             Spacer(modifier = Modifier.width(16.dp))
                             Text(
-                                stringResource(R.string.delete_group), 
+                                stringResource(R.string.delete_group),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                                 modifier = Modifier.clearAndSetSemantics {}
                             )
                         }
                     }
-                    
+
                     Spacer(modifier = Modifier.height(8.dp))
 
                     TextButton(
@@ -2475,20 +2554,20 @@ fun ChatHistorySelector(
                         rememberScrollState()
                     )
                 ) {
+                    val currentParentFolderId =
+                        chatFolders.firstOrNull { it.id == targetFolder.folderId }?.parentFolderId
                     fun moveTo(parentFolderId: String?) {
+                        if (parentFolderId == currentParentFolderId) {
+                            groupToMove = null
+                            return
+                        }
                         coroutineScope.launch {
                             runCatching {
                                 chatHistoryManager.moveFolder(
                                     folderId = targetFolder.folderId,
                                     targetParentFolderId = parentFolderId,
                                     expectedSourceSiblings =
-                                        historySiblingSnapshot(
-                                            chatFolders
-                                                .firstOrNull {
-                                                    it.id == targetFolder.folderId
-                                                }
-                                                ?.parentFolderId
-                                        ),
+                                        historySiblingSnapshot(currentParentFolderId),
                                     expectedTargetSiblings =
                                         historySiblingSnapshot(parentFolderId),
                                 )
@@ -2512,7 +2591,8 @@ fun ChatHistorySelector(
                         .asSequence()
                         .filter {
                             it.id != targetFolder.folderId &&
-                                it.id != SYSTEM_UNGROUPED_FOLDER_ID
+                                it.id != SYSTEM_UNGROUPED_FOLDER_ID &&
+                                canMoveFolderToParent(targetFolder.folderId, it.id)
                         }
                         .sortedWith(
                             compareBy<ChatFolderEntity> { folderChoiceLabels[it.id] }
@@ -3363,7 +3443,7 @@ fun ChatHistorySelector(
                                         .size(24.dp)
                                         .clip(CircleShape)
                                         .background(
-                                            if (!avatarUri.isNullOrBlank()) Color.Transparent 
+                                            if (!avatarUri.isNullOrBlank()) Color.Transparent
                                             else MaterialTheme.colorScheme.primaryContainer
                                         ),
                                     contentAlignment = Alignment.Center

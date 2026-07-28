@@ -342,7 +342,7 @@ fun CharacterItem(
                     .size(36.dp)
                     .clip(CircleShape)
                     .background(
-                        if (!avatarUri.isNullOrBlank()) Color.Transparent 
+                        if (!avatarUri.isNullOrBlank()) Color.Transparent
                         else MaterialTheme.colorScheme.secondaryContainer
                     ),
                 contentAlignment = Alignment.Center
