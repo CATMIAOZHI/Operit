@@ -158,6 +158,8 @@ fun ModelPromptsSettingsScreen(
 
     // 重置确认对话框状态
     var showResetDefaultConfirm by remember { mutableStateOf(false) }
+    var resettingCharacterCardId by remember { mutableStateOf("") }
+    var resettingCharacterCardName by remember { mutableStateOf("") }
 
     // 酒馆角色卡导入相关状态
     var showImportSuccessMessage by remember { mutableStateOf(false) }
@@ -714,11 +716,15 @@ fun ModelPromptsSettingsScreen(
         }
     }
 
-    // 确认重置默认角色卡
-    fun confirmResetDefaultCharacterCard() {
+    // 确认重置系统角色卡
+    fun confirmResetSystemCharacterCard() {
+        val characterCardId = resettingCharacterCardId
+        if (characterCardId.isBlank()) return
         scope.launch {
-            characterCardManager.resetDefaultCharacterCard()
+            characterCardManager.resetSystemCharacterCard(characterCardId)
             showResetDefaultConfirm = false
+            resettingCharacterCardId = ""
+            resettingCharacterCardName = ""
             refreshTrigger++
             Toast.makeText(context, context.getString(R.string.reset_successful), Toast.LENGTH_SHORT).show()
         }
@@ -920,7 +926,11 @@ fun ModelPromptsSettingsScreen(
                         },
                         onDeleteCharacterCard = { card -> showDeleteCharacterCardConfirm(card.id, card.name) },
                         onDuplicateCharacterCard = { card -> duplicateCharacterCard(card) },
-                        onResetDefaultCharacterCard = { showResetDefaultConfirm = true },
+                        onResetSystemCharacterCard = { card ->
+                            resettingCharacterCardId = card.id
+                            resettingCharacterCardName = card.name
+                            showResetDefaultConfirm = true
+                        },
                         onSetActiveCharacterCard = { cardId ->
                             scope.launch {
                                 activePromptManager.setActivePrompt(ActivePrompt.CharacterCard(cardId))
@@ -1455,15 +1465,26 @@ fun ModelPromptsSettingsScreen(
         )
     }
 
-    // 重置默认角色卡确认对话框
+    // 重置系统角色卡确认对话框
     if (showResetDefaultConfirm) {
         AlertDialog(
-            onDismissRequest = { showResetDefaultConfirm = false },
-            title = { Text(stringResource(R.string.reset_default_character)) },
-            text = { Text(stringResource(R.string.reset_default_character_confirm)) },
+            onDismissRequest = {
+                showResetDefaultConfirm = false
+                resettingCharacterCardId = ""
+                resettingCharacterCardName = ""
+            },
+            title = { Text(stringResource(R.string.reset_system_character)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.reset_system_character_confirm,
+                        resettingCharacterCardName
+                    )
+                )
+            },
             confirmButton = {
                 Button(
-                    onClick = { confirmResetDefaultCharacterCard() },
+                    onClick = { confirmResetSystemCharacterCard() },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
                     )
@@ -1472,7 +1493,13 @@ fun ModelPromptsSettingsScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showResetDefaultConfirm = false }) {
+                TextButton(
+                    onClick = {
+                        showResetDefaultConfirm = false
+                        resettingCharacterCardId = ""
+                        resettingCharacterCardName = ""
+                    }
+                ) {
                     Text(stringResource(R.string.cancel))
                 }
             }
@@ -2015,7 +2042,7 @@ fun CharacterCardTab(
     onEditCharacterCard: (CharacterCard) -> Unit,
     onDeleteCharacterCard: (CharacterCard) -> Unit,
     onDuplicateCharacterCard: (CharacterCard) -> Unit,
-    onResetDefaultCharacterCard: () -> Unit,
+    onResetSystemCharacterCard: (CharacterCard) -> Unit,
     onSetActiveCharacterCard: (String) -> Unit,
     onReorderCharacterCards: (List<String>) -> Unit,
     onNavigateToPersonaGeneration: () -> Unit,
@@ -2239,9 +2266,10 @@ fun CharacterCardTab(
                         onEdit = { onEditCharacterCard(characterCard) },
                         onDelete = { onDeleteCharacterCard(characterCard) },
                         onDuplicate = { onDuplicateCharacterCard(characterCard) },
-                        onReset = onResetDefaultCharacterCard,
+                        onReset = { onResetSystemCharacterCard(characterCard) },
                         onSetActive = { onSetActiveCharacterCard(characterCard.id) },
                         onExport = { onExportCharacterCard(characterCard.id, characterCard.name) },
+                        isSystemCard = CharacterCardManager.isSystemCharacterCard(characterCard.id),
                         isDragging = isDragging,
                         dragHandle = {
                             Icon(
@@ -2276,9 +2304,10 @@ fun CharacterCardTab(
                     onEdit = { onEditCharacterCard(characterCard) },
                     onDelete = { onDeleteCharacterCard(characterCard) },
                     onDuplicate = { onDuplicateCharacterCard(characterCard) },
-                    onReset = onResetDefaultCharacterCard,
+                    onReset = { onResetSystemCharacterCard(characterCard) },
                     onSetActive = { onSetActiveCharacterCard(characterCard.id) },
-                    onExport = { onExportCharacterCard(characterCard.id, characterCard.name) }
+                    onExport = { onExportCharacterCard(characterCard.id, characterCard.name) },
+                    isSystemCard = CharacterCardManager.isSystemCharacterCard(characterCard.id)
                 )
             }
         }
@@ -2335,6 +2364,7 @@ fun CharacterCardItem(
     onReset: () -> Unit,
     onSetActive: () -> Unit,
     onExport: () -> Unit,
+    isSystemCard: Boolean = false,
     isDragging: Boolean = false,
     dragHandle: (@Composable () -> Unit)? = null
 ) {
@@ -2485,7 +2515,7 @@ fun CharacterCardItem(
                             }
                         )
                     
-                        if (characterCard.isDefault) {
+                        if (isSystemCard) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.reset)) },
                                 onClick = {
@@ -2502,7 +2532,7 @@ fun CharacterCardItem(
                             )
                         }
                     
-                        if (!characterCard.isDefault) {
+                        if (!isSystemCard) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.delete)) },
                                 onClick = {

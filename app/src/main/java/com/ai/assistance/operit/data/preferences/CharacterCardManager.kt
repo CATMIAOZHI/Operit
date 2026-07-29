@@ -75,6 +75,51 @@ internal fun reconcileCharacterCardOrderAfterUpsert(
     return if (upsertedId in cardIds) currentOrder else currentOrder + upsertedId
 }
 
+internal fun resolveSystemCharacterCardOrder(
+    savedOrder: List<String>,
+    existingIds: Collection<String>,
+    placeRainyFirst: Boolean
+): List<String> {
+    if (placeRainyFirst) {
+        return listOf(
+            CharacterCardManager.RAINY_CHARACTER_CARD_ID,
+            CharacterCardManager.DEFAULT_CHARACTER_CARD_ID
+        )
+    }
+
+    var order = reconcileCharacterCardOrder(savedOrder, existingIds)
+    if (CharacterCardManager.DEFAULT_CHARACTER_CARD_ID !in existingIds) {
+        order += CharacterCardManager.DEFAULT_CHARACTER_CARD_ID
+    }
+    if (CharacterCardManager.RAINY_CHARACTER_CARD_ID !in existingIds) {
+        order += CharacterCardManager.RAINY_CHARACTER_CARD_ID
+    }
+    return order
+}
+
+internal fun shouldSelectRainyAsInitialCard(
+    hasCharacterCardList: Boolean,
+    activeCharacterCardId: String?
+): Boolean {
+    return !hasCharacterCardList && activeCharacterCardId.isNullOrBlank()
+}
+
+internal fun migrateBuiltInDescription(
+    savedDescription: String?,
+    oldBuiltInDescriptions: Set<String>,
+    newBuiltInDescription: String
+): String? {
+    return if (savedDescription in oldBuiltInDescriptions) {
+        newBuiltInDescription
+    } else {
+        savedDescription
+    }
+}
+
+internal fun shouldInstallBuiltInSystemAvatar(savedAvatarUri: String?): Boolean {
+    return savedAvatarUri.isNullOrBlank()
+}
+
 /**
  * 角色卡管理器
  */
@@ -95,8 +140,14 @@ class CharacterCardManager private constructor(private val context: Context) {
 
         // 默认角色卡ID
         const val DEFAULT_CHARACTER_CARD_ID = "default_character"
+        const val RAINY_CHARACTER_CARD_ID = "system_rainy"
 
         const val DEFAULT_CHARACTER_NAME = "Operit"
+        const val RAINY_CHARACTER_NAME = "Rainy"
+
+        fun isSystemCharacterCard(id: String): Boolean {
+            return id == DEFAULT_CHARACTER_CARD_ID || id == RAINY_CHARACTER_CARD_ID
+        }
         
         @Volatile
         private var INSTANCE: CharacterCardManager? = null
@@ -130,7 +181,7 @@ class CharacterCardManager private constructor(private val context: Context) {
         preferences[CHARACTER_CARD_ORDER] =
             characterCardOrderJson.encodeToString(orderedIds)
     }
-    
+
     // 角色卡列表流
     val characterCardListFlow: Flow<List<String>> = dataStore.data.map { preferences ->
         val cardIds = preferences[CHARACTER_CARD_LIST] ?: emptySet()
@@ -388,7 +439,7 @@ class CharacterCardManager private constructor(private val context: Context) {
     
     // 删除角色卡
     suspend fun deleteCharacterCard(id: String) {
-        if (id == DEFAULT_CHARACTER_CARD_ID) return
+        if (isSystemCharacterCard(id)) return
         
         dataStore.edit { preferences ->
             // 从列表中移除
@@ -521,31 +572,46 @@ class CharacterCardManager private constructor(private val context: Context) {
     
     // 初始化默认角色卡
     suspend fun initializeIfNeeded() {
-        var isInitialized = false
+        var needsDefaultThemeMigration = false
         dataStore.edit { preferences ->
             val cardListKey = CHARACTER_CARD_LIST
-            val currentList = preferences[cardListKey]?.toMutableSet()
+            val existingIds = preferences[cardListKey]?.toMutableSet()
+            val shouldSelectRainy = shouldSelectRainyAsInitialCard(
+                hasCharacterCardList = existingIds != null,
+                activeCharacterCardId = preferences[ACTIVE_CHARACTER_CARD_ID]
+            )
+            needsDefaultThemeMigration = existingIds.isNullOrEmpty()
 
-            if (currentList == null || currentList.isEmpty()) {
-                isInitialized = true
-                // 首次安装，创建默认角色卡
-                val defaultCardId = DEFAULT_CHARACTER_CARD_ID
-                preferences[cardListKey] = setOf(defaultCardId)
-                // 不再自动设置活跃角色卡，让用户自己选择角色卡或群组
-                // preferences[ACTIVE_CHARACTER_CARD_ID] = defaultCardId
+            val currentIds = existingIds ?: mutableSetOf()
+            val savedOrder = readCharacterCardOrder(preferences)
+            val updatedOrder = resolveSystemCharacterCardOrder(
+                savedOrder,
+                currentIds,
+                placeRainyFirst = shouldSelectRainy
+            )
 
-                // 设置默认角色卡数据
-                setupDefaultCharacterCard(preferences, defaultCardId)
+            if (currentIds.add(DEFAULT_CHARACTER_CARD_ID)) {
+                setupDefaultCharacterCard(preferences, DEFAULT_CHARACTER_CARD_ID)
             }
+
+            if (currentIds.add(RAINY_CHARACTER_CARD_ID)) {
+                setupRainyCharacterCard(preferences, RAINY_CHARACTER_CARD_ID)
+            }
+
+            migrateSystemCharacterCardDescriptions(preferences)
+            preferences[cardListKey] = currentIds
+            if (shouldSelectRainy) {
+                preferences[ACTIVE_CHARACTER_CARD_ID] = RAINY_CHARACTER_CARD_ID
+            }
+            writeCharacterCardOrder(preferences, updatedOrder)
         }
 
-        if (isInitialized) {
-            // This is a new installation or an old user updating.
-            // We should migrate their existing theme settings to the default character card.
-            AppLogger.d("CharacterCardManager", "First initialization detected. Migrating current theme to default character card.")
+        if (needsDefaultThemeMigration) {
+            AppLogger.d("CharacterCardManager", "Missing character cards detected. Migrating current theme to Operit.")
             userPreferencesManager.copyCurrentThemeToCharacterCard(DEFAULT_CHARACTER_CARD_ID)
-            userPreferencesManager.saveAiAvatarForCharacterCard(DEFAULT_CHARACTER_CARD_ID, UserPreferencesManager.DEFAULT_CHARACTER_AVATAR_URI)
         }
+        ensureBuiltInSystemAvatar(DEFAULT_CHARACTER_CARD_ID)
+        ensureBuiltInSystemAvatar(RAINY_CHARACTER_CARD_ID)
 
         // 清理历史内置功能标签（chat/voice/desktop pet）
         tagManager.removeLegacyBuiltInTags()
@@ -555,11 +621,57 @@ class CharacterCardManager private constructor(private val context: Context) {
 
     // 重置默认角色卡
     suspend fun resetDefaultCharacterCard() {
+        resetSystemCharacterCard(DEFAULT_CHARACTER_CARD_ID)
+    }
+
+    suspend fun resetSystemCharacterCard(id: String) {
+        if (!isSystemCharacterCard(id)) return
+
         dataStore.edit { preferences ->
-            setupDefaultCharacterCard(preferences, DEFAULT_CHARACTER_CARD_ID)
+            when (id) {
+                DEFAULT_CHARACTER_CARD_ID -> setupDefaultCharacterCard(preferences, id)
+                RAINY_CHARACTER_CARD_ID -> setupRainyCharacterCard(preferences, id)
+            }
         }
-        // 同时也重置头像和主题
-        userPreferencesManager.saveAiAvatarForCharacterCard(DEFAULT_CHARACTER_CARD_ID, "file:///android_asset/operit.png")
+        UserPreferencesManager.getBuiltInCharacterAvatarUri(id)?.let { avatarUri ->
+            userPreferencesManager.saveAiAvatarForCharacterCard(id, avatarUri)
+        }
+    }
+
+    private suspend fun ensureBuiltInSystemAvatar(id: String) {
+        if (
+            shouldInstallBuiltInSystemAvatar(
+                userPreferencesManager.getAiAvatarForCharacterCardFlow(id).first()
+            )
+        ) {
+            UserPreferencesManager.getBuiltInCharacterAvatarUri(id)?.let { avatarUri ->
+                userPreferencesManager.saveAiAvatarForCharacterCard(id, avatarUri)
+            }
+        }
+    }
+
+    private fun migrateSystemCharacterCardDescriptions(preferences: MutablePreferences) {
+        val operitDescriptionKey =
+            stringPreferencesKey("character_card_${DEFAULT_CHARACTER_CARD_ID}_description")
+        migrateBuiltInDescription(
+            savedDescription = preferences[operitDescriptionKey],
+            oldBuiltInDescriptions = setOf(
+                "系统默认的角色卡配置",
+                "System default character card configuration"
+            ),
+            newBuiltInDescription = CharacterCardBilingualData.getDefaultDescription(context)
+        )?.let { preferences[operitDescriptionKey] = it }
+
+        val rainyDescriptionKey =
+            stringPreferencesKey("character_card_${RAINY_CHARACTER_CARD_ID}_description")
+        migrateBuiltInDescription(
+            savedDescription = preferences[rainyDescriptionKey],
+            oldBuiltInDescriptions = setOf(
+                "Rainy是一位理性又活泼的AI小猫助手喵！",
+                "Rainy is a rational yet lively AI kitten assistant!"
+            ),
+            newBuiltInDescription = RainyCharacterCardData.getDescription(context)
+        )?.let { preferences[rainyDescriptionKey] = it }
     }
     
     private fun setupDefaultCharacterCard(preferences: MutablePreferences, id: String) {
@@ -600,6 +712,31 @@ class CharacterCardManager private constructor(private val context: Context) {
         preferences[isDefaultKey] = true
         preferences[createdAtKey] = System.currentTimeMillis()
         preferences[updatedAtKey] = System.currentTimeMillis()
+    }
+
+    private fun setupRainyCharacterCard(preferences: MutablePreferences, id: String) {
+        preferences[stringPreferencesKey("character_card_${id}_name")] = RAINY_CHARACTER_NAME
+        preferences[stringPreferencesKey("character_card_${id}_description")] =
+            RainyCharacterCardData.getDescription(context)
+        preferences[stringPreferencesKey("character_card_${id}_character_setting")] =
+            RainyCharacterCardData.getCharacterSetting(context)
+        preferences[stringPreferencesKey("character_card_${id}_opening_statement")] = ""
+        preferences[stringPreferencesKey("character_card_${id}_other_content_chat")] = ""
+        preferences[stringPreferencesKey("character_card_${id}_other_content_voice")] = ""
+        preferences[stringSetPreferencesKey("character_card_${id}_attached_tag_ids")] = emptySet()
+        preferences[stringPreferencesKey("character_card_${id}_advanced_custom_prompt")] = ""
+        preferences[stringPreferencesKey("character_card_${id}_marks")] = ""
+        preferences[stringPreferencesKey("character_card_${id}_chat_model_binding_mode")] =
+            CharacterCardChatModelBindingMode.FOLLOW_GLOBAL
+        preferences.remove(stringPreferencesKey("character_card_${id}_chat_model_config_id"))
+        preferences[intPreferencesKey("character_card_${id}_chat_model_index")] = 0
+        preferences[stringPreferencesKey("character_card_${id}_memory_profile_binding_mode")] =
+            CharacterCardMemoryProfileBindingMode.FOLLOW_GLOBAL
+        preferences.remove(stringPreferencesKey("character_card_${id}_memory_profile_id"))
+        preferences.remove(toolAccessConfigKey(id))
+        preferences[booleanPreferencesKey("character_card_${id}_is_default")] = false
+        preferences[longPreferencesKey("character_card_${id}_created_at")] = System.currentTimeMillis()
+        preferences[longPreferencesKey("character_card_${id}_updated_at")] = System.currentTimeMillis()
     }
 
     // 获取所有角色卡

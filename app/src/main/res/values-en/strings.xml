@@ -914,6 +914,8 @@
     <string name="reset_successful">Reset Successfully</string>
     <string name="reset_default_character">Reset Default Character</string>
     <string name="reset_default_character_confirm">Are you sure you want to reset the default character card? This will restore the default name, settings, and prompts, and reset the avatar and theme.</string>
+    <string name="reset_system_character">Reset System Character</string>
+    <string name="reset_system_character_confirm">Reset the system character card “%1$s”? This restores its built-in name, settings, prompts, and avatar.</string>
     
     <string name="settings_section_ai_model">AI Model Configuration</string>
     <string name="settings_model_parameters">Model and Parameter Configuration</string>
