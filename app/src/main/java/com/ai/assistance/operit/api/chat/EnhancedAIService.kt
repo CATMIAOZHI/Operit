@@ -351,6 +351,7 @@ class EnhancedAIService private constructor(private val context: Context) {
         var chatModelConfigIdOverride: String? = null,
         var chatModelIndexOverride: Int? = null,
         var memorySpaceIdOverride: String? = null,
+        var toolTimingScopeId: String? = null,
         var stream: Boolean = true,
         var disableWarning: Boolean = false
     )
@@ -431,6 +432,8 @@ class EnhancedAIService private constructor(private val context: Context) {
         val isConversationActive: AtomicBoolean = AtomicBoolean(true),
         val conversationHistory: MutableList<PromptTurn>,
         val eventChannel: MutableSharedStream<TextStreamEvent>,
+        val toolTimingScopeId: String? = null,
+        val nextToolInvocationIndex: AtomicInteger = AtomicInteger(0),
         var modelExecutionSnapshot: ModelExecutionSnapshot? = null
     )
 
@@ -908,6 +911,7 @@ class EnhancedAIService private constructor(private val context: Context) {
         val chatModelConfigIdOverride = options.chatModelConfigIdOverride
         val chatModelIndexOverride = options.chatModelIndexOverride
         val memorySpaceIdOverride = options.memorySpaceIdOverride
+        val toolTimingScopeId = options.toolTimingScopeId
         val stream = options.stream
         val disableWarning = options.disableWarning
         val onNonFatalError: suspend (error: String) -> Unit = { error ->
@@ -947,7 +951,8 @@ class EnhancedAIService private constructor(private val context: Context) {
                 MessageExecutionContext(
                     executionId = nextExecutionContextId.incrementAndGet(),
                     conversationHistory = chatHistory.toMutableList(),
-                    eventChannel = eventChannel
+                    eventChannel = eventChannel,
+                    toolTimingScopeId = toolTimingScopeId,
                 )
             registerExecutionContext(execContext)
             var hadFatalError = false
@@ -1834,7 +1839,12 @@ class EnhancedAIService private constructor(private val context: Context) {
             // 预先提取工具调用信息，避免重复解析
             val extractedToolInvocations =
                     if (truncatedToolRecovery == null) {
-                        ToolExecutionManager.extractToolInvocations(finalContent)
+                        ToolExecutionManager.extractToolInvocations(finalContent).map { invocation ->
+                            invocation.copy(
+                                callId = java.util.UUID.randomUUID().toString(),
+                                invocationIndex = context.nextToolInvocationIndex.getAndIncrement(),
+                            )
+                        }
                     } else {
                         emptyList()
                     }
@@ -2109,6 +2119,7 @@ class EnhancedAIService private constructor(private val context: Context) {
                 toolHandler = toolHandler,
                 packageManager = packageManager,
                 collector = collector,
+                timingScopeId = context.toolTimingScopeId,
                 toolExposureMode = ToolExposureMode.resolve(config.apiProviderType),
                 callerName = characterName,
                 callerChatId = chatId,

@@ -930,6 +930,7 @@ class MessageProcessingDelegate(
                 }
 
                 val prepareResponseStreamStartTime = messageTimingNow()
+                val aiMessageTimestamp = ChatMessageTimestampAllocator.next()
                 val responseStream = AIMessageManager.sendMessage(
                     enhancedAiService = service,
                     chatId = activeChatId,
@@ -965,6 +966,7 @@ class MessageProcessingDelegate(
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,
+                    toolTimingScopeId = aiMessageTimestamp.toString(),
                     disableWarning = turnOptions.disableWarning
                 )
                 logMessageTiming(
@@ -1000,7 +1002,7 @@ class MessageProcessingDelegate(
                 aiMessage = ChatMessage(
                     sender = "ai", 
                     contentStream = sharedCharStream,
-                    timestamp = ChatMessageTimestampAllocator.next(),
+                    timestamp = aiMessageTimestamp,
                     roleName = currentRoleName,
                     provider = provider,
                     modelName = modelName,
@@ -1570,6 +1572,7 @@ class MessageProcessingDelegate(
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,
+                    toolTimingScopeId = targetMessageTimestamp.toString(),
                 )
 
             val sharedResponseStream = responseStream
