@@ -10,7 +10,7 @@
 
 ## 晋升检查点
 
-每次晋升完成后，将最新 `personal/main` 回合并到 `personal/dev`，并在合并提交上创建不可复用的 annotated tag：
+每次晋升完成后，将最新 `personal/main` 回合并到 `personal/dev`，并在专用检查点提交上创建不可复用的 annotated tag：
 
 ```bash
 promotion-checkpoint/main-<YYYYMMDD>-<main-short-sha>
@@ -33,18 +33,57 @@ CHECKPOINT=$(git describe \
   origin/personal/dev)
 
 git log --oneline "$CHECKPOINT"..origin/personal/dev
+git log --no-merges --oneline \
+  "$CHECKPOINT"..origin/personal/dev \
+  --not origin/personal/main
 git diff --stat "$CHECKPOINT"..origin/personal/dev
 git diff "$CHECKPOINT"..origin/personal/dev
 ```
+
+第一条日志和 diff 用于查看检查点后的完整变化；第二条日志排除以同一 commit 对象从 `personal/main` 同步到 dev 的提交，用作待晋升候选列表。squash 或 rebase 后 SHA 和 patch 边界可能变化，仍须结合检查点、PR 记录和逐提交 diff 人工确认；若检查点后同步过 main，不得只根据原始 diff 判断晋升范围。
 
 检查点只缩小审查范围，不替代以下检查：
 
 - 确认标签可从当前 `personal/dev` 到达；
 - 确认标签说明中记录的 main SHA 与上一轮实际晋升结果一致；
 - 继续排除检查点之后新增或修改的开发版专属文件；
-- 如果 `personal/main` 在检查点之后又有其他改动，先将最新 main 回合并到 dev 并建立新检查点。
+- 如果 `personal/main` 在检查点之后又有其他改动，先将最新 main 回合并到 dev；只有 dev 没有待晋升通用改动时才立即建立新检查点，否则保留旧检查点并使用上面的过滤日志。
 
 检查点标签不得移动、覆盖或复用；每轮晋升创建一个新标签，以保留可审计历史。
+
+## 变更通道
+
+### Dev-first：功能与高风险改动
+
+新功能、用户可见行为、持久化、共享业务代码、依赖、原生模块及需要真机验证的改动，必须先进入 `personal/dev`，完成构建和实际测试后再按本手册晋升。改动行数少不等于风险低。
+
+### personal/main-first：小型维护
+
+文档修正、低风险 CI 或仓库元数据、稳定版专属配置，以及范围明确且已有针对性验证的紧急修复，可以直接从 `personal/main` 创建独立分支并通过 PR 合入稳定分支：
+
+```bash
+git fetch origin personal/main
+git switch -c fix/<short-name> origin/personal/main
+# 修改并执行与范围匹配的最小充分验证
+git push origin fix/<short-name>
+gh pr create --base personal/main --head fix/<short-name>
+```
+
+这里的“main-first”只指 PR 目标为 `personal/main`；`main` 仍是自动同步的只读兼容镜像，不得直接提交或接收 PR。`personal/main` PR 合并后，将它回合并到 `personal/dev`：
+
+```bash
+git fetch origin personal/main personal/dev --tags
+git switch personal/dev
+git pull --ff-only origin personal/dev
+git merge --no-ff origin/personal/main || {
+  echo "Resolve and run git merge --continue before validation; or run git merge --abort." >&2
+  exit 1
+}
+# 保留并验证 dev 专属身份、Nightly 和热更新配置，执行范围匹配的检查。
+git push origin personal/dev
+```
+
+若过滤后的待晋升候选为空，可立即按第 9 节建立新检查点；若仍有待晋升功能，只同步并验证 main，不要仅为这次小型维护执行 suspend/replay 或移动检查点。保留原检查点，下一次晋升时排除已经属于 `personal/main` 的提交，待晋升完成后再建立新检查点。
 
 ## 步骤
 
@@ -165,6 +204,8 @@ CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并�
 
 晋升 PR 合并后，将稳定分支回合并到开发分支。由于晋升 PR 可能经过 squash，出现等价代码冲突时，通用代码以通过审查的 `personal/main` 为准，同时保留 dev 专属身份、Nightly 和热更新配置。
 
+本节用于功能晋升完成后的检查点，或 main-first 维护后不存在待晋升通用改动的情况。main-first 维护后若仍有待晋升功能，只回合并 main 并保留旧检查点，不执行下面的 suspend/replay。
+
 如果 dev 仍有未包含在本轮晋升 PR 中的通用改动，合并前必须按从旧到新的顺序列出对应提交。每个提交必须是单父提交，只能属于一个待晋升功能，且不得混入 dev 专属配置；merge commit 或混合提交必须先通过 revert 和分块重提拆成单一职责的单父替代提交，不能继续建立检查点。
 
 检查点提交本身只允许包含“最新 main 通用代码 + dev 专属设施”。因此先按逆序暂时 revert 待晋升提交，再回合并 main；标签创建后，按原顺序逐提交 cherry-pick。这样即使通用改动和 dev 专属配置位于同一文件，也只移动待晋升提交实际修改的 hunk，并保留独立功能的提交边界。
@@ -193,32 +234,46 @@ for ((i=${#PENDING_COMMITS[@]}-1; i>=0; i--)); do
   REVERT_COMMITS+=("${PENDING_COMMITS[$i]}")
 done
 git revert --no-commit "${REVERT_COMMITS[@]}" || {
-  echo "Resolve and run git revert --continue, then resume at the conflict check; or run git revert --abort." >&2
+  echo "Resolve and repeat git revert --continue until the entire sequence finishes, then resume at the conflict check; or run git revert --abort." >&2
   exit 1
 }
-git diff --name-only --diff-filter=U  # 必须无输出
-git commit -m "chore(dev): suspend pending features for checkpoint"
-
-# 必须停在提交前；不得省略 --no-commit。
-git merge --no-ff --no-commit origin/personal/main || {
-  echo "Resolve and run git merge --continue, then resume at the merge-commit verification; or abort and restore pending features as documented below." >&2
+test ! -d "$(git rev-parse --git-path sequencer)" || {
+  echo "The revert sequence is still in progress" >&2
   exit 1
 }
+test -z "$(git diff --name-only --diff-filter=U)" || {
+  echo "The revert sequence still has unresolved files" >&2
+  exit 1
+}
+git commit -m "chore(dev): suspend pending features for checkpoint" || exit 1
 
-# 解决冲突：通用代码采用 main，dev 专属设施继续保留。
-git diff --name-only --diff-filter=U  # 必须无输出
-git commit -m "chore(dev): sync personal/main checkpoint" || exit 1
+# main 已经集成时创建显式空提交；否则必须停在 merge 提交前。
+CHECKPOINT_PARENT=$(git rev-parse HEAD)
+if git merge-base --is-ancestor "$MAIN_SHA" HEAD; then
+  git commit --allow-empty \
+    -m "chore(dev): record personal/main checkpoint" || exit 1
+else
+  git merge --no-ff --no-commit origin/personal/main || {
+    echo "Resolve and run git merge --continue, then resume at the checkpoint verification; or abort and restore pending features as documented below." >&2
+    exit 1
+  }
 
-# clean merge 提交或 merge --continue 后都必须从这里继续验证。
-test "$(git rev-parse HEAD^2)" = "$MAIN_SHA" || {
-  echo "HEAD is not the checkpoint merge for $MAIN_SHA" >&2
+  # 解决冲突：通用代码采用 main，dev 专属设施继续保留。
+  git diff --name-only --diff-filter=U  # 必须无输出
+  git commit -m "chore(dev): sync personal/main checkpoint" || exit 1
+fi
+
+# 空提交、clean merge 提交或 merge --continue 后都必须从这里继续验证。
+test "$(git rev-parse HEAD^1)" = "$CHECKPOINT_PARENT" &&
+  git merge-base --is-ancestor "$MAIN_SHA" HEAD || {
+  echo "HEAD is not a checkpoint commit for $MAIN_SHA" >&2
   exit 1
 }
 ```
 
 若执行 `git merge --abort`，已经提交的 suspension 不会被撤销。此时不得推送 dev；必须重新执行一次 `git cherry-pick "${PENDING_COMMITS[@]}"`，处理完整序列并验证待晋升功能已经恢复。下次重试使用这次重放生成的新 commit SHA。
 
-在合并提交上创建 annotated tag；若暂时移除了待晋升提交，随后按原顺序逐个重放：
+在检查点提交上创建 annotated tag；若暂时移除了待晋升提交，随后按原顺序逐个重放：
 
 ```bash
 MAIN_SHORT=$(git rev-parse --short=8 origin/personal/main)
@@ -231,7 +286,7 @@ git tag -a "$CHECKPOINT" \
   exit 1
 }
 test "$(git rev-parse "$CHECKPOINT^{}")" = "$CHECKPOINT_SHA" || {
-  echo "Checkpoint tag does not point to this checkpoint merge" >&2
+  echo "Checkpoint tag does not point to this checkpoint commit" >&2
   exit 1
 }
 
@@ -263,7 +318,7 @@ test "$(git rev-parse origin/personal/main)" = "$MAIN_SHA" || {
 git push --atomic origin personal/dev "$CHECKPOINT"
 ```
 
-确认远端标签指向本次回合并提交，并且标签说明记录了准确的 main SHA；`git diff "$CHECKPOINT"..origin/personal/dev` 应只显示标签之后尚未晋升的改动。原子推送失败时不得把该轮视为已建立检查点，应排查分支并发更新或远端规则后整体重试。
+确认远端标签指向本次检查点提交，并且标签说明记录了准确的 main SHA；`git diff "$CHECKPOINT"..origin/personal/dev` 应只显示标签之后尚未晋升的改动。原子推送失败时不得把该轮视为已建立检查点，应排查分支并发更新或远端规则后整体重试。
 
 ## 注意事项
 
