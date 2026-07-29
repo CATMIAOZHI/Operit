@@ -135,6 +135,8 @@ fun ModelPromptsSettingsScreen(
 
     // 角色卡相关状态
     val characterCardList by characterCardManager.characterCardListFlow.collectAsState(initial = emptyList())
+    val collapsedCharacterCardIds by
+        characterCardManager.collapsedCharacterCardIdsFlow.collectAsState(initial = emptySet())
     var showAddCharacterCardDialog by remember { mutableStateOf(false) }
     var showEditCharacterCardDialog by remember { mutableStateOf(false) }
     var editingCharacterCard by remember { mutableStateOf<CharacterCard?>(null) }
@@ -902,6 +904,7 @@ fun ModelPromptsSettingsScreen(
                 when (currentTab) {
                     0 -> CharacterCardTab(
                         characterCards = allCharacterCards,
+                        collapsedCharacterCardIds = collapsedCharacterCardIds,
                         activePrompt = activePrompt,
                         allTags = allTags,
                         onAddCharacterCard = {
@@ -940,6 +943,11 @@ fun ModelPromptsSettingsScreen(
                         onReorderCharacterCards = { orderedIds ->
                             scope.launch {
                                 characterCardManager.updateCharacterCardOrder(orderedIds)
+                            }
+                        },
+                        onToggleCharacterCardCollapsed = { cardId ->
+                            scope.launch {
+                                characterCardManager.toggleCharacterCardCollapsed(cardId)
                             }
                         },
                         onNavigateToPersonaGeneration = onNavigateToPersonaGeneration,
@@ -2036,6 +2044,7 @@ enum class ExportMode {
 @Composable
 fun CharacterCardTab(
     characterCards: List<CharacterCard>,
+    collapsedCharacterCardIds: Set<String>,
     activePrompt: ActivePrompt,
     allTags: List<PromptTag>,
     onAddCharacterCard: () -> Unit,
@@ -2045,6 +2054,7 @@ fun CharacterCardTab(
     onResetSystemCharacterCard: (CharacterCard) -> Unit,
     onSetActiveCharacterCard: (String) -> Unit,
     onReorderCharacterCards: (List<String>) -> Unit,
+    onToggleCharacterCardCollapsed: (String) -> Unit,
     onNavigateToPersonaGeneration: () -> Unit,
     onImportTavernCard: () -> Unit,
     onImportColorQrCode: () -> Unit,
@@ -2066,6 +2076,7 @@ fun CharacterCardTab(
     var sortMenuExpanded by remember { mutableStateOf(false) }
     var manuallyOrderedCards by remember(characterCards) { mutableStateOf(characterCards) }
     var reorderChanged by remember { mutableStateOf(false) }
+    var collapsedSectionExpanded by remember { mutableStateOf(false) }
 
     val sortedCharacterCards = remember(characterCards, sortOption) {
         when (sortOption) {
@@ -2080,6 +2091,10 @@ fun CharacterCardTab(
         } else {
             sortedCharacterCards
         }
+    val (uncollapsedCharacterCards, collapsedCharacterCards) =
+        remember(displayedCharacterCards, collapsedCharacterCardIds) {
+            displayedCharacterCards.partition { it.id !in collapsedCharacterCardIds }
+        }
     val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
         if (sortOption != CharacterCardSortOption.MANUAL) {
@@ -2087,15 +2102,16 @@ fun CharacterCardTab(
         }
         val fromIndex = from.index - 1
         val toIndex = to.index - 1
-        if (fromIndex !in manuallyOrderedCards.indices ||
-            toIndex !in manuallyOrderedCards.indices ||
+        if (fromIndex !in uncollapsedCharacterCards.indices ||
+            toIndex !in uncollapsedCharacterCards.indices ||
             fromIndex == toIndex
         ) {
             return@rememberReorderableLazyListState
         }
-        manuallyOrderedCards = manuallyOrderedCards.toMutableList().apply {
+        val reorderedUncollapsedCards = uncollapsedCharacterCards.toMutableList().apply {
             add(toIndex, removeAt(fromIndex))
         }
+        manuallyOrderedCards = reorderedUncollapsedCards + collapsedCharacterCards
         reorderChanged = true
     }
 
@@ -2252,8 +2268,8 @@ fun CharacterCardTab(
             }
         }
 
-        // 角色卡列表
-        items(displayedCharacterCards, key = { it.id }) { characterCard ->
+        // 未折叠角色卡列表
+        items(uncollapsedCharacterCards, key = { it.id }) { characterCard ->
             if (sortOption == CharacterCardSortOption.MANUAL) {
                 ReorderableItem(
                     reorderableState,
@@ -2269,6 +2285,9 @@ fun CharacterCardTab(
                         onReset = { onResetSystemCharacterCard(characterCard) },
                         onSetActive = { onSetActiveCharacterCard(characterCard.id) },
                         onExport = { onExportCharacterCard(characterCard.id, characterCard.name) },
+                        onToggleCollapsed = {
+                            onToggleCharacterCardCollapsed(characterCard.id)
+                        },
                         isSystemCard = CharacterCardManager.isSystemCharacterCard(characterCard.id),
                         isDragging = isDragging,
                         dragHandle = {
@@ -2307,8 +2326,69 @@ fun CharacterCardTab(
                     onReset = { onResetSystemCharacterCard(characterCard) },
                     onSetActive = { onSetActiveCharacterCard(characterCard.id) },
                     onExport = { onExportCharacterCard(characterCard.id, characterCard.name) },
+                    onToggleCollapsed = {
+                        onToggleCharacterCardCollapsed(characterCard.id)
+                    },
                     isSystemCard = CharacterCardManager.isSystemCharacterCard(characterCard.id)
                 )
+            }
+        }
+
+        if (collapsedCharacterCards.isNotEmpty()) {
+            item(key = "collapsed-character-cards-header") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            collapsedSectionExpanded = !collapsedSectionExpanded
+                        }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(
+                            R.string.collapsed_character_cards_count,
+                            collapsedCharacterCards.size
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        imageVector =
+                            if (collapsedSectionExpanded) {
+                                Icons.Default.KeyboardArrowUp
+                            } else {
+                                Icons.Default.KeyboardArrowDown
+                            },
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (collapsedSectionExpanded) {
+                items(collapsedCharacterCards, key = { "collapsed-${it.id}" }) { characterCard ->
+                    CharacterCardItem(
+                        characterCard = characterCard,
+                        isActive = (activePrompt as? ActivePrompt.CharacterCard)?.id == characterCard.id,
+                        allTags = allTags,
+                        onEdit = { onEditCharacterCard(characterCard) },
+                        onDelete = { onDeleteCharacterCard(characterCard) },
+                        onDuplicate = { onDuplicateCharacterCard(characterCard) },
+                        onReset = { onResetSystemCharacterCard(characterCard) },
+                        onSetActive = { onSetActiveCharacterCard(characterCard.id) },
+                        onExport = {
+                            onExportCharacterCard(characterCard.id, characterCard.name)
+                        },
+                        onToggleCollapsed = {
+                            onToggleCharacterCardCollapsed(characterCard.id)
+                        },
+                        isSystemCard = CharacterCardManager.isSystemCharacterCard(characterCard.id),
+                        isCollapsed = true
+                    )
+                }
             }
         }
     }
@@ -2364,7 +2444,9 @@ fun CharacterCardItem(
     onReset: () -> Unit,
     onSetActive: () -> Unit,
     onExport: () -> Unit,
+    onToggleCollapsed: () -> Unit,
     isSystemCard: Boolean = false,
+    isCollapsed: Boolean = false,
     isDragging: Boolean = false,
     dragHandle: (@Composable () -> Unit)? = null
 ) {
@@ -2435,6 +2517,24 @@ fun CharacterCardItem(
                 var showMenu by remember { mutableStateOf(false) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     dragHandle?.invoke()
+                    IconButton(
+                        onClick = onToggleCollapsed,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector =
+                                if (isCollapsed) Icons.Default.ArrowBack
+                                else Icons.Default.UnfoldLess,
+                            contentDescription =
+                                if (isCollapsed) {
+                                    stringResource(R.string.uncollapse_character_card)
+                                } else {
+                                    stringResource(R.string.collapse_character_card)
+                                },
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Box {
                         IconButton(
                             onClick = { showMenu = true },

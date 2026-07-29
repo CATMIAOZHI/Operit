@@ -4105,6 +4105,9 @@
     <string name="character_card_sort_default">Manual order</string>
     <string name="character_card_sort_by_name">By name</string>
     <string name="character_card_sort_by_created">By last updated time (newest first)</string>
+    <string name="collapsed_character_cards_count">Collapsed Character Cards (%d)</string>
+    <string name="collapse_character_card">Collapse character card</string>
+    <string name="uncollapse_character_card">Uncollapse character card</string>
     <string name="create_new">Create</string>
     <string name="ai_creation">AI Creation</string>
     <string name="edit">Edit</string>

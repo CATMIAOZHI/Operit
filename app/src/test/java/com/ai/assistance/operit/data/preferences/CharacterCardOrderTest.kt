@@ -50,4 +50,21 @@ class CharacterCardOrderTest {
             order
         )
     }
+
+    @Test
+    fun collapseToggle_addsAndRemovesCharacterCardId() {
+        val collapsed = toggleCollapsedCharacterCardId(emptySet(), "card-a")
+        assertEquals(setOf("card-a"), collapsed)
+
+        val expanded = toggleCollapsedCharacterCardId(collapsed, "card-a")
+        assertEquals(emptySet<String>(), expanded)
+    }
+
+    @Test
+    fun collapseToggle_ignoresBlankCharacterCardId() {
+        assertEquals(
+            setOf("card-a"),
+            toggleCollapsedCharacterCardId(setOf("card-a"), "")
+        )
+    }
 }
