@@ -165,7 +165,7 @@ CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并�
 
 晋升 PR 合并后，将稳定分支回合并到开发分支。由于晋升 PR 可能经过 squash，出现等价代码冲突时，通用代码以通过审查的 `personal/main` 为准，同时保留 dev 专属身份、Nightly 和热更新配置。
 
-如果 dev 仍有未包含在本轮晋升 PR 中的通用改动，合并前必须按从旧到新的顺序列出对应提交。每个提交只能属于一个待晋升功能，且不得混入 dev 专属配置；混合提交必须先通过 revert 和分块重提拆成单一职责的替代提交，不能继续建立检查点。
+如果 dev 仍有未包含在本轮晋升 PR 中的通用改动，合并前必须按从旧到新的顺序列出对应提交。每个提交必须是单父提交，只能属于一个待晋升功能，且不得混入 dev 专属配置；merge commit 或混合提交必须先通过 revert 和分块重提拆成单一职责的单父替代提交，不能继续建立检查点。
 
 检查点提交本身只允许包含“最新 main 通用代码 + dev 专属设施”。因此先按逆序暂时 revert 待晋升提交，再回合并 main；标签创建后，按原顺序逐提交 cherry-pick。这样即使通用改动和 dev 专属配置位于同一文件，也只移动待晋升提交实际修改的 hunk，并保留独立功能的提交边界。
 
@@ -173,48 +173,81 @@ CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并�
 git fetch origin personal/main personal/dev --tags
 git checkout personal/dev
 git pull --ff-only origin personal/dev
+MAIN_SHA=$(git rev-parse origin/personal/main)
 
 # 仅在仍有待晋升通用改动时执行本段。
 # 提交按从旧到新排列，并逐个检查不含 dev 专属配置或其他功能。
 PENDING_COMMITS=(<oldest-commit> ... <newest-commit>)
 for commit in "${PENDING_COMMITS[@]}"; do
+  read -r -a COMMIT_AND_PARENTS <<<"$(git rev-list --parents -n 1 "$commit")"
+  if ((${#COMMIT_AND_PARENTS[@]} != 2)); then
+    echo "Pending commit must have exactly one parent: $commit" >&2
+    exit 1
+  fi
   git show --stat --patch "$commit"
 done
 
 # 逆序移除待晋升功能，使检查点树不包含它们。
+REVERT_COMMITS=()
 for ((i=${#PENDING_COMMITS[@]}-1; i>=0; i--)); do
-  git revert --no-commit "${PENDING_COMMITS[$i]}"
+  REVERT_COMMITS+=("${PENDING_COMMITS[$i]}")
 done
+git revert --no-commit "${REVERT_COMMITS[@]}" || {
+  echo "Resolve and run git revert --continue, then resume at the conflict check; or run git revert --abort." >&2
+  exit 1
+}
 git diff --name-only --diff-filter=U  # 必须无输出
 git commit -m "chore(dev): suspend pending features for checkpoint"
 
 # 必须停在提交前；不得省略 --no-commit。
-git merge --no-ff --no-commit origin/personal/main
+git merge --no-ff --no-commit origin/personal/main || {
+  echo "Resolve and run git merge --continue, then resume at the merge-commit verification; or abort and restore pending features as documented below." >&2
+  exit 1
+}
 
 # 解决冲突：通用代码采用 main，dev 专属设施继续保留。
 git diff --name-only --diff-filter=U  # 必须无输出
-git commit -m "chore(dev): sync personal/main checkpoint"
+git commit -m "chore(dev): sync personal/main checkpoint" || exit 1
+
+# clean merge 提交或 merge --continue 后都必须从这里继续验证。
+test "$(git rev-parse HEAD^2)" = "$MAIN_SHA" || {
+  echo "HEAD is not the checkpoint merge for $MAIN_SHA" >&2
+  exit 1
+}
 ```
+
+若执行 `git merge --abort`，已经提交的 suspension 不会被撤销。此时不得推送 dev；必须重新执行一次 `git cherry-pick "${PENDING_COMMITS[@]}"`，处理完整序列并验证待晋升功能已经恢复。下次重试使用这次重放生成的新 commit SHA。
 
 在合并提交上创建 annotated tag；若暂时移除了待晋升提交，随后按原顺序逐个重放：
 
 ```bash
-MAIN_SHA=$(git rev-parse origin/personal/main)
 MAIN_SHORT=$(git rev-parse --short=8 origin/personal/main)
 CHECKPOINT="promotion-checkpoint/main-$(date +%Y%m%d)-$MAIN_SHORT"
+CHECKPOINT_SHA=$(git rev-parse HEAD)
 
 git tag -a "$CHECKPOINT" \
-  -m "Promotion checkpoint: personal/main $MAIN_SHA"
+  -m "Promotion checkpoint: personal/main $MAIN_SHA" || {
+  echo "Checkpoint tag already exists or could not be created; inspect it and do not continue." >&2
+  exit 1
+}
+test "$(git rev-parse "$CHECKPOINT^{}")" = "$CHECKPOINT_SHA" || {
+  echo "Checkpoint tag does not point to this checkpoint merge" >&2
+  exit 1
+}
 
-for commit in "${PENDING_COMMITS[@]}"; do
-  git cherry-pick "$commit"
-done
+git cherry-pick "${PENDING_COMMITS[@]}" || {
+  echo "Resolve and run git cherry-pick --continue until the sequence finishes; after --abort do not validate or push." >&2
+  exit 1
+}
 ```
 
-若 cherry-pick 发生冲突，必须保留 main 已审查修复和 dev 专属配置，只重放该提交所属功能的 hunk，验证后执行 `git cherry-pick --continue`。若没有待晋升通用改动，应省略 `PENDING_COMMITS`、revert 和 cherry-pick 段。确认 dev 专属配置仍然存在后，验证最终 dev 工作树：
+若 cherry-pick 发生冲突，必须保留 main 已审查修复和 dev 专属配置，只重放该提交所属功能的 hunk，验证后执行 `git cherry-pick --continue`。若执行 `git cherry-pick --abort`，dev 会停在缺少待晋升功能的检查点提交；此时不得进入验证或推送，必须重新执行完整 cherry-pick 序列或放弃本轮检查点并先恢复功能。若没有待晋升通用改动，应省略 `PENDING_COMMITS`、revert 和 cherry-pick 段。确认 dev 专属配置仍然存在后，验证最终 dev 工作树：
 
 ```bash
-git merge-base --is-ancestor origin/personal/main personal/dev
+git merge-base --is-ancestor origin/personal/main personal/dev || {
+  echo "personal/dev does not contain the fetched personal/main tip" >&2
+  exit 1
+}
 ./gradlew :app:compileDebugKotlin
 ./gradlew :app:testDebugUnitTest
 ```
@@ -222,6 +255,11 @@ git merge-base --is-ancestor origin/personal/main personal/dev
 最后原子推送 dev 与检查点标签，避免只发布其中一个：
 
 ```bash
+git fetch origin personal/main || exit 1
+test "$(git rev-parse origin/personal/main)" = "$MAIN_SHA" || {
+  echo "personal/main advanced; rebuild and retest the checkpoint from the new tip" >&2
+  exit 1
+}
 git push --atomic origin personal/dev "$CHECKPOINT"
 ```
 
