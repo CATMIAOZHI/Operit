@@ -697,7 +697,9 @@ class CharacterCardManager private constructor(private val context: Context) {
             savedDescription = preferences[rainyDescriptionKey],
             oldBuiltInDescriptions = setOf(
                 "Rainy是一位理性又活泼的AI小猫助手喵！",
-                "Rainy is a rational yet lively AI kitten assistant!"
+                "Rainy is a rational yet lively AI kitten assistant!",
+                "系统默认的角色卡",
+                "System default character card"
             ),
             newBuiltInDescription = RainyCharacterCardData.getDescription(context)
         )?.let { preferences[rainyDescriptionKey] = it }
