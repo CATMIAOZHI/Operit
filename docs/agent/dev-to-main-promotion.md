@@ -73,7 +73,8 @@ gh pr create --base personal/main --head fix/<short-name>
 
 ```bash
 git fetch origin personal/main personal/dev --tags
-git switch personal/dev
+git switch personal/dev || exit 1
+test "$(git branch --show-current)" = "personal/dev" || exit 1
 git pull --ff-only origin personal/dev
 git merge --no-ff origin/personal/main || {
   echo "Resolve and run git merge --continue before validation; or run git merge --abort." >&2
@@ -212,7 +213,11 @@ CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并�
 
 ```bash
 git fetch origin personal/main personal/dev --tags
-git checkout personal/dev
+git checkout personal/dev || exit 1
+test "$(git branch --show-current)" = "personal/dev" || {
+  echo "Checkpoint preparation must run on personal/dev" >&2
+  exit 1
+}
 git pull --ff-only origin personal/dev
 MAIN_SHA=$(git rev-parse origin/personal/main)
 
@@ -233,8 +238,8 @@ REVERT_COMMITS=()
 for ((i=${#PENDING_COMMITS[@]}-1; i>=0; i--)); do
   REVERT_COMMITS+=("${PENDING_COMMITS[$i]}")
 done
-git revert --no-commit "${REVERT_COMMITS[@]}" || {
-  echo "Resolve and repeat git revert --continue until the entire sequence finishes, then resume at the conflict check; or run git revert --abort." >&2
+git revert --no-edit "${REVERT_COMMITS[@]}" || {
+  echo "Resolve and repeat git revert --continue until the entire sequence finishes, then reload the variables documented below; or run git revert --abort." >&2
   exit 1
 }
 test ! -d "$(git rev-parse --git-path sequencer)" || {
@@ -245,7 +250,6 @@ test -z "$(git diff --name-only --diff-filter=U)" || {
   echo "The revert sequence still has unresolved files" >&2
   exit 1
 }
-git commit -m "chore(dev): suspend pending features for checkpoint" || exit 1
 
 # main 已经集成时创建显式空提交；否则必须停在 merge 提交前。
 CHECKPOINT_PARENT=$(git rev-parse HEAD)
@@ -254,7 +258,7 @@ if git merge-base --is-ancestor "$MAIN_SHA" HEAD; then
     -m "chore(dev): record personal/main checkpoint" || exit 1
 else
   git merge --no-ff --no-commit origin/personal/main || {
-    echo "Resolve and run git merge --continue, then resume at the checkpoint verification; or abort and restore pending features as documented below." >&2
+    echo "Resolve and run git merge --continue, then run the self-contained recovery block below; or abort and restore pending features as documented below." >&2
     exit 1
   }
 
@@ -271,7 +275,27 @@ test "$(git rev-parse HEAD^1)" = "$CHECKPOINT_PARENT" &&
 }
 ```
 
-若执行 `git merge --abort`，已经提交的 suspension 不会被撤销。此时不得推送 dev；必须重新执行一次 `git cherry-pick "${PENDING_COMMITS[@]}"`，处理完整序列并验证待晋升功能已经恢复。下次重试使用这次重放生成的新 commit SHA。
+若 revert 冲突导致 shell 退出，重复解决冲突并执行 `git revert --continue`，直到 sequencer 完成，然后在继续 checkpoint 创建前重新声明原列表并重新读取 main：
+
+```bash
+PENDING_COMMITS=(<same-oldest-commit> ... <same-newest-commit>)
+MAIN_SHA=$(git rev-parse origin/personal/main)
+```
+
+若 merge 冲突导致 shell 退出，解决后使用下面的自包含恢复块；它不依赖退出前的变量。存在待晋升提交时重新声明同一列表，然后从创建标签的代码块继续：
+
+```bash
+git merge --continue
+MAIN_SHA=$(git rev-parse origin/personal/main)
+test "$(git rev-parse HEAD^2)" = "$MAIN_SHA" &&
+  git merge-base --is-ancestor "$MAIN_SHA" HEAD || {
+  echo "Recovered merge does not contain the expected personal/main tip" >&2
+  exit 1
+}
+PENDING_COMMITS=(<same-oldest-commit> ... <same-newest-commit>)
+```
+
+若执行 `git merge --abort`，已经创建的 revert commits 不会被撤销。此时不得推送 dev；必须重新执行一次 `git cherry-pick "${PENDING_COMMITS[@]}"`，处理完整序列并验证待晋升功能已经恢复。下次重试使用这次重放生成的新 commit SHA。
 
 在检查点提交上创建 annotated tag；若暂时移除了待晋升提交，随后按原顺序逐个重放：
 
@@ -299,7 +323,8 @@ git cherry-pick "${PENDING_COMMITS[@]}" || {
 若 cherry-pick 发生冲突，必须保留 main 已审查修复和 dev 专属配置，只重放该提交所属功能的 hunk，验证后执行 `git cherry-pick --continue`。若执行 `git cherry-pick --abort`，dev 会停在缺少待晋升功能的检查点提交；此时不得进入验证或推送，必须重新执行完整 cherry-pick 序列或放弃本轮检查点并先恢复功能。若没有待晋升通用改动，应省略 `PENDING_COMMITS`、revert 和 cherry-pick 段。确认 dev 专属配置仍然存在后，验证最终 dev 工作树：
 
 ```bash
-git merge-base --is-ancestor origin/personal/main personal/dev || {
+test "$(git branch --show-current)" = "personal/dev" &&
+  git merge-base --is-ancestor origin/personal/main HEAD || {
   echo "personal/dev does not contain the fetched personal/main tip" >&2
   exit 1
 }
