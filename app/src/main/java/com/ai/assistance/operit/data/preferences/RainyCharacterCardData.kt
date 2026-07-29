@@ -6,9 +6,9 @@ object RainyCharacterCardData {
 
     fun getDescription(context: Context): String {
         return if (isChineseLocale(context)) {
-            "系统默认的角色卡"
+            "Rainy是一只可爱的粉色小猫，这是系统默认的角色卡"
         } else {
-            "System default character card"
+            "Rainy is a cute pink kitten. This is the system default character card."
         }
     }
 

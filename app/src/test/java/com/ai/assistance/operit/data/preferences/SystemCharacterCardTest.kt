@@ -92,6 +92,28 @@ class SystemCharacterCardTest {
     }
 
     @Test
+    fun rainyBuiltInDescription_isMigratedButCustomizationIsPreserved() {
+        val oldDescriptions = setOf(
+            "Rainy是一位理性又活泼的AI小猫助手喵！",
+            "Rainy is a rational yet lively AI kitten assistant!",
+            "系统默认的角色卡",
+            "System default character card"
+        )
+        val newDescription = "Rainy是一只可爱的粉色小猫，这是系统默认的角色卡"
+
+        oldDescriptions.forEach { oldDescription ->
+            assertEquals(
+                newDescription,
+                migrateBuiltInDescription(oldDescription, oldDescriptions, newDescription)
+            )
+        }
+        assertEquals(
+            "我的 Rainy 描述",
+            migrateBuiltInDescription("我的 Rainy 描述", oldDescriptions, newDescription)
+        )
+    }
+
+    @Test
     fun firstInitialization_placesRainyFirst() {
         val order = resolveSystemCharacterCardOrder(
             savedOrder = emptyList(),
