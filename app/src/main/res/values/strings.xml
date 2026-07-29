@@ -4037,7 +4037,7 @@
     <string name="duplicate_successful">创建副本成功</string>
     <string name="character_card_management">角色卡管理</string>
     <string name="character_card_sort">排序</string>
-    <string name="character_card_sort_default">默认顺序</string>
+    <string name="character_card_sort_default">手动顺序</string>
     <string name="character_card_sort_by_name">按名称</string>
     <string name="character_card_sort_by_created">按最近更新时间</string>
     <string name="create_new">新建</string>

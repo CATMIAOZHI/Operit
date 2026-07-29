@@ -46,6 +46,35 @@ private val Context.characterCardDataStore by preferencesDataStore(
     name = "character_cards"
 )
 
+internal fun reconcileCharacterCardOrder(
+    savedOrder: List<String>,
+    cardIds: Collection<String>
+): List<String> {
+    val availableIds = cardIds.toSet()
+    return buildList {
+        val addedIds = mutableSetOf<String>()
+        savedOrder.forEach { id ->
+            if (id in availableIds && addedIds.add(id)) {
+                add(id)
+            }
+        }
+        cardIds.forEach { id ->
+            if (addedIds.add(id)) {
+                add(id)
+            }
+        }
+    }
+}
+
+internal fun reconcileCharacterCardOrderAfterUpsert(
+    savedOrder: List<String>,
+    cardIds: Collection<String>,
+    upsertedId: String
+): List<String> {
+    val currentOrder = reconcileCharacterCardOrder(savedOrder, cardIds)
+    return if (upsertedId in cardIds) currentOrder else currentOrder + upsertedId
+}
+
 /**
  * 角色卡管理器
  */
@@ -61,6 +90,7 @@ class CharacterCardManager private constructor(private val context: Context) {
     
     companion object {
         private val CHARACTER_CARD_LIST = stringSetPreferencesKey("character_card_list")
+        private val CHARACTER_CARD_ORDER = stringPreferencesKey("character_card_order")
         private val ACTIVE_CHARACTER_CARD_ID = stringPreferencesKey("active_character_card_id")
 
         // 默认角色卡ID
@@ -80,10 +110,31 @@ class CharacterCardManager private constructor(private val context: Context) {
             }
         }
     }
+
+    private val characterCardOrderJson = Json { ignoreUnknownKeys = true }
+
+    private fun readCharacterCardOrder(preferences: Preferences): List<String> {
+        val rawOrder = preferences[CHARACTER_CARD_ORDER] ?: return emptyList()
+        return runCatching {
+            characterCardOrderJson.decodeFromString<List<String>>(rawOrder)
+        }.getOrElse {
+            AppLogger.e("CharacterCardManager", "解析角色卡顺序失败", it)
+            emptyList()
+        }
+    }
+
+    private fun writeCharacterCardOrder(
+        preferences: MutablePreferences,
+        orderedIds: List<String>
+    ) {
+        preferences[CHARACTER_CARD_ORDER] =
+            characterCardOrderJson.encodeToString(orderedIds)
+    }
     
     // 角色卡列表流
     val characterCardListFlow: Flow<List<String>> = dataStore.data.map { preferences ->
-        preferences[CHARACTER_CARD_LIST]?.toList() ?: emptyList()
+        val cardIds = preferences[CHARACTER_CARD_LIST] ?: emptySet()
+        reconcileCharacterCardOrder(readCharacterCardOrder(preferences), cardIds)
     }
     
     // 活跃角色卡ID流（可以为null）
@@ -244,10 +295,14 @@ class CharacterCardManager private constructor(private val context: Context) {
         dataStore.edit { preferences ->
             // 添加到角色卡列表
             val currentList = preferences[CHARACTER_CARD_LIST]?.toMutableSet() ?: mutableSetOf(DEFAULT_CHARACTER_CARD_ID)
-            if (!currentList.contains(id)) {
-                currentList.add(id)
-                preferences[CHARACTER_CARD_LIST] = currentList
-            }
+            val updatedOrder = reconcileCharacterCardOrderAfterUpsert(
+                readCharacterCardOrder(preferences),
+                currentList,
+                id
+            )
+            currentList.add(id)
+            preferences[CHARACTER_CARD_LIST] = currentList
+            writeCharacterCardOrder(preferences, updatedOrder)
             
             // 设置角色卡数据
             preferences[stringPreferencesKey("character_card_${id}_name")] = newCard.name
@@ -340,6 +395,10 @@ class CharacterCardManager private constructor(private val context: Context) {
             val currentList = preferences[CHARACTER_CARD_LIST]?.toMutableSet() ?: mutableSetOf(DEFAULT_CHARACTER_CARD_ID)
             currentList.remove(id)
             preferences[CHARACTER_CARD_LIST] = currentList
+            writeCharacterCardOrder(
+                preferences,
+                reconcileCharacterCardOrder(readCharacterCardOrder(preferences), currentList)
+            )
             
             // 清除角色卡数据
             val keysToRemove = listOf(
@@ -542,7 +601,7 @@ class CharacterCardManager private constructor(private val context: Context) {
         preferences[createdAtKey] = System.currentTimeMillis()
         preferences[updatedAtKey] = System.currentTimeMillis()
     }
-    
+
     // 获取所有角色卡
     suspend fun getAllCharacterCards(): List<CharacterCard> {
         val cardIds = characterCardListFlow.first()
@@ -552,6 +611,16 @@ class CharacterCardManager private constructor(private val context: Context) {
             } catch (e: Exception) {
                 null
             }
+        }
+    }
+
+    suspend fun updateCharacterCardOrder(orderedIds: List<String>) {
+        dataStore.edit { preferences ->
+            val cardIds = preferences[CHARACTER_CARD_LIST] ?: emptySet()
+            writeCharacterCardOrder(
+                preferences,
+                reconcileCharacterCardOrder(orderedIds, cardIds)
+            )
         }
     }
 
@@ -733,10 +802,14 @@ class CharacterCardManager private constructor(private val context: Context) {
         dataStore.edit { preferences ->
             val id = card.id
             val currentList = preferences[CHARACTER_CARD_LIST]?.toMutableSet() ?: mutableSetOf(DEFAULT_CHARACTER_CARD_ID)
-            if (!currentList.contains(id)) {
-                currentList.add(id)
-                preferences[CHARACTER_CARD_LIST] = currentList
-            }
+            val updatedOrder = reconcileCharacterCardOrderAfterUpsert(
+                readCharacterCardOrder(preferences),
+                currentList,
+                id
+            )
+            currentList.add(id)
+            preferences[CHARACTER_CARD_LIST] = currentList
+            writeCharacterCardOrder(preferences, updatedOrder)
 
             preferences[stringPreferencesKey("character_card_${id}_name")] = card.name
             preferences[stringPreferencesKey("character_card_${id}_description")] = card.description
