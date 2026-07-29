@@ -100,6 +100,8 @@ import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
 import coil.compose.AsyncImage
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -615,10 +617,7 @@ fun ModelPromptsSettingsScreen(
     // 获取所有角色卡
     var allCharacterCards by remember { mutableStateOf(emptyList<CharacterCard>()) }
     LaunchedEffect(characterCardList, refreshTrigger) {
-        scope.launch {
-            val cards = characterCardManager.getAllCharacterCards()
-            allCharacterCards = cards
-        }
+        allCharacterCards = characterCardManager.getAllCharacterCards()
     }
     val allCharacterGroups by characterGroupCardManager.allCharacterGroupCardsFlow.collectAsState(initial = emptyList())
 
@@ -926,6 +925,11 @@ fun ModelPromptsSettingsScreen(
                             scope.launch {
                                 activePromptManager.setActivePrompt(ActivePrompt.CharacterCard(cardId))
                                 refreshTrigger++
+                            }
+                        },
+                        onReorderCharacterCards = { orderedIds ->
+                            scope.launch {
+                                characterCardManager.updateCharacterCardOrder(orderedIds)
                             }
                         },
                         onNavigateToPersonaGeneration = onNavigateToPersonaGeneration,
@@ -1990,7 +1994,7 @@ fun ModelPromptsSettingsScreen(
 }
 
 enum class CharacterCardSortOption {
-    DEFAULT,
+    MANUAL,
     NAME_ASC,
     CREATED_DESC
 }
@@ -2013,6 +2017,7 @@ fun CharacterCardTab(
     onDuplicateCharacterCard: (CharacterCard) -> Unit,
     onResetDefaultCharacterCard: () -> Unit,
     onSetActiveCharacterCard: (String) -> Unit,
+    onReorderCharacterCards: (List<String>) -> Unit,
     onNavigateToPersonaGeneration: () -> Unit,
     onImportTavernCard: () -> Unit,
     onImportColorQrCode: () -> Unit,
@@ -2021,23 +2026,54 @@ fun CharacterCardTab(
 ) {
     val sortOptionNameState = rememberLocal(
         key = "ModelPromptsSettingsScreen.CharacterCardTab.sortOption",
-        defaultValue = CharacterCardSortOption.DEFAULT.name
+        defaultValue = CharacterCardSortOption.MANUAL.name
     )
     val sortOption = remember(sortOptionNameState.value) {
-        runCatching { CharacterCardSortOption.valueOf(sortOptionNameState.value) }
-            .getOrDefault(CharacterCardSortOption.DEFAULT)
+        if (sortOptionNameState.value == "DEFAULT") {
+            CharacterCardSortOption.MANUAL
+        } else {
+            runCatching { CharacterCardSortOption.valueOf(sortOptionNameState.value) }
+                .getOrDefault(CharacterCardSortOption.MANUAL)
+        }
     }
     var sortMenuExpanded by remember { mutableStateOf(false) }
+    var manuallyOrderedCards by remember(characterCards) { mutableStateOf(characterCards) }
+    var reorderChanged by remember { mutableStateOf(false) }
 
     val sortedCharacterCards = remember(characterCards, sortOption) {
         when (sortOption) {
-            CharacterCardSortOption.DEFAULT -> characterCards
+            CharacterCardSortOption.MANUAL -> characterCards
             CharacterCardSortOption.NAME_ASC -> characterCards.sortedBy { it.name.lowercase() }
             CharacterCardSortOption.CREATED_DESC -> characterCards.sortedByDescending { it.updatedAt }
         }
     }
+    val displayedCharacterCards =
+        if (sortOption == CharacterCardSortOption.MANUAL) {
+            manuallyOrderedCards
+        } else {
+            sortedCharacterCards
+        }
+    val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
+        if (sortOption != CharacterCardSortOption.MANUAL) {
+            return@rememberReorderableLazyListState
+        }
+        val fromIndex = from.index - 1
+        val toIndex = to.index - 1
+        if (fromIndex !in manuallyOrderedCards.indices ||
+            toIndex !in manuallyOrderedCards.indices ||
+            fromIndex == toIndex
+        ) {
+            return@rememberReorderableLazyListState
+        }
+        manuallyOrderedCards = manuallyOrderedCards.toMutableList().apply {
+            add(toIndex, removeAt(fromIndex))
+        }
+        reorderChanged = true
+    }
 
     LazyColumn(
+        state = lazyListState,
         modifier = Modifier
             .fillMaxSize()
             .padding(12.dp),
@@ -2165,7 +2201,7 @@ fun CharacterCardTab(
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.character_card_sort_default)) },
                                 onClick = {
-                                    sortOptionNameState.value = CharacterCardSortOption.DEFAULT.name
+                                    sortOptionNameState.value = CharacterCardSortOption.MANUAL.name
                                     sortMenuExpanded = false
                                 }
                             )
@@ -2190,18 +2226,61 @@ fun CharacterCardTab(
         }
 
         // 角色卡列表
-        items(sortedCharacterCards) { characterCard ->
-            CharacterCardItem(
-                characterCard = characterCard,
-                isActive = (activePrompt as? ActivePrompt.CharacterCard)?.id == characterCard.id,
-                allTags = allTags,
-                onEdit = { onEditCharacterCard(characterCard) },
-                onDelete = { onDeleteCharacterCard(characterCard) },
-                onDuplicate = { onDuplicateCharacterCard(characterCard) },
-                onReset = onResetDefaultCharacterCard,
-                onSetActive = { onSetActiveCharacterCard(characterCard.id) },
-                onExport = { onExportCharacterCard(characterCard.id, characterCard.name) }
-            )
+        items(displayedCharacterCards, key = { it.id }) { characterCard ->
+            if (sortOption == CharacterCardSortOption.MANUAL) {
+                ReorderableItem(
+                    reorderableState,
+                    key = characterCard.id
+                ) { isDragging ->
+                    CharacterCardItem(
+                        characterCard = characterCard,
+                        isActive = (activePrompt as? ActivePrompt.CharacterCard)?.id == characterCard.id,
+                        allTags = allTags,
+                        onEdit = { onEditCharacterCard(characterCard) },
+                        onDelete = { onDeleteCharacterCard(characterCard) },
+                        onDuplicate = { onDuplicateCharacterCard(characterCard) },
+                        onReset = onResetDefaultCharacterCard,
+                        onSetActive = { onSetActiveCharacterCard(characterCard.id) },
+                        onExport = { onExportCharacterCard(characterCard.id, characterCard.name) },
+                        isDragging = isDragging,
+                        dragHandle = {
+                            Icon(
+                                imageVector = Icons.Default.DragHandle,
+                                contentDescription = stringResource(R.string.drag_to_reorder),
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .padding(6.dp)
+                                    .draggableHandle(
+                                        onDragStarted = {
+                                            reorderChanged = false
+                                        },
+                                        onDragStopped = {
+                                            if (reorderChanged) {
+                                                onReorderCharacterCards(
+                                                    manuallyOrderedCards.map { it.id }
+                                                )
+                                            }
+                                            reorderChanged = false
+                                        }
+                                    ),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    )
+                }
+            } else {
+                CharacterCardItem(
+                    characterCard = characterCard,
+                    isActive = (activePrompt as? ActivePrompt.CharacterCard)?.id == characterCard.id,
+                    allTags = allTags,
+                    onEdit = { onEditCharacterCard(characterCard) },
+                    onDelete = { onDeleteCharacterCard(characterCard) },
+                    onDuplicate = { onDuplicateCharacterCard(characterCard) },
+                    onReset = onResetDefaultCharacterCard,
+                    onSetActive = { onSetActiveCharacterCard(characterCard.id) },
+                    onExport = { onExportCharacterCard(characterCard.id, characterCard.name) }
+                )
+            }
         }
     }
 }
@@ -2255,7 +2334,9 @@ fun CharacterCardItem(
     onDuplicate: () -> Unit,
     onReset: () -> Unit,
     onSetActive: () -> Unit,
-    onExport: () -> Unit
+    onExport: () -> Unit,
+    isDragging: Boolean = false,
+    dragHandle: (@Composable () -> Unit)? = null
 ) {
     val context = LocalContext.current
     val userPreferencesManager = remember { UserPreferencesManager.getInstance(context) }
@@ -2268,6 +2349,9 @@ fun CharacterCardItem(
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = if (isDragging) 6.dp else 0.dp
         ),
         border = BorderStroke(
             width = 0.5.dp,
@@ -2319,24 +2403,26 @@ fun CharacterCardItem(
 
                 // 三点菜单
                 var showMenu by remember { mutableStateOf(false) }
-                Box {
-                    IconButton(
-                        onClick = { showMenu = true },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            Icons.Outlined.MoreVert,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false },
-                        modifier = Modifier
-                            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(8.dp))
-                    ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    dragHandle?.invoke()
+                    Box {
+                        IconButton(
+                            onClick = { showMenu = true },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.MoreVert,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(8.dp))
+                        ) {
                         if (!isActive) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.set_active)) },
@@ -2435,6 +2521,7 @@ fun CharacterCardItem(
                                     textColor = MaterialTheme.colorScheme.error
                                 )
                             )
+                        }
                         }
                     }
                 }

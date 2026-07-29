@@ -4100,7 +4100,7 @@
     <string name="duplicate_successful">Duplicate created successfully</string>
     <string name="character_card_management">Card Management</string>
     <string name="character_card_sort">Sort</string>
-    <string name="character_card_sort_default">Default order</string>
+    <string name="character_card_sort_default">Manual order</string>
     <string name="character_card_sort_by_name">By name</string>
     <string name="character_card_sort_by_created">By last updated time (newest first)</string>
     <string name="create_new">Create</string>
