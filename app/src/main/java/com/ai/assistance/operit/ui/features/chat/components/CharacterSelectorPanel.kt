@@ -12,11 +12,17 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Sort
+import androidx.compose.material.icons.filled.UnfoldLess
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Groups
@@ -46,7 +52,10 @@ import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.rememberAsyncImagePainter
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.flowOf
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 
 private enum class CharacterSelectorSortOption {
     DEFAULT,
@@ -85,8 +94,11 @@ fun CharacterSelectorPanel(
     val characterCardManager = remember { CharacterCardManager.getInstance(context) }
     val characterGroupCardManager = remember { CharacterGroupCardManager.getInstance(context) }
     val activePromptManager = remember { ActivePromptManager.getInstance(context) }
+    val scope = rememberCoroutineScope()
     var allCards by remember { mutableStateOf<List<CharacterCard>>(emptyList()) }
     var allGroups by remember { mutableStateOf<List<CharacterGroupCard>>(emptyList()) }
+    val collapsedCharacterCardIds by
+        characterCardManager.collapsedCharacterCardIdsFlow.collectAsState(initial = emptySet())
     val activePrompt by activePromptManager.activePromptFlow.collectAsState(
         initial = ActivePrompt.CharacterCard(CharacterCardManager.DEFAULT_CHARACTER_CARD_ID)
     )
@@ -97,8 +109,44 @@ fun CharacterSelectorPanel(
         defaultValue = CharacterSelectorSortOption.DEFAULT.name
     )
     var sortMenuExpanded by remember { mutableStateOf(false) }
-    val sortedCards = remember(allCards, sortOptionNameState.value) {
-        applyCharacterSelectorSort(allCards, sortOptionNameState.value)
+    var collapsedSectionExpanded by remember { mutableStateOf(false) }
+    var manuallyOrderedCards by remember(allCards) { mutableStateOf(allCards) }
+    var reorderChanged by remember { mutableStateOf(false) }
+    val sortOption =
+        remember(sortOptionNameState.value) {
+            runCatching { CharacterSelectorSortOption.valueOf(sortOptionNameState.value) }
+                .getOrDefault(CharacterSelectorSortOption.DEFAULT)
+        }
+    val sortedCards = remember(allCards, manuallyOrderedCards, sortOption) {
+        if (sortOption == CharacterSelectorSortOption.DEFAULT) {
+            manuallyOrderedCards
+        } else {
+            applyCharacterSelectorSort(allCards, sortOption.name)
+        }
+    }
+    val (uncollapsedCards, collapsedCards) =
+        remember(sortedCards, collapsedCharacterCardIds) {
+            sortedCards.partition { it.id !in collapsedCharacterCardIds }
+        }
+    val lazyListState = rememberLazyListState()
+    val characterCardStartIndex = if (allGroups.isNotEmpty()) allGroups.size + 3 else 1
+    val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
+        if (sortOption != CharacterSelectorSortOption.DEFAULT) {
+            return@rememberReorderableLazyListState
+        }
+        val fromIndex = from.index - characterCardStartIndex
+        val toIndex = to.index - characterCardStartIndex
+        if (fromIndex !in uncollapsedCards.indices ||
+            toIndex !in uncollapsedCards.indices ||
+            fromIndex == toIndex
+        ) {
+            return@rememberReorderableLazyListState
+        }
+        val reorderedUncollapsedCards = uncollapsedCards.toMutableList().apply {
+            add(toIndex, removeAt(fromIndex))
+        }
+        manuallyOrderedCards = reorderedUncollapsedCards + collapsedCards
+        reorderChanged = true
     }
 
     LaunchedEffect(isVisible) {
@@ -247,6 +295,7 @@ fun CharacterSelectorPanel(
                         
                         // 角色列表
                         LazyColumn(
+                            state = lazyListState,
                             modifier = Modifier.heightIn(max = 320.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
@@ -279,15 +328,142 @@ fun CharacterSelectorPanel(
                                     modifier = Modifier.padding(top = 2.dp, bottom = 2.dp)
                                 )
                             }
-                            items(sortedCards, key = { it.id }) { card ->
-                                CharacterItem(
-                                    card = card,
-                                    isSelected = activeGroupId.isNullOrBlank() && card.id == activeCardId,
-                                    onClick = {
-                                        onSelectCharacter(CharacterSelectorTarget.CharacterCardTarget(card.id))
-                                        onDismiss()
+                            items(uncollapsedCards, key = { it.id }) { card ->
+                                if (sortOption == CharacterSelectorSortOption.DEFAULT) {
+                                    ReorderableItem(
+                                        reorderableState,
+                                        key = card.id
+                                    ) { isDragging ->
+                                        CharacterItem(
+                                            card = card,
+                                            isSelected =
+                                                activeGroupId.isNullOrBlank() &&
+                                                    card.id == activeCardId,
+                                            onToggleCollapsed = {
+                                                scope.launch {
+                                                    characterCardManager
+                                                        .toggleCharacterCardCollapsed(card.id)
+                                                }
+                                            },
+                                            isDragging = isDragging,
+                                            dragHandle = {
+                                                Icon(
+                                                    imageVector = Icons.Default.DragHandle,
+                                                    contentDescription =
+                                                        stringResource(R.string.drag_to_reorder),
+                                                    modifier = Modifier
+                                                        .size(32.dp)
+                                                        .padding(6.dp)
+                                                        .draggableHandle(
+                                                            onDragStarted = {
+                                                                reorderChanged = false
+                                                            },
+                                                            onDragStopped = {
+                                                                if (reorderChanged) {
+                                                                    scope.launch {
+                                                                        characterCardManager
+                                                                            .updateCharacterCardOrder(
+                                                                                manuallyOrderedCards
+                                                                                    .map { it.id }
+                                                                            )
+                                                                    }
+                                                                }
+                                                                reorderChanged = false
+                                                            }
+                                                        ),
+                                                    tint =
+                                                        MaterialTheme.colorScheme
+                                                            .onSurfaceVariant
+                                                )
+                                            },
+                                            onClick = {
+                                                onSelectCharacter(
+                                                    CharacterSelectorTarget.CharacterCardTarget(
+                                                        card.id
+                                                    )
+                                                )
+                                                onDismiss()
+                                            }
+                                        )
                                     }
-                                )
+                                } else {
+                                    CharacterItem(
+                                        card = card,
+                                        isSelected =
+                                            activeGroupId.isNullOrBlank() && card.id == activeCardId,
+                                        onToggleCollapsed = {
+                                            scope.launch {
+                                                characterCardManager
+                                                    .toggleCharacterCardCollapsed(card.id)
+                                            }
+                                        },
+                                        onClick = {
+                                            onSelectCharacter(
+                                                CharacterSelectorTarget.CharacterCardTarget(card.id)
+                                            )
+                                            onDismiss()
+                                        }
+                                    )
+                                }
+                            }
+                            if (collapsedCards.isNotEmpty()) {
+                                item(key = "collapsed-character-cards-header") {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                collapsedSectionExpanded = !collapsedSectionExpanded
+                                            }
+                                            .padding(vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = stringResource(
+                                                R.string.collapsed_character_cards_count,
+                                                collapsedCards.size
+                                            ),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Icon(
+                                            imageVector =
+                                                if (collapsedSectionExpanded) {
+                                                    Icons.Default.KeyboardArrowUp
+                                                } else {
+                                                    Icons.Default.KeyboardArrowDown
+                                                },
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                if (collapsedSectionExpanded) {
+                                    items(collapsedCards, key = { "collapsed-${it.id}" }) { card ->
+                                        CharacterItem(
+                                            card = card,
+                                            isSelected =
+                                                activeGroupId.isNullOrBlank() &&
+                                                    card.id == activeCardId,
+                                            isCollapsed = true,
+                                            onToggleCollapsed = {
+                                                scope.launch {
+                                                    characterCardManager
+                                                        .toggleCharacterCardCollapsed(card.id)
+                                                }
+                                            },
+                                            onClick = {
+                                                onSelectCharacter(
+                                                    CharacterSelectorTarget.CharacterCardTarget(
+                                                        card.id
+                                                    )
+                                                )
+                                                onDismiss()
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -301,6 +477,10 @@ fun CharacterSelectorPanel(
 fun CharacterItem(
     card: CharacterCard,
     isSelected: Boolean,
+    onToggleCollapsed: () -> Unit,
+    isCollapsed: Boolean = false,
+    isDragging: Boolean = false,
+    dragHandle: (@Composable () -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -328,7 +508,8 @@ fun CharacterItem(
         border = androidx.compose.foundation.BorderStroke(
             width = if (isSelected) 1.dp else 0.dp,
             color = borderColor
-        )
+        ),
+        shadowElevation = if (isDragging) 4.dp else 0.dp
     ) {
         Row(
             modifier = Modifier
@@ -391,6 +572,26 @@ fun CharacterItem(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
+
+            dragHandle?.invoke()
+
+            IconButton(
+                onClick = onToggleCollapsed,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector =
+                        if (isCollapsed) Icons.Default.ArrowBack else Icons.Default.UnfoldLess,
+                    contentDescription =
+                        if (isCollapsed) {
+                            stringResource(R.string.uncollapse_character_card)
+                        } else {
+                            stringResource(R.string.collapse_character_card)
+                        },
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             
             // 选中状态指示器（右侧）

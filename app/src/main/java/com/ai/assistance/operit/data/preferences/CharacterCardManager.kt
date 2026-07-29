@@ -120,6 +120,18 @@ internal fun shouldInstallBuiltInSystemAvatar(savedAvatarUri: String?): Boolean 
     return savedAvatarUri.isNullOrBlank()
 }
 
+internal fun toggleCollapsedCharacterCardId(
+    collapsedIds: Set<String>,
+    characterCardId: String
+): Set<String> {
+    if (characterCardId.isBlank()) return collapsedIds
+    return if (characterCardId in collapsedIds) {
+        collapsedIds - characterCardId
+    } else {
+        collapsedIds + characterCardId
+    }
+}
+
 /**
  * 角色卡管理器
  */
@@ -136,6 +148,8 @@ class CharacterCardManager private constructor(private val context: Context) {
     companion object {
         private val CHARACTER_CARD_LIST = stringSetPreferencesKey("character_card_list")
         private val CHARACTER_CARD_ORDER = stringPreferencesKey("character_card_order")
+        private val COLLAPSED_CHARACTER_CARD_IDS =
+            stringPreferencesKey("collapsed_character_card_ids")
         private val ACTIVE_CHARACTER_CARD_ID = stringPreferencesKey("active_character_card_id")
 
         // 默认角色卡ID
@@ -182,11 +196,23 @@ class CharacterCardManager private constructor(private val context: Context) {
             characterCardOrderJson.encodeToString(orderedIds)
     }
 
+    private fun readCollapsedCharacterCardIds(preferences: Preferences): Set<String> {
+        val rawIds = preferences[COLLAPSED_CHARACTER_CARD_IDS] ?: return emptySet()
+        return runCatching {
+            characterCardOrderJson.decodeFromString<List<String>>(rawIds)
+                .filter { it.isNotBlank() }
+                .toSet()
+        }.getOrDefault(emptySet())
+    }
+
     // 角色卡列表流
     val characterCardListFlow: Flow<List<String>> = dataStore.data.map { preferences ->
         val cardIds = preferences[CHARACTER_CARD_LIST] ?: emptySet()
         reconcileCharacterCardOrder(readCharacterCardOrder(preferences), cardIds)
     }
+
+    val collapsedCharacterCardIdsFlow: Flow<Set<String>> =
+        dataStore.data.map(::readCollapsedCharacterCardIds)
     
     // 活跃角色卡ID流（可以为null）
     private val activeCharacterCardIdFlow: Flow<String?> = dataStore.data.map { preferences ->
@@ -450,6 +476,9 @@ class CharacterCardManager private constructor(private val context: Context) {
                 preferences,
                 reconcileCharacterCardOrder(readCharacterCardOrder(preferences), currentList)
             )
+            val collapsedIds = readCollapsedCharacterCardIds(preferences) - id
+            preferences[COLLAPSED_CHARACTER_CARD_IDS] =
+                characterCardOrderJson.encodeToString(collapsedIds.toList())
             
             // 清除角色卡数据
             val keysToRemove = listOf(
@@ -758,6 +787,16 @@ class CharacterCardManager private constructor(private val context: Context) {
                 preferences,
                 reconcileCharacterCardOrder(orderedIds, cardIds)
             )
+        }
+    }
+
+    suspend fun toggleCharacterCardCollapsed(id: String) {
+        if (id.isBlank()) return
+        dataStore.edit { preferences ->
+            val updatedIds =
+                toggleCollapsedCharacterCardId(readCollapsedCharacterCardIds(preferences), id)
+            preferences[COLLAPSED_CHARACTER_CARD_IDS] =
+                characterCardOrderJson.encodeToString(updatedIds.toList())
         }
     }
 
