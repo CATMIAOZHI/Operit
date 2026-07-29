@@ -165,32 +165,38 @@ CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并�
 
 晋升 PR 合并后，将稳定分支回合并到开发分支。由于晋升 PR 可能经过 squash，出现等价代码冲突时，通用代码以通过审查的 `personal/main` 为准，同时保留 dev 专属身份、Nightly 和热更新配置。
 
-如果 dev 仍有未包含在本轮晋升 PR 中的通用改动，合并前必须明确列出这些路径，并保存它们相对最新 main 的补丁；每个路径只能包含尚未晋升的差异，若同一文件混有已晋升和待晋升改动，必须先拆分提交或补丁。检查点提交本身只允许包含“最新 main 通用代码 + dev 专属设施”：合并必须停在提交前，从检查点树中剥离待晋升改动，提交并打标签后再重放补丁。不得把它们吞进检查点，也不得在解决冲突时丢弃。
+如果 dev 仍有未包含在本轮晋升 PR 中的通用改动，合并前必须按从旧到新的顺序列出对应提交。每个提交只能属于一个待晋升功能，且不得混入 dev 专属配置；混合提交必须先通过 revert 和分块重提拆成单一职责的替代提交，不能继续建立检查点。
+
+检查点提交本身只允许包含“最新 main 通用代码 + dev 专属设施”。因此先按逆序暂时 revert 待晋升提交，再回合并 main；标签创建后，按原顺序逐提交 cherry-pick。这样即使通用改动和 dev 专属配置位于同一文件，也只移动待晋升提交实际修改的 hunk，并保留独立功能的提交边界。
 
 ```bash
 git fetch origin personal/main personal/dev --tags
 git checkout personal/dev
 git pull --ff-only origin personal/dev
 
-# 仅在仍有待晋升的通用改动时执行这四行；路径必须逐项人工确认。
-DEV_BEFORE_SYNC=$(git rev-parse HEAD)
-PENDING_GENERAL_PATHS=(path/to/pending-file ...)
-PENDING_PATCH=$(mktemp)
-git diff --binary origin/personal/main "$DEV_BEFORE_SYNC" \
-  -- "${PENDING_GENERAL_PATHS[@]}" > "$PENDING_PATCH"
+# 仅在仍有待晋升通用改动时执行本段。
+# 提交按从旧到新排列，并逐个检查不含 dev 专属配置或其他功能。
+PENDING_COMMITS=(<oldest-commit> ... <newest-commit>)
+for commit in "${PENDING_COMMITS[@]}"; do
+  git show --stat --patch "$commit"
+done
+
+# 逆序移除待晋升功能，使检查点树不包含它们。
+for ((i=${#PENDING_COMMITS[@]}-1; i>=0; i--)); do
+  git revert --no-commit "${PENDING_COMMITS[$i]}"
+done
+git diff --name-only --diff-filter=U  # 必须无输出
+git commit -m "chore(dev): suspend pending features for checkpoint"
 
 # 必须停在提交前；不得省略 --no-commit。
 git merge --no-ff --no-commit origin/personal/main
 
-# 解决其余冲突，并保留 dev 专属设施。若保存了待晋升补丁，
-# 先把对应路径恢复为 main 版本，避免非冲突改动被检查点吞掉。
-git restore --source=origin/personal/main --staged --worktree \
-  -- "${PENDING_GENERAL_PATHS[@]}"
+# 解决冲突：通用代码采用 main，dev 专属设施继续保留。
 git diff --name-only --diff-filter=U  # 必须无输出
 git commit -m "chore(dev): sync personal/main checkpoint"
 ```
 
-在合并提交上创建 annotated tag；若保存了待晋升补丁，随后将其重放为检查点之后的独立提交：
+在合并提交上创建 annotated tag；若暂时移除了待晋升提交，随后按原顺序逐个重放：
 
 ```bash
 MAIN_SHA=$(git rev-parse origin/personal/main)
@@ -200,11 +206,12 @@ CHECKPOINT="promotion-checkpoint/main-$(date +%Y%m%d)-$MAIN_SHORT"
 git tag -a "$CHECKPOINT" \
   -m "Promotion checkpoint: personal/main $MAIN_SHA"
 
-git apply --index "$PENDING_PATCH"
-git commit -m "chore(dev): retain pending general changes"
+for commit in "${PENDING_COMMITS[@]}"; do
+  git cherry-pick "$commit"
+done
 ```
 
-若没有待晋升通用改动，应省略 `PENDING_GENERAL_PATHS`、`PENDING_PATCH`、`git restore`、`git apply` 和第二个提交。确认 dev 专属配置仍然存在后，验证最终 dev 工作树：
+若 cherry-pick 发生冲突，必须保留 main 已审查修复和 dev 专属配置，只重放该提交所属功能的 hunk，验证后执行 `git cherry-pick --continue`。若没有待晋升通用改动，应省略 `PENDING_COMMITS`、revert 和 cherry-pick 段。确认 dev 专属配置仍然存在后，验证最终 dev 工作树：
 
 ```bash
 git merge-base --is-ancestor origin/personal/main personal/dev
