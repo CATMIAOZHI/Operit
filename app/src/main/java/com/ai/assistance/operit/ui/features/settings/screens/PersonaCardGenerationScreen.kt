@@ -617,8 +617,12 @@ fun PersonaCardGenerationScreen(
                         }
                     }
 
-                    // 删除当前角色卡（默认卡不可删）
-                    if (activeCard?.isDefault == false) {
+                    // 删除当前角色卡（系统卡不可删）
+                    if (
+                        activeCard?.let {
+                            !CharacterCardManager.isSystemCharacterCard(it.id)
+                        } == true
+                    ) {
                         Spacer(Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             TextButton(onClick = { showDeleteConfirm = true }) {

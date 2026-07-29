@@ -868,6 +868,8 @@
     <string name="reset_successful">重置成功</string>
     <string name="reset_default_character">重置默认角色卡</string>
     <string name="reset_default_character_confirm">确定要重置默认角色卡吗？这将恢复默认的名称、设定和提示词，并重置头像和主题。</string>
+    <string name="reset_system_character">重置系统角色卡</string>
+    <string name="reset_system_character_confirm">确定要重置系统角色卡“%1$s”吗？这将恢复内置的名称、设定、提示词和头像。</string>
 
     <string name="settings_section_ai_model">AI模型配置</string>
     <string name="settings_model_parameters">模型与参数配置</string>
