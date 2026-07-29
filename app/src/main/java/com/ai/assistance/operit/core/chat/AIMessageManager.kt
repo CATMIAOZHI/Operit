@@ -343,6 +343,7 @@ object AIMessageManager {
         chatModelConfigIdOverride: String? = null,
         chatModelIndexOverride: Int? = null,
         memorySpaceIdOverride: String? = null,
+        toolTimingScopeId: String? = null,
         disableWarning: Boolean = false
     ): SharedStream<String> {
         val totalStartTime = messageTimingNow()
@@ -478,6 +479,7 @@ object AIMessageManager {
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,
+                    toolTimingScopeId = toolTimingScopeId,
                     stream = enableStream,
                     disableWarning = disableWarning
                 )

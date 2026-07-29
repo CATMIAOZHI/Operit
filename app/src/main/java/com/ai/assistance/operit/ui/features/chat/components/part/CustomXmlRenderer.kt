@@ -41,6 +41,7 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.ui.common.animations.SimpleAnimatedVisibility
 import com.ai.assistance.operit.ui.common.markdown.DefaultXmlRenderer
 import com.ai.assistance.operit.ui.common.markdown.StreamMarkdownRenderer
+import com.ai.assistance.operit.ui.common.markdown.ToolXmlRenderInstanceKey
 import com.ai.assistance.operit.ui.common.markdown.XmlContentRenderer
 import com.ai.assistance.operit.ui.common.markdown.XmlRenderPluginRegistry
 import com.ai.assistance.operit.ui.common.rememberLocal
@@ -58,6 +59,8 @@ class CustomXmlRenderer(
     private val initialThinkingExpanded: Boolean = false,
     private val allowExpandedThinkingFullHeight: Boolean = false,
     private val enableDialogs: Boolean = true,  // 新增参数：是否启用弹窗功能，默认启用
+    private val toolTimingScopeId: String? = null,
+    private val persistedToolExecutions: Map<Int, PersistedToolExecution> = emptyMap(),
     private val fallback: XmlContentRenderer = DefaultXmlRenderer()
 ) : XmlContentRenderer {
     // 定义渲染器能够处理的内置标签集合
@@ -184,8 +187,19 @@ class CustomXmlRenderer(
             "think" -> renderThinkContent(trimmedContent, Modifier, textColor, xmlStream)
             "thinking" -> renderThinkContent(trimmedContent, Modifier, textColor, xmlStream)
             "search" -> renderSearchContent(trimmedContent, Modifier, textColor)
-            "tool" -> renderToolRequest(trimmedContent, Modifier, textColor, xmlStream)
-            "tool_result" -> renderToolResult(trimmedContent, Modifier, textColor)
+            "tool" ->
+                renderToolRequest(
+                    trimmedContent,
+                    Modifier,
+                    textColor,
+                    xmlStream,
+                    (renderInstanceKey as? ToolXmlRenderInstanceKey)?.invocationIndex,
+                )
+            "tool_result" -> {
+                if (!trimmedContent.contains(""" invocation_index="""")) {
+                    renderToolResult(trimmedContent, Modifier, textColor)
+                }
+            }
             "status" -> renderStatus(trimmedContent, Modifier, textColor)
             "html" -> renderHtmlContent(trimmedContent, Modifier, textColor)
             "mood" -> renderMoodTag(trimmedContent, Modifier, textColor)
@@ -702,7 +716,8 @@ class CustomXmlRenderer(
         content: String,
         modifier: Modifier,
         textColor: Color,
-        xmlStream: Stream<String>?
+        xmlStream: Stream<String>?,
+        invocationIndex: Int?,
     ) {
         val paramTokenEstimate = rememberToolParamTokenEstimate(content, xmlStream)
         val renderState =
@@ -722,45 +737,56 @@ class CustomXmlRenderer(
                 )
             }
 
-        // 特殊处理文件编辑类工具
-        if (renderState.displayToolName == "apply_file" ||
-            renderState.displayToolName == "create_file" ||
-            renderState.displayToolName == "edit_file"
-        ) {
-            if (renderState.isClosed) {
-                CompactToolDisplay(
-                    toolName = renderState.rawToolName,
-                    params = renderState.paramText,
-                    textColor = textColor,
-                    modifier = modifier,
-                    enableDialog = enableDialogs
-                )
+        Column {
+            // 特殊处理文件编辑类工具
+            if (renderState.displayToolName == "apply_file" ||
+                renderState.displayToolName == "create_file" ||
+                renderState.displayToolName == "edit_file"
+            ) {
+                if (renderState.isClosed) {
+                    CompactToolDisplay(
+                        toolName = renderState.rawToolName,
+                        params = renderState.paramText,
+                        textColor = textColor,
+                        modifier = modifier,
+                        enableDialog = enableDialogs
+                    )
+                } else {
+                    DetailedToolDisplay(
+                        toolName = renderState.rawToolName,
+                        params = renderState.paramText,
+                        textColor = textColor,
+                        modifier = modifier,
+                        enableDialog = enableDialogs
+                    )
+                }
             } else {
-                DetailedToolDisplay(
-                    toolName = renderState.rawToolName,
-                    params = renderState.paramText,
-                    textColor = textColor,
-                    modifier = modifier,
-                    enableDialog = enableDialogs
-                )
+                // 对于其他工具，保持原有逻辑
+                if (!renderState.isClosed && paramTokenEstimate > TOOL_PARAM_TOKEN_THRESHOLD) {
+                    DetailedToolDisplay(
+                        toolName = renderState.rawToolName,
+                        params = renderState.paramText,
+                        textColor = textColor,
+                        modifier = modifier,
+                        enableDialog = enableDialogs  // 传递弹窗启用状态
+                    )
+                } else {
+                    CompactToolDisplay(
+                        toolName = renderState.rawToolName,
+                        params = renderState.paramText,
+                        textColor = textColor,
+                        modifier = modifier,
+                        enableDialog = enableDialogs  // 传递弹窗启用状态
+                    )
+                }
             }
-        } else {
-            // 对于其他工具，保持原有逻辑
-            if (!renderState.isClosed && paramTokenEstimate > TOOL_PARAM_TOKEN_THRESHOLD) {
-                DetailedToolDisplay(
-                        toolName = renderState.rawToolName,
-                        params = renderState.paramText,
-                        textColor = textColor,
-                        modifier = modifier,
-                        enableDialog = enableDialogs  // 传递弹窗启用状态
-                )
-            } else {
-                CompactToolDisplay(
-                        toolName = renderState.rawToolName,
-                        params = renderState.paramText,
-                        textColor = textColor,
-                        modifier = modifier,
-                        enableDialog = enableDialogs  // 传递弹窗启用状态
+
+            invocationIndex?.let { index ->
+                ToolExecutionStatusDisplay(
+                    timingScopeId = toolTimingScopeId,
+                    invocationIndex = index,
+                    persistedExecution = persistedToolExecutions[index],
+                    modifier = modifier,
                 )
             }
         }

@@ -175,6 +175,7 @@ internal fun CanvasToolResultRow(
     semanticDescription: String,
     modifier: Modifier = Modifier,
     emphasizeSummary: Boolean = false,
+    showStatusIcon: Boolean = true,
     onClick: (() -> Unit)? = null,
     onCopyClick: (() -> Unit)? = null,
 ) {
@@ -240,7 +241,8 @@ internal fun CanvasToolResultRow(
         val endPaddingPx = with(density) { 16.dp.roundToPx() }
         val verticalPaddingPx = with(density) { 2.dp.roundToPx() }
         val arrowSizePx = with(density) { 18.dp.roundToPx().toFloat() }
-        val statusSizePx = with(density) { 14.dp.roundToPx().toFloat() }
+        val statusSizePx =
+            if (showStatusIcon) with(density) { 14.dp.roundToPx().toFloat() } else 0f
         val gapPx = with(density) { 8.dp.roundToPx().toFloat() }
         val trailingSlotPx = if (onCopyClick != null) with(density) { 24.dp.roundToPx() } else 0
         val trailingIconPx = with(density) { 14.dp.roundToPx().toFloat() }
@@ -287,13 +289,15 @@ internal fun CanvasToolResultRow(
                 }
 
                 val statusLeft = startPaddingPx + arrowSizePx + gapPx
-                val statusTop = contentTop + (contentHeightPx - statusSizePx) / 2f
-                translate(left = statusLeft, top = statusTop) {
-                    with(statusPainter) {
-                        draw(
-                            size = Size(statusSizePx, statusSizePx),
-                            colorFilter = ColorFilter.tint(statusTint),
-                        )
+                if (showStatusIcon) {
+                    val statusTop = contentTop + (contentHeightPx - statusSizePx) / 2f
+                    translate(left = statusLeft, top = statusTop) {
+                        with(statusPainter) {
+                            draw(
+                                size = Size(statusSizePx, statusSizePx),
+                                colorFilter = ColorFilter.tint(statusTint),
+                            )
+                        }
                     }
                 }
 

@@ -5232,6 +5232,13 @@
     <string name="success">成功</string>
     <string name="failed">失败</string>
     <string name="execution_success">执行成功</string>
+    <string name="tool_waiting_authorization">等待授权</string>
+    <string name="tool_waiting_execution">等待执行</string>
+    <string name="tool_executing_duration">执行中 · %1$s</string>
+    <string name="tool_not_executed">未执行</string>
+    <string name="tool_duration_milliseconds">%1$d 毫秒</string>
+    <string name="tool_duration_seconds">%1$.1f 秒</string>
+    <string name="tool_duration_minutes_seconds">%1$d 分 %2$02d 秒</string>
     <string name="execution_failed">执行失败</string>
     <string name="copy_result">复制结果</string>
     <string name="tool_call_parameters">调用参数</string>
