@@ -163,27 +163,34 @@ CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并�
 
 ### 9. 回合并 main 并建立新检查点
 
-晋升 PR 合并后，将稳定分支回合并到开发分支。由于晋升 PR 可能经过 squash，出现等价代码冲突时，通用代码以通过审查的 `personal/main` 为准，同时保留 dev 专属身份、Nightly 和热更新配置：
+晋升 PR 合并后，将稳定分支回合并到开发分支。由于晋升 PR 可能经过 squash，出现等价代码冲突时，通用代码以通过审查的 `personal/main` 为准，同时保留 dev 专属身份、Nightly 和热更新配置。
 
-如果 dev 仍有未包含在本轮晋升 PR 中的通用改动，合并前必须记录这些文件和提交。检查点提交本身只允许包含“最新 main 通用代码 + dev 专属设施”：解决冲突时暂时采用 main 版本，在该合并提交上创建标签，然后将尚未晋升的通用改动重新落成标签之后的独立提交。不得把它们吞进检查点，也不得在解决冲突时丢弃。
+如果 dev 仍有未包含在本轮晋升 PR 中的通用改动，合并前必须明确列出这些路径，并保存它们相对最新 main 的补丁；每个路径只能包含尚未晋升的差异，若同一文件混有已晋升和待晋升改动，必须先拆分提交或补丁。检查点提交本身只允许包含“最新 main 通用代码 + dev 专属设施”：合并必须停在提交前，从检查点树中剥离待晋升改动，提交并打标签后再重放补丁。不得把它们吞进检查点，也不得在解决冲突时丢弃。
 
 ```bash
 git fetch origin personal/main personal/dev --tags
 git checkout personal/dev
 git pull --ff-only origin personal/dev
-git merge --no-ff origin/personal/main \
-  -m "chore(dev): sync personal/main checkpoint"
+
+# 仅在仍有待晋升的通用改动时执行这四行；路径必须逐项人工确认。
+DEV_BEFORE_SYNC=$(git rev-parse HEAD)
+PENDING_GENERAL_PATHS=(path/to/pending-file ...)
+PENDING_PATCH=$(mktemp)
+git diff --binary origin/personal/main "$DEV_BEFORE_SYNC" \
+  -- "${PENDING_GENERAL_PATHS[@]}" > "$PENDING_PATCH"
+
+# 必须停在提交前；不得省略 --no-commit。
+git merge --no-ff --no-commit origin/personal/main
+
+# 解决其余冲突，并保留 dev 专属设施。若保存了待晋升补丁，
+# 先把对应路径恢复为 main 版本，避免非冲突改动被检查点吞掉。
+git restore --source=origin/personal/main --staged --worktree \
+  -- "${PENDING_GENERAL_PATHS[@]}"
+git diff --name-only --diff-filter=U  # 必须无输出
+git commit -m "chore(dev): sync personal/main checkpoint"
 ```
 
-验证 main 已成为 dev 的祖先，并运行与改动相称的构建和测试：
-
-```bash
-git merge-base --is-ancestor origin/personal/main personal/dev
-./gradlew :app:compileDebugKotlin
-./gradlew :app:testDebugUnitTest
-```
-
-确认 dev 专属配置仍然存在后，创建 annotated tag 并与 dev 一起推送：
+在合并提交上创建 annotated tag；若保存了待晋升补丁，随后将其重放为检查点之后的独立提交：
 
 ```bash
 MAIN_SHA=$(git rev-parse origin/personal/main)
@@ -192,11 +199,26 @@ CHECKPOINT="promotion-checkpoint/main-$(date +%Y%m%d)-$MAIN_SHORT"
 
 git tag -a "$CHECKPOINT" \
   -m "Promotion checkpoint: personal/main $MAIN_SHA"
-git push origin personal/dev
-git push origin "$CHECKPOINT"
+
+git apply --index "$PENDING_PATCH"
+git commit -m "chore(dev): retain pending general changes"
 ```
 
-最后确认远端标签指向本次回合并提交，并且标签说明记录了准确的 main SHA；`git diff "$CHECKPOINT"..origin/personal/dev` 应只显示标签之后尚未晋升的改动。若 dev 推送成功但标签推送失败，不得把该轮视为已建立检查点，应修复标签推送后再结束。
+若没有待晋升通用改动，应省略 `PENDING_GENERAL_PATHS`、`PENDING_PATCH`、`git restore`、`git apply` 和第二个提交。确认 dev 专属配置仍然存在后，验证最终 dev 工作树：
+
+```bash
+git merge-base --is-ancestor origin/personal/main personal/dev
+./gradlew :app:compileDebugKotlin
+./gradlew :app:testDebugUnitTest
+```
+
+最后原子推送 dev 与检查点标签，避免只发布其中一个：
+
+```bash
+git push --atomic origin personal/dev "$CHECKPOINT"
+```
+
+确认远端标签指向本次回合并提交，并且标签说明记录了准确的 main SHA；`git diff "$CHECKPOINT"..origin/personal/dev` 应只显示标签之后尚未晋升的改动。原子推送失败时不得把该轮视为已建立检查点，应排查分支并发更新或远端规则后整体重试。
 
 ## 注意事项
 
