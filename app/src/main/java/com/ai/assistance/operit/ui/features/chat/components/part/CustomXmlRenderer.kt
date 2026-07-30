@@ -933,32 +933,14 @@ class CustomXmlRenderer(
             }
         val toolName = renderState.toolName.ifBlank { stringResource(R.string.unknown_tool) }
 
-        // 检查结果是否为 file-diff
-        if ((toolName == "apply_file" || toolName == "create_file" || toolName == "edit_file") &&
-            renderState.isSuccess &&
-            renderState.resultContent.contains("<file-diff")
-        ) {
-            val (path, details, unescapedDiffContent) =
-                run {
-                    val pathRegex = "<file-diff path=\"([^\"]+)\"".toRegex()
-                    val detailsRegex = "details=\"([^\"]+)\"".toRegex()
-                    val cdataRegex = "<!\\[CDATA\\[(.*?)\\]\\]>".toRegex(RegexOption.DOT_MATCHES_ALL)
-
-                    val path = pathRegex.find(renderState.resultContent)?.groupValues?.get(1) ?: ""
-                    val details = detailsRegex.find(renderState.resultContent)?.groupValues?.get(1) ?: ""
-                    val diffContent = cdataRegex.find(renderState.resultContent)?.groupValues?.get(1)?.trim() ?: ""
-
-                    Triple(
-                        path,
-                        details,
-                        diffContent
-                            .replace("<", "<")
-                            .replace(">", ">")
-                            .replace("&", "&"),
-                    )
-                }
-
-            FileDiffDisplay(diff = FileDiff(path, unescapedDiffContent, details))
+        val fileDiff =
+            parseFileDiffResult(
+                toolName = toolName,
+                isSuccess = renderState.isSuccess,
+                resultContent = renderState.resultContent,
+            )
+        if (fileDiff != null) {
+            FileDiffDisplay(diff = fileDiff)
         } else {
             // 如果是错误状态，尝试提取错误信息
             val errorContent =

@@ -40,6 +40,49 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
+    fun timedFileResult_keepsStructuredDiffPresentation() {
+        val result =
+            """
+            [android] Updated file
+            <file-diff details="Updated file" path="/workspace/src/Main.kt"><![CDATA[
+            @@
+            -old
+            +new
+            ]]></file-diff>
+            """.trimIndent()
+
+        val diff =
+            requireNotNull(
+                parseFileDiffResult(
+                    toolName = "edit_file",
+                    isSuccess = true,
+                    resultContent = result,
+                )
+            )
+
+        assertEquals("/workspace/src/Main.kt", diff.path)
+        assertEquals("Updated file", diff.details)
+        assertEquals("@@\n-old\n+new", diff.diffContent)
+    }
+
+    @Test
+    fun subagentTaskResult_extractsFullDecodedFinalText() {
+        val result =
+            """
+            <task id="task-1" state="completed">
+              <summary>Inspect auth</summary>
+              <task_result>Found &lt;AuthManager&gt; &amp; its callers.
+            Second line.</task_result>
+            </task>
+            """.trimIndent()
+
+        assertEquals(
+            "Found <AuthManager> & its callers.\nSecond line.",
+            extractSubagentTaskResult(result),
+        )
+    }
+
+    @Test
     fun toolOrdinal_countsOnlyEarlierToolRequests() {
         val nodes =
             listOf(
