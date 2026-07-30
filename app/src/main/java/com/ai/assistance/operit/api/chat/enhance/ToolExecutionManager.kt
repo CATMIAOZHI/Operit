@@ -669,6 +669,13 @@ object ToolExecutionManager {
             for (invocation in invocations) {
                 val resolvedTool = resolveToolTarget(invocation.tool).tool
                 val consecutiveCount = subagentToolLoopGuard.record(invocation.tool)
+                if (resolvedTool.name == "task") {
+                    // Nested Subagents are rejected below, so they must never trigger
+                    // an approval dialog that cannot make the invocation executable.
+                    // Recording first still lets this distinct call break another
+                    // tool's exact-repeat sequence.
+                    continue
+                }
                 if (consecutiveCount < SUBAGENT_EXACT_REPEAT_REVIEW_THRESHOLD) {
                     continue
                 }

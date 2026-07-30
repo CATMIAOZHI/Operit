@@ -817,7 +817,8 @@ class EnhancedAIService private constructor(private val context: Context) {
                 chatId = chatId,
                 promptFunctionType = promptFunctionType,
                 roleCardId = roleCardId,
-                modelConfig = modelConfig
+                modelConfig = modelConfig,
+                isSubTask = isSubTask
             )
 
         var finalProcessedInput = message
@@ -1041,7 +1042,8 @@ class EnhancedAIService private constructor(private val context: Context) {
                         chatId = chatId,
                         promptFunctionType = promptFunctionType,
                         roleCardId = roleCardId,
-                        modelConfig = modelSnapshot.config
+                        modelConfig = modelSnapshot.config,
+                        isSubTask = isSubTask
                     )
                     val tAfterGetTools = messageTimingNow()
                     AppLogger.d(TAG, "sendMessage本地耗时: getAvailableToolsForFunction=${tAfterGetTools - tAfterGetService}ms")
@@ -2338,7 +2340,8 @@ class EnhancedAIService private constructor(private val context: Context) {
             chatId = chatId,
             promptFunctionType = promptFunctionType,
             roleCardId = roleCardId,
-            modelConfig = modelSnapshot.config
+            modelConfig = modelSnapshot.config,
+            isSubTask = isSubTask
         )
  
         val currentTokens = estimatePreparedRequestWindow(
@@ -2915,7 +2918,8 @@ class EnhancedAIService private constructor(private val context: Context) {
         chatId: String? = null,
         promptFunctionType: PromptFunctionType? = null,
         roleCardId: String? = null,
-        modelConfig: ModelConfigData
+        modelConfig: ModelConfigData,
+        isSubTask: Boolean = false
     ): List<ToolPrompt>? {
         return try {
             AppLogger.d(
@@ -2978,7 +2982,8 @@ class EnhancedAIService private constructor(private val context: Context) {
                         hasBackendVideoRecognition = hasBackendVideoRecognition,
                         chatModelHasDirectAudio = chatModelHasDirectAudio,
                         chatModelHasDirectVideo = chatModelHasDirectVideo,
-                        safBookmarkNames = safBookmarkNames
+                        safBookmarkNames = safBookmarkNames,
+                        includeSubagentTools = !isSubTask
                     )
                 } else {
                     SystemToolPrompts.getAIAllCategoriesCn(
@@ -2988,7 +2993,8 @@ class EnhancedAIService private constructor(private val context: Context) {
                         hasBackendVideoRecognition = hasBackendVideoRecognition,
                         chatModelHasDirectAudio = chatModelHasDirectAudio,
                         chatModelHasDirectVideo = chatModelHasDirectVideo,
-                        safBookmarkNames = safBookmarkNames
+                        safBookmarkNames = safBookmarkNames,
+                        includeSubagentTools = !isSubTask
                     )
                 }
 

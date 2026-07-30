@@ -1258,37 +1258,6 @@ object SystemToolPromptsInternal {
                                 )
                         ),
                         ToolPrompt(
-                            name = "task",
-                            description = "Delegate a foreground task to an independent Subagent and wait for its final result. Available subagent_type values: general, explore. Use task_id to continue an existing child conversation.",
-                            parametersStructured =
-                                listOf(
-                                    ToolParameterSchema(
-                                        name = "title",
-                                        type = "string",
-                                        description = "3-20 character task name shown in the tool call UI",
-                                        required = true
-                                    ),
-                                    ToolParameterSchema(
-                                        name = "prompt",
-                                        type = "string",
-                                        description = "complete task instructions for the Subagent",
-                                        required = true
-                                    ),
-                                    ToolParameterSchema(
-                                        name = "subagent_type",
-                                        type = "string",
-                                        description = "Subagent profile id: general | explore",
-                                        required = true
-                                    ),
-                                    ToolParameterSchema(
-                                        name = "task_id",
-                                        type = "string",
-                                        description = "optional stable task id to continue",
-                                        required = false
-                                    )
-                                )
-                        ),
-                        ToolPrompt(
                             name = "send_message_to_ai",
                             description = "Send a user message to AI.",
                             parametersStructured =
@@ -4277,37 +4246,6 @@ object SystemToolPromptsInternal {
                                         type = "string",
                                         description = "目标对话 ID",
                                         required = true
-                                    )
-                                )
-                        ),
-                        ToolPrompt(
-                            name = "task",
-                            description = "把前台任务委派给独立 Subagent，并等待其最终结果。可用的 subagent_type：general、explore；传入 task_id 可继续已有 child 对话。",
-                            parametersStructured =
-                                listOf(
-                                    ToolParameterSchema(
-                                        name = "title",
-                                        type = "string",
-                                        description = "显示在工具调用 UI 中的 3-20 字任务名称",
-                                        required = true
-                                    ),
-                                    ToolParameterSchema(
-                                        name = "prompt",
-                                        type = "string",
-                                        description = "交给 Subagent 的完整任务说明",
-                                        required = true
-                                    ),
-                                    ToolParameterSchema(
-                                        name = "subagent_type",
-                                        type = "string",
-                                        description = "Subagent 配置 ID：general | explore",
-                                        required = true
-                                    ),
-                                    ToolParameterSchema(
-                                        name = "task_id",
-                                        type = "string",
-                                        description = "可选，用于继续既有任务的稳定 task ID",
-                                        required = false
                                     )
                                 )
                         ),

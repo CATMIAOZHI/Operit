@@ -950,7 +950,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                         context = context,
                         packageManager = handler.getOrCreatePackageManager(),
                         roleCardToolAccess = roleCardToolAccess,
-                        useEnglish = useEnglish
+                        useEnglish = useEnglish,
+                        includeSubagentTools = runtimeContext?.isSubagent != true
                     )
                 }
                 val results = CliToolModeSupport.searchHiddenToolCatalog(
