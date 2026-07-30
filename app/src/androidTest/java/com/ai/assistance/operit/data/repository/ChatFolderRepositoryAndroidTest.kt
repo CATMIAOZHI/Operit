@@ -7,6 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatFolderEntity
+import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -85,6 +86,40 @@ class ChatFolderRepositoryAndroidTest {
             mapOf("favorite-a" to 0L, "hidden-b" to 1L, "favorite-c" to 2L),
             database.chatDao().getAllChatsDirectly().associate { it.id to it.updatedAt },
         )
+    }
+
+    @Test
+    fun visibleChatReorderIgnoresSubagentChildrenInTheSameFolder() = runBlocking {
+        val folderId = repository.createFolder(null, "Folder")
+        insertChat("a", folderId, 0, favorite = false)
+        insertChat("b", folderId, 2, favorite = false)
+        insertChat(
+            id = "subagent",
+            folderId = folderId,
+            order = 1,
+            favorite = false,
+            chatKind = ChatKind.SUBAGENT,
+            parentChatId = "a",
+        )
+
+        repository.moveChat(
+            chatId = "b",
+            targetFolderId = folderId,
+            expectedSourceSiblings = siblingSnapshot(folderId),
+            expectedTargetSiblings = siblingSnapshot(folderId),
+            orderedVisibleNodeKeys = listOf("chat:b", "chat:a"),
+        )
+
+        val visibleOrder =
+            database.chatDao().getAllChatsDirectly()
+                .filter {
+                    it.folderId == folderId &&
+                        it.chatKind != ChatKind.SUBAGENT.name
+                }
+                .sortedBy { it.displayOrder }
+                .map { it.id }
+        assertEquals(listOf("b", "a"), visibleOrder)
+        assertEquals(1L, database.chatDao().getChatById("subagent")?.displayOrder)
     }
 
     @Test
@@ -452,6 +487,8 @@ class ChatFolderRepositoryAndroidTest {
         favorite: Boolean,
         locked: Boolean = false,
         characterGroupId: String? = null,
+        chatKind: ChatKind = ChatKind.NORMAL,
+        parentChatId: String? = null,
     ) {
         database.chatDao().insertChat(
             ChatEntity(
@@ -464,6 +501,8 @@ class ChatFolderRepositoryAndroidTest {
                 isFavorite = favorite,
                 locked = locked,
                 characterGroupId = characterGroupId,
+                chatKind = chatKind.name,
+                parentChatId = parentChatId,
             )
         )
     }
@@ -478,7 +517,10 @@ class ChatFolderRepositoryAndroidTest {
                 .map(HistorySiblingSnapshot::fromFolder) +
                 database.chatDao().getAllChatsDirectly()
                     .asSequence()
-                    .filter { it.folderId == parentFolderId }
+                    .filter {
+                        it.folderId == parentFolderId &&
+                            it.chatKind != ChatKind.SUBAGENT.name
+                    }
                     .map(HistorySiblingSnapshot::fromChat)
         ).sortedWith(
             compareBy<HistorySiblingSnapshot> { it.displayOrder }

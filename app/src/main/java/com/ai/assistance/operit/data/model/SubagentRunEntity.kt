@@ -53,4 +53,5 @@ data class SubagentRunEntity(
     val agentConfigSnapshot: String? = null,
     val modelConfigIdSnapshot: String? = null,
     val modelIndexSnapshot: Int? = null,
+    val toolInvocationCount: Int = 0,
 )

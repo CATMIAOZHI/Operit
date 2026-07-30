@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatFolderEntity
+import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
 import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_NAME
 import java.util.UUID
@@ -477,7 +478,10 @@ class ChatFolderRepository(
                 .map { OrderedSibling(folder = it) } +
                 chats
                     .asSequence()
-                    .filter { it.folderId == parentFolderId }
+                    .filter {
+                        it.folderId == parentFolderId &&
+                            it.chatKind != ChatKind.SUBAGENT.name
+                    }
                     .map { OrderedSibling(chat = it) }
         ).sortedWith(siblingComparator).toList()
 

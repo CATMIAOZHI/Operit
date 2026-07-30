@@ -61,6 +61,15 @@ interface SubagentRunDao {
     @Query(
         """
         UPDATE subagent_runs
+        SET toolInvocationCount = toolInvocationCount + 1
+        WHERE childChatId = :childChatId
+        """
+    )
+    suspend fun incrementToolInvocationCountByChildChatId(childChatId: String): Int
+
+    @Query(
+        """
+        UPDATE subagent_runs
         SET status = :status,
             startedAt = COALESCE(:startedAt, startedAt),
             completedAt = :completedAt,

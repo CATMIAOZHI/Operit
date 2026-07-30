@@ -16,6 +16,7 @@ import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.MessageVariantEntity
 import com.ai.assistance.operit.data.model.SubagentRunEntity
+import com.ai.assistance.operit.util.ChatMarkupRegex
 
 /** 应用数据库，包含聊天表和消息表 */
 @Database(
@@ -26,7 +27,7 @@ import com.ai.assistance.operit.data.model.SubagentRunEntity
         MessageVariantEntity::class,
         SubagentRunEntity::class,
     ],
-    version = 26,
+    version = 27,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -465,6 +466,67 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        internal val MIGRATION_26_27 =
+            object : Migration(26, 27) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "ALTER TABLE `subagent_runs` ADD COLUMN " +
+                            "`toolInvocationCount` INTEGER NOT NULL DEFAULT 0"
+                    )
+                    db.execSQL(
+                        "UPDATE `subagent_runs` SET `toolInvocationCount` = 0"
+                    )
+                    val invocationCounts = mutableMapOf<String, Int>()
+                    db.query(
+                        """
+                        SELECT `subagent_runs`.`id`, `messages`.`content`
+                        FROM `subagent_runs`
+                        LEFT JOIN `messages`
+                            ON `messages`.`chatId` = `subagent_runs`.`childChatId`
+                        """.trimIndent()
+                    ).use { cursor ->
+                        while (cursor.moveToNext()) {
+                            val runId = cursor.getString(0)
+                            invocationCounts.putIfAbsent(runId, 0)
+                            if (!cursor.isNull(1)) {
+                                invocationCounts[runId] =
+                                    invocationCounts.getValue(runId) +
+                                        countFinalToolResults(cursor.getString(1))
+                            }
+                        }
+                    }
+                    db.compileStatement(
+                        """
+                        UPDATE `subagent_runs`
+                        SET `toolInvocationCount` = ?
+                        WHERE `id` = ?
+                        """.trimIndent()
+                    ).use { statement ->
+                        invocationCounts.forEach { (runId, count) ->
+                            statement.bindLong(1, count.toLong())
+                            statement.bindString(2, runId)
+                            statement.executeUpdateDelete()
+                            statement.clearBindings()
+                        }
+                    }
+                    db.query("PRAGMA foreign_key_check").use { cursor ->
+                        check(!cursor.moveToFirst()) {
+                            "Foreign key violations after v26 to v27 migration"
+                        }
+                    }
+                }
+            }
+
+        private val finalTrueAttributeRegex =
+            Regex("""\bfinal\s*=\s*["']true["']""", RegexOption.IGNORE_CASE)
+
+        private fun countFinalToolResults(content: String): Int =
+            ChatMarkupRegex.toolResultTagWithAttrs
+                .findAll(content)
+                .count { match ->
+                    finalTrueAttributeRegex.containsMatchIn(match.groupValues[2])
+                }
+
         // 定义从版本2到3的迁移
         private val MIGRATION_2_3 =
             object : Migration(2, 3) {
@@ -585,6 +647,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_20_24,
                                 MIGRATION_24_25,
                                 MIGRATION_25_26,
+                                MIGRATION_26_27,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

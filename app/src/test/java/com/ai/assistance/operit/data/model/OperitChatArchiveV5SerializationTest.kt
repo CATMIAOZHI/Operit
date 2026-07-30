@@ -45,6 +45,7 @@ class OperitChatArchiveV5SerializationTest {
                 agentConfigSnapshot = """{"id":"explore"}""",
                 modelConfigIdSnapshot = "model-config",
                 modelIndexSnapshot = 1,
+                toolInvocationCount = 4,
             )
         val archive =
             OperitChatArchive(
