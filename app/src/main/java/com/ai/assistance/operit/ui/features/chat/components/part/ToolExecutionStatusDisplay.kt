@@ -11,8 +11,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
@@ -102,10 +104,15 @@ internal fun ToolExecutionStatusDisplay(
             ?: return
 
     if (toolName == "task") {
+        val success = liveExecution?.success ?: persistedExecution?.success ?: false
         SubagentTaskStatusDisplay(
             callId = liveExecution?.callId ?: persistedExecution?.callId,
             fallbackState = state,
             fallbackStartedAtElapsedMs = liveExecution?.startedAtElapsedMs,
+            fallbackDurationMs = liveExecution?.durationMs ?: persistedExecution?.durationMs,
+            executionSuccess = success,
+            executionResultText =
+                resolveResultText(liveExecution, persistedExecution, success),
             requestedSubagentName = requestedSubagentName,
             modifier = modifier,
         )
@@ -150,13 +157,27 @@ internal fun ToolExecutionStatusDisplay(
             val success = liveExecution?.success ?: persistedExecution?.success ?: false
             val resultText =
                 resolveResultText(liveExecution, persistedExecution, success)
-            ToolResultDisplay(
-                toolName = liveExecution?.toolName ?: persistedExecution?.toolName.orEmpty(),
-                result = resultText,
-                isSuccess = success,
-                summaryPrefix = formatToolExecutionDuration(context, durationMs),
-                modifier = modifier,
-            )
+            val durationText = formatToolExecutionDuration(context, durationMs)
+            val fileDiff =
+                parseFileDiffResult(
+                    toolName = toolName,
+                    isSuccess = success,
+                    resultContent = resultText,
+                )
+            if (fileDiff != null) {
+                FileDiffDisplay(
+                    diff = fileDiff,
+                    summaryPrefix = durationText,
+                )
+            } else {
+                ToolResultDisplay(
+                    toolName = toolName,
+                    result = resultText,
+                    isSuccess = success,
+                    summaryPrefix = durationText,
+                    modifier = modifier,
+                )
+            }
         }
         ToolExecutionState.NOT_EXECUTED -> {
             val success = false
@@ -198,10 +219,14 @@ private fun SubagentTaskStatusDisplay(
     callId: String?,
     fallbackState: ToolExecutionState,
     fallbackStartedAtElapsedMs: Long?,
+    fallbackDurationMs: Long?,
+    executionSuccess: Boolean,
+    executionResultText: String,
     requestedSubagentName: String?,
     modifier: Modifier,
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
     val repository = remember(context) { SubagentRunRepository.getInstance(context) }
     val chatCore =
@@ -221,6 +246,22 @@ private fun SubagentTaskStatusDisplay(
     val run by runFlow.collectAsState(initial = null)
 
     if (run == null) {
+        if (
+            fallbackState == ToolExecutionState.COMPLETED ||
+                fallbackState == ToolExecutionState.NOT_EXECUTED
+        ) {
+            ToolResultDisplay(
+                toolName = requestedSubagentName?.ifBlank { "task" } ?: "task",
+                result = extractSubagentTaskResult(executionResultText),
+                isSuccess = executionSuccess,
+                summaryPrefix =
+                    fallbackDurationMs?.let {
+                        formatToolExecutionDuration(context, it)
+                    },
+                modifier = modifier,
+            )
+            return
+        }
         val fallbackText =
             when (fallbackState) {
                 ToolExecutionState.WAITING_AUTHORIZATION ->
@@ -343,8 +384,55 @@ private fun SubagentTaskStatusDisplay(
         status != SubagentRunStatus.FAILED &&
             status != SubagentRunStatus.INTERRUPTED &&
             status != SubagentRunStatus.CANCELLED
+    val isTerminal =
+        status == SubagentRunStatus.COMPLETED ||
+            status == SubagentRunStatus.FAILED ||
+            status == SubagentRunStatus.INTERRUPTED ||
+            status == SubagentRunStatus.CANCELLED
+    val terminalResult =
+        extractSubagentTaskResult(executionResultText)
+            .ifBlank { stringResource(R.string.subagent_result_empty) }
+    var showResultDialog by remember(resolvedRun.id) { androidx.compose.runtime.mutableStateOf(false) }
+
+    if (showResultDialog && isTerminal) {
+        ToolResultDetailDialog(
+            toolName = "task",
+            result = terminalResult,
+            isSuccess = isSuccess,
+            titleOverride =
+                stringResource(
+                    R.string.subagent_result_title,
+                    resolvedRun.title,
+                ),
+            metadata = "$durationText · $statusText",
+            onDismiss = { showResultDialog = false },
+            onCopy = {
+                clipboardManager.setText(AnnotatedString(terminalResult))
+            },
+            primaryActionLabel = stringResource(R.string.subagent_open_conversation),
+            onPrimaryAction = {
+                showResultDialog = false
+                chatCore.switchChat(
+                    resolvedRun.childChatId,
+                    scrollToBottom = false,
+                )
+            },
+        )
+    }
+
+    val rowText =
+        if (isTerminal) {
+            listOf(
+                    "$durationText  $statusText",
+                    terminalResult.toSingleLineResultSummary(),
+                )
+                .filter { it.isNotBlank() }
+                .joinToString(" · ")
+        } else {
+            "$durationText  $statusText"
+        }
     ToolPendingStatusRow(
-        text = "$durationText  $statusText",
+        text = rowText,
         modifier = modifier,
         isSuccess = isSuccess,
         showStatusIcon =
@@ -353,10 +441,14 @@ private fun SubagentTaskStatusDisplay(
                 status == SubagentRunStatus.INTERRUPTED ||
                 status == SubagentRunStatus.CANCELLED,
         onClick = {
-            chatCore.switchChat(
-                resolvedRun.childChatId,
-                scrollToBottom = false,
-            )
+            if (isTerminal) {
+                showResultDialog = true
+            } else {
+                chatCore.switchChat(
+                    resolvedRun.childChatId,
+                    scrollToBottom = false,
+                )
+            }
         },
         onStopClick =
             if (
@@ -374,6 +466,33 @@ private fun SubagentTaskStatusDisplay(
             },
     )
 }
+
+internal fun extractSubagentTaskResult(rawResult: String): String {
+    val result =
+        Regex("""<task_result>([\s\S]*?)</task_result>""", RegexOption.IGNORE_CASE)
+            .find(rawResult)
+            ?.groupValues
+            ?.getOrNull(1)
+        ?: Regex("""<task_error>([\s\S]*?)</task_error>""", RegexOption.IGNORE_CASE)
+            .find(rawResult)
+            ?.groupValues
+            ?.getOrNull(1)
+        ?: rawResult
+
+    return result
+        .trim()
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+private fun String.toSingleLineResultSummary(): String =
+    replace('\r', ' ')
+        .replace('\n', ' ')
+        .replace(Regex("""\s+"""), " ")
+        .trim()
 
 internal fun resolveSubagentDisplayedTool(
     childProcessingState: InputProcessingState?,

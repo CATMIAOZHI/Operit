@@ -4838,6 +4838,9 @@
     <string name="subagent_status_error">Error</string>
     <string name="subagent_status_cancelled">Cancelled</string>
     <string name="subagent_stop_task">Stop Subagent task</string>
+    <string name="subagent_result_title">Subagent result: %1$s</string>
+    <string name="subagent_result_empty">The Subagent returned no textual result</string>
+    <string name="subagent_open_conversation">Open Subagent conversation</string>
     <string name="subagent_delegated_by_parent">Delegated by parent chat</string>
     <string name="subagent_return_to_parent">Return to parent chat</string>
     <string name="subagent_parent_chat">Parent chat: %1$s</string>

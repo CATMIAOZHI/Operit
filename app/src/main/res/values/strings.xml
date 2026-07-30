@@ -5245,6 +5245,9 @@
     <string name="subagent_status_error">错误</string>
     <string name="subagent_status_cancelled">已取消</string>
     <string name="subagent_stop_task">停止子任务</string>
+    <string name="subagent_result_title">Subagent 结果：%1$s</string>
+    <string name="subagent_result_empty">Subagent 未返回文本结果</string>
+    <string name="subagent_open_conversation">进入 Subagent 对话</string>
     <string name="subagent_delegated_by_parent">由父聊天委派</string>
     <string name="subagent_return_to_parent">返回父聊天</string>
     <string name="subagent_parent_chat">父聊天：%1$s</string>

@@ -33,7 +33,10 @@ data class FileDiff(
 )
 
 @Composable
-fun FileDiffDisplay(diff: FileDiff) {
+fun FileDiffDisplay(
+    diff: FileDiff,
+    summaryPrefix: String? = null,
+) {
     val diffLines = diff.diffContent.trimEnd().lines()
     var showDetailDialog by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
@@ -48,15 +51,17 @@ fun FileDiffDisplay(diff: FileDiff) {
         )
     }
 
-    val summary = remember(diffLines) {
+    val summary = remember(diffLines, summaryPrefix) {
         val additions = diffLines.count { it.startsWith("+") }
         val deletions = diffLines.count { it.startsWith("-") }
-        when {
+        val changeSummary = when {
             additions > 0 && deletions > 0 -> "$additions insertions(+), $deletions deletions(-)"
             additions > 0 -> "$additions insertions(+)"
             deletions > 0 -> "$deletions deletions(-)"
             else -> "No changes detected"
         }
+        listOfNotNull(summaryPrefix?.takeIf { it.isNotBlank() }, changeSummary)
+            .joinToString(" · ")
     }
 
     Column(
@@ -104,4 +109,44 @@ fun FileDiffDisplay(diff: FileDiff) {
             }
         }
     }
+}
+
+internal fun parseFileDiffResult(
+    toolName: String,
+    isSuccess: Boolean,
+    resultContent: String,
+): FileDiff? {
+    if (
+        !isSuccess ||
+            toolName !in setOf("apply_file", "create_file", "edit_file") ||
+            !resultContent.contains("<file-diff")
+    ) {
+        return null
+    }
+
+    val path =
+        Regex("""<file-diff\s+[^>]*\bpath="([^"]*)"""", RegexOption.IGNORE_CASE)
+            .find(resultContent)
+            ?.groupValues
+            ?.getOrNull(1)
+            .orEmpty()
+    val details =
+        Regex("""<file-diff\s+[^>]*\bdetails="([^"]*)"""", RegexOption.IGNORE_CASE)
+            .find(resultContent)
+            ?.groupValues
+            ?.getOrNull(1)
+            .orEmpty()
+    val diffContent =
+        Regex("""<!\[CDATA\[([\s\S]*?)]]>""")
+            .find(resultContent)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?: return null
+
+    return FileDiff(
+        path = path,
+        diffContent = diffContent,
+        details = details,
+    )
 }
