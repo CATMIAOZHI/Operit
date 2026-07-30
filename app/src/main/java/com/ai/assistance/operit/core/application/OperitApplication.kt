@@ -22,6 +22,7 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import com.ai.assistance.operit.BuildConfig
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.agent.AgentProfileRepository
 import com.ai.assistance.operit.core.chat.AIMessageManager
 import com.ai.assistance.operit.api.chat.AIForegroundService
 import com.ai.assistance.operit.api.chat.library.MemoryAutoSaveScheduler
@@ -229,6 +230,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
         initAndroidPermissionPreferences(applicationContext)
         AppLogger.d(TAG, "【启动计时】Android权限偏好管理器初始化完成 - ${System.currentTimeMillis() - startTime}ms")
+
+        AgentProfileRepository.instance.initialize(applicationContext)
+        AppLogger.d(TAG, "【启动计时】AgentProfile配置初始化完成 - ${System.currentTimeMillis() - startTime}ms")
 
         // 在最早时机初始化并应用语言设置（必须在获取字符串资源之前）
         initializeAppLanguage()
