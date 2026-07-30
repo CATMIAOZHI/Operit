@@ -83,6 +83,79 @@ object SystemToolPrompts {
             )
         )
     )
+
+    // ==================== Subagent 工具 ====================
+    val subagentTools = SystemToolPromptCategory(
+        categoryName = "Subagent Tools",
+        tools = listOf(
+            ToolPrompt(
+                name = "task",
+                description = "Delegate a foreground task to an independent Subagent and wait for its final result. Available subagent_type values: general, explore. Use task_id to continue an existing child conversation.",
+                parametersStructured = listOf(
+                    ToolParameterSchema(
+                        name = "title",
+                        type = "string",
+                        description = "3-20 character task name shown in the tool call UI",
+                        required = true
+                    ),
+                    ToolParameterSchema(
+                        name = "prompt",
+                        type = "string",
+                        description = "complete task instructions for the Subagent",
+                        required = true
+                    ),
+                    ToolParameterSchema(
+                        name = "subagent_type",
+                        type = "string",
+                        description = "Subagent profile id: general | explore",
+                        required = true
+                    ),
+                    ToolParameterSchema(
+                        name = "task_id",
+                        type = "string",
+                        description = "optional stable task id to continue",
+                        required = false
+                    )
+                )
+            )
+        )
+    )
+
+    val subagentToolsCn = SystemToolPromptCategory(
+        categoryName = "Subagent 工具",
+        tools = listOf(
+            ToolPrompt(
+                name = "task",
+                description = "把前台任务委派给独立 Subagent，并等待其最终结果。可用的 subagent_type：general、explore；传入 task_id 可继续已有 child 对话。",
+                parametersStructured = listOf(
+                    ToolParameterSchema(
+                        name = "title",
+                        type = "string",
+                        description = "显示在工具调用 UI 中的 3-20 字任务名称",
+                        required = true
+                    ),
+                    ToolParameterSchema(
+                        name = "prompt",
+                        type = "string",
+                        description = "交给 Subagent 的完整任务说明",
+                        required = true
+                    ),
+                    ToolParameterSchema(
+                        name = "subagent_type",
+                        type = "string",
+                        description = "Subagent 配置 ID：general | explore",
+                        required = true
+                    ),
+                    ToolParameterSchema(
+                        name = "task_id",
+                        type = "string",
+                        description = "可选，用于继续既有任务的稳定 task ID",
+                        required = false
+                    )
+                )
+            )
+        )
+    )
     
     // ==================== 文件系统工具 ====================
     val fileSystemTools = SystemToolPromptCategory(
@@ -501,7 +574,8 @@ object SystemToolPrompts {
         hasBackendVideoRecognition: Boolean = false,
         chatModelHasDirectAudio: Boolean = false,
         chatModelHasDirectVideo: Boolean = false,
-        safBookmarkNames: List<String> = emptyList()
+        safBookmarkNames: List<String> = emptyList(),
+        includeSubagentTools: Boolean = true
     ): List<SystemToolPromptCategory> {
         val shouldExposeIntent =
             (hasBackendImageRecognition && !chatModelHasDirectImage) ||
@@ -536,12 +610,15 @@ object SystemToolPrompts {
             }
         )
 
-        return listOf(
-            basicTools,
-            adjustedFileSystemTools,
-            httpTools,
-            memoryTools
-        )
+        return buildList {
+            add(basicTools)
+            if (includeSubagentTools) {
+                add(subagentTools)
+            }
+            add(adjustedFileSystemTools)
+            add(httpTools)
+            add(memoryTools)
+        }
     }
 
     fun getAllCategoriesEn(
@@ -551,7 +628,8 @@ object SystemToolPrompts {
         hasBackendVideoRecognition: Boolean = false,
         chatModelHasDirectAudio: Boolean = false,
         chatModelHasDirectVideo: Boolean = false,
-        safBookmarkNames: List<String> = emptyList()
+        safBookmarkNames: List<String> = emptyList(),
+        includeSubagentTools: Boolean = true
     ): List<SystemToolPromptCategory> {
         return getAIAllCategoriesEn(
             hasBackendImageRecognition = hasBackendImageRecognition,
@@ -560,7 +638,8 @@ object SystemToolPrompts {
             hasBackendVideoRecognition = hasBackendVideoRecognition,
             chatModelHasDirectAudio = chatModelHasDirectAudio,
             chatModelHasDirectVideo = chatModelHasDirectVideo,
-            safBookmarkNames = safBookmarkNames
+            safBookmarkNames = safBookmarkNames,
+            includeSubagentTools = includeSubagentTools
         ) + internalToolCategoriesEn
     }
     
@@ -576,7 +655,8 @@ object SystemToolPrompts {
         hasBackendVideoRecognition: Boolean = false,
         chatModelHasDirectAudio: Boolean = false,
         chatModelHasDirectVideo: Boolean = false,
-        safBookmarkNames: List<String> = emptyList()
+        safBookmarkNames: List<String> = emptyList(),
+        includeSubagentTools: Boolean = true
     ): List<SystemToolPromptCategory> {
         val shouldExposeIntent =
             (hasBackendImageRecognition && !chatModelHasDirectImage) ||
@@ -611,12 +691,15 @@ object SystemToolPrompts {
             }
         )
 
-        return listOf(
-            basicToolsCn,
-            adjustedFileSystemTools,
-            httpToolsCn,
-            memoryToolsCn
-        )
+        return buildList {
+            add(basicToolsCn)
+            if (includeSubagentTools) {
+                add(subagentToolsCn)
+            }
+            add(adjustedFileSystemTools)
+            add(httpToolsCn)
+            add(memoryToolsCn)
+        }
     }
 
     fun getAllCategoriesCn(
@@ -626,7 +709,8 @@ object SystemToolPrompts {
         hasBackendVideoRecognition: Boolean = false,
         chatModelHasDirectAudio: Boolean = false,
         chatModelHasDirectVideo: Boolean = false,
-        safBookmarkNames: List<String> = emptyList()
+        safBookmarkNames: List<String> = emptyList(),
+        includeSubagentTools: Boolean = true
     ): List<SystemToolPromptCategory> {
         return getAIAllCategoriesCn(
             hasBackendImageRecognition = hasBackendImageRecognition,
@@ -635,7 +719,8 @@ object SystemToolPrompts {
             hasBackendVideoRecognition = hasBackendVideoRecognition,
             chatModelHasDirectAudio = chatModelHasDirectAudio,
             chatModelHasDirectVideo = chatModelHasDirectVideo,
-            safBookmarkNames = safBookmarkNames
+            safBookmarkNames = safBookmarkNames,
+            includeSubagentTools = includeSubagentTools
         ) + internalToolCategoriesCn
     }
 
@@ -681,9 +766,9 @@ object SystemToolPrompts {
         toolOrder: List<String> = emptyList()
     ): List<ManageableToolPrompt> {
         val baseCategories = if (useEnglish) {
-            listOf(basicTools, fileSystemTools, httpTools, memoryTools)
+            listOf(basicTools, subagentTools, fileSystemTools, httpTools, memoryTools)
         } else {
-            listOf(basicToolsCn, fileSystemToolsCn, httpToolsCn, memoryToolsCn)
+            listOf(basicToolsCn, subagentToolsCn, fileSystemToolsCn, httpToolsCn, memoryToolsCn)
         }
 
         val result = baseCategories

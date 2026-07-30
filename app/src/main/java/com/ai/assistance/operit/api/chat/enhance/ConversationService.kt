@@ -616,7 +616,12 @@ class ConversationService(
                     chatModelHasDirectVideo = chatModelHasDirectVideo,
                     useToolCallApi = useToolCallApi,
                     toolExposureMode = toolExposureMode,
-                    toolVisibility = roleCardToolAccess.effectiveBuiltinToolVisibility,
+                    toolVisibility =
+                        if (isSubTask) {
+                            roleCardToolAccess.effectiveBuiltinToolVisibility + ("task" to false)
+                        } else {
+                            roleCardToolAccess.effectiveBuiltinToolVisibility
+                        },
                     allowedPackageNames = roleCardToolAccess.allowedPackageNames,
                     allowedSkillNames = roleCardToolAccess.allowedSkillNames,
                     allowedMcpServerNames = roleCardToolAccess.allowedMcpServerNames,
