@@ -20,9 +20,16 @@ object InputProcessor {
         context: Context,
         input: String,
         chatId: String? = null,
-        roleCardId: String? = null
+        roleCardId: String? = null,
+        isSubTask: Boolean = false,
     ): String {
-        val activePromptMetadata = buildActivePromptHookMetadata(context, chatId, roleCardId)
+        val activePromptMetadata =
+            buildActivePromptHookMetadata(
+                context,
+                chatId,
+                roleCardId,
+                allowGlobalFallback = !isSubTask,
+            )
         val beforeContext =
             PromptHookRegistry.dispatchPromptInputHooks(
                 PromptHookContext(

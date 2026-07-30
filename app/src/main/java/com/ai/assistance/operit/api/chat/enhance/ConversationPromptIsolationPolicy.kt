@@ -7,7 +7,7 @@ internal object ConversationPromptIsolationPolicy {
         globalTemplate: String,
     ): String =
         if (isSubTask) {
-            ""
+            requestTemplate.orEmpty()
         } else {
             requestTemplate ?: globalTemplate
         }

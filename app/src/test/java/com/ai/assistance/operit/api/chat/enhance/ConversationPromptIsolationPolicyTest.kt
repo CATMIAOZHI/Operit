@@ -7,9 +7,9 @@ import org.junit.Test
 
 class ConversationPromptIsolationPolicyTest {
     @Test
-    fun subtaskUsesBuiltInBaseAndRejectsPersonalContext() {
+    fun subtaskUsesRequestScopedTemplateAndRejectsPersonalContext() {
         assertEquals(
-            "",
+            "request persona",
             ConversationPromptIsolationPolicy.resolveSystemTemplate(
                 isSubTask = true,
                 requestTemplate = "request persona",

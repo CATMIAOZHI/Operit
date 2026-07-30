@@ -5246,6 +5246,7 @@
     <string name="subagent_status_calling_tool">正在调用 %1$s</string>
     <string name="subagent_status_with_agent">%1$s · %2$s</string>
     <string name="subagent_status_completed">已完成</string>
+    <string name="subagent_status_completed_with_tool_count">已完成 · 调用了 %1$d 次工具</string>
     <string name="subagent_status_error">错误</string>
     <string name="subagent_status_cancelled">已取消</string>
     <string name="subagent_stop_task">停止子任务</string>
