@@ -112,7 +112,9 @@ fun ChatScreenHeader(
             transparent = chatHeaderTransparent,
             onBackToParent = {
                 (run?.parentChatId ?: currentChat.parentChatId)
-                    ?.let(actualViewModel::switchChat)
+                    ?.let { parentChatId ->
+                        actualViewModel.switchChat(parentChatId, scrollToBottom = false)
+                    }
             },
         )
         return

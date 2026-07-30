@@ -71,6 +71,8 @@ class CustomXmlRenderer(
         val rawToolName: String,
         val paramText: String,
         val displayToolName: String,
+        val summaryOverride: String? = null,
+        val subagentName: String? = null,
         val isClosed: Boolean,
     )
 
@@ -292,11 +294,6 @@ class CustomXmlRenderer(
     }
 
     private fun resolveToolDisplayNameForRender(toolName: String, params: Map<String, String>): String {
-        if (toolName == "task") {
-            val subagentName = params["subagent_type"].orEmpty().ifBlank { "subagent" }
-            val taskTitle = params["title"].orEmpty().ifBlank { "task" }
-            return "task $subagentName - $taskTitle"
-        }
         if (toolName != "package_proxy" && toolName != "proxy") {
             return toolName
         }
@@ -733,11 +730,26 @@ class CustomXmlRenderer(
                 val params = extractParamsFromTool(content)
                 val paramText = extractContentFromXml(content, "tool").trim()
                 val displayToolName = resolveToolDisplayNameForRender(rawToolName, params)
+                val summaryOverride =
+                    if (rawToolName == "task") {
+                        val subagentName =
+                            params["subagent_type"].orEmpty().ifBlank { "subagent" }
+                        val taskTitle = params["title"].orEmpty().ifBlank { "task" }
+                        "$subagentName - $taskTitle"
+                    } else {
+                        null
+                    }
+                val subagentName =
+                    params["subagent_type"]
+                        ?.trim()
+                        ?.takeIf { rawToolName == "task" && it.isNotEmpty() }
 
                 ToolRequestRenderState(
                     rawToolName = rawToolName,
                     paramText = paramText,
                     displayToolName = displayToolName,
+                    summaryOverride = summaryOverride,
+                    subagentName = subagentName,
                     isClosed = isXmlFullyClosed(content),
                 )
             }
@@ -746,10 +758,11 @@ class CustomXmlRenderer(
             if (renderState.rawToolName == "task") {
                 CompactToolDisplay(
                     toolName = renderState.displayToolName,
-                    params = "",
+                    params = renderState.paramText,
+                    summaryOverride = renderState.summaryOverride,
                     textColor = textColor,
                     modifier = modifier,
-                    enableDialog = false,
+                    enableDialog = enableDialogs,
                 )
             // 特殊处理文件编辑类工具
             } else if (renderState.displayToolName == "apply_file" ||
@@ -800,6 +813,7 @@ class CustomXmlRenderer(
                     invocationIndex = index,
                     persistedExecution = persistedToolExecutions[index],
                     requestedToolName = renderState.rawToolName,
+                    requestedSubagentName = renderState.subagentName,
                     modifier = modifier,
                 )
             }

@@ -62,6 +62,8 @@ class ChatHistoryDelegate(
     // State flows
     private val _chatHistory = MutableStateFlow<List<ChatMessage>>(emptyList())
     val chatHistory: StateFlow<List<ChatMessage>> = _chatHistory.asStateFlow()
+    private val _displayedChatId = MutableStateFlow<String?>(null)
+    val displayedChatId: StateFlow<String?> = _displayedChatId.asStateFlow()
     private val currentChatWindow = CurrentChatWindowController()
     val hasOlderDisplayHistory: StateFlow<Boolean> = currentChatWindow.hasOlderDisplayHistory
     val hasNewerDisplayHistory: StateFlow<Boolean> = currentChatWindow.hasNewerDisplayHistory
@@ -86,6 +88,7 @@ class ChatHistoryDelegate(
 
     private fun clearCurrentChatHistoryInMemory() {
         _chatHistory.value = emptyList()
+        _displayedChatId.value = null
         currentChatWindow.reset()
     }
 
@@ -139,6 +142,9 @@ class ChatHistoryDelegate(
     ): List<ChatMessage> {
         val loadResult = buildCurrentChatLoadResult(chatId, messages)
         currentChatWindow.applyLoadResult(loadResult, _chatHistory)
+        if (_currentChatId.value == chatId) {
+            _displayedChatId.value = chatId
+        }
         if (loadResult.messages.isEmpty()) {
             latestDisplayPageCountByChatId.remove(chatId)
         } else if (!loadResult.hasNewerPersistedHistory) {
@@ -524,6 +530,8 @@ class ChatHistoryDelegate(
 
     private val _chatHistories = MutableStateFlow<List<ChatHistory>>(emptyList())
     val chatHistories: StateFlow<List<ChatHistory>> = _chatHistories.asStateFlow()
+    private val _chatHistoriesLoaded = MutableStateFlow(false)
+    val chatHistoriesLoaded: StateFlow<Boolean> = _chatHistoriesLoaded.asStateFlow()
     private val _chatFolders = MutableStateFlow<List<ChatFolderEntity>>(emptyList())
     val chatFolders: StateFlow<List<ChatFolderEntity>> = _chatFolders.asStateFlow()
 
@@ -545,6 +553,7 @@ class ChatHistoryDelegate(
         coroutineScope.launch {
             chatHistoryManager.allChatHistoriesInternalFlow.collect { histories ->
                 _chatHistories.value = histories
+                _chatHistoriesLoaded.value = true
 
                 val currentId = _currentChatId.value
                 if (currentId != null && histories.none { it.id == currentId }) {
@@ -871,7 +880,11 @@ class ChatHistoryDelegate(
     }
 
     /** 切换聊天 */
-    fun switchChat(chatId: String, syncToGlobal: Boolean = true) {
+    fun switchChat(
+        chatId: String,
+        syncToGlobal: Boolean = true,
+        scrollToBottom: Boolean = true,
+    ) {
         coroutineScope.launch {
             // 切换对话时，禁止添加消息
             allowAddMessage.set(false)
@@ -898,7 +911,9 @@ class ChatHistoryDelegate(
                     loadChatMessages(chatId)
                 }
 
-                onScrollToBottom()
+                if (scrollToBottom) {
+                    onScrollToBottom()
+                }
             } finally {
                 if (!allowAddMessage.get()) {
                     allowAddMessage.set(true)

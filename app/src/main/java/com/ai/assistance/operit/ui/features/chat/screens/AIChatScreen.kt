@@ -19,7 +19,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.CodeOff
@@ -303,6 +303,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val activeChatConfigId by actualViewModel.activeChatConfigId.collectAsState()
     val modelName by actualViewModel.modelName.collectAsState()
     val chatHistory by actualViewModel.chatHistory.collectAsState()
+    val displayedChatId by actualViewModel.displayedChatId.collectAsState()
     // 仅对当前会话显示处理中状态（影响“停止/发送”按钮）
     val isLoading by actualViewModel.currentChatIsLoading.collectAsState()
     val errorMessage by actualViewModel.errorMessage.collectAsState()
@@ -324,6 +325,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val isAutoReadEnabled by actualViewModel.isAutoReadEnabled.collectAsState()
     val showChatHistorySelector by actualViewModel.showChatHistorySelector.collectAsState()
     val chatHistories by actualViewModel.chatHistories.collectAsState()
+    val chatHistoriesLoaded by actualViewModel.chatHistoriesLoaded.collectAsState()
     val currentChatId by actualViewModel.currentChatId.collectAsState()
     val hasNewerDisplayHistory by actualViewModel.hasNewerDisplayHistory.collectAsState()
     val isLoadingDisplayWindow by actualViewModel.isLoadingDisplayWindow.collectAsState()
@@ -335,7 +337,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     }
     val isSubagentChat = currentChatView?.chatKind == ChatKind.SUBAGENT.name
     BackHandler(enabled = isSubagentChat && currentChatView?.parentChatId != null) {
-        currentChatView?.parentChatId?.let(actualViewModel::switchChat)
+        currentChatView?.parentChatId?.let { parentChatId ->
+            actualViewModel.switchChat(parentChatId, scrollToBottom = false)
+        }
     }
     val latestChatViewParams by rememberUpdatedState(
         ChatViewHookParams(
@@ -455,23 +459,63 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val canDrawOverlays = remember { mutableStateOf(Settings.canDrawOverlays(context)) }
 
     // UI state
-    val scrollState = rememberScrollState()
-    val chatScrollPositions = remember { mutableStateMapOf<String, Int>() }
-    LaunchedEffect(Unit) {
-        snapshotFlow { currentChatId to scrollState.value }
-            .collect { (chatId, position) ->
-                if (!chatId.isNullOrBlank()) {
-                    chatScrollPositions[chatId] = position
-                }
-            }
+    var chatScrollOffsets by rememberSaveable {
+        mutableStateOf<Map<String, Int>>(emptyMap())
     }
-    LaunchedEffect(currentChatId) {
-        val chatId = currentChatId ?: return@LaunchedEffect
-        val savedPosition = chatScrollPositions[chatId] ?: return@LaunchedEffect
-        // Wait for the selected transcript to replace the previous chat's layout.
+    val deferredRestoreOffset = remember(currentChatId) {
+        chatScrollOffsets[currentChatId.orEmpty()]
+    }
+    val scrollState = rememberSaveable(currentChatId, saver = ScrollState.Saver) {
+        ScrollState(initial = chatScrollOffsets[currentChatId.orEmpty()] ?: 0)
+    }
+    var deferredRestoreComplete by remember(currentChatId) {
+        mutableStateOf(deferredRestoreOffset == null)
+    }
+    LaunchedEffect(currentChatId, displayedChatId, scrollState) {
+        val targetOffset = deferredRestoreOffset ?: return@LaunchedEffect
+        if (displayedChatId != currentChatId) {
+            return@LaunchedEffect
+        }
+        // The selected id is published before its transcript finishes loading. Restore only
+        // after the target transcript has replaced the previous chat's layout.
         withFrameNanos { }
         withFrameNanos { }
-        scrollState.scrollTo(savedPosition.coerceAtMost(scrollState.maxValue))
+        scrollState.scrollTo(targetOffset.coerceAtMost(scrollState.maxValue))
+        deferredRestoreComplete = true
+    }
+    val latestDisplayedChatIdForScrollSave by rememberUpdatedState(displayedChatId)
+    val latestDeferredRestoreComplete by rememberUpdatedState(deferredRestoreComplete)
+    DisposableEffect(currentChatId, scrollState) {
+        val chatId = currentChatId
+        onDispose {
+            if (
+                !chatId.isNullOrBlank() &&
+                    latestDisplayedChatIdForScrollSave == chatId &&
+                    latestDeferredRestoreComplete
+            ) {
+                chatScrollOffsets = chatScrollOffsets + (chatId to scrollState.value)
+            }
+        }
+    }
+    LaunchedEffect(currentChatId, displayedChatId, scrollState, deferredRestoreComplete) {
+        val chatId = currentChatId
+        if (
+            chatId.isNullOrBlank() ||
+                displayedChatId != chatId ||
+                !deferredRestoreComplete
+        ) {
+            return@LaunchedEffect
+        }
+        snapshotFlow { scrollState.value }.collect { offset ->
+            chatScrollOffsets = chatScrollOffsets + (chatId to offset)
+        }
+    }
+    LaunchedEffect(chatHistories, chatHistoriesLoaded) {
+        if (!chatHistoriesLoaded) {
+            return@LaunchedEffect
+        }
+        val validChatIds = chatHistories.mapTo(mutableSetOf()) { it.id }
+        chatScrollOffsets = chatScrollOffsets.filterKeys(validChatIds::contains)
     }
     val historyListState = rememberLazyListState()
     var selectedHistoryCategoryName by
@@ -746,14 +790,45 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         }
 
     // 滚动状态
-    var autoScrollToBottom by remember { mutableStateOf(true) }
-    val onAutoScrollToBottomChange = remember { { it: Boolean -> autoScrollToBottom = it } }
-    val requestAutoScrollToBottom = remember { { autoScrollToBottom = true } }
+    var chatAutoScrollStates by rememberSaveable {
+        mutableStateOf<Map<String, Boolean>>(emptyMap())
+    }
+    var autoScrollToBottom by remember(currentChatId) {
+        mutableStateOf(chatAutoScrollStates[currentChatId.orEmpty()] ?: true)
+    }
+    val onAutoScrollToBottomChange =
+        remember(currentChatId) {
+            { enabled: Boolean ->
+                autoScrollToBottom = enabled
+                currentChatId?.let { chatId ->
+                    chatAutoScrollStates = chatAutoScrollStates + (chatId to enabled)
+                }
+                Unit
+            }
+        }
+    val requestAutoScrollToBottom =
+        remember(currentChatId) {
+            {
+                autoScrollToBottom = true
+                currentChatId?.let { chatId ->
+                    chatAutoScrollStates = chatAutoScrollStates + (chatId to true)
+                }
+                Unit
+            }
+        }
+    LaunchedEffect(chatHistories, chatHistoriesLoaded) {
+        if (!chatHistoriesLoaded) {
+            return@LaunchedEffect
+        }
+        val validChatIds = chatHistories.mapTo(mutableSetOf()) { it.id }
+        chatAutoScrollStates = chatAutoScrollStates.filterKeys(validChatIds::contains)
+    }
     val imeBottomPx = WindowInsets.ime.getBottom(density)
     val latestChatHistory by rememberUpdatedState(chatHistory)
     val latestAutoScrollToBottom by rememberUpdatedState(autoScrollToBottom)
     val latestHasNewerDisplayHistory by rememberUpdatedState(hasNewerDisplayHistory)
     val latestIsLoadingDisplayWindow by rememberUpdatedState(isLoadingDisplayWindow)
+    val latestScrollState by rememberUpdatedState(scrollState)
 
     // 处理来自ViewModel的滚动事件（流式输出时）
     LaunchedEffect(Unit) {
@@ -765,7 +840,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
             ) {
                 try {
                     if (latestChatHistory.isNotEmpty()) {
-                        scrollState.animateScrollTo(scrollState.maxValue)
+                        latestScrollState.animateScrollTo(latestScrollState.maxValue)
                     }
                 } catch (e: Exception) {
                     // AppLogger.e("AIChatScreen", "自动滚动失败", e)
