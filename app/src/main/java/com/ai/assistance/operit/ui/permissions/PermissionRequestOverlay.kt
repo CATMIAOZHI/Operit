@@ -105,6 +105,7 @@ private fun PermissionRequestContent(
     onAllow: () -> Unit,
     onDeny: () -> Unit,
     onAlwaysAllow: () -> Unit,
+    allowAlwaysAllow: Boolean,
     onMinimize: () -> Unit,
     pendingRequestCount: Int,
     colorScheme: ColorScheme? = null,
@@ -261,17 +262,19 @@ private fun PermissionRequestContent(
                                         )
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = stringResource(R.string.permission_request_always_allow),
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontSize = 12.sp
-                                    ),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .clickable { onAlwaysAllow() }
-                                        .padding(vertical = 4.dp)
-                                )
+                                if (allowAlwaysAllow) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = stringResource(R.string.permission_request_always_allow),
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontSize = 12.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .clickable { onAlwaysAllow() }
+                                            .padding(vertical = 4.dp)
+                                    )
+                                }
                             }
                         }
 
@@ -545,7 +548,8 @@ class PermissionRequestOverlay(private val context: Context) {
         conversationLabel: String?,
         pendingRequestCount: StateFlow<Int>,
         onResult: (PermissionRequestResult) -> Unit,
-        onMinimized: (() -> Unit)? = null
+        onMinimized: (() -> Unit)? = null,
+        allowAlwaysAllow: Boolean = true,
     ) {
         if (overlayView != null) {
             AppLogger.e(TAG, "Cannot show permission request while an overlay is still attached")
@@ -642,6 +646,7 @@ class PermissionRequestOverlay(private val context: Context) {
                         onAlwaysAllow = {
                             onRes?.invoke(PermissionRequestResult.ALWAYS_ALLOW)
                         },
+                        allowAlwaysAllow = allowAlwaysAllow,
                         pendingRequestCount = pendingCount,
                         onMinimize = {
                             onMin?.invoke()

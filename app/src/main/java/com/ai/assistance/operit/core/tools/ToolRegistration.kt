@@ -6,6 +6,7 @@ import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.tools.climode.CliToolModeSupport
 import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
 import com.ai.assistance.operit.core.tools.defaultTool.ToolGetter
+import com.ai.assistance.operit.core.tools.defaultTool.standard.TaskToolExecutor
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.model.ToolResult
@@ -1503,6 +1504,18 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
 
     // 对话管理工具
     val chatManagerTool = ToolGetter.getChatManagerTool(context)
+    val taskToolExecutor = TaskToolExecutor(context)
+
+    handler.registerTool(
+        name = "task",
+        descriptionGenerator = { tool ->
+            val subagent =
+                tool.parameters.find { it.name == "subagent_type" }?.value.orEmpty()
+            val title = tool.parameters.find { it.name == "title" }?.value.orEmpty()
+            "task $subagent - $title"
+        },
+        executor = taskToolExecutor,
+    )
 
     // 启动聊天服务
     handler.registerTool(

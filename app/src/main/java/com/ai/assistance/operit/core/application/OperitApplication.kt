@@ -48,6 +48,7 @@ import com.ai.assistance.operit.data.preferences.initAndroidPermissionPreference
 import com.ai.assistance.operit.data.preferences.initUserPreferencesManager
 import com.ai.assistance.operit.data.preferences.preferencesManager
 import com.ai.assistance.operit.data.repository.CustomEmojiRepository
+import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.ui.features.chat.webview.LocalWebServer
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.editor.language.LanguageFactory
 import com.ai.assistance.operit.util.GlobalExceptionHandler
@@ -338,6 +339,15 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             val dbStartTime = System.currentTimeMillis()
             // 简单访问数据库以触发初始化
             database.openHelper.writableDatabase
+            val reconciledRuns =
+                SubagentRunRepository.getInstance(applicationContext)
+                    .reconcileIncompleteRuns(createdBeforeOrAt = startTime)
+            if (reconciledRuns > 0) {
+                AppLogger.w(
+                    TAG,
+                    "Marked $reconciledRuns unfinished Subagent runs as INTERRUPTED after restart",
+                )
+            }
             AppLogger.d(TAG, "【启动计时】数据库预加载完成（异步） - ${System.currentTimeMillis() - dbStartTime}ms")
         }
 

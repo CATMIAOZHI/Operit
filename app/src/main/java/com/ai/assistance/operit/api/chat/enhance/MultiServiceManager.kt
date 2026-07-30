@@ -29,6 +29,7 @@ class MultiServiceManager(private val context: Context) {
         private val closeAction: suspend () -> Unit,
         val service: AIService,
         val modelConfig: ModelConfigData,
+        val modelIndex: Int,
         val modelParameters: List<ModelParameter<*>>
     ) {
         private val closed = AtomicBoolean(false)
@@ -43,6 +44,7 @@ class MultiServiceManager(private val context: Context) {
     private class ManagedService(
         val service: AIService,
         val modelConfig: ModelConfigData,
+        val modelIndex: Int,
         var activeLeases: Int = 0,
         var retired: Boolean = false,
         var released: Boolean = false
@@ -106,6 +108,7 @@ class MultiServiceManager(private val context: Context) {
             closeAction = { releaseLease(managedService) },
             service = managedService.service,
             modelConfig = managedService.modelConfig,
+            modelIndex = managedService.modelIndex,
             modelParameters = modelParameters
         )
     }
@@ -122,6 +125,7 @@ class MultiServiceManager(private val context: Context) {
             closeAction = { releaseLease(managedService) },
             service = managedService.service,
             modelConfig = managedService.modelConfig,
+            modelIndex = managedService.modelIndex,
             modelParameters = modelParameters
         )
     }
@@ -134,10 +138,12 @@ class MultiServiceManager(private val context: Context) {
         val configMapping = functionalConfigManager.getConfigMappingForFunction(functionType)
         val config = modelConfigManager.getModelConfigFlow(configMapping.configId).first()
 
-        val service = createServiceFromConfig(config, configMapping.modelIndex)
+        val actualModelIndex = getValidModelIndex(config.modelName, configMapping.modelIndex)
+        val service = createServiceFromConfig(config, actualModelIndex)
         val managedService = ManagedService(
             service = service,
-            modelConfig = config
+            modelConfig = config,
+            modelIndex = actualModelIndex,
         )
         serviceInstances[functionType] = managedService
 
@@ -155,10 +161,12 @@ class MultiServiceManager(private val context: Context) {
         customServiceInstances[cacheKey]?.let { return it }
 
         val config = modelConfigManager.getModelConfigFlow(configId).first()
-        val service = createServiceFromConfig(config, normalizedIndex)
+        val actualModelIndex = getValidModelIndex(config.modelName, normalizedIndex)
+        val service = createServiceFromConfig(config, actualModelIndex)
         val managedService = ManagedService(
             service = service,
-            modelConfig = config
+            modelConfig = config,
+            modelIndex = actualModelIndex,
         )
         customServiceInstances[cacheKey] = managedService
 
