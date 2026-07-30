@@ -64,6 +64,8 @@ class MessageProcessingDelegate(
         private val getChatTitle: (chatId: String) -> String?,
         private val onTurnComplete:
             suspend (chatId: String?, service: EnhancedAIService, nextWindowSize: Int?, turnOptions: ChatTurnOptions) -> Unit,
+        private val onTurnTerminated: (ChatTurnTerminalSignal) -> Unit,
+        private val isTurnCancellationRequested: (String) -> Boolean,
         private val onTokenLimitExceeded: suspend (
             chatId: String?,
             roleCardId: String?,
@@ -474,6 +476,12 @@ class MessageProcessingDelegate(
         }
     }
 
+    suspend fun cancelMessageAndAwait(chatId: String) {
+        withContext(Dispatchers.IO) {
+            cancelMessageInternal(chatId, keepPartialResponse = true)
+        }
+    }
+
     suspend fun cancelMessageForDestructiveMutation(chatId: String) {
         cancelMessageInternal(chatId, keepPartialResponse = false)
     }
@@ -605,12 +613,24 @@ class MessageProcessingDelegate(
             turnOptions: ChatTurnOptions = ChatTurnOptions()
     ) {
         val rawMessageText = messageTextOverride ?: _userMessage.value.text
+        fun rejectRegisteredTurn(error: String) {
+            turnOptions.turnId?.let { turnId ->
+                onTurnTerminated(
+                    ChatTurnTerminalSignal.Failed(
+                        turnId = turnId,
+                        chatId = chatId.orEmpty(),
+                        error = error,
+                    )
+                )
+            }
+        }
         // 群组编排模式下，允许空消息（后续成员不需要用户消息）
         if (rawMessageText.isBlank() && attachments.isEmpty() && !isAutoContinuation && !isGroupOrchestrationTurn) {
             AppLogger.d(
                 TAG,
                 "sendUserMessage忽略: 空消息且无附件, chatId=$chatId, autoContinuation=$isAutoContinuation"
             )
+            rejectRegisteredTurn("Message was empty")
             return
         }
         val chatRuntime = runtimeFor(chatId)
@@ -619,6 +639,7 @@ class MessageProcessingDelegate(
                 TAG,
                 "sendUserMessage忽略: chat正在处理中, chatId=$chatId, roleCardId=$roleCardId, override=${!messageTextOverride.isNullOrBlank()}, suppressUserMessageInHistory=$suppressUserMessageInHistory"
             )
+            rejectRegisteredTurn("Chat is already processing another turn")
             return
         }
 
@@ -642,7 +663,13 @@ class MessageProcessingDelegate(
             val effectiveHideUserMessage = effectivePersistTurn && turnOptions.hideUserMessage
             // 检查这是否是聊天中的第一条用户消息（忽略AI的开场白）
             val isFirstMessage = !hasUserMessage(chatId)
-            val titleFallback = if (effectivePersistTurn && isFirstMessage && chatId != null) {
+            val titleFallback =
+                if (
+                    effectivePersistTurn &&
+                        isFirstMessage &&
+                        chatId != null &&
+                        !turnOptions.isSubTask
+                ) {
                 fallbackConversationTitle(originalMessageText, attachments).also { fallbackTitle ->
                     updateChatTitle(chatId, fallbackTitle)
                 }
@@ -783,6 +810,8 @@ class MessageProcessingDelegate(
             var turnCachedInputTokens = 0
             var calculateNextWindowSize: (suspend () -> Int?)? = null
             var cancellationToPropagate: kotlinx.coroutines.CancellationException? = null
+            var terminalFailureMessage: String? = null
+            var assistantMessageTimestampForTurn: Long? = null
             try {
                 // if (!NetworkUtils.isNetworkAvailable(context)) {
                 //     withContext(Dispatchers.Main) { showErrorMessage("网络连接不可用") }
@@ -931,6 +960,7 @@ class MessageProcessingDelegate(
 
                 val prepareResponseStreamStartTime = messageTimingNow()
                 val aiMessageTimestamp = ChatMessageTimestampAllocator.next()
+                assistantMessageTimestampForTurn = aiMessageTimestamp
                 val responseStream = AIMessageManager.sendMessage(
                     enhancedAiService = service,
                     chatId = activeChatId,
@@ -967,7 +997,9 @@ class MessageProcessingDelegate(
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,
                     toolTimingScopeId = aiMessageTimestamp.toString(),
-                    disableWarning = turnOptions.disableWarning
+                    disableWarning = turnOptions.disableWarning,
+                    isSubTask = turnOptions.isSubTask,
+                    systemPromptOverride = turnOptions.systemPromptOverride,
                 )
                 logMessageTiming(
                     stage = "delegate.prepareResponseStream",
@@ -1371,6 +1403,7 @@ class MessageProcessingDelegate(
                     cancellationToPropagate = e
                 } else {
                     AppLogger.e(TAG, "发送消息时出错", e)
+                    terminalFailureMessage = e.message ?: e.javaClass.simpleName
                     setChatInputProcessingState(
                         chatId,
                         EnhancedInputProcessingState.Error(context.getString(R.string.message_send_failed, e.message))
@@ -1443,6 +1476,33 @@ class MessageProcessingDelegate(
                     }
                 }
 
+                turnOptions.turnId?.let { turnId ->
+                    val terminalSignal =
+                        when {
+                            cancellationToPropagate != null ->
+                                ChatTurnTerminalSignal.Cancelled(
+                                    turnId = turnId,
+                                    chatId = activeChatId,
+                                )
+                            shouldNotifyTurnComplete && assistantMessageTimestampForTurn != null ->
+                                ChatTurnTerminalSignal.Completed(
+                                    turnId = turnId,
+                                    chatId = activeChatId,
+                                    assistantMessageTimestamp =
+                                        requireNotNull(assistantMessageTimestampForTurn),
+                                )
+                            else ->
+                                ChatTurnTerminalSignal.Failed(
+                                    turnId = turnId,
+                                    chatId = activeChatId,
+                                    error =
+                                        terminalFailureMessage
+                                            ?: "Turn ended without a final assistant result",
+                                )
+                        }
+                    onTurnTerminated(terminalSignal)
+                }
+
                 logMessageTiming(
                     stage = "delegate.sendUserMessage.total",
                     startTimeMs = sendUserMessageStartTime,
@@ -1456,6 +1516,13 @@ class MessageProcessingDelegate(
             cancellationToPropagate?.let { throw it }
         }
         chatRuntime.sendJob = sendJob
+        if (turnOptions.turnId?.let(isTurnCancellationRequested) == true) {
+            sendJob.cancel(
+                kotlinx.coroutines.CancellationException(
+                    "Turn ${turnOptions.turnId} was cancelled before its send job was bound"
+                )
+            )
+        }
     }
 
     suspend fun regenerateAiMessageVariant(

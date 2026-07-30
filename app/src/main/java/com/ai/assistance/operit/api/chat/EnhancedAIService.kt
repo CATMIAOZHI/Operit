@@ -80,6 +80,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import com.ai.assistance.operit.data.repository.CustomEmojiRepository
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
+import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.CharacterCardToolAccessResolver
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
@@ -338,6 +339,7 @@ class EnhancedAIService private constructor(private val context: Context) {
         var onNonFatalError: suspend (error: String) -> Unit = {},
         var onTokenLimitExceeded: (suspend () -> Unit)? = null,
         var customSystemPromptTemplate: String? = null,
+        var additionalSystemPrompt: String? = null,
         var isSubTask: Boolean = false,
         var characterName: String? = null,
         var avatarUri: String? = null,
@@ -434,6 +436,8 @@ class EnhancedAIService private constructor(private val context: Context) {
         val eventChannel: MutableSharedStream<TextStreamEvent>,
         val toolTimingScopeId: String? = null,
         val nextToolInvocationIndex: AtomicInteger = AtomicInteger(0),
+        val subagentToolLoopGuard: ToolExecutionManager.SubagentToolLoopGuard =
+            ToolExecutionManager.SubagentToolLoopGuard(),
         var modelExecutionSnapshot: ModelExecutionSnapshot? = null
     )
 
@@ -899,6 +903,7 @@ class EnhancedAIService private constructor(private val context: Context) {
         val maxTokens = options.maxTokens
         val tokenUsageThreshold = options.tokenUsageThreshold
         val customSystemPromptTemplate = options.customSystemPromptTemplate
+        val additionalSystemPrompt = options.additionalSystemPrompt
         val isSubTask = options.isSubTask
         val characterName = options.characterName
         val avatarUri = options.avatarUri
@@ -997,7 +1002,8 @@ class EnhancedAIService private constructor(private val context: Context) {
                                     isSubTask,
                                     functionType,
                                     modelSnapshot.config,
-                                    memorySpaceIdOverride
+                                    memorySpaceIdOverride,
+                                    additionalSystemPrompt,
                             )
                     val tAfterPrepareHistory = messageTimingNow()
                     AppLogger.d(TAG, "sendMessage本地耗时: prepareConversationHistory=${tAfterPrepareHistory - startTime}ms")
@@ -2098,14 +2104,37 @@ class EnhancedAIService private constructor(private val context: Context) {
             }
         }
 
-        val processToolJob = toolProcessingScope.launch {
-            val conversationLabel =
+        val processToolJob = toolProcessingScope.async {
+            val chatHistoryManager =
+                ChatHistoryManager.getInstance(this@EnhancedAIService.context)
+            val childChatTitle =
                 chatId
                     ?.takeIf { it.isNotBlank() }
-                    ?.let { ChatHistoryManager.getInstance(this@EnhancedAIService.context).getChatTitle(it) }
+                    ?.let { chatHistoryManager.getChatTitle(it) }
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() }
-                    ?: characterName?.trim()?.takeIf { it.isNotEmpty() }
+            val conversationLabel =
+                if (isSubTask && !chatId.isNullOrBlank()) {
+                    SubagentRunRepository.getInstance(this@EnhancedAIService.context)
+                        .getByChildChatId(chatId)
+                        ?.let { run ->
+                            val parentTitle =
+                                chatHistoryManager.getChatTitle(run.parentChatId)
+                                    ?.trim()
+                                    ?.takeIf { it.isNotEmpty() }
+                                    ?: run.parentChatId
+                            this@EnhancedAIService.context.getString(
+                                R.string.subagent_permission_source,
+                                run.agentProfileId,
+                                run.title,
+                                parentTitle,
+                                childChatTitle ?: chatId,
+                            )
+                        }
+                        ?: childChatTitle
+                } else {
+                    childChatTitle ?: characterName?.trim()?.takeIf { it.isNotEmpty() }
+                }
             val modelSnapshot = getModelExecutionSnapshot(
                 context,
                 functionType,
@@ -2124,7 +2153,12 @@ class EnhancedAIService private constructor(private val context: Context) {
                 callerName = characterName,
                 callerChatId = chatId,
                 callerCardId = roleCardId,
-                conversationLabel = conversationLabel
+                conversationLabel = conversationLabel,
+                parentModelConfigId = modelSnapshot.config.id,
+                parentModelIndex = modelSnapshot.lease.modelIndex,
+                isSubagent = isSubTask,
+                subagentToolLoopGuard =
+                    context.subagentToolLoopGuard.takeIf { isSubTask },
             )
 
             if (allToolResults.isNotEmpty()) {
@@ -2178,7 +2212,7 @@ class EnhancedAIService private constructor(private val context: Context) {
         toolExecutionJobs[invocationId] = processToolJob
 
         try {
-            processToolJob.join()
+            processToolJob.await()
         } finally {
             toolExecutionJobs.remove(invocationId)
         }
@@ -2667,6 +2701,7 @@ class EnhancedAIService private constructor(private val context: Context) {
             functionType: FunctionType = FunctionType.CHAT,
             modelConfig: ModelConfigData,
             memorySpaceIdOverride: String? = null,
+            additionalSystemPrompt: String? = null,
             dispatchHistoryHooks: (PromptHookContext) -> PromptHookContext =
                 PromptHookRegistry::dispatchPromptHistoryHooks,
             dispatchSystemPromptComposeHooks: (PromptHookContext) -> PromptHookContext =
@@ -2709,10 +2744,12 @@ class EnhancedAIService private constructor(private val context: Context) {
                 useToolCallApi,
                 chatModelHasDirectImage,
                 toolExposureMode,
-                memorySpaceIdOverride,
-                dispatchHistoryHooks,
-                dispatchSystemPromptComposeHooks,
-                dispatchToolPromptComposeHooks
+                memorySpaceIdOverride = memorySpaceIdOverride,
+                additionalSystemPrompt = additionalSystemPrompt,
+                isSubTask = isSubTask,
+                dispatchHistoryHooks = dispatchHistoryHooks,
+                dispatchSystemPromptComposeHooks = dispatchSystemPromptComposeHooks,
+                dispatchToolPromptComposeHooks = dispatchToolPromptComposeHooks,
         )
     }
 

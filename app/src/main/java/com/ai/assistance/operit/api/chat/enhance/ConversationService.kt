@@ -493,6 +493,8 @@ class ConversationService(
             chatModelHasDirectImage: Boolean = false,
             toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
             memorySpaceIdOverride: String? = null,
+            additionalSystemPrompt: String? = null,
+            isSubTask: Boolean = false,
             dispatchHistoryHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchPromptHistoryHooks,
             dispatchSystemPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchSystemPromptComposeHooks,
             dispatchToolPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchToolPromptComposeHooks
@@ -521,7 +523,8 @@ class ConversationService(
                             "chatModelHasDirectVideo" to chatModelHasDirectVideo,
                             "useToolCallApi" to useToolCallApi,
                             "chatModelHasDirectImage" to chatModelHasDirectImage,
-                            "toolExposureMode" to toolExposureMode.name
+                            "toolExposureMode" to toolExposureMode.name,
+                            "isSubTask" to isSubTask,
                         ) + activePromptMetadata
                 )
             )
@@ -559,7 +562,19 @@ class ConversationService(
                 }.orEmpty()
 
                 // 获取自定义系统提示模板
-                val finalCustomSystemPromptTemplate = customSystemPromptTemplate ?: apiPreferences.customSystemPromptTemplateFlow.first()
+                val finalCustomSystemPromptTemplate =
+                    ConversationPromptIsolationPolicy.resolveSystemTemplate(
+                        isSubTask = isSubTask,
+                        requestTemplate = customSystemPromptTemplate,
+                        globalTemplate =
+                            if (isSubTask) {
+                                ""
+                            } else {
+                                apiPreferences.customSystemPromptTemplateFlow.first()
+                            },
+                    )
+                val allowPersonalContext =
+                    ConversationPromptIsolationPolicy.allowPersonalContext(isSubTask)
 
                 // 获取工具启用状态
                 val enableTools = apiPreferences.enableToolsFlow.first()
@@ -615,10 +630,15 @@ class ConversationService(
                 )
 
                 // 构建waifu特殊规则
-                val waifuRulesText = if(waifuPreferences.enableWaifuModeFlow.first()) buildWaifuRulesText() else ""
+                val waifuRulesText =
+                    if (allowPersonalContext && waifuPreferences.enableWaifuModeFlow.first()) {
+                        buildWaifuRulesText()
+                    } else {
+                        ""
+                    }
                 // 语音头像模式：添加 <mood> 标签协议
                 val avatarMoodRulesText =
-                    if (shouldInjectMoodRules(promptFunctionType)) {
+                    if (allowPersonalContext && shouldInjectMoodRules(promptFunctionType)) {
                         buildAvatarMoodRulesText(useEnglish)
                     } else {
                         ""
@@ -629,13 +649,22 @@ class ConversationService(
                 val finalSystemPrompt = buildString {
                     append(avatarMoodRulesText)
                     append(systemPrompt)
-                    if (proxyRolePrompt.isNotEmpty()) {
+                    if (!additionalSystemPrompt.isNullOrBlank()) {
+                        append("\n\n<subagent_profile source=\"agent_profile\">\n")
+                        append(additionalSystemPrompt)
+                        append("\n</subagent_profile>")
+                    }
+                    if (allowPersonalContext && proxyRolePrompt.isNotEmpty()) {
                         append("\n\n<assistant_role source=\"proxy_character_card\">\n")
                         append(proxyRolePrompt)
                         append("\n</assistant_role>")
                     }
                     append(waifuRulesText)
-                    if (!disableUserPreferenceDescription && userProfileMarkdown.isNotEmpty()) {
+                    if (
+                        allowPersonalContext &&
+                            !disableUserPreferenceDescription &&
+                            userProfileMarkdown.isNotEmpty()
+                    ) {
                         append("\n\n<user_profile source=\"user.md\">\n")
                         append(userProfileMarkdown)
                         append("\n</user_profile>")

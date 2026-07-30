@@ -344,7 +344,9 @@ object AIMessageManager {
         chatModelIndexOverride: Int? = null,
         memorySpaceIdOverride: String? = null,
         toolTimingScopeId: String? = null,
-        disableWarning: Boolean = false
+        disableWarning: Boolean = false,
+        isSubTask: Boolean = false,
+        systemPromptOverride: String? = null,
     ): SharedStream<String> {
         val totalStartTime = messageTimingNow()
         val chatKey = chatId ?: DEFAULT_CHAT_KEY
@@ -403,19 +405,24 @@ object AIMessageManager {
             )
 
             val matchPluginStartTime = messageTimingNow()
-            val pluginExecution = MessageProcessingPluginRegistry.createExecutionIfMatched(
-                params = MessageProcessingHookParams(
-                    context = context,
-                    enhancedAIService = enhancedAiService,
-                    chatId = chatId,
-                    messageContent = messageContent,
-                    chatHistory = memoryForRequest,
-                    workspacePath = workspacePath,
-                    maxTokens = maxTokens,
-                    tokenUsageThreshold = tokenUsageThreshold,
-                    onNonFatalError = onNonFatalError
-                )
-            )
+            val pluginExecution =
+                if (isSubTask) {
+                    null
+                } else {
+                    MessageProcessingPluginRegistry.createExecutionIfMatched(
+                        params = MessageProcessingHookParams(
+                            context = context,
+                            enhancedAIService = enhancedAiService,
+                            chatId = chatId,
+                            messageContent = messageContent,
+                            chatHistory = memoryForRequest,
+                            workspacePath = workspacePath,
+                            maxTokens = maxTokens,
+                            tokenUsageThreshold = tokenUsageThreshold,
+                            onNonFatalError = onNonFatalError
+                        )
+                    )
+                }
             logMessageTiming(
                 stage = "sendMessage.matchPlugin",
                 startTimeMs = matchPluginStartTime,
@@ -479,10 +486,12 @@ object AIMessageManager {
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,
-                    toolTimingScopeId = toolTimingScopeId,
-                    stream = enableStream,
-                    disableWarning = disableWarning
-                )
+                     toolTimingScopeId = toolTimingScopeId,
+                     stream = enableStream,
+                    disableWarning = disableWarning,
+                    isSubTask = isSubTask,
+                    additionalSystemPrompt = systemPromptOverride,
+                 )
             ).shareRevisable(
                 scope = scope,
                 replay = Int.MAX_VALUE,

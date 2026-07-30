@@ -292,6 +292,11 @@ class CustomXmlRenderer(
     }
 
     private fun resolveToolDisplayNameForRender(toolName: String, params: Map<String, String>): String {
+        if (toolName == "task") {
+            val subagentName = params["subagent_type"].orEmpty().ifBlank { "subagent" }
+            val taskTitle = params["title"].orEmpty().ifBlank { "task" }
+            return "task $subagentName - $taskTitle"
+        }
         if (toolName != "package_proxy" && toolName != "proxy") {
             return toolName
         }
@@ -738,8 +743,16 @@ class CustomXmlRenderer(
             }
 
         Column {
+            if (renderState.rawToolName == "task") {
+                CompactToolDisplay(
+                    toolName = renderState.displayToolName,
+                    params = "",
+                    textColor = textColor,
+                    modifier = modifier,
+                    enableDialog = false,
+                )
             // 特殊处理文件编辑类工具
-            if (renderState.displayToolName == "apply_file" ||
+            } else if (renderState.displayToolName == "apply_file" ||
                 renderState.displayToolName == "create_file" ||
                 renderState.displayToolName == "edit_file"
             ) {
@@ -786,6 +799,7 @@ class CustomXmlRenderer(
                     timingScopeId = toolTimingScopeId,
                     invocationIndex = index,
                     persistedExecution = persistedToolExecutions[index],
+                    requestedToolName = renderState.rawToolName,
                     modifier = modifier,
                 )
             }

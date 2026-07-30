@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
 import com.ai.assistance.operit.data.model.ChatHistory
+import com.ai.assistance.operit.data.model.ChatKind
 
 enum class ChatHistoryCategory {
     ALL,
@@ -12,15 +13,16 @@ internal fun selectChatHistoriesForCategory(
     histories: List<ChatHistory>,
     category: ChatHistoryCategory,
 ): List<ChatHistory> {
+    val visibleHistories = histories.filter { it.chatKind != ChatKind.SUBAGENT.name }
     return when (category) {
-        ChatHistoryCategory.ALL -> histories
+        ChatHistoryCategory.ALL -> visibleHistories
         ChatHistoryCategory.RECENT ->
-            histories.sortedWith(
+            visibleHistories.sortedWith(
                 compareByDescending<ChatHistory> { it.lastMessageAt ?: it.createdAt }
                     .thenByDescending { it.createdAt }
                     .thenBy { it.id }
             )
-        ChatHistoryCategory.FAVORITES -> histories.filter { it.isFavorite }
+        ChatHistoryCategory.FAVORITES -> visibleHistories.filter { it.isFavorite }
     }
 }
 

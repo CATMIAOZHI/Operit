@@ -6,6 +6,7 @@ import androidx.annotation.RequiresApi
 import com.ai.assistance.operit.util.AppLogger
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -48,6 +49,7 @@ import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.AttachmentInfo
 import com.ai.assistance.operit.data.model.CharacterCardChatModelBindingMode
 import com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode
+import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.preferences.ApiPreferences
@@ -331,6 +333,10 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val currentChatView = remember(chatHistories, currentChatId) {
         chatHistories.find { it.id == currentChatId }
     }
+    val isSubagentChat = currentChatView?.chatKind == ChatKind.SUBAGENT.name
+    BackHandler(enabled = isSubagentChat && currentChatView?.parentChatId != null) {
+        currentChatView?.parentChatId?.let(actualViewModel::switchChat)
+    }
     val latestChatViewParams by rememberUpdatedState(
         ChatViewHookParams(
             context = context,
@@ -450,6 +456,23 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
 
     // UI state
     val scrollState = rememberScrollState()
+    val chatScrollPositions = remember { mutableStateMapOf<String, Int>() }
+    LaunchedEffect(Unit) {
+        snapshotFlow { currentChatId to scrollState.value }
+            .collect { (chatId, position) ->
+                if (!chatId.isNullOrBlank()) {
+                    chatScrollPositions[chatId] = position
+                }
+            }
+    }
+    LaunchedEffect(currentChatId) {
+        val chatId = currentChatId ?: return@LaunchedEffect
+        val savedPosition = chatScrollPositions[chatId] ?: return@LaunchedEffect
+        // Wait for the selected transcript to replace the previous chat's layout.
+        withFrameNanos { }
+        withFrameNanos { }
+        scrollState.scrollTo(savedPosition.coerceAtMost(scrollState.maxValue))
+    }
     val historyListState = rememberLazyListState()
     var selectedHistoryCategoryName by
         rememberLocal(
@@ -500,6 +523,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         "chat_history_auto_switch_chat_on_character_select",
         false
     )
+    val visibleAllChatHistories = remember(chatHistories) {
+        chatHistories.filter { it.chatKind != ChatKind.SUBAGENT.name }
+    }
     val displayedChatHistories = remember(
         chatHistories,
         activePrompt,
@@ -512,13 +538,13 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                 when (activePrompt) {
                     is ActivePrompt.CharacterGroup -> {
                         val group = activeCharacterGroup ?: return@remember emptyList()
-                        chatHistories.filter { history ->
+                        visibleAllChatHistories.filter { history ->
                             history.characterGroupId == group.id
                         }
                     }
                     is ActivePrompt.CharacterCard -> {
                         val activeCard = activeCharacterCard ?: return@remember emptyList()
-                        chatHistories.filter { history ->
+                        visibleAllChatHistories.filter { history ->
                             val historyCard = history.characterCardName
                             if (activeCard.isDefault) {
                                 historyCard == null || historyCard == activeCard.name
@@ -529,7 +555,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                     }
                 }
             }
-            else -> chatHistories
+            else -> visibleAllChatHistories
         }
     }
     LaunchedEffect(autoSwitchCharacterCard) {
@@ -919,6 +945,11 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     var showCharacterSelector by remember { mutableStateOf(false) }
 
     var bottomBarHeightPx by remember { mutableStateOf(0) }
+    LaunchedEffect(isSubagentChat) {
+        if (isSubagentChat) {
+            bottomBarHeightPx = 0
+        }
+    }
     val bottomBarHeightDp = with(density) { bottomBarHeightPx.toDp() }
     val classicSettingsBarBottomPadding =
         if (bottomBarHeightDp > 36.dp) {
@@ -1048,7 +1079,10 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 showChatFloatingDotsAnimation = showChatFloatingDotsAnimation,
                         )
 
-                        if (inputStyle == UserPreferencesManager.INPUT_STYLE_CLASSIC) {
+                        if (
+                            !isSubagentChat &&
+                                inputStyle == UserPreferencesManager.INPUT_STYLE_CLASSIC
+                        ) {
                             ClassicChatSettingsBar(
                                     modifier =
                                             Modifier
@@ -1133,16 +1167,17 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                         }
                     }
 
-                    Box(
-                        modifier =
-                            Modifier
-                                .align(Alignment.BottomCenter)
-                                .onGloballyPositioned {
-                                    bottomBarHeightPx = it.size.height
-                                }
-                                .graphicsLayer { translationY = -inputBarTranslationYPx }
-                    ) {
-                        ChatInputBottomBar(
+                    if (!isSubagentChat) {
+                        Box(
+                            modifier =
+                                Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .onGloballyPositioned {
+                                        bottomBarHeightPx = it.size.height
+                                    }
+                                    .graphicsLayer { translationY = -inputBarTranslationYPx }
+                        ) {
+                            ChatInputBottomBar(
                                 actualViewModel = actualViewModel,
                                 inputStyle = inputStyle,
                                 currentChatId = currentChatId,
@@ -1185,7 +1220,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                     showMemoryFolderDialog = true
                                 },
                                 onRequestAutoScrollToBottom = requestAutoScrollToBottom,
-                        )
+                            )
+                        }
                     }
 
                     CharacterSelectorPanel(
@@ -1232,7 +1268,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 ChatHistorySelectorPanel(
                                     actualViewModel = actualViewModel,
                                     chatHistories = displayedChatHistories,
-                                    allChatHistories = chatHistories,
+                                    allChatHistories = visibleAllChatHistories,
+                                    searchableChatHistories = chatHistories,
                                     currentChatId = currentChatId ?: "",
                                     showChatHistorySelector = showChatHistorySelector,
                                     historyListState = historyListState,

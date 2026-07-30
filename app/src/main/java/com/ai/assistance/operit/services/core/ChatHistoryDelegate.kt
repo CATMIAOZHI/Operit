@@ -334,6 +334,9 @@ class ChatHistoryDelegate(
     suspend fun getChatHistory(chatId: String): List<ChatMessage> =
         chatHistoryManager.loadChatMessages(chatId)
 
+    suspend fun chatExists(chatId: String): Boolean =
+        chatHistoryManager.chatExists(chatId)
+
     suspend fun getRuntimeChatHistory(chatId: String): List<ChatMessage> =
         chatHistoryManager.loadRuntimeChatMessages(chatId)
 
@@ -540,7 +543,7 @@ class ChatHistoryDelegate(
         }
 
         coroutineScope.launch {
-            chatHistoryManager.chatHistoriesFlow.collect { histories ->
+            chatHistoryManager.allChatHistoriesInternalFlow.collect { histories ->
                 _chatHistories.value = histories
 
                 val currentId = _currentChatId.value

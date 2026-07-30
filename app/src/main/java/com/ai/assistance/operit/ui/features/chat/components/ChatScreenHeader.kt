@@ -9,6 +9,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -21,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ai.assistance.operit.R
@@ -28,6 +31,9 @@ import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.CharacterGroupCardManager
 import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.model.ActivePrompt
+import com.ai.assistance.operit.data.model.ChatKind
+import com.ai.assistance.operit.data.model.SubagentRunStatus
+import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.floating.FloatingMode
@@ -66,11 +72,50 @@ fun ChatScreenHeader(
     val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography
+    val currentChatId by actualViewModel.currentChatId.collectAsState()
+    val chatHistories by actualViewModel.chatHistories.collectAsState()
+    val currentChat = remember(currentChatId, chatHistories) {
+        chatHistories.firstOrNull { it.id == currentChatId }
+    }
 
     LaunchedEffect(actualViewModel, context) {
         actualViewModel.moveTaskToBackEvents.collect {
             (context as? android.app.Activity)?.moveTaskToBack(true)
         }
+    }
+
+    if (currentChat?.chatKind == ChatKind.SUBAGENT.name) {
+        val repository = remember(context) { SubagentRunRepository.getInstance(context) }
+        val runFlow =
+            remember(currentChat.id) {
+                repository.observeByChildChatId(currentChat.id)
+            }
+        val run by runFlow.collectAsState(initial = null)
+        val parentTitle =
+            remember(run?.parentChatId, chatHistories) {
+                chatHistories.firstOrNull { it.id == run?.parentChatId }?.title
+                    ?: run?.parentChatId
+                    ?: currentChat.parentChatId.orEmpty()
+            }
+        val status =
+            run?.status
+                ?.let { value ->
+                    runCatching { SubagentRunStatus.valueOf(value) }.getOrNull()
+                }
+        SubagentChatHeader(
+            modifier = modifier,
+            title = run?.title ?: currentChat.title,
+            parentTitle = parentTitle,
+            agentName = run?.agentProfileId.orEmpty(),
+            taskId = run?.id.orEmpty(),
+            status = status,
+            transparent = chatHeaderTransparent,
+            onBackToParent = {
+                (run?.parentChatId ?: currentChat.parentChatId)
+                    ?.let(actualViewModel::switchChat)
+            },
+        )
+        return
     }
 
     val characterCardManager = remember { CharacterCardManager.getInstance(context) }
@@ -262,6 +307,88 @@ fun ChatScreenHeader(
                     
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SubagentChatHeader(
+    title: String,
+    parentTitle: String,
+    agentName: String,
+    taskId: String,
+    status: SubagentRunStatus?,
+    transparent: Boolean,
+    onBackToParent: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val statusText =
+        when (status) {
+            SubagentRunStatus.CREATED -> stringResource(R.string.subagent_status_creating)
+            SubagentRunStatus.QUEUED -> stringResource(R.string.subagent_status_queued, 1)
+            SubagentRunStatus.RUNNING -> stringResource(R.string.subagent_status_thinking)
+            SubagentRunStatus.COMPLETED -> stringResource(R.string.subagent_status_completed)
+            SubagentRunStatus.CANCELLED -> stringResource(R.string.subagent_status_cancelled)
+            SubagentRunStatus.FAILED,
+            SubagentRunStatus.INTERRUPTED -> stringResource(R.string.subagent_status_error)
+            null -> "—"
+        }
+    Row(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .background(
+                    if (transparent) {
+                        Color.Transparent
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                    }
+                )
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBackToParent) {
+            Icon(
+                imageVector = Icons.Default.ArrowBack,
+                contentDescription = stringResource(R.string.subagent_return_to_parent),
+            )
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(1.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text =
+                    "${stringResource(R.string.subagent_delegated_by_parent)} · " +
+                        stringResource(R.string.subagent_parent_chat, parentTitle),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text =
+                    "${stringResource(R.string.subagent_agent_name, agentName)} · " +
+                        stringResource(R.string.subagent_current_status, statusText),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = stringResource(R.string.subagent_task_id, taskId),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        TextButton(onClick = onBackToParent) {
+            Text(stringResource(R.string.subagent_return_to_parent))
         }
     }
 }

@@ -28,6 +28,7 @@ import kotlinx.coroutines.coroutineScope
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.ui.common.displays.MessageContentParser
+import com.ai.assistance.operit.ui.permissions.PermissionLevel
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.stream.plugins.StreamXmlPlugin
 import com.ai.assistance.operit.util.stream.splitBy
@@ -47,12 +48,76 @@ object ToolExecutionManager {
     private const val PACKAGE_CALLER_NAME_PARAM = "__operit_package_caller_name"
     private const val PACKAGE_CHAT_ID_PARAM = "__operit_package_chat_id"
     private const val PACKAGE_CALLER_CARD_ID_PARAM = "__operit_package_caller_card_id"
+    private const val SUBAGENT_EXACT_REPEAT_REVIEW_THRESHOLD = 3
     private val toolRuntimeContextThreadLocal = ThreadLocal<ToolRuntimeContext?>()
+
+    private data class ExactToolInstruction(
+        val name: String,
+        val orderedParameters: List<Pair<String, String>>,
+    )
+
+    /**
+     * Per model turn state. Equality is deliberately exact: tool name, parameter order, names and
+     * raw values must all match. Similar or normalized instructions never share a count.
+     */
+    class SubagentToolLoopGuard {
+        private var previous: ExactToolInstruction? = null
+        private var consecutiveCount: Int = 0
+
+        private fun fingerprint(tool: AITool): ExactToolInstruction =
+            ExactToolInstruction(
+                name = tool.name,
+                orderedParameters = tool.parameters.map { it.name to it.value },
+            )
+
+        @Synchronized
+        internal fun record(tool: AITool): Int {
+            val current = fingerprint(tool)
+            if (current == previous) {
+                consecutiveCount += 1
+            } else {
+                previous = current
+                consecutiveCount = 1
+            }
+            return consecutiveCount
+        }
+
+        /**
+         * Simulates a batch without mutating turn state so calls before the first review boundary
+         * can finish before the third identical call is paused.
+         */
+        @Synchronized
+        internal fun firstReviewIndex(tools: List<AITool>, threshold: Int): Int {
+            var simulatedPrevious = previous
+            var simulatedCount = consecutiveCount
+            tools.forEachIndexed { index, tool ->
+                val current = fingerprint(tool)
+                if (current == simulatedPrevious) {
+                    simulatedCount += 1
+                } else {
+                    simulatedPrevious = current
+                    simulatedCount = 1
+                }
+                if (simulatedCount >= threshold) {
+                    return index
+                }
+            }
+            return -1
+        }
+    }
+
+    class SubagentLoopRejectedException(message: String) : IllegalStateException(message)
 
     data class ToolRuntimeContext(
         val callerCardId: String? = null,
+        val callerChatId: String? = null,
         val toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
-        val conversationLabel: String? = null
+        val conversationLabel: String? = null,
+        val parentModelConfigId: String? = null,
+        val parentModelIndex: Int? = null,
+        val isSubagent: Boolean = false,
+        val callId: String? = null,
+        val invocationIndex: Int? = null,
     )
 
     private data class ResolvedToolTarget(
@@ -534,8 +599,59 @@ object ToolExecutionManager {
         callerName: String? = null,
         callerChatId: String? = null,
         callerCardId: String? = null,
-        conversationLabel: String? = null
+        conversationLabel: String? = null,
+        parentModelConfigId: String? = null,
+        parentModelIndex: Int? = null,
+        isSubagent: Boolean = false,
+        subagentToolLoopGuard: SubagentToolLoopGuard? = null,
     ): List<ToolResult> = coroutineScope {
+        if (isSubagent && subagentToolLoopGuard != null && invocations.size > 1) {
+            val firstReviewIndex =
+                subagentToolLoopGuard.firstReviewIndex(
+                    tools = invocations.map { it.tool },
+                    threshold = SUBAGENT_EXACT_REPEAT_REVIEW_THRESHOLD,
+                )
+            if (firstReviewIndex > 0) {
+                val commonPrefixResults =
+                    executeInvocations(
+                        context = context,
+                        invocations = invocations.take(firstReviewIndex),
+                        toolHandler = toolHandler,
+                        packageManager = packageManager,
+                        collector = collector,
+                        timingScopeId = timingScopeId,
+                        toolExposureMode = toolExposureMode,
+                        callerName = callerName,
+                        callerChatId = callerChatId,
+                        callerCardId = callerCardId,
+                        conversationLabel = conversationLabel,
+                        parentModelConfigId = parentModelConfigId,
+                        parentModelIndex = parentModelIndex,
+                        isSubagent = true,
+                        subagentToolLoopGuard = subagentToolLoopGuard,
+                    )
+                val reviewedSuffixResults =
+                    executeInvocations(
+                        context = context,
+                        invocations = invocations.drop(firstReviewIndex),
+                        toolHandler = toolHandler,
+                        packageManager = packageManager,
+                        collector = collector,
+                        timingScopeId = timingScopeId,
+                        toolExposureMode = toolExposureMode,
+                        callerName = callerName,
+                        callerChatId = callerChatId,
+                        callerCardId = callerCardId,
+                        conversationLabel = conversationLabel,
+                        parentModelConfigId = parentModelConfigId,
+                        parentModelIndex = parentModelIndex,
+                        isSubagent = true,
+                        subagentToolLoopGuard = subagentToolLoopGuard,
+                    )
+                return@coroutineScope commonPrefixResults + reviewedSuffixResults
+            }
+        }
+
         invocations.forEach { invocation ->
             ToolExecutionTimingRepository.register(timingScopeId, invocation)
         }
@@ -544,6 +660,55 @@ object ToolExecutionManager {
         // registerDefaultTools() 是幂等且线程安全的，可安全重复调用
         withContext(Dispatchers.Default) {
             toolHandler.registerDefaultTools()
+        }
+
+        val loopApprovedInvocations =
+            java.util.IdentityHashMap<ToolInvocation, Boolean>()
+        if (isSubagent && subagentToolLoopGuard != null) {
+            val permissionSystem = toolHandler.getToolPermissionSystem()
+            for (invocation in invocations) {
+                val resolvedTool = resolveToolTarget(invocation.tool).tool
+                val consecutiveCount = subagentToolLoopGuard.record(invocation.tool)
+                if (consecutiveCount < SUBAGENT_EXACT_REPEAT_REVIEW_THRESHOLD) {
+                    continue
+                }
+                val isCliPublicTool =
+                    toolExposureMode == ToolExposureMode.CLI &&
+                        (
+                            invocation.tool.name == CliToolModeSupport.SEARCH_TOOL_NAME ||
+                                invocation.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
+                            )
+                val effectivePermission =
+                    permissionSystem.getEffectivePermissionLevel(resolvedTool.name)
+                if (!isCliPublicTool && effectivePermission == PermissionLevel.FORBID) {
+                    // The normal permission path will reject this call without offering an override.
+                    continue
+                }
+                ToolExecutionTimingRepository.markWaitingAuthorization(
+                    timingScopeId,
+                    invocation,
+                )
+                val approved =
+                    permissionSystem.requestExplicitApproval(
+                        tool = resolvedTool,
+                        operationDescription =
+                            context.getString(
+                                R.string.subagent_loop_review_operation,
+                                resolveDisplayToolName(invocation.tool),
+                                consecutiveCount,
+                            ),
+                        conversationLabel = conversationLabel,
+                    )
+                if (!approved) {
+                    throw SubagentLoopRejectedException(
+                        context.getString(
+                            R.string.subagent_loop_rejected,
+                            resolveDisplayToolName(invocation.tool),
+                        )
+                    )
+                }
+                loopApprovedInvocations[invocation] = true
+            }
         }
 
         val roleCardToolAccess = if (callerCardId.isNullOrBlank()) {
@@ -560,15 +725,29 @@ object ToolExecutionManager {
         val toolRuntimeContext =
             ToolRuntimeContext(
                 callerCardId = callerCardId,
+                callerChatId = callerChatId,
                 toolExposureMode = toolExposureMode,
-                conversationLabel = conversationLabel
+                conversationLabel = conversationLabel,
+                parentModelConfigId = parentModelConfigId,
+                parentModelIndex = parentModelIndex,
+                isSubagent = isSubagent,
             )
 
         // 1. 顶层工具暴露模式拦截
         val toolExposurePermittedInvocations = mutableListOf<ToolInvocation>()
         val toolExposureDeniedResults = mutableListOf<ToolResult>()
         for (invocation in invocations) {
-            val deniedResult = buildToolExposureDeniedResult(context, invocation, toolExposureMode)
+            val deniedResult =
+                if (isSubagent && resolveDisplayToolName(invocation.tool) == "task") {
+                    ToolResult(
+                        toolName = "task",
+                        success = false,
+                        result = StringResultData(""),
+                        error = "Subagents cannot invoke task or create nested Subagents.",
+                    )
+                } else {
+                    buildToolExposureDeniedResult(context, invocation, toolExposureMode)
+                }
             if (deniedResult == null) {
                 toolExposurePermittedInvocations.add(invocation)
             } else {
@@ -637,12 +816,21 @@ object ToolExecutionManager {
                         invocation,
                     )
                     val (hasPermission, errorResult) =
-                        checkToolPermission(
-                            toolHandler,
-                            invocation,
-                            toolExposureMode,
-                            conversationLabel
-                        )
+                        if (loopApprovedInvocations.containsKey(invocation)) {
+                            toolHandler.notifyToolPermissionChecked(
+                                interceptionTool,
+                                granted = true,
+                                reason = "Approved by Subagent exact-repeat loop review",
+                            )
+                            Pair(true, null)
+                        } else {
+                            checkToolPermission(
+                                toolHandler,
+                                invocation,
+                                toolExposureMode,
+                                conversationLabel
+                            )
+                        }
                     if (hasPermission) {
                         permittedInvocations.add(invocation)
                         ToolExecutionTimingRepository.markWaitingExecution(
@@ -715,7 +903,7 @@ object ToolExecutionManager {
         val parallelizableToolNames = setOf(
             "list_files", "read_file", "read_file_part", "read_file_full", "file_exists",
             "find_files", "file_info", "grep_code", "calculate", "ffmpeg_info",
-            "visit_web", "download_file"
+            "visit_web", "download_file", "task"
         )
         val (parallelInvocations, serialInvocations) = injectedInvocations.partition {
             parallelizableToolNames.contains(
@@ -736,7 +924,12 @@ object ToolExecutionManager {
                             toolHandler = toolHandler,
                             packageManager = packageManager,
                             collector = collector,
-                            runtimeContext = toolRuntimeContext,
+                            runtimeContext =
+                                toolRuntimeContext.copy(
+                                    callId = invocation.callId,
+                                    invocationIndex =
+                                        invocation.invocationIndex.takeIf { it >= 0 },
+                                ),
                             timingScopeId = timingScopeId,
                         )
                     executionResults[invocation] = result
@@ -751,7 +944,11 @@ object ToolExecutionManager {
                         toolHandler = toolHandler,
                         packageManager = packageManager,
                         collector = collector,
-                        runtimeContext = toolRuntimeContext,
+                        runtimeContext =
+                            toolRuntimeContext.copy(
+                                callId = invocation.callId,
+                                invocationIndex = invocation.invocationIndex.takeIf { it >= 0 },
+                            ),
                         timingScopeId = timingScopeId,
                     )
                 executionResults[invocation] = result
