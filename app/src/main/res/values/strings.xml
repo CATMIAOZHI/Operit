@@ -5239,6 +5239,7 @@
     <string name="subagent_status_queued">排队中 · 第 %1$d 位</string>
     <string name="subagent_status_thinking">正在思考</string>
     <string name="subagent_status_calling_tool">正在调用 %1$s</string>
+    <string name="subagent_status_with_agent">%1$s · %2$s</string>
     <string name="subagent_status_completed">已完成</string>
     <string name="subagent_status_error">错误</string>
     <string name="subagent_status_cancelled">已取消</string>

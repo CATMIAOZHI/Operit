@@ -238,10 +238,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // 聊天历史相关
     val chatHistory: StateFlow<List<ChatMessage>> by lazy { chatHistoryDelegate.chatHistory }
+    val displayedChatId: StateFlow<String?> by lazy { chatHistoryDelegate.displayedChatId }
     val showChatHistorySelector: StateFlow<Boolean> by lazy {
         chatHistoryDelegate.showChatHistorySelector
     }
     val chatHistories: StateFlow<List<ChatHistory>> by lazy { chatHistoryDelegate.chatHistories }
+    val chatHistoriesLoaded: StateFlow<Boolean> by lazy { chatHistoryDelegate.chatHistoriesLoaded }
     val chatFolders by lazy { chatHistoryDelegate.chatFolders }
     val currentChatId: StateFlow<String?> by lazy { chatHistoryDelegate.currentChatId }
     val hasOlderDisplayHistory: StateFlow<Boolean> by lazy {
@@ -677,8 +679,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    fun switchChat(chatId: String) {
-        chatHistoryDelegate.switchChat(chatId)
+    fun switchChat(chatId: String, scrollToBottom: Boolean = true) {
+        chatHistoryDelegate.switchChat(chatId, scrollToBottom = scrollToBottom)
         chatRuntimeHolder.syncMainChatSelectionToFloating(chatId)
 
         // 如果当前WebView正在显示，则更新工作区并触发刷新

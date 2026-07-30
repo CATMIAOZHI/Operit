@@ -373,8 +373,8 @@ class ChatServiceCore(
     }
 
     /** 切换聊天 */
-    fun switchChat(chatId: String) {
-        chatHistoryDelegate.switchChat(chatId)
+    fun switchChat(chatId: String, scrollToBottom: Boolean = true) {
+        chatHistoryDelegate.switchChat(chatId, scrollToBottom = scrollToBottom)
     }
 
     /**

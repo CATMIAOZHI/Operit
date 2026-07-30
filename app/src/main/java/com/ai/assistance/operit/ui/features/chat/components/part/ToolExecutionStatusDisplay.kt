@@ -86,6 +86,7 @@ internal fun ToolExecutionStatusDisplay(
     invocationIndex: Int,
     persistedExecution: PersistedToolExecution?,
     requestedToolName: String? = null,
+    requestedSubagentName: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -105,6 +106,7 @@ internal fun ToolExecutionStatusDisplay(
             callId = liveExecution?.callId ?: persistedExecution?.callId,
             fallbackState = state,
             fallbackStartedAtElapsedMs = liveExecution?.startedAtElapsedMs,
+            requestedSubagentName = requestedSubagentName,
             modifier = modifier,
         )
         return
@@ -196,6 +198,7 @@ private fun SubagentTaskStatusDisplay(
     callId: String?,
     fallbackState: ToolExecutionState,
     fallbackStartedAtElapsedMs: Long?,
+    requestedSubagentName: String?,
     modifier: Modifier,
 ) {
     val context = LocalContext.current
@@ -237,8 +240,19 @@ private fun SubagentTaskStatusDisplay(
                 ToolExecutionState.COMPLETED -> stringResource(R.string.subagent_status_completed)
                 ToolExecutionState.NOT_EXECUTED -> stringResource(R.string.tool_not_executed)
             }
+        val displayText =
+            requestedSubagentName
+                ?.takeIf { it.isNotBlank() }
+                ?.let { agentName ->
+                    stringResource(
+                        R.string.subagent_status_with_agent,
+                        agentName,
+                        fallbackText,
+                    )
+                }
+                ?: fallbackText
         ToolPendingStatusRow(
-            text = fallbackText,
+            text = displayText,
             modifier = modifier,
             isSuccess = fallbackState != ToolExecutionState.NOT_EXECUTED,
             showStatusIcon =
@@ -289,7 +303,7 @@ private fun SubagentTaskStatusDisplay(
             is InputProcessingState.ProcessingToolResult -> childProcessingState.toolName
             else -> null
         }
-    val statusText =
+    val baseStatusText =
         when (status) {
             SubagentRunStatus.CREATED -> stringResource(R.string.subagent_status_creating)
             SubagentRunStatus.QUEUED ->
@@ -305,6 +319,12 @@ private fun SubagentTaskStatusDisplay(
             SubagentRunStatus.INTERRUPTED -> stringResource(R.string.subagent_status_error)
             SubagentRunStatus.CANCELLED -> stringResource(R.string.subagent_status_cancelled)
         }
+    val statusText =
+        stringResource(
+            R.string.subagent_status_with_agent,
+            resolvedRun.agentProfileId.ifBlank { requestedSubagentName ?: "subagent" },
+            baseStatusText,
+        )
     val isSuccess =
         status != SubagentRunStatus.FAILED &&
             status != SubagentRunStatus.INTERRUPTED &&
@@ -318,7 +338,12 @@ private fun SubagentTaskStatusDisplay(
                 status == SubagentRunStatus.FAILED ||
                 status == SubagentRunStatus.INTERRUPTED ||
                 status == SubagentRunStatus.CANCELLED,
-        onClick = { chatCore.switchChat(resolvedRun.childChatId) },
+        onClick = {
+            chatCore.switchChat(
+                resolvedRun.childChatId,
+                scrollToBottom = false,
+            )
+        },
         onStopClick =
             if (
                 status == SubagentRunStatus.CREATED ||

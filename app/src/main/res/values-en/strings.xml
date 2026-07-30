@@ -4832,6 +4832,7 @@
     <string name="subagent_status_queued">Queued · position %1$d</string>
     <string name="subagent_status_thinking">Thinking</string>
     <string name="subagent_status_calling_tool">Calling %1$s</string>
+    <string name="subagent_status_with_agent">%1$s · %2$s</string>
     <string name="subagent_status_completed">Completed</string>
     <string name="subagent_status_error">Error</string>
     <string name="subagent_status_cancelled">Cancelled</string>
