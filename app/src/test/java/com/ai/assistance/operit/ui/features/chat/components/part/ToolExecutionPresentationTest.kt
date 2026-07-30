@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.components.part
 
+import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.ui.common.markdown.toolInvocationIndexAt
 import com.ai.assistance.operit.util.markdown.MarkdownNodeStable
@@ -52,6 +53,38 @@ class ToolExecutionPresentationTest {
         assertEquals(0, toolInvocationIndexAt(nodes, 1))
         assertNull(toolInvocationIndexAt(nodes, 2))
         assertEquals(1, toolInvocationIndexAt(nodes, 3))
+    }
+
+    @Test
+    fun subagentToolDisplay_keepsLastInvocationWhileThinking() {
+        assertEquals(
+            "grep_code",
+            resolveSubagentDisplayedTool(
+                childProcessingState = InputProcessingState.Processing("Thinking"),
+                lastToolName = "grep_code",
+            ),
+        )
+    }
+
+    @Test
+    fun subagentToolDisplay_prefersCurrentToolOverPreviousInvocation() {
+        assertEquals(
+            "read_file",
+            resolveSubagentDisplayedTool(
+                childProcessingState = InputProcessingState.ExecutingTool("read_file"),
+                lastToolName = "grep_code",
+            ),
+        )
+    }
+
+    @Test
+    fun subagentToolDisplay_hasNoToolBeforeFirstInvocation() {
+        assertNull(
+            resolveSubagentDisplayedTool(
+                childProcessingState = InputProcessingState.Processing("Thinking"),
+                lastToolName = null,
+            ),
+        )
     }
 
     private fun node(content: String) =

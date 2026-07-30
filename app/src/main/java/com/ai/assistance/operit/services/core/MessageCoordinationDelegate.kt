@@ -543,6 +543,7 @@ class MessageCoordinationDelegate(
         }
         if (
             turnOptions.persistTurn &&
+            !turnOptions.isSubTask &&
             enableGroupOrchestration &&
             shouldRunGroupOrchestration(
                 promptFunctionType = promptFunctionType,
@@ -599,9 +600,14 @@ class MessageCoordinationDelegate(
         // 获取当前附件列表
         val currentAttachments =
             if (shouldReadComposerState) attachmentDelegate.attachments.value else emptyList()
-        // 角色卡和群组地位相等，都可以为 null，优先使用 override，否则使用当前活跃的角色卡（可能为 null）
-        val roleCardId = roleCardIdOverride?.takeIf { it.isNotBlank() }
-            ?: runBlocking { activePromptManager.resolveActiveCardIdForSend() }
+        // Subagent owns an independent AgentProfile and must never inherit the active role card.
+        val roleCardId =
+            roleCardIdOverride?.takeIf { it.isNotBlank() }
+                ?: if (turnOptions.isSubTask) {
+                    null
+                } else {
+                    runBlocking { activePromptManager.resolveActiveCardIdForSend() }
+                }
         val resolvedOverrides = try {
             if (promptFunctionType == PromptFunctionType.CHAT) {
                 val (resolvedChatModelConfigIdOverride, resolvedChatModelIndexOverride) =
@@ -613,7 +619,8 @@ class MessageCoordinationDelegate(
                             Pair(currentChatModelConfigIdOverride, currentChatModelIndexOverride)
                         }
                         else -> {
-                            resolveRoleCardChatModelOverrides(roleCardId)
+                            roleCardId?.let(::resolveRoleCardChatModelOverrides)
+                                ?: Pair(null, null)
                         }
                     }
                 val resolvedMemorySpaceIdOverride =

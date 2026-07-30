@@ -463,6 +463,12 @@ class ChatServiceCore(
     val currentTurnToolInvocationCountByChatId: StateFlow<Map<String, Int>>
         get() = messageProcessingDelegate.currentTurnToolInvocationCountByChatId
 
+    val lastToolNameByChatId: StateFlow<Map<String, String>>
+        get() = messageProcessingDelegate.lastToolNameByChatId
+
+    val lastTurnToolInvocationCountByChatId: StateFlow<Map<String, Int>>
+        get() = messageProcessingDelegate.lastTurnToolInvocationCountByChatId
+
     val scrollToBottomEvent: SharedFlow<Unit>
         get() = messageProcessingDelegate.scrollToBottomEvent
 

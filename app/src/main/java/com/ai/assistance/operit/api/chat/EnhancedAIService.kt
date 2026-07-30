@@ -722,7 +722,13 @@ class EnhancedAIService private constructor(private val context: Context) {
             "enableThinking" to enableThinking,
             "stream" to stream,
             "isSubTask" to isSubTask
-        ) + buildActivePromptHookMetadata(context, chatId, roleCardId)
+        ) +
+            buildActivePromptHookMetadata(
+                context,
+                chatId,
+                roleCardId,
+                allowGlobalFallback = !isSubTask,
+            )
     }
 
     private fun applyFinalizedCurrentUserTurn(

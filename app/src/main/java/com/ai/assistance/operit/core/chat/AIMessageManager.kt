@@ -126,11 +126,19 @@ object AIMessageManager {
         enableDirectAudioProcessing: Boolean = false,
         enableDirectVideoProcessing: Boolean = false,
         chatId: String? = null,
-        roleCardId: String? = null
+        roleCardId: String? = null,
+        isSubTask: Boolean = false,
     ): String {
         val totalStartTime = messageTimingNow()
         val promptInputStartTime = messageTimingNow()
-        val processedMessageText = InputProcessor.processUserInput(context, messageText, chatId, roleCardId)
+        val processedMessageText =
+            InputProcessor.processUserInput(
+                context,
+                messageText,
+                chatId,
+                roleCardId,
+                isSubTask = isSubTask,
+            )
         logMessageTiming(
             stage = "buildUserMessageContent.processUserInput",
             startTimeMs = promptInputStartTime,
@@ -332,7 +340,7 @@ object AIMessageManager {
         onTokenLimitExceeded: (suspend () -> Unit)? = null,
         characterName: String? = null,
         avatarUri: String? = null,
-        roleCardId: String,
+        roleCardId: String?,
         currentRoleName: String? = null,
         splitHistoryByRole: Boolean = false,
         groupOrchestrationMode: Boolean = false,
@@ -490,7 +498,10 @@ object AIMessageManager {
                      stream = enableStream,
                     disableWarning = disableWarning,
                     isSubTask = isSubTask,
-                    additionalSystemPrompt = systemPromptOverride,
+                    customSystemPromptTemplate =
+                        if (isSubTask) systemPromptOverride else null,
+                    additionalSystemPrompt =
+                        if (isSubTask) null else systemPromptOverride,
                  )
             ).shareRevisable(
                 scope = scope,

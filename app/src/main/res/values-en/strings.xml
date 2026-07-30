@@ -4834,6 +4834,7 @@
     <string name="subagent_status_calling_tool">Calling %1$s</string>
     <string name="subagent_status_with_agent">%1$s · %2$s</string>
     <string name="subagent_status_completed">Completed</string>
+    <string name="subagent_status_completed_with_tool_count">Completed · %1$d tool calls</string>
     <string name="subagent_status_error">Error</string>
     <string name="subagent_status_cancelled">Cancelled</string>
     <string name="subagent_stop_task">Stop Subagent task</string>

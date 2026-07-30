@@ -21,6 +21,8 @@ class SubagentPromptBuilderTest {
         val taskPrompt = SubagentPromptBuilder.buildTaskPrompt("inspect the repository")
 
         assertTrue(systemPrompt.contains("PROFILE-SYSTEM-INSTRUCTION"))
+        assertTrue(systemPrompt.contains("AVAILABLE_TOOLS_SECTION"))
+        assertFalse(systemPrompt.contains("BEGIN_SELF_INTRODUCTION_SECTION"))
         assertTrue(systemPrompt.contains("Do not invoke the task tool"))
         assertEquals("inspect the repository", taskPrompt)
         assertFalse(taskPrompt.contains("PROFILE-SYSTEM-INSTRUCTION"))

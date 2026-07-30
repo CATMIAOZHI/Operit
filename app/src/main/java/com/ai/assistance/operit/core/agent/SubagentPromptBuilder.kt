@@ -5,10 +5,10 @@ import com.ai.assistance.operit.core.config.SystemPromptConfig
 object SubagentPromptBuilder {
     fun buildSystemPrompt(profile: AgentProfile): String =
         """
-        ${SystemPromptConfig.SUBTASK_AGENT_BEHAVIOR_GUIDELINES}
-
         AGENT PROFILE:
         ${profile.systemPrompt}
+
+        ${SystemPromptConfig.SUBTASK_AGENT_PROMPT_TEMPLATE}
 
         This is a child task. Do not invoke the task tool or create another Subagent.
         """.trimIndent()

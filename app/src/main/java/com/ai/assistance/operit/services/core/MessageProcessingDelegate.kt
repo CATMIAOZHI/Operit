@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.cancelAndJoin
@@ -156,6 +157,14 @@ class MessageProcessingDelegate(
         MutableStateFlow<Map<String, Int>>(emptyMap())
     val currentTurnToolInvocationCountByChatId: StateFlow<Map<String, Int>> =
         _currentTurnToolInvocationCountByChatId.asStateFlow()
+    private val _lastToolNameByChatId =
+        MutableStateFlow<Map<String, String>>(emptyMap())
+    val lastToolNameByChatId: StateFlow<Map<String, String>> =
+        _lastToolNameByChatId.asStateFlow()
+    private val _lastTurnToolInvocationCountByChatId =
+        MutableStateFlow<Map<String, Int>>(emptyMap())
+    val lastTurnToolInvocationCountByChatId: StateFlow<Map<String, Int>> =
+        _lastTurnToolInvocationCountByChatId.asStateFlow()
 
     // 当前活跃的AI响应流
     private data class ChatRuntime(
@@ -571,15 +580,29 @@ class MessageProcessingDelegate(
     }
 
     private fun resetCurrentTurnToolInvocationCount(chatId: String) {
-        val updated = _currentTurnToolInvocationCountByChatId.value.toMutableMap()
-        updated[chatId] = 0
-        _currentTurnToolInvocationCountByChatId.value = updated
+        _currentTurnToolInvocationCountByChatId.update { current ->
+            current + (chatId to 0)
+        }
+        _lastToolNameByChatId.update { current ->
+            current - chatId
+        }
+        _lastTurnToolInvocationCountByChatId.update { current ->
+            current + (chatId to 0)
+        }
     }
 
-    private fun incrementCurrentTurnToolInvocationCount(chatId: String) {
-        val updated = _currentTurnToolInvocationCountByChatId.value.toMutableMap()
-        updated[chatId] = (updated[chatId] ?: 0) + 1
-        _currentTurnToolInvocationCountByChatId.value = updated
+    private fun recordCurrentTurnToolInvocation(chatId: String, toolName: String) {
+        _currentTurnToolInvocationCountByChatId.update { current ->
+            current + (chatId to ((current[chatId] ?: 0) + 1))
+        }
+        _lastTurnToolInvocationCountByChatId.update { current ->
+            current + (chatId to ((current[chatId] ?: 0) + 1))
+        }
+        toolName.takeIf { it.isNotBlank() }?.let { resolvedToolName ->
+            _lastToolNameByChatId.update { current ->
+                current + (chatId to resolvedToolName)
+            }
+        }
     }
 
     private fun clearCurrentTurnToolInvocationCount(chatId: String) {
@@ -596,7 +619,7 @@ class MessageProcessingDelegate(
             workspacePath: String? = null,
             workspaceEnv: String? = null,
             promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT,
-            roleCardId: String,
+            roleCardId: String?,
             enableThinking: Boolean = false,
             enableMemoryAutoUpdate: Boolean = true,
             maxTokens: Int,
@@ -708,7 +731,8 @@ class MessageProcessingDelegate(
                 enableDirectAudioProcessing = enableDirectAudioProcessing,
                 enableDirectVideoProcessing = enableDirectVideoProcessing,
                 chatId = chatId,
-                roleCardId = roleCardId
+                roleCardId = roleCardId,
+                isSubTask = turnOptions.isSubTask,
             )
             logMessageTiming(
                 stage = "delegate.buildUserMessageContent",
@@ -870,15 +894,21 @@ class MessageProcessingDelegate(
 
                 // 获取角色信息用于通知
                 val loadRoleInfoStartTime = messageTimingNow()
-                val (characterName, avatarUri) = try {
-                    val roleCard = characterCardManager.getCharacterCardFlow(effectiveRoleCardId).first()
-                    val avatar =
-                        userPreferencesManager.getAiAvatarForCharacterCardFlow(roleCard.id).first()
-                    Pair(roleCard.name, avatar)
-                } catch (e: Exception) {
-                    AppLogger.e(TAG, "获取角色信息失败: ${e.message}", e)
-                    Pair(null, null)
-                }
+                val (characterName, avatarUri) =
+                    effectiveRoleCardId?.let { cardId ->
+                        try {
+                            val roleCard =
+                                characterCardManager.getCharacterCardFlow(cardId).first()
+                            val avatar =
+                                userPreferencesManager
+                                    .getAiAvatarForCharacterCardFlow(roleCard.id)
+                                    .first()
+                            Pair(roleCard.name, avatar)
+                        } catch (e: Exception) {
+                            AppLogger.e(TAG, "获取角色信息失败: ${e.message}", e)
+                            Pair(null, null)
+                        }
+                    } ?: Pair(null, null)
                 val currentRoleName = characterName ?: "Operit"
                 logMessageTiming(
                     stage = "delegate.loadRoleInfo",
@@ -989,8 +1019,8 @@ class MessageProcessingDelegate(
                     groupOrchestrationMode = isGroupOrchestrationTurn,
                     groupParticipantNamesText = groupParticipantNamesText,
                     proxySenderName = proxySenderNameOverride,
-                    onToolInvocation = {
-                        incrementCurrentTurnToolInvocationCount(chatId)
+                    onToolInvocation = { toolName ->
+                        recordCurrentTurnToolInvocation(chatId, toolName)
                     },
                     notifyReplyOverride = turnOptions.notifyReply,
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
@@ -1635,7 +1665,9 @@ class MessageProcessingDelegate(
                     splitHistoryByRole = true,
                     groupOrchestrationMode = groupOrchestrationMode,
                     groupParticipantNamesText = groupParticipantNamesText,
-                    onToolInvocation = { incrementCurrentTurnToolInvocationCount(chatId) },
+                    onToolInvocation = { toolName ->
+                        recordCurrentTurnToolInvocation(chatId, toolName)
+                    },
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,

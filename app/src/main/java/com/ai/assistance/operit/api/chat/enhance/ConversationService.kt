@@ -499,7 +499,13 @@ class ConversationService(
             dispatchSystemPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchSystemPromptComposeHooks,
             dispatchToolPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchToolPromptComposeHooks
     ): List<PromptTurn> {
-        val activePromptMetadata = buildActivePromptHookMetadata(context, chatId, roleCardId)
+        val activePromptMetadata =
+            buildActivePromptHookMetadata(
+                context,
+                chatId,
+                roleCardId,
+                allowGlobalFallback = !isSubTask,
+            )
         val beforeContext =
             dispatchHistoryHooks(
                 PromptHookContext(

@@ -95,7 +95,7 @@ object SystemToolPrompts {
                     ToolParameterSchema(
                         name = "title",
                         type = "string",
-                        description = "3-20 character task name shown in the tool call UI",
+                        description = "task name shown in the tool call UI",
                         required = true
                     ),
                     ToolParameterSchema(
@@ -131,7 +131,7 @@ object SystemToolPrompts {
                     ToolParameterSchema(
                         name = "title",
                         type = "string",
-                        description = "显示在工具调用 UI 中的 3-20 字任务名称",
+                        description = "显示在工具调用 UI 中的任务名称",
                         required = true
                     ),
                     ToolParameterSchema(

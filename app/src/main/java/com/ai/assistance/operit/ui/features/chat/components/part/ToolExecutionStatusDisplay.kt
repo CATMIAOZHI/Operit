@@ -269,6 +269,9 @@ private fun SubagentTaskStatusDisplay(
         }
     val parentRuns by parentRunsFlow.collectAsState(initial = emptyList())
     val processingStates by chatCore.inputProcessingStateByChatId.collectAsState()
+    val lastToolNames by chatCore.lastToolNameByChatId.collectAsState()
+    val lastTurnToolInvocationCounts by
+        chatCore.lastTurnToolInvocationCountByChatId.collectAsState()
     val childProcessingState = processingStates[resolvedRun.childChatId]
     val status =
         runCatching { SubagentRunStatus.valueOf(resolvedRun.status) }
@@ -297,12 +300,12 @@ private fun SubagentTaskStatusDisplay(
             .indexOfFirst { it.id == resolvedRun.id }
             .let { if (it >= 0) it + 1 else 1 }
     val currentTool =
-        when (childProcessingState) {
-            is InputProcessingState.ExecutingTool -> childProcessingState.toolName
-            is InputProcessingState.ToolProgress -> childProcessingState.toolName
-            is InputProcessingState.ProcessingToolResult -> childProcessingState.toolName
-            else -> null
-        }
+        resolveSubagentDisplayedTool(
+            childProcessingState = childProcessingState,
+            lastToolName = lastToolNames[resolvedRun.childChatId],
+        )
+    val toolInvocationCount =
+        lastTurnToolInvocationCounts[resolvedRun.childChatId]?.coerceAtLeast(0) ?: 0
     val baseStatusText =
         when (status) {
             SubagentRunStatus.CREATED -> stringResource(R.string.subagent_status_creating)
@@ -314,7 +317,15 @@ private fun SubagentTaskStatusDisplay(
                 } else {
                     stringResource(R.string.subagent_status_calling_tool, currentTool)
                 }
-            SubagentRunStatus.COMPLETED -> stringResource(R.string.subagent_status_completed)
+            SubagentRunStatus.COMPLETED ->
+                if (toolInvocationCount > 0) {
+                    stringResource(
+                        R.string.subagent_status_completed_with_tool_count,
+                        toolInvocationCount,
+                    )
+                } else {
+                    stringResource(R.string.subagent_status_completed)
+                }
             SubagentRunStatus.FAILED,
             SubagentRunStatus.INTERRUPTED -> stringResource(R.string.subagent_status_error)
             SubagentRunStatus.CANCELLED -> stringResource(R.string.subagent_status_cancelled)
@@ -360,6 +371,17 @@ private fun SubagentTaskStatusDisplay(
             },
     )
 }
+
+internal fun resolveSubagentDisplayedTool(
+    childProcessingState: InputProcessingState?,
+    lastToolName: String?,
+): String? =
+    when (childProcessingState) {
+        is InputProcessingState.ExecutingTool -> childProcessingState.toolName
+        is InputProcessingState.ToolProgress -> childProcessingState.toolName
+        is InputProcessingState.ProcessingToolResult -> childProcessingState.toolName
+        else -> lastToolName
+    }?.takeIf { it.isNotBlank() }
 
 private fun resolveElapsedMs(snapshot: ToolExecutionTimingSnapshot?): Long {
     val startedAt = snapshot?.startedAtElapsedMs ?: return 0L

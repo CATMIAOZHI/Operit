@@ -4,6 +4,7 @@ import android.content.Context
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.agent.SubagentCoordinator
 import com.ai.assistance.operit.core.agent.SubagentExecutionException
+import com.ai.assistance.operit.core.agent.SubagentResultExtractor
 import com.ai.assistance.operit.core.agent.SubagentTaskRequest
 import com.ai.assistance.operit.core.agent.SubagentTaskResult
 import com.ai.assistance.operit.core.tools.StringResultData
@@ -39,8 +40,8 @@ class TaskToolExecutor(context: Context) : ToolExecutor {
         val taskId = tool.parameter("task_id").ifBlank { null }
         val parentChatId = runtime?.callerChatId.orEmpty()
 
-        if (title.length !in 3..20) {
-            return invalid(tool, "title must contain 3 to 20 characters")
+        if (title.isBlank()) {
+            return invalid(tool, "title is required")
         }
         if (prompt.isBlank()) {
             return invalid(tool, "prompt is required")
@@ -76,7 +77,10 @@ class TaskToolExecutor(context: Context) : ToolExecutor {
                                 buildCompletedXml(
                                     taskId = result.run.id,
                                     title = result.run.title,
-                                    result = result.outcome.finalAssistantText,
+                                    result =
+                                        SubagentResultExtractor.extract(
+                                            result.outcome.finalAssistantText
+                                        ),
                                 )
                             ),
                     )
