@@ -140,6 +140,9 @@ class SubagentRunRepository private constructor(
     suspend fun countChildren(parentChatId: String): Int =
         runDao.countByParentChatId(parentChatId)
 
+    suspend fun incrementToolInvocationCountByChildChatId(childChatId: String): Boolean =
+        runDao.incrementToolInvocationCountByChildChatId(childChatId) == 1
+
     suspend fun deleteChildChat(childChatId: String): Boolean =
         database.withTransaction {
             val run = runDao.getByChildChatId(childChatId) ?: return@withTransaction false

@@ -150,6 +150,7 @@ data class OperitArchivedSubagentRun(
     val agentConfigSnapshot: String? = null,
     val modelConfigIdSnapshot: String? = null,
     val modelIndexSnapshot: Int? = null,
+    val toolInvocationCount: Int = 0,
 ) {
     fun toEntity(): SubagentRunEntity =
         SubagentRunEntity(
@@ -167,6 +168,7 @@ data class OperitArchivedSubagentRun(
             agentConfigSnapshot = agentConfigSnapshot,
             modelConfigIdSnapshot = modelConfigIdSnapshot,
             modelIndexSnapshot = modelIndexSnapshot,
+            toolInvocationCount = toolInvocationCount,
         )
 
     companion object {
@@ -186,6 +188,7 @@ data class OperitArchivedSubagentRun(
                 agentConfigSnapshot = entity.agentConfigSnapshot,
                 modelConfigIdSnapshot = entity.modelConfigIdSnapshot,
                 modelIndexSnapshot = entity.modelIndexSnapshot,
+                toolInvocationCount = entity.toolInvocationCount,
             )
     }
 }

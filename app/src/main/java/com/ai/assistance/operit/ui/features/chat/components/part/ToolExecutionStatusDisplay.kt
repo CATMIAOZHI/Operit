@@ -305,7 +305,10 @@ private fun SubagentTaskStatusDisplay(
             lastToolName = lastToolNames[resolvedRun.childChatId],
         )
     val toolInvocationCount =
-        lastTurnToolInvocationCounts[resolvedRun.childChatId]?.coerceAtLeast(0) ?: 0
+        maxOf(
+            lastTurnToolInvocationCounts[resolvedRun.childChatId]?.coerceAtLeast(0) ?: 0,
+            resolvedRun.toolInvocationCount.coerceAtLeast(0),
+        )
     val baseStatusText =
         when (status) {
             SubagentRunStatus.CREATED -> stringResource(R.string.subagent_status_creating)

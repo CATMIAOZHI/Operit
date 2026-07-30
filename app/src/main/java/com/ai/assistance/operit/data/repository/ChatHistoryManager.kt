@@ -141,6 +141,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private val chatDao = database.chatDao()
     private val chatFolderDao = database.chatFolderDao()
     private val chatFolderRepository = ChatFolderRepository(database)
+    private val chatBranchRepository = ChatBranchRepository(database)
     private val messageDao = database.messageDao()
     private val messageVariantDao = database.messageVariantDao()
     private val subagentRunDao = database.subagentRunDao()
@@ -478,6 +479,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 getColumnIndexOrThrow("modelIndexSnapshot").let { index ->
                     if (isNull(index)) null else getInt(index)
                 },
+            toolInvocationCount = getInt(getColumnIndexOrThrow("toolInvocationCount")),
         )
 
     private fun buildOperitArchivedChatFromSnapshot(
@@ -572,7 +574,8 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         CREATE TABLE subagent_runs AS
                         SELECT id, parentChatId, childChatId, parentToolCallId, agentProfileId,
                                title, status, createdAt, startedAt, completedAt, error,
-                               agentConfigSnapshot, modelConfigIdSnapshot, modelIndexSnapshot
+                               agentConfigSnapshot, modelConfigIdSnapshot, modelIndexSnapshot,
+                               toolInvocationCount
                         FROM operit_export_source.subagent_runs
                         """.trimIndent(),
                     )
@@ -3377,43 +3380,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         pinned = false,
                     )
 
-                val copiedMessageCount = database.withTransaction {
-                    chatDao.insertChat(branchEntity)
-
-                    val count =
-                        messageDao.countMessagesForChatUpToTimestamp(
-                            parentChatId,
-                            upToMessageTimestamp,
-                        )
-                    if (count > 0) {
-                        messageDao.copyMessagesToChat(
-                            sourceChatId = parentChatId,
-                            targetChatId = branchEntity.id,
-                            upToTimestampInclusive = upToMessageTimestamp,
-                        )
-                        messageVariantDao.copyVariantsToChat(
-                            sourceChatId = parentChatId,
-                            targetChatId = branchEntity.id,
-                            upToTimestampInclusive = upToMessageTimestamp,
-                        )
-                    }
-                    chatDao.recalculateLastMessageAt(branchEntity.id)
-                    count
-                }
+                val copyResult =
+                    chatBranchRepository.copyBranch(
+                        sourceChatId = parentChatId,
+                        branch = branchEntity,
+                        upToTimestampInclusive = upToMessageTimestamp,
+                    )
 
                 val branchHistory =
-                    branchEntity
-                        .copy(
-                            lastMessageAt =
-                                if (copiedMessageCount > 0) {
-                                    messageDao
-                                        .getMessagesForChatDesc(branchEntity.id, 1)
-                                        .firstOrNull()
-                                        ?.timestamp
-                                } else {
-                                    null
-                                },
-                        )
+                    copyResult.branch
                         .toChatHistory(emptyList())
 
                 // 设置为当前聊天
@@ -3421,7 +3396,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
                 AppLogger.d(
                     TAG,
-                    "创建分支对话: ${branchHistory.id}, 父对话: $parentChatId, 消息数: $copiedMessageCount"
+                    "创建分支对话: ${branchHistory.id}, 父对话: $parentChatId, " +
+                        "消息数: ${copyResult.copiedMessageCount}, " +
+                        "Subagent数: ${copyResult.copiedSubagentCount}"
                 )
                 branchHistory
             } catch (e: Exception) {

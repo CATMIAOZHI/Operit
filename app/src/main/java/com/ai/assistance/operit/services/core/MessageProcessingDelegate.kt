@@ -26,6 +26,7 @@ import com.ai.assistance.operit.data.preferences.WaifuPreferences
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.WorkspaceBackupManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -126,6 +127,7 @@ class MessageProcessingDelegate(
     
     // 功能配置管理器，用于获取正确的模型配置ID
     private val functionalConfigManager = FunctionalConfigManager(context)
+    private val subagentRunRepository = SubagentRunRepository.getInstance(context)
 
     private val _userMessage = MutableStateFlow(TextFieldValue(""))
     val userMessage: StateFlow<TextFieldValue> = _userMessage.asStateFlow()
@@ -591,7 +593,7 @@ class MessageProcessingDelegate(
         }
     }
 
-    private fun recordCurrentTurnToolInvocation(chatId: String, toolName: String) {
+    private suspend fun recordCurrentTurnToolInvocation(chatId: String, toolName: String) {
         _currentTurnToolInvocationCountByChatId.update { current ->
             current + (chatId to ((current[chatId] ?: 0) + 1))
         }
@@ -602,6 +604,15 @@ class MessageProcessingDelegate(
             _lastToolNameByChatId.update { current ->
                 current + (chatId to resolvedToolName)
             }
+        }
+        runCatching {
+            subagentRunRepository.incrementToolInvocationCountByChildChatId(chatId)
+        }.onFailure { error ->
+            AppLogger.e(
+                TAG,
+                "Failed to persist Subagent tool invocation count: chatId=$chatId",
+                error,
+            )
         }
     }
 
