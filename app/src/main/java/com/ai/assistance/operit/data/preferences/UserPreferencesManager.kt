@@ -278,6 +278,15 @@ class UserPreferencesManager private constructor(private val context: Context) {
         const val BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE = "tiled_nine_slice"
         const val BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH = "nine_patch"
         const val DEFAULT_CHARACTER_AVATAR_URI = "file:///android_asset/operit.png"
+        const val RAINY_CHARACTER_AVATAR_URI = "file:///android_asset/rainy.png"
+
+        fun getBuiltInCharacterAvatarUri(characterCardId: String): String? {
+            return when (characterCardId) {
+                CharacterCardManager.DEFAULT_CHARACTER_CARD_ID -> DEFAULT_CHARACTER_AVATAR_URI
+                CharacterCardManager.RAINY_CHARACTER_CARD_ID -> RAINY_CHARACTER_AVATAR_URI
+                else -> null
+            }
+        }
 
         /** 角色卡头像前缀规则：avatar_<characterCardId>_<uuid>.<ext>
          * 群组头像前缀规则：group_avatar_<groupId>_<uuid>.<ext>
@@ -1371,30 +1380,27 @@ class UserPreferencesManager private constructor(private val context: Context) {
     }
 
     /**
-     * 与 [getAiAvatarForCharacterCardFlow] 相同，但对默认角色卡增加了
-     * 内置 asset 回退：键缺失或 blank 时返回默认头像 URI，
+     * 与 [getAiAvatarForCharacterCardFlow] 相同，但对系统角色卡增加了
+     * 内置 asset 回退：键缺失或 blank 时返回对应的默认头像 URI，
      * 不写入 DataStore。
      *
-     * 对非默认角色卡，键缺失或 blank 时返回 null（无自定义头像）。
+     * 对非系统角色卡，键缺失或 blank 时返回 null（无自定义头像）。
      */
     fun getResolvedAiAvatarForCharacterCardFlow(characterCardId: String): Flow<String?> {
         return context.userPreferencesDataStore.data.map { preferences ->
             val prefix = getCharacterCardThemePrefix(characterCardId)
             val key = stringPreferencesKey("${prefix}${KEY_CUSTOM_AI_AVATAR_URI.name}")
             val savedUri = preferences[key]
+            val builtInAvatarUri = getBuiltInCharacterAvatarUri(characterCardId)
             if (!savedUri.isNullOrBlank()) {
                 val resolved = resolveAppInternalAvatarUri(savedUri, context.filesDir)
                 if (resolved != null) {
                     resolved
-                } else if (characterCardId == CharacterCardManager.DEFAULT_CHARACTER_CARD_ID) {
-                    DEFAULT_CHARACTER_AVATAR_URI
                 } else {
-                    null
+                    builtInAvatarUri
                 }
-            } else if (characterCardId == CharacterCardManager.DEFAULT_CHARACTER_CARD_ID) {
-                DEFAULT_CHARACTER_AVATAR_URI
             } else {
-                null
+                builtInAvatarUri
             }
         }
     }

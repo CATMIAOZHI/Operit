@@ -914,6 +914,8 @@
     <string name="reset_successful">Reset Successfully</string>
     <string name="reset_default_character">Reset Default Character</string>
     <string name="reset_default_character_confirm">Are you sure you want to reset the default character card? This will restore the default name, settings, and prompts, and reset the avatar and theme.</string>
+    <string name="reset_system_character">Reset System Character</string>
+    <string name="reset_system_character_confirm">Reset the system character card “%1$s”? This restores its built-in name, settings, prompts, and avatar.</string>
     
     <string name="settings_section_ai_model">AI Model Configuration</string>
     <string name="settings_model_parameters">Model and Parameter Configuration</string>
@@ -4100,9 +4102,12 @@
     <string name="duplicate_successful">Duplicate created successfully</string>
     <string name="character_card_management">Card Management</string>
     <string name="character_card_sort">Sort</string>
-    <string name="character_card_sort_default">Default order</string>
+    <string name="character_card_sort_default">Manual order</string>
     <string name="character_card_sort_by_name">By name</string>
     <string name="character_card_sort_by_created">By last updated time (newest first)</string>
+    <string name="collapsed_character_cards_count">Collapsed Character Cards (%d)</string>
+    <string name="collapse_character_card">Collapse character card</string>
+    <string name="uncollapse_character_card">Uncollapse character card</string>
     <string name="create_new">Create</string>
     <string name="ai_creation">AI Creation</string>
     <string name="edit">Edit</string>
