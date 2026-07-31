@@ -4,6 +4,8 @@ import androidx.room.withTransaction
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatKind
+import com.ai.assistance.operit.data.model.SubagentRunEntity
+import com.ai.assistance.operit.data.model.SubagentRunStatus
 import java.util.UUID
 
 internal data class ChatBranchCopyResult(
@@ -125,10 +127,10 @@ internal class ChatBranchRepository(
                 )
                 chatDao.recalculateLastMessageAt(childCopy.id)
                 subagentRunDao.insert(
-                    sourceRun.copy(
-                        id = UUID.randomUUID().toString(),
-                        parentChatId = targetParentChatId,
-                        childChatId = childCopy.id,
+                    sourceRun.copyForBranch(
+                        branchParentChatId = targetParentChatId,
+                        branchChildChatId = childCopy.id,
+                        snapshotAt = System.currentTimeMillis(),
                     )
                 )
                 copiedCount++
@@ -159,6 +161,32 @@ internal class ChatBranchRepository(
             upToTimestampInclusive = upToTimestampInclusive,
         )
     }
+}
+
+private val ACTIVE_SUBAGENT_RUN_STATUS_NAMES =
+    setOf(
+        SubagentRunStatus.CREATED.name,
+        SubagentRunStatus.QUEUED.name,
+        SubagentRunStatus.RUNNING.name,
+    )
+
+private const val BRANCH_SNAPSHOT_INTERRUPTED_ERROR =
+    "This Subagent run was interrupted because its parent chat was branched."
+
+internal fun SubagentRunEntity.copyForBranch(
+    branchParentChatId: String,
+    branchChildChatId: String,
+    snapshotAt: Long,
+): SubagentRunEntity {
+    val activeSnapshot = status in ACTIVE_SUBAGENT_RUN_STATUS_NAMES
+    return copy(
+        id = UUID.randomUUID().toString(),
+        parentChatId = branchParentChatId,
+        childChatId = branchChildChatId,
+        status = if (activeSnapshot) SubagentRunStatus.INTERRUPTED.name else status,
+        completedAt = if (activeSnapshot) snapshotAt else completedAt,
+        error = if (activeSnapshot) BRANCH_SNAPSHOT_INTERRUPTED_ERROR else error,
+    )
 }
 
 private val persistedToolCallIdAttribute =

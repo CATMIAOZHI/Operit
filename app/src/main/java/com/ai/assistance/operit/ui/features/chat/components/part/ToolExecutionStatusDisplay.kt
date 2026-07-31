@@ -1,7 +1,24 @@
 package com.ai.assistance.operit.ui.features.chat.components.part
 
-import android.os.SystemClock
 import android.content.Context
+import android.os.SystemClock
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SubdirectoryArrowRight
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -10,11 +27,17 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
@@ -39,6 +62,26 @@ data class PersistedToolExecution(
     val success: Boolean,
     val resultText: String,
 )
+
+internal data class SubagentTaskRowContent(
+    val title: String,
+    val summary: String,
+)
+
+internal fun buildSubagentTaskRowContent(
+    agentName: String?,
+    durationText: String?,
+    statusText: String,
+): SubagentTaskRowContent =
+    SubagentTaskRowContent(
+        title = agentName?.trim()?.takeIf { it.isNotEmpty() } ?: "subagent",
+        summary =
+            listOfNotNull(
+                    durationText?.trim()?.takeIf { it.isNotEmpty() },
+                    statusText.trim().takeIf { it.isNotEmpty() },
+                )
+                .joinToString(" · "),
+    )
 
 internal fun parsePersistedToolExecutions(content: String): Map<Int, PersistedToolExecution> {
     if (content.isBlank()) return emptyMap()
@@ -215,6 +258,92 @@ private fun ToolPendingStatusRow(
 }
 
 @Composable
+private fun SubagentTaskResultRow(
+    agentName: String,
+    summary: String,
+    modifier: Modifier,
+    isSuccess: Boolean,
+    onClick: (() -> Unit)? = null,
+    onStopClick: (() -> Unit)? = null,
+) {
+    val accentColor =
+        if (isSuccess) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.error
+        }
+    val rowClickModifier =
+        if (onClick != null) {
+            Modifier.clickable(
+                role = Role.Button,
+                onClick = onClick,
+            )
+        } else {
+            Modifier
+        }
+
+    Row(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(4.dp))
+                .then(rowClickModifier)
+                .padding(start = 24.dp, end = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Default.SubdirectoryArrowRight,
+            contentDescription = null,
+            tint = accentColor.copy(alpha = 0.7f),
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Icon(
+            imageVector = Icons.Default.SmartToy,
+            contentDescription = null,
+            tint = accentColor.copy(alpha = 0.7f),
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = agentName,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Medium,
+                color = accentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodySmall,
+                color =
+                    if (isSuccess) {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    } else {
+                        MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                    },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (onStopClick != null) {
+            IconButton(
+                onClick = onStopClick,
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Stop,
+                    contentDescription = stringResource(R.string.subagent_stop_task),
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SubagentTaskStatusDisplay(
     callId: String?,
     fallbackState: ToolExecutionState,
@@ -246,59 +375,93 @@ private fun SubagentTaskStatusDisplay(
     val run by runFlow.collectAsState(initial = null)
 
     if (run == null) {
-        if (
-            fallbackState == ToolExecutionState.COMPLETED ||
-                fallbackState == ToolExecutionState.NOT_EXECUTED
-        ) {
-            ToolResultDisplay(
-                toolName = requestedSubagentName?.ifBlank { "task" } ?: "task",
-                result = extractSubagentTaskResult(executionResultText),
-                isSuccess = executionSuccess,
-                summaryPrefix =
-                    fallbackDurationMs?.let {
-                        formatToolExecutionDuration(context, it)
-                    },
-                modifier = modifier,
-            )
-            return
+        var fallbackElapsedMs by
+            remember(fallbackStartedAtElapsedMs, fallbackDurationMs) {
+                mutableLongStateOf(
+                    fallbackDurationMs
+                        ?: fallbackStartedAtElapsedMs
+                            ?.let {
+                                (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
+                            }
+                        ?: 0L
+                )
+            }
+        LaunchedEffect(fallbackState, fallbackStartedAtElapsedMs, fallbackDurationMs) {
+            while (
+                fallbackState == ToolExecutionState.RUNNING &&
+                    fallbackStartedAtElapsedMs != null
+            ) {
+                fallbackElapsedMs =
+                    (SystemClock.elapsedRealtime() - fallbackStartedAtElapsedMs)
+                        .coerceAtLeast(0L)
+                delay(100L)
+            }
         }
-        val fallbackText =
+
+        val fallbackStatusText =
             when (fallbackState) {
                 ToolExecutionState.WAITING_AUTHORIZATION ->
                     stringResource(R.string.tool_waiting_authorization)
                 ToolExecutionState.WAITING_EXECUTION ->
                     stringResource(R.string.tool_waiting_execution)
-                ToolExecutionState.RUNNING ->
-                    stringResource(
-                        R.string.tool_executing_duration,
-                        formatToolExecutionDuration(
-                            context,
-                            fallbackStartedAtElapsedMs
-                                ?.let { (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L) }
-                                ?: 0L,
-                        ),
-                    )
+                ToolExecutionState.RUNNING -> stringResource(R.string.subagent_status_thinking)
                 ToolExecutionState.COMPLETED -> stringResource(R.string.subagent_status_completed)
                 ToolExecutionState.NOT_EXECUTED -> stringResource(R.string.tool_not_executed)
             }
-        val displayText =
-            requestedSubagentName
-                ?.takeIf { it.isNotBlank() }
-                ?.let { agentName ->
+        val fallbackDurationText =
+            if (fallbackDurationMs != null || fallbackStartedAtElapsedMs != null) {
+                formatToolExecutionDuration(context, fallbackElapsedMs)
+            } else {
+                null
+            }
+        val rowContent =
+            buildSubagentTaskRowContent(
+                agentName = requestedSubagentName,
+                durationText = fallbackDurationText,
+                statusText = fallbackStatusText,
+            )
+        val isFallbackTerminal =
+            fallbackState == ToolExecutionState.COMPLETED ||
+                fallbackState == ToolExecutionState.NOT_EXECUTED
+        val fallbackResult =
+            extractSubagentTaskResult(executionResultText)
+                .ifBlank { stringResource(R.string.subagent_result_empty) }
+        var showFallbackResultDialog by
+            remember(callId, fallbackState) {
+                androidx.compose.runtime.mutableStateOf(false)
+            }
+
+        if (showFallbackResultDialog && isFallbackTerminal) {
+            ToolResultDetailDialog(
+                toolName = "task",
+                result = fallbackResult,
+                isSuccess = executionSuccess,
+                titleOverride =
                     stringResource(
-                        R.string.subagent_status_with_agent,
-                        agentName,
-                        fallbackText,
-                    )
-                }
-                ?: fallbackText
-        ToolPendingStatusRow(
-            text = displayText,
+                        R.string.subagent_result_title,
+                        rowContent.title,
+                    ),
+                metadata = rowContent.summary,
+                onDismiss = { showFallbackResultDialog = false },
+                onCopy = {
+                    clipboardManager.setText(AnnotatedString(fallbackResult))
+                },
+            )
+        }
+
+        SubagentTaskResultRow(
+            agentName = rowContent.title,
+            summary = rowContent.summary,
             modifier = modifier,
-            isSuccess = fallbackState != ToolExecutionState.NOT_EXECUTED,
-            showStatusIcon =
-                fallbackState == ToolExecutionState.COMPLETED ||
-                    fallbackState == ToolExecutionState.NOT_EXECUTED,
+            isSuccess =
+                fallbackState != ToolExecutionState.NOT_EXECUTED &&
+                    (!isFallbackTerminal || executionSuccess),
+            onClick =
+                if (isFallbackTerminal) {
+                    { showFallbackResultDialog = true }
+                } else {
+                    null
+                },
         )
         return
     }
@@ -374,11 +537,21 @@ private fun SubagentTaskStatusDisplay(
             SubagentRunStatus.INTERRUPTED -> stringResource(R.string.subagent_status_error)
             SubagentRunStatus.CANCELLED -> stringResource(R.string.subagent_status_cancelled)
         }
+    val agentName =
+        resolvedRun.agentProfileId.ifBlank {
+            requestedSubagentName?.takeIf { it.isNotBlank() } ?: "subagent"
+        }
     val statusText =
         stringResource(
             R.string.subagent_status_with_agent,
-            resolvedRun.agentProfileId.ifBlank { requestedSubagentName ?: "subagent" },
+            agentName,
             baseStatusText,
+        )
+    val rowContent =
+        buildSubagentTaskRowContent(
+            agentName = agentName,
+            durationText = durationText,
+            statusText = baseStatusText,
         )
     val isSuccess =
         status != SubagentRunStatus.FAILED &&
@@ -420,26 +593,11 @@ private fun SubagentTaskStatusDisplay(
         )
     }
 
-    val rowText =
-        if (isTerminal) {
-            listOf(
-                    "$durationText  $statusText",
-                    terminalResult.toSingleLineResultSummary(),
-                )
-                .filter { it.isNotBlank() }
-                .joinToString(" · ")
-        } else {
-            "$durationText  $statusText"
-        }
-    ToolPendingStatusRow(
-        text = rowText,
+    SubagentTaskResultRow(
+        agentName = rowContent.title,
+        summary = rowContent.summary,
         modifier = modifier,
         isSuccess = isSuccess,
-        showStatusIcon =
-            status == SubagentRunStatus.COMPLETED ||
-                status == SubagentRunStatus.FAILED ||
-                status == SubagentRunStatus.INTERRUPTED ||
-                status == SubagentRunStatus.CANCELLED,
         onClick = {
             if (isTerminal) {
                 showResultDialog = true
@@ -487,12 +645,6 @@ internal fun extractSubagentTaskResult(rawResult: String): String {
         .replace("&apos;", "'")
         .replace("&amp;", "&")
 }
-
-private fun String.toSingleLineResultSummary(): String =
-    replace('\r', ' ')
-        .replace('\n', ' ')
-        .replace(Regex("""\s+"""), " ")
-        .trim()
 
 internal fun resolveSubagentDisplayedTool(
     childProcessingState: InputProcessingState?,

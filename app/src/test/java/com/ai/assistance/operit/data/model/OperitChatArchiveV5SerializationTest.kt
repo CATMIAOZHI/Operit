@@ -1,14 +1,22 @@
 package com.ai.assistance.operit.data.model
 
+import com.ai.assistance.operit.data.repository.OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS
 import java.time.LocalDateTime
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OperitChatArchiveV5SerializationTest {
     private val json = Json { encodeDefaults = true }
+
+    @Test
+    fun snapshotProjectionIncludesAllPersistedSubagentMetadata() {
+        assertTrue("toolInvocationCount" in OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS)
+        assertTrue("archivedAt" in OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS)
+    }
 
     @Test
     fun roundTripPreservesChatKindAndSubagentRun() {
@@ -46,6 +54,7 @@ class OperitChatArchiveV5SerializationTest {
                 modelConfigIdSnapshot = "model-config",
                 modelIndexSnapshot = 1,
                 toolInvocationCount = 4,
+                archivedAt = 25,
             )
         val archive =
             OperitChatArchive(

@@ -10,13 +10,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -32,13 +35,14 @@ import com.ai.assistance.operit.data.preferences.CharacterGroupCardManager
 import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.model.ActivePrompt
 import com.ai.assistance.operit.data.model.ChatKind
-import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
+import com.ai.assistance.operit.core.agent.SubagentCoordinator
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.floating.FloatingMode
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 
 @Composable
 fun useFloatingWindowLauncher(
@@ -77,6 +81,68 @@ fun ChatScreenHeader(
     val currentChat = remember(currentChatId, chatHistories) {
         chatHistories.firstOrNull { it.id == currentChatId }
     }
+    val repository = remember(context) { SubagentRunRepository.getInstance(context) }
+    val coroutineScope = rememberCoroutineScope()
+    val managementParentChatId =
+        if (currentChat?.chatKind == ChatKind.SUBAGENT.name) {
+            currentChat.parentChatId
+        } else {
+            currentChat?.id
+        }
+    val parentRunsFlow =
+        remember(managementParentChatId) {
+            managementParentChatId?.let(repository::observeByParentChatId)
+                ?: flowOf(emptyList())
+        }
+    val parentRuns by parentRunsFlow.collectAsState(initial = emptyList())
+    val visibleParentRuns = remember(parentRuns) {
+        parentRuns.filter { it.archivedAt == null }
+    }
+    val hasActiveRun = remember(visibleParentRuns) {
+        visibleParentRuns.any { it.isActiveSubagentRun() }
+    }
+    val managementParentTitle =
+        remember(managementParentChatId, chatHistories) {
+            chatHistories.firstOrNull { it.id == managementParentChatId }?.title
+                ?: managementParentChatId.orEmpty()
+        }
+    var showSubagentManager by rememberSaveable { mutableStateOf(false) }
+
+    if (showSubagentManager && managementParentChatId != null) {
+        SubagentManagementDialog(
+            parentTitle = managementParentTitle,
+            runs = parentRuns,
+            currentChildChatId =
+                currentChat?.takeIf { it.chatKind == ChatKind.SUBAGENT.name }?.id,
+            onSelect = { run ->
+                showSubagentManager = false
+                actualViewModel.switchChat(run.childChatId, scrollToBottom = false)
+            },
+            onStop = { run ->
+                coroutineScope.launch {
+                    SubagentCoordinator.getInstance(context).cancelTask(run.id)
+                }
+            },
+            onArchive = { run ->
+                coroutineScope.launch {
+                    if (repository.setArchived(run.id, archived = true) &&
+                        currentChatId == run.childChatId
+                    ) {
+                        actualViewModel.switchChat(
+                            managementParentChatId,
+                            scrollToBottom = false,
+                        )
+                    }
+                }
+            },
+            onRestore = { run ->
+                coroutineScope.launch {
+                    repository.setArchived(run.id, archived = false)
+                }
+            },
+            onDismiss = { showSubagentManager = false },
+        )
+    }
 
     LaunchedEffect(actualViewModel, context) {
         actualViewModel.moveTaskToBackEvents.collect {
@@ -85,7 +151,6 @@ fun ChatScreenHeader(
     }
 
     if (currentChat?.chatKind == ChatKind.SUBAGENT.name) {
-        val repository = remember(context) { SubagentRunRepository.getInstance(context) }
         val runFlow =
             remember(currentChat.id) {
                 repository.observeByChildChatId(currentChat.id)
@@ -97,18 +162,13 @@ fun ChatScreenHeader(
                     ?: run?.parentChatId
                     ?: currentChat.parentChatId.orEmpty()
             }
-        val status =
-            run?.status
-                ?.let { value ->
-                    runCatching { SubagentRunStatus.valueOf(value) }.getOrNull()
-                }
         SubagentChatHeader(
             modifier = modifier,
             title = run?.title ?: currentChat.title,
             parentTitle = parentTitle,
             agentName = run?.agentProfileId.orEmpty(),
-            taskId = run?.id.orEmpty(),
-            status = status,
+            siblingRuns = parentRuns,
+            currentChildChatId = currentChat.id,
             transparent = chatHeaderTransparent,
             onBackToParent = {
                 (run?.parentChatId ?: currentChat.parentChatId)
@@ -116,6 +176,10 @@ fun ChatScreenHeader(
                         actualViewModel.switchChat(parentChatId, scrollToBottom = false)
                     }
             },
+            onSwitchSubagent = { childChatId ->
+                actualViewModel.switchChat(childChatId, scrollToBottom = false)
+            },
+            onManageSubagents = { showSubagentManager = true },
         )
         return
     }
@@ -209,8 +273,15 @@ fun ChatScreenHeader(
                 runningTaskCount = activeStreamingChatIds.size,
                 activeCharacterName = activeCharacterGroup?.name ?: activeCharacterCard?.name ?: "",
                 activeCharacterAvatarUri = activeCharacterAvatarUri,
-                onCharacterClick = onCharacterSwitcherClick
+                 onCharacterClick = onCharacterSwitcherClick
         )
+
+        if (parentRuns.isNotEmpty()) {
+            SubagentManageButton(
+                hasActiveRun = hasActiveRun,
+                onClick = { showSubagentManager = true },
+            )
+        }
 
         Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -318,23 +389,32 @@ private fun SubagentChatHeader(
     title: String,
     parentTitle: String,
     agentName: String,
-    taskId: String,
-    status: SubagentRunStatus?,
+    siblingRuns: List<com.ai.assistance.operit.data.model.SubagentRunEntity>,
+    currentChildChatId: String,
     transparent: Boolean,
     onBackToParent: () -> Unit,
+    onSwitchSubagent: (String) -> Unit,
+    onManageSubagents: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val statusText =
-        when (status) {
-            SubagentRunStatus.CREATED -> stringResource(R.string.subagent_status_creating)
-            SubagentRunStatus.QUEUED -> stringResource(R.string.subagent_status_queued, 1)
-            SubagentRunStatus.RUNNING -> stringResource(R.string.subagent_status_thinking)
-            SubagentRunStatus.COMPLETED -> stringResource(R.string.subagent_status_completed)
-            SubagentRunStatus.CANCELLED -> stringResource(R.string.subagent_status_cancelled)
-            SubagentRunStatus.FAILED,
-            SubagentRunStatus.INTERRUPTED -> stringResource(R.string.subagent_status_error)
-            null -> "—"
-        }
+    var showSwitcher by rememberSaveable { mutableStateOf(false) }
+    val visibleRuns = remember(siblingRuns) {
+        siblingRuns.filter { it.archivedAt == null }
+    }
+    val hasActiveRun = remember(visibleRuns) {
+        visibleRuns.any { it.isActiveSubagentRun() }
+    }
+    if (showSwitcher) {
+        SubagentSwitcherSheet(
+            runs = siblingRuns,
+            currentChildChatId = currentChildChatId,
+            onSelect = { run ->
+                showSwitcher = false
+                onSwitchSubagent(run.childChatId)
+            },
+            onDismiss = { showSwitcher = false },
+        )
+    }
     Row(
         modifier =
             modifier
@@ -351,47 +431,21 @@ private fun SubagentChatHeader(
     ) {
         IconButton(onClick = onBackToParent) {
             Icon(
-                imageVector = Icons.Default.ArrowBack,
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = stringResource(R.string.subagent_return_to_parent),
             )
         }
-        Column(
+        SubagentHeaderTitle(
+            parentTitle = parentTitle,
+            agentName = agentName,
+            taskTitle = title,
+            onClick = { showSwitcher = true },
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(1.dp),
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text =
-                    "${stringResource(R.string.subagent_delegated_by_parent)} · " +
-                        stringResource(R.string.subagent_parent_chat, parentTitle),
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text =
-                    "${stringResource(R.string.subagent_agent_name, agentName)} · " +
-                        stringResource(R.string.subagent_current_status, statusText),
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = stringResource(R.string.subagent_task_id, taskId),
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        TextButton(onClick = onBackToParent) {
-            Text(stringResource(R.string.subagent_return_to_parent))
-        }
+        )
+        SubagentManageButton(
+            hasActiveRun = hasActiveRun,
+            onClick = onManageSubagents,
+        )
     }
 }
 

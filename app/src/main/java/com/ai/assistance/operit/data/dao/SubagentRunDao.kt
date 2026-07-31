@@ -67,6 +67,9 @@ interface SubagentRunDao {
     )
     suspend fun incrementToolInvocationCountByChildChatId(childChatId: String): Int
 
+    @Query("UPDATE subagent_runs SET archivedAt = :archivedAt WHERE id = :taskId")
+    suspend fun updateArchivedAt(taskId: String, archivedAt: Long?): Int
+
     @Query(
         """
         UPDATE subagent_runs

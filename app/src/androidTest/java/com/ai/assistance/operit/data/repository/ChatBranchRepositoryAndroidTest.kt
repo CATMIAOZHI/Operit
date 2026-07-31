@@ -158,6 +158,65 @@ class ChatBranchRepositoryAndroidTest {
         assertEquals(emptyList<SubagentRunEntity>(), database.subagentRunDao().getByParentChatId(branch.id))
     }
 
+    @Test
+    fun activeSubagentRunsBecomeInterruptedBranchSnapshots() = runBlocking {
+        val parent = chat("parent", ChatKind.NORMAL)
+        database.chatDao().insertChat(parent)
+        val activeStatuses =
+            listOf(
+                SubagentRunStatus.CREATED,
+                SubagentRunStatus.QUEUED,
+                SubagentRunStatus.RUNNING,
+            )
+        val callIds = activeStatuses.indices.map { "call-$it" }
+        database.messageDao().insertMessage(
+            message(
+                chatId = parent.id,
+                timestamp = 10,
+                content =
+                    callIds.joinToString(separator = "") { callId ->
+                        """<tool name="task" call_id="$callId"></tool>"""
+                    },
+            )
+        )
+        activeStatuses.forEachIndexed { index, status ->
+            val child = chat("child-$index", ChatKind.SUBAGENT, parentChatId = parent.id)
+            database.chatDao().insertChat(child)
+            database.subagentRunDao().insert(
+                SubagentRunEntity(
+                    id = "run-$index",
+                    parentChatId = parent.id,
+                    childChatId = child.id,
+                    parentToolCallId = callIds[index],
+                    agentProfileId = "explore",
+                    title = status.name,
+                    status = status.name,
+                    createdAt = 5,
+                )
+            )
+        }
+        val branch = chat("branch", ChatKind.BRANCH, parentChatId = parent.id)
+
+        val result =
+            repository.copyBranch(
+                sourceChatId = parent.id,
+                branch = branch,
+                upToTimestampInclusive = null,
+            )
+
+        assertEquals(activeStatuses.size, result.copiedSubagentCount)
+        val copiedRuns = database.subagentRunDao().getByParentChatId(branch.id)
+        assertEquals(activeStatuses.size, copiedRuns.size)
+        copiedRuns.forEach { copiedRun ->
+            assertEquals(SubagentRunStatus.INTERRUPTED.name, copiedRun.status)
+            assertNotNull(copiedRun.completedAt)
+            assertEquals(
+                "This Subagent run was interrupted because its parent chat was branched.",
+                copiedRun.error,
+            )
+        }
+    }
+
     private fun chat(
         id: String,
         kind: ChatKind,

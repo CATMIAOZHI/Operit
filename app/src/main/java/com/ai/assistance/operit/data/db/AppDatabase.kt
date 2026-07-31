@@ -27,7 +27,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         MessageVariantEntity::class,
         SubagentRunEntity::class,
     ],
-    version = 27,
+    version = 28,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -517,6 +517,13 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        internal val MIGRATION_27_28 =
+            object : Migration(27, 28) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE `subagent_runs` ADD COLUMN `archivedAt` INTEGER")
+                }
+            }
+
         private val finalTrueAttributeRegex =
             Regex("""\bfinal\s*=\s*["']true["']""", RegexOption.IGNORE_CASE)
 
@@ -648,6 +655,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_24_25,
                                 MIGRATION_25_26,
                                 MIGRATION_26_27,
+                                MIGRATION_27_28,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

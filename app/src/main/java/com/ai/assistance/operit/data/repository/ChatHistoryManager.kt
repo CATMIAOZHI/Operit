@@ -84,6 +84,26 @@ private val Context.currentChatIdDataStore by preferencesDataStore(name = "curre
 internal fun normalizeChatFolderId(folderId: String?): String? =
     folderId.takeUnless { it == SYSTEM_UNGROUPED_FOLDER_ID }
 
+internal val OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS =
+    listOf(
+        "id",
+        "parentChatId",
+        "childChatId",
+        "parentToolCallId",
+        "agentProfileId",
+        "title",
+        "status",
+        "createdAt",
+        "startedAt",
+        "completedAt",
+        "error",
+        "agentConfigSnapshot",
+        "modelConfigIdSnapshot",
+        "modelIndexSnapshot",
+        "toolInvocationCount",
+        "archivedAt",
+    )
+
 internal fun remapArchivedParentToolCallIds(
     chat: OperitArchivedChat,
     callIdRemap: Map<String, String>,
@@ -480,6 +500,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     if (isNull(index)) null else getInt(index)
                 },
             toolInvocationCount = getInt(getColumnIndexOrThrow("toolInvocationCount")),
+            archivedAt = longOrNull("archivedAt"),
         )
 
     private fun buildOperitArchivedChatFromSnapshot(
@@ -572,10 +593,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     sqliteDb.execSQL(
                         """
                         CREATE TABLE subagent_runs AS
-                        SELECT id, parentChatId, childChatId, parentToolCallId, agentProfileId,
-                               title, status, createdAt, startedAt, completedAt, error,
-                               agentConfigSnapshot, modelConfigIdSnapshot, modelIndexSnapshot,
-                               toolInvocationCount
+                        SELECT ${OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS.joinToString()}
                         FROM operit_export_source.subagent_runs
                         """.trimIndent(),
                     )
