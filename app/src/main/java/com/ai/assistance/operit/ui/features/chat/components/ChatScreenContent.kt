@@ -1096,6 +1096,24 @@ fun ChatHistorySelectorPanel(
                     // 创建新对话后自动收起侧边框
                     actualViewModel.showChatHistorySelector(false)
                 },
+                onCreateFolderWithInitialChat = {
+                    parentFolderId,
+                    folderName,
+                    characterCardName,
+                    characterGroupId,
+                    onResult ->
+                    actualViewModel.createFolderWithInitialChat(
+                        parentFolderId = parentFolderId,
+                        folderName = folderName,
+                        characterCardName = characterCardName,
+                        characterGroupId = characterGroupId,
+                    ) { result ->
+                        onResult(result)
+                        if (result.isSuccess) {
+                            actualViewModel.showChatHistorySelector(false)
+                        }
+                    }
+                },
                 onSelectChat = { chatId ->
                     actualViewModel.switchChat(chatId)
                     // 切换聊天后也自动收起侧边框

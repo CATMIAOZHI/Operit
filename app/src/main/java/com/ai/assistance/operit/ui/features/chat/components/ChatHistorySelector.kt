@@ -199,13 +199,16 @@ private fun HistorySiblingSnapshot.structure(): HistorySiblingStructure =
         displayOrder = displayOrder,
     )
 
-private fun resolveBindingForCreate(
+internal fun resolveBindingForCreate(
     historyDisplayMode: ChatHistoryDisplayMode,
     activePrompt: ActivePrompt,
     activeCharacterCardName: String?
 ): Pair<String?, String?> {
     if (historyDisplayMode == ChatHistoryDisplayMode.BY_FOLDER) {
-        return Pair(null, null)
+        return when (val prompt = activePrompt) {
+            is ActivePrompt.CharacterGroup -> Pair(null, prompt.id)
+            is ActivePrompt.CharacterCard -> Pair(null, null)
+        }
     }
     return when (val prompt = activePrompt) {
         is ActivePrompt.CharacterGroup -> Pair(null, prompt.id)
@@ -513,6 +516,13 @@ private fun HistoryQuickScroller(
 fun ChatHistorySelector(
         modifier: Modifier = Modifier,
         onNewChat: (characterCardName: String?, characterGroupId: String?) -> Unit,
+        onCreateFolderWithInitialChat: (
+            parentFolderId: String?,
+            folderName: String,
+            characterCardName: String?,
+            characterGroupId: String?,
+            onResult: (Result<String>) -> Unit,
+        ) -> Unit,
         onSelectChat: (String) -> Unit,
         onDeleteChat: (String) -> Unit,
         onUpdateChatTitle: (chatId: String, newTitle: String) -> Unit,
@@ -550,6 +560,7 @@ fun ChatHistorySelector(
     var showNewGroupDialog by remember { mutableStateOf(false) }
     var newGroupName by remember { mutableStateOf("") }
     var newFolderParentId by remember { mutableStateOf<String?>(null) }
+    var isCreatingFolder by remember { mutableStateOf(false) }
     var groupActionTarget by remember { mutableStateOf<GroupTarget?>(null) }
     var groupToRename by remember { mutableStateOf<GroupTarget?>(null) }
     var groupToDelete by remember { mutableStateOf<GroupTarget?>(null) }
@@ -3115,8 +3126,10 @@ fun ChatHistorySelector(
     if (showNewGroupDialog) {
         AlertDialog(
                 onDismissRequest = {
-                    newFolderParentId = null
-                    showNewGroupDialog = false
+                    if (!isCreatingFolder) {
+                        newFolderParentId = null
+                        showNewGroupDialog = false
+                    }
                 },
                 title = { Text(stringResource(R.string.new_group)) },
                 text = {
@@ -3135,12 +3148,25 @@ fun ChatHistorySelector(
                                     if (normalizedGroupName.isBlank()) {
                                         return@Button
                                     }
-                                    coroutineScope.launch {
-                                        runCatching {
-                                            chatHistoryManager.createFolder(
-                                                parentFolderId = newFolderParentId,
-                                                name = normalizedGroupName,
-                                            )
+                                    isCreatingFolder = true
+                                    val (characterCardName, characterGroupId) =
+                                        resolveBindingForCreate(
+                                            historyDisplayMode = historyDisplayMode,
+                                            activePrompt = activePrompt,
+                                            activeCharacterCardName =
+                                                activeCharacterCardName,
+                                        )
+                                    onCreateFolderWithInitialChat(
+                                        newFolderParentId,
+                                        normalizedGroupName,
+                                        characterCardName,
+                                        characterGroupId,
+                                    ) { result ->
+                                        result.onSuccess {
+                                            newGroupName = ""
+                                            newFolderParentId = null
+                                            isCreatingFolder = false
+                                            showNewGroupDialog = false
                                         }.onFailure { error ->
                                             Toast.makeText(
                                                 context,
@@ -3148,13 +3174,12 @@ fun ChatHistorySelector(
                                                     ?: operationFailedText,
                                                 Toast.LENGTH_SHORT,
                                             ).show()
+                                            isCreatingFolder = false
                                         }
                                     }
-                                    newGroupName = ""
-                                    newFolderParentId = null
-                                    showNewGroupDialog = false
                                 }
-                            }
+                            },
+                            enabled = !isCreatingFolder,
                     ) {
                         Text(stringResource(R.string.create))
                     }
@@ -3164,7 +3189,8 @@ fun ChatHistorySelector(
                         onClick = {
                             newFolderParentId = null
                             showNewGroupDialog = false
-                        }
+                        },
+                        enabled = !isCreatingFolder,
                     ) {
                         Text(stringResource(R.string.cancel))
                     }
