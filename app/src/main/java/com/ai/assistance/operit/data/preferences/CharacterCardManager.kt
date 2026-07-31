@@ -46,6 +46,119 @@ private val Context.characterCardDataStore by preferencesDataStore(
     name = "character_cards"
 )
 
+internal fun reconcileCharacterCardOrder(
+    savedOrder: List<String>,
+    cardIds: Collection<String>
+): List<String> {
+    val availableIds = cardIds.toSet()
+    return buildList {
+        val addedIds = mutableSetOf<String>()
+        savedOrder.forEach { id ->
+            if (id in availableIds && addedIds.add(id)) {
+                add(id)
+            }
+        }
+        cardIds.forEach { id ->
+            if (addedIds.add(id)) {
+                add(id)
+            }
+        }
+    }
+}
+
+internal fun reconcileCharacterCardOrderAfterUpsert(
+    savedOrder: List<String>,
+    cardIds: Collection<String>,
+    upsertedId: String
+): List<String> {
+    val currentOrder = reconcileCharacterCardOrder(savedOrder, cardIds)
+    return if (upsertedId in cardIds) currentOrder else currentOrder + upsertedId
+}
+
+internal fun mergeReorderedVisibleCharacterCardIds(
+    currentOrder: List<String>,
+    reorderedVisibleIds: List<String>,
+    collapsedIds: Set<String>
+): List<String> {
+    val currentVisibleIds = currentOrder.filterNot { it in collapsedIds }
+    if (
+        currentVisibleIds.size != reorderedVisibleIds.size ||
+            currentVisibleIds.toSet() != reorderedVisibleIds.toSet()
+    ) {
+        return currentOrder
+    }
+
+    val reorderedVisibleIterator = reorderedVisibleIds.iterator()
+    return currentOrder.map { id ->
+        if (id in collapsedIds) id else reorderedVisibleIterator.next()
+    }
+}
+
+internal fun restoreImportedCharacterCardOrder(
+    currentOrder: List<String>,
+    importedOrder: List<String>,
+    cardIds: Collection<String>
+): List<String> {
+    return reconcileCharacterCardOrder(importedOrder + currentOrder, cardIds)
+}
+
+internal fun resolveSystemCharacterCardOrder(
+    savedOrder: List<String>,
+    existingIds: Collection<String>,
+    placeRainyFirst: Boolean
+): List<String> {
+    if (placeRainyFirst) {
+        return listOf(
+            CharacterCardManager.RAINY_CHARACTER_CARD_ID,
+            CharacterCardManager.DEFAULT_CHARACTER_CARD_ID
+        )
+    }
+
+    var order = reconcileCharacterCardOrder(savedOrder, existingIds)
+    if (CharacterCardManager.DEFAULT_CHARACTER_CARD_ID !in existingIds) {
+        order += CharacterCardManager.DEFAULT_CHARACTER_CARD_ID
+    }
+    if (CharacterCardManager.RAINY_CHARACTER_CARD_ID !in existingIds) {
+        order += CharacterCardManager.RAINY_CHARACTER_CARD_ID
+    }
+    return order
+}
+
+internal fun shouldSelectRainyAsInitialCard(
+    hasCharacterCardList: Boolean,
+    activeCharacterCardId: String?
+): Boolean {
+    return !hasCharacterCardList && activeCharacterCardId.isNullOrBlank()
+}
+
+internal fun migrateBuiltInDescription(
+    savedDescription: String?,
+    oldBuiltInDescriptions: Set<String>,
+    newBuiltInDescription: String
+): String? {
+    return if (savedDescription in oldBuiltInDescriptions) {
+        newBuiltInDescription
+    } else {
+        savedDescription
+    }
+}
+
+internal fun shouldInstallBuiltInSystemAvatar(savedAvatarUri: String?): Boolean {
+    return savedAvatarUri.isNullOrBlank()
+}
+
+internal fun toggleCollapsedCharacterCardId(
+    collapsedIds: Set<String>,
+    characterCardId: String
+): Set<String> {
+    if (characterCardId.isBlank()) return collapsedIds
+    return if (characterCardId in collapsedIds) {
+        collapsedIds - characterCardId
+    } else {
+        collapsedIds + characterCardId
+    }
+}
+
 /**
  * 角色卡管理器
  */
@@ -61,12 +174,21 @@ class CharacterCardManager private constructor(private val context: Context) {
     
     companion object {
         private val CHARACTER_CARD_LIST = stringSetPreferencesKey("character_card_list")
+        private val CHARACTER_CARD_ORDER = stringPreferencesKey("character_card_order")
+        private val COLLAPSED_CHARACTER_CARD_IDS =
+            stringPreferencesKey("collapsed_character_card_ids")
         private val ACTIVE_CHARACTER_CARD_ID = stringPreferencesKey("active_character_card_id")
 
         // 默认角色卡ID
         const val DEFAULT_CHARACTER_CARD_ID = "default_character"
+        const val RAINY_CHARACTER_CARD_ID = "system_rainy"
 
         const val DEFAULT_CHARACTER_NAME = "Operit"
+        const val RAINY_CHARACTER_NAME = "Rainy"
+
+        fun isSystemCharacterCard(id: String): Boolean {
+            return id == DEFAULT_CHARACTER_CARD_ID || id == RAINY_CHARACTER_CARD_ID
+        }
         
         @Volatile
         private var INSTANCE: CharacterCardManager? = null
@@ -80,11 +202,44 @@ class CharacterCardManager private constructor(private val context: Context) {
             }
         }
     }
-    
+
+    private val characterCardOrderJson = Json { ignoreUnknownKeys = true }
+
+    private fun readCharacterCardOrder(preferences: Preferences): List<String> {
+        val rawOrder = preferences[CHARACTER_CARD_ORDER] ?: return emptyList()
+        return runCatching {
+            characterCardOrderJson.decodeFromString<List<String>>(rawOrder)
+        }.getOrElse {
+            AppLogger.e("CharacterCardManager", "解析角色卡顺序失败", it)
+            emptyList()
+        }
+    }
+
+    private fun writeCharacterCardOrder(
+        preferences: MutablePreferences,
+        orderedIds: List<String>
+    ) {
+        preferences[CHARACTER_CARD_ORDER] =
+            characterCardOrderJson.encodeToString(orderedIds)
+    }
+
+    private fun readCollapsedCharacterCardIds(preferences: Preferences): Set<String> {
+        val rawIds = preferences[COLLAPSED_CHARACTER_CARD_IDS] ?: return emptySet()
+        return runCatching {
+            characterCardOrderJson.decodeFromString<List<String>>(rawIds)
+                .filter { it.isNotBlank() }
+                .toSet()
+        }.getOrDefault(emptySet())
+    }
+
     // 角色卡列表流
     val characterCardListFlow: Flow<List<String>> = dataStore.data.map { preferences ->
-        preferences[CHARACTER_CARD_LIST]?.toList() ?: emptyList()
+        val cardIds = preferences[CHARACTER_CARD_LIST] ?: emptySet()
+        reconcileCharacterCardOrder(readCharacterCardOrder(preferences), cardIds)
     }
+
+    val collapsedCharacterCardIdsFlow: Flow<Set<String>> =
+        dataStore.data.map(::readCollapsedCharacterCardIds)
     
     // 活跃角色卡ID流（可以为null）
     private val activeCharacterCardIdFlow: Flow<String?> = dataStore.data.map { preferences ->
@@ -244,10 +399,14 @@ class CharacterCardManager private constructor(private val context: Context) {
         dataStore.edit { preferences ->
             // 添加到角色卡列表
             val currentList = preferences[CHARACTER_CARD_LIST]?.toMutableSet() ?: mutableSetOf(DEFAULT_CHARACTER_CARD_ID)
-            if (!currentList.contains(id)) {
-                currentList.add(id)
-                preferences[CHARACTER_CARD_LIST] = currentList
-            }
+            val updatedOrder = reconcileCharacterCardOrderAfterUpsert(
+                readCharacterCardOrder(preferences),
+                currentList,
+                id
+            )
+            currentList.add(id)
+            preferences[CHARACTER_CARD_LIST] = currentList
+            writeCharacterCardOrder(preferences, updatedOrder)
             
             // 设置角色卡数据
             preferences[stringPreferencesKey("character_card_${id}_name")] = newCard.name
@@ -333,13 +492,20 @@ class CharacterCardManager private constructor(private val context: Context) {
     
     // 删除角色卡
     suspend fun deleteCharacterCard(id: String) {
-        if (id == DEFAULT_CHARACTER_CARD_ID) return
+        if (isSystemCharacterCard(id)) return
         
         dataStore.edit { preferences ->
             // 从列表中移除
             val currentList = preferences[CHARACTER_CARD_LIST]?.toMutableSet() ?: mutableSetOf(DEFAULT_CHARACTER_CARD_ID)
             currentList.remove(id)
             preferences[CHARACTER_CARD_LIST] = currentList
+            writeCharacterCardOrder(
+                preferences,
+                reconcileCharacterCardOrder(readCharacterCardOrder(preferences), currentList)
+            )
+            val collapsedIds = readCollapsedCharacterCardIds(preferences) - id
+            preferences[COLLAPSED_CHARACTER_CARD_IDS] =
+                characterCardOrderJson.encodeToString(collapsedIds.toList())
             
             // 清除角色卡数据
             val keysToRemove = listOf(
@@ -462,31 +628,46 @@ class CharacterCardManager private constructor(private val context: Context) {
     
     // 初始化默认角色卡
     suspend fun initializeIfNeeded() {
-        var isInitialized = false
+        var needsDefaultThemeMigration = false
         dataStore.edit { preferences ->
             val cardListKey = CHARACTER_CARD_LIST
-            val currentList = preferences[cardListKey]?.toMutableSet()
+            val existingIds = preferences[cardListKey]?.toMutableSet()
+            val shouldSelectRainy = shouldSelectRainyAsInitialCard(
+                hasCharacterCardList = existingIds != null,
+                activeCharacterCardId = preferences[ACTIVE_CHARACTER_CARD_ID]
+            )
+            needsDefaultThemeMigration = existingIds.isNullOrEmpty()
 
-            if (currentList == null || currentList.isEmpty()) {
-                isInitialized = true
-                // 首次安装，创建默认角色卡
-                val defaultCardId = DEFAULT_CHARACTER_CARD_ID
-                preferences[cardListKey] = setOf(defaultCardId)
-                // 不再自动设置活跃角色卡，让用户自己选择角色卡或群组
-                // preferences[ACTIVE_CHARACTER_CARD_ID] = defaultCardId
+            val currentIds = existingIds ?: mutableSetOf()
+            val savedOrder = readCharacterCardOrder(preferences)
+            val updatedOrder = resolveSystemCharacterCardOrder(
+                savedOrder,
+                currentIds,
+                placeRainyFirst = shouldSelectRainy
+            )
 
-                // 设置默认角色卡数据
-                setupDefaultCharacterCard(preferences, defaultCardId)
+            if (currentIds.add(DEFAULT_CHARACTER_CARD_ID)) {
+                setupDefaultCharacterCard(preferences, DEFAULT_CHARACTER_CARD_ID)
             }
+
+            if (currentIds.add(RAINY_CHARACTER_CARD_ID)) {
+                setupRainyCharacterCard(preferences, RAINY_CHARACTER_CARD_ID)
+            }
+
+            migrateSystemCharacterCardDescriptions(preferences)
+            preferences[cardListKey] = currentIds
+            if (shouldSelectRainy) {
+                preferences[ACTIVE_CHARACTER_CARD_ID] = RAINY_CHARACTER_CARD_ID
+            }
+            writeCharacterCardOrder(preferences, updatedOrder)
         }
 
-        if (isInitialized) {
-            // This is a new installation or an old user updating.
-            // We should migrate their existing theme settings to the default character card.
-            AppLogger.d("CharacterCardManager", "First initialization detected. Migrating current theme to default character card.")
+        if (needsDefaultThemeMigration) {
+            AppLogger.d("CharacterCardManager", "Missing character cards detected. Migrating current theme to Operit.")
             userPreferencesManager.copyCurrentThemeToCharacterCard(DEFAULT_CHARACTER_CARD_ID)
-            userPreferencesManager.saveAiAvatarForCharacterCard(DEFAULT_CHARACTER_CARD_ID, UserPreferencesManager.DEFAULT_CHARACTER_AVATAR_URI)
         }
+        ensureBuiltInSystemAvatar(DEFAULT_CHARACTER_CARD_ID)
+        ensureBuiltInSystemAvatar(RAINY_CHARACTER_CARD_ID)
 
         // 清理历史内置功能标签（chat/voice/desktop pet）
         tagManager.removeLegacyBuiltInTags()
@@ -496,11 +677,59 @@ class CharacterCardManager private constructor(private val context: Context) {
 
     // 重置默认角色卡
     suspend fun resetDefaultCharacterCard() {
+        resetSystemCharacterCard(DEFAULT_CHARACTER_CARD_ID)
+    }
+
+    suspend fun resetSystemCharacterCard(id: String) {
+        if (!isSystemCharacterCard(id)) return
+
         dataStore.edit { preferences ->
-            setupDefaultCharacterCard(preferences, DEFAULT_CHARACTER_CARD_ID)
+            when (id) {
+                DEFAULT_CHARACTER_CARD_ID -> setupDefaultCharacterCard(preferences, id)
+                RAINY_CHARACTER_CARD_ID -> setupRainyCharacterCard(preferences, id)
+            }
         }
-        // 同时也重置头像和主题
-        userPreferencesManager.saveAiAvatarForCharacterCard(DEFAULT_CHARACTER_CARD_ID, "file:///android_asset/operit.png")
+        UserPreferencesManager.getBuiltInCharacterAvatarUri(id)?.let { avatarUri ->
+            userPreferencesManager.saveAiAvatarForCharacterCard(id, avatarUri)
+        }
+    }
+
+    private suspend fun ensureBuiltInSystemAvatar(id: String) {
+        if (
+            shouldInstallBuiltInSystemAvatar(
+                userPreferencesManager.getAiAvatarForCharacterCardFlow(id).first()
+            )
+        ) {
+            UserPreferencesManager.getBuiltInCharacterAvatarUri(id)?.let { avatarUri ->
+                userPreferencesManager.saveAiAvatarForCharacterCard(id, avatarUri)
+            }
+        }
+    }
+
+    private fun migrateSystemCharacterCardDescriptions(preferences: MutablePreferences) {
+        val operitDescriptionKey =
+            stringPreferencesKey("character_card_${DEFAULT_CHARACTER_CARD_ID}_description")
+        migrateBuiltInDescription(
+            savedDescription = preferences[operitDescriptionKey],
+            oldBuiltInDescriptions = setOf(
+                "系统默认的角色卡配置",
+                "System default character card configuration"
+            ),
+            newBuiltInDescription = CharacterCardBilingualData.getDefaultDescription(context)
+        )?.let { preferences[operitDescriptionKey] = it }
+
+        val rainyDescriptionKey =
+            stringPreferencesKey("character_card_${RAINY_CHARACTER_CARD_ID}_description")
+        migrateBuiltInDescription(
+            savedDescription = preferences[rainyDescriptionKey],
+            oldBuiltInDescriptions = setOf(
+                "Rainy是一位理性又活泼的AI小猫助手喵！",
+                "Rainy is a rational yet lively AI kitten assistant!",
+                "系统默认的角色卡",
+                "System default character card"
+            ),
+            newBuiltInDescription = RainyCharacterCardData.getDescription(context)
+        )?.let { preferences[rainyDescriptionKey] = it }
     }
     
     private fun setupDefaultCharacterCard(preferences: MutablePreferences, id: String) {
@@ -542,7 +771,32 @@ class CharacterCardManager private constructor(private val context: Context) {
         preferences[createdAtKey] = System.currentTimeMillis()
         preferences[updatedAtKey] = System.currentTimeMillis()
     }
-    
+
+    private fun setupRainyCharacterCard(preferences: MutablePreferences, id: String) {
+        preferences[stringPreferencesKey("character_card_${id}_name")] = RAINY_CHARACTER_NAME
+        preferences[stringPreferencesKey("character_card_${id}_description")] =
+            RainyCharacterCardData.getDescription(context)
+        preferences[stringPreferencesKey("character_card_${id}_character_setting")] =
+            RainyCharacterCardData.getCharacterSetting(context)
+        preferences[stringPreferencesKey("character_card_${id}_opening_statement")] = ""
+        preferences[stringPreferencesKey("character_card_${id}_other_content_chat")] = ""
+        preferences[stringPreferencesKey("character_card_${id}_other_content_voice")] = ""
+        preferences[stringSetPreferencesKey("character_card_${id}_attached_tag_ids")] = emptySet()
+        preferences[stringPreferencesKey("character_card_${id}_advanced_custom_prompt")] = ""
+        preferences[stringPreferencesKey("character_card_${id}_marks")] = ""
+        preferences[stringPreferencesKey("character_card_${id}_chat_model_binding_mode")] =
+            CharacterCardChatModelBindingMode.FOLLOW_GLOBAL
+        preferences.remove(stringPreferencesKey("character_card_${id}_chat_model_config_id"))
+        preferences[intPreferencesKey("character_card_${id}_chat_model_index")] = 0
+        preferences[stringPreferencesKey("character_card_${id}_memory_profile_binding_mode")] =
+            CharacterCardMemoryProfileBindingMode.FOLLOW_GLOBAL
+        preferences.remove(stringPreferencesKey("character_card_${id}_memory_profile_id"))
+        preferences.remove(toolAccessConfigKey(id))
+        preferences[booleanPreferencesKey("character_card_${id}_is_default")] = false
+        preferences[longPreferencesKey("character_card_${id}_created_at")] = System.currentTimeMillis()
+        preferences[longPreferencesKey("character_card_${id}_updated_at")] = System.currentTimeMillis()
+    }
+
     // 获取所有角色卡
     suspend fun getAllCharacterCards(): List<CharacterCard> {
         val cardIds = characterCardListFlow.first()
@@ -552,6 +806,26 @@ class CharacterCardManager private constructor(private val context: Context) {
             } catch (e: Exception) {
                 null
             }
+        }
+    }
+
+    suspend fun updateCharacterCardOrder(orderedIds: List<String>) {
+        dataStore.edit { preferences ->
+            val cardIds = preferences[CHARACTER_CARD_LIST] ?: emptySet()
+            writeCharacterCardOrder(
+                preferences,
+                reconcileCharacterCardOrder(orderedIds, cardIds)
+            )
+        }
+    }
+
+    suspend fun toggleCharacterCardCollapsed(id: String) {
+        if (id.isBlank()) return
+        dataStore.edit { preferences ->
+            val updatedIds =
+                toggleCollapsedCharacterCardId(readCollapsedCharacterCardIds(preferences), id)
+            preferences[COLLAPSED_CHARACTER_CARD_IDS] =
+                characterCardOrderJson.encodeToString(updatedIds.toList())
         }
     }
 
@@ -685,6 +959,7 @@ class CharacterCardManager private constructor(private val context: Context) {
         var newCount = 0
         var updatedCount = 0
         var skippedCount = 0
+        val importedCardIds = mutableListOf<String>()
 
         val existingIds = characterCardListFlow.first().toSet()
         val importedTagIdMap = importOrReusePromptTags(exportedPromptTags)
@@ -724,6 +999,19 @@ class CharacterCardManager private constructor(private val context: Context) {
             }
 
             upsertCharacterCardWithId(finalCard)
+            importedCardIds += finalCard.id
+        }
+
+        dataStore.edit { preferences ->
+            val cardIds = preferences[CHARACTER_CARD_LIST] ?: emptySet()
+            val currentOrder = reconcileCharacterCardOrder(
+                readCharacterCardOrder(preferences),
+                cardIds
+            )
+            writeCharacterCardOrder(
+                preferences,
+                restoreImportedCharacterCardOrder(currentOrder, importedCardIds, cardIds)
+            )
         }
 
         return CharacterCardImportResult(newCount, updatedCount, skippedCount)
@@ -733,10 +1021,14 @@ class CharacterCardManager private constructor(private val context: Context) {
         dataStore.edit { preferences ->
             val id = card.id
             val currentList = preferences[CHARACTER_CARD_LIST]?.toMutableSet() ?: mutableSetOf(DEFAULT_CHARACTER_CARD_ID)
-            if (!currentList.contains(id)) {
-                currentList.add(id)
-                preferences[CHARACTER_CARD_LIST] = currentList
-            }
+            val updatedOrder = reconcileCharacterCardOrderAfterUpsert(
+                readCharacterCardOrder(preferences),
+                currentList,
+                id
+            )
+            currentList.add(id)
+            preferences[CHARACTER_CARD_LIST] = currentList
+            writeCharacterCardOrder(preferences, updatedOrder)
 
             preferences[stringPreferencesKey("character_card_${id}_name")] = card.name
             preferences[stringPreferencesKey("character_card_${id}_description")] = card.description

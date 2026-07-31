@@ -868,6 +868,8 @@
     <string name="reset_successful">重置成功</string>
     <string name="reset_default_character">重置默认角色卡</string>
     <string name="reset_default_character_confirm">确定要重置默认角色卡吗？这将恢复默认的名称、设定和提示词，并重置头像和主题。</string>
+    <string name="reset_system_character">重置系统角色卡</string>
+    <string name="reset_system_character_confirm">确定要重置系统角色卡“%1$s”吗？这将恢复内置的名称、设定、提示词和头像。</string>
 
     <string name="settings_section_ai_model">AI模型配置</string>
     <string name="settings_model_parameters">模型与参数配置</string>
@@ -4037,9 +4039,12 @@
     <string name="duplicate_successful">创建副本成功</string>
     <string name="character_card_management">角色卡管理</string>
     <string name="character_card_sort">排序</string>
-    <string name="character_card_sort_default">默认顺序</string>
+    <string name="character_card_sort_default">手动顺序</string>
     <string name="character_card_sort_by_name">按名称</string>
     <string name="character_card_sort_by_created">按最近更新时间</string>
+    <string name="collapsed_character_cards_count">已折叠角色卡 (%d)</string>
+    <string name="collapse_character_card">折叠角色卡</string>
+    <string name="uncollapse_character_card">取消折叠角色卡</string>
     <string name="create_new">新建</string>
     <string name="ai_creation">AI创作</string>
     <string name="edit">编辑</string>

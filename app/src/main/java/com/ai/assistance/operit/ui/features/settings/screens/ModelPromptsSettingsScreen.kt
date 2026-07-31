@@ -57,6 +57,7 @@ import com.ai.assistance.operit.data.model.TagType
 import com.ai.assistance.operit.data.preferences.CharacterCardBilingualData
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.CharacterGroupCardManager
+import com.ai.assistance.operit.data.preferences.mergeReorderedVisibleCharacterCardIds
 import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.model.ActivePrompt
 import com.ai.assistance.operit.data.preferences.PromptTagManager
@@ -100,6 +101,8 @@ import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
 import coil.compose.AsyncImage
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -133,6 +136,8 @@ fun ModelPromptsSettingsScreen(
 
     // 角色卡相关状态
     val characterCardList by characterCardManager.characterCardListFlow.collectAsState(initial = emptyList())
+    val collapsedCharacterCardIds by
+        characterCardManager.collapsedCharacterCardIdsFlow.collectAsState(initial = emptySet())
     var showAddCharacterCardDialog by remember { mutableStateOf(false) }
     var showEditCharacterCardDialog by remember { mutableStateOf(false) }
     var editingCharacterCard by remember { mutableStateOf<CharacterCard?>(null) }
@@ -156,6 +161,8 @@ fun ModelPromptsSettingsScreen(
 
     // 重置确认对话框状态
     var showResetDefaultConfirm by remember { mutableStateOf(false) }
+    var resettingCharacterCardId by remember { mutableStateOf("") }
+    var resettingCharacterCardName by remember { mutableStateOf("") }
 
     // 酒馆角色卡导入相关状态
     var showImportSuccessMessage by remember { mutableStateOf(false) }
@@ -615,10 +622,7 @@ fun ModelPromptsSettingsScreen(
     // 获取所有角色卡
     var allCharacterCards by remember { mutableStateOf(emptyList<CharacterCard>()) }
     LaunchedEffect(characterCardList, refreshTrigger) {
-        scope.launch {
-            val cards = characterCardManager.getAllCharacterCards()
-            allCharacterCards = cards
-        }
+        allCharacterCards = characterCardManager.getAllCharacterCards()
     }
     val allCharacterGroups by characterGroupCardManager.allCharacterGroupCardsFlow.collectAsState(initial = emptyList())
 
@@ -715,11 +719,15 @@ fun ModelPromptsSettingsScreen(
         }
     }
 
-    // 确认重置默认角色卡
-    fun confirmResetDefaultCharacterCard() {
+    // 确认重置系统角色卡
+    fun confirmResetSystemCharacterCard() {
+        val characterCardId = resettingCharacterCardId
+        if (characterCardId.isBlank()) return
         scope.launch {
-            characterCardManager.resetDefaultCharacterCard()
+            characterCardManager.resetSystemCharacterCard(characterCardId)
             showResetDefaultConfirm = false
+            resettingCharacterCardId = ""
+            resettingCharacterCardName = ""
             refreshTrigger++
             Toast.makeText(context, context.getString(R.string.reset_successful), Toast.LENGTH_SHORT).show()
         }
@@ -897,6 +905,7 @@ fun ModelPromptsSettingsScreen(
                 when (currentTab) {
                     0 -> CharacterCardTab(
                         characterCards = allCharacterCards,
+                        collapsedCharacterCardIds = collapsedCharacterCardIds,
                         activePrompt = activePrompt,
                         allTags = allTags,
                         onAddCharacterCard = {
@@ -921,11 +930,25 @@ fun ModelPromptsSettingsScreen(
                         },
                         onDeleteCharacterCard = { card -> showDeleteCharacterCardConfirm(card.id, card.name) },
                         onDuplicateCharacterCard = { card -> duplicateCharacterCard(card) },
-                        onResetDefaultCharacterCard = { showResetDefaultConfirm = true },
+                        onResetSystemCharacterCard = { card ->
+                            resettingCharacterCardId = card.id
+                            resettingCharacterCardName = card.name
+                            showResetDefaultConfirm = true
+                        },
                         onSetActiveCharacterCard = { cardId ->
                             scope.launch {
                                 activePromptManager.setActivePrompt(ActivePrompt.CharacterCard(cardId))
                                 refreshTrigger++
+                            }
+                        },
+                        onReorderCharacterCards = { orderedIds ->
+                            scope.launch {
+                                characterCardManager.updateCharacterCardOrder(orderedIds)
+                            }
+                        },
+                        onToggleCharacterCardCollapsed = { cardId ->
+                            scope.launch {
+                                characterCardManager.toggleCharacterCardCollapsed(cardId)
                             }
                         },
                         onNavigateToPersonaGeneration = onNavigateToPersonaGeneration,
@@ -1451,15 +1474,26 @@ fun ModelPromptsSettingsScreen(
         )
     }
 
-    // 重置默认角色卡确认对话框
+    // 重置系统角色卡确认对话框
     if (showResetDefaultConfirm) {
         AlertDialog(
-            onDismissRequest = { showResetDefaultConfirm = false },
-            title = { Text(stringResource(R.string.reset_default_character)) },
-            text = { Text(stringResource(R.string.reset_default_character_confirm)) },
+            onDismissRequest = {
+                showResetDefaultConfirm = false
+                resettingCharacterCardId = ""
+                resettingCharacterCardName = ""
+            },
+            title = { Text(stringResource(R.string.reset_system_character)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.reset_system_character_confirm,
+                        resettingCharacterCardName
+                    )
+                )
+            },
             confirmButton = {
                 Button(
-                    onClick = { confirmResetDefaultCharacterCard() },
+                    onClick = { confirmResetSystemCharacterCard() },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
                     )
@@ -1468,7 +1502,13 @@ fun ModelPromptsSettingsScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showResetDefaultConfirm = false }) {
+                TextButton(
+                    onClick = {
+                        showResetDefaultConfirm = false
+                        resettingCharacterCardId = ""
+                        resettingCharacterCardName = ""
+                    }
+                ) {
                     Text(stringResource(R.string.cancel))
                 }
             }
@@ -1990,7 +2030,7 @@ fun ModelPromptsSettingsScreen(
 }
 
 enum class CharacterCardSortOption {
-    DEFAULT,
+    MANUAL,
     NAME_ASC,
     CREATED_DESC
 }
@@ -2005,14 +2045,17 @@ enum class ExportMode {
 @Composable
 fun CharacterCardTab(
     characterCards: List<CharacterCard>,
+    collapsedCharacterCardIds: Set<String>,
     activePrompt: ActivePrompt,
     allTags: List<PromptTag>,
     onAddCharacterCard: () -> Unit,
     onEditCharacterCard: (CharacterCard) -> Unit,
     onDeleteCharacterCard: (CharacterCard) -> Unit,
     onDuplicateCharacterCard: (CharacterCard) -> Unit,
-    onResetDefaultCharacterCard: () -> Unit,
+    onResetSystemCharacterCard: (CharacterCard) -> Unit,
     onSetActiveCharacterCard: (String) -> Unit,
+    onReorderCharacterCards: (List<String>) -> Unit,
+    onToggleCharacterCardCollapsed: (String) -> Unit,
     onNavigateToPersonaGeneration: () -> Unit,
     onImportTavernCard: () -> Unit,
     onImportColorQrCode: () -> Unit,
@@ -2021,23 +2064,65 @@ fun CharacterCardTab(
 ) {
     val sortOptionNameState = rememberLocal(
         key = "ModelPromptsSettingsScreen.CharacterCardTab.sortOption",
-        defaultValue = CharacterCardSortOption.DEFAULT.name
+        defaultValue = CharacterCardSortOption.MANUAL.name
     )
     val sortOption = remember(sortOptionNameState.value) {
-        runCatching { CharacterCardSortOption.valueOf(sortOptionNameState.value) }
-            .getOrDefault(CharacterCardSortOption.DEFAULT)
+        if (sortOptionNameState.value == "DEFAULT") {
+            CharacterCardSortOption.MANUAL
+        } else {
+            runCatching { CharacterCardSortOption.valueOf(sortOptionNameState.value) }
+                .getOrDefault(CharacterCardSortOption.MANUAL)
+        }
     }
     var sortMenuExpanded by remember { mutableStateOf(false) }
+    var manuallyOrderedCards by remember(characterCards) { mutableStateOf(characterCards) }
+    var reorderChanged by remember { mutableStateOf(false) }
+    var collapsedSectionExpanded by remember { mutableStateOf(false) }
 
     val sortedCharacterCards = remember(characterCards, sortOption) {
         when (sortOption) {
-            CharacterCardSortOption.DEFAULT -> characterCards
+            CharacterCardSortOption.MANUAL -> characterCards
             CharacterCardSortOption.NAME_ASC -> characterCards.sortedBy { it.name.lowercase() }
             CharacterCardSortOption.CREATED_DESC -> characterCards.sortedByDescending { it.updatedAt }
         }
     }
+    val displayedCharacterCards =
+        if (sortOption == CharacterCardSortOption.MANUAL) {
+            manuallyOrderedCards
+        } else {
+            sortedCharacterCards
+        }
+    val (uncollapsedCharacterCards, collapsedCharacterCards) =
+        remember(displayedCharacterCards, collapsedCharacterCardIds) {
+            displayedCharacterCards.partition { it.id !in collapsedCharacterCardIds }
+        }
+    val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
+        if (sortOption != CharacterCardSortOption.MANUAL) {
+            return@rememberReorderableLazyListState
+        }
+        val fromIndex = from.index - 1
+        val toIndex = to.index - 1
+        if (fromIndex !in uncollapsedCharacterCards.indices ||
+            toIndex !in uncollapsedCharacterCards.indices ||
+            fromIndex == toIndex
+        ) {
+            return@rememberReorderableLazyListState
+        }
+        val reorderedUncollapsedCards = uncollapsedCharacterCards.toMutableList().apply {
+            add(toIndex, removeAt(fromIndex))
+        }
+        val cardsById = manuallyOrderedCards.associateBy { it.id }
+        manuallyOrderedCards = mergeReorderedVisibleCharacterCardIds(
+            currentOrder = manuallyOrderedCards.map { it.id },
+            reorderedVisibleIds = reorderedUncollapsedCards.map { it.id },
+            collapsedIds = collapsedCharacterCardIds
+        ).map { cardsById.getValue(it) }
+        reorderChanged = true
+    }
 
     LazyColumn(
+        state = lazyListState,
         modifier = Modifier
             .fillMaxSize()
             .padding(12.dp),
@@ -2165,7 +2250,7 @@ fun CharacterCardTab(
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.character_card_sort_default)) },
                                 onClick = {
-                                    sortOptionNameState.value = CharacterCardSortOption.DEFAULT.name
+                                    sortOptionNameState.value = CharacterCardSortOption.MANUAL.name
                                     sortMenuExpanded = false
                                 }
                             )
@@ -2189,19 +2274,128 @@ fun CharacterCardTab(
             }
         }
 
-        // 角色卡列表
-        items(sortedCharacterCards) { characterCard ->
-            CharacterCardItem(
-                characterCard = characterCard,
-                isActive = (activePrompt as? ActivePrompt.CharacterCard)?.id == characterCard.id,
-                allTags = allTags,
-                onEdit = { onEditCharacterCard(characterCard) },
-                onDelete = { onDeleteCharacterCard(characterCard) },
-                onDuplicate = { onDuplicateCharacterCard(characterCard) },
-                onReset = onResetDefaultCharacterCard,
-                onSetActive = { onSetActiveCharacterCard(characterCard.id) },
-                onExport = { onExportCharacterCard(characterCard.id, characterCard.name) }
-            )
+        // 未折叠角色卡列表
+        items(uncollapsedCharacterCards, key = { it.id }) { characterCard ->
+            if (sortOption == CharacterCardSortOption.MANUAL) {
+                ReorderableItem(
+                    reorderableState,
+                    key = characterCard.id
+                ) { isDragging ->
+                    CharacterCardItem(
+                        characterCard = characterCard,
+                        isActive = (activePrompt as? ActivePrompt.CharacterCard)?.id == characterCard.id,
+                        allTags = allTags,
+                        onEdit = { onEditCharacterCard(characterCard) },
+                        onDelete = { onDeleteCharacterCard(characterCard) },
+                        onDuplicate = { onDuplicateCharacterCard(characterCard) },
+                        onReset = { onResetSystemCharacterCard(characterCard) },
+                        onSetActive = { onSetActiveCharacterCard(characterCard.id) },
+                        onExport = { onExportCharacterCard(characterCard.id, characterCard.name) },
+                        onToggleCollapsed = {
+                            onToggleCharacterCardCollapsed(characterCard.id)
+                        },
+                        isSystemCard = CharacterCardManager.isSystemCharacterCard(characterCard.id),
+                        isDragging = isDragging,
+                        dragHandle = {
+                            Icon(
+                                imageVector = Icons.Default.DragHandle,
+                                contentDescription = stringResource(R.string.drag_to_reorder),
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .padding(6.dp)
+                                    .draggableHandle(
+                                        onDragStarted = {
+                                            reorderChanged = false
+                                        },
+                                        onDragStopped = {
+                                            if (reorderChanged) {
+                                                onReorderCharacterCards(
+                                                    manuallyOrderedCards.map { it.id }
+                                                )
+                                            }
+                                            reorderChanged = false
+                                        }
+                                    ),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    )
+                }
+            } else {
+                CharacterCardItem(
+                    characterCard = characterCard,
+                    isActive = (activePrompt as? ActivePrompt.CharacterCard)?.id == characterCard.id,
+                    allTags = allTags,
+                    onEdit = { onEditCharacterCard(characterCard) },
+                    onDelete = { onDeleteCharacterCard(characterCard) },
+                    onDuplicate = { onDuplicateCharacterCard(characterCard) },
+                    onReset = { onResetSystemCharacterCard(characterCard) },
+                    onSetActive = { onSetActiveCharacterCard(characterCard.id) },
+                    onExport = { onExportCharacterCard(characterCard.id, characterCard.name) },
+                    onToggleCollapsed = {
+                        onToggleCharacterCardCollapsed(characterCard.id)
+                    },
+                    isSystemCard = CharacterCardManager.isSystemCharacterCard(characterCard.id)
+                )
+            }
+        }
+
+        if (collapsedCharacterCards.isNotEmpty()) {
+            item(key = "collapsed-character-cards-header") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            collapsedSectionExpanded = !collapsedSectionExpanded
+                        }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(
+                            R.string.collapsed_character_cards_count,
+                            collapsedCharacterCards.size
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        imageVector =
+                            if (collapsedSectionExpanded) {
+                                Icons.Default.KeyboardArrowUp
+                            } else {
+                                Icons.Default.KeyboardArrowDown
+                            },
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (collapsedSectionExpanded) {
+                items(collapsedCharacterCards, key = { "collapsed-${it.id}" }) { characterCard ->
+                    CharacterCardItem(
+                        characterCard = characterCard,
+                        isActive = (activePrompt as? ActivePrompt.CharacterCard)?.id == characterCard.id,
+                        allTags = allTags,
+                        onEdit = { onEditCharacterCard(characterCard) },
+                        onDelete = { onDeleteCharacterCard(characterCard) },
+                        onDuplicate = { onDuplicateCharacterCard(characterCard) },
+                        onReset = { onResetSystemCharacterCard(characterCard) },
+                        onSetActive = { onSetActiveCharacterCard(characterCard.id) },
+                        onExport = {
+                            onExportCharacterCard(characterCard.id, characterCard.name)
+                        },
+                        onToggleCollapsed = {
+                            onToggleCharacterCardCollapsed(characterCard.id)
+                        },
+                        isSystemCard = CharacterCardManager.isSystemCharacterCard(characterCard.id),
+                        isCollapsed = true
+                    )
+                }
+            }
         }
     }
 }
@@ -2255,7 +2449,12 @@ fun CharacterCardItem(
     onDuplicate: () -> Unit,
     onReset: () -> Unit,
     onSetActive: () -> Unit,
-    onExport: () -> Unit
+    onExport: () -> Unit,
+    onToggleCollapsed: () -> Unit,
+    isSystemCard: Boolean = false,
+    isCollapsed: Boolean = false,
+    isDragging: Boolean = false,
+    dragHandle: (@Composable () -> Unit)? = null
 ) {
     val context = LocalContext.current
     val userPreferencesManager = remember { UserPreferencesManager.getInstance(context) }
@@ -2268,6 +2467,9 @@ fun CharacterCardItem(
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = if (isDragging) 6.dp else 0.dp
         ),
         border = BorderStroke(
             width = 0.5.dp,
@@ -2319,24 +2521,44 @@ fun CharacterCardItem(
 
                 // 三点菜单
                 var showMenu by remember { mutableStateOf(false) }
-                Box {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    dragHandle?.invoke()
                     IconButton(
-                        onClick = { showMenu = true },
+                        onClick = onToggleCollapsed,
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
-                            Icons.Outlined.MoreVert,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp)
+                            imageVector =
+                                if (isCollapsed) Icons.Default.ArrowBack
+                                else Icons.Default.UnfoldLess,
+                            contentDescription =
+                                if (isCollapsed) {
+                                    stringResource(R.string.uncollapse_character_card)
+                                } else {
+                                    stringResource(R.string.collapse_character_card)
+                                },
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false },
-                        modifier = Modifier
-                            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(8.dp))
-                    ) {
+                    Box {
+                        IconButton(
+                            onClick = { showMenu = true },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.MoreVert,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(8.dp))
+                        ) {
                         if (!isActive) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.set_active)) },
@@ -2399,7 +2621,7 @@ fun CharacterCardItem(
                             }
                         )
                     
-                        if (characterCard.isDefault) {
+                        if (isSystemCard) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.reset)) },
                                 onClick = {
@@ -2416,7 +2638,7 @@ fun CharacterCardItem(
                             )
                         }
                     
-                        if (!characterCard.isDefault) {
+                        if (!isSystemCard) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.delete)) },
                                 onClick = {
@@ -2435,6 +2657,7 @@ fun CharacterCardItem(
                                     textColor = MaterialTheme.colorScheme.error
                                 )
                             )
+                        }
                         }
                     }
                 }

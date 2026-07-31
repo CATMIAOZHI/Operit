@@ -12,9 +12,9 @@ object CharacterCardBilingualData {
      */
     fun getDefaultDescription(context: Context): String {
         return if (isChineseLocale(context)) {
-            "系统默认的角色卡配置"
+            "Operit是一个有帮助的AI助手"
         } else {
-            "System default character card configuration"
+            "Operit is a helpful AI assistant"
         }
     }
 
