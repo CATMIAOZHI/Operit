@@ -21,6 +21,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
 import kotlinx.coroutines.delay
 
 data class PersistedToolExecution(
+    val callId: String?,
     val toolName: String,
     val state: ToolExecutionState,
     val durationMs: Long?,
@@ -34,9 +35,7 @@ internal fun parsePersistedToolExecutions(content: String): Map<Int, PersistedTo
     return buildMap {
         ChatMarkupRegex.toolResultTagWithAttrs.findAll(content).forEach { match ->
             val attrs = match.groupValues[2]
-            if (readXmlAttribute(attrs, "final") != "true") return@forEach
-            val invocationIndex =
-                readXmlAttribute(attrs, "invocation_index")?.toIntOrNull() ?: return@forEach
+            val invocationIndex = readFinalInvocationIndex(attrs) ?: return@forEach
             val state =
                 readXmlAttribute(attrs, "execution_state")
                     ?.uppercase()
@@ -45,12 +44,14 @@ internal fun parsePersistedToolExecutions(content: String): Map<Int, PersistedTo
             val durationMs = readXmlAttribute(attrs, "duration_ms")?.toLongOrNull()
             val success = readXmlAttribute(attrs, "status").equals("success", ignoreCase = true)
             val toolName = readXmlAttribute(attrs, "name").orEmpty()
+            val callId = readXmlAttribute(attrs, "call_id")
             val body = match.groupValues[3]
             val resultText =
                 ChatMarkupRegex.contentTag.find(body)?.groupValues?.getOrNull(1)?.trim().orEmpty()
             put(
                 invocationIndex,
                 PersistedToolExecution(
+                    callId = callId,
                     toolName = toolName,
                     state = state,
                     durationMs = durationMs,
@@ -68,18 +69,49 @@ private fun readXmlAttribute(attrs: String, name: String): String? =
         ?.groupValues
         ?.getOrNull(1)
 
+private fun readFinalInvocationIndex(attrs: String): Int? {
+    if (!readXmlAttribute(attrs, "final").equals("true", ignoreCase = true)) return null
+    return readXmlAttribute(attrs, "invocation_index")
+        ?.toIntOrNull()
+        ?.takeIf { it >= 0 }
+}
+
+internal fun shouldRenderStandaloneToolResult(content: String): Boolean {
+    val match = ChatMarkupRegex.toolResultTagWithAttrs.matchEntire(content.trim()) ?: return true
+    return readFinalInvocationIndex(match.groupValues[2]) == null
+}
+
+internal fun resolveLiveToolExecution(
+    liveExecution: ToolExecutionTimingSnapshot?,
+    persistedExecution: PersistedToolExecution?,
+    allowUnmatchedLiveExecution: Boolean,
+): ToolExecutionTimingSnapshot? {
+    val live = liveExecution ?: return null
+    val persistedCallId = persistedExecution?.callId?.takeIf { it.isNotBlank() }
+    if (persistedCallId == null) {
+        return live.takeIf { allowUnmatchedLiveExecution }
+    }
+    return live.takeIf { it.callId == persistedCallId }
+}
+
 @Composable
 internal fun ToolExecutionStatusDisplay(
     timingScopeId: String?,
     invocationIndex: Int,
     persistedExecution: PersistedToolExecution?,
+    allowUnmatchedLiveExecution: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val timings by ToolExecutionTimingRepository.timings.collectAsState()
     val liveExecution =
-        timingScopeId
-            ?.let { scopeId -> timings[ToolExecutionTimingKey(scopeId, invocationIndex)] }
+        resolveLiveToolExecution(
+            liveExecution =
+                timingScopeId
+                    ?.let { scopeId -> timings[ToolExecutionTimingKey(scopeId, invocationIndex)] },
+            persistedExecution = persistedExecution,
+            allowUnmatchedLiveExecution = allowUnmatchedLiveExecution,
+        )
     val state = liveExecution?.state ?: persistedExecution?.state ?: return
 
     var currentElapsedMs by remember(liveExecution?.startedAtElapsedMs) {
@@ -167,12 +199,14 @@ private fun resolveResultText(
     success: Boolean,
 ): String {
     val raw =
-        if (liveExecution != null) {
+        if (persistedExecution != null) {
+            persistedExecution.resultText
+        } else if (liveExecution != null) {
             if (success) liveExecution.resultText else liveExecution.errorText.ifBlank {
                 liveExecution.resultText
             }
         } else {
-            persistedExecution?.resultText.orEmpty()
+            ""
         }
     if (success) return raw
 

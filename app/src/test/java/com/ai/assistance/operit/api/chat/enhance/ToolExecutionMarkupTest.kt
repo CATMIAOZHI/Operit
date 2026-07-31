@@ -1,8 +1,11 @@
 package com.ai.assistance.operit.api.chat.enhance
 
+import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.data.model.ToolExecutionState
+import com.ai.assistance.operit.data.model.ToolInvocation
 import com.ai.assistance.operit.data.model.ToolResult
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -48,4 +51,60 @@ class ToolExecutionMarkupTest {
         assertTrue(normalized.contains("""status="success""""))
         assertTrue(normalized.contains("<content>file contents</content>"))
     }
+
+    @Test
+    fun resultAccumulator_boundsOutputAndKeepsLastResultMetadata() {
+        val first = result(text = "first")
+        val second = result(text = "second", success = false, error = "failed")
+        val accumulator = ToolExecutionManager.BoundedToolResultAccumulator(maxChars = 16)
+
+        accumulator.add(first)
+        accumulator.add(second)
+
+        assertEquals("first\nStep error", accumulator.combinedResultText())
+        assertFalse(requireNotNull(accumulator.lastResultSuccess))
+        assertEquals("failed", accumulator.lastResultError)
+        assertEquals(2, accumulator.resultCount)
+    }
+
+    @Test
+    fun cancelledResult_preservesAccumulatedOutput() {
+        val invocation =
+            ToolInvocation(
+                tool = AITool(name = "terminal"),
+                rawText = """<tool name="terminal"></tool>""",
+                responseLocation = 0..0,
+                callId = "call-cancelled",
+                invocationIndex = 3,
+            )
+
+        val cancelled =
+            ToolExecutionManager.createCancelledToolResult(
+                displayToolName = "terminal",
+                invocation = invocation,
+                durationMs = 250L,
+                partialResultText = "partial output",
+            )
+
+        assertFalse(cancelled.success)
+        assertEquals("partial output", cancelled.result.toString())
+        assertEquals("Tool execution cancelled.", cancelled.error)
+        assertEquals("call-cancelled", cancelled.callId)
+        assertEquals(3, cancelled.invocationIndex)
+        assertEquals(250L, cancelled.executionDurationMs)
+        assertEquals(ToolExecutionState.COMPLETED, cancelled.executionState)
+        assertTrue(cancelled.isFinal)
+    }
+
+    private fun result(
+        text: String,
+        success: Boolean = true,
+        error: String? = null,
+    ) =
+        ToolResult(
+            toolName = "test",
+            success = success,
+            result = StringResultData(text),
+            error = error,
+        )
 }

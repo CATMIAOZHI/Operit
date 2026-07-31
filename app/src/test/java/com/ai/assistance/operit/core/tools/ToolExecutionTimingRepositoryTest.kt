@@ -39,6 +39,37 @@ class ToolExecutionTimingRepositoryTest {
         assertNull(secondSnapshot?.durationMs)
     }
 
+    @Test
+    fun finishedPayloads_areBoundedAndScopeCanBeCleared() {
+        val scopeId = "bounded-${System.nanoTime()}"
+        val invocation = invocation(callId = "bounded", invocationIndex = 0)
+        val oversizedText = "r".repeat(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH + 100)
+        val oversizedError = "e".repeat(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH + 100)
+
+        ToolExecutionTimingRepository.register(scopeId, invocation)
+        ToolExecutionTimingRepository.markFinished(
+            scopeId = scopeId,
+            invocation = invocation,
+            result =
+                ToolResult(
+                    toolName = "read_file",
+                    success = false,
+                    result = StringResultData(oversizedText),
+                    error = oversizedError,
+                ),
+            durationMs = 100L,
+            state = ToolExecutionState.COMPLETED,
+        )
+
+        val snapshot = ToolExecutionTimingRepository.get(scopeId, 0)
+        assertEquals(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH, snapshot?.resultText?.length)
+        assertEquals(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH, snapshot?.errorText?.length)
+
+        ToolExecutionTimingRepository.clearScope(scopeId)
+
+        assertNull(ToolExecutionTimingRepository.get(scopeId, 0))
+    }
+
     private fun invocation(callId: String, invocationIndex: Int) =
         ToolInvocation(
             tool = AITool(name = "read_file"),

@@ -196,7 +196,7 @@ class CustomXmlRenderer(
                     (renderInstanceKey as? ToolXmlRenderInstanceKey)?.invocationIndex,
                 )
             "tool_result" -> {
-                if (!trimmedContent.contains(""" invocation_index="""")) {
+                if (shouldRenderStandaloneToolResult(trimmedContent)) {
                     renderToolResult(trimmedContent, Modifier, textColor)
                 }
             }
@@ -786,6 +786,7 @@ class CustomXmlRenderer(
                     timingScopeId = toolTimingScopeId,
                     invocationIndex = index,
                     persistedExecution = persistedToolExecutions[index],
+                    allowUnmatchedLiveExecution = xmlStream != null,
                     modifier = modifier,
                 )
             }

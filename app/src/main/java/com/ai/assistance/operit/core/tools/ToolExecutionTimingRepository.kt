@@ -38,6 +38,13 @@ object ToolExecutionTimingRepository {
         return mutableTimings.value[ToolExecutionTimingKey(scopeId, invocationIndex)]
     }
 
+    fun clearScope(scopeId: String?) {
+        if (scopeId.isNullOrBlank()) return
+        mutableTimings.update { current ->
+            current.filterKeys { key -> key.scopeId != scopeId }
+        }
+    }
+
     fun register(scopeId: String?, invocation: ToolInvocation) {
         val callId = invocation.callId ?: return
         if (scopeId.isNullOrBlank() || invocation.invocationIndex < 0) return
@@ -85,8 +92,8 @@ object ToolExecutionTimingRepository {
                 state = state,
                 durationMs = durationMs,
                 success = result.success,
-                resultText = result.result.toString(),
-                errorText = result.error.orEmpty(),
+                resultText = result.result.toString().take(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH),
+                errorText = result.error.orEmpty().take(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH),
             )
         }
     }

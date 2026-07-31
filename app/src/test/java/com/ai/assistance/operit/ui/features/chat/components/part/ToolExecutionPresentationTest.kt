@@ -1,11 +1,15 @@
 package com.ai.assistance.operit.ui.features.chat.components.part
 
+import com.ai.assistance.operit.core.tools.ToolExecutionTimingSnapshot
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.ui.common.markdown.toolInvocationIndexAt
 import com.ai.assistance.operit.util.markdown.MarkdownNodeStable
 import com.ai.assistance.operit.util.markdown.MarkdownProcessorType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolExecutionPresentationTest {
@@ -22,8 +26,10 @@ class ToolExecutionPresentationTest {
         val executions = parsePersistedToolExecutions(content)
 
         assertEquals(800L, executions.getValue(0).durationMs)
+        assertEquals("a", executions.getValue(0).callId)
         assertEquals("A", executions.getValue(0).resultText)
         assertEquals(2_200L, executions.getValue(1).durationMs)
+        assertEquals("b", executions.getValue(1).callId)
         assertEquals("B", executions.getValue(1).resultText)
     }
 
@@ -54,10 +60,90 @@ class ToolExecutionPresentationTest {
         assertEquals(1, toolInvocationIndexAt(nodes, 3))
     }
 
+    @Test
+    fun legacyResult_bodyMetadataTextDoesNotHideStandaloneResult() {
+        val content =
+            """<tool_result name="read_file" status="success"><content>source contains invocation_index="2"</content></tool_result>"""
+
+        assertTrue(shouldRenderStandaloneToolResult(content))
+    }
+
+    @Test
+    fun onlyValidFinalTimedResultHidesStandaloneResult() {
+        assertFalse(
+            shouldRenderStandaloneToolResult(
+                """<tool_result_x name="read_file" status="success" invocation_index="0" final="true"><content>A</content></tool_result_x>"""
+            )
+        )
+        assertTrue(
+            shouldRenderStandaloneToolResult(
+                """<tool_result_x name="read_file" status="success" invocation_index="0"><content>A</content></tool_result_x>"""
+            )
+        )
+        assertTrue(
+            shouldRenderStandaloneToolResult(
+                """<tool_result_x name="read_file" status="success" invocation_index="-1" final="true"><content>A</content></tool_result_x>"""
+            )
+        )
+    }
+
+    @Test
+    fun persistedCallIdentityRejectsSnapshotFromAnotherVariant() {
+        val live =
+            ToolExecutionTimingSnapshot(
+                callId = "new-call",
+                toolName = "read_file",
+                state = ToolExecutionState.COMPLETED,
+            )
+        val currentPersisted = persistedExecution(callId = "new-call")
+        val oldPersisted = persistedExecution(callId = "old-call")
+
+        assertSame(
+            live,
+            resolveLiveToolExecution(
+                liveExecution = live,
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = true,
+            ),
+        )
+        assertNull(
+            resolveLiveToolExecution(
+                liveExecution = live,
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = false,
+            )
+        )
+        assertSame(
+            live,
+            resolveLiveToolExecution(
+                liveExecution = live,
+                persistedExecution = currentPersisted,
+                allowUnmatchedLiveExecution = false,
+            ),
+        )
+        assertNull(
+            resolveLiveToolExecution(
+                liveExecution = live,
+                persistedExecution = oldPersisted,
+                allowUnmatchedLiveExecution = true,
+            )
+        )
+    }
+
     private fun node(content: String) =
         MarkdownNodeStable(
             type = MarkdownProcessorType.XML_BLOCK,
             content = content,
             children = emptyList(),
+        )
+
+    private fun persistedExecution(callId: String) =
+        PersistedToolExecution(
+            callId = callId,
+            toolName = "read_file",
+            state = ToolExecutionState.COMPLETED,
+            durationMs = 100L,
+            success = true,
+            resultText = "result",
         )
 }
