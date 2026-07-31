@@ -89,7 +89,10 @@ fun ToolResultDisplay(
         val statusLabel =
             if (isSuccess) context.getString(R.string.success) else context.getString(R.string.failed)
         if (hasContent && semanticResultText.isNotBlank()) {
-            "$resultLabel: $toolName, $statusLabel, $semanticResultText"
+            val semanticSummary =
+                listOfNotNull(summaryPrefix?.takeIf { it.isNotBlank() }, semanticResultText)
+                    .joinToString(" · ")
+            "$resultLabel: $toolName, $statusLabel, $semanticSummary"
         } else {
             "$resultLabel: $toolName, $statusLabel, $summaryText"
         }

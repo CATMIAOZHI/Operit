@@ -28,11 +28,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.rememberNestedScrollInteropConnection
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -787,6 +785,7 @@ class CustomXmlRenderer(
                     invocationIndex = index,
                     persistedExecution = persistedToolExecutions[index],
                     allowUnmatchedLiveExecution = xmlStream != null,
+                    enableDialogs = enableDialogs,
                     modifier = modifier,
                 )
             }
@@ -887,8 +886,6 @@ class CustomXmlRenderer(
     /** 渲染工具结果标签 <tool_result name="..." status="..."><content>...</content></tool_result> */
     @Composable
     private fun renderToolResult(content: String, modifier: Modifier, _textColor: Color) {
-        val clipboardManager = LocalClipboardManager.current
-
         val renderState =
             run {
                 val nameMatch = ChatMarkupRegex.nameAttr.find(content)
@@ -905,59 +902,29 @@ class CustomXmlRenderer(
                 )
             }
         val toolName = renderState.toolName.ifBlank { stringResource(R.string.unknown_tool) }
-
-        // 检查结果是否为 file-diff
-        if ((toolName == "apply_file" || toolName == "create_file" || toolName == "edit_file") &&
-            renderState.isSuccess &&
-            renderState.resultContent.contains("<file-diff")
-        ) {
-            val (path, details, unescapedDiffContent) =
-                run {
-                    val pathRegex = "<file-diff path=\"([^\"]+)\"".toRegex()
-                    val detailsRegex = "details=\"([^\"]+)\"".toRegex()
-                    val cdataRegex = "<!\\[CDATA\\[(.*?)\\]\\]>".toRegex(RegexOption.DOT_MATCHES_ALL)
-
-                    val path = pathRegex.find(renderState.resultContent)?.groupValues?.get(1) ?: ""
-                    val details = detailsRegex.find(renderState.resultContent)?.groupValues?.get(1) ?: ""
-                    val diffContent = cdataRegex.find(renderState.resultContent)?.groupValues?.get(1)?.trim() ?: ""
-
-                    Triple(
-                        path,
-                        details,
-                        diffContent
-                            .replace("<", "<")
-                            .replace(">", ">")
-                            .replace("&", "&"),
-                    )
+        val displayResult =
+            if (!renderState.isSuccess) {
+                ChatMarkupRegex.errorTag.find(renderState.resultContent)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.trim()
+                    ?: renderState.resultContent
+            } else {
+                val fileDiffRegex =
+                    """<file-diff.*</file-diff>""".toRegex(RegexOption.DOT_MATCHES_ALL)
+                if (toolName in setOf("apply_file", "create_file", "edit_file")) {
+                    renderState.resultContent
+                } else {
+                    renderState.resultContent.replace(fileDiffRegex, "").trim()
                 }
-
-            FileDiffDisplay(diff = FileDiff(path, unescapedDiffContent, details))
-        } else {
-            // 如果是错误状态，尝试提取错误信息
-            val errorContent =
-                    if (!renderState.isSuccess) {
-                        val errorMatch = ChatMarkupRegex.errorTag.find(renderState.resultContent)
-                        errorMatch?.groupValues?.get(1)?.trim() ?: renderState.resultContent
-                    } else {
-                        // 从结果中移除 file-diff 块（如果存在）
-                        val fileDiffRegex = """<file-diff.*</file-diff>""".toRegex(RegexOption.DOT_MATCHES_ALL)
-                        renderState.resultContent.replace(fileDiffRegex, "").trim()
-                    }
-
-            // 使用ToolResultDisplay组件显示结果
-            ToolResultDisplay(
-                    toolName = toolName,
-                    result = errorContent,
-                    isSuccess = renderState.isSuccess,
-                    onCopyResult = {
-                        if (errorContent.isNotBlank()) {
-                            clipboardManager.setText(AnnotatedString(errorContent))
-                        }
-                    },
-                    modifier = modifier,
-                    enableDialog = enableDialogs  // 传递弹窗启用状态
-            )
-        }
+            }
+        ToolExecutionResultDisplay(
+            toolName = toolName,
+            result = displayResult,
+            isSuccess = renderState.isSuccess,
+            modifier = modifier,
+            enableDialog = enableDialogs,
+        )
     }
 
     /** 渲染状态信息标签 <status type="..." tool="..." uuid="..." title="..." subtitle="...">...</status> */

@@ -29,6 +29,8 @@ data class PersistedToolExecution(
     val resultText: String,
 )
 
+private val FILE_EDIT_TOOL_NAMES = setOf("apply_file", "create_file", "edit_file")
+
 internal fun parsePersistedToolExecutions(content: String): Map<Int, PersistedToolExecution> {
     if (content.isBlank()) return emptyMap()
 
@@ -100,6 +102,7 @@ internal fun ToolExecutionStatusDisplay(
     invocationIndex: Int,
     persistedExecution: PersistedToolExecution?,
     allowUnmatchedLiveExecution: Boolean,
+    enableDialogs: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -152,26 +155,91 @@ internal fun ToolExecutionStatusDisplay(
             val success = liveExecution?.success ?: persistedExecution?.success ?: false
             val resultText =
                 resolveResultText(liveExecution, persistedExecution, success)
-            ToolResultDisplay(
+            ToolExecutionResultDisplay(
                 toolName = liveExecution?.toolName ?: persistedExecution?.toolName.orEmpty(),
                 result = resultText,
                 isSuccess = success,
                 summaryPrefix = formatToolExecutionDuration(context, durationMs),
+                enableDialog = enableDialogs,
                 modifier = modifier,
             )
         }
         ToolExecutionState.NOT_EXECUTED -> {
             val success = false
             val resultText = resolveResultText(liveExecution, persistedExecution, success)
-            ToolResultDisplay(
+            ToolExecutionResultDisplay(
                 toolName = liveExecution?.toolName ?: persistedExecution?.toolName.orEmpty(),
                 result = resultText,
                 isSuccess = false,
                 summaryPrefix = stringResource(R.string.tool_not_executed),
+                enableDialog = enableDialogs,
                 modifier = modifier,
             )
         }
     }
+}
+
+@Composable
+internal fun ToolExecutionResultDisplay(
+    toolName: String,
+    result: String,
+    isSuccess: Boolean,
+    modifier: Modifier = Modifier,
+    summaryPrefix: String? = null,
+    enableDialog: Boolean = true,
+) {
+    val fileDiff = remember(toolName, result, isSuccess) {
+        parseFileDiffResult(toolName, result, isSuccess)
+    }
+    if (fileDiff != null) {
+        FileDiffDisplay(
+            diff = fileDiff,
+            modifier = modifier,
+            summaryPrefix = summaryPrefix,
+            enableDialog = enableDialog,
+        )
+    } else {
+        ToolResultDisplay(
+            toolName = toolName,
+            result = result,
+            isSuccess = isSuccess,
+            modifier = modifier,
+            summaryPrefix = summaryPrefix,
+            enableDialog = enableDialog,
+        )
+    }
+}
+
+internal fun parseFileDiffResult(
+    toolName: String,
+    result: String,
+    isSuccess: Boolean,
+): FileDiff? {
+    if (!isSuccess || toolName !in FILE_EDIT_TOOL_NAMES) return null
+    if (!result.contains("<file-diff")) return null
+
+    val fileDiffBlock = Regex("""<file-diff\b[^>]*>[\s\S]*?</file-diff\s*>""")
+        .find(result)
+        ?.value
+        ?: return null
+    val path = Regex("""<file-diff\s+[^>]*path="([^"]+)"""")
+        .find(fileDiffBlock)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+    val details = Regex("""\bdetails="([^"]*)"""")
+        .find(fileDiffBlock)
+        ?.groupValues
+        ?.getOrNull(1)
+        .orEmpty()
+    val diffContent = Regex("""<!\[CDATA\[([\s\S]*?)]]>""")
+        .find(fileDiffBlock)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.trim()
+        ?: return null
+    return FileDiff(path = path, diffContent = diffContent, details = details)
 }
 
 @Composable

@@ -165,9 +165,7 @@ object ToolExecutionManager {
             group.stream.collect { chunk -> blockContent.append(chunk) }
             val blockText = blockContent.toString()
             if (group.tag is StreamXmlPlugin &&
-                ChatMarkupRegex.normalizeToolLikeTagName(
-                    ChatMarkupRegex.extractOpeningTagName(blockText)
-                ) == "tool"
+                ChatMarkupRegex.isToolCall(blockText)
             ) {
                 invocationCount += 1
             }
@@ -419,7 +417,7 @@ object ToolExecutionManager {
         val content = response
 
         val charStream = content.stream()
-        val plugins = listOf(StreamXmlPlugin())
+        val plugins = NestedMarkdownProcessor.getBlockPlugins()
 
         charStream.splitBy(plugins).collect { group ->
             val chunkContent = StringBuilder()
@@ -429,8 +427,8 @@ object ToolExecutionManager {
             if (chunkString.isEmpty()) return@collect
 
             if (group.tag is StreamXmlPlugin) {
-                ChatMarkupRegex.toolCallPattern.findAll(chunkString).forEach { toolMatch ->
-                    val toolName = toolMatch.groupValues.getOrNull(2) ?: return@forEach
+                ChatMarkupRegex.matchToolCall(chunkString)?.let { toolMatch ->
+                    val toolName = toolMatch.groupValues.getOrNull(2) ?: return@let
                     val toolBody = toolMatch.groupValues.getOrNull(3).orEmpty()
 
                     val parameters = mutableListOf<ToolParameter>()
@@ -898,6 +896,59 @@ object ToolExecutionManager {
                 }
             }
             throw cancellation
+        } catch (failure: Exception) {
+            withContext(NonCancellable) {
+                invocations.forEach { invocation ->
+                    val snapshot =
+                        ToolExecutionTimingRepository.get(
+                            timingScopeId,
+                            invocation.invocationIndex,
+                        )
+                    val terminalState =
+                        when (snapshot?.state) {
+                            ToolExecutionState.RUNNING -> ToolExecutionState.COMPLETED
+                            ToolExecutionState.WAITING_EXECUTION,
+                            ToolExecutionState.WAITING_AUTHORIZATION -> ToolExecutionState.NOT_EXECUTED
+                            else -> return@forEach
+                        }
+                    val durationMs =
+                        snapshot.startedAtElapsedMs?.let { startedAt ->
+                            (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
+                        }
+                    val failureMessage =
+                        failure.message
+                            ?.take(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH)
+                            ?.takeIf { it.isNotBlank() }
+                            ?: failure::class.java.simpleName
+                    val failedResult =
+                        ToolResult(
+                            toolName = resolveDisplayToolName(invocation.tool),
+                            success = false,
+                            result = StringResultData(""),
+                            error = "Tool execution failed: $failureMessage",
+                        ).withExecutionMetadata(
+                            invocation = invocation,
+                            state = terminalState,
+                            durationMs = durationMs,
+                        )
+                    ToolExecutionTimingRepository.markFinished(
+                        timingScopeId,
+                        invocation,
+                        failedResult,
+                        durationMs = durationMs,
+                        state = terminalState,
+                    )
+                    try {
+                        emitFinalResult(collector, failedResult)
+                    } catch (emitError: Exception) {
+                        AppLogger.w(
+                            TAG,
+                            "Failed to persist failed tool result: ${emitError.message}",
+                        )
+                    }
+                }
+            }
+            throw failure
         }
     }
 

@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -62,6 +63,18 @@ class ToolExecutionPresentationTest {
         assertEquals(0, toolInvocationIndexAt(nodes, 1))
         assertNull(toolInvocationIndexAt(nodes, 2))
         assertEquals(1, toolInvocationIndexAt(nodes, 3))
+    }
+
+    @Test
+    fun toolOrdinal_ignoresMalformedToolRequests() {
+        val nodes =
+            listOf(
+                node("""<tool><param name="path">/bad</param></tool>"""),
+                node("""<tool name="read_file"><param name="path">/real</param></tool>"""),
+            )
+
+        assertNull(toolInvocationIndexAt(nodes, 0))
+        assertEquals(0, toolInvocationIndexAt(nodes, 1))
     }
 
     @Test
@@ -145,6 +158,7 @@ class ToolExecutionPresentationTest {
             ```xml
             <tool name="fenced_example"></tool>
             ```
+            <tool><param name="path">/malformed</param></tool>
             <tool name="invalidated_repaired"></tool>
             """.trimIndent()
         val invalidatedInvocationCount =
@@ -165,13 +179,68 @@ class ToolExecutionPresentationTest {
                 node("""<tool name="invalidated_complete"><param name="content"><![CDATA[<tool name="nested_example"/>]]></param></tool>"""),
                 node("""<tool name="invalidated_self_closing"/>""", MarkdownProcessorType.PLAIN_TEXT),
                 node("""<tool name="fenced_example"></tool>""", MarkdownProcessorType.CODE_BLOCK),
+                node("""<tool><param name="path">/malformed</param></tool>"""),
                 node("""<tool name="invalidated_repaired"></tool>"""),
                 node("""<tool name="read_file"></tool>"""),
             )
 
         assertEquals(2, invalidatedInvocationCount)
-        assertEquals(validInvocationIndex, toolInvocationIndexAt(nodes, 5))
+        assertEquals(validInvocationIndex, toolInvocationIndexAt(nodes, 6))
         assertEquals(2, validInvocationIndex)
+    }
+
+    @Test
+    fun fileEditResults_useStructuredDiffPresentation() {
+        listOf("apply_file", "create_file", "edit_file").forEach { toolName ->
+            val diff =
+                parseFileDiffResult(
+                    toolName = toolName,
+                    result =
+                        """<file-diff path="src/Test.kt" details="updated"><![CDATA[+added
+-removed]]></file-diff>""",
+                    isSuccess = true,
+                )
+
+            assertNotNull(diff)
+            assertEquals("src/Test.kt", diff?.path)
+            assertEquals("updated", diff?.details)
+            assertEquals("+added\n-removed", diff?.diffContent)
+        }
+        assertNull(
+            parseFileDiffResult(
+                toolName = "read_file",
+                result = """<file-diff path="src/Test.kt"><![CDATA[+added]]></file-diff>""",
+                isSuccess = true,
+            )
+        )
+        assertNull(
+            parseFileDiffResult(
+                toolName = "apply_file",
+                result = """<file-diff path="src/Test.kt"><![CDATA[+added]]></file-diff>""",
+                isSuccess = false,
+            )
+        )
+        assertNull(
+            parseFileDiffResult(
+                toolName = "apply_file",
+                result = """<file-diff path="src/Test.kt"><![CDATA[+truncated""",
+                isSuccess = true,
+            )
+        )
+        assertNull(
+            parseFileDiffResult(
+                toolName = "apply_file",
+                result = """<file-diff path="src/Test.kt"><![CDATA[+changed]]>""",
+                isSuccess = true,
+            )
+        )
+        assertNull(
+            parseFileDiffResult(
+                toolName = "apply_file",
+                result = """<file-diff><![CDATA[+added]]></file-diff>""",
+                isSuccess = true,
+            )
+        )
     }
 
     private fun node(
