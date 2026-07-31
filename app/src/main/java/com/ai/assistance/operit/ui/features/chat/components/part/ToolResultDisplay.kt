@@ -36,6 +36,7 @@ fun ToolResultDisplay(
         isSuccess: Boolean = true,
         onCopyResult: () -> Unit = {},
         modifier: Modifier = Modifier,
+        summaryPrefix: String? = null,
         enableDialog: Boolean = true  // 新增参数：是否启用弹窗功能，默认启用
 ) {
     val context = LocalContext.current
@@ -59,7 +60,7 @@ fun ToolResultDisplay(
         )
     }
 
-    val summaryText =
+    val resultSummary =
         if (hasContent) {
             result.take(200)
         } else if (isSuccess) {
@@ -67,6 +68,9 @@ fun ToolResultDisplay(
         } else {
             context.getString(R.string.execution_failed)
         }
+    val summaryText =
+        listOfNotNull(summaryPrefix?.takeIf { it.isNotBlank() }, resultSummary)
+            .joinToString(" · ")
     val semanticResultText = remember(result, hasContent) {
         if (!hasContent) {
             ""
@@ -85,7 +89,10 @@ fun ToolResultDisplay(
         val statusLabel =
             if (isSuccess) context.getString(R.string.success) else context.getString(R.string.failed)
         if (hasContent && semanticResultText.isNotBlank()) {
-            "$resultLabel: $toolName, $statusLabel, $semanticResultText"
+            val semanticSummary =
+                listOfNotNull(summaryPrefix?.takeIf { it.isNotBlank() }, semanticResultText)
+                    .joinToString(" · ")
+            "$resultLabel: $toolName, $statusLabel, $semanticSummary"
         } else {
             "$resultLabel: $toolName, $statusLabel, $summaryText"
         }

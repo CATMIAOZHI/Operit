@@ -10,6 +10,7 @@ import com.ai.assistance.operit.core.chat.AIMessageManager
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
 import com.ai.assistance.operit.core.tools.AIToolHandler
+import com.ai.assistance.operit.core.tools.ToolExecutionTimingRepository
 import com.ai.assistance.operit.core.tools.agent.PhoneAgentJobRegistry
 import com.ai.assistance.operit.data.model.*
 import com.ai.assistance.operit.data.model.InputProcessingState as EnhancedInputProcessingState
@@ -930,6 +931,7 @@ class MessageProcessingDelegate(
                 }
 
                 val prepareResponseStreamStartTime = messageTimingNow()
+                val aiMessageTimestamp = ChatMessageTimestampAllocator.next()
                 val responseStream = AIMessageManager.sendMessage(
                     enhancedAiService = service,
                     chatId = activeChatId,
@@ -965,6 +967,7 @@ class MessageProcessingDelegate(
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,
+                    toolTimingScopeId = aiMessageTimestamp.toString(),
                     disableWarning = turnOptions.disableWarning
                 )
                 logMessageTiming(
@@ -1000,7 +1003,7 @@ class MessageProcessingDelegate(
                 aiMessage = ChatMessage(
                     sender = "ai", 
                     contentStream = sharedCharStream,
-                    timestamp = ChatMessageTimestampAllocator.next(),
+                    timestamp = aiMessageTimestamp,
                     roleName = currentRoleName,
                     provider = provider,
                     modelName = modelName,
@@ -1481,6 +1484,7 @@ class MessageProcessingDelegate(
         if (chatRuntime.isLoading.value) {
             throw IllegalStateException(context.getString(R.string.chat_regenerate_busy))
         }
+        ToolExecutionTimingRepository.clearScope(targetMessageTimestamp.toString())
 
         val currentJob = coroutineContext[Job] ?: throw IllegalStateException("Missing coroutine job")
         var serviceForTerminalCleanup: EnhancedAIService? = null
@@ -1570,6 +1574,7 @@ class MessageProcessingDelegate(
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,
+                    toolTimingScopeId = targetMessageTimestamp.toString(),
                 )
 
             val sharedResponseStream = responseStream

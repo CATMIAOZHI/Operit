@@ -54,6 +54,20 @@ import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkBuilder
 import com.ai.assistance.operit.data.repository.getCustomMoodDefinitions
 import com.ai.assistance.operit.data.repository.getMoodAnimationMapping
 
+private val toolExecutionMetadataAttributeRegex = Regex(
+    """\s+(?:call_id|invocation_index|duration_ms|execution_state|final)="[^"]*"""",
+    RegexOption.IGNORE_CASE,
+)
+
+internal fun stripToolExecutionMetadataFromToolResults(content: String): String {
+    return ChatMarkupRegex.toolResultTagWithAttrs.replace(content) { matchResult ->
+        val tagName = matchResult.groupValues[1]
+        val attrs = toolExecutionMetadataAttributeRegex.replace(matchResult.groupValues[2], "")
+        val body = matchResult.groupValues[3]
+        "<$tagName$attrs>$body</$tagName>"
+    }
+}
+
 /** 处理会话相关功能的服务类，包括会话总结、偏好处理和对话切割准备 */
 class ConversationService(
     private val context: Context,
@@ -700,7 +714,9 @@ class ConversationService(
     }
 
     private fun normalizeToolResultMarkupForModel(content: String): String {
-        return ChatMarkupRegex.toolResultTagWithAttrs.replace(content) { matchResult ->
+        val contentWithoutExecutionMetadata =
+            stripToolExecutionMetadataFromToolResults(content)
+        return ChatMarkupRegex.toolResultTagWithAttrs.replace(contentWithoutExecutionMetadata) { matchResult ->
             val tagName = matchResult.groupValues[1]
             val attrs = matchResult.groupValues[2]
             val body = matchResult.groupValues[3]
@@ -712,7 +728,8 @@ class ConversationService(
             }
 
             val requestContent =
-                extractApplyFileRequestContent(body) ?: return@replace matchResult.value
+                extractApplyFileRequestContent(body)
+                    ?: return@replace matchResult.value
             "<$tagName$attrs><content>$requestContent</content></$tagName>"
         }
     }

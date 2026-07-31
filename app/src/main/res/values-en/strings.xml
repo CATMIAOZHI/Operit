@@ -4830,6 +4830,13 @@
     <string name="success">Success</string>
     <string name="failed">Failed</string>
     <string name="execution_success">Execution Successful</string>
+    <string name="tool_waiting_authorization">Waiting for authorization</string>
+    <string name="tool_waiting_execution">Waiting to execute</string>
+    <string name="tool_executing_duration">Running · %1$s</string>
+    <string name="tool_not_executed">Not executed</string>
+    <string name="tool_duration_milliseconds">%1$d ms</string>
+    <string name="tool_duration_seconds">%1$.1f s</string>
+    <string name="tool_duration_minutes_seconds">%1$d min %2$02d s</string>
     <string name="execution_failed">Execution Failed</string>
     <string name="copy_result">Copy Result</string>
     <string name="tool_call_parameters">Call Parameters</string>
