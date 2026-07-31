@@ -5,6 +5,7 @@ import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.ChatKind
+import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
 import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_NAME
 import java.util.UUID
@@ -59,6 +60,7 @@ class ChatFolderRepository(
 ) {
     private val folderDao = database.chatFolderDao()
     private val chatDao = database.chatDao()
+    private val messageDao = database.messageDao()
 
     suspend fun ensureUngroupedFolder() {
         database.withTransaction {
@@ -90,35 +92,44 @@ class ChatFolderRepository(
 
     suspend fun createFolder(parentFolderId: String?, name: String): String =
         database.withTransaction {
-            val normalizedName = name.trim()
-            require(normalizedName.isNotEmpty()) { "Folder name must not be blank" }
-            val folders = folderDao.getFolders()
-            require(parentFolderId == null || folders.any { it.id == parentFolderId }) {
-                "Parent folder does not exist"
+            createFolderInCurrentTransaction(parentFolderId, name)
+        }
+
+    /**
+     * Creates a folder and its first normal chat as one persisted unit.
+     *
+     * The optional opening message belongs to [initialChat] and is committed in the same Room
+     * transaction, so a failed chat or message insert cannot leave an unusable empty folder.
+     */
+    suspend fun createFolderWithInitialChat(
+        parentFolderId: String?,
+        name: String,
+        initialChat: ChatEntity,
+        openingMessage: MessageEntity? = null,
+    ): ChatEntity =
+        database.withTransaction {
+            require(initialChat.chatKind == ChatKind.NORMAL.name) {
+                "The initial folder chat must be a normal chat"
             }
-            require(parentFolderId != SYSTEM_UNGROUPED_FOLDER_ID) {
-                "The ungrouped folder cannot contain folders"
+            require(openingMessage == null || openingMessage.chatId == initialChat.id) {
+                "The opening message must belong to the initial chat"
             }
-            require(folderDepth(parentFolderId, folders) + 1 <= MAX_DEPTH) {
-                "Folder depth cannot exceed $MAX_DEPTH"
-            }
-            val id = allocateFolderId(folders.mapTo(hashSetOf()) { it.id })
-            val chats = chatDao.getAllChatsDirectly()
-            val nextOrder =
-                siblings(parentFolderId, folders, chats)
-                    .maxOfOrNull { it.displayOrder }
-                    ?.plus(1)
-                    ?: 0L
-            folderDao.insertFolder(
-                ChatFolderEntity(
-                    id = id,
-                    name = normalizedName,
-                    parentFolderId = parentFolderId,
-                    displayOrder = nextOrder,
-                    createdAt = System.currentTimeMillis(),
+
+            val folderId = createFolderInCurrentTransaction(parentFolderId, name)
+            val persistedChat =
+                initialChat.copy(
+                    folderId = folderId,
+                    updatedAt =
+                        if (openingMessage == null) {
+                            initialChat.updatedAt
+                        } else {
+                            System.currentTimeMillis()
+                        },
+                    lastMessageAt = openingMessage?.timestamp ?: initialChat.lastMessageAt,
                 )
-            )
-            id
+            chatDao.insertChat(persistedChat)
+            openingMessage?.let { messageDao.insertMessage(it) }
+            persistedChat
         }
 
     suspend fun renameFolder(folderId: String, newName: String) {
@@ -522,6 +533,41 @@ class ChatFolderRepository(
             depth++
             current = folder.parentFolderId ?: return depth
         }
+    }
+
+    private suspend fun createFolderInCurrentTransaction(
+        parentFolderId: String?,
+        name: String,
+    ): String {
+        val normalizedName = name.trim()
+        require(normalizedName.isNotEmpty()) { "Folder name must not be blank" }
+        val folders = folderDao.getFolders()
+        require(parentFolderId == null || folders.any { it.id == parentFolderId }) {
+            "Parent folder does not exist"
+        }
+        require(parentFolderId != SYSTEM_UNGROUPED_FOLDER_ID) {
+            "The ungrouped folder cannot contain folders"
+        }
+        require(folderDepth(parentFolderId, folders) + 1 <= MAX_DEPTH) {
+            "Folder depth cannot exceed $MAX_DEPTH"
+        }
+        val id = allocateFolderId(folders.mapTo(hashSetOf()) { it.id })
+        val chats = chatDao.getAllChatsDirectly()
+        val nextOrder =
+            siblings(parentFolderId, folders, chats)
+                .maxOfOrNull { it.displayOrder }
+                ?.plus(1)
+                ?: 0L
+        folderDao.insertFolder(
+            ChatFolderEntity(
+                id = id,
+                name = normalizedName,
+                parentFolderId = parentFolderId,
+                displayOrder = nextOrder,
+                createdAt = System.currentTimeMillis(),
+            )
+        )
+        return id
     }
 
     private fun subtreeHeight(folderId: String, folders: List<ChatFolderEntity>): Int {
