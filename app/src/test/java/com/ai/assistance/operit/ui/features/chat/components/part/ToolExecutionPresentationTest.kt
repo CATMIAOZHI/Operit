@@ -1,10 +1,14 @@
 package com.ai.assistance.operit.ui.features.chat.components.part
 
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingSnapshot
+import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.ui.common.markdown.toolInvocationIndexAt
 import com.ai.assistance.operit.util.markdown.MarkdownNodeStable
 import com.ai.assistance.operit.util.markdown.MarkdownProcessorType
+import com.ai.assistance.operit.util.stream.StreamLogger
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -130,9 +134,52 @@ class ToolExecutionPresentationTest {
         )
     }
 
-    private fun node(content: String) =
+    @Test
+    fun invalidatedToolReservation_keepsLaterExecutionAlignedWithRenderedOrdinal() = runBlocking {
+        val nextInvocationIndex = AtomicInteger(0)
+        val invalidatedContent =
+            """
+            <think>Example only: <tool name="nested_thought"/></think>
+            <tool name="invalidated_complete"><param name="content"><![CDATA[<tool name="nested_example"/>]]></param></tool>
+            <tool name="invalidated_self_closing"/>
+            ```xml
+            <tool name="fenced_example"></tool>
+            ```
+            <tool name="invalidated_repaired"></tool>
+            """.trimIndent()
+        val invalidatedInvocationCount =
+            try {
+                StreamLogger.setEnabled(false)
+                ToolExecutionManager.countDisplayedToolInvocations(invalidatedContent)
+            } finally {
+                StreamLogger.setEnabled(true)
+            }
+        ToolExecutionManager.reserveToolInvocationIndices(
+            nextInvocationIndex,
+            invalidatedInvocationCount,
+        )
+        val validInvocationIndex = nextInvocationIndex.getAndIncrement()
+        val nodes =
+            listOf(
+                node("""<think>Example only: <tool name="nested_thought"/></think>"""),
+                node("""<tool name="invalidated_complete"><param name="content"><![CDATA[<tool name="nested_example"/>]]></param></tool>"""),
+                node("""<tool name="invalidated_self_closing"/>""", MarkdownProcessorType.PLAIN_TEXT),
+                node("""<tool name="fenced_example"></tool>""", MarkdownProcessorType.CODE_BLOCK),
+                node("""<tool name="invalidated_repaired"></tool>"""),
+                node("""<tool name="read_file"></tool>"""),
+            )
+
+        assertEquals(2, invalidatedInvocationCount)
+        assertEquals(validInvocationIndex, toolInvocationIndexAt(nodes, 5))
+        assertEquals(2, validInvocationIndex)
+    }
+
+    private fun node(
+        content: String,
+        type: MarkdownProcessorType = MarkdownProcessorType.XML_BLOCK,
+    ) =
         MarkdownNodeStable(
-            type = MarkdownProcessorType.XML_BLOCK,
+            type = type,
             content = content,
             children = emptyList(),
         )

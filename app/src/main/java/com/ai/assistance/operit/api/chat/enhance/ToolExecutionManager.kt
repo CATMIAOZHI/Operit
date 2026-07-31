@@ -19,6 +19,7 @@ import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.util.stream.StreamCollector
 import com.ai.assistance.operit.data.preferences.CharacterCardToolAccessResolver
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -30,6 +31,7 @@ import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.ui.common.displays.MessageContentParser
 import com.ai.assistance.operit.util.ChatMarkupRegex
+import com.ai.assistance.operit.util.markdown.NestedMarkdownProcessor
 import com.ai.assistance.operit.util.stream.plugins.StreamXmlPlugin
 import com.ai.assistance.operit.util.stream.splitBy
 import com.ai.assistance.operit.util.stream.stream
@@ -146,6 +148,32 @@ object ToolExecutionManager {
             state = ToolExecutionState.COMPLETED,
             durationMs = durationMs,
         )
+
+    internal fun reserveToolInvocationIndices(
+        nextInvocationIndex: AtomicInteger,
+        invocationCount: Int,
+    ) {
+        if (invocationCount > 0) {
+            nextInvocationIndex.addAndGet(invocationCount)
+        }
+    }
+
+    internal suspend fun countDisplayedToolInvocations(content: String): Int {
+        var invocationCount = 0
+        content.stream().splitBy(NestedMarkdownProcessor.getBlockPlugins()).collect { group ->
+            val blockContent = StringBuilder()
+            group.stream.collect { chunk -> blockContent.append(chunk) }
+            val blockText = blockContent.toString()
+            if (group.tag is StreamXmlPlugin &&
+                ChatMarkupRegex.normalizeToolLikeTagName(
+                    ChatMarkupRegex.extractOpeningTagName(blockText)
+                ) == "tool"
+            ) {
+                invocationCount += 1
+            }
+        }
+        return invocationCount
+    }
 
     private fun resolveToolTarget(tool: AITool): ResolvedToolTarget {
         if (tool.name != PACKAGE_PROXY_TOOL_NAME &&
@@ -600,6 +628,7 @@ object ToolExecutionManager {
             ToolExecutionTimingRepository.register(timingScopeId, invocation)
         }
 
+        try {
         // 默认工具注册现在可能在启动阶段被延后；这里确保在真正执行工具前已完成注册
         // registerDefaultTools() 是幂等且线程安全的，可安全重复调用
         withContext(Dispatchers.Default) {
@@ -783,7 +812,6 @@ object ToolExecutionManager {
             )
         }
 
-        try {
             // 5. 执行工具并收集聚合结果
             val executionResults = ConcurrentHashMap<ToolInvocation, ToolResult>()
 
@@ -831,7 +859,7 @@ object ToolExecutionManager {
                 orderedAggregated
         } catch (cancellation: CancellationException) {
             withContext(NonCancellable) {
-                injectedInvocations.forEach { invocation ->
+                invocations.forEach { invocation ->
                     val snapshot =
                         ToolExecutionTimingRepository.get(
                             timingScopeId,

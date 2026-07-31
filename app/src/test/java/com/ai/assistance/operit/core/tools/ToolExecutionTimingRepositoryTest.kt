@@ -70,6 +70,36 @@ class ToolExecutionTimingRepositoryTest {
         assertNull(ToolExecutionTimingRepository.get(scopeId, 0))
     }
 
+    @Test
+    fun finishedProxyCall_usesResolvedResultName() {
+        val scopeId = "proxy-${System.nanoTime()}"
+        val invocation =
+            ToolInvocation(
+                tool = AITool(name = "package_proxy"),
+                rawText = """<tool name="package_proxy"></tool>""",
+                responseLocation = 0..0,
+                callId = "proxy-call",
+                invocationIndex = 0,
+            )
+
+        ToolExecutionTimingRepository.register(scopeId, invocation)
+        ToolExecutionTimingRepository.markFinished(
+            scopeId = scopeId,
+            invocation = invocation,
+            result =
+                ToolResult(
+                    toolName = "demo:actual_tool",
+                    success = true,
+                    result = StringResultData("result"),
+                ),
+            durationMs = 100L,
+            state = ToolExecutionState.COMPLETED,
+        )
+
+        assertEquals("demo:actual_tool", ToolExecutionTimingRepository.get(scopeId, 0)?.toolName)
+        ToolExecutionTimingRepository.clearScope(scopeId)
+    }
+
     private fun invocation(callId: String, invocationIndex: Int) =
         ToolInvocation(
             tool = AITool(name = "read_file"),

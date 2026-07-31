@@ -92,6 +92,7 @@ object ToolExecutionTimingRepository {
                 state = state,
                 durationMs = durationMs,
                 success = result.success,
+                toolName = result.toolName.ifBlank { it.toolName },
                 resultText = result.result.toString().take(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH),
                 errorText = result.error.orEmpty().take(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH),
             )
