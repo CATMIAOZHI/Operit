@@ -52,6 +52,34 @@ class CharacterCardOrderTest {
     }
 
     @Test
+    fun reorderVisibleCards_preservesCollapsedCardSlots() {
+        val result = mergeReorderedVisibleCharacterCardIds(
+            currentOrder = listOf("card-a", "collapsed-b", "card-c", "collapsed-d"),
+            reorderedVisibleIds = listOf("card-c", "card-a"),
+            collapsedIds = setOf("collapsed-b", "collapsed-d")
+        )
+
+        assertEquals(
+            listOf("card-c", "collapsed-b", "card-a", "collapsed-d"),
+            result
+        )
+    }
+
+    @Test
+    fun backupImport_restoresPayloadOrderWhenCardsAlreadyExist() {
+        val result = restoreImportedCharacterCardOrder(
+            currentOrder = listOf("default_character", "system_rainy", "custom"),
+            importedOrder = listOf("custom", "system_rainy", "default_character"),
+            cardIds = setOf("default_character", "system_rainy", "custom")
+        )
+
+        assertEquals(
+            listOf("custom", "system_rainy", "default_character"),
+            result
+        )
+    }
+
+    @Test
     fun collapseToggle_addsAndRemovesCharacterCardId() {
         val collapsed = toggleCollapsedCharacterCardId(emptySet(), "card-a")
         assertEquals(setOf("card-a"), collapsed)
