@@ -83,6 +83,19 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
+    fun subagentTaskRow_separatesAgentNameFromStatusSummary() {
+        val content =
+            buildSubagentTaskRowContent(
+                agentName = "explore",
+                durationText = "21.5 秒",
+                statusText = "已完成 · 调用了 10 次工具",
+            )
+
+        assertEquals("explore", content.title)
+        assertEquals("21.5 秒 · 已完成 · 调用了 10 次工具", content.summary)
+    }
+
+    @Test
     fun toolOrdinal_countsOnlyEarlierToolRequests() {
         val nodes =
             listOf(
