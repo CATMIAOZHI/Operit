@@ -1,8 +1,10 @@
 package com.ai.assistance.operit.core.agent
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentProfileRepositoryTest {
@@ -44,18 +46,34 @@ class AgentProfileRepositoryTest {
     }
 
     @Test
-    fun blankRestoredPromptFallsBackToDefaultAndUnknownProfilesAreIgnored() {
+    fun blankBuiltInPromptFallsBackAndValidCustomProfileIsRestored() {
         val blankSaved = default.copy(systemPrompt = "   ")
-        val unknown = default.copy(id = "custom", systemPrompt = "Unknown")
+        val custom =
+            default.copy(
+                id = "custom_reviewer",
+                name = "Reviewer",
+                description = "Reviews completed changes",
+                systemPrompt = "Review independently",
+                mode = AgentMode.PRIMARY,
+                hidden = true,
+                enabled = false,
+            )
 
         val restored =
             mergeAgentProfileSettings(
                 defaults = mapOf(default.id to default),
-                restored = listOf(blankSaved, unknown),
+                restored = listOf(blankSaved, custom),
             )
 
-        assertEquals(setOf(default.id), restored.keys)
+        assertEquals(setOf(default.id, custom.id), restored.keys)
         assertEquals(default, restored.getValue(default.id))
+        val restoredCustom = restored.getValue(custom.id)
+        assertEquals("Reviewer", restoredCustom.name)
+        assertEquals("Reviews completed changes", restoredCustom.description)
+        assertEquals("Review independently", restoredCustom.systemPrompt)
+        assertEquals(AgentMode.SUBAGENT, restoredCustom.mode)
+        assertFalse(restoredCustom.hidden)
+        assertTrue(restoredCustom.enabled)
     }
 
     @Test
@@ -88,6 +106,27 @@ class AgentProfileRepositoryTest {
                 modelConfigId = null,
                 modelIndex = null,
             )
+        }
+    }
+
+    @Test
+    fun customProfileRequiresStableReadableIdAndMetadata() {
+        val custom =
+            buildCustomAgentProfile(
+                id = " Code-Review ",
+                name = " Code review ",
+                description = " Reviews code changes ",
+                systemPrompt = " Review carefully ",
+                modelConfigId = null,
+                modelIndex = null,
+            )
+
+        assertEquals("code-review", custom.id)
+        assertEquals("Code review", custom.name)
+        assertEquals("Reviews code changes", custom.description)
+        assertEquals("Review carefully", custom.systemPrompt)
+        assertThrows(IllegalArgumentException::class.java) {
+            normalizeCustomAgentId("9invalid")
         }
     }
 }

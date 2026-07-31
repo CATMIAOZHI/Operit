@@ -96,6 +96,26 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
+    fun continuedSubagentCard_resolvesRunByStableTaskIdInsteadOfNewCallId() {
+        assertEquals(
+            SubagentRunLookup.TaskId(taskId = "task-original", parentChatId = "parent"),
+            resolveSubagentRunLookup(
+                requestedTaskId = "task-original",
+                parentChatId = "parent",
+                callId = "call-new",
+            ),
+        )
+        assertEquals(
+            SubagentRunLookup.ParentCall(parentChatId = "parent", callId = "call-first"),
+            resolveSubagentRunLookup(
+                requestedTaskId = null,
+                parentChatId = "parent",
+                callId = "call-first",
+            ),
+        )
+    }
+
+    @Test
     fun toolOrdinal_countsOnlyEarlierToolRequests() {
         val nodes =
             listOf(

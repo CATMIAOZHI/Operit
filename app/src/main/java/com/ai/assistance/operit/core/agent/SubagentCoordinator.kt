@@ -37,6 +37,7 @@ import kotlinx.serialization.json.Json
 data class SubagentTaskRequest(
     val parentChatId: String,
     val parentToolCallId: String?,
+    val parentAgentName: String?,
     val title: String,
     val prompt: String,
     val subagentType: String,
@@ -336,6 +337,8 @@ class SubagentCoordinator private constructor(context: Context) {
                                             SubagentPromptBuilder.buildSystemPrompt(
                                                 resolved.profile
                                             ),
+                                        userRoleNameOverride = request.parentAgentName,
+                                        assistantRoleNameOverride = resolved.profile.name,
                                     ),
                                 chatModelConfigIdOverride = modelConfigId,
                                 chatModelIndexOverride = modelIndex,

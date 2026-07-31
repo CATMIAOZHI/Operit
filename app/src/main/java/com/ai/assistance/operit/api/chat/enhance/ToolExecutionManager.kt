@@ -109,6 +109,7 @@ object ToolExecutionManager {
     class SubagentLoopRejectedException(message: String) : IllegalStateException(message)
 
     data class ToolRuntimeContext(
+        val callerName: String? = null,
         val callerCardId: String? = null,
         val callerChatId: String? = null,
         val toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
@@ -731,6 +732,7 @@ object ToolExecutionManager {
         }
         val toolRuntimeContext =
             ToolRuntimeContext(
+                callerName = callerName,
                 callerCardId = callerCardId,
                 callerChatId = callerChatId,
                 toolExposureMode = toolExposureMode,

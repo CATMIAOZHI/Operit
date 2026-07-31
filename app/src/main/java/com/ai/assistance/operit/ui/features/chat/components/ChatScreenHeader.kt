@@ -166,7 +166,7 @@ fun ChatScreenHeader(
             modifier = modifier,
             title = run?.title ?: currentChat.title,
             parentTitle = parentTitle,
-            agentName = run?.agentProfileId.orEmpty(),
+            agentName = resolveSubagentAgentName(run),
             siblingRuns = parentRuns,
             currentChildChatId = currentChat.id,
             transparent = chatHeaderTransparent,

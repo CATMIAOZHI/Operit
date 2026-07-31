@@ -52,6 +52,7 @@ import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 data class PersistedToolExecution(
@@ -67,6 +68,26 @@ internal data class SubagentTaskRowContent(
     val title: String,
     val summary: String,
 )
+
+internal sealed interface SubagentRunLookup {
+    data class TaskId(val taskId: String, val parentChatId: String) : SubagentRunLookup
+
+    data class ParentCall(val parentChatId: String, val callId: String) : SubagentRunLookup
+}
+
+internal fun resolveSubagentRunLookup(
+    requestedTaskId: String?,
+    parentChatId: String?,
+    callId: String?,
+): SubagentRunLookup? {
+    val normalizedParentChatId = parentChatId?.trim()?.takeIf(String::isNotEmpty) ?: return null
+    val normalizedTaskId = requestedTaskId?.trim()?.takeIf(String::isNotEmpty)
+    if (normalizedTaskId != null) {
+        return SubagentRunLookup.TaskId(normalizedTaskId, normalizedParentChatId)
+    }
+    val normalizedCallId = callId?.trim()?.takeIf(String::isNotEmpty) ?: return null
+    return SubagentRunLookup.ParentCall(normalizedParentChatId, normalizedCallId)
+}
 
 internal fun buildSubagentTaskRowContent(
     agentName: String?,
@@ -130,9 +151,10 @@ internal fun ToolExecutionStatusDisplay(
     timingScopeId: String?,
     invocationIndex: Int,
     persistedExecution: PersistedToolExecution?,
+    modifier: Modifier = Modifier,
     requestedToolName: String? = null,
     requestedSubagentName: String? = null,
-    modifier: Modifier = Modifier,
+    requestedSubagentTaskId: String? = null,
 ) {
     val context = LocalContext.current
     val timings by ToolExecutionTimingRepository.timings.collectAsState()
@@ -157,6 +179,7 @@ internal fun ToolExecutionStatusDisplay(
             executionResultText =
                 resolveResultText(liveExecution, persistedExecution, success),
             requestedSubagentName = requestedSubagentName,
+            requestedSubagentTaskId = requestedSubagentTaskId,
             modifier = modifier,
         )
         return
@@ -352,6 +375,7 @@ private fun SubagentTaskStatusDisplay(
     executionSuccess: Boolean,
     executionResultText: String,
     requestedSubagentName: String?,
+    requestedSubagentTaskId: String?,
     modifier: Modifier,
 ) {
     val context = LocalContext.current
@@ -365,11 +389,22 @@ private fun SubagentTaskStatusDisplay(
         }
     val parentChatId by chatCore.currentChatId.collectAsState()
     val runFlow =
-        remember(parentChatId, callId) {
-            if (parentChatId.isNullOrBlank() || callId.isNullOrBlank()) {
-                flowOf(null)
-            } else {
-                repository.observeByParentToolCallId(requireNotNull(parentChatId), callId)
+        remember(parentChatId, callId, requestedSubagentTaskId) {
+            when (
+                val lookup =
+                    resolveSubagentRunLookup(
+                        requestedTaskId = requestedSubagentTaskId,
+                        parentChatId = parentChatId,
+                        callId = callId,
+                    )
+            ) {
+                is SubagentRunLookup.TaskId ->
+                    repository.observeById(lookup.taskId).map { candidate ->
+                        candidate?.takeIf { it.parentChatId == lookup.parentChatId }
+                    }
+                is SubagentRunLookup.ParentCall ->
+                    repository.observeByParentToolCallId(lookup.parentChatId, lookup.callId)
+                null -> flowOf(null)
             }
         }
     val run by runFlow.collectAsState(initial = null)

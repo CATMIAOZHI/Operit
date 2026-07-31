@@ -10,4 +10,8 @@ data class ChatTurnOptions(
     val isSubTask: Boolean = false,
     /** Request-only system role content. It is never persisted as a user transcript message. */
     val systemPromptOverride: String? = null,
+    /** Optional transcript-only role label for the persisted prompt sender. */
+    val userRoleNameOverride: String? = null,
+    /** Optional transcript-only role label for the persisted assistant response. */
+    val assistantRoleNameOverride: String? = null,
 )

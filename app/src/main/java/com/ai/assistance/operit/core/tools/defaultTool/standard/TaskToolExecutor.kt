@@ -11,6 +11,7 @@ import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.ToolExecutor
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolResult
+import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -18,7 +19,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 
 class TaskToolExecutor(context: Context) : ToolExecutor {
-    private val coordinator = SubagentCoordinator.getInstance(context.applicationContext)
+    private val appContext = context.applicationContext
+    private val coordinator = SubagentCoordinator.getInstance(appContext)
 
     override fun invoke(tool: AITool): ToolResult {
         val runtime = ToolExecutionManager.currentToolRuntimeContext()
@@ -39,6 +41,23 @@ class TaskToolExecutor(context: Context) : ToolExecutor {
         val subagentType = tool.parameter("subagent_type")
         val taskId = tool.parameter("task_id").ifBlank { null }
         val parentChatId = runtime?.callerChatId.orEmpty()
+        val parentAgentName =
+            runtime
+                ?.callerName
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?: runtime
+                    ?.callerCardId
+                    ?.takeIf(String::isNotBlank)
+                    ?.let { cardId ->
+                        runCatching {
+                                CharacterCardManager.getInstance(appContext)
+                                    .getCharacterCard(cardId)
+                                    .name
+                            }
+                            .getOrNull()
+                    }
+                ?: "Operit"
 
         if (title.isBlank()) {
             return invalid(tool, "title is required")
@@ -59,6 +78,7 @@ class TaskToolExecutor(context: Context) : ToolExecutor {
                     SubagentTaskRequest(
                         parentChatId = parentChatId,
                         parentToolCallId = runtime?.callId,
+                        parentAgentName = parentAgentName,
                         title = title,
                         prompt = prompt,
                         subagentType = subagentType,

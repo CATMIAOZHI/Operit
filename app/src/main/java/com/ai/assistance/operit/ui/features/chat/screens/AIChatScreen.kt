@@ -56,6 +56,7 @@ import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.preferences.WaifuPreferences
+import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.ui.components.ErrorDialog
 import com.ai.assistance.operit.ui.features.chat.components.*
 import com.ai.assistance.operit.ui.features.chat.components.style.input.agent.AgentChatInputSection
@@ -336,6 +337,15 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         chatHistories.find { it.id == currentChatId }
     }
     val isSubagentChat = currentChatView?.chatKind == ChatKind.SUBAGENT.name
+    val subagentRunRepository = remember(context) { SubagentRunRepository.getInstance(context) }
+    val currentSubagentRunFlow =
+        remember(isSubagentChat, currentChatView?.id) {
+            currentChatView
+                ?.takeIf { isSubagentChat }
+                ?.let { subagentRunRepository.observeByChildChatId(it.id) }
+                ?: flowOf(null)
+        }
+    val currentSubagentRun by currentSubagentRunFlow.collectAsState(initial = null)
     BackHandler(enabled = isSubagentChat && currentChatView?.parentChatId != null) {
         currentChatView?.parentChatId?.let { parentChatId ->
             actualViewModel.switchChat(parentChatId, scrollToBottom = false)
@@ -570,6 +580,45 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val visibleAllChatHistories = remember(chatHistories) {
         chatHistories.filter { it.chatKind != ChatKind.SUBAGENT.name }
     }
+    val localizedUserRoleName = stringResource(R.string.message_role_user)
+    val displayedChatHistory =
+        remember(
+            chatHistory,
+            isSubagentChat,
+            currentSubagentRun,
+            currentChatView?.characterCardName,
+            currentChatView?.parentChatId,
+            chatHistories,
+            activeCharacterCard,
+            localizedUserRoleName,
+        ) {
+            if (!isSubagentChat) {
+                chatHistory
+            } else {
+                val parentCharacterName =
+                    currentChatView?.characterCardName
+                        ?: chatHistories
+                            .firstOrNull { it.id == currentChatView?.parentChatId }
+                            ?.characterCardName
+                        ?: activeCharacterCard?.name
+                        ?: ""
+                val subagentName = resolveSubagentAgentName(currentSubagentRun)
+                chatHistory.map { message ->
+                    val displayedRoleName =
+                        resolveSubagentTranscriptRoleName(
+                            message = message,
+                            parentAgentName = parentCharacterName,
+                            subagentName = subagentName,
+                            localizedUserRoleName = localizedUserRoleName,
+                        )
+                    if (displayedRoleName == message.roleName) {
+                        message
+                    } else {
+                        message.copy(roleName = displayedRoleName)
+                    }
+                }
+            }
+        }
     val displayedChatHistories = remember(
         chatHistories,
         activePrompt,
@@ -1100,7 +1149,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 actualViewModel = actualViewModel,
                                 enableMessageDialogs = !isFloatingMode,
                                 showChatHistorySelector = showChatHistorySelector,
-                                chatHistory = chatHistory,
+                                chatHistory = displayedChatHistory,
                                 isLoading = isLoading,
                                 userMessageColor = userMessageColor,
                                 aiMessageColor = aiMessageColor,
