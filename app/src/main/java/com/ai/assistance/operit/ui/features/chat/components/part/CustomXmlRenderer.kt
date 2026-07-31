@@ -73,6 +73,7 @@ class CustomXmlRenderer(
         val displayToolName: String,
         val summaryOverride: String? = null,
         val subagentName: String? = null,
+        val subagentTaskId: String? = null,
         val isClosed: Boolean,
     )
 
@@ -743,6 +744,10 @@ class CustomXmlRenderer(
                     params["subagent_type"]
                         ?.trim()
                         ?.takeIf { rawToolName == "task" && it.isNotEmpty() }
+                val subagentTaskId =
+                    params["task_id"]
+                        ?.trim()
+                        ?.takeIf { rawToolName == "task" && it.isNotEmpty() }
 
                 ToolRequestRenderState(
                     rawToolName = rawToolName,
@@ -750,6 +755,7 @@ class CustomXmlRenderer(
                     displayToolName = displayToolName,
                     summaryOverride = summaryOverride,
                     subagentName = subagentName,
+                    subagentTaskId = subagentTaskId,
                     isClosed = isXmlFullyClosed(content),
                 )
             }
@@ -814,6 +820,7 @@ class CustomXmlRenderer(
                     persistedExecution = persistedToolExecutions[index],
                     requestedToolName = renderState.rawToolName,
                     requestedSubagentName = renderState.subagentName,
+                    requestedSubagentTaskId = renderState.subagentTaskId,
                     modifier = modifier,
                 )
             }

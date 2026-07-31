@@ -766,7 +766,11 @@ class MessageProcessingDelegate(
             var userMessage = ChatMessage(
                 sender = "user",
                 content = finalMessageContent,
-                roleName = context.getString(R.string.message_role_user), // 用户消息的角色名固定为"用户"
+                roleName =
+                    resolveTranscriptRoleName(
+                        override = turnOptions.userRoleNameOverride,
+                        fallback = context.getString(R.string.message_role_user),
+                    ),
                 displayMode =
                     if (effectiveHideUserMessage) {
                         ChatMessageDisplayMode.HIDDEN_PLACEHOLDER
@@ -920,7 +924,11 @@ class MessageProcessingDelegate(
                             Pair(null, null)
                         }
                     } ?: Pair(null, null)
-                val currentRoleName = characterName ?: "Operit"
+                val currentRoleName =
+                    resolveTranscriptRoleName(
+                        override = turnOptions.assistantRoleNameOverride,
+                        fallback = characterName ?: "Operit",
+                    )
                 logMessageTiming(
                     stage = "delegate.loadRoleInfo",
                     startTimeMs = loadRoleInfoStartTime,

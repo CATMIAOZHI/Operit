@@ -9,11 +9,10 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
 /**
- * Stable built-in Agent profiles for the first Subagent release.
+ * Built-in and user-defined Agent profiles used by the Subagent tool.
  *
- * Profiles are deliberately independent from CharacterCard. Only the independent system prompt
- * and optional model binding are user-editable in the first release; stable identity and dispatch
- * metadata remain owned by the built-in definitions.
+ * Profiles are deliberately independent from CharacterCard. Built-in identity and dispatch
+ * metadata remain owned by the app, while custom profiles are persisted as complete definitions.
  */
 class AgentProfileRepository private constructor() {
     private val defaults: Map<String, AgentProfile> =
@@ -97,6 +96,8 @@ class AgentProfileRepository private constructor() {
             .sortedBy(AgentProfile::id)
             .toList()
 
+    fun isBuiltIn(id: String): Boolean = id in defaults
+
     @Synchronized
     fun updateSettings(
         id: String,
@@ -107,6 +108,67 @@ class AgentProfileRepository private constructor() {
         val current = requireNotNull(profilesById[id]) { "Unknown Agent profile: $id" }
         val updated = current.withEditableSettings(systemPrompt, modelConfigId, modelIndex)
         profilesById = profilesById + (id to updated)
+        persist()
+        publish()
+    }
+
+    @Synchronized
+    fun createCustomProfile(
+        id: String,
+        name: String,
+        description: String,
+        systemPrompt: String,
+        modelConfigId: String?,
+        modelIndex: Int?,
+    ): AgentProfile {
+        val normalizedId = normalizeCustomAgentId(id)
+        require(normalizedId !in profilesById) { "Agent profile already exists: $normalizedId" }
+        val profile =
+            buildCustomAgentProfile(
+                id = normalizedId,
+                name = name,
+                description = description,
+                systemPrompt = systemPrompt,
+                modelConfigId = modelConfigId,
+                modelIndex = modelIndex,
+            )
+        profilesById = profilesById + (profile.id to profile)
+        persist()
+        publish()
+        return profile
+    }
+
+    @Synchronized
+    fun updateCustomProfile(
+        id: String,
+        name: String,
+        description: String,
+        systemPrompt: String,
+        modelConfigId: String?,
+        modelIndex: Int?,
+    ): AgentProfile {
+        require(id !in defaults) { "Built-in Agent profile metadata cannot be changed: $id" }
+        requireNotNull(profilesById[id]) { "Unknown Agent profile: $id" }
+        val updated =
+            buildCustomAgentProfile(
+                id = id,
+                name = name,
+                description = description,
+                systemPrompt = systemPrompt,
+                modelConfigId = modelConfigId,
+                modelIndex = modelIndex,
+            )
+        profilesById = profilesById + (id to updated)
+        persist()
+        publish()
+        return updated
+    }
+
+    @Synchronized
+    fun deleteCustomProfile(id: String) {
+        require(id !in defaults) { "Built-in Agent profile cannot be deleted: $id" }
+        requireNotNull(profilesById[id]) { "Unknown Agent profile: $id" }
+        profilesById = profilesById - id
         persist()
         publish()
     }
@@ -147,7 +209,7 @@ internal fun mergeAgentProfileSettings(
     restored: List<AgentProfile>,
 ): Map<String, AgentProfile> {
     val restoredById = restored.associateBy(AgentProfile::id)
-    return defaults.mapValues { (id, default) ->
+    val mergedDefaults = defaults.mapValues { (id, default) ->
         val saved = restoredById[id] ?: return@mapValues default
         val restoredPrompt = saved.systemPrompt.trim().takeIf(String::isNotEmpty)
         default.withEditableSettings(
@@ -156,6 +218,25 @@ internal fun mergeAgentProfileSettings(
             modelIndex = saved.modelIndex,
         )
     }
+    val restoredCustom =
+        restored
+            .asSequence()
+            .filter { it.id !in defaults }
+            .mapNotNull { saved ->
+                runCatching {
+                        buildCustomAgentProfile(
+                            id = saved.id,
+                            name = saved.name,
+                            description = saved.description,
+                            systemPrompt = saved.systemPrompt,
+                            modelConfigId = saved.modelConfigId,
+                            modelIndex = saved.modelIndex,
+                        )
+                    }
+                    .getOrNull()
+            }
+            .associateBy(AgentProfile::id)
+    return mergedDefaults + restoredCustom
 }
 
 internal fun AgentProfile.withEditableSettings(
@@ -172,3 +253,36 @@ internal fun AgentProfile.withEditableSettings(
         modelIndex = if (normalizedConfigId == null) null else (modelIndex ?: 0).coerceAtLeast(0),
     )
 }
+
+internal fun normalizeCustomAgentId(id: String): String {
+    val normalized = id.trim().lowercase()
+    require(CUSTOM_AGENT_ID_PATTERN.matches(normalized)) {
+        "Agent profile ID must start with a letter and contain only lowercase letters, numbers, _ or -"
+    }
+    return normalized
+}
+
+internal fun buildCustomAgentProfile(
+    id: String,
+    name: String,
+    description: String,
+    systemPrompt: String,
+    modelConfigId: String?,
+    modelIndex: Int?,
+): AgentProfile {
+    val normalizedId = normalizeCustomAgentId(id)
+    val normalizedName = name.trim()
+    val normalizedDescription = description.trim()
+    require(normalizedName.isNotEmpty()) { "Agent profile name cannot be empty" }
+    require(normalizedDescription.isNotEmpty()) { "Agent profile description cannot be empty" }
+    return AgentProfile(
+            id = normalizedId,
+            name = normalizedName,
+            description = normalizedDescription,
+            mode = AgentMode.SUBAGENT,
+            systemPrompt = systemPrompt,
+        )
+        .withEditableSettings(systemPrompt, modelConfigId, modelIndex)
+}
+
+private val CUSTOM_AGENT_ID_PATTERN = Regex("[a-z][a-z0-9_-]{0,63}")

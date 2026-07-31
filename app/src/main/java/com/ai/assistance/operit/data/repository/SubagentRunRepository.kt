@@ -59,6 +59,8 @@ class SubagentRunRepository private constructor(
                     workspaceEnv = parent.workspaceEnv,
                     parentChatId = parent.id,
                     chatKind = ChatKind.SUBAGENT.name,
+                    characterCardName = parent.characterCardName,
+                    characterGroupId = parent.characterGroupId,
                 )
             val run =
                 SubagentRunEntity(
@@ -80,6 +82,8 @@ class SubagentRunRepository private constructor(
         }
 
     suspend fun getById(taskId: String): SubagentRunEntity? = runDao.getById(taskId)
+
+    fun observeById(taskId: String): Flow<SubagentRunEntity?> = runDao.observeById(taskId)
 
     suspend fun getByChildChatId(childChatId: String): SubagentRunEntity? =
         runDao.getByChildChatId(childChatId)

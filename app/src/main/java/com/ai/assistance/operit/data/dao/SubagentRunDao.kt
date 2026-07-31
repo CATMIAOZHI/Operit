@@ -19,6 +19,9 @@ interface SubagentRunDao {
     @Query("SELECT * FROM subagent_runs WHERE id = :taskId")
     suspend fun getById(taskId: String): SubagentRunEntity?
 
+    @Query("SELECT * FROM subagent_runs WHERE id = :taskId")
+    fun observeById(taskId: String): Flow<SubagentRunEntity?>
+
     @Query("SELECT * FROM subagent_runs ORDER BY createdAt ASC, id ASC")
     suspend fun getAll(): List<SubagentRunEntity>
 

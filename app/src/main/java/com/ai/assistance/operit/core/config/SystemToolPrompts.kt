@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.core.config
 
+import com.ai.assistance.operit.core.agent.AgentProfile
+import com.ai.assistance.operit.core.agent.AgentProfileRepository
 import com.ai.assistance.operit.core.chat.hooks.PromptHookContext
 import com.ai.assistance.operit.core.chat.hooks.PromptHookRegistry
 import com.ai.assistance.operit.data.model.SystemToolPromptCategory
@@ -85,78 +87,87 @@ object SystemToolPrompts {
     )
 
     // ==================== Subagent 工具 ====================
-    val subagentTools = SystemToolPromptCategory(
-        categoryName = "Subagent Tools",
-        tools = listOf(
-            ToolPrompt(
-                name = "task",
-                description = "Delegate a foreground task to an independent Subagent and wait for its final result. Available subagent_type values: general, explore. Use task_id to continue an existing child conversation.",
-                parametersStructured = listOf(
-                    ToolParameterSchema(
-                        name = "title",
-                        type = "string",
-                        description = "task name shown in the tool call UI",
-                        required = true
-                    ),
-                    ToolParameterSchema(
-                        name = "prompt",
-                        type = "string",
-                        description = "complete task instructions for the Subagent",
-                        required = true
-                    ),
-                    ToolParameterSchema(
-                        name = "subagent_type",
-                        type = "string",
-                        description = "Subagent profile id: general | explore",
-                        required = true
-                    ),
-                    ToolParameterSchema(
-                        name = "task_id",
-                        type = "string",
-                        description = "optional stable task id to continue",
-                        required = false
-                    )
-                )
-            )
-        )
-    )
+    val subagentTools: SystemToolPromptCategory
+        get() = buildSubagentTools(useChinese = false)
 
-    val subagentToolsCn = SystemToolPromptCategory(
-        categoryName = "Subagent 工具",
-        tools = listOf(
-            ToolPrompt(
-                name = "task",
-                description = "把前台任务委派给独立 Subagent，并等待其最终结果。可用的 subagent_type：general、explore；传入 task_id 可继续已有 child 对话。",
-                parametersStructured = listOf(
-                    ToolParameterSchema(
-                        name = "title",
-                        type = "string",
-                        description = "显示在工具调用 UI 中的任务名称",
-                        required = true
-                    ),
-                    ToolParameterSchema(
-                        name = "prompt",
-                        type = "string",
-                        description = "交给 Subagent 的完整任务说明",
-                        required = true
-                    ),
-                    ToolParameterSchema(
-                        name = "subagent_type",
-                        type = "string",
-                        description = "Subagent 配置 ID：general | explore",
-                        required = true
-                    ),
-                    ToolParameterSchema(
-                        name = "task_id",
-                        type = "string",
-                        description = "可选，用于继续既有任务的稳定 task ID",
-                        required = false
+    val subagentToolsCn: SystemToolPromptCategory
+        get() = buildSubagentTools(useChinese = true)
+
+    internal fun buildSubagentTools(
+        useChinese: Boolean,
+        profiles: List<AgentProfile> = AgentProfileRepository.instance.listAvailableSubagents(),
+    ): SystemToolPromptCategory {
+        val profileIds = profiles.joinToString(if (useChinese) "、" else ", ") { it.id }
+        val profileDetails =
+            profiles.joinToString(separator = "\n") { profile ->
+                "- ${profile.id} (${profile.name}): ${profile.description}"
+            }
+        val description =
+            if (useChinese) {
+                "把前台任务委派给独立 Subagent，并等待其最终结果。可用的 subagent_type：$profileIds；传入 task_id 可继续已有 child 对话。\n$profileDetails"
+            } else {
+                "Delegate a foreground task to an independent Subagent and wait for its final result. Available subagent_type values: $profileIds. Use task_id to continue an existing child conversation.\n$profileDetails"
+            }
+        val typeDescription =
+            if (useChinese) {
+                "Subagent 配置 ID：$profileIds"
+            } else {
+                "Subagent profile ID: $profileIds"
+            }
+        return SystemToolPromptCategory(
+            categoryName = if (useChinese) "Subagent 工具" else "Subagent Tools",
+            tools =
+                listOf(
+                    ToolPrompt(
+                        name = "task",
+                        description = description,
+                        parametersStructured =
+                            listOf(
+                                ToolParameterSchema(
+                                    name = "title",
+                                    type = "string",
+                                    description =
+                                        if (useChinese) {
+                                            "显示在工具调用 UI 中的任务名称"
+                                        } else {
+                                            "task name shown in the tool call UI"
+                                        },
+                                    required = true,
+                                ),
+                                ToolParameterSchema(
+                                    name = "prompt",
+                                    type = "string",
+                                    description =
+                                        if (useChinese) {
+                                            "交给 Subagent 的完整任务说明"
+                                        } else {
+                                            "complete task instructions for the Subagent"
+                                        },
+                                    required = true,
+                                ),
+                                ToolParameterSchema(
+                                    name = "subagent_type",
+                                    type = "string",
+                                    description = typeDescription,
+                                    required = true,
+                                ),
+                                ToolParameterSchema(
+                                    name = "task_id",
+                                    type = "string",
+                                    description =
+                                        if (useChinese) {
+                                            "可选，用于继续既有任务的稳定 task ID"
+                                        } else {
+                                            "optional stable task id to continue"
+                                        },
+                                    required = false,
+                                ),
+                            ),
                     )
-                )
-            )
+                ),
         )
-    )
-    
+    }
+
     // ==================== 文件系统工具 ====================
     val fileSystemTools = SystemToolPromptCategory(
         categoryName = "File System Tools",
