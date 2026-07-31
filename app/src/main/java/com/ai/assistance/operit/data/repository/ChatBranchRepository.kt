@@ -18,8 +18,8 @@ internal data class ChatBranchCopyResult(
  * Copies one persisted conversation branch together with the Subagent chats referenced by the
  * copied transcript.
  *
- * Tool call IDs are scoped by parent chat, so they remain unchanged in the copied messages and
- * runs. Chat and run IDs are always regenerated to keep the branch graph independent.
+ * Tool call IDs are scoped by parent chat, so they remain unchanged. Chat and run IDs are always
+ * regenerated, and persisted task references are rewritten to keep the branch graph independent.
  */
 internal class ChatBranchRepository(
     private val database: AppDatabase,
@@ -102,6 +102,7 @@ internal class ChatBranchRepository(
         if (referencedCallIds.isEmpty()) return 0
 
         var copiedCount = 0
+        val taskIdRemap = mutableMapOf<String, String>()
         subagentRunDao
             .getByParentChatId(sourceParentChatId)
             .filter { run -> run.parentToolCallId in referencedCallIds }
@@ -126,13 +127,15 @@ internal class ChatBranchRepository(
                     upToTimestampInclusive = null,
                 )
                 chatDao.recalculateLastMessageAt(childCopy.id)
-                subagentRunDao.insert(
+                val copiedRun =
                     sourceRun.copyForBranch(
+                        branchTaskId = UUID.randomUUID().toString(),
                         branchParentChatId = targetParentChatId,
                         branchChildChatId = childCopy.id,
                         snapshotAt = System.currentTimeMillis(),
                     )
-                )
+                subagentRunDao.insert(copiedRun)
+                taskIdRemap[sourceRun.id] = copiedRun.id
                 copiedCount++
                 copiedCount +=
                     cloneReferencedSubagentTree(
@@ -142,7 +145,27 @@ internal class ChatBranchRepository(
                         copiedSourceChatIds = copiedSourceChatIds,
                     )
             }
+        remapCopiedTaskIds(targetParentChatId, taskIdRemap)
         return copiedCount
+    }
+
+    private suspend fun remapCopiedTaskIds(
+        targetChatId: String,
+        taskIdRemap: Map<String, String>,
+    ) {
+        if (taskIdRemap.isEmpty()) return
+        messageDao.getMessagesForChat(targetChatId).forEach { message ->
+            val content = remapPersistedTaskIds(message.content, taskIdRemap)
+            if (content != message.content) {
+                messageDao.updateMessage(message.copy(content = content))
+            }
+        }
+        messageVariantDao.getVariantsForChat(targetChatId).forEach { variant ->
+            val content = remapPersistedTaskIds(variant.content, taskIdRemap)
+            if (content != variant.content) {
+                messageVariantDao.updateVariant(variant.copy(content = content))
+            }
+        }
     }
 
     private suspend fun copyMessagesAndVariants(
@@ -174,13 +197,14 @@ private const val BRANCH_SNAPSHOT_INTERRUPTED_ERROR =
     "This Subagent run was interrupted because its parent chat was branched."
 
 internal fun SubagentRunEntity.copyForBranch(
+    branchTaskId: String,
     branchParentChatId: String,
     branchChildChatId: String,
     snapshotAt: Long,
 ): SubagentRunEntity {
     val activeSnapshot = status in ACTIVE_SUBAGENT_RUN_STATUS_NAMES
     return copy(
-        id = UUID.randomUUID().toString(),
+        id = branchTaskId,
         parentChatId = branchParentChatId,
         childChatId = branchChildChatId,
         status = if (activeSnapshot) SubagentRunStatus.INTERRUPTED.name else status,
@@ -204,3 +228,24 @@ internal fun extractPersistedToolCallIds(contents: Iterable<String>): Set<String
                 .mapNotNull { match -> match.groupValues.getOrNull(1)?.takeIf(String::isNotBlank) }
         }
         .toSet()
+
+internal fun remapPersistedTaskIds(
+    content: String,
+    taskIdRemap: Map<String, String>,
+): String =
+    taskIdRemap.entries.fold(content) { current, (oldTaskId, newTaskId) ->
+        val escapedTaskId = Regex.escape(oldTaskId)
+        val taskResultRemapped =
+            Regex(
+                """(<task\b[^>]*\bid\s*=\s*["'])$escapedTaskId(["'])""",
+                RegexOption.IGNORE_CASE,
+            ).replace(current) { match ->
+                match.groupValues[1] + newTaskId + match.groupValues[2]
+            }
+        Regex(
+            """(<param\s+name\s*=\s*["']task_id["']\s*>\s*)$escapedTaskId(\s*</param\s*>)""",
+            RegexOption.IGNORE_CASE,
+        ).replace(taskResultRemapped) { match ->
+            match.groupValues[1] + newTaskId + match.groupValues[2]
+        }
+    }

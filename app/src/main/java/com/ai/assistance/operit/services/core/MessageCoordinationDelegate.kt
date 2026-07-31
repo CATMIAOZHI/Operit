@@ -524,7 +524,7 @@ class MessageCoordinationDelegate(
         turnOptions: ChatTurnOptions = ChatTurnOptions()
     ) {
         // 如果不是自动续写，更新当前的 promptFunctionType
-        if (!isAutoContinuation) {
+        if (!isAutoContinuation && !turnOptions.isSubTask) {
             currentPromptFunctionType = promptFunctionType
         }
         val isBackgroundSend =
@@ -652,7 +652,7 @@ class MessageCoordinationDelegate(
                 resolveChatContextSettingsForRequest(resolvedChatModelConfigIdOverride)
             }
 
-        if (!isAutoContinuation) {
+        if (!isAutoContinuation && !turnOptions.isSubTask) {
             currentChatModelConfigIdOverride = resolvedChatModelConfigIdOverride
             currentChatModelIndexOverride = resolvedChatModelIndexOverride
             currentMemorySpaceIdOverride = resolvedMemorySpaceIdOverride

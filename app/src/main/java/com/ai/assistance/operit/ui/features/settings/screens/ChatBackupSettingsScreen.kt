@@ -1738,7 +1738,7 @@ private suspend fun deleteAllChatHistories(context: Context): DeleteAllChatsResu
     withContext(Dispatchers.IO) {
         try {
             val chatHistoryManager = ChatHistoryManager.getInstance(context)
-            val chatHistories = chatHistoryManager.allChatHistoriesInternalFlow.first()
+            val chatHistories = chatHistoryManager.chatHistoriesFlow.first()
             var deletedCount = 0
             var skippedLockedCount = 0
 

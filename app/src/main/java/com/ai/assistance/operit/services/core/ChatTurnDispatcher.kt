@@ -206,27 +206,36 @@ class ChatTurnDispatcher {
         val terminalSignal = core.registerChatTurn(request.turnId)
         val effectiveTurnOptions = request.turnOptions.copy(turnId = request.turnId)
 
-        if (hasTargetChat) {
-            core.sendUserMessage(
-                promptFunctionType = PromptFunctionType.CHAT,
-                roleCardIdOverride = request.roleCardId,
-                chatIdOverride = preflightChatId,
-                messageTextOverride = request.message,
-                proxySenderNameOverride = request.proxySenderName,
-                chatModelConfigIdOverride = request.chatModelConfigIdOverride,
-                chatModelIndexOverride = request.chatModelIndexOverride,
-                turnOptions = effectiveTurnOptions,
+        try {
+            if (hasTargetChat) {
+                core.sendUserMessage(
+                    promptFunctionType = PromptFunctionType.CHAT,
+                    roleCardIdOverride = request.roleCardId,
+                    chatIdOverride = preflightChatId,
+                    messageTextOverride = request.message,
+                    proxySenderNameOverride = request.proxySenderName,
+                    chatModelConfigIdOverride = request.chatModelConfigIdOverride,
+                    chatModelIndexOverride = request.chatModelIndexOverride,
+                    turnOptions = effectiveTurnOptions,
+                )
+            } else {
+                core.sendUserMessage(
+                    promptFunctionType = PromptFunctionType.CHAT,
+                    roleCardIdOverride = request.roleCardId,
+                    messageTextOverride = request.message,
+                    proxySenderNameOverride = request.proxySenderName,
+                    chatModelConfigIdOverride = request.chatModelConfigIdOverride,
+                    chatModelIndexOverride = request.chatModelIndexOverride,
+                    turnOptions = effectiveTurnOptions,
+                )
+            }
+        } catch (error: Throwable) {
+            core.failRegisteredChatTurn(
+                turnId = request.turnId,
+                chatId = preflightChatId.orEmpty(),
+                error = error.message ?: error.javaClass.simpleName,
             )
-        } else {
-            core.sendUserMessage(
-                promptFunctionType = PromptFunctionType.CHAT,
-                roleCardIdOverride = request.roleCardId,
-                messageTextOverride = request.message,
-                proxySenderNameOverride = request.proxySenderName,
-                chatModelConfigIdOverride = request.chatModelConfigIdOverride,
-                chatModelIndexOverride = request.chatModelIndexOverride,
-                turnOptions = effectiveTurnOptions,
-            )
+            throw error
         }
 
         val resolvedChatId =

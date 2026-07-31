@@ -18,4 +18,17 @@ class ChatBranchRepositoryTest {
             extractPersistedToolCallIds(contents),
         )
     }
+
+    @Test
+    fun `remaps task results and continuation parameters without replacing plain text`() {
+        val content =
+            """<task id="old-task" state="completed">old-task</task>""" +
+                """<tool name="task"><param name="task_id">old-task</param></tool>"""
+
+        assertEquals(
+            """<task id="new-task" state="completed">old-task</task>""" +
+                """<tool name="task"><param name="task_id">new-task</param></tool>""",
+            remapPersistedTaskIds(content, mapOf("old-task" to "new-task")),
+        )
+    }
 }

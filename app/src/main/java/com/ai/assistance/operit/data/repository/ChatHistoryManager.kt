@@ -107,18 +107,22 @@ internal val OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS =
 internal fun remapArchivedParentToolCallIds(
     chat: OperitArchivedChat,
     callIdRemap: Map<String, String>,
+    taskIdRemap: Map<String, String> = emptyMap(),
 ): OperitArchivedChat {
-    if (callIdRemap.isEmpty()) return chat
+    if (callIdRemap.isEmpty() && taskIdRemap.isEmpty()) return chat
 
     fun remapContent(content: String): String =
-        callIdRemap.entries.fold(content) { current, (oldCallId, newCallId) ->
-            Regex(
-                """(\bcall_id\s*=\s*")${Regex.escape(oldCallId)}(")""",
-                RegexOption.IGNORE_CASE,
-            ).replace(current) { match ->
-                match.groupValues[1] + newCallId + match.groupValues[2]
-            }
-        }
+        remapPersistedTaskIds(
+            callIdRemap.entries.fold(content) { current, (oldCallId, newCallId) ->
+                Regex(
+                    """(\bcall_id\s*=\s*")${Regex.escape(oldCallId)}(")""",
+                    RegexOption.IGNORE_CASE,
+                ).replace(current) { match ->
+                    match.groupValues[1] + newCallId + match.groupValues[2]
+                }
+            },
+            taskIdRemap,
+        )
 
     return chat.copy(
         messages =
@@ -1270,6 +1274,11 @@ class ChatHistoryManager private constructor(private val context: Context) {
                             parentToolCallIdRemap
                                 .filterKeys { (parentChatId, _) -> parentChatId == chat.id }
                                 .mapKeys { (key, _) -> key.second },
+                        taskIdRemap =
+                            completeRuns
+                                .asSequence()
+                                .filter { run -> run.parentChatId == chat.id }
+                                .associate { run -> run.id to taskIdRemap.getValue(run.id) },
                     ).messages,
             )
 

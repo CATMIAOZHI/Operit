@@ -51,7 +51,10 @@ class ChatBranchRepositoryAndroidTest {
                 timestamp = 10,
                 content =
                     """<tool name="task" call_id="call-1"></tool>""" +
-                        """<tool_result name="task" call_id="call-1"></tool_result>""",
+                        """<tool_result name="task" call_id="call-1">""" +
+                        """<task id="run" state="completed"></task>""" +
+                        """</tool_result>""" +
+                        """<tool name="task"><param name="task_id">run</param></tool>""",
             )
         )
         database.messageDao().insertMessage(
@@ -81,7 +84,13 @@ class ChatBranchRepositoryAndroidTest {
         assertEquals(1, result.copiedMessageCount)
         assertEquals(1, result.copiedSubagentCount)
         val copiedRun = database.subagentRunDao().getByParentChatId(branch.id).single()
+        val copiedParentContent =
+            database.messageDao().getMessagesForChat(branch.id).single().content
         assertEquals(3, copiedRun.toolInvocationCount)
+        assertEquals(false, copiedParentContent.contains("id=\"run\""))
+        assertEquals(false, copiedParentContent.contains(">run</param>"))
+        assertEquals(true, copiedParentContent.contains("id=\"${copiedRun.id}\""))
+        assertEquals(true, copiedParentContent.contains(">${copiedRun.id}</param>"))
         assertNotEquals(child.id, copiedRun.childChatId)
         val copiedChild = database.chatDao().getChatById(copiedRun.childChatId)
         assertNotNull(copiedChild)

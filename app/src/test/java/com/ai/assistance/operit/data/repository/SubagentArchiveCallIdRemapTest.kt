@@ -46,4 +46,47 @@ class SubagentArchiveCallIdRemapTest {
             remapped.messages.single().variants.single().content,
         )
     }
+
+    @Test
+    fun remapsPersistedTaskIdsInBaseAndVariants() {
+        val chat =
+            OperitArchivedChat(
+                id = "parent",
+                title = "Parent",
+                messages =
+                    listOf(
+                        OperitArchivedMessage(
+                            baseMessage =
+                                ChatMessage(
+                                    sender = "ai",
+                                    content = """<task id="old-task">old-task</task>""",
+                                ),
+                            variants =
+                                listOf(
+                                    OperitArchivedMessageVariant(
+                                        variantIndex = 1,
+                                        content =
+                                            """<param name="task_id">old-task</param>""",
+                                    )
+                                ),
+                        )
+                    ),
+            )
+
+        val remapped =
+            remapArchivedParentToolCallIds(
+                chat = chat,
+                callIdRemap = emptyMap(),
+                taskIdRemap = mapOf("old-task" to "new-task"),
+            )
+
+        assertEquals(
+            """<task id="new-task">old-task</task>""",
+            remapped.messages.single().baseMessage.content,
+        )
+        assertEquals(
+            """<param name="task_id">new-task</param>""",
+            remapped.messages.single().variants.single().content,
+        )
+    }
 }
