@@ -366,50 +366,71 @@ class ChatFolderRepository(
             true
         }
 
+    suspend fun getFolderDeletionChatIds(
+        folderId: String,
+        characterCardName: String?,
+        characterGroupId: String?,
+    ): Set<String> =
+        database.withTransaction {
+            findFolderDeletionChats(folderId, characterCardName, characterGroupId)
+                .mapTo(linkedSetOf()) { it.id }
+        }
+
     suspend fun deleteFolderWithChats(
         folderId: String,
         characterCardName: String?,
         characterGroupId: String?,
+        expectedChatIds: Set<String>,
     ): List<String> =
         database.withTransaction {
-            require(folderId != SYSTEM_UNGROUPED_FOLDER_ID) {
-                "The ungrouped folder cannot be deleted"
-            }
-            val folders = folderDao.getFolders()
-            require(folders.any { it.id == folderId }) { "Folder does not exist" }
-            val descendantFolderIds = linkedSetOf(folderId)
-            var addedDescendant: Boolean
-            do {
-                addedDescendant = false
-                folders.forEach { folder ->
-                    if (
-                        folder.parentFolderId in descendantFolderIds &&
-                            descendantFolderIds.add(folder.id)
-                    ) {
-                        addedDescendant = true
-                    }
-                }
-            } while (addedDescendant)
-
             val chatsToDelete =
-                chatDao.getAllChatsDirectly().filter {
-                    it.folderId in descendantFolderIds &&
-                        (
-                            when {
-                                characterGroupId != null ->
-                                    it.characterGroupId == characterGroupId
-                                characterCardName != null ->
-                                    it.characterGroupId == null &&
-                                        it.characterCardName == characterCardName
-                                else -> true
-                            }
-                        ) &&
-                        !it.locked
-                }
+                findFolderDeletionChats(folderId, characterCardName, characterGroupId)
+            check(chatsToDelete.mapTo(linkedSetOf()) { it.id } == expectedChatIds) {
+                "Folder deletion candidates changed while preparing deletion"
+            }
             chatsToDelete.forEach { chatDao.deleteChat(it.id) }
             deleteFolder(folderId)
             chatsToDelete.map { it.id }
         }
+
+    private suspend fun findFolderDeletionChats(
+        folderId: String,
+        characterCardName: String?,
+        characterGroupId: String?,
+    ): List<ChatEntity> {
+        require(folderId != SYSTEM_UNGROUPED_FOLDER_ID) {
+            "The ungrouped folder cannot be deleted"
+        }
+        val folders = folderDao.getFolders()
+        require(folders.any { it.id == folderId }) { "Folder does not exist" }
+        val descendantFolderIds = linkedSetOf(folderId)
+        var addedDescendant: Boolean
+        do {
+            addedDescendant = false
+            folders.forEach { folder ->
+                if (
+                    folder.parentFolderId in descendantFolderIds &&
+                        descendantFolderIds.add(folder.id)
+                ) {
+                    addedDescendant = true
+                }
+            }
+        } while (addedDescendant)
+
+        return chatDao.getAllChatsDirectly().filter {
+            it.folderId in descendantFolderIds &&
+                (
+                    when {
+                        characterGroupId != null -> it.characterGroupId == characterGroupId
+                        characterCardName != null ->
+                            it.characterGroupId == null &&
+                                it.characterCardName == characterCardName
+                        else -> true
+                    }
+                ) &&
+                !it.locked
+        }
+    }
 
     suspend fun deleteFolder(folderId: String) {
         database.withTransaction {

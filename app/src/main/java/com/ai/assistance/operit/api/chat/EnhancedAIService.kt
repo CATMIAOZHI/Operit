@@ -727,7 +727,7 @@ class EnhancedAIService private constructor(private val context: Context) {
                 context,
                 chatId,
                 roleCardId,
-                allowGlobalFallback = !isSubTask,
+                includeActivePrompt = !isSubTask,
             )
     }
 
@@ -1436,10 +1436,11 @@ class EnhancedAIService private constructor(private val context: Context) {
     private data class TruncatedToolRoundRecovery(
         val repairedContent: String,
         val appendedSuffix: String,
-        val invalidatedToolNames: List<String>
+        val invalidatedToolNames: List<String>,
+        val invalidatedInvocationCount: Int,
     )
 
-    private fun detectAndRepairTruncatedToolRound(content: String): TruncatedToolRoundRecovery? {
+    private suspend fun detectAndRepairTruncatedToolRound(content: String): TruncatedToolRoundRecovery? {
         if (!content.contains("<tool", ignoreCase = true)) {
             return null
         }
@@ -1494,7 +1495,9 @@ class EnhancedAIService private constructor(private val context: Context) {
         return TruncatedToolRoundRecovery(
             repairedContent = repairedContent,
             appendedSuffix = appendedSuffix,
-            invalidatedToolNames = invalidatedToolNames
+            invalidatedToolNames = invalidatedToolNames,
+            invalidatedInvocationCount =
+                ToolExecutionManager.countDisplayedToolInvocations(repairedContent),
         )
     }
 
@@ -1860,6 +1863,10 @@ class EnhancedAIService private constructor(private val context: Context) {
                             )
                         }
                     } else {
+                        ToolExecutionManager.reserveToolInvocationIndices(
+                            context.nextToolInvocationIndex,
+                            truncatedToolRecovery.invalidatedInvocationCount,
+                        )
                         emptyList()
                     }
 

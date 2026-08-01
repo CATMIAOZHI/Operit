@@ -214,6 +214,10 @@ object ChatMarkupRegex {
         }
     }
 
+    fun matchToolCall(xml: String): MatchResult? = toolCallPattern.matchEntire(xml.trim())
+
+    fun isToolCall(xml: String): Boolean = matchToolCall(xml) != null
+
     fun containsToolTag(content: String): Boolean {
         return toolStartTagRegex.containsMatchIn(content)
     }

@@ -17,8 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -35,13 +33,14 @@ data class FileDiff(
 @Composable
 fun FileDiffDisplay(
     diff: FileDiff,
+    modifier: Modifier = Modifier,
     summaryPrefix: String? = null,
+    enableDialog: Boolean = true,
 ) {
     val diffLines = diff.diffContent.trimEnd().lines()
     var showDetailDialog by remember { mutableStateOf(false) }
-    val clipboardManager = LocalClipboardManager.current
 
-    if (showDetailDialog) {
+    if (showDetailDialog && enableDialog) {
         ContentDetailDialog(
             title = "File Changes: ${diff.path.substringAfterLast('/')}",
             content = diff.diffContent,
@@ -51,24 +50,31 @@ fun FileDiffDisplay(
         )
     }
 
-    val summary = remember(diffLines, summaryPrefix) {
+    val changeSummary = remember(diffLines) {
         val additions = diffLines.count { it.startsWith("+") }
         val deletions = diffLines.count { it.startsWith("-") }
-        val changeSummary = when {
+        when {
             additions > 0 && deletions > 0 -> "$additions insertions(+), $deletions deletions(-)"
             additions > 0 -> "$additions insertions(+)"
             deletions > 0 -> "$deletions deletions(-)"
             else -> "No changes detected"
         }
+    }
+    val summary =
         listOfNotNull(summaryPrefix?.takeIf { it.isNotBlank() }, changeSummary)
             .joinToString(" · ")
-    }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(4.dp))
-            .clickable { showDetailDialog = true }
+            .then(
+                if (enableDialog) {
+                    Modifier.clickable { showDetailDialog = true }
+                } else {
+                    Modifier
+                }
+            )
             .padding(start = 24.dp,bottom = 8.dp) // 左侧的缩进
     ) {
         Row(
@@ -109,44 +115,4 @@ fun FileDiffDisplay(
             }
         }
     }
-}
-
-internal fun parseFileDiffResult(
-    toolName: String,
-    isSuccess: Boolean,
-    resultContent: String,
-): FileDiff? {
-    if (
-        !isSuccess ||
-            toolName !in setOf("apply_file", "create_file", "edit_file") ||
-            !resultContent.contains("<file-diff")
-    ) {
-        return null
-    }
-
-    val path =
-        Regex("""<file-diff\s+[^>]*\bpath="([^"]*)"""", RegexOption.IGNORE_CASE)
-            .find(resultContent)
-            ?.groupValues
-            ?.getOrNull(1)
-            .orEmpty()
-    val details =
-        Regex("""<file-diff\s+[^>]*\bdetails="([^"]*)"""", RegexOption.IGNORE_CASE)
-            .find(resultContent)
-            ?.groupValues
-            ?.getOrNull(1)
-            .orEmpty()
-    val diffContent =
-        Regex("""<!\[CDATA\[([\s\S]*?)]]>""")
-            .find(resultContent)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.trim()
-            ?: return null
-
-    return FileDiff(
-        path = path,
-        diffContent = diffContent,
-        details = details,
-    )
 }

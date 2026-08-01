@@ -248,6 +248,7 @@ class ChatFolderRepositoryAndroidTest {
                 "root",
                 characterCardName = null,
                 characterGroupId = null,
+                expectedChatIds = setOf("direct", "nested", "deep"),
             )
 
         assertEquals(setOf("direct", "nested", "deep"), deleted.toSet())
@@ -282,6 +283,7 @@ class ChatFolderRepositoryAndroidTest {
                 "root",
                 characterCardName = null,
                 characterGroupId = "group-a",
+                expectedChatIds = setOf("matching"),
             )
 
         assertEquals(listOf("matching"), deleted)

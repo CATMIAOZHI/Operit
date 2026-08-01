@@ -551,7 +551,7 @@ class ChatHistoryDelegate(
         }
 
         coroutineScope.launch {
-            chatHistoryManager.allChatHistoriesInternalFlow.collect { histories ->
+            chatHistoryManager.allChatHistoriesUpdatesFlow.collect { histories ->
                 _chatHistories.value = histories
                 _chatHistoriesLoaded.value = true
 

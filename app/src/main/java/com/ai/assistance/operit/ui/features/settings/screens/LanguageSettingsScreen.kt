@@ -44,6 +44,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.os.LocaleListCompat
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.agent.AgentProfileRepository
 import com.ai.assistance.operit.data.preferences.preferencesManager
 import com.ai.assistance.operit.ui.main.MainActivity
 import com.ai.assistance.operit.util.LocaleUtils
@@ -109,6 +110,9 @@ fun LanguageSettingsScreen(
                                     
                                     // 应用新的语言设置（使用已初始化的全局实例）
                                     LocaleUtils.setAppLanguage(context, language.code)
+                                    AgentProfileRepository.instance.initialize(
+                                        context.applicationContext
+                                    )
                                     
                                     // 显示切换语言的提示
                                     Toast.makeText(
@@ -203,4 +207,4 @@ fun LanguageItem(
         thickness = 0.5.dp,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
     )
-} 
+}

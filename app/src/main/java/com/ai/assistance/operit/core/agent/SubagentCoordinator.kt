@@ -106,8 +106,14 @@ class SubagentCoordinator private constructor(context: Context) {
 
         val requestedTaskId = request.taskId
         if (requestedTaskId != null) {
-            return taskMutexes.getOrPut(requestedTaskId) { Mutex() }.withLock {
-                supervisorScope {
+            val taskMutex = taskMutexes.getOrPut(requestedTaskId) { Mutex() }
+            if (!taskMutex.tryLock()) {
+                return SubagentTaskResult.AlreadyRunning(
+                    requireNotNull(runRepository.getById(requestedTaskId))
+                )
+            }
+            try {
+                return supervisorScope {
                     val registered =
                         lifecycleGate.withLock {
                             val existing = resolveRun(request)
@@ -123,6 +129,8 @@ class SubagentCoordinator private constructor(context: Context) {
                     }
                     awaitRegisteredTask(registered)
                 }
+            } finally {
+                taskMutex.unlock()
             }
         }
 
@@ -196,28 +204,52 @@ class SubagentCoordinator private constructor(context: Context) {
     suspend fun <T> withChatDeletionPrepared(
         chatId: String,
         delete: suspend () -> T,
+    ): T = withChatDeletionsPrepared(listOf(chatId), delete)
+
+    suspend fun <T> withChatDeletionsPrepared(
+        chatIds: Collection<String>,
+        delete: suspend () -> T,
     ): T {
+        val normalizedChatIds =
+            chatIds.mapNotNullTo(linkedSetOf()) { it.trim().takeIf(String::isNotEmpty) }
+        if (normalizedChatIds.isEmpty()) return delete()
+
         val runsAndJobs =
-            lifecycleGate.withLock {
-                check(deletingChatIds.add(chatId)) {
-                    "Chat deletion is already in progress: $chatId"
-                }
-                val runs =
-                    runRepository.getByChildChatId(chatId)?.let(::listOf)
-                        ?: runRepository.getByParentChatId(chatId)
-                val jobs =
-                    synchronized(lifecycleLock) {
-                        runs.mapNotNull { run ->
-                            taskJobs[run.id]?.also { job ->
-                                job.cancel(
-                                    CancellationException(
-                                        "Chat ${run.childChatId} is being deleted"
+            try {
+                lifecycleGate.withLock {
+                    val alreadyDeleting = normalizedChatIds.firstOrNull(deletingChatIds::contains)
+                    check(alreadyDeleting == null) {
+                        "Chat deletion is already in progress: $alreadyDeleting"
+                    }
+                    deletingChatIds.addAll(normalizedChatIds)
+                    val runs =
+                        normalizedChatIds
+                            .flatMap { chatId ->
+                                listOfNotNull(runRepository.getByChildChatId(chatId)) +
+                                    runRepository.getByParentChatId(chatId)
+                            }
+                            .distinctBy(SubagentRunEntity::id)
+                    val jobs =
+                        synchronized(lifecycleLock) {
+                            runs.mapNotNull { run ->
+                                taskJobs[run.id]?.also { job ->
+                                    job.cancel(
+                                        CancellationException(
+                                            "Chat ${run.childChatId} is being deleted"
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
+                    runs to jobs
+                }
+            } catch (error: Throwable) {
+                withContext(NonCancellable) {
+                    lifecycleGate.withLock {
+                        deletingChatIds.removeAll(normalizedChatIds)
                     }
-                runs to jobs
+                }
+                throw error
             }
         try {
             val (runs, jobs) = runsAndJobs
@@ -225,8 +257,10 @@ class SubagentCoordinator private constructor(context: Context) {
             runs.forEach { run -> EnhancedAIService.releaseChatInstance(run.childChatId) }
             return delete()
         } finally {
-            lifecycleGate.withLock {
-                deletingChatIds.remove(chatId)
+            withContext(NonCancellable) {
+                lifecycleGate.withLock {
+                    deletingChatIds.removeAll(normalizedChatIds)
+                }
             }
         }
     }
