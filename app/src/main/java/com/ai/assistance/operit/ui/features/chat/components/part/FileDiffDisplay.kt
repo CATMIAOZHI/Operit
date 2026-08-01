@@ -53,18 +53,14 @@ fun FileDiffDisplay(
     val changeSummary = remember(diffLines) {
         val additions = diffLines.count { it.startsWith("+") }
         val deletions = diffLines.count { it.startsWith("-") }
-        val changeSummary = when {
+        when {
             additions > 0 && deletions > 0 -> "$additions insertions(+), $deletions deletions(-)"
             additions > 0 -> "$additions insertions(+)"
             deletions > 0 -> "$deletions deletions(-)"
             else -> "No changes detected"
         }
-        listOfNotNull(summaryPrefix?.takeIf { it.isNotBlank() }, changeSummary)
-            .joinToString(" · ")
     }
-    val summary =
-        listOfNotNull(summaryPrefix?.takeIf { it.isNotBlank() }, changeSummary)
-            .joinToString(" · ")
+    val summary = buildFileDiffSummary(summaryPrefix, changeSummary)
 
     Column(
         modifier = modifier
@@ -118,3 +114,7 @@ fun FileDiffDisplay(
         }
     }
 }
+
+internal fun buildFileDiffSummary(summaryPrefix: String?, changeSummary: String): String =
+    listOfNotNull(summaryPrefix?.takeIf { it.isNotBlank() }, changeSummary)
+        .joinToString(" · ")

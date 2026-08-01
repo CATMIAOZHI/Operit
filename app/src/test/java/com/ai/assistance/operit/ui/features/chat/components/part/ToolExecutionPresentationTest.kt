@@ -77,6 +77,17 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
+    fun timedFileResult_includesDurationOnlyOnceInSummary() {
+        assertEquals(
+            "1.2 秒 · 3 insertions(+), 1 deletions(-)",
+            buildFileDiffSummary(
+                summaryPrefix = "1.2 秒",
+                changeSummary = "3 insertions(+), 1 deletions(-)",
+            ),
+        )
+    }
+
+    @Test
     fun subagentTaskResult_extractsFullDecodedFinalText() {
         val result =
             """
