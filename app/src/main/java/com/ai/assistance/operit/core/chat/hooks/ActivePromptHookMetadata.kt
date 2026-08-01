@@ -15,18 +15,23 @@ private const val ACTIVE_PROMPT_TYPE_CHARACTER_GROUP = "character_group"
 suspend fun buildActivePromptHookMetadata(
     context: Context,
     chatId: String? = null,
-    roleCardId: String? = null
+    roleCardId: String? = null,
+    includeActivePrompt: Boolean = true,
 ): Map<String, Any?> {
+    if (!includeActivePrompt) return mapOf("activePrompt" to null)
+
     val appContext = context.applicationContext
     val activePrompt = resolveHookActivePrompt(appContext, chatId, roleCardId)
-    return mapOf("activePrompt" to activePromptToMetadata(appContext, activePrompt))
+    return mapOf(
+        "activePrompt" to activePrompt?.let { activePromptToMetadata(appContext, it) }
+    )
 }
 
 private suspend fun resolveHookActivePrompt(
     context: Context,
     chatId: String?,
-    roleCardId: String?
-): ActivePrompt {
+    roleCardId: String?,
+): ActivePrompt? {
     val boundChat = resolveBoundChat(context, chatId)
     val boundGroupId = boundChat?.characterGroupId?.trim()?.takeIf { it.isNotBlank() }
     if (boundGroupId != null) {

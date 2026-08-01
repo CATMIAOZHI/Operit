@@ -27,6 +27,7 @@ import com.ai.assistance.operit.data.preferences.WaifuPreferences
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.WorkspaceBackupManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -39,6 +40,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.cancelAndJoin
@@ -65,6 +67,8 @@ class MessageProcessingDelegate(
         private val getChatTitle: (chatId: String) -> String?,
         private val onTurnComplete:
             suspend (chatId: String?, service: EnhancedAIService, nextWindowSize: Int?, turnOptions: ChatTurnOptions) -> Unit,
+        private val onTurnTerminated: (ChatTurnTerminalSignal) -> Unit,
+        private val isTurnCancellationRequested: (String) -> Boolean,
         private val onTokenLimitExceeded: suspend (
             chatId: String?,
             roleCardId: String?,
@@ -124,6 +128,7 @@ class MessageProcessingDelegate(
     
     // 功能配置管理器，用于获取正确的模型配置ID
     private val functionalConfigManager = FunctionalConfigManager(context)
+    private val subagentRunRepository = SubagentRunRepository.getInstance(context)
 
     private val _userMessage = MutableStateFlow(TextFieldValue(""))
     val userMessage: StateFlow<TextFieldValue> = _userMessage.asStateFlow()
@@ -155,6 +160,14 @@ class MessageProcessingDelegate(
         MutableStateFlow<Map<String, Int>>(emptyMap())
     val currentTurnToolInvocationCountByChatId: StateFlow<Map<String, Int>> =
         _currentTurnToolInvocationCountByChatId.asStateFlow()
+    private val _lastToolNameByChatId =
+        MutableStateFlow<Map<String, String>>(emptyMap())
+    val lastToolNameByChatId: StateFlow<Map<String, String>> =
+        _lastToolNameByChatId.asStateFlow()
+    private val _lastTurnToolInvocationCountByChatId =
+        MutableStateFlow<Map<String, Int>>(emptyMap())
+    val lastTurnToolInvocationCountByChatId: StateFlow<Map<String, Int>> =
+        _lastTurnToolInvocationCountByChatId.asStateFlow()
 
     // 当前活跃的AI响应流
     private data class ChatRuntime(
@@ -475,6 +488,12 @@ class MessageProcessingDelegate(
         }
     }
 
+    suspend fun cancelMessageAndAwait(chatId: String) {
+        withContext(Dispatchers.IO) {
+            cancelMessageInternal(chatId, keepPartialResponse = true)
+        }
+    }
+
     suspend fun cancelMessageForDestructiveMutation(chatId: String) {
         cancelMessageInternal(chatId, keepPartialResponse = false)
     }
@@ -564,15 +583,38 @@ class MessageProcessingDelegate(
     }
 
     private fun resetCurrentTurnToolInvocationCount(chatId: String) {
-        val updated = _currentTurnToolInvocationCountByChatId.value.toMutableMap()
-        updated[chatId] = 0
-        _currentTurnToolInvocationCountByChatId.value = updated
+        _currentTurnToolInvocationCountByChatId.update { current ->
+            current + (chatId to 0)
+        }
+        _lastToolNameByChatId.update { current ->
+            current - chatId
+        }
+        _lastTurnToolInvocationCountByChatId.update { current ->
+            current + (chatId to 0)
+        }
     }
 
-    private fun incrementCurrentTurnToolInvocationCount(chatId: String) {
-        val updated = _currentTurnToolInvocationCountByChatId.value.toMutableMap()
-        updated[chatId] = (updated[chatId] ?: 0) + 1
-        _currentTurnToolInvocationCountByChatId.value = updated
+    private suspend fun recordCurrentTurnToolInvocation(chatId: String, toolName: String) {
+        _currentTurnToolInvocationCountByChatId.update { current ->
+            current + (chatId to ((current[chatId] ?: 0) + 1))
+        }
+        _lastTurnToolInvocationCountByChatId.update { current ->
+            current + (chatId to ((current[chatId] ?: 0) + 1))
+        }
+        toolName.takeIf { it.isNotBlank() }?.let { resolvedToolName ->
+            _lastToolNameByChatId.update { current ->
+                current + (chatId to resolvedToolName)
+            }
+        }
+        runCatching {
+            subagentRunRepository.incrementToolInvocationCountByChildChatId(chatId)
+        }.onFailure { error ->
+            AppLogger.e(
+                TAG,
+                "Failed to persist Subagent tool invocation count: chatId=$chatId",
+                error,
+            )
+        }
     }
 
     private fun clearCurrentTurnToolInvocationCount(chatId: String) {
@@ -589,7 +631,7 @@ class MessageProcessingDelegate(
             workspacePath: String? = null,
             workspaceEnv: String? = null,
             promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT,
-            roleCardId: String,
+            roleCardId: String?,
             enableThinking: Boolean = false,
             enableMemoryAutoUpdate: Boolean = true,
             maxTokens: Int,
@@ -606,12 +648,24 @@ class MessageProcessingDelegate(
             turnOptions: ChatTurnOptions = ChatTurnOptions()
     ) {
         val rawMessageText = messageTextOverride ?: _userMessage.value.text
+        fun rejectRegisteredTurn(error: String) {
+            turnOptions.turnId?.let { turnId ->
+                onTurnTerminated(
+                    ChatTurnTerminalSignal.Failed(
+                        turnId = turnId,
+                        chatId = chatId.orEmpty(),
+                        error = error,
+                    )
+                )
+            }
+        }
         // 群组编排模式下，允许空消息（后续成员不需要用户消息）
         if (rawMessageText.isBlank() && attachments.isEmpty() && !isAutoContinuation && !isGroupOrchestrationTurn) {
             AppLogger.d(
                 TAG,
                 "sendUserMessage忽略: 空消息且无附件, chatId=$chatId, autoContinuation=$isAutoContinuation"
             )
+            rejectRegisteredTurn("Message was empty")
             return
         }
         val chatRuntime = runtimeFor(chatId)
@@ -620,6 +674,7 @@ class MessageProcessingDelegate(
                 TAG,
                 "sendUserMessage忽略: chat正在处理中, chatId=$chatId, roleCardId=$roleCardId, override=${!messageTextOverride.isNullOrBlank()}, suppressUserMessageInHistory=$suppressUserMessageInHistory"
             )
+            rejectRegisteredTurn("Chat is already processing another turn")
             return
         }
 
@@ -643,7 +698,13 @@ class MessageProcessingDelegate(
             val effectiveHideUserMessage = effectivePersistTurn && turnOptions.hideUserMessage
             // 检查这是否是聊天中的第一条用户消息（忽略AI的开场白）
             val isFirstMessage = !hasUserMessage(chatId)
-            val titleFallback = if (effectivePersistTurn && isFirstMessage && chatId != null) {
+            val titleFallback =
+                if (
+                    effectivePersistTurn &&
+                        isFirstMessage &&
+                        chatId != null &&
+                        !turnOptions.isSubTask
+                ) {
                 fallbackConversationTitle(originalMessageText, attachments).also { fallbackTitle ->
                     updateChatTitle(chatId, fallbackTitle)
                 }
@@ -682,7 +743,8 @@ class MessageProcessingDelegate(
                 enableDirectAudioProcessing = enableDirectAudioProcessing,
                 enableDirectVideoProcessing = enableDirectVideoProcessing,
                 chatId = chatId,
-                roleCardId = roleCardId
+                roleCardId = roleCardId,
+                isSubTask = turnOptions.isSubTask,
             )
             logMessageTiming(
                 stage = "delegate.buildUserMessageContent",
@@ -705,7 +767,11 @@ class MessageProcessingDelegate(
             var userMessage = ChatMessage(
                 sender = "user",
                 content = finalMessageContent,
-                roleName = context.getString(R.string.message_role_user), // 用户消息的角色名固定为"用户"
+                roleName =
+                    resolveTranscriptRoleName(
+                        override = turnOptions.userRoleNameOverride,
+                        fallback = context.getString(R.string.message_role_user),
+                    ),
                 displayMode =
                     if (effectiveHideUserMessage) {
                         ChatMessageDisplayMode.HIDDEN_PLACEHOLDER
@@ -784,6 +850,8 @@ class MessageProcessingDelegate(
             var turnCachedInputTokens = 0
             var calculateNextWindowSize: (suspend () -> Int?)? = null
             var cancellationToPropagate: kotlinx.coroutines.CancellationException? = null
+            var terminalFailureMessage: String? = null
+            var assistantMessageTimestampForTurn: Long? = null
             try {
                 // if (!NetworkUtils.isNetworkAvailable(context)) {
                 //     withContext(Dispatchers.Main) { showErrorMessage("网络连接不可用") }
@@ -842,16 +910,26 @@ class MessageProcessingDelegate(
 
                 // 获取角色信息用于通知
                 val loadRoleInfoStartTime = messageTimingNow()
-                val (characterName, avatarUri) = try {
-                    val roleCard = characterCardManager.getCharacterCardFlow(effectiveRoleCardId).first()
-                    val avatar =
-                        userPreferencesManager.getAiAvatarForCharacterCardFlow(roleCard.id).first()
-                    Pair(roleCard.name, avatar)
-                } catch (e: Exception) {
-                    AppLogger.e(TAG, "获取角色信息失败: ${e.message}", e)
-                    Pair(null, null)
-                }
-                val currentRoleName = characterName ?: "Operit"
+                val (characterName, avatarUri) =
+                    effectiveRoleCardId?.let { cardId ->
+                        try {
+                            val roleCard =
+                                characterCardManager.getCharacterCardFlow(cardId).first()
+                            val avatar =
+                                userPreferencesManager
+                                    .getAiAvatarForCharacterCardFlow(roleCard.id)
+                                    .first()
+                            Pair(roleCard.name, avatar)
+                        } catch (e: Exception) {
+                            AppLogger.e(TAG, "获取角色信息失败: ${e.message}", e)
+                            Pair(null, null)
+                        }
+                    } ?: Pair(null, null)
+                val currentRoleName =
+                    resolveTranscriptRoleName(
+                        override = turnOptions.assistantRoleNameOverride,
+                        fallback = characterName ?: "Operit",
+                    )
                 logMessageTiming(
                     stage = "delegate.loadRoleInfo",
                     startTimeMs = loadRoleInfoStartTime,
@@ -932,6 +1010,7 @@ class MessageProcessingDelegate(
 
                 val prepareResponseStreamStartTime = messageTimingNow()
                 val aiMessageTimestamp = ChatMessageTimestampAllocator.next()
+                assistantMessageTimestampForTurn = aiMessageTimestamp
                 val responseStream = AIMessageManager.sendMessage(
                     enhancedAiService = service,
                     chatId = activeChatId,
@@ -960,15 +1039,17 @@ class MessageProcessingDelegate(
                     groupOrchestrationMode = isGroupOrchestrationTurn,
                     groupParticipantNamesText = groupParticipantNamesText,
                     proxySenderName = proxySenderNameOverride,
-                    onToolInvocation = {
-                        incrementCurrentTurnToolInvocationCount(chatId)
+                    onToolInvocation = { toolName ->
+                        recordCurrentTurnToolInvocation(chatId, toolName)
                     },
                     notifyReplyOverride = turnOptions.notifyReply,
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,
                     toolTimingScopeId = aiMessageTimestamp.toString(),
-                    disableWarning = turnOptions.disableWarning
+                    disableWarning = turnOptions.disableWarning,
+                    isSubTask = turnOptions.isSubTask,
+                    systemPromptOverride = turnOptions.systemPromptOverride,
                 )
                 logMessageTiming(
                     stage = "delegate.prepareResponseStream",
@@ -1372,6 +1453,7 @@ class MessageProcessingDelegate(
                     cancellationToPropagate = e
                 } else {
                     AppLogger.e(TAG, "发送消息时出错", e)
+                    terminalFailureMessage = e.message ?: e.javaClass.simpleName
                     setChatInputProcessingState(
                         chatId,
                         EnhancedInputProcessingState.Error(context.getString(R.string.message_send_failed, e.message))
@@ -1444,6 +1526,33 @@ class MessageProcessingDelegate(
                     }
                 }
 
+                turnOptions.turnId?.let { turnId ->
+                    val terminalSignal =
+                        when {
+                            cancellationToPropagate != null ->
+                                ChatTurnTerminalSignal.Cancelled(
+                                    turnId = turnId,
+                                    chatId = activeChatId,
+                                )
+                            shouldNotifyTurnComplete && assistantMessageTimestampForTurn != null ->
+                                ChatTurnTerminalSignal.Completed(
+                                    turnId = turnId,
+                                    chatId = activeChatId,
+                                    assistantMessageTimestamp =
+                                        requireNotNull(assistantMessageTimestampForTurn),
+                                )
+                            else ->
+                                ChatTurnTerminalSignal.Failed(
+                                    turnId = turnId,
+                                    chatId = activeChatId,
+                                    error =
+                                        terminalFailureMessage
+                                            ?: "Turn ended without a final assistant result",
+                                )
+                        }
+                    onTurnTerminated(terminalSignal)
+                }
+
                 logMessageTiming(
                     stage = "delegate.sendUserMessage.total",
                     startTimeMs = sendUserMessageStartTime,
@@ -1457,6 +1566,13 @@ class MessageProcessingDelegate(
             cancellationToPropagate?.let { throw it }
         }
         chatRuntime.sendJob = sendJob
+        if (turnOptions.turnId?.let(isTurnCancellationRequested) == true) {
+            sendJob.cancel(
+                kotlinx.coroutines.CancellationException(
+                    "Turn ${turnOptions.turnId} was cancelled before its send job was bound"
+                )
+            )
+        }
     }
 
     suspend fun regenerateAiMessageVariant(
@@ -1570,7 +1686,9 @@ class MessageProcessingDelegate(
                     splitHistoryByRole = true,
                     groupOrchestrationMode = groupOrchestrationMode,
                     groupParticipantNamesText = groupParticipantNamesText,
-                    onToolInvocation = { incrementCurrentTurnToolInvocationCount(chatId) },
+                    onToolInvocation = { toolName ->
+                        recordCurrentTurnToolInvocation(chatId, toolName)
+                    },
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,

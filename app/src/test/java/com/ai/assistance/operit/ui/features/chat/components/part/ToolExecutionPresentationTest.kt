@@ -1,7 +1,8 @@
 package com.ai.assistance.operit.ui.features.chat.components.part
 
-import com.ai.assistance.operit.core.tools.ToolExecutionTimingSnapshot
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.core.tools.ToolExecutionTimingSnapshot
+import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.ui.common.markdown.toolInvocationIndexAt
 import com.ai.assistance.operit.util.markdown.MarkdownNodeStable
@@ -50,6 +51,82 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
+    fun timedFileResult_keepsStructuredDiffPresentation() {
+        val result =
+            """
+            [android] Updated file
+            <file-diff details="Updated file" path="/workspace/src/Main.kt"><![CDATA[
+            @@
+            -old
+            +new
+            ]]></file-diff>
+            """.trimIndent()
+
+        val diff =
+            requireNotNull(
+                parseFileDiffResult(
+                    toolName = "edit_file",
+                    isSuccess = true,
+                    result = result,
+                )
+            )
+
+        assertEquals("/workspace/src/Main.kt", diff.path)
+        assertEquals("Updated file", diff.details)
+        assertEquals("@@\n-old\n+new", diff.diffContent)
+    }
+
+    @Test
+    fun subagentTaskResult_extractsFullDecodedFinalText() {
+        val result =
+            """
+            <task id="task-1" state="completed">
+              <summary>Inspect auth</summary>
+              <task_result>Found &lt;AuthManager&gt; &amp; its callers.
+            Second line.</task_result>
+            </task>
+            """.trimIndent()
+
+        assertEquals(
+            "Found <AuthManager> & its callers.\nSecond line.",
+            extractSubagentTaskResult(result),
+        )
+    }
+
+    @Test
+    fun subagentTaskRow_separatesAgentNameFromStatusSummary() {
+        val content =
+            buildSubagentTaskRowContent(
+                agentName = "explore",
+                durationText = "21.5 秒",
+                statusText = "已完成 · 调用了 10 次工具",
+            )
+
+        assertEquals("explore", content.title)
+        assertEquals("21.5 秒 · 已完成 · 调用了 10 次工具", content.summary)
+    }
+
+    @Test
+    fun continuedSubagentCard_resolvesRunByStableTaskIdInsteadOfNewCallId() {
+        assertEquals(
+            SubagentRunLookup.TaskId(taskId = "task-original", parentChatId = "parent"),
+            resolveSubagentRunLookup(
+                requestedTaskId = "task-original",
+                parentChatId = "parent",
+                callId = "call-new",
+            ),
+        )
+        assertEquals(
+            SubagentRunLookup.ParentCall(parentChatId = "parent", callId = "call-first"),
+            resolveSubagentRunLookup(
+                requestedTaskId = null,
+                parentChatId = "parent",
+                callId = "call-first",
+            ),
+        )
+    }
+
+    @Test
     fun toolOrdinal_countsOnlyEarlierToolRequests() {
         val nodes =
             listOf(
@@ -63,6 +140,47 @@ class ToolExecutionPresentationTest {
         assertEquals(0, toolInvocationIndexAt(nodes, 1))
         assertNull(toolInvocationIndexAt(nodes, 2))
         assertEquals(1, toolInvocationIndexAt(nodes, 3))
+    }
+
+    @Test
+    fun subagentToolDisplay_keepsLastInvocationWhileThinking() {
+        assertEquals(
+            "grep_code",
+            resolveSubagentDisplayedTool(
+                childProcessingState = InputProcessingState.Processing("Thinking"),
+                lastToolName = "grep_code",
+            ),
+        )
+    }
+
+    @Test
+    fun proxyTaskPresentation_usesForwardedSubagentMetadata() {
+        val resolved =
+            resolveToolRequestPresentation(
+                rawToolName = "proxy",
+                params =
+                    mapOf(
+                        "tool_name" to "task",
+                        "params" to
+                            """{&quot;subagent_type&quot;:&quot;explore&quot;,&quot;title&quot;:&quot;Trace auth&quot;,&quot;task_id&quot;:&quot;task-1&quot;}""",
+                    ),
+            )
+
+        assertEquals("task", resolved.toolName)
+        assertEquals("explore", resolved.forwardedParams["subagent_type"])
+        assertEquals("Trace auth", resolved.forwardedParams["title"])
+        assertEquals("task-1", resolved.forwardedParams["task_id"])
+    }
+
+    @Test
+    fun proxyFileEditPresentation_usesResolvedToolName() {
+        val resolved =
+            resolveToolRequestPresentation(
+                rawToolName = "proxy",
+                params = mapOf("tool_name" to "edit_file", "params" to "{}"),
+            )
+
+        assertEquals("edit_file", resolved.toolName)
     }
 
     @Test
@@ -101,6 +219,27 @@ class ToolExecutionPresentationTest {
             shouldRenderStandaloneToolResult(
                 """<tool_result_x name="read_file" status="success" invocation_index="-1" final="true"><content>A</content></tool_result_x>"""
             )
+        )
+    }
+
+    @Test
+    fun subagentToolDisplay_prefersCurrentToolOverPreviousInvocation() {
+        assertEquals(
+            "read_file",
+            resolveSubagentDisplayedTool(
+                childProcessingState = InputProcessingState.ExecutingTool("read_file"),
+                lastToolName = "grep_code",
+            ),
+        )
+    }
+
+    @Test
+    fun subagentToolDisplay_hasNoToolBeforeFirstInvocation() {
+        assertNull(
+            resolveSubagentDisplayedTool(
+                childProcessingState = InputProcessingState.Processing("Thinking"),
+                lastToolName = null,
+            ),
         )
     }
 

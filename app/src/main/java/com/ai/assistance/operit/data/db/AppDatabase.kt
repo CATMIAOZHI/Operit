@@ -10,15 +10,24 @@ import com.ai.assistance.operit.data.dao.ChatDao
 import com.ai.assistance.operit.data.dao.ChatFolderDao
 import com.ai.assistance.operit.data.dao.MessageDao
 import com.ai.assistance.operit.data.dao.MessageVariantDao
+import com.ai.assistance.operit.data.dao.SubagentRunDao
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.MessageVariantEntity
+import com.ai.assistance.operit.data.model.SubagentRunEntity
+import com.ai.assistance.operit.util.ChatMarkupRegex
 
 /** 应用数据库，包含聊天表和消息表 */
 @Database(
-    entities = [ChatEntity::class, ChatFolderEntity::class, MessageEntity::class, MessageVariantEntity::class],
-    version = 25,
+    entities = [
+        ChatEntity::class,
+        ChatFolderEntity::class,
+        MessageEntity::class,
+        MessageVariantEntity::class,
+        SubagentRunEntity::class,
+    ],
+    version = 28,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -32,6 +41,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
 
     abstract fun messageVariantDao(): MessageVariantDao
+
+    abstract fun subagentRunDao(): SubagentRunDao
 
     companion object {
         @Volatile
@@ -388,6 +399,141 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        internal val MIGRATION_25_26 =
+            object : Migration(25, 26) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "ALTER TABLE `chats` ADD COLUMN `chatKind` TEXT NOT NULL DEFAULT 'NORMAL'"
+                    )
+                    db.execSQL(
+                        "UPDATE `chats` SET `chatKind` = 'BRANCH' WHERE `parentChatId` IS NOT NULL"
+                    )
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_chats_chatKind` " +
+                            "ON `chats` (`chatKind`)"
+                    )
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_chats_parentChatId_chatKind` " +
+                            "ON `chats` (`parentChatId`, `chatKind`)"
+                    )
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `subagent_runs` (
+                            `id` TEXT NOT NULL,
+                            `parentChatId` TEXT NOT NULL,
+                            `childChatId` TEXT NOT NULL,
+                            `parentToolCallId` TEXT,
+                            `agentProfileId` TEXT NOT NULL,
+                            `title` TEXT NOT NULL,
+                            `status` TEXT NOT NULL,
+                            `createdAt` INTEGER NOT NULL,
+                            `startedAt` INTEGER,
+                            `completedAt` INTEGER,
+                            `error` TEXT,
+                            `agentConfigSnapshot` TEXT,
+                            `modelConfigIdSnapshot` TEXT,
+                            `modelIndexSnapshot` INTEGER,
+                            PRIMARY KEY(`id`),
+                            FOREIGN KEY(`parentChatId`) REFERENCES `chats`(`id`)
+                                ON UPDATE NO ACTION ON DELETE NO ACTION,
+                            FOREIGN KEY(`childChatId`) REFERENCES `chats`(`id`)
+                                ON UPDATE NO ACTION ON DELETE CASCADE
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_subagent_runs_parentChatId` " +
+                            "ON `subagent_runs` (`parentChatId`)"
+                    )
+                    db.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS `index_subagent_runs_childChatId` " +
+                            "ON `subagent_runs` (`childChatId`)"
+                    )
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS " +
+                            "`index_subagent_runs_parentChatId_parentToolCallId` " +
+                            "ON `subagent_runs` (`parentChatId`, `parentToolCallId`)"
+                    )
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_subagent_runs_status` " +
+                            "ON `subagent_runs` (`status`)"
+                    )
+                    db.query("PRAGMA foreign_key_check").use { cursor ->
+                        check(!cursor.moveToFirst()) {
+                            "Foreign key violations after v25 to v26 migration"
+                        }
+                    }
+                }
+            }
+
+        internal val MIGRATION_26_27 =
+            object : Migration(26, 27) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "ALTER TABLE `subagent_runs` ADD COLUMN " +
+                            "`toolInvocationCount` INTEGER NOT NULL DEFAULT 0"
+                    )
+                    db.execSQL(
+                        "UPDATE `subagent_runs` SET `toolInvocationCount` = 0"
+                    )
+                    val invocationCounts = mutableMapOf<String, Int>()
+                    db.query(
+                        """
+                        SELECT `subagent_runs`.`id`, `messages`.`content`
+                        FROM `subagent_runs`
+                        LEFT JOIN `messages`
+                            ON `messages`.`chatId` = `subagent_runs`.`childChatId`
+                        """.trimIndent()
+                    ).use { cursor ->
+                        while (cursor.moveToNext()) {
+                            val runId = cursor.getString(0)
+                            invocationCounts.putIfAbsent(runId, 0)
+                            if (!cursor.isNull(1)) {
+                                invocationCounts[runId] =
+                                    invocationCounts.getValue(runId) +
+                                        countFinalToolResults(cursor.getString(1))
+                            }
+                        }
+                    }
+                    db.compileStatement(
+                        """
+                        UPDATE `subagent_runs`
+                        SET `toolInvocationCount` = ?
+                        WHERE `id` = ?
+                        """.trimIndent()
+                    ).use { statement ->
+                        invocationCounts.forEach { (runId, count) ->
+                            statement.bindLong(1, count.toLong())
+                            statement.bindString(2, runId)
+                            statement.executeUpdateDelete()
+                            statement.clearBindings()
+                        }
+                    }
+                    db.query("PRAGMA foreign_key_check").use { cursor ->
+                        check(!cursor.moveToFirst()) {
+                            "Foreign key violations after v26 to v27 migration"
+                        }
+                    }
+                }
+            }
+
+        internal val MIGRATION_27_28 =
+            object : Migration(27, 28) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE `subagent_runs` ADD COLUMN `archivedAt` INTEGER")
+                }
+            }
+
+        private val finalTrueAttributeRegex =
+            Regex("""\bfinal\s*=\s*["']true["']""", RegexOption.IGNORE_CASE)
+
+        private fun countFinalToolResults(content: String): Int =
+            ChatMarkupRegex.toolResultTagWithAttrs
+                .findAll(content)
+                .count { match ->
+                    finalTrueAttributeRegex.containsMatchIn(match.groupValues[2])
+                }
+
         // 定义从版本2到3的迁移
         private val MIGRATION_2_3 =
             object : Migration(2, 3) {
@@ -506,7 +652,10 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_18_19,
                                 MIGRATION_19_20,
                                 MIGRATION_20_24,
-                                MIGRATION_24_25
+                                MIGRATION_24_25,
+                                MIGRATION_25_26,
+                                MIGRATION_26_27,
+                                MIGRATION_27_28,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

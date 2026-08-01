@@ -22,6 +22,7 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import com.ai.assistance.operit.BuildConfig
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.agent.AgentProfileRepository
 import com.ai.assistance.operit.core.chat.AIMessageManager
 import com.ai.assistance.operit.api.chat.AIForegroundService
 import com.ai.assistance.operit.api.chat.library.MemoryAutoSaveScheduler
@@ -48,6 +49,7 @@ import com.ai.assistance.operit.data.preferences.initAndroidPermissionPreference
 import com.ai.assistance.operit.data.preferences.initUserPreferencesManager
 import com.ai.assistance.operit.data.preferences.preferencesManager
 import com.ai.assistance.operit.data.repository.CustomEmojiRepository
+import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.ui.features.chat.webview.LocalWebServer
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.editor.language.LanguageFactory
 import com.ai.assistance.operit.util.GlobalExceptionHandler
@@ -229,6 +231,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         initAndroidPermissionPreferences(applicationContext)
         AppLogger.d(TAG, "【启动计时】Android权限偏好管理器初始化完成 - ${System.currentTimeMillis() - startTime}ms")
 
+        AgentProfileRepository.instance.initialize(applicationContext)
+        AppLogger.d(TAG, "【启动计时】AgentProfile配置初始化完成 - ${System.currentTimeMillis() - startTime}ms")
+
         // 在最早时机初始化并应用语言设置（必须在获取字符串资源之前）
         initializeAppLanguage()
         AppLogger.d(TAG, "【启动计时】语言设置初始化完成 - ${System.currentTimeMillis() - startTime}ms")
@@ -338,6 +343,15 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             val dbStartTime = System.currentTimeMillis()
             // 简单访问数据库以触发初始化
             database.openHelper.writableDatabase
+            val reconciledRuns =
+                SubagentRunRepository.getInstance(applicationContext)
+                    .reconcileIncompleteRuns(createdBeforeOrAt = startTime)
+            if (reconciledRuns > 0) {
+                AppLogger.w(
+                    TAG,
+                    "Marked $reconciledRuns unfinished Subagent runs as INTERRUPTED after restart",
+                )
+            }
             AppLogger.d(TAG, "【启动计时】数据库预加载完成（异步） - ${System.currentTimeMillis() - dbStartTime}ms")
         }
 

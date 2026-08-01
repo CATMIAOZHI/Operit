@@ -211,7 +211,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         }
     }
 
-    private suspend fun getEffectivePermissionLevel(toolName: String): PermissionLevel {
+    suspend fun getEffectivePermissionLevel(toolName: String): PermissionLevel {
         val preferences = context.toolPermissionsDataStore.data.first()
         val masterSwitch = PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
         val key = toolPermissionKey(toolName)
@@ -239,12 +239,43 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * Shows a one-shot review even when the tool itself is normally allowed.
+     *
+     * This does not expose or persist "always allow", so an approval applies only to the current
+     * guarded invocation. Requests share the normal serialized permission queue.
+     */
+    suspend fun requestExplicitApproval(
+        tool: AITool,
+        operationDescription: String,
+        conversationLabel: String?,
+    ): Boolean {
+        _pendingPermissionRequestCount.update { it + 1 }
+        try {
+            return askMutex.withLock {
+                requestPermissionInternal(
+                    tool = tool,
+                    conversationLabel = conversationLabel,
+                    operationDescriptionOverride = operationDescription,
+                    persistAlwaysAllow = false,
+                    allowAlwaysAllow = false,
+                )
+            }
+        } finally {
+            _pendingPermissionRequestCount.update { count -> (count - 1).coerceAtLeast(0) }
+        }
+    }
+
     private suspend fun requestPermissionInternal(
         tool: AITool,
-        conversationLabel: String?
+        conversationLabel: String?,
+        operationDescriptionOverride: String? = null,
+        persistAlwaysAllow: Boolean = true,
+        allowAlwaysAllow: Boolean = true,
     ): Boolean {
         return withContext(Dispatchers.Main.immediate) {
-            val operationDescription = getOperationDescription(tool)
+            val operationDescription =
+                operationDescriptionOverride ?: getOperationDescription(tool)
             AppLogger.d(TAG, "Requesting permission: ${tool.name}")
 
             val requestInfo = Pair(tool, operationDescription)
@@ -310,7 +341,8 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                                 timeoutDisabled = true
                                 mainHandler.removeCallbacks(requestTimeoutTask)
                             }
-                        }
+                        },
+                        allowAlwaysAllow = allowAlwaysAllow,
                     )
                 }
 
@@ -318,9 +350,11 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                     PermissionRequestResult.ALLOW -> true
                     PermissionRequestResult.DENY -> false
                     PermissionRequestResult.ALWAYS_ALLOW -> {
-                        // Persist the choice before releasing the mutex to queued requests.
-                        withContext(NonCancellable + Dispatchers.IO) {
-                            saveToolPermission(tool.name, PermissionLevel.ALLOW)
+                        if (persistAlwaysAllow) {
+                            // Persist the choice before releasing the mutex to queued requests.
+                            withContext(NonCancellable + Dispatchers.IO) {
+                                saveToolPermission(tool.name, PermissionLevel.ALLOW)
+                            }
                         }
                         true
                     }

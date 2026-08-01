@@ -15,6 +15,7 @@ import com.ai.assistance.operit.services.core.ChatSelectionMode
 import com.ai.assistance.operit.services.core.ChatHistoryDelegate
 import com.ai.assistance.operit.services.core.MessageCoordinationDelegate
 import com.ai.assistance.operit.services.core.MessageProcessingDelegate
+import com.ai.assistance.operit.services.core.ChatTurnTerminalSignal
 import com.ai.assistance.operit.services.core.TokenStatisticsDelegate
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.ui.features.chat.viewmodel.UiStateDelegate
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 聊天服务核心类
@@ -61,6 +63,9 @@ class ChatServiceCore(
     
     // 额外的 onTurnComplete 回调（用于悬浮窗通知应用等场景）
     private var additionalOnTurnComplete: ((String?, Int, Int, Int) -> Unit)? = null
+    private val pendingChatTurns =
+        ConcurrentHashMap<String, CompletableDeferred<ChatTurnTerminalSignal>>()
+    private val cancellationRequestedChatTurns = ConcurrentHashMap.newKeySet<String>()
 
     private fun Long.toTokenCountCallbackInt(): Int = coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
     private var uiBridge: ChatServiceUiBridge = EmptyChatServiceUiBridge
@@ -205,6 +210,13 @@ class ChatServiceCore(
                     windowSize.toTokenCountCallbackInt()
                 )
             },
+            onTurnTerminated = { signal ->
+                cancellationRequestedChatTurns.remove(signal.turnId)
+                pendingChatTurns.remove(signal.turnId)?.complete(signal)
+            },
+            isTurnCancellationRequested = { turnId ->
+                turnId in cancellationRequestedChatTurns
+            },
             getIsAutoReadEnabled = {
                 apiConfigDelegate.enableAutoRead.value
             },
@@ -289,6 +301,11 @@ class ChatServiceCore(
         messageProcessingDelegate.cancelMessage(chatId)
     }
 
+    suspend fun cancelMessageAndAwait(chatId: String) {
+        messageCoordinationDelegate.cancelSummaryForChat(chatId)
+        messageProcessingDelegate.cancelMessageAndAwait(chatId)
+    }
+
     /** 更新用户消息 */
     fun updateUserMessage(message: String) {
         messageProcessingDelegate.updateUserMessage(message)
@@ -296,6 +313,42 @@ class ChatServiceCore(
 
     fun getResponseStream(chatId: String): SharedStream<String>? {
         return messageProcessingDelegate.getResponseStream(chatId)
+    }
+
+    suspend fun chatExists(chatId: String): Boolean =
+        chatHistoryDelegate.chatExists(chatId)
+
+    fun registerChatTurn(turnId: String): CompletableDeferred<ChatTurnTerminalSignal> {
+        val deferred = CompletableDeferred<ChatTurnTerminalSignal>()
+        check(pendingChatTurns.putIfAbsent(turnId, deferred) == null) {
+            "Turn is already registered: $turnId"
+        }
+        return deferred
+    }
+
+    fun failRegisteredChatTurn(turnId: String, chatId: String, error: String) {
+        cancellationRequestedChatTurns.remove(turnId)
+        pendingChatTurns.remove(turnId)?.complete(
+            ChatTurnTerminalSignal.Failed(
+                turnId = turnId,
+                chatId = chatId,
+                error = error,
+            )
+        )
+    }
+
+    fun cancelRegisteredChatTurn(turnId: String, chatId: String) {
+        cancellationRequestedChatTurns.add(turnId)
+        messageCoordinationDelegate.cancelSummaryForChat(chatId)
+        messageProcessingDelegate.cancelMessage(chatId)
+    }
+
+    suspend fun cancelRegisteredChatTurnAndAwait(turnId: String, chatId: String) {
+        val terminalSignal = pendingChatTurns[turnId]
+        cancellationRequestedChatTurns.add(turnId)
+        messageCoordinationDelegate.cancelSummaryForChat(chatId)
+        messageProcessingDelegate.cancelMessageAndAwait(chatId)
+        terminalSignal?.await()
     }
 
     // ========== 聊天历史相关 ==========
@@ -320,8 +373,8 @@ class ChatServiceCore(
     }
 
     /** 切换聊天 */
-    fun switchChat(chatId: String) {
-        chatHistoryDelegate.switchChat(chatId)
+    fun switchChat(chatId: String, scrollToBottom: Boolean = true) {
+        chatHistoryDelegate.switchChat(chatId, scrollToBottom = scrollToBottom)
     }
 
     /**
@@ -409,6 +462,12 @@ class ChatServiceCore(
 
     val currentTurnToolInvocationCountByChatId: StateFlow<Map<String, Int>>
         get() = messageProcessingDelegate.currentTurnToolInvocationCountByChatId
+
+    val lastToolNameByChatId: StateFlow<Map<String, String>>
+        get() = messageProcessingDelegate.lastToolNameByChatId
+
+    val lastTurnToolInvocationCountByChatId: StateFlow<Map<String, Int>>
+        get() = messageProcessingDelegate.lastTurnToolInvocationCountByChatId
 
     val scrollToBottomEvent: SharedFlow<Unit>
         get() = messageProcessingDelegate.scrollToBottomEvent

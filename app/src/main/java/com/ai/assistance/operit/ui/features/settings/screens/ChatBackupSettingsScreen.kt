@@ -243,7 +243,7 @@ fun ChatBackupSettingsScreen() {
     }
 
     LaunchedEffect(Unit) {
-        chatHistoryManager.chatHistoriesFlow.collect { chatHistories ->
+        chatHistoryManager.allChatHistoriesInternalFlow.collect { chatHistories ->
             totalChatCount = chatHistories.size
         }
     }
@@ -1289,7 +1289,8 @@ fun ChatBackupSettingsScreen() {
                         val filePath = chatHistoryManager.exportChatHistoriesToDownloads(selectedExportFormat)
                         if (filePath != null) {
                             operationState = ChatHistoryOperation.EXPORTED
-                            val chatCount = chatHistoryManager.chatHistoriesFlow.first().size
+                            val chatCount =
+                                chatHistoryManager.allChatHistoriesInternalFlow.first().size
                             val formatName = when (selectedExportFormat) {
                                 ExportFormat.JSON -> context.getString(R.string.backup_format_json)
                                 ExportFormat.MARKDOWN -> context.getString(R.string.backup_format_markdown)

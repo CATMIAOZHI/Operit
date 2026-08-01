@@ -11,9 +11,11 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.agent.SubagentCoordinator
 import com.ai.assistance.operit.data.backup.OperitBackupDirs
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ChatEntity
+import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.ChatMessage
@@ -27,7 +29,9 @@ import com.ai.assistance.operit.data.model.OperitArchivedChat
 import com.ai.assistance.operit.data.model.OperitArchivedFolder
 import com.ai.assistance.operit.data.model.OperitArchivedMessage
 import com.ai.assistance.operit.data.model.OperitArchivedMessageVariant
+import com.ai.assistance.operit.data.model.OperitArchivedSubagentRun
 import com.ai.assistance.operit.data.model.OperitChatArchive
+import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.model.WorkspaceRenameResult
 import com.ai.assistance.operit.util.LocaleUtils
 import com.ai.assistance.operit.data.converter.*
@@ -80,6 +84,63 @@ private val Context.currentChatIdDataStore by preferencesDataStore(name = "curre
 internal fun normalizeChatFolderId(folderId: String?): String? =
     folderId.takeUnless { it == SYSTEM_UNGROUPED_FOLDER_ID }
 
+internal val OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS =
+    listOf(
+        "id",
+        "parentChatId",
+        "childChatId",
+        "parentToolCallId",
+        "agentProfileId",
+        "title",
+        "status",
+        "createdAt",
+        "startedAt",
+        "completedAt",
+        "error",
+        "agentConfigSnapshot",
+        "modelConfigIdSnapshot",
+        "modelIndexSnapshot",
+        "toolInvocationCount",
+        "archivedAt",
+    )
+
+internal fun remapArchivedParentToolCallIds(
+    chat: OperitArchivedChat,
+    callIdRemap: Map<String, String>,
+    taskIdRemap: Map<String, String> = emptyMap(),
+): OperitArchivedChat {
+    if (callIdRemap.isEmpty() && taskIdRemap.isEmpty()) return chat
+
+    fun remapContent(content: String): String =
+        remapPersistedTaskIds(
+            callIdRemap.entries.fold(content) { current, (oldCallId, newCallId) ->
+                Regex(
+                    """(\bcall_id\s*=\s*")${Regex.escape(oldCallId)}(")""",
+                    RegexOption.IGNORE_CASE,
+                ).replace(current) { match ->
+                    match.groupValues[1] + newCallId + match.groupValues[2]
+                }
+            },
+            taskIdRemap,
+        )
+
+    return chat.copy(
+        messages =
+            chat.messages.map { archivedMessage ->
+                archivedMessage.copy(
+                    baseMessage =
+                        archivedMessage.baseMessage.copy(
+                            content = remapContent(archivedMessage.baseMessage.content)
+                        ),
+                    variants =
+                        archivedMessage.variants.map { variant ->
+                            variant.copy(content = remapContent(variant.content))
+                        },
+                )
+            }
+    )
+}
+
 class ChatHistoryManager private constructor(private val context: Context) {
     companion object {
         private const val TAG = "ChatHistoryManager"
@@ -104,8 +165,11 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private val chatDao = database.chatDao()
     private val chatFolderDao = database.chatFolderDao()
     private val chatFolderRepository = ChatFolderRepository(database)
+    private val chatBranchRepository = ChatBranchRepository(database)
     private val messageDao = database.messageDao()
     private val messageVariantDao = database.messageVariantDao()
+    private val subagentRunDao = database.subagentRunDao()
+    private val subagentRunRepository = SubagentRunRepository.getInstance(context)
     private val operitArchiveExportMutex = Mutex()
     private val operitArchiveJson =
         Json {
@@ -136,12 +200,16 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     private data class ArchivedChatMetadata(
         val id: String,
+        val title: String,
         val folderId: String?,
         val legacyFolderBucketKey: LegacyFolderBucketKey?,
         val displayOrder: Long,
         val createdAt: Long,
         val hasMessages: Boolean,
         val hasFolderIdField: Boolean,
+        val parentChatId: String?,
+        val chatKind: String?,
+        val hasChatKindField: Boolean,
         val isFavorite: Boolean?,
     )
 
@@ -155,6 +223,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         val formatVersion: Int,
         val folders: List<ScannedFolder>,
         val chats: List<ArchivedChatMetadata>,
+        val subagentRuns: List<OperitArchivedSubagentRun>,
     )
 
     private fun OperitArchivedChat.legacyFolderBucketKey(): LegacyFolderBucketKey? {
@@ -358,6 +427,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
             workspace = stringOrNull("workspace"),
             workspaceEnv = stringOrNull("workspaceEnv"),
             parentChatId = stringOrNull("parentChatId"),
+            chatKind =
+                stringOrNull("chatKind")
+                    ?: if (stringOrNull("parentChatId") == null) {
+                        ChatKind.NORMAL.name
+                    } else {
+                        ChatKind.BRANCH.name
+                    },
             characterCardName = stringOrNull("characterCardName"),
             characterGroupId = stringOrNull("characterGroupId"),
             locked = getInt(getColumnIndexOrThrow("locked")) != 0,
@@ -406,6 +482,29 @@ class ChatHistoryManager private constructor(private val context: Context) {
             outputDurationMs = getLong(getColumnIndexOrThrow("outputDurationMs")),
             waitDurationMs = getLong(getColumnIndexOrThrow("waitDurationMs")),
             completedAt = getLong(getColumnIndexOrThrow("completedAt")),
+        )
+
+    private fun Cursor.toArchivedSubagentRun(): OperitArchivedSubagentRun =
+        OperitArchivedSubagentRun(
+            id = getString(getColumnIndexOrThrow("id")),
+            parentChatId = getString(getColumnIndexOrThrow("parentChatId")),
+            childChatId = getString(getColumnIndexOrThrow("childChatId")),
+            parentToolCallId = stringOrNull("parentToolCallId"),
+            agentProfileId = getString(getColumnIndexOrThrow("agentProfileId")),
+            title = getString(getColumnIndexOrThrow("title")),
+            status = getString(getColumnIndexOrThrow("status")),
+            createdAt = getLong(getColumnIndexOrThrow("createdAt")),
+            startedAt = longOrNull("startedAt"),
+            completedAt = longOrNull("completedAt"),
+            error = stringOrNull("error"),
+            agentConfigSnapshot = stringOrNull("agentConfigSnapshot"),
+            modelConfigIdSnapshot = stringOrNull("modelConfigIdSnapshot"),
+            modelIndexSnapshot =
+                getColumnIndexOrThrow("modelIndexSnapshot").let { index ->
+                    if (isNull(index)) null else getInt(index)
+                },
+            toolInvocationCount = getInt(getColumnIndexOrThrow("toolInvocationCount")),
+            archivedAt = longOrNull("archivedAt"),
         )
 
     private fun buildOperitArchivedChatFromSnapshot(
@@ -464,7 +563,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         CREATE TABLE chats AS
                         SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens,
                                currentWindowSize, `group`, folderId, displayOrder, workspace,
-                               workspaceEnv, parentChatId, characterCardName, characterGroupId,
+                               workspaceEnv, parentChatId, chatKind, characterCardName, characterGroupId,
                                locked, pinned, isFavorite, lastMessageAt
                         FROM operit_export_source.chats
                         """.trimIndent(),
@@ -493,6 +592,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
                                provider, modelName, inputTokens, outputTokens, cachedInputTokens,
                                sentAt, outputDurationMs, waitDurationMs, completedAt
                         FROM operit_export_source.message_variants
+                        """.trimIndent(),
+                    )
+                    sqliteDb.execSQL(
+                        """
+                        CREATE TABLE subagent_runs AS
+                        SELECT ${OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS.joinToString()}
+                        FROM operit_export_source.subagent_runs
                         """.trimIndent(),
                     )
                     sqliteDb.execSQL(
@@ -592,7 +698,21 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     }
 
                     if (chatCount > 0) writer.append('\n')
-                    writer.append("  ]\n")
+                    writer.append("  ],\n")
+                    val archivedSubagentRuns =
+                        snapshot.rawQuery(
+                            "SELECT * FROM subagent_runs ORDER BY createdAt ASC, id ASC",
+                            emptyArray(),
+                        ).use { cursor ->
+                            buildList {
+                                while (cursor.moveToNext()) {
+                                    add(cursor.toArchivedSubagentRun())
+                                }
+                            }
+                        }
+                    writer.append("  \"subagentRuns\": ")
+                    writer.append(operitArchiveJson.encodeToString(archivedSubagentRuns))
+                    writer.append('\n')
                     writer.append("}\n")
                 }
                 AppLogger.d(
@@ -618,7 +738,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         counters: ImportCounters,
         importedIndex: Int,
     ) {
-        if (archivedChat.messages.isEmpty()) {
+        if (archivedChat.messages.isEmpty() && formatVersion < 5) {
             counters.skippedCount++
             AppLogger.w(
                 TAG,
@@ -749,6 +869,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
         archiveFile: File,
         existingIds: MutableSet<String>,
         counters: ImportCounters,
+        formatVersion: Int = 4,
+        chatTransform: (OperitArchivedChat) -> OperitArchivedChat = { it },
+        afterChatsInTransaction: suspend () -> Unit = {},
     ): Int {
         var importedFolderCount = 0
         database.withTransaction {
@@ -946,24 +1069,28 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 }
             }
             forEachArchivedChat(archiveFile) { archivedChat, _, index ->
+                val transformedChat = chatTransform(archivedChat)
                 val normalizedFolderId =
-                    archivedChat.folderId
+                    transformedChat.folderId
                         ?.takeIf { it in staged.folderIds }
                         ?.let(folderIdRemap::getValue)
                 consumeImportedArchiveChat(
-                    archivedChat = archivedChat,
+                    archivedChat = transformedChat,
                     folderId = normalizedFolderId,
-                    formatVersion = 4,
+                    formatVersion = formatVersion,
                     existingIds = existingIds,
                     counters = counters,
                     importedIndex = index,
                 )
             }
+            afterChatsInTransaction()
             val foreignKeyViolation =
                 database.openHelper.writableDatabase
                     .query("PRAGMA foreign_key_check")
                     .use { cursor -> cursor.moveToFirst() }
-            check(!foreignKeyViolation) { "Archive v4 import violates foreign keys" }
+            check(!foreignKeyViolation) {
+                "Archive v$formatVersion import violates foreign keys"
+            }
         }
         if (staged.orphanParentCount > 0 || staged.orphanChatFolderCount > 0) {
             AppLogger.w(
@@ -972,6 +1099,231 @@ class ChatHistoryManager private constructor(private val context: Context) {
             )
         }
         return importedFolderCount
+    }
+
+    private fun validateV5Archive(archive: ScannedArchive): List<OperitArchivedSubagentRun> {
+        val chatsById = archive.chats.associateBy { it.id }
+        archive.chats.forEach { chat ->
+            val kind =
+                requireNotNull(
+                    chat.chatKind?.let { value ->
+                        runCatching { ChatKind.valueOf(value) }.getOrNull()
+                    }
+                ) {
+                    "Archive v5 chat ${chat.id} has an invalid chatKind"
+                }
+            when (kind) {
+                ChatKind.NORMAL ->
+                    require(chat.parentChatId == null) {
+                        "Archive v5 NORMAL chat ${chat.id} cannot have a parent"
+                    }
+                ChatKind.BRANCH,
+                ChatKind.SUBAGENT -> {
+                    require(chat.parentChatId != null && chat.parentChatId in chatsById) {
+                        "Archive v5 ${kind.name} chat ${chat.id} has an invalid parent"
+                    }
+                }
+            }
+        }
+
+        val runIds = archive.subagentRuns.map { it.id }
+        require(runIds.all { it.isNotBlank() } && runIds.distinct().size == runIds.size) {
+            "Archive v5 contains blank or duplicate task IDs"
+        }
+        val childIds = archive.subagentRuns.map { it.childChatId }
+        require(childIds.distinct().size == childIds.size) {
+            "Archive v5 contains multiple runs for one child chat"
+        }
+        val parentCallIds =
+            archive.subagentRuns.mapNotNull { run ->
+                run.parentToolCallId?.let { callId -> run.parentChatId to callId }
+            }
+        require(parentCallIds.distinct().size == parentCallIds.size) {
+            "Archive v5 contains duplicate parent tool call IDs within one parent chat"
+        }
+        archive.subagentRuns.forEach { run ->
+            val child =
+                requireNotNull(chatsById[run.childChatId]) {
+                    "Archive v5 run ${run.id} references a missing child chat"
+                }
+            require(run.parentChatId in chatsById) {
+                "Archive v5 run ${run.id} references a missing parent chat"
+            }
+            require(
+                child.chatKind == ChatKind.SUBAGENT.name &&
+                    child.parentChatId == run.parentChatId
+            ) {
+                "Archive v5 run ${run.id} does not match its child relationship"
+            }
+            require(
+                runCatching { SubagentRunStatus.valueOf(run.status) }.isSuccess
+            ) {
+                "Archive v5 run ${run.id} has an invalid status"
+            }
+        }
+
+        val subagentChildIds =
+            archive.chats
+                .filterTo(linkedSetOf()) { it.chatKind == ChatKind.SUBAGENT.name }
+                .mapTo(linkedSetOf()) { it.id }
+        require(childIds.toSet() == subagentChildIds) {
+            "Archive v5 contains a Subagent child without exactly one run record"
+        }
+        return archive.subagentRuns
+    }
+
+    private suspend fun importV5Archive(
+        archive: ScannedArchive,
+        archiveFile: File,
+        existingIds: MutableSet<String>,
+        counters: ImportCounters,
+    ): Int {
+        val completeRuns = validateV5Archive(archive)
+        val staged = stageV4Archive(archive)
+        val localChatIds = chatDao.getAllChatsDirectly().mapTo(hashSetOf()) { it.id }
+        val allocatedChatIds =
+            hashSetOf<String>().apply {
+                addAll(localChatIds)
+                addAll(archive.chats.map { it.id })
+            }
+        val chatIdRemap =
+            archive.chats.associate { chat ->
+                val resolvedId =
+                    if (chat.id !in localChatIds) {
+                        chat.id
+                    } else {
+                        var candidate: String
+                        do {
+                            candidate = java.util.UUID.randomUUID().toString()
+                        } while (!allocatedChatIds.add(candidate))
+                        candidate
+                    }
+                chat.id to resolvedId
+            }
+
+        val localRuns = subagentRunDao.getAll()
+        val localTaskIds = localRuns.mapTo(hashSetOf()) { it.id }
+        val allocatedTaskIds =
+            hashSetOf<String>().apply {
+                addAll(localTaskIds)
+                addAll(completeRuns.map { it.id })
+            }
+        val taskIdRemap =
+            completeRuns.associate { run ->
+                val resolvedId =
+                    if (run.id !in localTaskIds) {
+                        run.id
+                    } else {
+                        var candidate: String
+                        do {
+                            candidate = java.util.UUID.randomUUID().toString()
+                        } while (!allocatedTaskIds.add(candidate))
+                        candidate
+                    }
+                run.id to resolvedId
+            }
+
+        val allocatedParentToolCallIds =
+            localRuns.mapNotNullTo(hashSetOf()) { it.parentToolCallId }
+        val parentToolCallIdRemap =
+            completeRuns
+                .mapNotNull { run ->
+                    val oldCallId = run.parentToolCallId ?: return@mapNotNull null
+                    val resolvedCallId =
+                        if (allocatedParentToolCallIds.add(oldCallId)) {
+                            oldCallId
+                        } else {
+                            var candidate: String
+                            do {
+                                candidate = java.util.UUID.randomUUID().toString()
+                            } while (!allocatedParentToolCallIds.add(candidate))
+                            candidate
+                        }
+                    (run.parentChatId to oldCallId) to resolvedCallId
+                }
+                .toMap()
+
+        fun remapChat(chat: OperitArchivedChat): OperitArchivedChat =
+            chat.copy(
+                id = chatIdRemap.getValue(chat.id),
+                parentChatId = chat.parentChatId?.let(chatIdRemap::getValue),
+                chatKind =
+                    chat.chatKind
+                        ?: if (chat.parentChatId == null) {
+                            ChatKind.NORMAL.name
+                        } else {
+                            ChatKind.BRANCH.name
+                        },
+                messages =
+                    remapArchivedParentToolCallIds(
+                        chat = chat,
+                        callIdRemap =
+                            parentToolCallIdRemap
+                                .filterKeys { (parentChatId, _) -> parentChatId == chat.id }
+                                .mapKeys { (key, _) -> key.second },
+                        taskIdRemap =
+                            completeRuns
+                                .asSequence()
+                                .filter { run -> run.parentChatId == chat.id }
+                                .associate { run -> run.id to taskIdRemap.getValue(run.id) },
+                    ).messages,
+            )
+
+        val remappedStaged =
+            staged.copy(
+                chats =
+                    staged.chats.map { chat ->
+                        chat.copy(
+                            id = chatIdRemap.getValue(chat.id),
+                            parentChatId = chat.parentChatId?.let(chatIdRemap::getValue),
+                        )
+                    }
+            )
+        val activeStatuses =
+            setOf(
+                SubagentRunStatus.CREATED.name,
+                SubagentRunStatus.QUEUED.name,
+                SubagentRunStatus.RUNNING.name,
+            )
+        val now = System.currentTimeMillis()
+        val remappedRuns =
+            completeRuns.map { run ->
+                val wasActive = run.status in activeStatuses
+                run.copy(
+                    id = taskIdRemap.getValue(run.id),
+                    parentChatId = chatIdRemap.getValue(run.parentChatId),
+                    childChatId = chatIdRemap.getValue(run.childChatId),
+                    parentToolCallId =
+                        run.parentToolCallId?.let { oldCallId ->
+                            parentToolCallIdRemap.getValue(run.parentChatId to oldCallId)
+                        },
+                    status =
+                        if (wasActive) {
+                            SubagentRunStatus.INTERRUPTED.name
+                        } else {
+                            run.status
+                        },
+                    completedAt = if (wasActive) now else run.completedAt,
+                    error =
+                        if (wasActive) {
+                            "Imported while the Subagent task was incomplete."
+                        } else {
+                            run.error
+                        },
+                )
+            }
+
+        return importV4Archive(
+            staged = remappedStaged,
+            archiveFile = archiveFile,
+            existingIds = existingIds,
+            counters = counters,
+            formatVersion = 5,
+            chatTransform = ::remapChat,
+            afterChatsInTransaction = {
+                remappedRuns.forEach { run -> subagentRunDao.insert(run.toEntity()) }
+            },
+        )
     }
 
     private fun <T> decodeStreamObject(
@@ -990,8 +1342,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
         var formatVersion: Int? = null
         var foldersPresent = false
         var chatsPresent = false
+        var subagentRunsPresent = false
         val folders = mutableListOf<ScannedFolder>()
         val chats = mutableListOf<ArchivedChatMetadata>()
+        val subagentRuns = mutableListOf<OperitArchivedSubagentRun>()
 
         JsonReader(InputStreamReader(file.inputStream(), StandardCharsets.UTF_8)).use { reader ->
             reader.isLenient = true
@@ -1040,6 +1394,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                             chats +=
                                 ArchivedChatMetadata(
                                     id = chat.id,
+                                    title = chat.title,
                                     folderId = chat.folderId,
                                     legacyFolderBucketKey = chat.legacyFolderBucketKey(),
                                     displayOrder = chat.displayOrder,
@@ -1050,8 +1405,23 @@ class ChatHistoryManager private constructor(private val context: Context) {
                                             .toEpochMilli(),
                                     hasMessages = chat.messages.isNotEmpty(),
                                     hasFolderIdField = "folderId" in fields,
+                                    parentChatId = chat.parentChatId,
+                                    chatKind = chat.chatKind,
+                                    hasChatKindField = "chatKind" in fields,
                                     isFavorite = chat.isFavorite,
                                 )
+                        }
+                        reader.endArray()
+                    }
+                    "subagentRuns" -> {
+                        subagentRunsPresent = true
+                        reader.beginArray()
+                        while (reader.hasNext()) {
+                            subagentRuns +=
+                                decodeStreamObject(reader, "Archived Subagent run") {
+                                    operitArchiveJson
+                                        .decodeFromString<OperitArchivedSubagentRun>(it)
+                                }.first
                         }
                         reader.endArray()
                     }
@@ -1079,13 +1449,19 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 "Archive v$resolvedFormatVersion contains a chat without isFavorite"
             }
         }
-        if (resolvedFormatVersion == 4) {
-            require(foldersPresent) { "Archive v4 is missing folders" }
+        if (resolvedFormatVersion >= 4) {
+            require(foldersPresent) { "Archive v$resolvedFormatVersion is missing folders" }
             require(folders.all { it.hasRequiredV4Fields }) {
-                "Archive v4 contains a folder with missing fields"
+                "Archive v$resolvedFormatVersion contains a folder with missing fields"
             }
             require(chats.all { it.hasFolderIdField }) {
-                "Archive v4 contains a chat without folderId"
+                "Archive v$resolvedFormatVersion contains a chat without folderId"
+            }
+        }
+        if (resolvedFormatVersion == 5) {
+            require(subagentRunsPresent) { "Archive v5 is missing subagentRuns" }
+            require(chats.all { it.hasChatKindField }) {
+                "Archive v5 contains a chat without chatKind"
             }
         }
         return ScannedArchive(
@@ -1093,6 +1469,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
             formatVersion = resolvedFormatVersion,
             folders = folders,
             chats = chats,
+            subagentRuns = subagentRuns,
         )
     }
 
@@ -1125,6 +1502,35 @@ class ChatHistoryManager private constructor(private val context: Context) {
             reader.endObject()
         }
         require(chatsPresent) { "Operit archive is missing chats" }
+    }
+
+    private suspend fun forEachArchivedSubagentRun(
+        file: File,
+        consume: suspend (OperitArchivedSubagentRun) -> Unit,
+    ) {
+        var runsPresent = false
+        JsonReader(InputStreamReader(file.inputStream(), StandardCharsets.UTF_8)).use { reader ->
+            reader.isLenient = true
+            reader.beginObject()
+            while (reader.hasNext()) {
+                if (reader.nextName() != "subagentRuns") {
+                    reader.skipValue()
+                    continue
+                }
+                runsPresent = true
+                reader.beginArray()
+                while (reader.hasNext()) {
+                    consume(
+                        decodeStreamObject(reader, "Archived Subagent run") {
+                            operitArchiveJson.decodeFromString<OperitArchivedSubagentRun>(it)
+                        }.first
+                    )
+                }
+                reader.endArray()
+            }
+            reader.endObject()
+        }
+        require(runsPresent) { "Operit archive is missing subagentRuns" }
     }
 
     private suspend fun importLegacyChatArray(
@@ -1207,7 +1613,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
             when (rootToken) {
                 JsonToken.BEGIN_OBJECT -> {
                     val archive = scanOperitArchive(importFile)
-                    if (archive.formatVersion == 4) {
+                    if (archive.formatVersion == 5) {
+                        counters.folderCount =
+                            importV5Archive(
+                                archive = archive,
+                                archiveFile = importFile,
+                                existingIds = existingIds,
+                                counters = counters,
+                            )
+                    } else if (archive.formatVersion == 4) {
                         counters.folderCount =
                             importV4Archive(
                                 staged = stageV4Archive(archive),
@@ -1308,24 +1722,38 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return toChatHistory(emptyList())
     }
 
-    // 获取所有聊天历史（转换为UI层需要的ChatHistory对象）
-    private val _chatHistoriesFlow: Flow<List<ChatHistory>> =
-        // 使用原始的Flow方式，这样可以确保数据库变化时会自动刷新
-        chatDao.getAllChats().map { chatEntities ->
-            // AppLogger.d(TAG, "加载聊天列表，共 ${chatEntities.size} 个聊天")
+    private val historyFlowScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-            // 使用withContext将处理移至IO线程
-            kotlinx.coroutines.withContext(Dispatchers.IO) {
+    private fun Flow<List<ChatEntity>>.toHistoryFlow(): Flow<List<ChatHistory>> =
+        map { chatEntities ->
+            withContext(Dispatchers.IO) {
                 chatEntities.map {
                     it.toChatHistory().copy(folderId = normalizeChatFolderId(it.folderId))
                 }
             }
         }
 
-    // 转换为StateFlow以便共享
+    /** Internal data source used by dispatch, archive, migration and consistency checks. */
+    internal val allChatHistoriesUpdatesFlow =
+        chatDao
+            .getAllChats()
+            .toHistoryFlow()
+
+    val allChatHistoriesInternalFlow =
+        allChatHistoriesUpdatesFlow
+            .stateIn(
+                historyFlowScope,
+                SharingStarted.Lazily,
+                emptyList(),
+            )
+
+    /** Default UI data source. Subagent child chats are entered only through task navigation. */
     val chatHistoriesFlow =
-        _chatHistoriesFlow.stateIn(
-            CoroutineScope(Dispatchers.IO + SupervisorJob()),
+        chatDao
+            .getVisibleChats()
+            .toHistoryFlow()
+            .stateIn(
+            historyFlowScope,
             SharingStarted.Lazily,
             emptyList()
         )
@@ -1547,12 +1975,21 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 characterCardName?.trim()?.takeIf { it.isNotEmpty() }
             val normalizedCharacterGroupId =
                 characterGroupId?.trim()?.takeIf { it.isNotEmpty() }
-            val deletedChatIds =
-                chatFolderRepository.deleteFolderWithChats(
+            val expectedChatIds =
+                chatFolderRepository.getFolderDeletionChatIds(
                     folderId = folderId,
                     characterCardName = normalizedCharacterCardName,
                     characterGroupId = normalizedCharacterGroupId,
                 )
+            val deletedChatIds =
+                SubagentCoordinator.getInstance(context).withChatDeletionsPrepared(expectedChatIds) {
+                    chatFolderRepository.deleteFolderWithChats(
+                        folderId = folderId,
+                        characterCardName = normalizedCharacterCardName,
+                        characterGroupId = normalizedCharacterGroupId,
+                        expectedChatIds = expectedChatIds,
+                    )
+                }
             context.currentChatIdDataStore.edit { preferences ->
                 if (preferences[PreferencesKeys.CURRENT_CHAT_ID] in deletedChatIds) {
                     preferences.remove(PreferencesKeys.CURRENT_CHAT_ID)
@@ -2552,6 +2989,11 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
     }
 
+    suspend fun getSubagentChildCount(chatId: String): Int =
+        withContext(Dispatchers.IO) {
+            subagentRunRepository.countChildren(chatId)
+        }
+
     // 删除聊天历史
     suspend fun deleteChatHistory(chatId: String): Boolean {
         chatMutex(chatId).withLock {
@@ -2564,8 +3006,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 if (chat == null) {
                     return false
                 }
-                // 删除聊天实体（级联删除所有消息）
-                chatDao.deleteChat(chatId)
+                SubagentCoordinator.getInstance(context).withChatDeletionPrepared(chatId) {
+                    when {
+                        chat.chatKind == ChatKind.SUBAGENT.name ->
+                            subagentRunRepository.deleteChildChat(chatId)
+                        subagentRunRepository.countChildren(chatId) > 0 ->
+                            subagentRunRepository.deleteParentChatAndChildren(chatId)
+                        else -> chatDao.deleteChat(chatId)
+                    }
+                }
 
                 // 如果删除的是当前聊天，清除当前聊天ID
                 val currentChatId = currentChatIdFlow.first()
@@ -2637,6 +3086,39 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
         return newHistory
     }
+
+    /**
+     * Phase-0 repository entry for creating an off-screen Subagent child.
+     *
+     * This intentionally does not change the globally selected chat and does not use the
+     * UI-oriented ChatHistoryDelegate.createNewChat path.
+     */
+    suspend fun createSubagentSliceChat(
+        parentChatId: String,
+        title: String,
+    ): ChatHistory =
+        withContext(Dispatchers.IO) {
+            val parent =
+                requireNotNull(chatDao.getChatById(parentChatId)) {
+                    "Parent chat does not exist: $parentChatId"
+                }
+            val now = System.currentTimeMillis()
+            val child =
+                ChatEntity(
+                    title = title,
+                    createdAt = now,
+                    updatedAt = now,
+                    folderId = parent.folderId,
+                    displayOrder = -now,
+                    workspace = parent.workspace,
+                    workspaceEnv = parent.workspaceEnv,
+                    parentChatId = parent.id,
+                    chatKind = ChatKind.SUBAGENT.name,
+                    characterCardName = parent.characterCardName,
+                )
+            chatDao.insertChat(child)
+            child.toChatHistory(emptyList())
+        }
 
     /** 更新聊天工作区 */
     suspend fun updateChatWorkspace(chatId: String, workspace: String?, workspaceEnv: String?) {
@@ -2917,49 +3399,22 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         workspace = parentChat.workspace,
                         workspaceEnv = parentChat.workspaceEnv,
                         parentChatId = parentChatId,
+                        chatKind = ChatKind.BRANCH.name,
                         characterCardName = parentChat.characterCardName,
                         characterGroupId = parentChat.characterGroupId,
                         locked = false,
                         pinned = false,
                     )
 
-                val copiedMessageCount = database.withTransaction {
-                    chatDao.insertChat(branchEntity)
-
-                    val count =
-                        messageDao.countMessagesForChatUpToTimestamp(
-                            parentChatId,
-                            upToMessageTimestamp,
-                        )
-                    if (count > 0) {
-                        messageDao.copyMessagesToChat(
-                            sourceChatId = parentChatId,
-                            targetChatId = branchEntity.id,
-                            upToTimestampInclusive = upToMessageTimestamp,
-                        )
-                        messageVariantDao.copyVariantsToChat(
-                            sourceChatId = parentChatId,
-                            targetChatId = branchEntity.id,
-                            upToTimestampInclusive = upToMessageTimestamp,
-                        )
-                    }
-                    chatDao.recalculateLastMessageAt(branchEntity.id)
-                    count
-                }
+                val copyResult =
+                    chatBranchRepository.copyBranch(
+                        sourceChatId = parentChatId,
+                        branch = branchEntity,
+                        upToTimestampInclusive = upToMessageTimestamp,
+                    )
 
                 val branchHistory =
-                    branchEntity
-                        .copy(
-                            lastMessageAt =
-                                if (copiedMessageCount > 0) {
-                                    messageDao
-                                        .getMessagesForChatDesc(branchEntity.id, 1)
-                                        .firstOrNull()
-                                        ?.timestamp
-                                } else {
-                                    null
-                                },
-                        )
+                    copyResult.branch
                         .toChatHistory(emptyList())
 
                 // 设置为当前聊天
@@ -2967,7 +3422,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
                 AppLogger.d(
                     TAG,
-                    "创建分支对话: ${branchHistory.id}, 父对话: $parentChatId, 消息数: $copiedMessageCount"
+                    "创建分支对话: ${branchHistory.id}, 父对话: $parentChatId, " +
+                        "消息数: ${copyResult.copiedMessageCount}, " +
+                        "Subagent数: ${copyResult.copiedSubagentCount}"
                 )
                 branchHistory
             } catch (e: Exception) {
@@ -3020,7 +3477,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
     suspend fun exportChatHistoriesToDownloads(format: ExportFormat): String? =
         withContext(Dispatchers.IO) {
             try {
-                val chatHistoriesBasic = chatHistoriesFlow.first()
+                val chatHistoriesBasic = allChatHistoriesInternalFlow.first()
                 val folderPathsByChatId = buildFolderPathsByChatId(chatHistoriesBasic)
 
                 val exportDir = OperitBackupDirs.chatDir()
@@ -3162,7 +3619,8 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 if (!isZipProcessed) {
                     AppLogger.d(TAG, "使用指定格式导入: $format")
                     if (format == ChatFormat.OPERIT) {
-                        val existingIds = chatHistoriesFlow.first().map { it.id }.toMutableSet()
+                        val existingIds =
+                            allChatHistoriesInternalFlow.first().map { it.id }.toMutableSet()
                         val inputStream =
                             context.contentResolver.openInputStream(uri)
                                 ?: return@withContext ChatImportResult(0, 0, 0)
@@ -3189,7 +3647,8 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 }
 
                 // 保存导入的对话
-                val existingIds = chatHistoriesFlow.first().map { it.id }.toMutableSet()
+                val existingIds =
+                    allChatHistoriesInternalFlow.first().map { it.id }.toMutableSet()
 
                 var newCount = 0
                 var updatedCount = 0
@@ -3707,26 +4166,45 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 val currentChatId = currentChatIdFlow.first()
-                val currentChat = currentChatId?.let { chatDao.getChatById(it) }
-
-                val deletedCount = if (sourceCharacterCardName == null) {
-                    chatDao.deleteUnlockedUnboundChats()
-                } else {
-                    chatDao.deleteUnlockedChatsByCharacterCardName(sourceCharacterCardName)
-                }
-
-                val currentChatShouldBeCleared =
-                    currentChat != null &&
-                        !currentChat.locked &&
-                        (
-                            if (sourceCharacterCardName == null) {
-                                currentChat.characterCardName == null && currentChat.characterGroupId == null
-                            } else {
-                                currentChat.characterCardName == sourceCharacterCardName
+                fun selectDeletionCandidates(allChats: List<ChatEntity>): List<ChatEntity> {
+                    val scopedChatIds =
+                        allChats
+                            .asSequence()
+                            .filter { chat ->
+                                if (sourceCharacterCardName == null) {
+                                    chat.characterCardName == null &&
+                                        chat.characterGroupId == null
+                                } else {
+                                    chat.characterCardName == sourceCharacterCardName
+                                }
                             }
-                        )
+                            .mapTo(hashSetOf(), ChatEntity::id)
+                    return ChatDeletionGraphPolicy.selectDeletableChats(
+                        allChats,
+                        scopedChatIds,
+                    )
+                }
+                val expectedChats = selectDeletionCandidates(chatDao.getAllChatsDirectly())
+                val expectedChatIds = expectedChats.mapTo(linkedSetOf(), ChatEntity::id)
+                val deletedCount =
+                    SubagentCoordinator.getInstance(context)
+                        .withChatDeletionsPrepared(expectedChatIds) {
+                            database.withTransaction {
+                                val currentChats =
+                                    selectDeletionCandidates(chatDao.getAllChatsDirectly())
+                                val currentChatIds =
+                                    currentChats.mapTo(linkedSetOf(), ChatEntity::id)
+                                check(currentChatIds == expectedChatIds) {
+                                    "Character-bound deletion candidates changed while preparing deletion"
+                                }
+                                ChatDeletionGraphPolicy.orderChildFirst(currentChats).forEach {
+                                    chatDao.deleteChat(it.id)
+                                }
+                                currentChats.count { it.chatKind != ChatKind.SUBAGENT.name }
+                            }
+                        }
 
-                if (currentChatShouldBeCleared) {
+                if (currentChatId in expectedChatIds) {
                     context.currentChatIdDataStore.edit { preferences ->
                         preferences.remove(PreferencesKeys.CURRENT_CHAT_ID)
                     }

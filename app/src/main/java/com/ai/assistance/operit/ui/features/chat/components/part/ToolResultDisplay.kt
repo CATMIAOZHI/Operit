@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -124,12 +125,16 @@ fun ToolResultDisplay(
 
 /** 工具结果详情弹窗 美观的弹窗显示完整的工具执行结果 */
 @Composable
-private fun ToolResultDetailDialog(
+internal fun ToolResultDetailDialog(
         toolName: String,
         result: String,
         isSuccess: Boolean,
         onDismiss: () -> Unit,
-        onCopy: () -> Unit
+        onCopy: () -> Unit,
+        titleOverride: String? = null,
+        metadata: String? = null,
+        primaryActionLabel: String? = null,
+        onPrimaryAction: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val dialogMetrics = rememberCompactDialogMetrics()
@@ -167,13 +172,16 @@ private fun ToolResultDetailDialog(
 
                     // 工具名称
                     Text(
-                            text = "$toolName ${if (isSuccess) context.getString(R.string.execution_success) else context.getString(R.string.execution_failed)}",
+                            text =
+                                    titleOverride
+                                            ?: "$toolName ${if (isSuccess) context.getString(R.string.execution_success) else context.getString(R.string.execution_failed)}",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                     )
-
-                    Spacer(modifier = Modifier.weight(1f))
 
                     // 复制按钮
                     IconButton(onClick = onCopy) {
@@ -186,6 +194,15 @@ private fun ToolResultDetailDialog(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                metadata?.takeIf { it.isNotBlank() }?.let { metadataText ->
+                    Text(
+                            text = metadataText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
 
                 // 分隔线
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -224,14 +241,35 @@ private fun ToolResultDetailDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // 关闭按钮
-                Button(
-                        onClick = onDismiss,
+                Row(
                         modifier = Modifier.align(Alignment.End),
-                        colors =
-                                ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.primary
-                                )
-                ) { Text(context.getString(R.string.close)) }
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (onPrimaryAction != null && !primaryActionLabel.isNullOrBlank()) {
+                        TextButton(onClick = onDismiss) {
+                            Text(stringResource(R.string.close))
+                        }
+                        Button(
+                                onClick = onPrimaryAction,
+                                colors =
+                                        ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.primary
+                                        )
+                        ) {
+                            Text(primaryActionLabel)
+                        }
+                    } else {
+                        Button(
+                                onClick = onDismiss,
+                                colors =
+                                        ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.primary
+                                        )
+                        ) {
+                            Text(stringResource(R.string.close))
+                        }
+                    }
+                }
             }
         }
     }

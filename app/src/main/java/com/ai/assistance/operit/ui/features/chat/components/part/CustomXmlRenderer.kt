@@ -47,9 +47,57 @@ import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.stream
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 /** 支持多种 XML 标签的自定义渲染器 包含高效的前缀检测，直接解析标签类型 */
 private const val TOOL_PARAM_TOKEN_THRESHOLD = 50
+
+internal data class ResolvedToolRequestPresentation(
+    val toolName: String,
+    val forwardedParams: Map<String, String>,
+)
+
+internal fun resolveToolRequestPresentation(
+    rawToolName: String,
+    params: Map<String, String>,
+): ResolvedToolRequestPresentation {
+    if (rawToolName != "proxy" && rawToolName != "package_proxy") {
+        return ResolvedToolRequestPresentation(rawToolName, params)
+    }
+
+    val targetToolName = params["tool_name"]?.decodeToolXmlText()?.trim().orEmpty()
+    val paramsJson =
+        params["params"]
+            ?.trim()
+            ?.removeSurrounding("<![CDATA[", "]]>")
+            ?.decodeToolXmlText()
+            .orEmpty()
+    val forwardedParams =
+        runCatching {
+                Json.parseToJsonElement(paramsJson).jsonObject.mapValues { (_, value) ->
+                    when (value) {
+                        JsonNull -> ""
+                        is JsonPrimitive -> value.content
+                        else -> value.toString()
+                    }
+                }
+            }
+            .getOrDefault(emptyMap())
+    return ResolvedToolRequestPresentation(
+        toolName = targetToolName.ifBlank { rawToolName },
+        forwardedParams = forwardedParams,
+    )
+}
+
+private fun String.decodeToolXmlText(): String =
+    replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 
 class CustomXmlRenderer(
     private val showThinkingProcess: Boolean = true,
@@ -69,6 +117,9 @@ class CustomXmlRenderer(
         val rawToolName: String,
         val paramText: String,
         val displayToolName: String,
+        val summaryOverride: String? = null,
+        val subagentName: String? = null,
+        val subagentTaskId: String? = null,
         val isClosed: Boolean,
     )
 
@@ -287,20 +338,6 @@ class CustomXmlRenderer(
         }
 
         return params
-    }
-
-    private fun resolveToolDisplayNameForRender(toolName: String, params: Map<String, String>): String {
-        if (toolName != "package_proxy" && toolName != "proxy") {
-            return toolName
-        }
-
-        val targetToolName = params["tool_name"]
-            ?.replace("&quot;", "\"")
-            ?.replace("&amp;", "&")
-            ?.trim()
-            .orEmpty()
-
-        return if (targetToolName.isNotBlank()) targetToolName else toolName
     }
 
     /** 渲染 <search> 标签内容 (Google Search Grounding 来源) */
@@ -725,25 +762,56 @@ class CustomXmlRenderer(
                 val rawToolName = nameMatch?.groupValues?.get(1) ?: "Unknown tool"
                 val params = extractParamsFromTool(content)
                 val paramText = extractContentFromXml(content, "tool").trim()
-                val displayToolName = resolveToolDisplayNameForRender(rawToolName, params)
+                val resolvedPresentation = resolveToolRequestPresentation(rawToolName, params)
+                val displayToolName = resolvedPresentation.toolName
+                val displayParams = resolvedPresentation.forwardedParams
+                val summaryOverride =
+                    if (displayToolName == "task") {
+                        val subagentName =
+                            displayParams["subagent_type"].orEmpty().ifBlank { "subagent" }
+                        val taskTitle = displayParams["title"].orEmpty().ifBlank { "task" }
+                        "$subagentName - $taskTitle"
+                    } else {
+                        null
+                    }
+                val subagentName =
+                    displayParams["subagent_type"]
+                        ?.trim()
+                        ?.takeIf { displayToolName == "task" && it.isNotEmpty() }
+                val subagentTaskId =
+                    displayParams["task_id"]
+                        ?.trim()
+                        ?.takeIf { displayToolName == "task" && it.isNotEmpty() }
 
                 ToolRequestRenderState(
                     rawToolName = rawToolName,
                     paramText = paramText,
                     displayToolName = displayToolName,
+                    summaryOverride = summaryOverride,
+                    subagentName = subagentName,
+                    subagentTaskId = subagentTaskId,
                     isClosed = isXmlFullyClosed(content),
                 )
             }
 
         Column {
+            if (renderState.displayToolName == "task") {
+                CompactToolDisplay(
+                    toolName = renderState.displayToolName,
+                    params = renderState.paramText,
+                    summaryOverride = renderState.summaryOverride,
+                    textColor = textColor,
+                    modifier = modifier,
+                    enableDialog = enableDialogs,
+                )
             // 特殊处理文件编辑类工具
-            if (renderState.displayToolName == "apply_file" ||
+            } else if (renderState.displayToolName == "apply_file" ||
                 renderState.displayToolName == "create_file" ||
                 renderState.displayToolName == "edit_file"
             ) {
                 if (renderState.isClosed) {
                     CompactToolDisplay(
-                        toolName = renderState.rawToolName,
+                        toolName = renderState.displayToolName,
                         params = renderState.paramText,
                         textColor = textColor,
                         modifier = modifier,
@@ -751,7 +819,7 @@ class CustomXmlRenderer(
                     )
                 } else {
                     DetailedToolDisplay(
-                        toolName = renderState.rawToolName,
+                        toolName = renderState.displayToolName,
                         params = renderState.paramText,
                         textColor = textColor,
                         modifier = modifier,
@@ -762,7 +830,7 @@ class CustomXmlRenderer(
                 // 对于其他工具，保持原有逻辑
                 if (!renderState.isClosed && paramTokenEstimate > TOOL_PARAM_TOKEN_THRESHOLD) {
                     DetailedToolDisplay(
-                        toolName = renderState.rawToolName,
+                        toolName = renderState.displayToolName,
                         params = renderState.paramText,
                         textColor = textColor,
                         modifier = modifier,
@@ -770,7 +838,7 @@ class CustomXmlRenderer(
                     )
                 } else {
                     CompactToolDisplay(
-                        toolName = renderState.rawToolName,
+                        toolName = renderState.displayToolName,
                         params = renderState.paramText,
                         textColor = textColor,
                         modifier = modifier,
@@ -786,6 +854,9 @@ class CustomXmlRenderer(
                     persistedExecution = persistedToolExecutions[index],
                     allowUnmatchedLiveExecution = xmlStream != null,
                     enableDialogs = enableDialogs,
+                    requestedToolName = renderState.displayToolName,
+                    requestedSubagentName = renderState.subagentName,
+                    requestedSubagentTaskId = renderState.subagentTaskId,
                     modifier = modifier,
                 )
             }

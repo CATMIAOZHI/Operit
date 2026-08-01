@@ -28,6 +28,7 @@ import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.AttachmentInfo
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ChatHistory
+import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.ChatMessageLocatorPreview
 import com.ai.assistance.operit.data.model.FunctionType
@@ -238,10 +239,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // 聊天历史相关
     val chatHistory: StateFlow<List<ChatMessage>> by lazy { chatHistoryDelegate.chatHistory }
+    val displayedChatId: StateFlow<String?> by lazy { chatHistoryDelegate.displayedChatId }
     val showChatHistorySelector: StateFlow<Boolean> by lazy {
         chatHistoryDelegate.showChatHistorySelector
     }
     val chatHistories: StateFlow<List<ChatHistory>> by lazy { chatHistoryDelegate.chatHistories }
+    val chatHistoriesLoaded: StateFlow<Boolean> by lazy { chatHistoryDelegate.chatHistoriesLoaded }
     val chatFolders by lazy { chatHistoryDelegate.chatFolders }
     val currentChatId: StateFlow<String?> by lazy { chatHistoryDelegate.currentChatId }
     val hasOlderDisplayHistory: StateFlow<Boolean> by lazy {
@@ -677,8 +680,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    fun switchChat(chatId: String) {
-        chatHistoryDelegate.switchChat(chatId)
+    fun switchChat(chatId: String, scrollToBottom: Boolean = true) {
+        chatHistoryDelegate.switchChat(chatId, scrollToBottom = scrollToBottom)
         chatRuntimeHolder.syncMainChatSelectionToFloating(chatId)
 
         // 如果当前WebView正在显示，则更新工作区并触发刷新
@@ -833,14 +836,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             .maxByOrNull { it.updatedAt }
     }
 
+    private fun isCurrentTranscriptReadOnly(): Boolean {
+        val chatId = currentChatId.value ?: return false
+        return chatHistories.value.firstOrNull { it.id == chatId }?.chatKind ==
+            ChatKind.SUBAGENT.name
+    }
+
     /** 创建对话分支 */
     fun createBranch(upToMessageTimestamp: Long? = null) {
+        if (isCurrentTranscriptReadOnly()) return
         chatHistoryDelegate.createBranch(upToMessageTimestamp)
         uiStateDelegate.showToast(context.getString(R.string.chat_branch_created))
     }
 
     /** 插入总结 */
     fun insertSummary(message: ChatMessage) {
+        if (isCurrentTranscriptReadOnly()) return
         performInsertSummary(message)
     }
 
@@ -943,6 +954,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     /** 删除单条消息 */
     fun deleteMessage(index: Int) {
+        if (isCurrentTranscriptReadOnly()) return
         AppLogger.d(TAG, "准备删除消息，索引: $index")
         val chatIdSnapshot = chatHistoryDelegate.currentChatId.value
         val historySnapshot = chatHistoryDelegate.chatHistory.value
@@ -956,6 +968,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     /** 从指定索引删除后续所有消息 */
     fun deleteMessagesFrom(index: Int) {
+        if (isCurrentTranscriptReadOnly()) return
         viewModelScope.launch {
             AppLogger.d(TAG, "准备从索引 $index 开始删除后续消息")
             chatHistoryDelegate.deleteMessagesFrom(index)
@@ -964,6 +977,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     /** 批量删除消息 */
     fun deleteMessages(indices: Set<Int>) {
+        if (isCurrentTranscriptReadOnly()) return
         viewModelScope.launch {
             AppLogger.d(TAG, "准备批量删除消息，索引: $indices")
             val chatIdSnapshot = chatHistoryDelegate.currentChatId.value
@@ -1096,6 +1110,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // 添加消息编辑方法
     fun updateMessage(index: Int, editedMessage: ChatMessage) {
+        if (isCurrentTranscriptReadOnly()) return
         viewModelScope.launch {
             try {
                 val currentHistory = chatHistoryDelegate.chatHistory.value
@@ -1119,6 +1134,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun regenerateSingleAiMessage(index: Int) {
+        if (isCurrentTranscriptReadOnly()) return
         viewModelScope.launch {
             try {
                 messageCoordinationDelegate.regenerateSingleAiMessage(index)
@@ -1134,6 +1150,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun switchMessageVariant(index: Int, targetVariantIndex: Int) {
+        if (isCurrentTranscriptReadOnly()) return
         viewModelScope.launch {
             try {
                 val currentHistory = chatHistoryDelegate.chatHistory.value
@@ -1158,6 +1175,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun deleteCurrentMessageVariant(index: Int) {
+        if (isCurrentTranscriptReadOnly()) return
         viewModelScope.launch {
             try {
                 val currentHistory = chatHistoryDelegate.chatHistory.value
@@ -1196,6 +1214,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
      * @param editedContent 编辑后的消息内容（如果有）
      */
     fun rewindAndResendMessage(index: Int, editedContent: String) {
+        if (isCurrentTranscriptReadOnly()) return
         viewModelScope.launch {
             try {
                 // 获取当前聊天历史
@@ -1301,6 +1320,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun rollbackToMessage(index: Int) {
+        if (isCurrentTranscriptReadOnly()) return
         viewModelScope.launch {
             try {
                 val currentHistory = chatHistoryDelegate.chatHistory.value.toMutableList()
@@ -1452,11 +1472,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun sendUserMessage(promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT) {
+        if (isCurrentTranscriptReadOnly()) return
         hideMentionSuggestionPanel()
         messageCoordinationDelegate.sendUserMessage(promptFunctionType)
     }
 
     fun sendTextMessage(text: String, promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT) {
+        if (isCurrentTranscriptReadOnly()) return
         hideMentionSuggestionPanel()
         messageCoordinationDelegate.sendUserMessage(
             promptFunctionType = promptFunctionType,
@@ -1465,6 +1487,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     suspend fun removeLastVisibleUserMessageFromCurrentChat(text: String): Boolean {
+        if (isCurrentTranscriptReadOnly()) return false
         val chatId = currentChatId.value ?: return false
         val messageText = text.trim()
         if (messageText.isBlank()) return false
@@ -1483,6 +1506,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     suspend fun addVisibleUserMessageToCurrentChat(text: String) {
+        if (isCurrentTranscriptReadOnly()) return
         val messageText = text.trim()
         if (messageText.isBlank()) return
 

@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.data.model
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -11,7 +12,11 @@ import java.util.UUID
 /** 聊天实体类，用于Room数据库存储聊天元数据 */
 @Entity(
     tableName = "chats",
-    indices = [Index(value = ["folderId"])],
+    indices = [
+        Index(value = ["folderId"]),
+        Index(value = ["chatKind"]),
+        Index(value = ["parentChatId", "chatKind"]),
+    ],
     foreignKeys = [
         ForeignKey(
             entity = ChatFolderEntity::class,
@@ -36,6 +41,8 @@ data class ChatEntity(
         val workspace: String? = null,
         val workspaceEnv: String? = null,
         val parentChatId: String? = null,
+        @ColumnInfo(defaultValue = "'NORMAL'")
+        val chatKind: String = ChatKind.NORMAL.name,
         val characterCardName: String? = null,
         val characterGroupId: String? = null,
         val locked: Boolean = false,
@@ -74,6 +81,7 @@ data class ChatEntity(
                 workspace = workspace,
                 workspaceEnv = workspaceEnv,
                 parentChatId = parentChatId,
+                chatKind = chatKind,
                 characterCardName = characterCardName,
                 characterGroupId = characterGroupId,
                 locked = locked,
@@ -111,6 +119,7 @@ data class ChatEntity(
                     workspace = chatHistory.workspace,
                     workspaceEnv = chatHistory.workspaceEnv,
                     parentChatId = chatHistory.parentChatId,
+                    chatKind = chatHistory.chatKind,
                     characterCardName = chatHistory.characterCardName,
                     characterGroupId = chatHistory.characterGroupId,
                     locked = chatHistory.locked,
