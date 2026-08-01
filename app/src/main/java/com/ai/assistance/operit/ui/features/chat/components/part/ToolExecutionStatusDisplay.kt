@@ -64,6 +64,8 @@ data class PersistedToolExecution(
     val resultText: String,
 )
 
+private val FILE_EDIT_TOOL_NAMES = setOf("apply_file", "create_file", "edit_file")
+
 internal data class SubagentTaskRowContent(
     val title: String,
     val summary: String,
@@ -110,9 +112,7 @@ internal fun parsePersistedToolExecutions(content: String): Map<Int, PersistedTo
     return buildMap {
         ChatMarkupRegex.toolResultTagWithAttrs.findAll(content).forEach { match ->
             val attrs = match.groupValues[2]
-            if (readXmlAttribute(attrs, "final") != "true") return@forEach
-            val invocationIndex =
-                readXmlAttribute(attrs, "invocation_index")?.toIntOrNull() ?: return@forEach
+            val invocationIndex = readFinalInvocationIndex(attrs) ?: return@forEach
             val state =
                 readXmlAttribute(attrs, "execution_state")
                     ?.uppercase()
@@ -146,11 +146,38 @@ private fun readXmlAttribute(attrs: String, name: String): String? =
         ?.groupValues
         ?.getOrNull(1)
 
+private fun readFinalInvocationIndex(attrs: String): Int? {
+    if (!readXmlAttribute(attrs, "final").equals("true", ignoreCase = true)) return null
+    return readXmlAttribute(attrs, "invocation_index")
+        ?.toIntOrNull()
+        ?.takeIf { it >= 0 }
+}
+
+internal fun shouldRenderStandaloneToolResult(content: String): Boolean {
+    val match = ChatMarkupRegex.toolResultTagWithAttrs.matchEntire(content.trim()) ?: return true
+    return readFinalInvocationIndex(match.groupValues[2]) == null
+}
+
+internal fun resolveLiveToolExecution(
+    liveExecution: ToolExecutionTimingSnapshot?,
+    persistedExecution: PersistedToolExecution?,
+    allowUnmatchedLiveExecution: Boolean,
+): ToolExecutionTimingSnapshot? {
+    val live = liveExecution ?: return null
+    val persistedCallId = persistedExecution?.callId?.takeIf { it.isNotBlank() }
+    if (persistedCallId == null) {
+        return live.takeIf { allowUnmatchedLiveExecution }
+    }
+    return live.takeIf { it.callId == persistedCallId }
+}
+
 @Composable
 internal fun ToolExecutionStatusDisplay(
     timingScopeId: String?,
     invocationIndex: Int,
     persistedExecution: PersistedToolExecution?,
+    allowUnmatchedLiveExecution: Boolean,
+    enableDialogs: Boolean,
     modifier: Modifier = Modifier,
     requestedToolName: String? = null,
     requestedSubagentName: String? = null,
@@ -159,8 +186,13 @@ internal fun ToolExecutionStatusDisplay(
     val context = LocalContext.current
     val timings by ToolExecutionTimingRepository.timings.collectAsState()
     val liveExecution =
-        timingScopeId
-            ?.let { scopeId -> timings[ToolExecutionTimingKey(scopeId, invocationIndex)] }
+        resolveLiveToolExecution(
+            liveExecution =
+                timingScopeId
+                    ?.let { scopeId -> timings[ToolExecutionTimingKey(scopeId, invocationIndex)] },
+            persistedExecution = persistedExecution,
+            allowUnmatchedLiveExecution = allowUnmatchedLiveExecution,
+        )
     val state = liveExecution?.state ?: persistedExecution?.state ?: return
     val toolName =
         requestedToolName
@@ -223,40 +255,91 @@ internal fun ToolExecutionStatusDisplay(
             val success = liveExecution?.success ?: persistedExecution?.success ?: false
             val resultText =
                 resolveResultText(liveExecution, persistedExecution, success)
-            val durationText = formatToolExecutionDuration(context, durationMs)
-            val fileDiff =
-                parseFileDiffResult(
-                    toolName = toolName,
-                    isSuccess = success,
-                    resultContent = resultText,
-                )
-            if (fileDiff != null) {
-                FileDiffDisplay(
-                    diff = fileDiff,
-                    summaryPrefix = durationText,
-                )
-            } else {
-                ToolResultDisplay(
-                    toolName = toolName,
-                    result = resultText,
-                    isSuccess = success,
-                    summaryPrefix = durationText,
-                    modifier = modifier,
-                )
-            }
+            ToolExecutionResultDisplay(
+                toolName = toolName,
+                result = resultText,
+                isSuccess = success,
+                summaryPrefix = formatToolExecutionDuration(context, durationMs),
+                enableDialog = enableDialogs,
+                modifier = modifier,
+            )
         }
         ToolExecutionState.NOT_EXECUTED -> {
             val success = false
             val resultText = resolveResultText(liveExecution, persistedExecution, success)
-            ToolResultDisplay(
+            ToolExecutionResultDisplay(
                 toolName = liveExecution?.toolName ?: persistedExecution?.toolName.orEmpty(),
                 result = resultText,
                 isSuccess = false,
                 summaryPrefix = stringResource(R.string.tool_not_executed),
+                enableDialog = enableDialogs,
                 modifier = modifier,
             )
         }
     }
+}
+
+@Composable
+internal fun ToolExecutionResultDisplay(
+    toolName: String,
+    result: String,
+    isSuccess: Boolean,
+    modifier: Modifier = Modifier,
+    summaryPrefix: String? = null,
+    enableDialog: Boolean = true,
+) {
+    val fileDiff = remember(toolName, result, isSuccess) {
+        parseFileDiffResult(toolName, result, isSuccess)
+    }
+    if (fileDiff != null) {
+        FileDiffDisplay(
+            diff = fileDiff,
+            modifier = modifier,
+            summaryPrefix = summaryPrefix,
+            enableDialog = enableDialog,
+        )
+    } else {
+        ToolResultDisplay(
+            toolName = toolName,
+            result = result,
+            isSuccess = isSuccess,
+            modifier = modifier,
+            summaryPrefix = summaryPrefix,
+            enableDialog = enableDialog,
+        )
+    }
+}
+
+internal fun parseFileDiffResult(
+    toolName: String,
+    result: String,
+    isSuccess: Boolean,
+): FileDiff? {
+    if (!isSuccess || toolName !in FILE_EDIT_TOOL_NAMES) return null
+    if (!result.contains("<file-diff")) return null
+
+    val fileDiffBlock = Regex("""<file-diff\b[^>]*>[\s\S]*?</file-diff\s*>""")
+        .find(result)
+        ?.value
+        ?: return null
+    val path = Regex("""<file-diff\s+[^>]*path="([^"]+)"""")
+        .find(fileDiffBlock)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+    val details = Regex("""\bdetails="([^"]*)"""")
+        .find(fileDiffBlock)
+        ?.groupValues
+        ?.getOrNull(1)
+        .orEmpty()
+    val diffContent = Regex("""<!\[CDATA\[([\s\S]*?)]]>""")
+        .find(fileDiffBlock)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.trim()
+        ?: return null
+    return FileDiff(path = path, diffContent = diffContent, details = details)
 }
 
 @Composable
@@ -703,12 +786,14 @@ private fun resolveResultText(
     success: Boolean,
 ): String {
     val raw =
-        if (liveExecution != null) {
+        if (persistedExecution != null) {
+            persistedExecution.resultText
+        } else if (liveExecution != null) {
             if (success) liveExecution.resultText else liveExecution.errorText.ifBlank {
                 liveExecution.resultText
             }
         } else {
-            persistedExecution?.resultText.orEmpty()
+            ""
         }
     if (success) return raw
 

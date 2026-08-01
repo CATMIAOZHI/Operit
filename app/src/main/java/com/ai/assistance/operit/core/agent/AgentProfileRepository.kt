@@ -2,6 +2,8 @@ package com.ai.assistance.operit.core.agent
 
 import android.content.Context
 import androidx.core.content.edit
+import com.ai.assistance.operit.R
+import com.ai.assistance.operit.util.LocaleUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,12 +17,15 @@ import kotlinx.serialization.json.Json
  * metadata remain owned by the app, while custom profiles are persisted as complete definitions.
  */
 class AgentProfileRepository private constructor() {
-    private val defaults: Map<String, AgentProfile> =
+    @Volatile private var defaults: Map<String, AgentProfile> = emptyMap()
+
+    private fun buildDefaults(context: Context): Map<String, AgentProfile> =
         listOf(
                 AgentProfile(
                     id = "general",
-                    name = "General",
-                    description = "Handles general multi-step tasks using available tools.",
+                    name = context.getString(R.string.agent_profile_builtin_general_name),
+                    description =
+                        context.getString(R.string.agent_profile_builtin_general_description),
                     mode = AgentMode.SUBAGENT,
                     systemPrompt =
                         """
@@ -31,8 +36,9 @@ class AgentProfileRepository private constructor() {
                 ),
                 AgentProfile(
                     id = "explore",
-                    name = "Explore",
-                    description = "Searches code and information and reports evidence.",
+                    name = context.getString(R.string.agent_profile_builtin_explore_name),
+                    description =
+                        context.getString(R.string.agent_profile_builtin_explore_description),
                     mode = AgentMode.SUBAGENT,
                     systemPrompt =
                         """
@@ -50,15 +56,22 @@ class AgentProfileRepository private constructor() {
             encodeDefaults = true
         }
     private val profileListSerializer = ListSerializer(AgentProfile.serializer())
-    private val _profiles = MutableStateFlow(defaults.values.sortedBy(AgentProfile::id))
+    private val _profiles = MutableStateFlow<List<AgentProfile>>(emptyList())
     val profiles: StateFlow<List<AgentProfile>> = _profiles.asStateFlow()
 
-    @Volatile private var profilesById: Map<String, AgentProfile> = defaults
+    @Volatile private var profilesById: Map<String, AgentProfile> = emptyMap()
     @Volatile private var preferences: android.content.SharedPreferences? = null
 
     @Synchronized
     fun initialize(context: Context) {
-        if (preferences != null) return
+        val localizedDefaults =
+            buildDefaults(LocaleUtils.getLocalizedContext(context.applicationContext))
+        if (preferences != null) {
+            defaults = localizedDefaults
+            profilesById = mergeAgentProfileSettings(localizedDefaults, profilesById.values.toList())
+            publish()
+            return
+        }
 
         val loadedPreferences =
             context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
@@ -71,7 +84,8 @@ class AgentProfileRepository private constructor() {
                 .orEmpty()
                 .associateBy(AgentProfile::id)
 
-        profilesById = mergeAgentProfileSettings(defaults, restored.values.toList())
+        defaults = localizedDefaults
+        profilesById = mergeAgentProfileSettings(localizedDefaults, restored.values.toList())
         preferences = loadedPreferences
         publish()
     }
@@ -96,7 +110,7 @@ class AgentProfileRepository private constructor() {
             .sortedBy(AgentProfile::id)
             .toList()
 
-    fun isBuiltIn(id: String): Boolean = id in defaults
+    fun isBuiltIn(id: String): Boolean = id in BUILT_IN_IDS
 
     @Synchronized
     fun updateSettings(
@@ -147,7 +161,7 @@ class AgentProfileRepository private constructor() {
         modelConfigId: String?,
         modelIndex: Int?,
     ): AgentProfile {
-        require(id !in defaults) { "Built-in Agent profile metadata cannot be changed: $id" }
+        require(id !in BUILT_IN_IDS) { "Built-in Agent profile metadata cannot be changed: $id" }
         requireNotNull(profilesById[id]) { "Unknown Agent profile: $id" }
         val updated =
             buildCustomAgentProfile(
@@ -166,7 +180,7 @@ class AgentProfileRepository private constructor() {
 
     @Synchronized
     fun deleteCustomProfile(id: String) {
-        require(id !in defaults) { "Built-in Agent profile cannot be deleted: $id" }
+        require(id !in BUILT_IN_IDS) { "Built-in Agent profile cannot be deleted: $id" }
         requireNotNull(profilesById[id]) { "Unknown Agent profile: $id" }
         profilesById = profilesById - id
         persist()
@@ -197,6 +211,7 @@ class AgentProfileRepository private constructor() {
     companion object {
         private const val PREFERENCES_NAME = "agent_profiles"
         private const val KEY_PROFILES = "profiles_v1"
+        private val BUILT_IN_IDS = setOf("general", "explore")
 
         val instance: AgentProfileRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
             AgentProfileRepository()

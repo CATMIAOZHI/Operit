@@ -57,6 +57,7 @@ import com.ai.assistance.operit.data.model.TagType
 import com.ai.assistance.operit.data.preferences.CharacterCardBilingualData
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.CharacterGroupCardManager
+import com.ai.assistance.operit.data.preferences.mergeReorderedVisibleCharacterCardIds
 import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.model.ActivePrompt
 import com.ai.assistance.operit.data.preferences.PromptTagManager
@@ -2111,7 +2112,12 @@ fun CharacterCardTab(
         val reorderedUncollapsedCards = uncollapsedCharacterCards.toMutableList().apply {
             add(toIndex, removeAt(fromIndex))
         }
-        manuallyOrderedCards = reorderedUncollapsedCards + collapsedCharacterCards
+        val cardsById = manuallyOrderedCards.associateBy { it.id }
+        manuallyOrderedCards = mergeReorderedVisibleCharacterCardIds(
+            currentOrder = manuallyOrderedCards.map { it.id },
+            reorderedVisibleIds = reorderedUncollapsedCards.map { it.id },
+            collapsedIds = collapsedCharacterCardIds
+        ).map { cardsById.getValue(it) }
         reorderChanged = true
     }
 

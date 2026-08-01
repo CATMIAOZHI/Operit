@@ -4878,6 +4878,10 @@
     <string name="agent_profile_create_title">Create Subagent</string>
     <string name="agent_profile_builtin_badge">Built-in</string>
     <string name="agent_profile_custom_badge">Custom</string>
+    <string name="agent_profile_builtin_general_name">General</string>
+    <string name="agent_profile_builtin_general_description">Handles general multi-step tasks using available tools.</string>
+    <string name="agent_profile_builtin_explore_name">Explore</string>
+    <string name="agent_profile_builtin_explore_description">Searches code and information and reports evidence.</string>
     <string name="agent_profile_id">Stable ID</string>
     <string name="agent_profile_id_hint">Used by the main Agent; lowercase letters, numbers, underscores, and hyphens only.</string>
     <string name="agent_profile_id_invalid">The ID must start with a letter and contain only lowercase letters, numbers, underscores, or hyphens.</string>

@@ -208,14 +208,6 @@ interface ChatDao {
     @Query("UPDATE chats SET characterCardName = NULL, updatedAt = :timestamp WHERE characterCardName = :characterCardName")
     suspend fun clearCharacterCardBinding(characterCardName: String, timestamp: Long = System.currentTimeMillis())
 
-    /** 批量删除绑定特定角色卡名称的未锁定对话 */
-    @Query("DELETE FROM chats WHERE characterCardName = :characterCardName AND locked = 0")
-    suspend fun deleteUnlockedChatsByCharacterCardName(characterCardName: String): Int
-
-    /** 批量删除未绑定角色卡的未锁定对话 */
-    @Query("DELETE FROM chats WHERE characterCardName IS NULL AND characterGroupId IS NULL AND locked = 0")
-    suspend fun deleteUnlockedUnboundChats(): Int
-
     /** 批量重命名角色卡绑定 */
     @Query("UPDATE chats SET characterCardName = :newName, updatedAt = :timestamp WHERE characterCardName = :oldName")
     suspend fun renameCharacterCardBinding(
@@ -299,7 +291,7 @@ interface ChatDao {
             FROM messages
             GROUP BY chatId
         ) mc ON c.id = mc.chatId
-        WHERE c.characterGroupId IS NULL
+        WHERE c.characterGroupId IS NULL AND c.chatKind != 'SUBAGENT'
         GROUP BY c.characterCardName
         """
     )
@@ -318,7 +310,7 @@ interface ChatDao {
             FROM messages
             GROUP BY chatId
         ) mc ON c.id = mc.chatId
-        WHERE c.characterCardName IS NULL
+        WHERE c.characterCardName IS NULL AND c.chatKind != 'SUBAGENT'
         GROUP BY c.characterGroupId
         """
     )

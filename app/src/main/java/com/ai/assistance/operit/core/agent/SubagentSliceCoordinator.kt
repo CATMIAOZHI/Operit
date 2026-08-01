@@ -109,7 +109,7 @@ class SubagentSliceCoordinator(context: Context) {
                                         SubagentPromptBuilder.buildSystemPrompt(profile),
                                 ),
                             responseStreamAcquireTimeoutMs = RESPONSE_STREAM_ACQUIRE_TIMEOUT_MS,
-                            responseTimeoutMs = RESPONSE_TIMEOUT_MS,
+                            responseTimeoutMs = null,
                             turnId = taskId,
                         ),
                 )
@@ -131,8 +131,6 @@ class SubagentSliceCoordinator(context: Context) {
             withContext(NonCancellable) {
                 if (activeSession != null) {
                     activeSession.cancelAndAwaitTermination()
-                } else {
-                    chatCore.cancelMessageAndAwait(child.id)
                 }
                 updateStatus(
                     taskId,
@@ -183,7 +181,6 @@ class SubagentSliceCoordinator(context: Context) {
     companion object {
         private const val EXPLORE_PROFILE_ID = "explore"
         private const val RESPONSE_STREAM_ACQUIRE_TIMEOUT_MS = 15_000L
-        private const val RESPONSE_TIMEOUT_MS = 180_000L
         private const val CHILD_VISIBILITY_TIMEOUT_MS = 5_000L
     }
 }

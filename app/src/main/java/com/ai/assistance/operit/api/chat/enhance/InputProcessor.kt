@@ -28,7 +28,7 @@ object InputProcessor {
                 context,
                 chatId,
                 roleCardId,
-                allowGlobalFallback = !isSubTask,
+                includeActivePrompt = !isSubTask,
             )
         val beforeContext =
             PromptHookRegistry.dispatchPromptInputHooks(

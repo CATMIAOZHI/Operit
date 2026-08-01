@@ -75,6 +75,33 @@ internal fun reconcileCharacterCardOrderAfterUpsert(
     return if (upsertedId in cardIds) currentOrder else currentOrder + upsertedId
 }
 
+internal fun mergeReorderedVisibleCharacterCardIds(
+    currentOrder: List<String>,
+    reorderedVisibleIds: List<String>,
+    collapsedIds: Set<String>
+): List<String> {
+    val currentVisibleIds = currentOrder.filterNot { it in collapsedIds }
+    if (
+        currentVisibleIds.size != reorderedVisibleIds.size ||
+            currentVisibleIds.toSet() != reorderedVisibleIds.toSet()
+    ) {
+        return currentOrder
+    }
+
+    val reorderedVisibleIterator = reorderedVisibleIds.iterator()
+    return currentOrder.map { id ->
+        if (id in collapsedIds) id else reorderedVisibleIterator.next()
+    }
+}
+
+internal fun restoreImportedCharacterCardOrder(
+    currentOrder: List<String>,
+    importedOrder: List<String>,
+    cardIds: Collection<String>
+): List<String> {
+    return reconcileCharacterCardOrder(importedOrder + currentOrder, cardIds)
+}
+
 internal fun resolveSystemCharacterCardOrder(
     savedOrder: List<String>,
     existingIds: Collection<String>,
@@ -932,6 +959,7 @@ class CharacterCardManager private constructor(private val context: Context) {
         var newCount = 0
         var updatedCount = 0
         var skippedCount = 0
+        val importedCardIds = mutableListOf<String>()
 
         val existingIds = characterCardListFlow.first().toSet()
         val importedTagIdMap = importOrReusePromptTags(exportedPromptTags)
@@ -971,6 +999,19 @@ class CharacterCardManager private constructor(private val context: Context) {
             }
 
             upsertCharacterCardWithId(finalCard)
+            importedCardIds += finalCard.id
+        }
+
+        dataStore.edit { preferences ->
+            val cardIds = preferences[CHARACTER_CARD_LIST] ?: emptySet()
+            val currentOrder = reconcileCharacterCardOrder(
+                readCharacterCardOrder(preferences),
+                cardIds
+            )
+            writeCharacterCardOrder(
+                preferences,
+                restoreImportedCharacterCardOrder(currentOrder, importedCardIds, cardIds)
+            )
         }
 
         return CharacterCardImportResult(newCount, updatedCount, skippedCount)

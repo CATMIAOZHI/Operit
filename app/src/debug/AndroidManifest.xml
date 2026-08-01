@@ -3,6 +3,6 @@
     <application>
         <activity
             android:name=".debug.SubagentSliceDebugActivity"
-            android:exported="true" />
+            android:exported="false" />
     </application>
 </manifest>

@@ -107,18 +107,22 @@ internal val OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS =
 internal fun remapArchivedParentToolCallIds(
     chat: OperitArchivedChat,
     callIdRemap: Map<String, String>,
+    taskIdRemap: Map<String, String> = emptyMap(),
 ): OperitArchivedChat {
-    if (callIdRemap.isEmpty()) return chat
+    if (callIdRemap.isEmpty() && taskIdRemap.isEmpty()) return chat
 
     fun remapContent(content: String): String =
-        callIdRemap.entries.fold(content) { current, (oldCallId, newCallId) ->
-            Regex(
-                """(\bcall_id\s*=\s*")${Regex.escape(oldCallId)}(")""",
-                RegexOption.IGNORE_CASE,
-            ).replace(current) { match ->
-                match.groupValues[1] + newCallId + match.groupValues[2]
-            }
-        }
+        remapPersistedTaskIds(
+            callIdRemap.entries.fold(content) { current, (oldCallId, newCallId) ->
+                Regex(
+                    """(\bcall_id\s*=\s*")${Regex.escape(oldCallId)}(")""",
+                    RegexOption.IGNORE_CASE,
+                ).replace(current) { match ->
+                    match.groupValues[1] + newCallId + match.groupValues[2]
+                }
+            },
+            taskIdRemap,
+        )
 
     return chat.copy(
         messages =
@@ -1158,27 +1162,14 @@ class ChatHistoryManager private constructor(private val context: Context) {
             }
         }
 
-        val runChildIds = childIds.toHashSet()
-        val now = System.currentTimeMillis()
-        val synthesizedRuns =
+        val subagentChildIds =
             archive.chats
-                .asSequence()
-                .filter { it.chatKind == ChatKind.SUBAGENT.name && it.id !in runChildIds }
-                .map { child ->
-                    OperitArchivedSubagentRun(
-                        id = java.util.UUID.randomUUID().toString(),
-                        parentChatId = requireNotNull(child.parentChatId),
-                        childChatId = child.id,
-                        agentProfileId = "imported",
-                        title = child.title,
-                        status = SubagentRunStatus.INTERRUPTED.name,
-                        createdAt = child.createdAt,
-                        completedAt = now,
-                        error = "Imported Subagent child had no run record.",
-                    )
-                }
-                .toList()
-        return archive.subagentRuns + synthesizedRuns
+                .filterTo(linkedSetOf()) { it.chatKind == ChatKind.SUBAGENT.name }
+                .mapTo(linkedSetOf()) { it.id }
+        require(childIds.toSet() == subagentChildIds) {
+            "Archive v5 contains a Subagent child without exactly one run record"
+        }
+        return archive.subagentRuns
     }
 
     private suspend fun importV5Archive(
@@ -1270,6 +1261,11 @@ class ChatHistoryManager private constructor(private val context: Context) {
                             parentToolCallIdRemap
                                 .filterKeys { (parentChatId, _) -> parentChatId == chat.id }
                                 .mapKeys { (key, _) -> key.second },
+                        taskIdRemap =
+                            completeRuns
+                                .asSequence()
+                                .filter { run -> run.parentChatId == chat.id }
+                                .associate { run -> run.id to taskIdRemap.getValue(run.id) },
                     ).messages,
             )
 
@@ -1738,10 +1734,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
 
     /** Internal data source used by dispatch, archive, migration and consistency checks. */
-    val allChatHistoriesInternalFlow =
+    internal val allChatHistoriesUpdatesFlow =
         chatDao
             .getAllChats()
             .toHistoryFlow()
+
+    val allChatHistoriesInternalFlow =
+        allChatHistoriesUpdatesFlow
             .stateIn(
                 historyFlowScope,
                 SharingStarted.Lazily,
@@ -1976,12 +1975,21 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 characterCardName?.trim()?.takeIf { it.isNotEmpty() }
             val normalizedCharacterGroupId =
                 characterGroupId?.trim()?.takeIf { it.isNotEmpty() }
-            val deletedChatIds =
-                chatFolderRepository.deleteFolderWithChats(
+            val expectedChatIds =
+                chatFolderRepository.getFolderDeletionChatIds(
                     folderId = folderId,
                     characterCardName = normalizedCharacterCardName,
                     characterGroupId = normalizedCharacterGroupId,
                 )
+            val deletedChatIds =
+                SubagentCoordinator.getInstance(context).withChatDeletionsPrepared(expectedChatIds) {
+                    chatFolderRepository.deleteFolderWithChats(
+                        folderId = folderId,
+                        characterCardName = normalizedCharacterCardName,
+                        characterGroupId = normalizedCharacterGroupId,
+                        expectedChatIds = expectedChatIds,
+                    )
+                }
             context.currentChatIdDataStore.edit { preferences ->
                 if (preferences[PreferencesKeys.CURRENT_CHAT_ID] in deletedChatIds) {
                     preferences.remove(PreferencesKeys.CURRENT_CHAT_ID)
@@ -4201,26 +4209,45 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 val currentChatId = currentChatIdFlow.first()
-                val currentChat = currentChatId?.let { chatDao.getChatById(it) }
-
-                val deletedCount = if (sourceCharacterCardName == null) {
-                    chatDao.deleteUnlockedUnboundChats()
-                } else {
-                    chatDao.deleteUnlockedChatsByCharacterCardName(sourceCharacterCardName)
-                }
-
-                val currentChatShouldBeCleared =
-                    currentChat != null &&
-                        !currentChat.locked &&
-                        (
-                            if (sourceCharacterCardName == null) {
-                                currentChat.characterCardName == null && currentChat.characterGroupId == null
-                            } else {
-                                currentChat.characterCardName == sourceCharacterCardName
+                fun selectDeletionCandidates(allChats: List<ChatEntity>): List<ChatEntity> {
+                    val scopedChatIds =
+                        allChats
+                            .asSequence()
+                            .filter { chat ->
+                                if (sourceCharacterCardName == null) {
+                                    chat.characterCardName == null &&
+                                        chat.characterGroupId == null
+                                } else {
+                                    chat.characterCardName == sourceCharacterCardName
+                                }
                             }
-                        )
+                            .mapTo(hashSetOf(), ChatEntity::id)
+                    return ChatDeletionGraphPolicy.selectDeletableChats(
+                        allChats,
+                        scopedChatIds,
+                    )
+                }
+                val expectedChats = selectDeletionCandidates(chatDao.getAllChatsDirectly())
+                val expectedChatIds = expectedChats.mapTo(linkedSetOf(), ChatEntity::id)
+                val deletedCount =
+                    SubagentCoordinator.getInstance(context)
+                        .withChatDeletionsPrepared(expectedChatIds) {
+                            database.withTransaction {
+                                val currentChats =
+                                    selectDeletionCandidates(chatDao.getAllChatsDirectly())
+                                val currentChatIds =
+                                    currentChats.mapTo(linkedSetOf(), ChatEntity::id)
+                                check(currentChatIds == expectedChatIds) {
+                                    "Character-bound deletion candidates changed while preparing deletion"
+                                }
+                                ChatDeletionGraphPolicy.orderChildFirst(currentChats).forEach {
+                                    chatDao.deleteChat(it.id)
+                                }
+                                currentChats.count { it.chatKind != ChatKind.SUBAGENT.name }
+                            }
+                        }
 
-                if (currentChatShouldBeCleared) {
+                if (currentChatId in expectedChatIds) {
                     context.currentChatIdDataStore.edit { preferences ->
                         preferences.remove(PreferencesKeys.CURRENT_CHAT_ID)
                     }

@@ -10,7 +10,10 @@ import com.ai.assistance.operit.util.ChatUtils
  * internal thinking, tool calls, tool results, status updates, and provider metadata.
  */
 object SubagentResultExtractor {
-    fun extract(persistedAssistantContent: String): String {
+    fun extract(
+        persistedAssistantContent: String,
+        emptyResultText: String,
+    ): String {
         val visibleContent = removeInternalNonToolMarkup(persistedAssistantContent)
         val toolMatches =
             sequenceOf(
@@ -34,9 +37,9 @@ object SubagentResultExtractor {
         }
 
         if (toolMatches.isNotEmpty()) {
-            return "Subagent completed without a textual final result."
+            return emptyResultText
         }
-        return visibleContent.ifEmpty { "Subagent completed without a textual final result." }
+        return visibleContent.ifEmpty { emptyResultText }
     }
 
     private fun removeInternalNonToolMarkup(content: String): String =

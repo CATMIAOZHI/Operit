@@ -18,6 +18,18 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
+private const val TURN_CANCELLATION_TIMEOUT_MS = 15_000L
+
+internal suspend fun awaitChatTurnTerminalSignal(
+    terminalSignal: CompletableDeferred<ChatTurnTerminalSignal>,
+    responseTimeoutMs: Long?,
+): ChatTurnTerminalSignal =
+    if (responseTimeoutMs == null) {
+        terminalSignal.await()
+    } else {
+        withTimeout(responseTimeoutMs) { terminalSignal.await() }
+    }
+
 data class ChatTurnDispatchRequest(
     val chatId: String?,
     val message: String,
@@ -27,7 +39,7 @@ data class ChatTurnDispatchRequest(
     val chatModelConfigIdOverride: String? = null,
     val chatModelIndexOverride: Int? = null,
     val responseStreamAcquireTimeoutMs: Long,
-    val responseTimeoutMs: Long,
+    val responseTimeoutMs: Long?,
     val turnId: String = UUID.randomUUID().toString(),
 )
 
@@ -68,6 +80,7 @@ data class ChatTurnSession(
     val message: String,
     val responseStream: SharedStream<String>,
     val responseTimeoutMs: Long,
+    private val enforceResponseTimeout: Boolean,
     private val terminalSignal: CompletableDeferred<ChatTurnTerminalSignal>,
     private val loadPersistedMessage: suspend (Long) -> ChatMessage?,
     private val currentStateProvider: () -> InputProcessingState,
@@ -80,15 +93,16 @@ data class ChatTurnSession(
     suspend fun awaitOutcome(): ChatTurnOutcome {
         val signal =
             try {
-                withTimeout(responseTimeoutMs) {
-                    terminalSignal.await()
-                }
+                awaitChatTurnTerminalSignal(
+                    terminalSignal = terminalSignal,
+                    responseTimeoutMs = responseTimeoutMs.takeIf { enforceResponseTimeout },
+                )
             } catch (error: TimeoutCancellationException) {
                 if (!currentCoroutineContext().isActive) throw error
                 val message = "Turn $turnId timed out waiting for a terminal result"
                 withContext(NonCancellable) {
                     runCatching {
-                        withTimeout(CANCELLATION_TIMEOUT_MS) {
+                        withTimeout(TURN_CANCELLATION_TIMEOUT_MS) {
                             cancelAndAwaitAction()
                         }
                     }
@@ -126,7 +140,7 @@ data class ChatTurnSession(
     suspend fun cancelAndAwaitTermination() {
         withContext(NonCancellable) {
             try {
-                withTimeout(CANCELLATION_TIMEOUT_MS) {
+                withTimeout(TURN_CANCELLATION_TIMEOUT_MS) {
                     cancelAndAwaitAction()
                     terminalSignal.await()
                 }
@@ -136,9 +150,6 @@ data class ChatTurnSession(
         }
     }
 
-    private companion object {
-        const val CANCELLATION_TIMEOUT_MS = 15_000L
-    }
 }
 
 sealed interface ChatTurnDispatchResult {
@@ -158,15 +169,38 @@ sealed interface ChatTurnDispatchResult {
  * exposes the raw response stream only; the stable terminal outcome is added on top of this path.
  */
 class ChatTurnDispatcher {
+    private suspend fun cancelRegisteredTurnWithinTimeout(
+        core: ChatServiceCore,
+        turnId: String,
+        chatId: String,
+    ) {
+        withContext(NonCancellable) {
+            try {
+                withTimeout(TURN_CANCELLATION_TIMEOUT_MS) {
+                    core.cancelRegisteredChatTurnAndAwait(turnId, chatId)
+                }
+            } catch (_: TimeoutCancellationException) {
+                core.failRegisteredChatTurn(
+                    turnId = turnId,
+                    chatId = chatId,
+                    error = "Turn $turnId timed out while cancelling",
+                )
+            }
+        }
+    }
+
     suspend fun dispatch(
         core: ChatServiceCore,
         request: ChatTurnDispatchRequest,
     ): ChatTurnDispatchResult {
-        val timeoutDeadlineMs = System.currentTimeMillis() + request.responseTimeoutMs
+        val timeoutDeadlineMs =
+            request.responseTimeoutMs?.let { timeoutMs ->
+                System.currentTimeMillis() + timeoutMs
+            }
 
         fun remainingTimeoutMs(defaultTimeoutMs: Long): Long {
-            return (timeoutDeadlineMs - System.currentTimeMillis())
-                .coerceAtMost(defaultTimeoutMs)
+            val deadline = timeoutDeadlineMs ?: return defaultTimeoutMs
+            return (deadline - System.currentTimeMillis()).coerceAtMost(defaultTimeoutMs)
                 .coerceAtLeast(1L)
         }
 
@@ -188,7 +222,11 @@ class ChatTurnDispatcher {
 
         try {
             preflightChatId?.let { chatId ->
-                withTimeout(remainingTimeoutMs(request.responseTimeoutMs)) {
+                withTimeout(
+                    remainingTimeoutMs(
+                        request.responseTimeoutMs ?: request.responseStreamAcquireTimeoutMs
+                    )
+                ) {
                     core.activeStreamingChatIds.first { activeChatIds ->
                         chatId !in activeChatIds
                     }
@@ -206,27 +244,36 @@ class ChatTurnDispatcher {
         val terminalSignal = core.registerChatTurn(request.turnId)
         val effectiveTurnOptions = request.turnOptions.copy(turnId = request.turnId)
 
-        if (hasTargetChat) {
-            core.sendUserMessage(
-                promptFunctionType = PromptFunctionType.CHAT,
-                roleCardIdOverride = request.roleCardId,
-                chatIdOverride = preflightChatId,
-                messageTextOverride = request.message,
-                proxySenderNameOverride = request.proxySenderName,
-                chatModelConfigIdOverride = request.chatModelConfigIdOverride,
-                chatModelIndexOverride = request.chatModelIndexOverride,
-                turnOptions = effectiveTurnOptions,
+        try {
+            if (hasTargetChat) {
+                core.sendUserMessage(
+                    promptFunctionType = PromptFunctionType.CHAT,
+                    roleCardIdOverride = request.roleCardId,
+                    chatIdOverride = preflightChatId,
+                    messageTextOverride = request.message,
+                    proxySenderNameOverride = request.proxySenderName,
+                    chatModelConfigIdOverride = request.chatModelConfigIdOverride,
+                    chatModelIndexOverride = request.chatModelIndexOverride,
+                    turnOptions = effectiveTurnOptions,
+                )
+            } else {
+                core.sendUserMessage(
+                    promptFunctionType = PromptFunctionType.CHAT,
+                    roleCardIdOverride = request.roleCardId,
+                    messageTextOverride = request.message,
+                    proxySenderNameOverride = request.proxySenderName,
+                    chatModelConfigIdOverride = request.chatModelConfigIdOverride,
+                    chatModelIndexOverride = request.chatModelIndexOverride,
+                    turnOptions = effectiveTurnOptions,
+                )
+            }
+        } catch (error: Throwable) {
+            core.failRegisteredChatTurn(
+                turnId = request.turnId,
+                chatId = preflightChatId.orEmpty(),
+                error = error.message ?: error.javaClass.simpleName,
             )
-        } else {
-            core.sendUserMessage(
-                promptFunctionType = PromptFunctionType.CHAT,
-                roleCardIdOverride = request.roleCardId,
-                messageTextOverride = request.message,
-                proxySenderNameOverride = request.proxySenderName,
-                chatModelConfigIdOverride = request.chatModelConfigIdOverride,
-                chatModelIndexOverride = request.chatModelIndexOverride,
-                turnOptions = effectiveTurnOptions,
-            )
+            throw error
         }
 
         val resolvedChatId =
@@ -270,7 +317,19 @@ class ChatTurnDispatcher {
                             core.inputProcessingStateByChatId.value[resolvedChatId]
                                 ?: InputProcessingState.Idle
                         if (state is InputProcessingState.Error) {
-                            throw IllegalStateException(state.message)
+                            val terminal = terminalSignal.await()
+                            when (terminal) {
+                                is ChatTurnTerminalSignal.Failed ->
+                                    throw IllegalStateException(terminal.error)
+                                is ChatTurnTerminalSignal.Cancelled ->
+                                    throw CancellationException(
+                                        "Turn ${request.turnId} was cancelled"
+                                    )
+                                is ChatTurnTerminalSignal.Completed ->
+                                    throw IllegalStateException(
+                                        "Turn ${request.turnId} completed before its response stream was available"
+                                    )
+                            }
                         }
                         delay(50)
                         stream = core.getResponseStream(resolvedChatId)
@@ -279,12 +338,11 @@ class ChatTurnDispatcher {
                 requireNotNull(stream)
             } catch (error: TimeoutCancellationException) {
                 if (!currentCoroutineContext().isActive) {
-                    withContext(NonCancellable) {
-                        core.cancelRegisteredChatTurnAndAwait(
-                            request.turnId,
-                            resolvedChatId,
-                        )
-                    }
+                    cancelRegisteredTurnWithinTimeout(
+                        core = core,
+                        turnId = request.turnId,
+                        chatId = resolvedChatId,
+                    )
                     throw error
                 }
                 runCatching {
@@ -301,12 +359,11 @@ class ChatTurnDispatcher {
                     error = "Timeout waiting for AI response",
                 )
             } catch (error: CancellationException) {
-                withContext(NonCancellable) {
-                    core.cancelRegisteredChatTurnAndAwait(
-                        request.turnId,
-                        resolvedChatId,
-                    )
-                }
+                cancelRegisteredTurnWithinTimeout(
+                    core = core,
+                    turnId = request.turnId,
+                    chatId = resolvedChatId,
+                )
                 throw error
             }
 
@@ -316,7 +373,9 @@ class ChatTurnDispatcher {
                 chatId = resolvedChatId,
                 message = request.message,
                 responseStream = responseStream,
-                responseTimeoutMs = remainingTimeoutMs(request.responseTimeoutMs),
+                responseTimeoutMs =
+                    request.responseTimeoutMs?.let(::remainingTimeoutMs) ?: Long.MAX_VALUE,
+                enforceResponseTimeout = request.responseTimeoutMs != null,
                 terminalSignal = terminalSignal,
                 loadPersistedMessage = { timestamp ->
                     core.getChatHistoryDelegate()

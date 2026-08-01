@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.core.tools.climode
 
 import android.content.Context
+import com.ai.assistance.operit.core.agent.SubagentToolPolicy
 import com.ai.assistance.operit.core.config.SystemToolPrompts
 import com.ai.assistance.operit.core.tools.PackageTool
 import com.ai.assistance.operit.core.tools.PackageToolParameter
@@ -208,6 +209,9 @@ object CliToolModeSupport {
         categories.forEach { category ->
             category.tools.forEach { tool ->
                 if (tool.name == "use_package") {
+                    return@forEach
+                }
+                if (!includeSubagentTools && SubagentToolPolicy.isForbidden(tool.name)) {
                     return@forEach
                 }
                 if (isReservedProxyTarget(tool.name) || isCliPublicTool(tool.name)) {

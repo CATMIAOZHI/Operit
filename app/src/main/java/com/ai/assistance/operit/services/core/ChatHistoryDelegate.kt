@@ -551,7 +551,7 @@ class ChatHistoryDelegate(
         }
 
         coroutineScope.launch {
-            chatHistoryManager.allChatHistoriesInternalFlow.collect { histories ->
+            chatHistoryManager.allChatHistoriesUpdatesFlow.collect { histories ->
                 _chatHistories.value = histories
                 _chatHistoriesLoaded.value = true
 
@@ -920,7 +920,8 @@ class ChatHistoryDelegate(
         onResult: (Result<String>) -> Unit,
     ) {
         coroutineScope.launch {
-            val result =
+            // 只把「创建」纳入失败判定：Room 事务一旦提交，文件夹和初始对话就已持久化。
+            val creationResult =
                 runCatching {
                     val (inputTokens, outputTokens, windowSize) = getChatStatistics()
                     saveCurrentChat(inputTokens, outputTokens, windowSize)
@@ -930,34 +931,41 @@ class ChatHistoryDelegate(
                             characterGroupId = characterGroupId,
                             characterCardId = characterCardId,
                         )
-                    val newChat =
-                        chatHistoryManager.createFolderWithInitialChat(
-                            parentFolderId = parentFolderId,
-                            folderName = folderName,
-                            characterCardName = target.characterCardName,
-                            characterGroupId = target.characterGroupId,
-                            openingMessage = target.openingMessage,
-                        )
+                    chatHistoryManager.createFolderWithInitialChat(
+                        parentFolderId = parentFolderId,
+                        folderName = folderName,
+                        characterCardName = target.characterCardName,
+                        characterGroupId = target.characterGroupId,
+                        openingMessage = target.openingMessage,
+                    ).id
+                }
 
+            // 创建已提交成功后，后续的选中/切换失败（如 DataStore 写入失败）不应把
+            // 整个创建报告为失败，否则对话框保持打开并邀请重试，导致重复创建。
+            creationResult.onSuccess { newChatId ->
+                runCatching {
                     withTimeoutOrNull(500) {
                         _chatHistories.first { histories ->
-                            histories.any { it.id == newChat.id }
+                            histories.any { it.id == newChatId }
                         }
                     }
 
                     if (selectionMode == ChatSelectionMode.FOLLOW_GLOBAL) {
-                        chatHistoryManager.setCurrentChatId(newChat.id)
+                        chatHistoryManager.setCurrentChatId(newChatId)
                     } else {
-                        _currentChatId.value = newChat.id
-                        loadChatMessages(newChat.id)
+                        _currentChatId.value = newChatId
+                        loadChatMessages(newChatId)
                     }
-                    onTokenStatisticsLoaded(newChat.id, 0, 0, 0)
-                    newChat.id
+                    onTokenStatisticsLoaded(newChatId, 0, 0, 0)
+                }.onFailure { selectionError ->
+                    AppLogger.e(TAG, "Failed to select newly created chat $newChatId", selectionError)
                 }
-            result.exceptionOrNull()?.let { error ->
+            }
+
+            creationResult.exceptionOrNull()?.let { error ->
                 AppLogger.e(TAG, "Failed to create folder with initial chat", error)
             }
-            onResult(result)
+            onResult(creationResult)
         }
     }
 
