@@ -388,7 +388,9 @@ class ChatFolderRepository(
             check(chatsToDelete.mapTo(linkedSetOf()) { it.id } == expectedChatIds) {
                 "Folder deletion candidates changed while preparing deletion"
             }
-            orderChatsChildFirst(chatsToDelete).forEach { chatDao.deleteChat(it.id) }
+            ChatDeletionGraphPolicy.orderChildFirst(chatsToDelete).forEach {
+                chatDao.deleteChat(it.id)
+            }
             deleteFolder(folderId)
             chatsToDelete.map { it.id }
         }
@@ -435,39 +437,7 @@ class ChatFolderRepository(
                         )
                 }
                 .mapTo(hashSetOf()) { it.id }
-        val protectedChatIds =
-            allChats
-                .asSequence()
-                .filter { it.locked || it.id !in scopedChatIds }
-                .mapTo(hashSetOf()) { it.id }
-        var changed: Boolean
-        do {
-            changed = false
-            allChats.forEach { chat ->
-                if (chat.id in protectedChatIds) {
-                    chat.parentChatId?.let { parentId ->
-                        changed = protectedChatIds.add(parentId) || changed
-                    }
-                } else if (chat.parentChatId in protectedChatIds) {
-                    changed = protectedChatIds.add(chat.id) || changed
-                }
-            }
-        } while (changed)
-
-        return allChats.filter { it.id in scopedChatIds && it.id !in protectedChatIds }
-    }
-
-    private fun orderChatsChildFirst(chats: List<ChatEntity>): List<ChatEntity> {
-        val remaining = chats.toMutableList()
-        val ordered = mutableListOf<ChatEntity>()
-        while (remaining.isNotEmpty()) {
-            val parentIds = remaining.mapNotNullTo(hashSetOf()) { it.parentChatId }
-            val leaves = remaining.filter { it.id !in parentIds }
-            check(leaves.isNotEmpty()) { "Chat parent graph contains a cycle" }
-            ordered += leaves
-            remaining.removeAll(leaves.toSet())
-        }
-        return ordered
+        return ChatDeletionGraphPolicy.selectDeletableChats(allChats, scopedChatIds)
     }
 
     suspend fun deleteFolder(folderId: String) {

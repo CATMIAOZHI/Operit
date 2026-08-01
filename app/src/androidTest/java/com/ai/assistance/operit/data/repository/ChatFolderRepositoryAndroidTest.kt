@@ -8,8 +8,10 @@ import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.ChatKind
+import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
 import com.ai.assistance.operit.data.model.SubagentRunEntity
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -366,6 +368,58 @@ class ChatFolderRepositoryAndroidTest {
     }
 
     @Test
+    fun characterStatisticsExcludeSubagentChatsAndMessages() = runBlocking {
+        insertChat(
+            id = "card-parent",
+            folderId = null,
+            order = 0,
+            favorite = false,
+            characterCardName = "card",
+        )
+        insertChat(
+            id = "card-child",
+            folderId = null,
+            order = 1,
+            favorite = false,
+            characterCardName = "card",
+            chatKind = ChatKind.SUBAGENT,
+            parentChatId = "card-parent",
+        )
+        insertChat(
+            id = "group-parent",
+            folderId = null,
+            order = 2,
+            favorite = false,
+            characterGroupId = "group",
+        )
+        insertChat(
+            id = "group-child",
+            folderId = null,
+            order = 3,
+            favorite = false,
+            characterGroupId = "group",
+            chatKind = ChatKind.SUBAGENT,
+            parentChatId = "group-parent",
+        )
+        insertMessage("card-parent", 10)
+        insertMessage("card-child", 11)
+        insertMessage("card-child", 12)
+        insertMessage("group-parent", 13)
+        insertMessage("group-child", 14)
+        insertMessage("group-child", 15)
+
+        val cardStats = database.chatDao().getCharacterCardChatStats().first()
+            .single { it.characterCardName == "card" }
+        val groupStats = database.chatDao().getCharacterGroupChatStats().first()
+            .single { it.characterGroupId == "group" }
+
+        assertEquals(1, cardStats.chatCount)
+        assertEquals(1, cardStats.messageCount)
+        assertEquals(1, groupStats.chatCount)
+        assertEquals(1, groupStats.messageCount)
+    }
+
+    @Test
     fun chatsAndFoldersCanBeInterleavedWithinOneParent() = runBlocking {
         database.chatFolderDao().insertFolders(
             listOf(folder("folder-a", null, 0), folder("folder-b", null, 2))
@@ -562,6 +616,7 @@ class ChatFolderRepositoryAndroidTest {
         order: Long,
         favorite: Boolean,
         locked: Boolean = false,
+        characterCardName: String? = null,
         characterGroupId: String? = null,
         chatKind: ChatKind = ChatKind.NORMAL,
         parentChatId: String? = null,
@@ -576,9 +631,22 @@ class ChatFolderRepositoryAndroidTest {
                 displayOrder = order,
                 isFavorite = favorite,
                 locked = locked,
+                characterCardName = characterCardName,
                 characterGroupId = characterGroupId,
                 chatKind = chatKind.name,
                 parentChatId = parentChatId,
+            )
+        )
+    }
+
+    private suspend fun insertMessage(chatId: String, timestamp: Long) {
+        database.messageDao().insertMessage(
+            MessageEntity(
+                chatId = chatId,
+                sender = "assistant",
+                content = "message-$timestamp",
+                timestamp = timestamp,
+                orderIndex = timestamp.toInt(),
             )
         )
     }

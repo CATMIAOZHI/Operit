@@ -4166,35 +4166,41 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 val currentChatId = currentChatIdFlow.first()
-                fun ChatEntity.matchesDeletion(): Boolean =
-                    !locked &&
-                        if (sourceCharacterCardName == null) {
-                            characterCardName == null && characterGroupId == null
-                        } else {
-                            characterCardName == sourceCharacterCardName
-                        }
-                val expectedChatIds =
-                    chatDao.getAllChatsDirectly()
-                        .filter(ChatEntity::matchesDeletion)
-                        .mapTo(linkedSetOf(), ChatEntity::id)
+                fun selectDeletionCandidates(allChats: List<ChatEntity>): List<ChatEntity> {
+                    val scopedChatIds =
+                        allChats
+                            .asSequence()
+                            .filter { chat ->
+                                if (sourceCharacterCardName == null) {
+                                    chat.characterCardName == null &&
+                                        chat.characterGroupId == null
+                                } else {
+                                    chat.characterCardName == sourceCharacterCardName
+                                }
+                            }
+                            .mapTo(hashSetOf(), ChatEntity::id)
+                    return ChatDeletionGraphPolicy.selectDeletableChats(
+                        allChats,
+                        scopedChatIds,
+                    )
+                }
+                val expectedChats = selectDeletionCandidates(chatDao.getAllChatsDirectly())
+                val expectedChatIds = expectedChats.mapTo(linkedSetOf(), ChatEntity::id)
                 val deletedCount =
                     SubagentCoordinator.getInstance(context)
                         .withChatDeletionsPrepared(expectedChatIds) {
                             database.withTransaction {
+                                val currentChats =
+                                    selectDeletionCandidates(chatDao.getAllChatsDirectly())
                                 val currentChatIds =
-                                    chatDao.getAllChatsDirectly()
-                                        .filter(ChatEntity::matchesDeletion)
-                                        .mapTo(linkedSetOf(), ChatEntity::id)
+                                    currentChats.mapTo(linkedSetOf(), ChatEntity::id)
                                 check(currentChatIds == expectedChatIds) {
                                     "Character-bound deletion candidates changed while preparing deletion"
                                 }
-                                if (sourceCharacterCardName == null) {
-                                    chatDao.deleteUnlockedUnboundChats()
-                                } else {
-                                    chatDao.deleteUnlockedChatsByCharacterCardName(
-                                        sourceCharacterCardName
-                                    )
+                                ChatDeletionGraphPolicy.orderChildFirst(currentChats).forEach {
+                                    chatDao.deleteChat(it.id)
                                 }
+                                currentChats.count { it.chatKind != ChatKind.SUBAGENT.name }
                             }
                         }
 

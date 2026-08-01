@@ -3,6 +3,7 @@ package com.ai.assistance.operit.api.chat.enhance
 import android.content.Context
 import android.os.SystemClock
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.agent.SubagentToolPolicy
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.AIToolHookDecision
@@ -834,12 +835,16 @@ object ToolExecutionManager {
         val toolExposureDeniedResults = mutableListOf<ToolResult>()
         for (invocation in invocations) {
             val deniedResult =
-                if (isSubagent && resolveDisplayToolName(invocation.tool) == "task") {
+                if (
+                    isSubagent &&
+                        SubagentToolPolicy.isForbidden(resolveDisplayToolName(invocation.tool))
+                ) {
+                    val targetToolName = resolveDisplayToolName(invocation.tool)
                     ToolResult(
-                        toolName = "task",
+                        toolName = targetToolName,
                         success = false,
                         result = StringResultData(""),
-                        error = "Subagents cannot invoke task or create nested Subagents.",
+                        error = "Subagents cannot invoke tools that start nested AI turns.",
                     )
                 } else {
                     buildToolExposureDeniedResult(context, invocation, toolExposureMode)

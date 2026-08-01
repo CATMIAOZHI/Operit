@@ -253,7 +253,9 @@ class SubagentCoordinator private constructor(context: Context) {
             }
         try {
             val (runs, jobs) = runsAndJobs
-            jobs.joinAll()
+            withTimeout(DELETION_CANCELLATION_TIMEOUT_MS) {
+                jobs.joinAll()
+            }
             runs.forEach { run -> EnhancedAIService.releaseChatInstance(run.childChatId) }
             return delete()
         } finally {
@@ -411,7 +413,7 @@ class SubagentCoordinator private constructor(context: Context) {
                                 chatModelIndexOverride = modelIndex,
                                 responseStreamAcquireTimeoutMs =
                                     RESPONSE_STREAM_ACQUIRE_TIMEOUT_MS,
-                                responseTimeoutMs = RESPONSE_TIMEOUT_MS,
+                                responseTimeoutMs = null,
                                 turnId = taskId,
                             ),
                     )
@@ -424,10 +426,14 @@ class SubagentCoordinator private constructor(context: Context) {
                 return requireNotNull(activeSession).awaitOutcome()
             }
 
+            val initialTaskPrompt = SubagentPromptBuilder.buildTaskPrompt(request.prompt)
+            val userMessageCountBeforeAttempt =
+                chatCore.getChatHistoryDelegate().getChatHistory(childChatId)
+                    .count { it.sender == "user" }
             val outcome =
                 try {
                     executeTurn(
-                        message = SubagentPromptBuilder.buildTaskPrompt(request.prompt),
+                        message = initialTaskPrompt,
                         modelConfigId = run.modelConfigIdSnapshot,
                         modelIndex = run.modelIndexSnapshot,
                     )
@@ -457,8 +463,17 @@ class SubagentCoordinator private constructor(context: Context) {
                     }
                     executeTurn(
                         message =
-                            appContext.getString(
-                                R.string.subagent_model_fallback_transcript_note
+                            SubagentModelFallbackPolicy.buildFallbackMessage(
+                                originalTaskPrompt = initialTaskPrompt,
+                                fallbackNote =
+                                    appContext.getString(
+                                        R.string.subagent_model_fallback_transcript_note
+                                    ),
+                                originalPromptPersisted =
+                                    chatCore.getChatHistoryDelegate()
+                                        .getChatHistory(childChatId)
+                                        .count { it.sender == "user" } >
+                                        userMessageCountBeforeAttempt,
                             ),
                         modelConfigId = parentModelConfigId,
                         modelIndex = request.parentModelIndex,
@@ -547,7 +562,7 @@ class SubagentCoordinator private constructor(context: Context) {
     companion object {
         private const val MAX_CONCURRENT_SUBAGENTS_PER_PARENT = 10
         private const val RESPONSE_STREAM_ACQUIRE_TIMEOUT_MS = 15_000L
-        private const val RESPONSE_TIMEOUT_MS = 180_000L
+        private const val DELETION_CANCELLATION_TIMEOUT_MS = 20_000L
         private const val CHILD_VISIBILITY_TIMEOUT_MS = 5_000L
         private val ACTIVE_STATUS_NAMES =
             setOf(
@@ -687,4 +702,15 @@ internal object SubagentModelFallbackPolicy {
         val normalized = message.lowercase()
         return explicitAvailabilityMarkers.any(normalized::contains)
     }
+
+    fun buildFallbackMessage(
+        originalTaskPrompt: String,
+        fallbackNote: String,
+        originalPromptPersisted: Boolean,
+    ): String =
+        if (originalPromptPersisted) {
+            fallbackNote
+        } else {
+            "$originalTaskPrompt\n\n$fallbackNote"
+        }
 }
