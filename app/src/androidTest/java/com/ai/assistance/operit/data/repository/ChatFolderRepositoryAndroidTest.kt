@@ -9,6 +9,7 @@ import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
+import com.ai.assistance.operit.data.model.SubagentRunEntity
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -292,6 +293,79 @@ class ChatFolderRepositoryAndroidTest {
     }
 
     @Test
+    fun deletingFolderWithChatsDeletesSubagentChildrenBeforeParents() = runBlocking {
+        val folderId = repository.createFolder(null, "Folder")
+        insertChat("parent", folderId, 0, favorite = false)
+        insertChat(
+            id = "child",
+            folderId = folderId,
+            order = 1,
+            favorite = false,
+            chatKind = ChatKind.SUBAGENT,
+            parentChatId = "parent",
+        )
+        insertSubagentRun("run", "parent", "child")
+
+        val expectedChatIds = repository.getFolderDeletionChatIds(folderId, null, null)
+        val deleted = repository.deleteFolderWithChats(folderId, null, null, expectedChatIds)
+
+        assertEquals(setOf("parent", "child"), deleted.toSet())
+        assertEquals(null, database.subagentRunDao().getById("run"))
+        assertEquals(0, database.chatDao().getTotalChatCount())
+    }
+
+    @Test
+    fun deletingFolderWithChatsPreservesLockedSubagentGraph() = runBlocking {
+        val folderId = repository.createFolder(null, "Folder")
+        insertChat("parent", folderId, 0, favorite = false, locked = true)
+        insertChat(
+            id = "child",
+            folderId = folderId,
+            order = 1,
+            favorite = false,
+            chatKind = ChatKind.SUBAGENT,
+            parentChatId = "parent",
+        )
+        insertSubagentRun("run", "parent", "child")
+
+        val expectedChatIds = repository.getFolderDeletionChatIds(folderId, null, null)
+        val deleted = repository.deleteFolderWithChats(folderId, null, null, expectedChatIds)
+
+        assertTrue(deleted.isEmpty())
+        assertEquals(
+            setOf("parent", "child"),
+            database.chatDao().getAllChatsDirectly().map { it.id }.toSet(),
+        )
+        assertEquals("run", database.subagentRunDao().getById("run")?.id)
+    }
+
+    @Test
+    fun deletingFolderWithChatsPreservesSubagentGraphSplitAcrossFolders() = runBlocking {
+        val deletedFolderId = repository.createFolder(null, "Deleted")
+        val retainedFolderId = repository.createFolder(null, "Retained")
+        insertChat("parent", deletedFolderId, 0, favorite = false)
+        insertChat(
+            id = "child",
+            folderId = retainedFolderId,
+            order = 1,
+            favorite = false,
+            chatKind = ChatKind.SUBAGENT,
+            parentChatId = "parent",
+        )
+        insertSubagentRun("run", "parent", "child")
+
+        val expectedChatIds =
+            repository.getFolderDeletionChatIds(deletedFolderId, null, null)
+        val deleted =
+            repository.deleteFolderWithChats(deletedFolderId, null, null, expectedChatIds)
+
+        assertTrue(deleted.isEmpty())
+        assertEquals(null, database.chatDao().getChatById("parent")?.folderId)
+        assertEquals(retainedFolderId, database.chatDao().getChatById("child")?.folderId)
+        assertEquals("run", database.subagentRunDao().getById("run")?.id)
+    }
+
+    @Test
     fun chatsAndFoldersCanBeInterleavedWithinOneParent() = runBlocking {
         database.chatFolderDao().insertFolders(
             listOf(folder("folder-a", null, 0), folder("folder-b", null, 2))
@@ -505,6 +579,18 @@ class ChatFolderRepositoryAndroidTest {
                 characterGroupId = characterGroupId,
                 chatKind = chatKind.name,
                 parentChatId = parentChatId,
+            )
+        )
+    }
+
+    private suspend fun insertSubagentRun(id: String, parentChatId: String, childChatId: String) {
+        database.subagentRunDao().insert(
+            SubagentRunEntity(
+                id = id,
+                parentChatId = parentChatId,
+                childChatId = childChatId,
+                agentProfileId = "general",
+                title = id,
             )
         )
     }
