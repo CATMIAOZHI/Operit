@@ -59,7 +59,80 @@ RELEASE_KEY_PASSWORD=<密码>
 
 签名材料不得写入代码或日志。
 
-### 4. 构建 WebChat 和 ToolPkg
+### 4. Windows 长路径与 Ninja
+
+项目原生模块继续使用 CMake 3.22.1。Android SDK 随该版本提供的 Ninja 1.10.2 不支持 Windows 超过 260 字符的路径，MNN/KleidiAI 构建可能因此出现：
+
+```text
+ninja: error: Stat(...): Filename longer than 260 characters
+```
+
+Windows 本身也必须启用 Win32 长路径。使用 PowerShell 检查：
+
+```powershell
+Get-ItemPropertyValue `
+  -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
+  -Name LongPathsEnabled
+```
+
+结果应为 `1`。系统设置只为支持长路径的应用放开限制，仍需使用 Ninja 1.12.1 或更高版本。
+
+推荐保留 SDK Manager 管理的原版 CMake，在 SDK 管理目录之外创建本机隔离副本，例如：
+
+```text
+<Android SDK>\cmake-custom\3.22.1-ninja-1.12.1
+```
+
+操作原则：
+
+1. 将 `<Android SDK>\cmake\3.22.1` 完整复制到隔离目录。
+2. 从 Ninja 官方发布包，或包含 Ninja 1.12.1 的 Google Android SDK CMake 3.31.6 Windows 包中取得 `ninja.exe`。
+3. 只替换隔离副本的 `bin\ninja.exe`，不要覆盖 `<Android SDK>\cmake\3.22.1` 中由 SDK Manager 管理的原版文件。
+4. 确认隔离副本中的 CMake 仍报告 3.22.1，Ninja 报告 1.12.1 或更高版本。
+
+```powershell
+& '<隔离目录>\bin\cmake.exe' --version
+& '<隔离目录>\bin\ninja.exe' --version
+```
+
+在 `local.properties` 中增加 `cmake.dir`。该文件已被 Git 忽略，不得提交；Windows 路径中的冒号和反斜杠需要转义：
+
+```properties
+sdk.dir=C\:\\AndroidSdk
+cmake.dir=C\:\\AndroidSdk\\cmake-custom\\3.22.1-ninja-1.12.1
+```
+
+首次构建后不能只检查命令行中的版本输出，还要确认 AGP 生成的 `build_command_*.bat` 或 `CMakeCache.txt` 实际指向隔离工具链：
+
+```powershell
+rg -n 'CMAKE_MAKE_PROGRAM|cmake-custom' `
+  app/.cxx mnn/.cxx llama/.cxx `
+  app/build/intermediates/cxx mnn/build/intermediates/cxx llama/build/intermediates/cxx
+```
+
+这套 `CMake 3.22.1 + Ninja 1.12.1` 组合已经从仓库原始长路径通过以下验证：
+
+```powershell
+.\gradlew.bat :mnn:assembleDebug
+.\gradlew.bat :app:assembleDebug
+.\gradlew.bat :app:lintDebug
+```
+
+CMake 仍可能输出 `CMAKE_OBJECT_PATH_MAX` 警告；只要新版 Ninja 完成构建，该警告不应被单独报告为失败。
+
+如果无法准备 Ninja 1.12.1+、系统长路径未启用，或新版工具仍然失败，使用短盘符作为回退：
+
+```powershell
+subst R: '<Operit 仓库绝对路径>'
+Set-Location R:\
+.\gradlew.bat :app:lintDebug
+Set-Location '<原工作目录>'
+subst R: /d
+```
+
+使用前确认盘符未被占用；构建命令必须从短盘符根目录执行。不要把 `Filename longer than 260 characters` 误报为 Kotlin 或 Lint 代码失败，也不能因此跳过验证。
+
+### 5. 构建 WebChat 和 ToolPkg
 
 ```bash
 npm install
@@ -171,6 +244,7 @@ gh run watch <run-id> --exit-status --interval 60 >/dev/null 2>&1
 | `NDK not found` | 确认安装了 `ndk;25.1.8937393` |
 | `Missing web-chat/dist` | 先执行 `npm run build:webchat` |
 | `ERROR: prebuild step failed` | 先在项目根目录执行 `npm install`，确认 `pnpm` 可用 |
+| Ninja `Filename longer than 260 characters` | 确认 Windows `LongPathsEnabled=1`，并按上文使用 `CMake 3.22.1 + Ninja 1.12.1+` 的隔离工具链；`subst` 仅作为回退 |
 | CMake `Unable to resolve ref` | 确认 `operit_git_source.cmake` 的 SHA 检测逻辑未被改动；CMake regex 不支持 `{n}` 量词 |
 | 构建产物体积异常 | 检查是否意外打包了多个 ABI；当前只支持 `arm64-v8a` |
 | ObjectBox 模型文件被修改 | 提交前用 `git status` 检查，恢复无关生成物 |
