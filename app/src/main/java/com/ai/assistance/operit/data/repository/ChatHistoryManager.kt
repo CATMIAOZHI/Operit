@@ -3030,6 +3030,29 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
     }
 
+    private fun buildNewChatHistory(
+        folderId: String?,
+        characterCardName: String?,
+        characterGroupId: String?,
+    ): ChatHistory {
+        val dateTime = LocalDateTime.now()
+        val formattedTime =
+            "${dateTime.hour}:${
+                dateTime.minute.toString().padStart(2, '0')
+            }:${dateTime.second.toString().padStart(2, '0')}"
+        val localizedContext = LocaleUtils.getLocalizedContext(context)
+
+        return ChatHistory(
+            title = "${localizedContext.getString(R.string.new_conversation)} $formattedTime",
+            messages = emptyList(),
+            inputTokens = 0,
+            outputTokens = 0,
+            folderId = folderId,
+            characterCardName = characterCardName,
+            characterGroupId = characterGroupId,
+        )
+    }
+
     // 创建新对话
     suspend fun createNewChat(
         folderId: String? = null,
@@ -3038,14 +3061,6 @@ class ChatHistoryManager private constructor(private val context: Context) {
         characterGroupId: String? = null,
         setAsCurrentChat: Boolean = true
     ): ChatHistory {
-        val dateTime = LocalDateTime.now()
-        val formattedTime =
-            "${dateTime.hour}:${
-                dateTime.minute.toString().padStart(2, '0')
-            }:${dateTime.second.toString().padStart(2, '0')}"
-
-        val localizedContext = LocaleUtils.getLocalizedContext(context)
-
         val requestedFolderId = normalizeChatFolderId(folderId)
         if (requestedFolderId != null) {
             require(chatFolderDao.getFolder(requestedFolderId) != null) {
@@ -3064,14 +3079,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
 
         val newHistory =
-            ChatHistory(
-                title = "${localizedContext.getString(R.string.new_conversation)} $formattedTime",
-                messages = listOf<ChatMessage>(),
-                inputTokens = 0,
-                outputTokens = 0,
+            buildNewChatHistory(
                 folderId = finalFolderId,
-                characterCardName = characterCardName, // 使用传入的角色卡名称，如果为null则不绑定
-                characterGroupId = characterGroupId // 绑定群组角色卡ID（可选）
+                characterCardName = characterCardName,
+                characterGroupId = characterGroupId,
             )
 
         // 保存新聊天
@@ -3085,6 +3096,38 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
 
         return newHistory
+    }
+
+    suspend fun createFolderWithInitialChat(
+        parentFolderId: String?,
+        folderName: String,
+        characterCardName: String?,
+        characterGroupId: String?,
+        openingMessage: ChatMessage? = null,
+    ): ChatHistory {
+        val initialHistory =
+            buildNewChatHistory(
+                folderId = null,
+                characterCardName = characterCardName,
+                characterGroupId = characterGroupId,
+            )
+        val initialEntity = ChatEntity.fromChatHistory(initialHistory)
+        val openingMessageEntity =
+            openingMessage?.let {
+                MessageEntity.fromChatMessage(
+                    chatId = initialHistory.id,
+                    message = it,
+                    orderIndex = 0,
+                )
+            }
+        val persistedEntity =
+            chatFolderRepository.createFolderWithInitialChat(
+                parentFolderId = parentFolderId,
+                name = folderName,
+                initialChat = initialEntity,
+                openingMessage = openingMessageEntity,
+            )
+        return persistedEntity.toChatHistory(listOfNotNull(openingMessage))
     }
 
     /**

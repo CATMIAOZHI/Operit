@@ -657,7 +657,26 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // 聊天历史相关方法
     fun createNewChat(characterCardName: String? = null, characterGroupId: String? = null) {
-        chatHistoryDelegate.createNewChat(characterCardName = characterCardName, characterGroupId = characterGroupId)
+        chatHistoryDelegate.createNewChat(
+            characterCardName = characterCardName,
+            characterGroupId = characterGroupId,
+        )
+    }
+
+    fun createFolderWithInitialChat(
+        parentFolderId: String?,
+        folderName: String,
+        characterCardName: String?,
+        characterGroupId: String?,
+        onResult: (Result<String>) -> Unit,
+    ) {
+        chatHistoryDelegate.createFolderWithInitialChat(
+            parentFolderId = parentFolderId,
+            folderName = folderName,
+            characterCardName = characterCardName,
+            characterGroupId = characterGroupId,
+            onResult = onResult,
+        )
     }
 
     fun createNewChatWithDraft(draft: String) {

@@ -92,6 +92,61 @@ class ChatFolderRepositoryAndroidTest {
     }
 
     @Test
+    fun folderAndInitialChatArePersistedInOneTransaction() = runBlocking {
+        val initialChat =
+            ChatEntity(
+                id = "initial-chat",
+                title = "New conversation",
+                characterGroupId = "group-id",
+            )
+        val openingMessage =
+            MessageEntity(
+                chatId = initialChat.id,
+                sender = "ai",
+                content = "Opening",
+                timestamp = 1234L,
+                orderIndex = 0,
+                roleName = "Agent",
+            )
+
+        val persisted =
+            repository.createFolderWithInitialChat(
+                parentFolderId = null,
+                name = "Atomic",
+                initialChat = initialChat,
+                openingMessage = openingMessage,
+            )
+
+        val folder = database.chatFolderDao().getFolder(requireNotNull(persisted.folderId))
+        val messages = database.messageDao().getMessagesForChat(persisted.id)
+        assertEquals("Atomic", folder?.name)
+        assertEquals("group-id", persisted.characterGroupId)
+        assertEquals(1234L, persisted.lastMessageAt)
+        assertEquals(listOf("Opening"), messages.map { it.content })
+    }
+
+    @Test
+    fun failedInitialChatInsertRollsBackFolder() = runBlocking {
+        val duplicateChat = ChatEntity(id = "duplicate-chat", title = "Existing")
+        database.chatDao().insertChat(duplicateChat)
+
+        val result =
+            runCatching {
+                repository.createFolderWithInitialChat(
+                    parentFolderId = null,
+                    name = "Must roll back",
+                    initialChat = duplicateChat.copy(title = "Duplicate"),
+                )
+            }
+
+        assertTrue(result.isFailure)
+        assertFalse(
+            database.chatFolderDao().getFolders().any { it.name == "Must roll back" }
+        )
+        assertEquals("Existing", database.chatDao().getChatById(duplicateChat.id)?.title)
+    }
+
+    @Test
     fun visibleChatReorderIgnoresSubagentChildrenInTheSameFolder() = runBlocking {
         val folderId = repository.createFolder(null, "Folder")
         insertChat("a", folderId, 0, favorite = false)
