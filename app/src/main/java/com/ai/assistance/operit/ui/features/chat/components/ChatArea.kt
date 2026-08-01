@@ -160,6 +160,7 @@ fun ChatArea(
     aiReferences: List<AiReference> = emptyList(),
     isLoading: Boolean,
     enableDialogs: Boolean = true,
+    allowTranscriptMutation: Boolean = true,
     userMessageColor: Color,
     aiMessageColor: Color,
     userTextColor: Color,
@@ -402,6 +403,7 @@ fun ChatArea(
                             index = actualIndex,
                             message = message,
                             enableDialogs = enableDialogs,
+                            allowTranscriptMutation = allowTranscriptMutation,
                             userMessageColor = userMessageColor,
                             aiMessageColor = aiMessageColor,
                             userTextColor = userTextColor,
@@ -571,6 +573,7 @@ private fun MessageItem(
     index: Int,
     message: ChatMessage,
     enableDialogs: Boolean,
+    allowTranscriptMutation: Boolean,
     userMessageColor: Color,
     aiMessageColor: Color,
     userTextColor: Color,
@@ -731,6 +734,7 @@ private fun MessageItem(
                     showMessageTokenStats = showMessageTokenStats,
                     showMessageTimingStats = showMessageTimingStats,
                     showMessageTimestamp = showMessageTimestamp,
+                    allowVariantSelection = allowTranscriptMutation,
                     onSelectVariant = { targetVariantIndex ->
                         onSwitchMessageVariant?.invoke(index, targetVariantIndex)
                     },
@@ -801,8 +805,9 @@ private fun MessageItem(
                 )
             }
 
-            // 根据消息发送者显示不同的操作
-            if (message.sender == "user") {
+            if (allowTranscriptMutation) {
+                // 根据消息发送者显示不同的操作
+                if (message.sender == "user") {
                 if (!isHiddenUserMessage) {
                     // 编辑并重发选项
                     DropdownMenuItem(
@@ -851,7 +856,7 @@ private fun MessageItem(
                     },
                     modifier = Modifier.height(36.dp)
                 )
-            } else if (message.sender == "ai") {
+                } else if (message.sender == "ai") {
                 DropdownMenuItem(
                     text = {
                         Text(
@@ -899,7 +904,7 @@ private fun MessageItem(
                 )
             }
 
-            if (message.sender == "ai" && message.variantCount > 1) {
+                if (message.sender == "ai" && message.variantCount > 1) {
                 DropdownMenuItem(
                     text = {
                         Text(
@@ -924,8 +929,8 @@ private fun MessageItem(
                 )
             }
 
-            // 删除
-            DropdownMenuItem(
+                // 删除
+                DropdownMenuItem(
                 text = {
                     Text(
                         stringResource(id = R.string.delete),
@@ -948,8 +953,8 @@ private fun MessageItem(
                 modifier = Modifier.height(36.dp)
             )
 
-            // 回复选项
-            if (message.sender == "ai") {
+                // 回复选项
+                if (message.sender == "ai") {
                 DropdownMenuItem(
                 text = {
                         Text(
@@ -974,7 +979,7 @@ private fun MessageItem(
                 )
             }
 
-            if (message.sender == "user" || message.sender == "ai") {
+                if (message.sender == "user" || message.sender == "ai") {
                 DropdownMenuItem(
                     text = {
                         Text(
@@ -999,8 +1004,8 @@ private fun MessageItem(
                 )
             }
 
-            // 创建分支
-            DropdownMenuItem(
+                // 创建分支
+                DropdownMenuItem(
                 text = {
                     Text(
                         stringResource(id = R.string.create_branch),
@@ -1021,7 +1026,8 @@ private fun MessageItem(
                     )
                 },
                 modifier = Modifier.height(36.dp)
-            )
+                )
+            }
 
             // 信息
             DropdownMenuItem(
@@ -1047,7 +1053,8 @@ private fun MessageItem(
                 modifier = Modifier.height(36.dp)
             )
 
-            DropdownMenuItem(
+            if (allowTranscriptMutation) {
+                DropdownMenuItem(
                 text = {
                     Text(
                         stringResource(id = R.string.multi_select),
@@ -1068,7 +1075,8 @@ private fun MessageItem(
                     )
                 },
                 modifier = Modifier.height(36.dp)
-            )
+                )
+            }
         }
 
         if (enableDialogs && isHiddenUserMessage && showHiddenUserMessageDialog) {
@@ -1273,6 +1281,7 @@ private fun MessageFooterBar(
     showMessageTokenStats: Boolean,
     showMessageTimingStats: Boolean,
     showMessageTimestamp: Boolean,
+    allowVariantSelection: Boolean,
     onSelectVariant: (Int) -> Unit,
 ) {
     val hasPrevious = message.selectedVariantIndex > 0
@@ -1321,7 +1330,7 @@ private fun MessageFooterBar(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(R.string.chat_previous_variant),
                     tint =
-                        if (hasPrevious) {
+                        if (hasPrevious && allowVariantSelection) {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
@@ -1329,7 +1338,7 @@ private fun MessageFooterBar(
                     modifier =
                         Modifier
                             .size(16.dp)
-                            .clickable(enabled = hasPrevious) {
+                            .clickable(enabled = hasPrevious && allowVariantSelection) {
                                 onSelectVariant(message.selectedVariantIndex - 1)
                             },
                 )
@@ -1347,7 +1356,7 @@ private fun MessageFooterBar(
                     imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                     contentDescription = stringResource(R.string.chat_next_variant),
                     tint =
-                        if (hasNext) {
+                        if (hasNext && allowVariantSelection) {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
@@ -1355,7 +1364,7 @@ private fun MessageFooterBar(
                     modifier =
                         Modifier
                             .size(16.dp)
-                            .clickable(enabled = hasNext) {
+                            .clickable(enabled = hasNext && allowVariantSelection) {
                                 onSelectVariant(message.selectedVariantIndex + 1)
                             },
                 )

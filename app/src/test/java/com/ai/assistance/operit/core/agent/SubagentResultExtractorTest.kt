@@ -15,7 +15,7 @@ class SubagentResultExtractorTest {
             The implementation is in AuthRepository.kt and is called by LoginViewModel.
             """.trimIndent()
 
-        val result = SubagentResultExtractor.extract(content)
+        val result = SubagentResultExtractor.extract(content, "No result")
 
         assertEquals(
             "The implementation is in AuthRepository.kt and is called by LoginViewModel.",
@@ -37,7 +37,7 @@ class SubagentResultExtractorTest {
             Final answer.
             """.trimIndent()
 
-        assertEquals("Final answer.", SubagentResultExtractor.extract(content))
+        assertEquals("Final answer.", SubagentResultExtractor.extract(content, "No result"))
     }
 
     @Test
@@ -50,8 +50,8 @@ class SubagentResultExtractorTest {
             """.trimIndent()
 
         assertEquals(
-            "Subagent completed without a textual final result.",
-            SubagentResultExtractor.extract(content),
+            "未返回文本结果",
+            SubagentResultExtractor.extract(content, "未返回文本结果"),
         )
     }
 }

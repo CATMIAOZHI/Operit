@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.core.tools.defaultTool.standard
 
 import android.content.Context
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.agent.SubagentCoordinator
 import com.ai.assistance.operit.core.agent.SubagentExecutionException
@@ -99,7 +100,8 @@ class TaskToolExecutor(context: Context) : ToolExecutor {
                                     title = result.run.title,
                                     result =
                                         SubagentResultExtractor.extract(
-                                            result.outcome.finalAssistantText
+                                            result.outcome.finalAssistantText,
+                                            appContext.getString(R.string.subagent_result_empty),
                                         ),
                                 )
                             ),

@@ -250,9 +250,7 @@ internal fun toolInvocationIndexAt(
 ): Int? {
     val target = nodes.getOrNull(nodeIndex) ?: return null
     if (target.type != MarkdownProcessorType.XML_BLOCK ||
-        ChatMarkupRegex.normalizeToolLikeTagName(
-            ChatMarkupRegex.extractOpeningTagName(target.content)
-        ) != "tool"
+        !ChatMarkupRegex.isToolCall(target.content)
     ) {
         return null
     }
@@ -261,9 +259,7 @@ internal fun toolInvocationIndexAt(
     for (index in 0 until nodeIndex) {
         val node = nodes[index]
         if (node.type == MarkdownProcessorType.XML_BLOCK &&
-            ChatMarkupRegex.normalizeToolLikeTagName(
-                ChatMarkupRegex.extractOpeningTagName(node.content)
-            ) == "tool"
+            ChatMarkupRegex.isToolCall(node.content)
         ) {
             invocationIndex++
         }

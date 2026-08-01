@@ -20,11 +20,17 @@ import com.ai.assistance.operit.services.core.ChatTurnSession
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -98,39 +104,74 @@ class SubagentCoordinator private constructor(context: Context) {
         require(request.title.isNotBlank()) { "Subagent title must not be blank" }
         require(request.prompt.isNotBlank()) { "Subagent prompt must not be blank" }
 
-        val currentJob = requireNotNull(currentCoroutineContext()[Job])
         val requestedTaskId = request.taskId
         if (requestedTaskId != null) {
-            return taskMutexes.getOrPut(requestedTaskId) { Mutex() }.withLock {
-                val resolved =
-                    lifecycleGate.withLock {
-                        val existing = resolveRun(request)
-                        if (existing.run.status in ACTIVE_STATUS_NAMES) {
-                            return@withLock null
+            val taskMutex = taskMutexes.getOrPut(requestedTaskId) { Mutex() }
+            if (!taskMutex.tryLock()) {
+                return SubagentTaskResult.AlreadyRunning(
+                    requireNotNull(runRepository.getById(requestedTaskId))
+                )
+            }
+            try {
+                return supervisorScope {
+                    val registered =
+                        lifecycleGate.withLock {
+                            val existing = resolveRun(request)
+                            if (existing.run.status in ACTIVE_STATUS_NAMES) {
+                                return@withLock null
+                            }
+                            registerTask(this@supervisorScope, request, existing)
                         }
-                        registerResolvedTask(existing.run, currentJob)
-                        existing
+                    if (registered == null) {
+                        return@supervisorScope SubagentTaskResult.AlreadyRunning(
+                            requireNotNull(runRepository.getById(requestedTaskId))
+                        )
                     }
-                if (resolved == null) {
-                    return@withLock SubagentTaskResult.AlreadyRunning(
-                        requireNotNull(runRepository.getById(requestedTaskId))
-                    )
+                    awaitRegisteredTask(registered)
                 }
-                runResolvedTask(request, resolved)
+            } finally {
+                taskMutex.unlock()
             }
         }
 
-        val resolved =
-            lifecycleGate.withLock {
-                check(!deletingChatIds.contains(request.parentChatId)) {
-                    "Parent chat ${request.parentChatId} is being deleted"
+        return supervisorScope {
+            val registered =
+                lifecycleGate.withLock {
+                    check(!deletingChatIds.contains(request.parentChatId)) {
+                        "Parent chat ${request.parentChatId} is being deleted"
+                    }
+                    registerTask(this@supervisorScope, request, resolveRun(request))
                 }
-                resolveRun(request).also { registerResolvedTask(it.run, currentJob) }
+            taskMutexes.getOrPut(registered.resolved.run.id) { Mutex() }.withLock {
+                awaitRegisteredTask(registered)
             }
-        return taskMutexes.getOrPut(resolved.run.id) { Mutex() }.withLock {
-            runResolvedTask(request, resolved)
         }
     }
+
+    private fun registerTask(
+        scope: CoroutineScope,
+        request: SubagentTaskRequest,
+        resolved: ResolvedRun,
+    ): RegisteredTask {
+        val task =
+            scope.async(start = CoroutineStart.LAZY) {
+                runResolvedTask(request, resolved)
+            }
+        registerResolvedTask(resolved.run, task)
+        task.start()
+        return RegisteredTask(resolved, task)
+    }
+
+    private suspend fun awaitRegisteredTask(registered: RegisteredTask): SubagentTaskResult =
+        try {
+            registered.task.await()
+        } catch (error: CancellationException) {
+            if (!currentCoroutineContext().isActive) throw error
+            throw SubagentExecutionException(
+                registered.resolved.run.id,
+                IllegalStateException("Subagent task ${registered.resolved.run.id} was cancelled"),
+            )
+        }
 
     suspend fun getRun(taskId: String): SubagentRunEntity? = runRepository.getById(taskId)
 
@@ -163,37 +204,65 @@ class SubagentCoordinator private constructor(context: Context) {
     suspend fun <T> withChatDeletionPrepared(
         chatId: String,
         delete: suspend () -> T,
+    ): T = withChatDeletionsPrepared(listOf(chatId), delete)
+
+    suspend fun <T> withChatDeletionsPrepared(
+        chatIds: Collection<String>,
+        delete: suspend () -> T,
     ): T {
+        val normalizedChatIds =
+            chatIds.mapNotNullTo(linkedSetOf()) { it.trim().takeIf(String::isNotEmpty) }
+        if (normalizedChatIds.isEmpty()) return delete()
+
         val runsAndJobs =
-            lifecycleGate.withLock {
-                check(deletingChatIds.add(chatId)) {
-                    "Chat deletion is already in progress: $chatId"
-                }
-                val runs =
-                    runRepository.getByChildChatId(chatId)?.let(::listOf)
-                        ?: runRepository.getByParentChatId(chatId)
-                val jobs =
-                    synchronized(lifecycleLock) {
-                        runs.mapNotNull { run ->
-                            taskJobs[run.id]?.also { job ->
-                                job.cancel(
-                                    CancellationException(
-                                        "Chat ${run.childChatId} is being deleted"
+            try {
+                lifecycleGate.withLock {
+                    val alreadyDeleting = normalizedChatIds.firstOrNull(deletingChatIds::contains)
+                    check(alreadyDeleting == null) {
+                        "Chat deletion is already in progress: $alreadyDeleting"
+                    }
+                    deletingChatIds.addAll(normalizedChatIds)
+                    val runs =
+                        normalizedChatIds
+                            .flatMap { chatId ->
+                                listOfNotNull(runRepository.getByChildChatId(chatId)) +
+                                    runRepository.getByParentChatId(chatId)
+                            }
+                            .distinctBy(SubagentRunEntity::id)
+                    val jobs =
+                        synchronized(lifecycleLock) {
+                            runs.mapNotNull { run ->
+                                taskJobs[run.id]?.also { job ->
+                                    job.cancel(
+                                        CancellationException(
+                                            "Chat ${run.childChatId} is being deleted"
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
+                    runs to jobs
+                }
+            } catch (error: Throwable) {
+                withContext(NonCancellable) {
+                    lifecycleGate.withLock {
+                        deletingChatIds.removeAll(normalizedChatIds)
                     }
-                runs to jobs
+                }
+                throw error
             }
         try {
             val (runs, jobs) = runsAndJobs
-            jobs.joinAll()
+            withTimeout(DELETION_CANCELLATION_TIMEOUT_MS) {
+                jobs.joinAll()
+            }
             runs.forEach { run -> EnhancedAIService.releaseChatInstance(run.childChatId) }
             return delete()
         } finally {
-            lifecycleGate.withLock {
-                deletingChatIds.remove(chatId)
+            withContext(NonCancellable) {
+                lifecycleGate.withLock {
+                    deletingChatIds.removeAll(normalizedChatIds)
+                }
             }
         }
     }
@@ -275,7 +344,7 @@ class SubagentCoordinator private constructor(context: Context) {
             parentSemaphores.getOrPut(run.parentChatId) {
                 Semaphore(MAX_CONCURRENT_SUBAGENTS_PER_PARENT)
             }
-        val modelSemaphore = resolveModelSemaphore(run.modelConfigIdSnapshot)
+        var modelSemaphore = resolveModelSemaphore(run.modelConfigIdSnapshot)
         var parentAcquired = semaphore.tryAcquire()
         var modelAcquired =
             if (parentAcquired) {
@@ -344,7 +413,7 @@ class SubagentCoordinator private constructor(context: Context) {
                                 chatModelIndexOverride = modelIndex,
                                 responseStreamAcquireTimeoutMs =
                                     RESPONSE_STREAM_ACQUIRE_TIMEOUT_MS,
-                                responseTimeoutMs = RESPONSE_TIMEOUT_MS,
+                                responseTimeoutMs = null,
                                 turnId = taskId,
                             ),
                     )
@@ -357,10 +426,14 @@ class SubagentCoordinator private constructor(context: Context) {
                 return requireNotNull(activeSession).awaitOutcome()
             }
 
+            val initialTaskPrompt = SubagentPromptBuilder.buildTaskPrompt(request.prompt)
+            val userMessageCountBeforeAttempt =
+                chatCore.getChatHistoryDelegate().getChatHistory(childChatId)
+                    .count { it.sender == "user" }
             val outcome =
                 try {
                     executeTurn(
-                        message = SubagentPromptBuilder.buildTaskPrompt(request.prompt),
+                        message = initialTaskPrompt,
                         modelConfigId = run.modelConfigIdSnapshot,
                         modelIndex = run.modelIndexSnapshot,
                     )
@@ -379,10 +452,28 @@ class SubagentCoordinator private constructor(context: Context) {
                     if (!canFallback) {
                         throw error
                     }
+                    if (parentModelConfigId != run.modelConfigIdSnapshot) {
+                        if (modelAcquired) {
+                            modelSemaphore?.release()
+                            modelAcquired = false
+                        }
+                        modelSemaphore = resolveModelSemaphore(parentModelConfigId)
+                        modelSemaphore?.acquire()
+                        modelAcquired = true
+                    }
                     executeTurn(
                         message =
-                            appContext.getString(
-                                R.string.subagent_model_fallback_transcript_note
+                            SubagentModelFallbackPolicy.buildFallbackMessage(
+                                originalTaskPrompt = initialTaskPrompt,
+                                fallbackNote =
+                                    appContext.getString(
+                                        R.string.subagent_model_fallback_transcript_note
+                                    ),
+                                originalPromptPersisted =
+                                    chatCore.getChatHistoryDelegate()
+                                        .getChatHistory(childChatId)
+                                        .count { it.sender == "user" } >
+                                        userMessageCountBeforeAttempt,
                             ),
                         modelConfigId = parentModelConfigId,
                         modelIndex = request.parentModelIndex,
@@ -442,6 +533,11 @@ class SubagentCoordinator private constructor(context: Context) {
         val profile: AgentProfile,
     )
 
+    private data class RegisteredTask(
+        val resolved: ResolvedRun,
+        val task: Deferred<SubagentTaskResult>,
+    )
+
     private suspend fun resolveModelSemaphore(modelConfigId: String?): AdjustableConcurrencyGate? {
         if (modelConfigId.isNullOrBlank()) return null
         return modelSemaphoreUpdateMutexes
@@ -466,7 +562,7 @@ class SubagentCoordinator private constructor(context: Context) {
     companion object {
         private const val MAX_CONCURRENT_SUBAGENTS_PER_PARENT = 10
         private const val RESPONSE_STREAM_ACQUIRE_TIMEOUT_MS = 15_000L
-        private const val RESPONSE_TIMEOUT_MS = 180_000L
+        private const val DELETION_CANCELLATION_TIMEOUT_MS = 20_000L
         private const val CHILD_VISIBILITY_TIMEOUT_MS = 5_000L
         private val ACTIVE_STATUS_NAMES =
             setOf(
@@ -606,4 +702,15 @@ internal object SubagentModelFallbackPolicy {
         val normalized = message.lowercase()
         return explicitAvailabilityMarkers.any(normalized::contains)
     }
+
+    fun buildFallbackMessage(
+        originalTaskPrompt: String,
+        fallbackNote: String,
+        originalPromptPersisted: Boolean,
+    ): String =
+        if (originalPromptPersisted) {
+            fallbackNote
+        } else {
+            "$originalTaskPrompt\n\n$fallbackNote"
+        }
 }
