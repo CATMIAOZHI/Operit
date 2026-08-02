@@ -11,11 +11,6 @@ import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.TextStreamEventCarrier
 import com.ai.assistance.operit.util.stream.TextStreamEventType
 import com.ai.assistance.operit.util.stream.TextStreamRevisionTracker
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 @Composable
 fun rememberRevisableTextStream(sourceStream: Stream<String>?): Stream<String>? {
@@ -27,53 +22,48 @@ fun rememberRevisableTextStream(sourceStream: Stream<String>?): Stream<String>? 
 
     LaunchedEffect(sourceStream) {
         val tracker = TextStreamRevisionTracker()
-        val stateMutex = Mutex()
         var currentDisplayStream = MutableSharedStream<String>(replay = Int.MAX_VALUE)
+        var processedRevisionEventCount = 0
+        var processedReplayCharCount = 0
         displayStream = currentDisplayStream
 
-        coroutineScope {
-            val eventJob = launch {
-                carrier.eventChannel.collect { event ->
-                    when (event.eventType) {
-                        TextStreamEventType.SAVEPOINT -> {
-                            stateMutex.withLock {
-                                tracker.savepoint(event.id)
-                            }
+        suspend fun drainDueRevisionEvents() {
+            val events = carrier.eventChannel.replayCache
+            while (processedRevisionEventCount < events.size) {
+                val event = events[processedRevisionEventCount]
+                if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
+                    break
+                }
+                processedRevisionEventCount++
+                when (event.eventType) {
+                    TextStreamEventType.SAVEPOINT -> tracker.savepoint(event.id)
+                    TextStreamEventType.ROLLBACK -> {
+                        val snapshot = tracker.rollback(event.id)?.toString() ?: continue
+                        val previousDisplayStream = currentDisplayStream
+                        val replacementStream =
+                            MutableSharedStream<String>(replay = Int.MAX_VALUE)
+                        if (snapshot.isNotEmpty()) {
+                            replacementStream.emit(snapshot)
                         }
-
-                        TextStreamEventType.ROLLBACK -> {
-                            val snapshot =
-                                stateMutex.withLock {
-                                    tracker.rollback(event.id)?.toString()
-                                } ?: return@collect
-                            val previousDisplayStream = currentDisplayStream
-                            val replacementStream =
-                                MutableSharedStream<String>(replay = Int.MAX_VALUE)
-                            if (snapshot.isNotEmpty()) {
-                                replacementStream.emit(snapshot)
-                            }
-                            currentDisplayStream = replacementStream
-                            displayStream = replacementStream
-                            previousDisplayStream.resetReplayCache()
-                        }
+                        currentDisplayStream = replacementStream
+                        displayStream = replacementStream
+                        previousDisplayStream.resetReplayCache()
                     }
                 }
             }
+        }
 
-            try {
-                sourceStream.collect { chunk ->
-                    val activeDisplayStream =
-                        stateMutex.withLock {
-                            tracker.append(chunk)
-                            currentDisplayStream
-                        }
-                    activeDisplayStream.emit(chunk)
-                }
-            } finally {
-                eventJob.cancelAndJoin()
-                currentDisplayStream.resetReplayCache()
-                displayStream = null
+        try {
+            sourceStream.collect { chunk ->
+                drainDueRevisionEvents()
+                tracker.append(chunk)
+                processedReplayCharCount += chunk.length
+                currentDisplayStream.emit(chunk)
             }
+            drainDueRevisionEvents()
+        } finally {
+            currentDisplayStream.resetReplayCache()
+            displayStream = null
         }
     }
 

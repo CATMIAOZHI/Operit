@@ -341,7 +341,14 @@ export interface WebInputSettingsState {
   enable_tools: boolean;
   disable_stream_output: boolean;
   disable_user_preference_description: boolean;
-  permission_level: 'ALLOW' | 'ASK' | 'FORBID' | string;
+  permission_level:
+    | 'ALLOW'
+    | 'WORKSPACE'
+    | 'WORKSPACE_REVIEWER'
+    | 'REVIEWER'
+    | 'ASK'
+    | 'FORBID'
+    | string;
   current_window_tokens: number;
   base_context_length_k: number;
   max_context_length_k: number;

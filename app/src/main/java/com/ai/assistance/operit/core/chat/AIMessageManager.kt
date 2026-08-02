@@ -22,6 +22,7 @@ import com.ai.assistance.operit.data.model.AttachmentInfo
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.ChatMessageTimestampAllocator
 import com.ai.assistance.operit.data.model.ToolParameter
+import com.ai.assistance.operit.data.model.ToolPrompt
 import com.ai.assistance.operit.data.model.PromptFunctionType
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.process.WorkspaceAttachmentProcessor
@@ -128,6 +129,7 @@ object AIMessageManager {
         chatId: String? = null,
         roleCardId: String? = null,
         isSubTask: Boolean = false,
+        promptHooksEnabled: Boolean = true,
     ): String {
         val totalStartTime = messageTimingNow()
         val promptInputStartTime = messageTimingNow()
@@ -138,6 +140,7 @@ object AIMessageManager {
                 chatId,
                 roleCardId,
                 isSubTask = isSubTask,
+                promptHooksEnabled = promptHooksEnabled,
             )
         logMessageTiming(
             stage = "buildUserMessageContent.processUserInput",
@@ -331,6 +334,7 @@ object AIMessageManager {
         messageContent: String,
         chatHistory: List<ChatMessage>,
         workspacePath: String?,
+        workspaceEnv: String? = null,
         promptFunctionType: PromptFunctionType,
         enableThinking: Boolean,
         enableMemoryAutoUpdate: Boolean,
@@ -347,6 +351,8 @@ object AIMessageManager {
         groupParticipantNamesText: String? = null,
         proxySenderName: String? = null,
         onToolInvocation: (suspend (String) -> Unit)? = null,
+        onToolExecutionBoundary:
+            (suspend (EnhancedAIService.ToolExecutionBoundarySnapshot) -> Unit)? = null,
         notifyReplyOverride: Boolean? = null,
         chatModelConfigIdOverride: String? = null,
         chatModelIndexOverride: Int? = null,
@@ -354,6 +360,10 @@ object AIMessageManager {
         toolTimingScopeId: String? = null,
         disableWarning: Boolean = false,
         isSubTask: Boolean = false,
+        toolsEnabled: Boolean = true,
+        isolatedToolPrompts: List<ToolPrompt>? = null,
+        terminalToolNames: Set<String> = emptySet(),
+        promptHooksEnabled: Boolean = true,
         systemPromptOverride: String? = null,
     ): SharedStream<String> {
         val totalStartTime = messageTimingNow()
@@ -476,6 +486,7 @@ object AIMessageManager {
                     chatId = chatId,
                     chatHistory = memoryForRequest,
                     workspacePath = workspacePath,
+                    workspaceEnv = workspaceEnv,
                     promptFunctionType = promptFunctionType,
                     enableThinking = enableThinking,
                     enableMemoryAutoUpdate = enableMemoryAutoUpdate,
@@ -490,14 +501,19 @@ object AIMessageManager {
                     groupParticipantNamesText = groupParticipantNamesText,
                     proxySenderName = proxySenderName,
                     onToolInvocation = onToolInvocation,
+                    onToolExecutionBoundary = onToolExecutionBoundary,
                     notifyReplyOverride = notifyReplyOverride,
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,
-                     toolTimingScopeId = toolTimingScopeId,
-                     stream = enableStream,
+                    toolTimingScopeId = toolTimingScopeId,
+                    stream = enableStream,
                     disableWarning = disableWarning,
                     isSubTask = isSubTask,
+                    toolsEnabled = toolsEnabled,
+                    isolatedToolPrompts = isolatedToolPrompts,
+                    terminalToolNames = terminalToolNames,
+                    promptHooksEnabled = promptHooksEnabled,
                     customSystemPromptTemplate =
                         if (isSubTask) systemPromptOverride else null,
                     additionalSystemPrompt =
@@ -656,6 +672,28 @@ object AIMessageManager {
         }
 
         AppLogger.d(TAG, "AI操作取消请求已发送: chatId=$chatKey")
+    }
+
+    suspend fun cancelOperationAndAwait(chatId: String) {
+        val chatKey = chatId.ifBlank { DEFAULT_CHAT_KEY }
+        AppLogger.d(TAG, "请求取消并等待AI操作收尾: chatId=$chatKey")
+
+        activeMessageProcessingControllerByChatId.remove(chatKey)?.cancel()
+        val enhancedAiService = activeEnhancedAiServiceByChatId.remove(chatKey)
+
+        // ToolPkg may be blocked in Future.get(). Complete that future before awaiting the
+        // EnhancedAIService tool job; reversing this order can stall cancellation until timeout.
+        if (chatId.isNotBlank()) {
+            runCatching {
+                packageManager.cancelToolPkgExecutionsForChat(chatKey, "User cancelled")
+            }.onFailure { error ->
+                AppLogger.e(TAG, "取消ToolPkg JS执行失败: chatId=$chatKey", error)
+            }
+        }
+
+        enhancedAiService?.cancelConversationAndAwait()
+
+        AppLogger.d(TAG, "AI操作取消与工具收尾已完成: chatId=$chatKey")
     }
 
     fun cancelAllOperations() {

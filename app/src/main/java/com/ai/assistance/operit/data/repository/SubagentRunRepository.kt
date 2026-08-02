@@ -100,8 +100,9 @@ class SubagentRunRepository private constructor(
     fun observeByParentToolCallId(
         parentChatId: String,
         callId: String,
+        excludedAgentProfileId: String,
     ): Flow<SubagentRunEntity?> =
-        runDao.observeByParentToolCallId(parentChatId, callId)
+        runDao.observeByParentToolCallId(parentChatId, callId, excludedAgentProfileId)
 
     suspend fun updateStatus(
         taskId: String,

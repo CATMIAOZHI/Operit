@@ -22,7 +22,9 @@ object InputProcessor {
         chatId: String? = null,
         roleCardId: String? = null,
         isSubTask: Boolean = false,
+        promptHooksEnabled: Boolean = true,
     ): String {
+        if (!promptHooksEnabled) return input
         val activePromptMetadata =
             buildActivePromptHookMetadata(
                 context,

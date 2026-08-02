@@ -30,11 +30,27 @@ import kotlin.coroutines.resume
 // Define DataStore
 private val Context.toolPermissionsDataStore: DataStore<Preferences> by preferencesDataStore(name = "tool_permissions")
 
+internal object PermissionCircuitBreakerNoticeState {
+    private val _pendingCount = MutableStateFlow(0)
+    val pendingCount = _pendingCount.asStateFlow()
+
+    fun enqueue() {
+        _pendingCount.update { count -> count + 1 }
+    }
+
+    fun clear() {
+        _pendingCount.value = 0
+    }
+}
+
 /**
  * Permission levels for tool operations
  */
 enum class PermissionLevel {
     ALLOW,      // Allow automatically without asking
+    WORKSPACE,  // Allow only operations proven to stay inside the bound workspace
+    WORKSPACE_REVIEWER, // Allow proven workspace operations, review everything else
+    REVIEWER,   // Let an independent approval reviewer decide
     ASK,        // Always ask
     FORBID;     // Never allow
 
@@ -42,6 +58,9 @@ enum class PermissionLevel {
         fun fromString(value: String?): PermissionLevel {
             return when (value) {
                 "ALLOW" -> ALLOW
+                "WORKSPACE" -> WORKSPACE
+                "WORKSPACE_REVIEWER" -> WORKSPACE_REVIEWER
+                "REVIEWER" -> REVIEWER
                 "CAUTION" -> ASK
                 "ASK" -> ASK
                 "FORBID" -> FORBID
@@ -49,6 +68,22 @@ enum class PermissionLevel {
             }
         }
     }
+}
+
+internal enum class ToolPermissionDenialSource {
+    SETTINGS,
+    USER,
+    AUTOMATIC_REVIEW,
+}
+
+internal sealed interface ToolPermissionDecision {
+    data object Allowed : ToolPermissionDecision
+
+    data class Denied(
+        val source: ToolPermissionDenialSource,
+        val rejection: String,
+        val interruptTurn: Boolean = false,
+    ) : ToolPermissionDecision
 }
 
 /**
@@ -82,6 +117,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     // Permission request management
     private val mainHandler = Handler(Looper.getMainLooper())
     private val permissionRequestOverlay = PermissionRequestOverlay(context)
+    private val circuitBreakerWarningOverlay = PermissionRequestOverlay(context)
     private var currentPermissionCallback: ((PermissionRequestResult) -> Unit)? = null
     private var permissionRequestInfo: Pair<AITool, String>? = null
     private var currentRequestToken: Long = -1L
@@ -101,6 +137,15 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     fun setColorScheme(colorScheme: ColorScheme?) {
         this.currentColorScheme = colorScheme
         permissionRequestOverlay.setColorScheme(colorScheme)
+        circuitBreakerWarningOverlay.setColorScheme(colorScheme)
+    }
+
+    internal fun showAutomaticReviewCircuitBreakerWarning() {
+        mainHandler.post {
+            circuitBreakerWarningOverlay.showCircuitBreakerWarning(
+                onUnavailable = PermissionCircuitBreakerNoticeState::enqueue,
+            )
+        }
     }
     
     // Permission request state flow
@@ -201,14 +246,97 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     /**
      * Check if a tool is allowed to execute
      */
-    suspend fun checkToolPermission(tool: AITool, conversationLabel: String? = null): Boolean {
+    internal suspend fun checkToolPermission(
+        tool: AITool,
+        conversationLabel: String? = null,
+        workspacePath: String? = null,
+        workspaceEnv: String? = null,
+        callerChatId: String? = null,
+        parentModelConfigId: String? = null,
+        parentModelIndex: Int? = null,
+        timingScopeId: String? = null,
+        targetId: String? = null,
+        invocationIndex: Int = -1,
+        batchPosition: Int = 1,
+        batchSize: Int = 1,
+        deferCircuitBreaker: Boolean = false,
+        liveAssistantContent: String? = null,
+    ): ToolPermissionDecision {
         AppLogger.d(TAG, "Starting permission check: ${tool.name}")
 
-        return when (getEffectivePermissionLevel(tool.name)) {
-            PermissionLevel.ALLOW -> true
-            PermissionLevel.ASK -> requestPermission(tool, conversationLabel)
-            PermissionLevel.FORBID -> false
+        val duplicateParameterNames =
+            findDuplicateToolParameterNames(tool)
+        if (duplicateParameterNames.isNotEmpty()) {
+            return ToolPermissionDecision.Denied(
+                source = ToolPermissionDenialSource.SETTINGS,
+                rejection =
+                    "Tool execution rejected because duplicate parameter names are ambiguous: " +
+                        duplicateParameterNames.sorted().joinToString(", "),
+            )
         }
+
+        val reviewContext =
+            ToolPermissionReviewContext(
+                callerChatId = callerChatId,
+                conversationLabel = conversationLabel,
+                workspacePath = workspacePath,
+                workspaceEnv = workspaceEnv,
+                parentModelConfigId = parentModelConfigId,
+                parentModelIndex = parentModelIndex,
+                timingScopeId = timingScopeId,
+                targetId = targetId,
+                invocationIndex = invocationIndex,
+                batchPosition = batchPosition,
+                batchSize = batchSize,
+                deferCircuitBreaker = deferCircuitBreaker,
+                liveAssistantContent = liveAssistantContent,
+            )
+
+        val effectiveLevel = getEffectivePermissionLevel(tool.name)
+        val currentRoute = resolveCurrentPermissionRoute(tool, reviewContext)
+        if (
+            !callerChatId.isNullOrBlank() &&
+                currentRoute == PermissionRoute.REVIEWER &&
+                PermissionReviewCircuitBreaker.isInterrupted(callerChatId, timingScopeId)
+        ) {
+            PermissionReviewEventRepository.initialize(context)
+            val skippedReviewId = PermissionReviewInspectionRegistry.newReviewId()
+            val skippedAction =
+                PermissionReviewAction.fromTool(
+                    tool = tool,
+                    operationDescription = getOperationDescription(tool),
+                    reviewContext = reviewContext,
+                    targetId = targetId ?: skippedReviewId,
+                )
+            val now = System.currentTimeMillis()
+            PermissionReviewEventRepository.publish(
+                PermissionReviewEvent(
+                    id = skippedReviewId,
+                    parentChatId = callerChatId,
+                    timingScopeId = timingScopeId,
+                    invocationIndex = invocationIndex,
+                    batchPosition = batchPosition,
+                    batchSize = batchSize,
+                    action = skippedAction,
+                    actionFingerprint = skippedAction.fingerprint(),
+                    status = PermissionReviewStatus.ABORTED,
+                    startedAt = now,
+                    completedAt = now,
+                    rationale = "Skipped because repeated denials stopped this model turn.",
+                )
+            )
+            return permissionDeniedByAutomaticReview(
+                rationale = "This model turn was stopped after repeated denied actions.",
+                interruptTurn = true,
+            )
+        }
+
+        return evaluatePermissionLevel(
+            level = effectiveLevel,
+            tool = tool,
+            reviewContext = reviewContext,
+            onAsk = { requestPermission(tool, reviewContext) },
+        )
     }
 
     suspend fun getEffectivePermissionLevel(toolName: String): PermissionLevel {
@@ -216,26 +344,224 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         val masterSwitch = PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
         val key = toolPermissionKey(toolName)
         val overrideLevel = preferences[key]?.let { PermissionLevel.fromString(it) }
-        return overrideLevel ?: masterSwitch
+        return resolveEffectivePermissionLevel(masterSwitch, overrideLevel)
     }
     
     /**
      * Request permission from the user to execute a tool.
      * ASK requests are serialized via askMutex.
      */
-    private suspend fun requestPermission(tool: AITool, conversationLabel: String?): Boolean {
+    private suspend fun requestPermission(
+        tool: AITool,
+        reviewContext: ToolPermissionReviewContext,
+    ): ToolPermissionDecision {
         _pendingPermissionRequestCount.update { it + 1 }
         try {
-            return askMutex.withLock {
-                // A preceding request may have changed this tool to Always Allow while we waited.
-                when (getEffectivePermissionLevel(tool.name)) {
-                    PermissionLevel.ALLOW -> true
-                    PermissionLevel.ASK -> requestPermissionInternal(tool, conversationLabel)
-                    PermissionLevel.FORBID -> false
+            while (true) {
+                when (resolveCurrentPermissionRoute(tool, reviewContext)) {
+                    PermissionRoute.ALLOW -> return ToolPermissionDecision.Allowed
+                    PermissionRoute.FORBID -> return permissionDeniedBySettings()
+                    PermissionRoute.REVIEWER ->
+                        return reviewPermission(
+                            tool = tool,
+                            reviewContext = reviewContext,
+                            pendingRequestAlreadyCounted = true,
+                        )
+                    PermissionRoute.ASK -> {
+                        val lockedResult: ToolPermissionDecision? =
+                            askMutex.withLock {
+                                // Settings may have changed while this request waited in the queue.
+                                when (resolveCurrentPermissionRoute(tool, reviewContext)) {
+                                    PermissionRoute.ALLOW -> ToolPermissionDecision.Allowed
+                                    PermissionRoute.FORBID -> permissionDeniedBySettings()
+                                    PermissionRoute.ASK ->
+                                        if (
+                                            requestPermissionInternal(
+                                                tool,
+                                                reviewContext.conversationLabel,
+                                            )
+                                        ) {
+                                            ToolPermissionDecision.Allowed
+                                        } else {
+                                            permissionDeniedByUser()
+                                        }
+                                    PermissionRoute.REVIEWER -> null
+                                }
+                            }
+                        if (lockedResult != null) return lockedResult
+                    }
                 }
             }
         } finally {
             _pendingPermissionRequestCount.update { count -> (count - 1).coerceAtLeast(0) }
+        }
+    }
+
+    private suspend fun reviewPermission(
+        tool: AITool,
+        reviewContext: ToolPermissionReviewContext,
+        pendingRequestAlreadyCounted: Boolean = false,
+    ): ToolPermissionDecision {
+        val decision =
+            AgentToolPermissionReviewer.getInstance(context).review(
+                tool = tool,
+                operationDescription = getOperationDescription(tool),
+                reviewContext = reviewContext,
+            )
+        AppLogger.i(
+            TAG,
+            "Independent permission review completed: tool=${tool.name}, decision=${decision.outcome}, " +
+                "risk=${decision.riskLevel}, authorization=${decision.userAuthorization}, " +
+                "failure=${decision.failureKind}"
+        )
+        if (decision.failureKind != null) {
+            return requestManualPermission(
+                tool = tool,
+                reviewContext = reviewContext,
+                reviewFailureKind = decision.failureKind,
+                pendingRequestAlreadyCounted = pendingRequestAlreadyCounted,
+            )
+        }
+        val refreshedDecision =
+            resolveReviewDecisionAfterSettingsRefresh(
+                approvalGranted = decision.outcome == PermissionReviewOutcome.ALLOW,
+                latestRoute = resolveCurrentPermissionRoute(tool, reviewContext),
+                reviewerRationale = decision.rationale,
+            )
+        if (!reviewContext.deferCircuitBreaker &&
+            !reviewContext.callerChatId.isNullOrBlank()
+        ) {
+            if (
+                refreshedDecision is ToolPermissionDecision.Denied &&
+                    refreshedDecision.source == ToolPermissionDenialSource.AUTOMATIC_REVIEW
+            ) {
+                val circuit =
+                    PermissionReviewCircuitBreaker.recordDenial(
+                        reviewContext.callerChatId,
+                        reviewContext.timingScopeId,
+                    )
+                return refreshedDecision.copy(interruptTurn = circuit.interruptTurn)
+            }
+            if (refreshedDecision is ToolPermissionDecision.Allowed) {
+                PermissionReviewCircuitBreaker.recordNonDenial(
+                    reviewContext.callerChatId,
+                    reviewContext.timingScopeId,
+                )
+            }
+        }
+        return refreshedDecision
+            ?: requestManualPermission(
+                tool = tool,
+                reviewContext = reviewContext,
+                reviewFailureKind = null,
+                pendingRequestAlreadyCounted = pendingRequestAlreadyCounted,
+            )
+    }
+
+    private suspend fun requestManualPermission(
+        tool: AITool,
+        reviewContext: ToolPermissionReviewContext,
+        reviewFailureKind: PermissionReviewFailureKind?,
+        pendingRequestAlreadyCounted: Boolean,
+    ): ToolPermissionDecision {
+        if (!pendingRequestAlreadyCounted) {
+            _pendingPermissionRequestCount.update { it + 1 }
+        }
+        try {
+            val manualDecision = askMutex.withLock {
+                when (resolveCurrentPermissionRoute(tool, reviewContext)) {
+                    PermissionRoute.ALLOW -> ToolPermissionDecision.Allowed
+                    PermissionRoute.FORBID -> permissionDeniedBySettings()
+                    else ->
+                        if (
+                            requestPermissionInternal(
+                                tool = tool,
+                                conversationLabel = reviewContext.conversationLabel,
+                                reviewFailureKind = reviewFailureKind,
+                            )
+                        ) {
+                            ToolPermissionDecision.Allowed
+                        } else {
+                            permissionDeniedByUser()
+                        }
+                }
+            }
+            if (!reviewContext.callerChatId.isNullOrBlank()) {
+                PermissionReviewEventRepository.findForInvocation(
+                    reviewContext.callerChatId,
+                    reviewContext.timingScopeId,
+                    reviewContext.invocationIndex,
+                )?.let { event ->
+                    PermissionReviewEventRepository.update(event.id) { current ->
+                        current.copy(
+                            resolutionSource =
+                                if (manualDecision is ToolPermissionDecision.Allowed) {
+                                    "manual_or_setting_allow"
+                                } else {
+                                    "manual_or_setting_deny"
+                                }
+                        )
+                    }
+                }
+            }
+            return manualDecision
+        } finally {
+            if (!pendingRequestAlreadyCounted) {
+                _pendingPermissionRequestCount.update { count -> (count - 1).coerceAtLeast(0) }
+            }
+        }
+    }
+
+    private suspend fun resolveCurrentPermissionRoute(
+        tool: AITool,
+        reviewContext: ToolPermissionReviewContext,
+    ): PermissionRoute {
+        val level = getEffectivePermissionLevel(tool.name)
+        val workspaceApproved =
+            if (
+                level == PermissionLevel.WORKSPACE ||
+                    level == PermissionLevel.WORKSPACE_REVIEWER
+            ) {
+                WorkspaceToolPermissionPolicy.isAutoApproved(
+                    context = context,
+                    tool = tool,
+                    workspacePath = reviewContext.workspacePath,
+                    workspaceEnv = reviewContext.workspaceEnv,
+                    callerChatId = reviewContext.callerChatId,
+                )
+            } else {
+                false
+            }
+        return resolvePermissionRoute(level, workspaceApproved)
+    }
+
+    private suspend fun evaluatePermissionLevel(
+        level: PermissionLevel,
+        tool: AITool,
+        reviewContext: ToolPermissionReviewContext,
+        onAsk: suspend () -> ToolPermissionDecision,
+    ): ToolPermissionDecision {
+        val workspaceApproved =
+            if (
+                level == PermissionLevel.WORKSPACE ||
+                    level == PermissionLevel.WORKSPACE_REVIEWER
+            ) {
+                WorkspaceToolPermissionPolicy.isAutoApproved(
+                    context = context,
+                    tool = tool,
+                    workspacePath = reviewContext.workspacePath,
+                    workspaceEnv = reviewContext.workspaceEnv,
+                    callerChatId = reviewContext.callerChatId,
+                )
+            } else {
+                false
+            }
+
+        return when (resolvePermissionRoute(level, workspaceApproved)) {
+            PermissionRoute.ALLOW -> ToolPermissionDecision.Allowed
+            PermissionRoute.ASK -> onAsk()
+            PermissionRoute.REVIEWER -> reviewPermission(tool, reviewContext)
+            PermissionRoute.FORBID -> permissionDeniedBySettings()
         }
     }
 
@@ -257,8 +583,8 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                     tool = tool,
                     conversationLabel = conversationLabel,
                     operationDescriptionOverride = operationDescription,
-                    persistAlwaysAllow = false,
-                    allowAlwaysAllow = false,
+                    persistPermanentChoice = false,
+                    allowPermanentChoice = false,
                 )
             }
         } finally {
@@ -270,8 +596,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         tool: AITool,
         conversationLabel: String?,
         operationDescriptionOverride: String? = null,
-        persistAlwaysAllow: Boolean = true,
-        allowAlwaysAllow: Boolean = true,
+        persistPermanentChoice: Boolean = true,
+        allowPermanentChoice: Boolean = true,
+        reviewFailureKind: PermissionReviewFailureKind? = null,
     ): Boolean {
         return withContext(Dispatchers.Main.immediate) {
             val operationDescription =
@@ -332,6 +659,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                         operationDescription,
                         conversationLabel = conversationLabel,
                         pendingRequestCount = pendingPermissionRequestCount,
+                        reviewFailureKind = reviewFailureKind,
                         onResult = { permissionResult ->
                             handlePermissionResult(permissionResult)
                         },
@@ -342,7 +670,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                                 mainHandler.removeCallbacks(requestTimeoutTask)
                             }
                         },
-                        allowAlwaysAllow = allowAlwaysAllow,
+                        allowPermanentChoice = allowPermanentChoice,
                     )
                 }
 
@@ -350,13 +678,22 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                     PermissionRequestResult.ALLOW -> true
                     PermissionRequestResult.DENY -> false
                     PermissionRequestResult.ALWAYS_ALLOW -> {
-                        if (persistAlwaysAllow) {
+                        if (persistPermanentChoice) {
                             // Persist the choice before releasing the mutex to queued requests.
                             withContext(NonCancellable + Dispatchers.IO) {
                                 saveToolPermission(tool.name, PermissionLevel.ALLOW)
                             }
                         }
                         true
+                    }
+                    PermissionRequestResult.ALWAYS_DENY -> {
+                        if (persistPermanentChoice) {
+                            // Persist before releasing the mutex so queued calls observe the deny.
+                            withContext(NonCancellable + Dispatchers.IO) {
+                                saveToolPermission(tool.name, PermissionLevel.FORBID)
+                            }
+                        }
+                        false
                     }
                 }
             } finally {
@@ -400,3 +737,91 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         return hasActivePermissionRequest()
     }
 }
+
+internal fun resolveEffectivePermissionLevel(
+    masterLevel: PermissionLevel,
+    toolOverride: PermissionLevel?,
+): PermissionLevel = toolOverride ?: masterLevel
+
+internal fun findDuplicateToolParameterNames(tool: AITool): Set<String> =
+    tool.parameters.groupingBy { parameter -> parameter.name }.eachCount()
+        .filterValues { count -> count > 1 }
+        .keys
+
+internal enum class PermissionRoute {
+    ALLOW,
+    ASK,
+    REVIEWER,
+    FORBID,
+}
+
+internal fun resolvePermissionRoute(
+    level: PermissionLevel,
+    workspaceApproved: Boolean,
+): PermissionRoute =
+    when (level) {
+        PermissionLevel.ALLOW -> PermissionRoute.ALLOW
+        PermissionLevel.WORKSPACE ->
+            if (workspaceApproved) PermissionRoute.ALLOW else PermissionRoute.ASK
+        PermissionLevel.WORKSPACE_REVIEWER ->
+            if (workspaceApproved) PermissionRoute.ALLOW else PermissionRoute.REVIEWER
+        PermissionLevel.REVIEWER -> PermissionRoute.REVIEWER
+        PermissionLevel.ASK -> PermissionRoute.ASK
+        PermissionLevel.FORBID -> PermissionRoute.FORBID
+    }
+
+internal fun resolveApprovalDecisionWithPermanentOverride(
+    approvalGranted: Boolean,
+    latestToolOverride: PermissionLevel?,
+): Boolean =
+    when (latestToolOverride) {
+        PermissionLevel.ALLOW -> true
+        PermissionLevel.FORBID -> false
+        else -> approvalGranted
+    }
+
+internal fun permissionDeniedBySettings(): ToolPermissionDecision.Denied =
+    ToolPermissionDecision.Denied(
+        source = ToolPermissionDenialSource.SETTINGS,
+        rejection = "Tool execution denied by permission settings.",
+    )
+
+internal fun permissionDeniedByUser(): ToolPermissionDecision.Denied =
+    ToolPermissionDecision.Denied(
+        source = ToolPermissionDenialSource.USER,
+        rejection = "Tool execution denied by user.",
+    )
+
+internal fun permissionDeniedByAutomaticReview(
+    rationale: String,
+    interruptTurn: Boolean = false,
+): ToolPermissionDecision.Denied {
+    val normalizedRationale = rationale.trim().take(1_000)
+    val suffix = normalizedRationale.takeIf(String::isNotEmpty)?.let { ": $it" }.orEmpty()
+    return ToolPermissionDecision.Denied(
+        source = ToolPermissionDenialSource.AUTOMATIC_REVIEW,
+        rejection =
+            "Automatic permission review denied the action$suffix. Do not retry, rephrase, " +
+                "split, encode, delegate, or use another tool or path to work around this denial. " +
+                "Ask the user for explicit authorization or choose a genuinely different safe action.",
+        interruptTurn = interruptTurn,
+    )
+}
+
+/** Null means the latest setting now requires a manual prompt. */
+internal fun resolveReviewDecisionAfterSettingsRefresh(
+    approvalGranted: Boolean,
+    latestRoute: PermissionRoute,
+    reviewerRationale: String,
+): ToolPermissionDecision? =
+    when (latestRoute) {
+        PermissionRoute.ALLOW -> ToolPermissionDecision.Allowed
+        PermissionRoute.FORBID -> permissionDeniedBySettings()
+        PermissionRoute.REVIEWER ->
+            if (approvalGranted) {
+                ToolPermissionDecision.Allowed
+            } else {
+                permissionDeniedByAutomaticReview(reviewerRationale)
+            }
+        PermissionRoute.ASK -> null
+    }
