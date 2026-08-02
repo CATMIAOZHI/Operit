@@ -33,18 +33,23 @@ internal object WorkspaceToolPermissionPolicy {
     private const val ANDROID_ENV = "android"
     private const val LINUX_ENV = "linux"
 
-    private val singlePathTools =
+    private val confinedSinglePathTools =
         setOf(
             "read_file",
             "read_file_part",
             "read_file_full",
             "read_file_binary",
+            "list_files",
+            "grep_code",
+            "grep_context",
             "write_file",
             "write_file_binary",
             "file_exists",
             "make_directory",
             "file_info",
             "create_file",
+            "edit_file",
+            "apply_file",
         )
 
     // Persistent and hidden terminals are deliberately excluded. Their cwd/provider/interactive
@@ -121,7 +126,7 @@ internal object WorkspaceToolPermissionPolicy {
         val boundEnvironment = normalizeEnvironment(workspaceEnv)
         val name = tool.name.lowercase()
 
-        if (name in singlePathTools) {
+        if (name in confinedSinglePathTools) {
             val target = tool.parameter("path") ?: return false
             val environment = normalizeEnvironment(tool.parameter("environment"))
             return isPathInsideWorkspace(
