@@ -170,53 +170,74 @@ class ToolPermissionPoliciesTest {
     }
 
     @Test
-    fun workspacePolicyPromptsForRecursiveOrMultiEndpointFileOperations() {
+    fun workspacePolicyAllowsSafeConfinedSinglePathFileTools() {
         val workspace = Files.createTempDirectory("operit-workspace-policy").toFile().canonicalFile
         val insideSource = File(workspace, "source.txt")
         val insideDestination = File(workspace, "nested/destination.txt")
-        val outsideDestination = File(workspace.parentFile, "outside.txt")
+        val outside = File(workspace.parentFile, "outside.txt")
 
-        assertFalse(
-            workspaceAllows(
-                tool(
-                    "move_file",
-                    "source" to insideSource.path,
-                    "destination" to insideDestination.path,
-                ),
-                workspace.path,
+        listOf(
+                "read_file",
+                "read_file_part",
+                "read_file_full",
+                "read_file_binary",
+                "list_files",
+                "grep_code",
+                "grep_context",
+                "write_file",
+                "write_file_binary",
+                "file_exists",
+                "make_directory",
+                "file_info",
+                "create_file",
+                "edit_file",
+                "apply_file",
             )
-        )
-        assertFalse(
-            workspaceAllows(
-                tool(
-                    "move_file",
-                    "source" to insideSource.path,
-                    "destination" to outsideDestination.path,
-                ),
-                workspace.path,
-            )
-        )
+            .forEach { toolName ->
+                assertTrue(
+                    toolName,
+                    workspaceAllows(tool(toolName, "path" to insideSource.path), workspace.path),
+                )
+            }
+
+        listOf("list_files", "grep_code", "grep_context", "edit_file", "apply_file")
+            .forEach { toolName ->
+                assertFalse(
+                    toolName,
+                    workspaceAllows(tool(toolName, "path" to outside.path), workspace.path),
+                )
+                assertFalse(
+                    toolName,
+                    workspaceAllows(
+                        tool(toolName, "path" to insideSource.path, "environment" to "linux"),
+                        workspace.path,
+                    ),
+                )
+                assertFalse(toolName, workspaceAllows(tool(toolName), workspace.path))
+            }
+
         assertFalse(
             workspaceAllows(
                 tool("delete_file", "path" to workspace.path, "recursive" to "true"),
                 workspace.path,
             )
         )
-        assertFalse(
-            workspaceAllows(tool("find_files", "path" to workspace.path), workspace.path)
-        )
-        assertFalse(
-            workspaceAllows(tool("list_files", "path" to workspace.path), workspace.path)
-        )
-        assertFalse(
-            workspaceAllows(tool("edit_file", "path" to insideSource.path), workspace.path)
-        )
-        assertFalse(
-            workspaceAllows(
-                tool("zip_files", "source" to workspace.path, "destination" to insideDestination.path),
-                workspace.path,
+
+        listOf("move_file", "copy_file", "zip_files", "unzip_files").forEach { toolName ->
+            assertFalse(
+                toolName,
+                workspaceAllows(
+                    tool(
+                        toolName,
+                        "source" to insideSource.path,
+                        "destination" to insideDestination.path,
+                    ),
+                    workspace.path,
+                ),
             )
-        )
+        }
+
+        assertFalse(workspaceAllows(tool("find_files", "path" to workspace.path), workspace.path))
         assertFalse(
             workspaceAllows(
                 tool(
@@ -226,6 +247,28 @@ class ToolPermissionPoliciesTest {
                     "source_environment" to "android",
                     "dest_environment" to "linux",
                 ),
+                workspace.path,
+            )
+        )
+    }
+
+    @Test
+    fun workspacePolicyDoesNotAutoApproveToolsWithExternalSideEffects() {
+        val workspace = Files.createTempDirectory("operit-workspace-policy").toFile().canonicalFile
+        val inside = File(workspace, "artifact.apk")
+
+        listOf("open_file", "share_file", "install_app").forEach { toolName ->
+            assertFalse(toolName, workspaceAllows(tool(toolName, "path" to inside.path), workspace.path))
+        }
+        assertFalse(
+            workspaceAllows(
+                tool("download_file", "destination" to inside.path, "url" to "https://example.com"),
+                workspace.path,
+            )
+        )
+        assertFalse(
+            workspaceAllows(
+                tool("multipart_request", "files" to "[\"${inside.path}\"]"),
                 workspace.path,
             )
         )
