@@ -415,6 +415,7 @@ class MessageCoordinationDelegate(
         val groupParticipantNamesText = buildBoundGroupParticipantNamesText(chatId)
         val groupOrchestrationMode = groupParticipantNamesText != null
         val workspacePath = currentChat?.workspace
+        val workspaceEnv = currentChat?.workspaceEnv
         val roleCardId = resolveRegenerationRoleCardId(chatId, targetMessage)
         val currentRoleName =
             runCatching { characterCardManager.getCharacterCardFlow(roleCardId).first().name }
@@ -435,6 +436,7 @@ class MessageCoordinationDelegate(
                 requestMessageContent = requestMessageContent,
                 requestHistory = requestHistory,
                 workspacePath = workspacePath,
+                workspaceEnv = workspaceEnv,
                 promptFunctionType = currentPromptFunctionType,
                 roleCardId = roleCardId,
                 currentRoleName = currentRoleName,

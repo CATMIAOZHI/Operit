@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -63,6 +64,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -76,7 +78,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -86,6 +90,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
@@ -105,7 +111,9 @@ private fun PermissionRequestContent(
     onAllow: () -> Unit,
     onDeny: () -> Unit,
     onAlwaysAllow: () -> Unit,
-    allowAlwaysAllow: Boolean,
+    onAlwaysDeny: () -> Unit,
+    allowPermanentChoice: Boolean,
+    reviewFailureKind: PermissionReviewFailureKind?,
     onMinimize: () -> Unit,
     pendingRequestCount: Int,
     colorScheme: ColorScheme? = null,
@@ -193,6 +201,26 @@ private fun PermissionRequestContent(
                             textAlign = TextAlign.Center
                         )
 
+                        val reviewFallbackText =
+                            when (reviewFailureKind) {
+                                PermissionReviewFailureKind.INVALID_OUTPUT ->
+                                    stringResource(R.string.permission_review_fallback_invalid)
+                                PermissionReviewFailureKind.TIMED_OUT ->
+                                    stringResource(R.string.permission_review_fallback_timeout)
+                                PermissionReviewFailureKind.REVIEWER_ERROR ->
+                                    stringResource(R.string.permission_review_fallback_error)
+                                null -> null
+                            }
+                        if (reviewFallbackText != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = reviewFallbackText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+
                         if (pendingRequestCount > 1) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
@@ -228,20 +256,38 @@ private fun PermissionRequestContent(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            OutlinedButton(
-                                onClick = onDeny,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(44.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Text(
-                                    stringResource(R.string.permission_request_deny),
-                                    style = MaterialTheme.typography.labelLarge.copy(
-                                        fontSize = 15.sp
+                                OutlinedButton(
+                                    onClick = onDeny,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(44.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                                ) {
+                                    Text(
+                                        stringResource(R.string.permission_request_deny),
+                                        style = MaterialTheme.typography.labelLarge.copy(
+                                            fontSize = 15.sp
+                                        )
                                     )
-                                )
+                                }
+                                if (allowPermanentChoice) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = stringResource(R.string.permission_request_always_deny),
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontSize = 12.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier
+                                            .clickable { onAlwaysDeny() }
+                                            .padding(vertical = 4.dp)
+                                    )
+                                }
                             }
 
                             Column(
@@ -262,7 +308,7 @@ private fun PermissionRequestContent(
                                         )
                                     )
                                 }
-                                if (allowAlwaysAllow) {
+                                if (allowPermanentChoice) {
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
                                         text = stringResource(R.string.permission_request_always_allow),
@@ -292,6 +338,168 @@ private fun PermissionRequestContent(
                 }
             }
         }
+    }
+}
+
+@Composable
+internal fun PermissionCircuitBreakerContent(
+    colorScheme: ColorScheme?,
+    warningCount: Int,
+    onDismiss: () -> Unit,
+) {
+    var remainingSeconds by remember { mutableStateOf(3) }
+
+    LaunchedEffect(Unit) {
+        while (remainingSeconds > 0) {
+            delay(1_000L)
+            remainingSeconds -= 1
+        }
+    }
+
+    FloatingWindowTheme(colorScheme = colorScheme) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.68f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            ElevatedCard(
+                modifier =
+                    Modifier.fillMaxWidth(0.88f)
+                        .fillMaxHeight(0.82f)
+                        .padding(16.dp),
+                shape = RoundedCornerShape(24.dp),
+                colors =
+                    CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ),
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp),
+            ) {
+                Column(
+                    modifier =
+                        Modifier.padding(horizontal = 24.dp, vertical = 24.dp)
+                            .verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Shield,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(42.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.permission_review_circuit_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        text = stringResource(R.string.permission_review_circuit_message),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center,
+                    )
+                    if (warningCount > 1) {
+                        Text(
+                            text =
+                                stringResource(
+                                    R.string.permission_review_circuit_combined_count,
+                                    warningCount,
+                                ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    CircuitBreakerGuidanceSection(
+                        title = stringResource(R.string.permission_review_circuit_what_happened_title),
+                        body = stringResource(R.string.permission_review_circuit_what_happened_body),
+                    )
+                    CircuitBreakerGuidanceSection(
+                        title = stringResource(R.string.permission_review_circuit_what_to_do_title),
+                        body = stringResource(R.string.permission_review_circuit_what_to_do_body),
+                    )
+                    if (remainingSeconds == 0) {
+                        Text(
+                            text = stringResource(R.string.permission_review_circuit_ready),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                        )
+                    }
+                    Button(
+                        enabled = remainingSeconds == 0,
+                        onClick = onDismiss,
+                        modifier =
+                            Modifier.fillMaxWidth()
+                                .heightIn(min = 48.dp),
+                    ) {
+                        Text(
+                            if (remainingSeconds > 0) {
+                                stringResource(
+                                    R.string.permission_review_circuit_countdown,
+                                    remainingSeconds,
+                                )
+                            } else {
+                                stringResource(R.string.permission_review_circuit_confirm)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CircuitBreakerGuidanceSection(
+    title: String,
+    body: String,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun PermissionCircuitBreakerDialogHost() {
+    val pendingCount by PermissionCircuitBreakerNoticeState.pendingCount.collectAsState()
+    if (pendingCount <= 0) return
+
+    Dialog(
+        onDismissRequest = {},
+        properties =
+            DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false,
+                usePlatformDefaultWidth = false,
+            ),
+    ) {
+        PermissionCircuitBreakerContent(
+            colorScheme = null,
+            warningCount = pendingCount,
+            onDismiss = PermissionCircuitBreakerNoticeState::clear,
+        )
     }
 }
 
@@ -481,6 +689,7 @@ class PermissionRequestOverlay(private val context: Context) {
     private var currentOnResult: ((PermissionRequestResult) -> Unit)? = null
     private var currentOnMinimized: (() -> Unit)? = null
     private var currentLayoutParams: WindowManager.LayoutParams? = null
+    private val circuitBreakerWarningCountState = mutableIntStateOf(0)
 
     // Minimized state — use MutableState for Compose reactivity
     private var isMinimizedState = mutableStateOf(false)
@@ -547,9 +756,10 @@ class PermissionRequestOverlay(private val context: Context) {
         operationDescription: String,
         conversationLabel: String?,
         pendingRequestCount: StateFlow<Int>,
+        reviewFailureKind: PermissionReviewFailureKind? = null,
         onResult: (PermissionRequestResult) -> Unit,
         onMinimized: (() -> Unit)? = null,
-        allowAlwaysAllow: Boolean = true,
+        allowPermanentChoice: Boolean = true,
     ) {
         if (overlayView != null) {
             AppLogger.e(TAG, "Cannot show permission request while an overlay is still attached")
@@ -646,7 +856,11 @@ class PermissionRequestOverlay(private val context: Context) {
                         onAlwaysAllow = {
                             onRes?.invoke(PermissionRequestResult.ALWAYS_ALLOW)
                         },
-                        allowAlwaysAllow = allowAlwaysAllow,
+                        onAlwaysDeny = {
+                            onRes?.invoke(PermissionRequestResult.ALWAYS_DENY)
+                        },
+                        allowPermanentChoice = allowPermanentChoice,
+                        reviewFailureKind = reviewFailureKind,
                         pendingRequestCount = pendingCount,
                         onMinimize = {
                             onMin?.invoke()
@@ -676,6 +890,70 @@ class PermissionRequestOverlay(private val context: Context) {
             AppLogger.e(TAG, "Error adding overlay view", e)
             dismiss()
             onResult(PermissionRequestResult.DENY)
+        }
+    }
+
+    fun showCircuitBreakerWarning(onUnavailable: () -> Unit = {}) {
+        if (overlayView != null) {
+            circuitBreakerWarningCountState.intValue += 1
+            AppLogger.w(TAG, "Consecutive circuit-breaker warning merged into the active notice")
+            return
+        }
+        if (!hasOverlayPermission()) {
+            AppLogger.e(TAG, "Cannot show circuit-breaker warning without overlay permission")
+            onUnavailable()
+            return
+        }
+        circuitBreakerWarningCountState.intValue = 1
+
+        windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val params = WindowManager.LayoutParams().apply {
+            width = WindowManager.LayoutParams.MATCH_PARENT
+            height = WindowManager.LayoutParams.MATCH_PARENT
+            type =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                } else {
+                    WindowManager.LayoutParams.TYPE_PHONE
+                }
+            flags =
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            format = android.graphics.PixelFormat.TRANSLUCENT
+            gravity = Gravity.TOP or Gravity.START
+        }
+        currentLayoutParams = params
+        val scheme = colorScheme
+        overlayView = ComposeView(context).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            setContent {
+                PermissionCircuitBreakerContent(
+                    colorScheme = scheme,
+                    warningCount = circuitBreakerWarningCountState.intValue,
+                    onDismiss = {
+                        dismiss()
+                    },
+                )
+            }
+        }
+        lifecycleOwner = ServiceLifecycleOwner().apply {
+            handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+            handleLifecycleEvent(Lifecycle.Event.ON_START)
+            handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
+        overlayView?.apply {
+            setViewTreeLifecycleOwner(lifecycleOwner)
+            setViewTreeViewModelStoreOwner(lifecycleOwner)
+            setViewTreeSavedStateRegistryOwner(lifecycleOwner)
+        }
+        try {
+            windowManager?.addView(overlayView, params)
+            AppLogger.d(TAG, "Circuit-breaker warning overlay added")
+        } catch (error: Exception) {
+            AppLogger.e(TAG, "Error adding circuit-breaker warning overlay", error)
+            dismiss()
+            onUnavailable()
         }
     }
 
@@ -808,6 +1086,7 @@ class PermissionRequestOverlay(private val context: Context) {
         currentOpDesc = null
         currentOnResult = null
         currentOnMinimized = null
+        circuitBreakerWarningCountState.intValue = 0
         conversationLabelState.value = null
         isMinimizedState.value = false
         cachedMinimizedX = 0

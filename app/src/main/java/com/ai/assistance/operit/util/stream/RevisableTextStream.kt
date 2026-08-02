@@ -1,10 +1,12 @@
 package com.ai.assistance.operit.util.stream
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 data class TextStreamEvent(
     val eventType: TextStreamEventType,
-    val id: String
+    val id: String,
+    val replayCharCount: Int? = null,
 )
 
 enum class TextStreamEventType {
@@ -138,9 +140,58 @@ fun Stream<String>.shareRevisable(
     started: StreamStart = StreamStart.EAGERLY,
     onComplete: suspend () -> Unit = {}
 ): SharedStream<String> {
-    val sharedTextStream = share(scope = scope, replay = replay, started = started, onComplete = onComplete)
-    val carrier = this as? TextStreamEventCarrier ?: return sharedTextStream
-    val sharedEventStream =
-        carrier.eventChannel.share(scope = scope, replay = Int.MAX_VALUE, started = started)
+    val carrier =
+        this as? TextStreamEventCarrier
+            ?: return share(
+                scope = scope,
+                replay = replay,
+                started = started,
+                onComplete = onComplete,
+            )
+    if (started != StreamStart.EAGERLY) {
+        val sharedTextStream =
+            share(scope = scope, replay = replay, started = started, onComplete = onComplete)
+        val sharedEventStream =
+            carrier.eventChannel.share(scope = scope, replay = Int.MAX_VALUE, started = started)
+        return sharedTextStream.withEventChannel(sharedEventStream)
+    }
+
+    val sharedTextStream = MutableSharedStreamImpl<String>(replay = replay)
+    val sharedEventStream = MutableSharedStreamImpl<TextStreamEvent>(replay = Int.MAX_VALUE)
+    scope.launch {
+        var processedEventCount = 0
+        var emittedTextCharCount = 0
+
+        suspend fun drainEvents() {
+            val events = carrier.eventChannel.replayCache
+            while (processedEventCount < events.size) {
+                sharedEventStream.emit(
+                    events[processedEventCount++].copy(
+                        replayCharCount = emittedTextCharCount,
+                    )
+                )
+            }
+        }
+
+        var failure: Throwable? = null
+        try {
+            this@shareRevisable.collect { value ->
+                // The upstream publishes revision events before the text they govern. Copy both
+                // through one coroutine so every downstream text replay observes its preceding
+                // savepoint/rollback event first.
+                drainEvents()
+                sharedTextStream.emit(value)
+                emittedTextCharCount += value.length
+            }
+            drainEvents()
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            sharedEventStream.close(failure)
+            sharedTextStream.close(failure)
+            onComplete()
+        }
+    }
     return sharedTextStream.withEventChannel(sharedEventStream)
 }

@@ -33,11 +33,14 @@ interface SubagentRunDao {
 
     @Query(
         "SELECT * FROM subagent_runs " +
-            "WHERE parentChatId = :parentChatId AND parentToolCallId = :callId LIMIT 1"
+            "WHERE parentChatId = :parentChatId AND parentToolCallId = :callId " +
+            "AND agentProfileId != :excludedAgentProfileId " +
+            "ORDER BY createdAt DESC, id DESC LIMIT 1"
     )
     fun observeByParentToolCallId(
         parentChatId: String,
         callId: String,
+        excludedAgentProfileId: String,
     ): Flow<SubagentRunEntity?>
 
     @Query(

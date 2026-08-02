@@ -28,7 +28,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.AIToolHandler
+import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
+import com.ai.assistance.operit.ui.permissions.PermissionReviewPolicyStore
 import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
 import kotlinx.coroutines.launch
 
@@ -38,11 +40,25 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
     val context = LocalContext.current
     val toolHandler = remember { AIToolHandler.getInstance(context) }
     val toolPermissionSystem = remember { ToolPermissionSystem.getInstance(context) }
+    val reviewPolicyStore = remember { PermissionReviewPolicyStore(context) }
+    val reviewPolicySnapshot by
+        reviewPolicyStore.snapshotFlow.collectAsState(
+            initial =
+                com.ai.assistance.operit.ui.permissions.PermissionReviewPolicySnapshot(
+                    text = PermissionReviewPolicyStore.DEFAULT_POLICY,
+                    version = "default",
+                    customized = false,
+                    managedAdditions = "",
+                )
+        )
+    var policyDraft by remember { mutableStateOf("") }
+    var policyExpanded by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     val allTools = remember {
         toolHandler.getAllToolNames().filterNot {
-            it == "package_proxy" || it == "proxy" || it == "search"
+            it == "package_proxy" || it == "proxy" || it == "search" ||
+                it in PermissionReviewInternalTools.names
         }
     }
     val toolPermissions = remember { mutableStateMapOf<String, PermissionLevel>() }
@@ -133,6 +149,73 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
             }
         }
         item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        stringResource(R.string.permission_review_policy_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        stringResource(
+                            R.string.permission_review_policy_description,
+                            reviewPolicySnapshot.version,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(
+                        onClick = {
+                            if (!policyExpanded) {
+                                policyDraft = reviewPolicySnapshot.managedAdditions
+                            }
+                            policyExpanded = !policyExpanded
+                        }
+                    ) {
+                        Text(
+                            stringResource(
+                                if (policyExpanded) R.string.permission_review_policy_collapse
+                                else R.string.permission_review_policy_edit
+                            )
+                        )
+                    }
+                    AnimatedVisibility(policyExpanded) {
+                        Column {
+                            Text(
+                                stringResource(R.string.permission_review_policy_managed_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            OutlinedTextField(
+                                value = policyDraft,
+                                onValueChange = { policyDraft = it },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp),
+                                placeholder = {
+                                    Text(stringResource(R.string.permission_review_policy_placeholder))
+                                },
+                                minLines = 5,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = {
+                                        scope.launch { reviewPolicyStore.saveCustomPolicy(policyDraft) }
+                                    }
+                                ) { Text(stringResource(R.string.save)) }
+                                OutlinedButton(
+                                    onClick = {
+                                        policyDraft = ""
+                                        scope.launch { reviewPolicyStore.reset() }
+                                    }
+                                ) { Text(stringResource(R.string.reset)) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
@@ -165,6 +248,51 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
         }
         item {
             PermissionGroup(
+                level = PermissionLevel.WORKSPACE,
+                allTools = allTools,
+                toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.WORKSPACE }.keys,
+                toolHandler = toolHandler,
+                onToolToggled = { toolName ->
+                    handlePermissionChange(toolName, PermissionLevel.WORKSPACE)
+                }
+            )
+        }
+        item {
+            PermissionGroup(
+                level = PermissionLevel.REVIEWER,
+                allTools = allTools,
+                toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.REVIEWER }.keys,
+                toolHandler = toolHandler,
+                onToolToggled = { toolName ->
+                    handlePermissionChange(toolName, PermissionLevel.REVIEWER)
+                }
+            )
+        }
+        item {
+            PermissionGroup(
+                level = PermissionLevel.WORKSPACE_REVIEWER,
+                allTools = allTools,
+                toolsInLevel =
+                    toolPermissions.filterValues {
+                        it == PermissionLevel.WORKSPACE_REVIEWER
+                    }.keys,
+                toolHandler = toolHandler,
+                onToolToggled = { toolName ->
+                    handlePermissionChange(toolName, PermissionLevel.WORKSPACE_REVIEWER)
+                }
+            )
+        }
+        item {
+            PermissionGroup(
+                level = PermissionLevel.ASK,
+                allTools = allTools,
+                toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.ASK }.keys,
+                toolHandler = toolHandler,
+                onToolToggled = { toolName -> handlePermissionChange(toolName, PermissionLevel.ASK) }
+            )
+        }
+        item {
+            PermissionGroup(
                 level = PermissionLevel.FORBID,
                 allTools = allTools,
                 toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.FORBID }.keys,
@@ -190,6 +318,21 @@ private fun PermissionGroup(
             stringResource(R.string.permission_level_allow),
             stringResource(R.string.permission_level_allow_description),
             MaterialTheme.colorScheme.primary
+        )
+        PermissionLevel.WORKSPACE -> Triple(
+            stringResource(R.string.permission_level_workspace),
+            stringResource(R.string.permission_level_workspace_description),
+            MaterialTheme.colorScheme.tertiary
+        )
+        PermissionLevel.WORKSPACE_REVIEWER -> Triple(
+            stringResource(R.string.permission_level_workspace_reviewer),
+            stringResource(R.string.permission_level_workspace_reviewer_description),
+            MaterialTheme.colorScheme.tertiary
+        )
+        PermissionLevel.REVIEWER -> Triple(
+            stringResource(R.string.permission_level_reviewer),
+            stringResource(R.string.permission_level_reviewer_description),
+            MaterialTheme.colorScheme.secondary
         )
         PermissionLevel.FORBID -> Triple(
             stringResource(R.string.permission_level_forbid),
@@ -395,6 +538,10 @@ fun CompactPermissionLevelSelector(
                 Text(
                     text = when (level) {
                         PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
+                        PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
+                        PermissionLevel.WORKSPACE_REVIEWER ->
+                            stringResource(R.string.permission_level_workspace_reviewer)
+                        PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
                         PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
                         PermissionLevel.FORBID -> stringResource(R.string.forbid)
                     },

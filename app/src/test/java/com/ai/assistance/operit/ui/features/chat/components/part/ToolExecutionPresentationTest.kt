@@ -298,6 +298,22 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
+    fun reloadedRunningTaskStillAcceptsItsExactLiveTiming() {
+        val live =
+            ToolExecutionTimingSnapshot(
+                callId = "task-call",
+                toolName = "task",
+                state = ToolExecutionState.RUNNING,
+            )
+
+        assertTrue(shouldAllowUnmatchedTaskExecution("task", live))
+        assertFalse(shouldAllowUnmatchedTaskExecution("read_file", live))
+
+        val proxyWrappedTask = live.copy(toolName = "proxy")
+        assertTrue(shouldAllowUnmatchedTaskExecution("task", proxyWrappedTask))
+    }
+
+    @Test
     fun invalidatedToolReservation_keepsLaterExecutionAlignedWithRenderedOrdinal() = runBlocking {
         val nextInvocationIndex = AtomicInteger(0)
         val invalidatedContent =

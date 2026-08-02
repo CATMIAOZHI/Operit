@@ -86,8 +86,9 @@ const INFO_COPY = {
     description: '收到新回复后自动朗读内容。'
   },
   autoApprove: {
-    title: '自动批准',
-    description: '开启后，默认直接执行所有工具调用而不再弹出确认。'
+    title: '工具权限',
+    description:
+      '拒绝会阻止工具；询问由你确认；工作区允许仅放行可证明位于工作区内的操作；组合模式会放行工作区内操作并把其余询问交给独立代理；单工具永久允许或拒绝优先。'
   },
   disableGroup: {
     title: '禁用项',
@@ -794,6 +795,27 @@ export function AgentChatInputSection({
   const disableUserPreferenceDescription =
     inputSettings?.disable_user_preference_description ?? false;
   const permissionLevel = inputSettings?.permission_level ?? 'ASK';
+  const permissionLevels = [
+    'ASK',
+    'WORKSPACE',
+    'WORKSPACE_REVIEWER',
+    'REVIEWER',
+    'ALLOW',
+    'FORBID'
+  ] as const;
+  const permissionLabels: Record<(typeof permissionLevels)[number], string> = {
+    ASK: '询问',
+    WORKSPACE: '工作区允许',
+    WORKSPACE_REVIEWER: '工作区 + 替我审批',
+    REVIEWER: '全部替我审批',
+    ALLOW: '允许',
+    FORBID: '拒绝'
+  };
+  const normalizedPermissionLevel = permissionLevels.includes(
+    permissionLevel as (typeof permissionLevels)[number]
+  )
+    ? (permissionLevel as (typeof permissionLevels)[number])
+    : 'ASK';
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1053,17 +1075,35 @@ export function AgentChatInputSection({
                 title="自动朗读"
               />
 
-              <AgentSimpleToggleSettingItem
-                checked={permissionLevel === 'ALLOW'}
-                icon={LockIcon}
-                onInfoClick={() => setInfoPopupContent(INFO_COPY.autoApprove)}
-                onToggle={() => {
-                  void onUpdateInputSettings({
-                    permission_level: permissionLevel === 'ALLOW' ? 'ASK' : 'ALLOW'
-                  });
-                }}
-                title="自动批准"
-              />
+              <AgentSettingsRow>
+                <span
+                  className={joinClasses(
+                    'agent-settings-icon',
+                    normalizedPermissionLevel !== 'FORBID' && 'is-active'
+                  )}
+                >
+                  <LockIcon size={16} />
+                </span>
+                <AgentInfoButton onClick={() => setInfoPopupContent(INFO_COPY.autoApprove)} />
+                <AgentInfoSpacer />
+                <span className="agent-settings-copy">
+                  <strong>工具权限</strong>
+                </span>
+                <select
+                  aria-label="工具权限"
+                  className="agent-settings-select"
+                  onChange={(event) => {
+                    void onUpdateInputSettings({ permission_level: event.target.value });
+                  }}
+                  value={normalizedPermissionLevel}
+                >
+                  {permissionLevels.map((level) => (
+                    <option key={level} value={level}>
+                      {permissionLabels[level]}
+                    </option>
+                  ))}
+                </select>
+              </AgentSettingsRow>
 
               <AgentDisableSettingsGroupItem
                 disableStreamOutput={disableStreamOutput}

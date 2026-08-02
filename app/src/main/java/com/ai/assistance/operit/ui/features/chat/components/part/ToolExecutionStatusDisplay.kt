@@ -3,10 +3,13 @@ package com.ai.assistance.operit.ui.features.chat.components.part
 import android.content.Context
 import android.os.SystemClock
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -15,15 +18,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SubdirectoryArrowRight
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -34,6 +42,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -42,6 +53,7 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.core.agent.SubagentCoordinator
+import com.ai.assistance.operit.core.agent.AgentProfileRepository
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingKey
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingRepository
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingSnapshot
@@ -49,6 +61,14 @@ import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
+import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
+import com.ai.assistance.operit.ui.permissions.PermissionReviewEvent
+import com.ai.assistance.operit.ui.permissions.PermissionReviewAuthorization
+import com.ai.assistance.operit.ui.permissions.PermissionReviewExactOverrideState
+import com.ai.assistance.operit.ui.permissions.PermissionReviewFailureKind
+import com.ai.assistance.operit.ui.permissions.PermissionReviewRiskLevel
+import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
+import com.ai.assistance.operit.ui.permissions.effectiveExactOverrideState
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
@@ -171,6 +191,12 @@ internal fun resolveLiveToolExecution(
     return live.takeIf { it.callId == persistedCallId }
 }
 
+internal fun shouldAllowUnmatchedTaskExecution(
+    requestedToolName: String?,
+    liveExecution: ToolExecutionTimingSnapshot?,
+): Boolean =
+    requestedToolName == "task" && liveExecution?.toolName in setOf("task", "proxy")
+
 @Composable
 internal fun ToolExecutionStatusDisplay(
     timingScopeId: String?,
@@ -184,14 +210,35 @@ internal fun ToolExecutionStatusDisplay(
     requestedSubagentTaskId: String? = null,
 ) {
     val context = LocalContext.current
+    remember(context) { PermissionReviewEventRepository.initialize(context); true }
     val timings by ToolExecutionTimingRepository.timings.collectAsState()
+    val chatCore =
+        remember(context) {
+            ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
+        }
+    val currentChatId by chatCore.currentChatId.collectAsState(initial = null)
+    val reviewEvents by PermissionReviewEventRepository.events.collectAsState()
+    val reviewEvent =
+        remember(reviewEvents, currentChatId, timingScopeId, invocationIndex) {
+            reviewEvents.lastOrNull { event ->
+                event.parentChatId == currentChatId &&
+                    event.timingScopeId == timingScopeId &&
+                    event.invocationIndex == invocationIndex
+            }
+        }
+    val liveExecutionCandidate =
+        timingScopeId
+            ?.let { scopeId -> timings[ToolExecutionTimingKey(scopeId, invocationIndex)] }
     val liveExecution =
         resolveLiveToolExecution(
-            liveExecution =
-                timingScopeId
-                    ?.let { scopeId -> timings[ToolExecutionTimingKey(scopeId, invocationIndex)] },
+            liveExecution = liveExecutionCandidate,
             persistedExecution = persistedExecution,
-            allowUnmatchedLiveExecution = allowUnmatchedLiveExecution,
+            allowUnmatchedLiveExecution =
+                allowUnmatchedLiveExecution ||
+                    shouldAllowUnmatchedTaskExecution(
+                        requestedToolName = requestedToolName,
+                        liveExecution = liveExecutionCandidate,
+                    ),
         )
     val state = liveExecution?.state ?: persistedExecution?.state ?: return
     val toolName =
@@ -202,6 +249,8 @@ internal fun ToolExecutionStatusDisplay(
 
     if (toolName == "task") {
         val success = liveExecution?.success ?: persistedExecution?.success ?: false
+        Column(modifier = modifier) {
+        reviewEvent?.let { event -> PermissionReviewLifecycleDisplay(event) }
         SubagentTaskStatusDisplay(
             callId = liveExecution?.callId ?: persistedExecution?.callId,
             fallbackState = state,
@@ -212,8 +261,9 @@ internal fun ToolExecutionStatusDisplay(
                 resolveResultText(liveExecution, persistedExecution, success),
             requestedSubagentName = requestedSubagentName,
             requestedSubagentTaskId = requestedSubagentTaskId,
-            modifier = modifier,
+            modifier = Modifier,
         )
+        }
         return
     }
 
@@ -227,17 +277,19 @@ internal fun ToolExecutionStatusDisplay(
         }
     }
 
+    Column(modifier = modifier) {
+        reviewEvent?.let { event -> PermissionReviewLifecycleDisplay(event) }
     when (state) {
         ToolExecutionState.WAITING_AUTHORIZATION -> {
             ToolPendingStatusRow(
                 text = stringResource(R.string.tool_waiting_authorization),
-                modifier = modifier,
+                modifier = Modifier,
             )
         }
         ToolExecutionState.WAITING_EXECUTION -> {
             ToolPendingStatusRow(
                 text = stringResource(R.string.tool_waiting_execution),
-                modifier = modifier,
+                modifier = Modifier,
             )
         }
         ToolExecutionState.RUNNING -> {
@@ -247,7 +299,7 @@ internal fun ToolExecutionStatusDisplay(
                         R.string.tool_executing_duration,
                         formatToolExecutionDuration(context, currentElapsedMs),
                     ),
-                modifier = modifier,
+                modifier = Modifier,
             )
         }
         ToolExecutionState.COMPLETED -> {
@@ -261,7 +313,7 @@ internal fun ToolExecutionStatusDisplay(
                 isSuccess = success,
                 summaryPrefix = formatToolExecutionDuration(context, durationMs),
                 enableDialog = enableDialogs,
-                modifier = modifier,
+                modifier = Modifier,
             )
         }
         ToolExecutionState.NOT_EXECUTED -> {
@@ -273,9 +325,286 @@ internal fun ToolExecutionStatusDisplay(
                 isSuccess = false,
                 summaryPrefix = stringResource(R.string.tool_not_executed),
                 enableDialog = enableDialogs,
-                modifier = modifier,
+                modifier = Modifier,
             )
         }
+    }
+    }
+}
+
+@Composable
+private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
+    val context = LocalContext.current
+    val repository = remember(context) { SubagentRunRepository.getInstance(context) }
+    val chatCore =
+        remember(context) {
+            ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
+        }
+    val reviewerRunFlow =
+        remember(event.reviewerTaskId, event.parentChatId, event.action.targetId) {
+            event.reviewerTaskId?.let(repository::observeById)
+                ?: repository.observeByParentChatId(event.parentChatId).map { runs ->
+                    runs.lastOrNull { run ->
+                        run.agentProfileId == AgentProfileRepository.PERMISSION_REVIEWER_ID &&
+                            run.parentToolCallId == event.action.targetId
+                    }
+                }
+        }
+    val reviewerRun by reviewerRunFlow.collectAsState(initial = null)
+    var showDetails by remember(event.id) { mutableStateOf(false) }
+    var overrideNowMs by remember(event.id) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(event.exactOverrideExpiresAt) {
+        val expiresAt = event.exactOverrideExpiresAt ?: return@LaunchedEffect
+        val remaining = (expiresAt - System.currentTimeMillis()).coerceAtLeast(0L)
+        delay(remaining)
+        overrideNowMs = System.currentTimeMillis()
+    }
+    val overrideState = event.effectiveExactOverrideState(overrideNowMs)
+    val lifecycle =
+        when (event.status) {
+            PermissionReviewStatus.IN_PROGRESS ->
+                stringResource(R.string.permission_review_lifecycle_in_progress)
+            PermissionReviewStatus.APPROVED ->
+                stringResource(R.string.permission_review_lifecycle_approved)
+            PermissionReviewStatus.DENIED ->
+                stringResource(R.string.permission_review_lifecycle_denied)
+            PermissionReviewStatus.TIMED_OUT ->
+                stringResource(R.string.permission_review_lifecycle_timed_out)
+            PermissionReviewStatus.ABORTED ->
+                stringResource(R.string.permission_review_lifecycle_aborted)
+            PermissionReviewStatus.FAILED ->
+                stringResource(R.string.permission_review_lifecycle_failed)
+        }
+    val statusColor =
+        if (event.status == PermissionReviewStatus.DENIED ||
+            event.status == PermissionReviewStatus.FAILED ||
+            event.status == PermissionReviewStatus.TIMED_OUT
+        ) MaterialTheme.colorScheme.error
+        else MaterialTheme.colorScheme.primary
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .minimumInteractiveComponentSize()
+                .clip(RoundedCornerShape(6.dp))
+                .clickable(role = Role.Button) { showDetails = true }
+                .semantics { liveRegion = LiveRegionMode.Polite }
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text =
+                stringResource(
+                    R.string.permission_review_batch_lifecycle,
+                    event.batchPosition,
+                    event.batchSize,
+                    lifecycle,
+                    event.action.summary,
+                ),
+            style = MaterialTheme.typography.labelSmall,
+            color = statusColor,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        event.resolutionSource?.let { source ->
+            Text(
+                text =
+                    stringResource(
+                        if (source.endsWith("allow")) {
+                            R.string.permission_review_resolved_allow
+                        } else {
+                            R.string.permission_review_resolved_deny
+                        }
+                    ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(
+            text = stringResource(R.string.permission_review_tap_for_details),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+
+    if (showDetails) {
+        AlertDialog(
+            onDismissRequest = { showDetails = false },
+            title = { Text(stringResource(R.string.permission_review_detail_title)) },
+            text = {
+                Column(
+                    modifier =
+                        Modifier
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState()),
+                ) {
+                    Text(
+                        stringResource(R.string.permission_review_detail_status, lifecycle),
+                        color = statusColor,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (event.status == PermissionReviewStatus.DENIED) {
+                        Button(
+                            enabled =
+                                overrideState == null ||
+                                    overrideState == PermissionReviewExactOverrideState.EXPIRED,
+                            onClick = {
+                                PermissionReviewEventRepository.approveExactActionOnce(event.id)
+                            },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                        ) {
+                            Text(
+                                stringResource(
+                                    when (overrideState) {
+                                        PermissionReviewExactOverrideState.PENDING ->
+                                            R.string.permission_review_override_recorded
+                                        PermissionReviewExactOverrideState.IN_REVIEW ->
+                                            R.string.permission_review_override_in_review
+                                        PermissionReviewExactOverrideState.CONSUMED ->
+                                            R.string.permission_review_override_consumed
+                                        PermissionReviewExactOverrideState.EXPIRED ->
+                                            R.string.permission_review_override_expired
+                                        null -> R.string.permission_review_allow_exact_once
+                                    }
+                                )
+                            )
+                        }
+                        if (overrideState == PermissionReviewExactOverrideState.PENDING) {
+                            Text(
+                                stringResource(R.string.permission_review_override_next_step),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                    Text(
+                        stringResource(
+                            R.string.permission_review_detail_action,
+                            event.action.summary,
+                        )
+                    )
+                    event.riskLevel?.let { risk ->
+                        val riskLabel =
+                            stringResource(
+                                when (risk) {
+                                    PermissionReviewRiskLevel.LOW ->
+                                        R.string.permission_review_value_low
+                                    PermissionReviewRiskLevel.MEDIUM ->
+                                        R.string.permission_review_value_medium
+                                    PermissionReviewRiskLevel.HIGH ->
+                                        R.string.permission_review_value_high
+                                    PermissionReviewRiskLevel.CRITICAL ->
+                                        R.string.permission_review_value_critical
+                                }
+                            )
+                        Text(
+                            stringResource(
+                                R.string.permission_review_detail_risk,
+                                riskLabel,
+                            )
+                        )
+                    }
+                    event.userAuthorization?.let { authorization ->
+                        val authorizationLabel =
+                            stringResource(
+                                when (authorization) {
+                                    PermissionReviewAuthorization.UNKNOWN ->
+                                        R.string.permission_review_value_unknown
+                                    PermissionReviewAuthorization.LOW ->
+                                        R.string.permission_review_value_low
+                                    PermissionReviewAuthorization.MEDIUM ->
+                                        R.string.permission_review_value_medium
+                                    PermissionReviewAuthorization.HIGH ->
+                                        R.string.permission_review_value_high
+                                }
+                            )
+                        Text(
+                            stringResource(
+                                R.string.permission_review_detail_authorization,
+                                authorizationLabel,
+                            )
+                        )
+                    }
+                    event.failureKind?.let { failure ->
+                        val failureLabel =
+                            stringResource(
+                                when (failure) {
+                                    PermissionReviewFailureKind.INVALID_OUTPUT ->
+                                        R.string.permission_review_failure_invalid_output
+                                    PermissionReviewFailureKind.TIMED_OUT ->
+                                        R.string.permission_review_failure_timed_out
+                                    PermissionReviewFailureKind.REVIEWER_ERROR ->
+                                        R.string.permission_review_failure_reviewer_error
+                                }
+                            )
+                        Text(
+                            stringResource(
+                                R.string.permission_review_detail_failure,
+                                failureLabel,
+                            )
+                        )
+                    }
+                    event.rationale?.takeIf(String::isNotBlank)?.let { rationale ->
+                        Text(
+                            stringResource(
+                                R.string.permission_review_detail_rationale,
+                                rationale,
+                            )
+                        )
+                    }
+                    reviewerRun?.let { run ->
+                        val runStatus =
+                            stringResource(
+                                when (run.status) {
+                                    SubagentRunStatus.CREATED.name ->
+                                        R.string.subagent_status_creating
+                                    SubagentRunStatus.QUEUED.name ->
+                                        R.string.subagent_filter_queued
+                                    SubagentRunStatus.RUNNING.name ->
+                                        R.string.subagent_status_thinking
+                                    SubagentRunStatus.COMPLETED.name ->
+                                        R.string.subagent_status_completed
+                                    SubagentRunStatus.CANCELLED.name ->
+                                        R.string.subagent_status_cancelled
+                                    else -> R.string.subagent_status_error
+                                }
+                            )
+                        Text(
+                            stringResource(
+                                R.string.permission_review_detail_subagent_status,
+                                runStatus,
+                            )
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                if (reviewerRun != null) {
+                    TextButton(
+                        onClick = {
+                            showDetails = false
+                            chatCore.switchChat(
+                                requireNotNull(reviewerRun).childChatId,
+                                scrollToBottom = false,
+                            )
+                        }
+                    ) {
+                        Text(stringResource(R.string.permission_review_open_subagent))
+                    }
+                } else {
+                    TextButton(onClick = { showDetails = false }) {
+                        Text(stringResource(R.string.close))
+                    }
+                }
+            },
+            dismissButton =
+                reviewerRun?.let {
+                    {
+                        TextButton(onClick = { showDetails = false }) {
+                            Text(stringResource(R.string.close))
+                        }
+                    }
+                },
+        )
     }
 }
 
@@ -436,7 +765,7 @@ private fun SubagentTaskResultRow(
         if (onStopClick != null) {
             IconButton(
                 onClick = onStopClick,
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(48.dp),
             ) {
                 Icon(
                     imageVector = Icons.Default.Stop,
@@ -486,7 +815,12 @@ private fun SubagentTaskStatusDisplay(
                         candidate?.takeIf { it.parentChatId == lookup.parentChatId }
                     }
                 is SubagentRunLookup.ParentCall ->
-                    repository.observeByParentToolCallId(lookup.parentChatId, lookup.callId)
+                    repository.observeByParentToolCallId(
+                        lookup.parentChatId,
+                        lookup.callId,
+                        com.ai.assistance.operit.core.agent.AgentProfileRepository
+                            .PERMISSION_REVIEWER_ID,
+                    )
                 null -> flowOf(null)
             }
         }
@@ -631,6 +965,16 @@ private fun SubagentTaskStatusDisplay(
             lastTurnToolInvocationCounts[resolvedRun.childChatId]?.coerceAtLeast(0) ?: 0,
             resolvedRun.toolInvocationCount.coerceAtLeast(0),
         )
+    val runIsTerminal =
+        status == SubagentRunStatus.COMPLETED ||
+            status == SubagentRunStatus.FAILED ||
+            status == SubagentRunStatus.INTERRUPTED ||
+            status == SubagentRunStatus.CANCELLED
+    val resultIsSynchronizing =
+        runIsTerminal &&
+            executionResultText.isBlank() &&
+            fallbackState != ToolExecutionState.COMPLETED &&
+            fallbackState != ToolExecutionState.NOT_EXECUTED
     val baseStatusText =
         when (status) {
             SubagentRunStatus.CREATED -> stringResource(R.string.subagent_status_creating)
@@ -643,7 +987,9 @@ private fun SubagentTaskStatusDisplay(
                     stringResource(R.string.subagent_status_calling_tool, currentTool)
                 }
             SubagentRunStatus.COMPLETED ->
-                if (toolInvocationCount > 0) {
+                if (resultIsSynchronizing) {
+                    stringResource(R.string.subagent_status_syncing_result)
+                } else if (toolInvocationCount > 0) {
                     stringResource(
                         R.string.subagent_status_completed_with_tool_count,
                         toolInvocationCount,
@@ -676,10 +1022,7 @@ private fun SubagentTaskStatusDisplay(
             status != SubagentRunStatus.INTERRUPTED &&
             status != SubagentRunStatus.CANCELLED
     val isTerminal =
-        status == SubagentRunStatus.COMPLETED ||
-            status == SubagentRunStatus.FAILED ||
-            status == SubagentRunStatus.INTERRUPTED ||
-            status == SubagentRunStatus.CANCELLED
+        runIsTerminal && !resultIsSynchronizing
     val terminalResult =
         extractSubagentTaskResult(executionResultText)
             .ifBlank { stringResource(R.string.subagent_result_empty) }
