@@ -392,15 +392,15 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
                 reason = "The approval reviewer timed out.",
                 failureKind = PermissionReviewFailureKind.TIMED_OUT,
             ).copy(reviewerTaskId = latestReviewerTaskId)
-            if (exactOverride != null && finalDecision.failureKind == null &&
-                finalDecision.outcome == PermissionReviewOutcome.ALLOW
-            ) {
-                PermissionReviewExactOverrideStore.commit(reviewId)
-                exactOverrideCommitted = true
-            } else if (exactOverride != null) {
-                PermissionReviewExactOverrideStore.release(reviewId)
-            }
-            completeEvent(
+        if (exactOverride != null && finalDecision.failureKind == null &&
+            finalDecision.outcome == PermissionReviewOutcome.ALLOW
+        ) {
+            PermissionReviewExactOverrideStore.commit(reviewId)
+            exactOverrideCommitted = true
+        } else if (exactOverride != null) {
+            PermissionReviewExactOverrideStore.release(reviewId)
+        }
+        completeEvent(
             reviewId = reviewId,
             status =
                 when {
@@ -413,8 +413,8 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
                 },
             rationale = finalDecision.rationale,
             decision = finalDecision,
-            )
-            return finalDecision
+        )
+        return finalDecision
         } finally {
             if (exactOverride != null && !exactOverrideCommitted) {
                 PermissionReviewExactOverrideStore.release(reviewId)

@@ -278,6 +278,11 @@ fun FunctionConfigCard(
 
     var mediaSupportWarningResId by remember { mutableStateOf<Int?>(null) }
 
+    val permissionReviewerTestInvalidMessage =
+        stringResource(R.string.functional_config_permission_reviewer_test_invalid)
+    val permissionReviewerTestSuccessTemplate =
+        stringResource(R.string.functional_config_permission_reviewer_test_success)
+
     LaunchedEffect(functionType, currentConfig?.id) {
         mediaSupportWarningResId = null
         if (
@@ -714,12 +719,9 @@ fun FunctionConfigCard(
                                                             buffer.toString()
                                                         )
                                                             ?: error(
-                                                                context.getString(
-                                                                    R.string.functional_config_permission_reviewer_test_invalid
-                                                                )
+                                                                permissionReviewerTestInvalidMessage
                                                             )
-                                                    context.getString(
-                                                        R.string.functional_config_permission_reviewer_test_success,
+                                                    permissionReviewerTestSuccessTemplate.format(
                                                         decision.outcome.name.lowercase(),
                                                         decision.riskLevel.name.lowercase(),
                                                         decision.userAuthorization.name.lowercase(),
