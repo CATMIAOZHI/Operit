@@ -64,6 +64,12 @@ object ToolExecutionManager {
     private const val SUBAGENT_EXACT_REPEAT_REVIEW_THRESHOLD = 3
     private val toolRuntimeContextThreadLocal = ThreadLocal<ToolRuntimeContext?>()
 
+    // System-reserved package context parameters. They are only ever set by the host: values the
+    // model supplies (at the proxy top level or inside params) must not reach a package, or the
+    // reviewed parameter set would differ from the executed one.
+    private val reservedPackageContextParams =
+        setOf(PACKAGE_CALLER_NAME_PARAM, PACKAGE_CHAT_ID_PARAM, PACKAGE_CALLER_CARD_ID_PARAM)
+
     private data class ExactToolInstruction(
         val name: String,
         val orderedParameters: List<Pair<String, String>>,
@@ -335,6 +341,75 @@ object ToolExecutionManager {
 
     private fun getParameterValue(tool: AITool, name: String): String? {
         return tool.parameters.firstOrNull { it.name == name }?.value?.trim()
+    }
+
+    /**
+     * Binds a proxy/package_proxy call to the host's package context parameters before permission
+     * review and execution, so the reviewed parameter set is exactly the executed one. Values the
+     * model supplied for these reserved parameters (at the proxy top level or inside the params
+     * JSON) are replaced by the authoritative host values, so a package can never observe a
+     * spoofed chat/caller identity.
+     */
+    private fun bindProxyContextParameters(
+        tool: AITool,
+        callerName: String?,
+        callerChatId: String?,
+        callerCardId: String?,
+    ): AITool {
+        if (tool.name != PACKAGE_PROXY_TOOL_NAME &&
+            tool.name != CliToolModeSupport.PROXY_TOOL_NAME
+        ) {
+            return tool
+        }
+        val contextValues =
+            mapOf(
+                PACKAGE_CALLER_NAME_PARAM to callerName,
+                PACKAGE_CHAT_ID_PARAM to callerChatId,
+                PACKAGE_CALLER_CARD_ID_PARAM to callerCardId,
+            )
+        val topLevelHasReserved =
+            tool.parameters.any { parameter -> parameter.name in reservedPackageContextParams }
+        val paramsParam = tool.parameters.firstOrNull { it.name == "params" }
+        val paramsJson = paramsParam?.value?.trim().orEmpty()
+        val paramsObject =
+            if (paramsJson.isNotBlank()) runCatching { JSONObject(paramsJson) }.getOrNull() else null
+        val jsonHasReserved =
+            paramsObject != null &&
+                paramsObject.keys().asSequence().any { it in reservedPackageContextParams }
+        val hostHasAny =
+            !callerName.isNullOrBlank() || !callerChatId.isNullOrBlank() || !callerCardId.isNullOrBlank()
+        if (!topLevelHasReserved && !jsonHasReserved && !hostHasAny) {
+            return tool
+        }
+
+        val updated = tool.parameters.toMutableList()
+        contextValues.forEach { (name, value) ->
+            if (value.isNullOrBlank()) {
+                updated.removeAll { it.name == name }
+            } else {
+                val existingIndex = updated.indexOfFirst { it.name == name }
+                if (existingIndex >= 0) {
+                    updated[existingIndex] = ToolParameter(name, value)
+                } else {
+                    updated.add(ToolParameter(name, value))
+                }
+            }
+        }
+        if (paramsObject != null && (hostHasAny || jsonHasReserved)) {
+            reservedPackageContextParams.forEach { name ->
+                if (paramsObject.has(name)) paramsObject.remove(name)
+            }
+            contextValues.forEach { (name, value) ->
+                if (!value.isNullOrBlank() && !paramsObject.has(name)) {
+                    paramsObject.put(name, value)
+                }
+            }
+            val paramsIndex = updated.indexOfFirst { it.name == "params" }
+            if (paramsIndex >= 0) {
+                updated[paramsIndex] = ToolParameter("params", paramsObject.toString())
+            }
+        }
+        return tool.copy(parameters = updated)
     }
 
     private fun isInvocationAllowedForRoleCard(
@@ -729,17 +804,39 @@ object ToolExecutionManager {
         isSubagent: Boolean = false,
         subagentToolLoopGuard: SubagentToolLoopGuard? = null,
     ): List<ToolResult> = coroutineScope {
-        if (isSubagent && subagentToolLoopGuard != null && invocations.size > 1) {
+        // Bind proxy context parameters to host values before any permission review or execution
+        // happens, so the reviewed parameter set is exactly the executed one. The model can never
+        // supply a reserved package context value.
+        val boundInvocations =
+            invocations.map { invocation ->
+                if (
+                    invocation.tool.name == PACKAGE_PROXY_TOOL_NAME ||
+                    invocation.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
+                ) {
+                    invocation.copy(
+                        tool =
+                            bindProxyContextParameters(
+                                invocation.tool,
+                                callerName,
+                                callerChatId,
+                                callerCardId,
+                            )
+                    )
+                } else {
+                    invocation
+                }
+            }
+        if (isSubagent && subagentToolLoopGuard != null && boundInvocations.size > 1) {
             val firstReviewIndex =
                 subagentToolLoopGuard.firstReviewIndex(
-                    tools = invocations.map { it.tool },
+                    tools = boundInvocations.map { it.tool },
                     threshold = SUBAGENT_EXACT_REPEAT_REVIEW_THRESHOLD,
                 )
             if (firstReviewIndex > 0) {
                 val commonPrefixResults =
                     executeInvocations(
                         context = context,
-                        invocations = invocations.take(firstReviewIndex),
+                        invocations = boundInvocations.take(firstReviewIndex),
                         toolHandler = toolHandler,
                         packageManager = packageManager,
                         collector = collector,
@@ -760,7 +857,7 @@ object ToolExecutionManager {
                 val reviewedSuffixResults =
                     executeInvocations(
                         context = context,
-                        invocations = invocations.drop(firstReviewIndex),
+                        invocations = boundInvocations.drop(firstReviewIndex),
                         toolHandler = toolHandler,
                         packageManager = packageManager,
                         collector = collector,
@@ -782,7 +879,7 @@ object ToolExecutionManager {
             }
         }
 
-        invocations.forEach { invocation ->
+        boundInvocations.forEach { invocation ->
             ToolExecutionTimingRepository.register(timingScopeId, invocation)
         }
 
@@ -797,7 +894,7 @@ object ToolExecutionManager {
             java.util.IdentityHashMap<ToolInvocation, Boolean>()
         if (isSubagent && subagentToolLoopGuard != null) {
             val permissionSystem = toolHandler.getToolPermissionSystem()
-            for (invocation in invocations) {
+            for (invocation in boundInvocations) {
                 val resolvedTool = resolveToolTarget(invocation.tool).tool
                 val consecutiveCount = subagentToolLoopGuard.record(invocation.tool)
                 if (resolvedTool.name == "task") {
@@ -882,13 +979,13 @@ object ToolExecutionManager {
                 parentModelIndex = parentModelIndex,
                 isSubagent = isSubagent,
                 timingScopeId = timingScopeId,
-                batchSize = invocations.size.coerceAtLeast(1),
+                batchSize = boundInvocations.size.coerceAtLeast(1),
             )
 
         // 1. 顶层工具暴露模式拦截
         val toolExposurePermittedInvocations = mutableListOf<ToolInvocation>()
         val toolExposureDeniedResults = mutableListOf<ToolResult>()
-        for (invocation in invocations) {
+        for (invocation in boundInvocations) {
             val deniedResult =
                 if (
                     isSubagent &&
@@ -1208,8 +1305,8 @@ object ToolExecutionManager {
         // Walk invocations in the model's original order, executing each item at its slot and
         // publishing its result before any later invocation is started.
         var index = 0
-        while (index < invocations.size) {
-            val originalInvocation = invocations[index]
+        while (index < boundInvocations.size) {
+            val originalInvocation = boundInvocations[index]
             val invocationKey =
                 key(
                     originalInvocation.callId,
@@ -1236,11 +1333,11 @@ object ToolExecutionManager {
             // A contiguous run of executable task calls: launch them concurrently, then publish
             // their results in call order once the whole group has finished.
             var groupEnd = index + 1
-            while (groupEnd < invocations.size) {
+            while (groupEnd < boundInvocations.size) {
                 val candidateKey =
                     key(
-                        invocations[groupEnd].callId,
-                        invocations[groupEnd].invocationIndex.takeIf { it >= 0 },
+                        boundInvocations[groupEnd].callId,
+                        boundInvocations[groupEnd].invocationIndex.takeIf { it >= 0 },
                     )
                 val candidate = executableByInvocation[candidateKey]
                 if (candidate == null || candidate.tool.name != "task") break
@@ -1250,8 +1347,8 @@ object ToolExecutionManager {
                 (index until groupEnd).mapNotNull { position ->
                     val slotKey =
                         key(
-                            invocations[position].callId,
-                            invocations[position].invocationIndex.takeIf { it >= 0 },
+                            boundInvocations[position].callId,
+                            boundInvocations[position].invocationIndex.takeIf { it >= 0 },
                         )
                     executableByInvocation[slotKey]
                 }
@@ -1274,7 +1371,7 @@ object ToolExecutionManager {
         orderedResults.sortedBy { result -> result.invocationIndex ?: Int.MAX_VALUE }
         } catch (cancellation: CancellationException) {
             withContext(NonCancellable) {
-                invocations.forEach { invocation ->
+                boundInvocations.forEach { invocation ->
                     val snapshot =
                         ToolExecutionTimingRepository.get(
                             timingScopeId,
@@ -1315,7 +1412,7 @@ object ToolExecutionManager {
             throw cancellation
         } catch (failure: Exception) {
             withContext(NonCancellable) {
-                invocations.forEach { invocation ->
+                boundInvocations.forEach { invocation ->
                     val snapshot =
                         ToolExecutionTimingRepository.get(
                             timingScopeId,

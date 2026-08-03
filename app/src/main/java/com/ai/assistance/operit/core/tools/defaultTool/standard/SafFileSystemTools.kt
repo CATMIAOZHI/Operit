@@ -603,7 +603,11 @@ class SafFileSystemTools(
         val authority = uri.authority ?: return null
         val treeId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() ?: return null
         val treeUri = DocumentsContract.buildTreeDocumentUri(authority, treeId)
-        val docId = if (DocumentsContract.isTreeUri(uri)) treeId else runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull() ?: treeId
+        // getDocumentId returns the tree id for a tree-root uri and the real document id for a
+        // tree-backed child uri. isTreeUri() must not be used here: it is also true for
+        // /tree/.../document/... child uris, which would otherwise be resolved to the tree root
+        // and mis-classified as a directory by any MIME query.
+        val docId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull() ?: treeId
         return DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
     }
 
@@ -630,6 +634,18 @@ class SafFileSystemTools(
         val docUri = toTreeDocumentUri(uri) ?: uri
         val mime = queryMimeType(docUri)
         return mime == DocumentsContract.Document.MIME_TYPE_DIR || DocumentsContract.isTreeUri(uri)
+    }
+
+    /**
+     * Resolves whether a document is a directory, based only on its MIME type. Returns null when
+     * the type cannot be determined. Unlike [isDirectoryUri] this never falls back to the URI
+     * shape: a tree-backed child document URI is still a file, and a failed MIME query must fail
+     * closed instead of risking a provider-level recursive delete.
+     */
+    private fun isDirectoryDocument(uri: Uri): Boolean? {
+        val docUri = toTreeDocumentUri(uri) ?: uri
+        val mime = queryMimeType(docUri) ?: return null
+        return mime == DocumentsContract.Document.MIME_TYPE_DIR
     }
 
     private fun openInputStreamOrNull(uri: Uri) = runCatching { contentResolver.openInputStream(uri) }.getOrNull()
@@ -1310,6 +1326,8 @@ class SafFileSystemTools(
     suspend fun deleteFile(tool: AITool): ToolResult {
         val path = tool.parameters.find { it.name == "path" }?.value ?: ""
         val environment = tool.parameters.find { it.name == "environment" }?.value
+        val recursive =
+            tool.parameters.find { it.name == "recursive" }?.value?.toBoolean() ?: false
         val envLabel = resolveEnvLabel(environment)
         val uri = resolveSafPathToDocumentUriOrNull(path, environment)
             ?: return ToolResult(
@@ -1321,6 +1339,30 @@ class SafFileSystemTools(
 
         return withContext(Dispatchers.IO) {
             try {
+                // DocumentsContract has no portable non-recursive directory delete. A provider
+                // may delete the whole subtree when a directory document is deleted, so mirror the
+                // android path semantics: reject directory targets unless recursive is set. The
+                // type is resolved from the document MIME only; when it cannot be determined the
+                // delete fails closed rather than risking a provider-level recursive deletion.
+                if (!recursive) {
+                    val isDirectory = isDirectoryDocument(uri)
+                    if (isDirectory == true) {
+                        return@withContext ToolResult(
+                            toolName = tool.name,
+                            success = false,
+                            result = FileOperationData(operation = "delete", env = envLabel, path = path, successful = false, details = "Directory is not empty and recursive flag is not set"),
+                            error = "Directory is not empty and recursive flag is not set"
+                        )
+                    }
+                    if (isDirectory == null) {
+                        return@withContext ToolResult(
+                            toolName = tool.name,
+                            success = false,
+                            result = FileOperationData(operation = "delete", env = envLabel, path = path, successful = false, details = "Cannot determine target type for non-recursive delete"),
+                            error = "Cannot determine target type for non-recursive delete"
+                        )
+                    }
+                }
                 val deletedCount = contentResolver.delete(uri, null, null)
                 if (deletedCount > 0) {
                     ToolResult(
