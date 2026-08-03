@@ -2448,6 +2448,9 @@
     <string name="file_op_cut_success">剪切成功</string>
     <string name="file_op_paste_success">粘贴成功</string>
     <string name="file_op_delete_success">删除成功</string>
+    <string name="file_delete_directory_not_empty_non_recursive">目录不为空，未设置递归删除标志</string>
+    <string name="file_delete_directory_contents_unknown_non_recursive">无法确定目录是否为空</string>
+    <string name="file_delete_target_type_unknown_non_recursive">无法确定目标类型，未设置递归删除标志</string>
     <string name="file_op_create_folder_success">文件夹创建成功</string>
     <string name="file_op_rename_success">重命名成功</string>
     <string name="file_menu_open">打开</string>

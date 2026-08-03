@@ -3,6 +3,7 @@ package com.ai.assistance.operit.core.tools
 import android.content.Context
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.mcp.MCPManager
+import com.ai.assistance.operit.core.tools.mcp.MCPToolExecutor
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolInvocation
@@ -331,7 +332,7 @@ class AIToolHandler private constructor(private val context: Context) {
             }
         }
 
-        if (executor != null && toolName.contains(':')) {
+        if (executor != null && toolName.contains(':') && executor is MCPToolExecutor) {
             val packageName = toolName.substringBefore(':', missingDelimiterValue = "")
             if (packageName.isNotBlank()) {
                 try {
@@ -388,6 +389,37 @@ class AIToolHandler private constructor(private val context: Context) {
             return notFoundResult
         }
 
+        return executeResolvedTool(tool, executor)
+    }
+
+    /**
+     * Executes a tool with an already-resolved executor, never re-resolving (and possibly
+     * replacing) it. Performs the same request notification, interception, validation and
+     * lifecycle notifications as [executeTool]. Callers that classified the executor (for
+     * example a JavaScript package marker check) must invoke this overload so the classified
+     * executor is the one that runs.
+     */
+    fun executeToolWithExecutor(tool: AITool, executor: ToolExecutor): ToolResult {
+        notifyToolCallRequested(tool)
+        when (val interception = checkToolInterception(tool)) {
+            AIToolHookDecision.Allow -> Unit
+            is AIToolHookDecision.Block -> {
+                val interceptedResult = buildToolInterceptionResult(tool.name, interception)
+                notifyToolExecutionResult(tool, interceptedResult)
+                notifyToolExecutionFinished(tool)
+                return interceptedResult
+            }
+        }
+
+        return executeResolvedTool(tool, executor)
+    }
+
+    /**
+     * Executes a tool whose executor was already resolved. The caller is responsible for the
+     * request notification and interception steps; this helper runs validation and the
+     * invocation with the full result/error/finished lifecycle.
+     */
+    private fun executeResolvedTool(tool: AITool, executor: ToolExecutor): ToolResult {
         // Validate parameters
         val validationResult = executor.validateParameters(tool)
         if (!validationResult.valid) {
@@ -490,3 +522,11 @@ interface ToolExecutor {
         return ToolValidationResult(valid = true)
     }
 }
+
+/**
+ * Marks executors that run real JavaScript package (ToolPkg) tools. MCP tools and system tools
+ * never implement this marker. The marker allows callers to distinguish an actual package tool
+ * from an MCP tool that shares the same "server:tool" namespace without querying the package
+ * catalog.
+ */
+interface JsPackageToolExecutorMarker

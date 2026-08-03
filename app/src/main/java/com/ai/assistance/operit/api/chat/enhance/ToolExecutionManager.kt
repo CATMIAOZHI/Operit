@@ -7,6 +7,7 @@ import com.ai.assistance.operit.core.agent.SubagentToolPolicy
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.AIToolHookDecision
+import com.ai.assistance.operit.core.tools.JsPackageToolExecutorMarker
 import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.ToolExecutor
@@ -294,12 +295,12 @@ object ToolExecutionManager {
      * JavaScript package tool and therefore eligible for host package-context injection. Taken
      * once per batch and reused by binding and post-review injection so the reviewed parameter
      * set equals the executed one even when package initialization fails transiently. A degraded
-     * snapshot carries empty catalogs and null caller values, so it strips forged parameters and
-     * injects nothing (fail closed).
+     * snapshot carries an empty catalog and null caller values, so it strips forged parameters
+     * and injects nothing (fail closed).
      */
     private data class HostPackageContext(
         val jsPackages: Map<String, ToolPackage> = emptyMap(),
-        val mcpServerNames: Set<String> = emptySet(),
+        val toolHandler: AIToolHandler,
         val callerName: String? = null,
         val callerChatId: String? = null,
         val callerCardId: String? = null,
@@ -311,12 +312,15 @@ object ToolExecutionManager {
                     !callerCardId.isNullOrBlank()
 
         /**
-         * A proxy target is a real JavaScript package tool only when the named server is NOT a
-         * registered MCP server AND the package actually declares the target tool (in its base
-         * tools or one of its states). MCP servers share the same "server:tool" namespace, so a
-         * bare prefix match would misclassify an MCP-only target as a package and leak internal
-         * conversation metadata to the MCP server. Advice-only tools are never registered and
-         * therefore never injected.
+         * A proxy target is a real JavaScript package tool only when the package actually
+         * declares the target tool (in its base tools or one of its states) AND the executor
+         * currently registered for the exact "package:tool" name is a marked JavaScript package
+         * executor. MCP tools share the same "server:tool" namespace and are registered with an
+         * unmarked MCP executor, so an MCP target is never misclassified as a package and never
+         * receives internal conversation metadata. Rejecting per exact tool name (instead of per
+         * prefix) keeps colliding JS/MCP prefixes from vetoing tools that genuinely belong to the
+         * JavaScript package. Advice-only tools are never registered and therefore never
+         * injected. A not-yet-registered tool fails closed (no injection).
          */
         fun isJsPackageTool(toolName: String): Boolean {
             val toolNameParts = toolName.split(':', limit = 2)
@@ -325,31 +329,32 @@ object ToolExecutionManager {
             }
             val packageName = toolNameParts[0]
             val targetToolName = toolNameParts[1]
-            if (mcpServerNames.contains(packageName)) {
-                return false
-            }
             val toolPackage = jsPackages[packageName] ?: return false
             val declaredExecutableTools =
                 toolPackage.tools.filterNot { it.advice }.map { it.name } +
                     toolPackage.states.flatMap { state ->
                         state.tools.filterNot { it.advice }.map { it.name }
                     }
-            return declaredExecutableTools.contains(targetToolName)
+            if (!declaredExecutableTools.contains(targetToolName)) {
+                return false
+            }
+            return toolHandler.getToolExecutor(toolName) is JsPackageToolExecutorMarker
         }
     }
 
     /**
-     * Resolves the package/MCP snapshot and host caller values once for the whole batch. The
-     * lookup is restricted to batches that actually need it (host context present AND a proxy
-     * call or a qualified "server:tool" call) and guarded, so a failing package initialization
-     * can never abort a tool turn that does not involve packages: binding degrades to stripping
-     * forged reserved parameters without host injection. The snapshot is intentionally reused
-     * after permission review so a transient failure cannot make the reviewed parameter set
-     * differ from the executed one.
+     * Resolves the package snapshot and host caller values once for the whole batch. The lookup
+     * is restricted to batches that actually need it (host context present AND a proxy call or a
+     * qualified "server:tool" call) and guarded, so a failing package initialization can never
+     * abort a tool turn that does not involve packages: binding degrades to stripping forged
+     * reserved parameters without host injection. The snapshot is intentionally reused after
+     * permission review so a transient failure cannot make the reviewed parameter set differ
+     * from the executed one.
      */
     private fun resolveHostPackageContext(
         invocations: List<ToolInvocation>,
         packageManager: PackageManager,
+        toolHandler: AIToolHandler,
         callerName: String?,
         callerChatId: String?,
         callerCardId: String?,
@@ -359,7 +364,7 @@ object ToolExecutionManager {
                 !callerChatId.isNullOrBlank() ||
                 !callerCardId.isNullOrBlank()
         if (!hostHasAny) {
-            return HostPackageContext()
+            return HostPackageContext(toolHandler = toolHandler)
         }
         val needsPackageLookup =
             invocations.any { invocation ->
@@ -369,20 +374,17 @@ object ToolExecutionManager {
                     toolName.contains(':')
             }
         if (!needsPackageLookup) {
-            return HostPackageContext()
+            return HostPackageContext(toolHandler = toolHandler)
         }
-        // Fail closed as a single unit: if either catalog lookup fails, the snapshot is unusable.
-        // A half-snapshot with a missing server set could misclassify an MCP target as a JS
-        // package and leak conversation metadata, so degrade to an empty snapshot instead.
+        // Fail closed: if the package catalog lookup fails, the snapshot is unusable and binding
+        // degrades to stripping forged reserved parameters without host injection.
         val jsPackages = runCatching { packageManager.getAvailablePackages() }.getOrNull()
-        val mcpServerNames =
-            runCatching { packageManager.getAvailableServerPackages().keys }.getOrNull()
-        if (jsPackages == null || mcpServerNames == null) {
-            return HostPackageContext()
+        if (jsPackages == null) {
+            return HostPackageContext(toolHandler = toolHandler)
         }
         return HostPackageContext(
             jsPackages = jsPackages.toMap(),
-            mcpServerNames = mcpServerNames.toSet(),
+            toolHandler = toolHandler,
             callerName = callerName,
             callerChatId = callerChatId,
             callerCardId = callerCardId,
@@ -909,6 +911,7 @@ object ToolExecutionManager {
             resolveHostPackageContext(
                 invocations = invocations,
                 packageManager = packageManager,
+                toolHandler = toolHandler,
                 callerName = callerName,
                 callerChatId = callerChatId,
                 callerCardId = callerCardId,
@@ -1688,7 +1691,27 @@ object ToolExecutionManager {
                     executionStartedAtMs,
                 )
 
-                executeToolSafely(invocation, executor, toolHandler).collect { result ->
+                // The binding-time classification can go stale within a batch: an earlier
+                // invocation may have disabled the JavaScript package, and auto-activation may
+                // then select an MCP executor for the same qualified name. Reserved host context
+                // must never reach anything but a marked JavaScript package executor, so strip it
+                // once more after the final executor is chosen.
+                val executionInvocation =
+                    if (executor is JsPackageToolExecutorMarker) {
+                        invocation
+                    } else {
+                        invocation.copy(
+                            tool =
+                                invocation.tool.copy(
+                                    parameters =
+                                        invocation.tool.parameters.filterNot {
+                                            it.name in reservedPackageContextParams
+                                        }
+                                )
+                        )
+                    }
+
+                executeToolSafely(executionInvocation, executor, toolHandler).collect { result ->
                     // Intermediate emissions belong to this same invocation. Aggregate them and
                     // publish one final row so streaming tools do not create duplicate result rows.
                     collectedResults.add(result)

@@ -2390,6 +2390,9 @@
     <string name="file_op_cut_success">Cut successful</string>
     <string name="file_op_paste_success">Paste successful</string>
     <string name="file_op_delete_success">Delete successful</string>
+    <string name="file_delete_directory_not_empty_non_recursive">Directory is not empty and recursive flag is not set</string>
+    <string name="file_delete_directory_contents_unknown_non_recursive">Cannot determine whether directory is empty</string>
+    <string name="file_delete_target_type_unknown_non_recursive">Cannot determine target type for non-recursive delete</string>
     <string name="file_op_create_folder_success">Folder created successfully</string>
     <string name="file_op_rename_success">Rename successful</string>
     <string name="file_menu_open">Open</string>

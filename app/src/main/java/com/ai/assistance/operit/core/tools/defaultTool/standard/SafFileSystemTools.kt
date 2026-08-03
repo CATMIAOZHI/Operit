@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Base64
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.BinaryFileContentData
 import com.ai.assistance.operit.core.tools.DirectoryListingData
 import com.ai.assistance.operit.core.tools.FileContentData
@@ -646,6 +647,32 @@ class SafFileSystemTools(
         val docUri = toTreeDocumentUri(uri) ?: uri
         val mime = queryMimeType(docUri) ?: return null
         return mime == DocumentsContract.Document.MIME_TYPE_DIR
+    }
+
+    /**
+     * Resolves whether a directory document has no children. Returns true when the children query
+     * succeeds and returns an empty cursor, false when at least one child exists, and null when
+     * the query cannot be constructed or fails (fail closed).
+     */
+    private fun isDirectoryEmpty(uri: Uri): Boolean? {
+        val childrenQuery = resolveChildrenQueryUri(uri) ?: return null
+        return try {
+            contentResolver.query(
+                childrenQuery.first,
+                arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                null,
+                null,
+                null
+            )?.use { cursor -> !cursor.moveToFirst() }
+                ?: null
+        } catch (e: Exception) {
+            AppLogger.w(
+                "SafFileSystemTools",
+                "Failed to query children for directory emptiness check: $uri",
+                e
+            )
+            null
+        }
     }
 
     private fun openInputStreamOrNull(uri: Uri) = runCatching { contentResolver.openInputStream(uri) }.getOrNull()
@@ -1340,26 +1367,71 @@ class SafFileSystemTools(
         return withContext(Dispatchers.IO) {
             try {
                 // DocumentsContract has no portable non-recursive directory delete. A provider
-                // may delete the whole subtree when a directory document is deleted, so mirror the
-                // android path semantics: reject directory targets unless recursive is set. The
-                // type is resolved from the document MIME only; when it cannot be determined the
-                // delete fails closed rather than risking a provider-level recursive deletion.
+                // may delete the whole subtree when a directory document is deleted, so mirror
+                // the android path semantics: an empty directory is deletable without recursion,
+                // but a non-empty directory is rejected unless recursive is set. When the type or
+                // the child set cannot be determined the delete fails closed rather than risking a
+                // provider-level recursive deletion.
                 if (!recursive) {
                     val isDirectory = isDirectoryDocument(uri)
                     if (isDirectory == true) {
-                        return@withContext ToolResult(
-                            toolName = tool.name,
-                            success = false,
-                            result = FileOperationData(operation = "delete", env = envLabel, path = path, successful = false, details = "Directory is not empty and recursive flag is not set"),
-                            error = "Directory is not empty and recursive flag is not set"
-                        )
+                        val isEmpty = isDirectoryEmpty(uri)
+                        if (isEmpty == false) {
+                            val message =
+                                context.getString(
+                                    R.string.file_delete_directory_not_empty_non_recursive
+                                )
+                            return@withContext ToolResult(
+                                toolName = tool.name,
+                                success = false,
+                                result =
+                                    FileOperationData(
+                                        operation = "delete",
+                                        env = envLabel,
+                                        path = path,
+                                        successful = false,
+                                        details = message
+                                    ),
+                                error = message
+                            )
+                        }
+                        if (isEmpty == null) {
+                            val message =
+                                context.getString(
+                                    R.string.file_delete_directory_contents_unknown_non_recursive
+                                )
+                            return@withContext ToolResult(
+                                toolName = tool.name,
+                                success = false,
+                                result =
+                                    FileOperationData(
+                                        operation = "delete",
+                                        env = envLabel,
+                                        path = path,
+                                        successful = false,
+                                        details = message
+                                    ),
+                                error = message
+                            )
+                        }
                     }
                     if (isDirectory == null) {
+                        val message =
+                            context.getString(
+                                R.string.file_delete_target_type_unknown_non_recursive
+                            )
                         return@withContext ToolResult(
                             toolName = tool.name,
                             success = false,
-                            result = FileOperationData(operation = "delete", env = envLabel, path = path, successful = false, details = "Cannot determine target type for non-recursive delete"),
-                            error = "Cannot determine target type for non-recursive delete"
+                            result =
+                                FileOperationData(
+                                    operation = "delete",
+                                    env = envLabel,
+                                    path = path,
+                                    successful = false,
+                                    details = message
+                                ),
+                            error = message
                         )
                     }
                 }
