@@ -237,10 +237,6 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         useEnglish: Boolean,
         conversationLabel: String? = null
     ): ToolResult {
-        val proxiedTool = AITool(
-            name = targetToolName,
-            parameters = forwardedParameters
-        )
         val executor = handler.getToolExecutorOrActivate(targetToolName)
         if (executor == null) {
             return ToolResult(
@@ -250,6 +246,22 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 error = CliToolModeSupport.buildProxyTargetUnavailableMessage(targetToolName, useEnglish)
             )
         }
+
+        // The binding-time classification can go stale within a batch: an earlier invocation may
+        // have disabled the JavaScript package, and auto-activation may then select an MCP
+        // executor for the same qualified name. Reserved host context must never reach anything
+        // but a marked JavaScript package executor, so strip it once more after the final
+        // executor is chosen.
+        val finalForwardedParameters =
+            if (executor is JsPackageToolExecutorMarker) {
+                forwardedParameters
+            } else {
+                forwardedParameters.filterNot { it.name in packageContextParamNames }
+            }
+        val proxiedTool = AITool(
+            name = targetToolName,
+            parameters = finalForwardedParameters
+        )
 
         val runtimeContext = ToolExecutionManager.currentToolRuntimeContext()
         val permissionDecision =
@@ -288,7 +300,11 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         }
 
         handler.notifyToolPermissionChecked(proxiedTool, granted = true)
-        val proxiedResult = handler.executeTool(proxiedTool)
+        // Execute the already-resolved executor instead of re-resolving: the marker
+        // classification above is only valid for the exact executor instance it was made
+        // against, and a re-resolution could replace it with an MCP executor between the
+        // classification and the invocation.
+        val proxiedResult = handler.executeToolWithExecutor(proxiedTool, executor)
         return ToolResult(
             toolName = targetToolName,
             success = proxiedResult.success,
@@ -1088,11 +1104,39 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     return@registerTool buildToolErrorResult(tool, "tool_name cannot be package_proxy")
                 }
 
+                val targetExecutor = handler.getToolExecutorOrActivate(resolvedInvocation.targetToolName)
+                if (targetExecutor == null) {
+                    return@registerTool buildToolErrorResult(
+                        tool,
+                        CliToolModeSupport.buildProxyTargetUnavailableMessage(
+                            resolvedInvocation.targetToolName,
+                            isEnglishLanguage()
+                        )
+                    )
+                }
+
+                // The binding-time classification can go stale within a batch: an earlier
+                // invocation may have disabled the JavaScript package, and auto-activation may
+                // then select an MCP executor for the same qualified name. Reserved host context
+                // must never reach anything but a marked JavaScript package executor, so strip it
+                // once more after the final executor is chosen.
+                val finalForwardedParameters =
+                    if (targetExecutor is JsPackageToolExecutorMarker) {
+                        resolvedInvocation.forwardedParameters
+                    } else {
+                        resolvedInvocation.forwardedParameters.filterNot {
+                            it.name in packageContextParamNames
+                        }
+                    }
                 val proxiedTool = AITool(
                     name = resolvedInvocation.targetToolName,
-                    parameters = resolvedInvocation.forwardedParameters
+                    parameters = finalForwardedParameters
                 )
-                val proxiedResult = handler.executeTool(proxiedTool)
+                // Execute the already-resolved executor instead of re-resolving: the marker
+                // classification above is only valid for the exact executor instance it was made
+                // against, and a re-resolution could replace it with an MCP executor between the
+                // classification and the invocation.
+                val proxiedResult = handler.executeToolWithExecutor(proxiedTool, targetExecutor)
                 ToolResult(
                     toolName = resolvedInvocation.targetToolName,
                     success = proxiedResult.success,
