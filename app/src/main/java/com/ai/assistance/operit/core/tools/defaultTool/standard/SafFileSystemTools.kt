@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Base64
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.BinaryFileContentData
 import com.ai.assistance.operit.core.tools.DirectoryListingData
 import com.ai.assistance.operit.core.tools.FileContentData
@@ -603,7 +604,11 @@ class SafFileSystemTools(
         val authority = uri.authority ?: return null
         val treeId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() ?: return null
         val treeUri = DocumentsContract.buildTreeDocumentUri(authority, treeId)
-        val docId = if (DocumentsContract.isTreeUri(uri)) treeId else runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull() ?: treeId
+        // getDocumentId returns the tree id for a tree-root uri and the real document id for a
+        // tree-backed child uri. isTreeUri() must not be used here: it is also true for
+        // /tree/.../document/... child uris, which would otherwise be resolved to the tree root
+        // and mis-classified as a directory by any MIME query.
+        val docId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull() ?: treeId
         return DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
     }
 
@@ -630,6 +635,44 @@ class SafFileSystemTools(
         val docUri = toTreeDocumentUri(uri) ?: uri
         val mime = queryMimeType(docUri)
         return mime == DocumentsContract.Document.MIME_TYPE_DIR || DocumentsContract.isTreeUri(uri)
+    }
+
+    /**
+     * Resolves whether a document is a directory, based only on its MIME type. Returns null when
+     * the type cannot be determined. Unlike [isDirectoryUri] this never falls back to the URI
+     * shape: a tree-backed child document URI is still a file, and a failed MIME query must fail
+     * closed instead of risking a provider-level recursive delete.
+     */
+    private fun isDirectoryDocument(uri: Uri): Boolean? {
+        val docUri = toTreeDocumentUri(uri) ?: uri
+        val mime = queryMimeType(docUri) ?: return null
+        return mime == DocumentsContract.Document.MIME_TYPE_DIR
+    }
+
+    /**
+     * Resolves whether a directory document has no children. Returns true when the children query
+     * succeeds and returns an empty cursor, false when at least one child exists, and null when
+     * the query cannot be constructed or fails (fail closed).
+     */
+    private fun isDirectoryEmpty(uri: Uri): Boolean? {
+        val childrenQuery = resolveChildrenQueryUri(uri) ?: return null
+        return try {
+            contentResolver.query(
+                childrenQuery.first,
+                arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                null,
+                null,
+                null
+            )?.use { cursor -> !cursor.moveToFirst() }
+                ?: null
+        } catch (e: Exception) {
+            AppLogger.w(
+                "SafFileSystemTools",
+                "Failed to query children for directory emptiness check: $uri",
+                e
+            )
+            null
+        }
     }
 
     private fun openInputStreamOrNull(uri: Uri) = runCatching { contentResolver.openInputStream(uri) }.getOrNull()
@@ -1310,6 +1353,8 @@ class SafFileSystemTools(
     suspend fun deleteFile(tool: AITool): ToolResult {
         val path = tool.parameters.find { it.name == "path" }?.value ?: ""
         val environment = tool.parameters.find { it.name == "environment" }?.value
+        val recursive =
+            tool.parameters.find { it.name == "recursive" }?.value?.toBoolean() ?: false
         val envLabel = resolveEnvLabel(environment)
         val uri = resolveSafPathToDocumentUriOrNull(path, environment)
             ?: return ToolResult(
@@ -1321,6 +1366,75 @@ class SafFileSystemTools(
 
         return withContext(Dispatchers.IO) {
             try {
+                // DocumentsContract has no portable non-recursive directory delete. A provider
+                // may delete the whole subtree when a directory document is deleted, so mirror
+                // the android path semantics: an empty directory is deletable without recursion,
+                // but a non-empty directory is rejected unless recursive is set. When the type or
+                // the child set cannot be determined the delete fails closed rather than risking a
+                // provider-level recursive deletion.
+                if (!recursive) {
+                    val isDirectory = isDirectoryDocument(uri)
+                    if (isDirectory == true) {
+                        val isEmpty = isDirectoryEmpty(uri)
+                        if (isEmpty == false) {
+                            val message =
+                                context.getString(
+                                    R.string.file_delete_directory_not_empty_non_recursive
+                                )
+                            return@withContext ToolResult(
+                                toolName = tool.name,
+                                success = false,
+                                result =
+                                    FileOperationData(
+                                        operation = "delete",
+                                        env = envLabel,
+                                        path = path,
+                                        successful = false,
+                                        details = message
+                                    ),
+                                error = message
+                            )
+                        }
+                        if (isEmpty == null) {
+                            val message =
+                                context.getString(
+                                    R.string.file_delete_directory_contents_unknown_non_recursive
+                                )
+                            return@withContext ToolResult(
+                                toolName = tool.name,
+                                success = false,
+                                result =
+                                    FileOperationData(
+                                        operation = "delete",
+                                        env = envLabel,
+                                        path = path,
+                                        successful = false,
+                                        details = message
+                                    ),
+                                error = message
+                            )
+                        }
+                    }
+                    if (isDirectory == null) {
+                        val message =
+                            context.getString(
+                                R.string.file_delete_target_type_unknown_non_recursive
+                            )
+                        return@withContext ToolResult(
+                            toolName = tool.name,
+                            success = false,
+                            result =
+                                FileOperationData(
+                                    operation = "delete",
+                                    env = envLabel,
+                                    path = path,
+                                    successful = false,
+                                    details = message
+                                ),
+                            error = message
+                        )
+                    }
+                }
                 val deletedCount = contentResolver.delete(uri, null, null)
                 if (deletedCount > 0) {
                     ToolResult(

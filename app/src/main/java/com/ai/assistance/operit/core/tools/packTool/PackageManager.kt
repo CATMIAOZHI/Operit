@@ -6,7 +6,10 @@ import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.AIToolHandler
+import com.ai.assistance.operit.core.tools.JsPackageToolExecutorMarker
 import com.ai.assistance.operit.core.tools.StringResultData
+import com.ai.assistance.operit.core.tools.ToolExecutor
+import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.core.tools.PackageToolExecutor
 import com.ai.assistance.operit.core.tools.PackageTool
 import com.ai.assistance.operit.core.tools.ToolPackage
@@ -3002,12 +3005,20 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         }
         activePackageToolNames[toolPackage.name] = newToolNames
 
-        // Register each tool with the format packageName:toolName
+        // Register each tool with the format packageName:toolName. The executor is marked so
+        // callers can tell a real package tool from an MCP tool that shares the same
+        // "server:tool" namespace.
         executableTools.forEach { packageTool ->
             val toolName = "${toolPackage.name}:${packageTool.name}"
-            aiToolHandler.registerTool(toolName) { tool ->
-                packageToolExecutor.invoke(tool)
-            }
+            aiToolHandler.registerTool(
+                name = toolName,
+                executor =
+                    object : ToolExecutor, JsPackageToolExecutorMarker {
+                        override fun invoke(tool: AITool): ToolResult {
+                            return packageToolExecutor.invoke(tool)
+                        }
+                    }
+            )
         }
     }
 
