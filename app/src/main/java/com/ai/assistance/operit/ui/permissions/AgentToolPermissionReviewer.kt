@@ -95,6 +95,7 @@ internal object PermissionReviewResponsePolicy {
     suspend fun extractToolCallAndEnforce(
         response: String,
         exactOverride: Boolean = false,
+        expectedReviewId: String? = null,
     ): PermissionReviewDecision? {
         val invocations = ToolExecutionManager.extractToolInvocations(response)
         if (invocations.any { invocation ->
@@ -107,7 +108,7 @@ internal object PermissionReviewResponsePolicy {
             .filter { invocation -> invocation.tool.name == PermissionReviewSubmissionTool.NAME }
             .singleOrNull()
             ?.tool
-            ?.let { tool -> parseAndEnforce(tool, exactOverride) }
+            ?.let { tool -> parseAndEnforce(tool, exactOverride, expectedReviewId) }
     }
 
     private fun enforceFields(
@@ -285,7 +286,12 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
                 policySnapshot = policySnapshot,
                 exactOverrideReviewId = exactOverride?.originalReviewId,
             )
-        PermissionReviewInspectionRegistry.register(reviewId, reviewContext.workspacePath, action)
+        PermissionReviewInspectionRegistry.register(
+            reviewId,
+            reviewContext.workspacePath,
+            reviewContext.workspaceEnv,
+            action,
+        )
         PermissionReviewSubmissionRegistry.register(reviewId)
         val decision =
             try {

@@ -428,6 +428,32 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                 latestRoute = resolveCurrentPermissionRoute(tool, reviewContext),
                 reviewerRationale = decision.rationale,
             )
+        if (!reviewContext.callerChatId.isNullOrBlank()) {
+            // Settings can change while the reviewer turn is in flight. The event was finalized
+            // with the reviewer's own result; if the refreshed route overrides it, record the
+            // outcome that was actually enforced so the UI and audit history do not report the
+            // opposite of what happened.
+            PermissionReviewEventRepository.findForInvocation(
+                reviewContext.callerChatId,
+                reviewContext.timingScopeId,
+                reviewContext.invocationIndex,
+            )?.let { event ->
+                val enforcedStatus =
+                    if (refreshedDecision != null) {
+                        reviewEventStatusForEnforcedDecision(refreshedDecision)
+                    } else {
+                        event.status
+                    }
+                if (enforcedStatus != event.status) {
+                    PermissionReviewEventRepository.update(event.id) { current ->
+                        current.copy(
+                            status = enforcedStatus,
+                            resolutionSource = "settings_refreshed_during_review",
+                        )
+                    }
+                }
+            }
+        }
         if (!reviewContext.deferCircuitBreaker &&
             !reviewContext.callerChatId.isNullOrBlank()
         ) {
@@ -493,7 +519,11 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                     reviewContext.invocationIndex,
                 )?.let { event ->
                     PermissionReviewEventRepository.update(event.id) { current ->
+                        // The reviewer may have concluded before settings changed to ASK (or the
+                        // review failed/timed out); the manual or setting decision below is what
+                        // was actually enforced, so the event must not keep the opposite status.
                         current.copy(
+                            status = reviewEventStatusForEnforcedDecision(manualDecision),
                             resolutionSource =
                                 if (manualDecision is ToolPermissionDecision.Allowed) {
                                     "manual_or_setting_allow"
@@ -772,9 +802,9 @@ internal fun resolvePermissionRoute(
 
 internal fun resolveApprovalDecisionWithPermanentOverride(
     approvalGranted: Boolean,
-    latestToolOverride: PermissionLevel?,
+    latestEffectiveLevel: PermissionLevel,
 ): Boolean =
-    when (latestToolOverride) {
+    when (latestEffectiveLevel) {
         PermissionLevel.ALLOW -> true
         PermissionLevel.FORBID -> false
         else -> approvalGranted
@@ -824,4 +854,18 @@ internal fun resolveReviewDecisionAfterSettingsRefresh(
                 permissionDeniedByAutomaticReview(reviewerRationale)
             }
         PermissionRoute.ASK -> null
+    }
+
+/**
+ * The event status must mirror the decision that was actually enforced. A manual or setting
+ * decision reached after the reviewer finished may differ from the reviewer's own result, and a
+ * stale APPROVED/DENIED status would misreport the outcome in the UI and audit history.
+ */
+internal fun reviewEventStatusForEnforcedDecision(
+    decision: ToolPermissionDecision,
+): PermissionReviewStatus =
+    if (decision is ToolPermissionDecision.Allowed) {
+        PermissionReviewStatus.APPROVED
+    } else {
+        PermissionReviewStatus.DENIED
     }

@@ -516,6 +516,7 @@ data class PermissionReviewInspectionScope(
     val workspaceRoot: File?,
     val allowedTargets: List<File>,
     val remainingCalls: AtomicInteger = AtomicInteger(12),
+    val localInspectionEnabled: Boolean = true,
 )
 
 object PermissionReviewInspectionRegistry {
@@ -523,15 +524,42 @@ object PermissionReviewInspectionRegistry {
     private const val MAX_DIRECTORY_ENTRIES = 80
     private val scopes = ConcurrentHashMap<String, PermissionReviewInspectionScope>()
 
+    private fun isLocalEnvironment(workspaceEnv: String?): Boolean =
+        workspaceEnv.isNullOrBlank() || workspaceEnv.equals("android", ignoreCase = true)
+
     fun newReviewId(): String = UUID.randomUUID().toString()
 
-    fun register(reviewId: String, workspacePath: String?, action: PermissionReviewAction) {
-        val workspace = workspacePath?.takeIf(String::isNotBlank)?.let(::File)?.canonicalOrNull()
+    fun register(
+        reviewId: String,
+        workspacePath: String?,
+        workspaceEnv: String?,
+        action: PermissionReviewAction,
+    ) {
+        // Virtual environments (repo:*, linux) use paths that must not be interpreted as local
+        // Android files. A repo workspace commonly uses "/" as its virtual root, which would
+        // otherwise resolve to the device root and let the reviewer read arbitrary app files.
+        val localInspectionEnabled = isLocalEnvironment(workspaceEnv)
+        val workspace =
+            if (localInspectionEnabled) {
+                workspacePath?.takeIf(String::isNotBlank)?.let(::File)?.canonicalOrNull()
+            } else {
+                null
+            }
         val targets =
-            action.paths
-                .mapNotNull { path -> resolvePath(path, workspace)?.canonicalOrNull() }
-                .distinctBy(File::getPath)
-        scopes[reviewId] = PermissionReviewInspectionScope(reviewId, workspace, targets)
+            if (localInspectionEnabled) {
+                action.paths
+                    .mapNotNull { path -> resolvePath(path, workspace)?.canonicalOrNull() }
+                    .distinctBy(File::getPath)
+            } else {
+                emptyList()
+            }
+        scopes[reviewId] =
+            PermissionReviewInspectionScope(
+                reviewId,
+                workspace,
+                targets,
+                localInspectionEnabled = localInspectionEnabled,
+            )
     }
 
     fun unregister(reviewId: String) {
@@ -540,6 +568,9 @@ object PermissionReviewInspectionRegistry {
 
     fun inspect(reviewId: String, operation: String, requestedPath: String?): String {
         val scope = scopes[reviewId] ?: return "Inspection rejected: review is not active."
+        if (!scope.localInspectionEnabled) {
+            return "Inspection rejected: local file inspection is not available for this workspace environment."
+        }
         if (scope.remainingCalls.getAndDecrement() <= 0) {
             return "Inspection rejected: per-review inspection limit reached."
         }

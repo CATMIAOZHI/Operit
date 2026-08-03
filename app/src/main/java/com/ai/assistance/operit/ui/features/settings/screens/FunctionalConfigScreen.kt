@@ -698,10 +698,13 @@ fun FunctionConfigCard(
                                                 FunctionType.PERMISSION_REVIEWER -> {
                                                     val parameters =
                                                         modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                    val compatibilityReviewId = "compat-test-review-id"
                                                     val prompt =
                                                         "Compatibility test: call ${PermissionReviewSubmissionTool.NAME} " +
-                                                            "exactly once with outcome=allow, risk_level=low, " +
+                                                            "exactly once with review_id=$compatibilityReviewId, " +
+                                                            "outcome=allow, risk_level=low, " +
                                                             "user_authorization=low, and a concise rationale. " +
+                                                            "Echo review_id=$compatibilityReviewId unchanged. " +
                                                             "Do not call any other tool."
                                                     val buffer = StringBuilder()
                                                     service.sendMessage(
@@ -716,7 +719,8 @@ fun FunctionConfigCard(
                                                         .collect { chunk -> buffer.append(chunk) }
                                                     val decision =
                                                         PermissionReviewResponsePolicy.extractToolCallAndEnforce(
-                                                            buffer.toString()
+                                                            buffer.toString(),
+                                                            expectedReviewId = compatibilityReviewId,
                                                         )
                                                             ?: error(
                                                                 permissionReviewerTestInvalidMessage

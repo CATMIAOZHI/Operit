@@ -284,6 +284,7 @@ internal fun mergeAgentProfileSettings(
             modelIndex = saved.modelIndex,
         )
     }
+    val customIds = mutableSetOf<String>()
     val restoredCustom =
         restored
             .asSequence()
@@ -301,8 +302,45 @@ internal fun mergeAgentProfileSettings(
                     }
                     .getOrNull()
             }
+            .onEach { customIds += it.id }
             .associateBy(AgentProfile::id)
-    return mergedDefaults + restoredCustom
+    val preservedCollisions =
+        restored
+            .asSequence()
+            // Custom profiles are always persisted with hidden=false. A hidden saved record is the
+            // app's own immutable built-in snapshot, which must never be duplicated as a custom
+            // profile; only genuinely user-created profiles colliding with a now-reserved id are
+            // migrated.
+            .filter { it.id in immutableDefaultIds && !it.hidden }
+            .mapNotNull { saved ->
+                val renamedId = legacyCollisionProfileId(saved.id, customIds)
+                customIds += renamedId
+                runCatching {
+                        buildCustomAgentProfile(
+                            id = renamedId,
+                            name = saved.name,
+                            description = saved.description,
+                            systemPrompt = saved.systemPrompt,
+                            modelConfigId = saved.modelConfigId,
+                            modelIndex = saved.modelIndex,
+                        )
+                    }
+                    .getOrNull()
+            }
+            .associateBy(AgentProfile::id)
+    return mergedDefaults + restoredCustom + preservedCollisions
+}
+
+/** Picks an unused custom id for a saved profile whose id now belongs to an immutable built-in. */
+internal fun legacyCollisionProfileId(baseId: String, takenIds: MutableSet<String>): String {
+    val normalizedBase = normalizeCustomAgentId("${baseId}_custom")
+    if (takenIds.add(normalizedBase)) return normalizedBase
+    var suffix = 2
+    while (true) {
+        val candidate = "$normalizedBase$suffix"
+        if (takenIds.add(candidate)) return candidate
+        suffix += 1
+    }
 }
 
 internal fun AgentProfile.withEditableSettings(

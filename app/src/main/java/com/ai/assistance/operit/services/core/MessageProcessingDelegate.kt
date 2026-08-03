@@ -899,6 +899,10 @@ class MessageProcessingDelegate(
             var assistantMessageTimestampForTurn: Long? = null
             val toolBoundaryContentSnapshot =
                 AtomicReference<EnhancedAIService.ToolExecutionBoundarySnapshot?>(null)
+            // Final merged content produced by the stream-collection exit. resolveFinalContent()
+            // prefers the raw replay cache when no revision event exists, so the finalizer must
+            // not rebuild the content from that unmerged replay after the boundary merge ran.
+            val boundaryMergedContent = AtomicReference<String?>(null)
             try {
                 // if (!NetworkUtils.isNetworkAvailable(context)) {
                 //     withContext(Dispatchers.Main) { showErrorMessage("网络连接不可用") }
@@ -1418,11 +1422,21 @@ class MessageProcessingDelegate(
                                 // The finalizer uses aiMessage.content when revision events exist,
                                 // so publish one immutable snapshot on every collection exit.
                                 val replaySnapshot = revisionTracker.currentContent().toString()
-                                aiMessage.content =
+                                val mergedContent =
                                     preferToolBoundarySnapshot(
                                         toolBoundaryContentSnapshot.get(),
                                         replaySnapshot,
                                     )
+                                aiMessage.content = mergedContent
+                                // The boundary merge is not idempotent: reapplying it against the
+                                // already-merged content would duplicate the boundary region (the
+                                // tail of the last tool call) whenever the round-manager display
+                                // content is longer than the emitted replay prefix. Record the
+                                // merged result and drop the raw snapshot so the finalizer keeps
+                                // exactly this content instead of re-merging or falling back to
+                                // the unmerged replay cache.
+                                boundaryMergedContent.set(mergedContent)
+                                toolBoundaryContentSnapshot.set(null)
                             }
 
                             autoReadJob?.join()
@@ -1560,10 +1574,15 @@ class MessageProcessingDelegate(
                             },
                             calculateNextWindowSize = calculateNextWindowSize,
                             finalContentTransform = { replayContent ->
-                                preferToolBoundarySnapshot(
-                                    toolBoundaryContentSnapshot.get(),
-                                    replayContent,
-                                )
+                                // The stream-collection exit already merged the tool-boundary
+                                // snapshot; reuse it so the raw replay cache (preferred by
+                                // resolveFinalContent when no revision event exists) can never
+                                // replace the merged content with a shorter unmerged prefix.
+                                boundaryMergedContent.get()
+                                    ?: preferToolBoundarySnapshot(
+                                        toolBoundaryContentSnapshot.get(),
+                                        replayContent,
+                                    )
                             },
                             turnOptions = turnOptions
                         )

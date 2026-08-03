@@ -82,19 +82,31 @@ class ToolPermissionPoliciesTest {
         assertTrue(
             resolveApprovalDecisionWithPermanentOverride(
                 approvalGranted = false,
-                latestToolOverride = PermissionLevel.ALLOW,
+                latestEffectiveLevel = PermissionLevel.ALLOW,
             )
         )
         assertFalse(
             resolveApprovalDecisionWithPermanentOverride(
                 approvalGranted = true,
-                latestToolOverride = PermissionLevel.FORBID,
+                latestEffectiveLevel = PermissionLevel.FORBID,
             )
         )
         assertTrue(
             resolveApprovalDecisionWithPermanentOverride(
                 approvalGranted = true,
-                latestToolOverride = PermissionLevel.WORKSPACE_REVIEWER,
+                latestEffectiveLevel = PermissionLevel.WORKSPACE_REVIEWER,
+            )
+        )
+        assertFalse(
+            resolveApprovalDecisionWithPermanentOverride(
+                approvalGranted = false,
+                latestEffectiveLevel = PermissionLevel.ASK,
+            )
+        )
+        assertTrue(
+            resolveApprovalDecisionWithPermanentOverride(
+                approvalGranted = true,
+                latestEffectiveLevel = PermissionLevel.ASK,
             )
         )
     }
@@ -133,6 +145,28 @@ class ToolPermissionPoliciesTest {
         assertEquals(ToolPermissionDenialSource.AUTOMATIC_REVIEW, reviewDenial.source)
         assertTrue(reviewDenial.rejection.contains("Do not retry"))
         assertEquals("Tool execution denied by user.", permissionDeniedByUser().rejection)
+    }
+
+    @Test
+    fun reviewEventStatusReflectsTheDecisionActuallyEnforced() {
+        assertEquals(
+            PermissionReviewStatus.APPROVED,
+            reviewEventStatusForEnforcedDecision(ToolPermissionDecision.Allowed),
+        )
+        assertEquals(
+            PermissionReviewStatus.DENIED,
+            reviewEventStatusForEnforcedDecision(permissionDeniedByUser()),
+        )
+        assertEquals(
+            PermissionReviewStatus.DENIED,
+            reviewEventStatusForEnforcedDecision(permissionDeniedBySettings()),
+        )
+        assertEquals(
+            PermissionReviewStatus.DENIED,
+            reviewEventStatusForEnforcedDecision(
+                permissionDeniedByAutomaticReview("not authorized")
+            ),
+        )
     }
 
     @Test
@@ -852,7 +886,7 @@ class ToolPermissionPoliciesTest {
                 ToolPermissionReviewContext(workspacePath = workspace.path),
                 "target",
             )
-        PermissionReviewInspectionRegistry.register(reviewId, workspace.path, action)
+        PermissionReviewInspectionRegistry.register(reviewId, workspace.path, null, action)
         try {
             assertTrue(
                 PermissionReviewInspectionRegistry.inspect(reviewId, "read_text", inside.path)
@@ -871,6 +905,31 @@ class ToolPermissionPoliciesTest {
             outside.delete()
             inside.delete()
             workspace.delete()
+        }
+    }
+
+    @Test
+    fun virtualWorkspaceEnvironmentDisablesLocalInspection() {
+        val reviewId = PermissionReviewInspectionRegistry.newReviewId()
+        val action =
+            PermissionReviewAction.fromTool(
+                tool("read_file", "path" to "/sdcard/evidence.txt"),
+                "read evidence",
+                ToolPermissionReviewContext(workspacePath = "/", workspaceEnv = "repo:my-repo"),
+                "target",
+            )
+        PermissionReviewInspectionRegistry.register(reviewId, "/", "repo:my-repo", action)
+        try {
+            val result =
+                PermissionReviewInspectionRegistry.inspect(
+                    reviewId,
+                    "read_text",
+                    "/sdcard/evidence.txt",
+                )
+            assertTrue(result.startsWith("Inspection rejected"))
+            assertTrue(result.contains("not available for this workspace environment"))
+        } finally {
+            PermissionReviewInspectionRegistry.unregister(reviewId)
         }
     }
 

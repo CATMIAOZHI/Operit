@@ -172,4 +172,110 @@ class AgentProfileRepositoryTest {
             normalizeCustomAgentId("9invalid")
         }
     }
+
+    @Test
+    fun savedProfileCollidingWithImmutableBuiltInIsPreservedUnderCustomId() {
+        val reviewer =
+            default.copy(
+                id = AgentProfileRepository.PERMISSION_REVIEWER_ID,
+                name = "Permission reviewer",
+                systemPrompt = "Immutable security prompt",
+                hidden = true,
+            )
+        val previouslySaved =
+            reviewer.copy(
+                name = "My Reviewer",
+                description = "My review settings",
+                systemPrompt = "Always deny unless authorized",
+                modelConfigId = "my-model",
+                modelIndex = 1,
+                hidden = false,
+            )
+
+        val restored =
+            mergeAgentProfileSettings(
+                defaults = mapOf(reviewer.id to reviewer),
+                restored = listOf(previouslySaved),
+                immutableDefaultIds = setOf(reviewer.id),
+            )
+
+        assertEquals(reviewer, restored.getValue(reviewer.id))
+        val preserved = restored.getValue("permission_reviewer_custom")
+        assertEquals("My Reviewer", preserved.name)
+        assertEquals("My review settings", preserved.description)
+        assertEquals("Always deny unless authorized", preserved.systemPrompt)
+        assertEquals("my-model", preserved.modelConfigId)
+        assertEquals(1, preserved.modelIndex)
+    }
+
+    @Test
+    fun hiddenBuiltInSnapshotIsNeverDuplicatedAsCustomProfile() {
+        val reviewer =
+            default.copy(
+                id = AgentProfileRepository.PERMISSION_REVIEWER_ID,
+                name = "Permission reviewer",
+                systemPrompt = "Immutable security prompt",
+                hidden = true,
+            )
+        val persistedSnapshot =
+            reviewer.copy(
+                systemPrompt = "Immutable security prompt",
+                modelConfigId = "my-model",
+                modelIndex = 1,
+                hidden = true,
+            )
+
+        val restored =
+            mergeAgentProfileSettings(
+                defaults = mapOf(reviewer.id to reviewer),
+                restored = listOf(persistedSnapshot),
+                immutableDefaultIds = setOf(reviewer.id),
+            )
+
+        assertEquals(setOf(reviewer.id), restored.keys)
+        assertEquals(reviewer, restored.getValue(reviewer.id))
+    }
+
+    @Test
+    fun collidingSavedProfilesGetDistinctCustomIds() {
+        val reviewer =
+            default.copy(
+                id = AgentProfileRepository.PERMISSION_REVIEWER_ID,
+                name = "Permission reviewer",
+                systemPrompt = "Immutable security prompt",
+                hidden = true,
+            )
+        val first =
+            reviewer.copy(
+                name = "First",
+                description = "First settings",
+                systemPrompt = "Prompt one",
+                hidden = false,
+            )
+        val second =
+            reviewer.copy(
+                name = "Second",
+                description = "Second settings",
+                systemPrompt = "Prompt two",
+                hidden = false,
+            )
+        val alreadyTaken =
+            default.copy(
+                id = "permission_reviewer_custom",
+                name = "Taken",
+                description = "Already used id",
+                systemPrompt = "Existing custom",
+            )
+
+        val restored =
+            mergeAgentProfileSettings(
+                defaults = mapOf(reviewer.id to reviewer),
+                restored = listOf(first, second, alreadyTaken),
+                immutableDefaultIds = setOf(reviewer.id),
+            )
+
+        assertEquals("Taken", restored.getValue("permission_reviewer_custom").name)
+        assertEquals("First", restored.getValue("permission_reviewer_custom2").name)
+        assertEquals("Second", restored.getValue("permission_reviewer_custom3").name)
+    }
 }
