@@ -60,9 +60,7 @@ fun FileDiffDisplay(
             else -> "No changes detected"
         }
     }
-    val summary =
-        listOfNotNull(summaryPrefix?.takeIf { it.isNotBlank() }, changeSummary)
-            .joinToString(" · ")
+    val summary = buildFileDiffSummary(summaryPrefix, changeSummary)
 
     Column(
         modifier = modifier
@@ -116,3 +114,7 @@ fun FileDiffDisplay(
         }
     }
 }
+
+internal fun buildFileDiffSummary(summaryPrefix: String?, changeSummary: String): String =
+    listOfNotNull(summaryPrefix?.takeIf { it.isNotBlank() }, changeSummary)
+        .joinToString(" · ")

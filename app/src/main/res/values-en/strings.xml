@@ -1695,6 +1695,7 @@
     <string name="permission_request_allow">Allow</string>
     <string name="permission_request_deny">Deny</string>
     <string name="permission_request_always_allow">Always allow</string>
+    <string name="permission_request_always_deny">Always deny</string>
     <string name="permission_change_reminder">* You can change permissions in settings at any time</string>
     <string name="overlay_permission_grant_hint">Overlay permission is required. Please allow this permission in settings.</string>
     <string name="parameter_details">Parameter Details</string>
@@ -2853,6 +2854,7 @@
     <string name="function_type_ui_controller">UI Controller</string>
     <string name="function_type_grep">Grep Retrieval</string>
     <string name="function_type_role_response_planner">Group Planner</string>
+    <string name="function_type_permission_reviewer">Permission Approval</string>
 
     <!-- Function Descriptions -->
     <string name="function_desc_chat">Main chat function for daily conversation interaction with users</string>
@@ -2863,6 +2865,7 @@
     <string name="function_desc_ui_controller">Used for automatic traversal and operation of UI interfaces. The corresponding UI controller model is only activated when the user explicitly requests to use an "agent" for control, for example by choosing dedicated models such as autoglm-phone-9b.</string>
     <string name="function_desc_grep">Used for grep_context planning and result filtering (multi-round grep_code)</string>
     <string name="function_desc_role_response_planner">Dynamically plans speaking order and skip decisions in groups, supports multi-turn discussions</string>
+    <string name="function_desc_permission_reviewer">Used by “approve for me” to review tool calls independently. The reviewer can only use an internal result-submission tool and cannot execute the reviewed action; failures, timeouts, and invalid responses are handed back to you.</string>
 
     <!-- Functional Prompt Config Screen -->
     <string name="advanced_config_notice">For advanced configurations like modifying system prompt templates, please go to the \"Manage All Prompts\" page.</string>
@@ -4791,9 +4794,15 @@
     <string name="tool_permissions_title">Tool Permissions</string>
     <string name="tool_permissions_description">By default, all tools require you to \'Ask\'. You can add exceptions below.</string>
     <string name="global_permission_switch">Global Permission Switch</string>
-    <string name="global_permission_switch_description">This setting acts as a master control and can override individual tool permissions.</string>
+    <string name="global_permission_switch_description">This setting controls the default behavior. Per-tool exceptions such as “always allow/deny” take precedence.</string>
     <string name="permission_level_allow">Allowed</string>
     <string name="permission_level_allow_description">These tools will run automatically.</string>
+    <string name="permission_level_workspace">Allow in workspace</string>
+    <string name="permission_level_workspace_description">Automatically approves only file operations and terminal commands whose targets can be proven to stay inside the current workspace. External, mismatched-environment, or unknown scopes still ask. This mode is not an OS sandbox.</string>
+    <string name="permission_level_workspace_reviewer">Workspace + approve for me</string>
+    <string name="permission_level_workspace_reviewer_description">Provably in-workspace operations run directly; all other calls that would ask are reviewed by an independent agent. Permanent per-tool allow or deny rules always take precedence.</string>
+    <string name="permission_level_reviewer">Approve all for me</string>
+    <string name="permission_level_reviewer_description">Every call that would otherwise ask the user is reviewed by an isolated independent agent. The reviewer can only use an internal result-submission tool and cannot execute the reviewed action; failures, timeouts, and invalid responses are handed back to you.</string>
     <string name="permission_level_forbid">Forbidden</string>
     <string name="permission_level_forbid_description">These tools will never run.</string>
     <string name="permission_level_ask">Ask</string>
@@ -4839,6 +4848,7 @@
     <string name="subagent_status_calling_tool">Calling %1$s</string>
     <string name="subagent_status_with_agent">%1$s · %2$s</string>
     <string name="subagent_status_completed">Completed</string>
+    <string name="subagent_status_syncing_result">Syncing result</string>
     <string name="subagent_status_completed_with_tool_count">Completed · %1$d tool calls</string>
     <string name="subagent_status_error">Error</string>
     <string name="subagent_status_cancelled">Cancelled</string>
@@ -4853,6 +4863,9 @@
     <string name="subagent_task_id">Task ID: %1$s</string>
     <string name="subagent_current_status">Status: %1$s</string>
     <string name="subagent_manage">Manage Subagents</string>
+    <string name="subagent_manage_active">Manage Subagents, tasks are running</string>
+    <string name="subagent_manage_review_count">Manage Subagents, %1$d automatic review records</string>
+    <string name="subagent_manage_active_review_count">Manage Subagents, tasks are running, %1$d automatic review records</string>
     <string name="subagent_switch_title">Switch Subagent</string>
     <string name="subagent_manage_empty">This chat has no Subagents matching this filter</string>
     <string name="subagent_search_hint">Search Subagent name or task</string>
@@ -4862,6 +4875,8 @@
     <string name="subagent_filter_running">Running</string>
     <string name="subagent_filter_queued">Queued</string>
     <string name="subagent_filter_completed">Completed</string>
+    <string name="subagent_filter_auto_review">Auto review</string>
+    <string name="subagent_filter_error">Errors</string>
     <string name="subagent_filter_archived">Archived</string>
     <string name="subagent_archive">Archive</string>
     <string name="subagent_restore">Restore</string>
@@ -4882,6 +4897,20 @@
     <string name="agent_profile_builtin_general_description">Handles general multi-step tasks using available tools.</string>
     <string name="agent_profile_builtin_explore_name">Explore</string>
     <string name="agent_profile_builtin_explore_description">Searches code and information and reports evidence.</string>
+    <string name="agent_profile_builtin_permission_reviewer_name">Permission Reviewer</string>
+    <string name="agent_profile_builtin_permission_reviewer_description">Independently reviews tool calls and returns a one-shot allow or deny decision.</string>
+    <string name="permission_review_task_title">Permission review: %1$s</string>
+    <string name="permission_review_submitted">Permission review decision submitted.</string>
+    <string name="permission_review_fallback_invalid">Automatic review repeatedly returned an invalid result. Your confirmation is required.</string>
+    <string name="permission_review_fallback_timeout">Automatic review timed out. Your confirmation is required.</string>
+    <string name="permission_review_fallback_error">Automatic review failed. Your confirmation is required.</string>
+    <string name="permission_review_status_allowed">Allowed</string>
+    <string name="permission_review_status_denied">Denied</string>
+    <string name="permission_review_status_invalid">Invalid output, handed to user</string>
+    <string name="permission_review_status_timeout_or_cancelled">Review timed out or was cancelled</string>
+    <string name="permission_review_status_error">Review failed, handed to user</string>
+    <string name="functional_config_permission_reviewer_test_invalid">The model connected, but did not call the result tool using the approval protocol.</string>
+    <string name="functional_config_permission_reviewer_test_success">Approval protocol test passed: outcome=%1$s, risk=%2$s, authorization=%3$s</string>
     <string name="agent_profile_id">Stable ID</string>
     <string name="agent_profile_id_hint">Used by the main Agent; lowercase letters, numbers, underscores, and hyphens only.</string>
     <string name="agent_profile_id_invalid">The ID must start with a letter and contain only lowercase letters, numbers, underscores, or hyphens.</string>
@@ -8152,4 +8181,63 @@
     <string name="chat_category_favorites">Favorites</string>
     <string name="add_to_favorites">Add to favorites</string>
     <string name="remove_from_favorites">Remove from favorites</string>
+    <string name="permission_review_policy_title">Automatic review policy</string>
+    <string name="permission_review_policy_description">Add review rules here to reflect how you like to work; automatic review follows these rules. Policy version: %1$s</string>
+    <string name="permission_review_policy_edit">Edit managed rules</string>
+    <string name="permission_review_policy_collapse">Collapse policy editor</string>
+    <string name="permission_review_policy_managed_hint">These rules are sent to the review model as your custom requirements, and review judges risk and authorization according to your habits. Only add rules you truly intend to allow.</string>
+    <string name="permission_review_policy_placeholder">Example: Any action publishing data publicly must require manual confirmation.</string>
+    <string name="permission_review_recent_denials">Recent denials</string>
+    <string name="permission_review_recent_denials_summary">%1$d denials across %2$d distinct actions</string>
+    <string name="permission_review_recent_denials_open">View statistics and audit details</string>
+    <string name="permission_review_recent_denials_statistics">Denial statistics</string>
+    <string name="permission_review_denial_total">Total denials</string>
+    <string name="permission_review_denial_unique_actions">Distinct actions</string>
+    <string name="permission_review_recent_denials_description">The 10 most recent distinct denied actions are shown below. Select one to open its review Subagent and inspect the full process.</string>
+    <string name="permission_review_recent_denials_empty">This chat has no actions denied by automatic review</string>
+    <string name="permission_review_open_subagent_details">Open review Subagent details</string>
+    <string name="permission_review_subagent_unavailable">The corresponding review Subagent is unavailable</string>
+    <string name="permission_review_allow_exact_once">Authorize re-review of exact action</string>
+    <string name="permission_review_override_recorded">Authorized; waiting for Agent retry</string>
+    <string name="permission_review_override_in_review">Re-review in progress</string>
+    <string name="permission_review_override_consumed">This authorization was used</string>
+    <string name="permission_review_override_expired">Authorization expired; authorize again</string>
+    <string name="permission_review_override_next_step">Authorization is valid for 5 minutes. Return to the parent chat and ask the Agent to retry the exact action; this button does not execute it directly.</string>
+    <string name="permission_review_lifecycle_in_progress">reviewing</string>
+    <string name="permission_review_lifecycle_approved">approved</string>
+    <string name="permission_review_lifecycle_denied">denied</string>
+    <string name="permission_review_lifecycle_timed_out">timed out</string>
+    <string name="permission_review_lifecycle_aborted">aborted</string>
+    <string name="permission_review_lifecycle_failed">review failed</string>
+    <string name="permission_review_batch_lifecycle">Guardian · batch tool %1$d/%2$d · %3$s · %4$s</string>
+    <string name="permission_review_resolved_allow">Later allowed by you or current settings</string>
+    <string name="permission_review_resolved_deny">Later denied by you or current settings</string>
+    <string name="permission_review_tap_for_details">Tap for status, decision, and review conversation</string>
+    <string name="permission_review_detail_title">Guardian review details</string>
+    <string name="permission_review_detail_status">Status: %1$s</string>
+    <string name="permission_review_detail_action">Action: %1$s</string>
+    <string name="permission_review_detail_risk">Risk level: %1$s</string>
+    <string name="permission_review_detail_authorization">User authorization: %1$s</string>
+    <string name="permission_review_detail_rationale">Decision: %1$s</string>
+    <string name="permission_review_detail_subagent_status">Review subagent: %1$s</string>
+    <string name="permission_review_detail_failure">Failure: %1$s</string>
+    <string name="permission_review_value_low">Low</string>
+    <string name="permission_review_value_medium">Medium</string>
+    <string name="permission_review_value_high">High</string>
+    <string name="permission_review_value_critical">Critical</string>
+    <string name="permission_review_value_unknown">Unknown</string>
+    <string name="permission_review_failure_invalid_output">Invalid structured output</string>
+    <string name="permission_review_failure_timed_out">Review timed out</string>
+    <string name="permission_review_failure_reviewer_error">Reviewer model error</string>
+    <string name="permission_review_open_subagent">Open review conversation</string>
+    <string name="permission_review_circuit_title">Guardian stopped this turn</string>
+    <string name="permission_review_circuit_message">Automatic review denied several actions in a row. To protect your data, the remaining tools were not run and this turn was stopped safely.</string>
+    <string name="permission_review_circuit_countdown">Confirm in %1$d s</string>
+    <string name="permission_review_circuit_confirm">I understand</string>
+    <string name="permission_review_circuit_ready">You can now confirm and close this notice</string>
+    <string name="permission_review_circuit_combined_count">%1$d consecutive safety interruptions combined</string>
+    <string name="permission_review_circuit_what_happened_title">What happened</string>
+    <string name="permission_review_circuit_what_happened_body">Guardian denied several tool calls in this turn. The denied calls and the remaining tools were not run, so the turn was stopped.</string>
+    <string name="permission_review_circuit_what_to_do_title">What you should do</string>
+    <string name="permission_review_circuit_what_to_do_body">Review the audit record and check which operation was denied and why. If it is still needed, return to the main chat and clearly state the exact operation, target, and scope before asking the AI to try again. Do not authorize an operation you do not understand.</string>
 </resources>

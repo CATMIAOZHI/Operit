@@ -43,14 +43,23 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import com.ai.assistance.operit.core.tools.ToolProgressBus
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.coroutineContext
+
+internal fun preferToolBoundarySnapshot(
+    boundarySnapshot: EnhancedAIService.ToolExecutionBoundarySnapshot?,
+    replayCandidate: String,
+): String {
+    boundarySnapshot ?: return replayCandidate
+    if (replayCandidate.length <= boundarySnapshot.replayCharCount) {
+        return boundarySnapshot.displayContent
+    }
+    return boundarySnapshot.displayContent +
+        replayCandidate.substring(boundarySnapshot.replayCharCount)
+}
 
 /** 委托类，负责处理消息处理相关功能 */
 class MessageProcessingDelegate(
@@ -173,6 +182,8 @@ class MessageProcessingDelegate(
     private data class ChatRuntime(
         var sendJob: Job? = null,
         var responseStream: SharedStream<String>? = null,
+        @Volatile var streamingAiMessage: ChatMessage? = null,
+        @Volatile var toolBoundarySnapshot: EnhancedAIService.ToolExecutionBoundarySnapshot? = null,
         var streamCollectionJob: Job? = null,
         var stateCollectionJob: Job? = null,
         var currentTurnOptions: ChatTurnOptions = ChatTurnOptions(),
@@ -388,12 +399,19 @@ class MessageProcessingDelegate(
     private suspend fun detachStreamingAiMessage(
         chatId: String,
         snapshot: TurnCancellationSnapshot? = null,
+        streamingMessageOverride: ChatMessage? = null,
+        toolBoundarySnapshot: EnhancedAIService.ToolExecutionBoundarySnapshot? = null,
     ) {
-        val messages = getRuntimeChatHistory(chatId)
         val streamingMessage =
-            messages.lastOrNull { it.sender == "ai" && it.contentStream != null }
+            streamingMessageOverride
+                ?: getRuntimeChatHistory(chatId)
+                    .lastOrNull { it.sender == "ai" && it.contentStream != null }
                 ?: return
-        val finalContent = resolveFinalContent(streamingMessage)
+        val finalContent =
+            preferToolBoundarySnapshot(
+                toolBoundarySnapshot,
+                resolveFinalContent(streamingMessage),
+            )
         streamingMessage.content = finalContent
         val completedAt = System.currentTimeMillis()
         val finalMessage =
@@ -412,6 +430,7 @@ class MessageProcessingDelegate(
                     contentStream = null,
                     completedAt = completedAt,
                 )
+        val messages = if (snapshot != null) getRuntimeChatHistory(chatId) else emptyList()
         withContext(Dispatchers.Main) {
             snapshot?.let { stats ->
                 val matchingUserMessage =
@@ -442,6 +461,10 @@ class MessageProcessingDelegate(
         val currentTurnOptions = chatRuntime.currentTurnOptions
         val cancellationSnapshot =
             if (keepPartialResponse) readCurrentTurnCancellationSnapshot(chatId) else null
+        val initialCancellationStreamingMessage =
+            if (keepPartialResponse) chatRuntime.streamingAiMessage else null
+        val initialCancellationToolBoundarySnapshot =
+            if (keepPartialResponse) chatRuntime.toolBoundarySnapshot else null
         val jobsToCancel =
             linkedSetOf<Job>().apply {
                 chatRuntime.sendJob?.let { add(it) }
@@ -450,7 +473,19 @@ class MessageProcessingDelegate(
             }
 
         clearCurrentTurnToolInvocationCount(chatId)
-        AIMessageManager.cancelOperation(chatId)
+        AIMessageManager.cancelOperationAndAwait(chatId)
+        val cancellationStreamingMessage =
+            if (keepPartialResponse) {
+                chatRuntime.streamingAiMessage ?: initialCancellationStreamingMessage
+            } else {
+                null
+            }
+        val cancellationToolBoundarySnapshot =
+            if (keepPartialResponse) {
+                chatRuntime.toolBoundarySnapshot ?: initialCancellationToolBoundarySnapshot
+            } else {
+                null
+            }
 
         jobsToCancel.forEach { job -> job.cancel() }
         jobsToCancel.forEach { job ->
@@ -465,10 +500,17 @@ class MessageProcessingDelegate(
         chatRuntime.streamCollectionJob = null
 
         if (keepPartialResponse) {
-            detachStreamingAiMessage(chatId, snapshot = cancellationSnapshot)
+            detachStreamingAiMessage(
+                chatId = chatId,
+                snapshot = cancellationSnapshot,
+                streamingMessageOverride = cancellationStreamingMessage,
+                toolBoundarySnapshot = cancellationToolBoundarySnapshot,
+            )
         }
 
         chatRuntime.responseStream = null
+        chatRuntime.streamingAiMessage = null
+        chatRuntime.toolBoundarySnapshot = null
         chatRuntime.isLoading.value = false
         chatRuntime.currentTurnOptions = ChatTurnOptions()
         chatRuntime.requestSentAt = 0L
@@ -686,6 +728,8 @@ class MessageProcessingDelegate(
         }
         resetCurrentTurnToolInvocationCount(chatId)
         chatRuntime.responseStream = null
+        chatRuntime.streamingAiMessage = null
+        chatRuntime.toolBoundarySnapshot = null
         chatRuntime.isLoading.value = true
         chatRuntime.currentTurnOptions = turnOptions
         updateGlobalLoadingState()
@@ -745,6 +789,7 @@ class MessageProcessingDelegate(
                 chatId = chatId,
                 roleCardId = roleCardId,
                 isSubTask = turnOptions.isSubTask,
+                promptHooksEnabled = turnOptions.promptHooksEnabled,
             )
             logMessageTiming(
                 stage = "delegate.buildUserMessageContent",
@@ -852,6 +897,12 @@ class MessageProcessingDelegate(
             var cancellationToPropagate: kotlinx.coroutines.CancellationException? = null
             var terminalFailureMessage: String? = null
             var assistantMessageTimestampForTurn: Long? = null
+            val toolBoundaryContentSnapshot =
+                AtomicReference<EnhancedAIService.ToolExecutionBoundarySnapshot?>(null)
+            // Final merged content produced by the stream-collection exit. resolveFinalContent()
+            // prefers the raw replay cache when no revision event exists, so the finalizer must
+            // not rebuild the content from that unmerged replay after the boundary merge ran.
+            val boundaryMergedContent = AtomicReference<String?>(null)
             try {
                 // if (!NetworkUtils.isNetworkAvailable(context)) {
                 //     withContext(Dispatchers.Main) { showErrorMessage("网络连接不可用") }
@@ -1011,7 +1062,12 @@ class MessageProcessingDelegate(
                 val prepareResponseStreamStartTime = messageTimingNow()
                 val aiMessageTimestamp = ChatMessageTimestampAllocator.next()
                 assistantMessageTimestampForTurn = aiMessageTimestamp
-                val responseStream = AIMessageManager.sendMessage(
+                val toolBoundaryMessageReady = CompletableDeferred<ChatMessage?>()
+                coroutineContext[Job]?.invokeOnCompletion {
+                    toolBoundaryMessageReady.complete(null)
+                }
+                val responseStream = try {
+                    AIMessageManager.sendMessage(
                     enhancedAiService = service,
                     chatId = activeChatId,
                     messageContent = requestMessageContent,
@@ -1022,6 +1078,7 @@ class MessageProcessingDelegate(
                         chatHistory
                     },
                     workspacePath = workspacePath,
+                    workspaceEnv = workspaceEnv,
                     promptFunctionType = promptFunctionType,
                     enableThinking = enableThinking,
                     enableMemoryAutoUpdate = enableMemoryAutoUpdate,
@@ -1042,6 +1099,16 @@ class MessageProcessingDelegate(
                     onToolInvocation = { toolName ->
                         recordCurrentTurnToolInvocation(chatId, toolName)
                     },
+                    onToolExecutionBoundary = boundary@ { boundarySnapshot ->
+                        toolBoundaryContentSnapshot.set(boundarySnapshot)
+                        chatRuntime.toolBoundarySnapshot = boundarySnapshot
+                        val snapshotMessage = toolBoundaryMessageReady.await() ?: return@boundary
+                        val targetChatId = chatId ?: return@boundary
+                        addMessageToChat(
+                            targetChatId,
+                            snapshotMessage.copy(content = boundarySnapshot.displayContent),
+                        )
+                    },
                     notifyReplyOverride = turnOptions.notifyReply,
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
@@ -1049,8 +1116,16 @@ class MessageProcessingDelegate(
                     toolTimingScopeId = aiMessageTimestamp.toString(),
                     disableWarning = turnOptions.disableWarning,
                     isSubTask = turnOptions.isSubTask,
+                    toolsEnabled = turnOptions.toolsEnabled,
+                    isolatedToolPrompts = turnOptions.isolatedToolPrompts,
+                    terminalToolNames = turnOptions.terminalToolNames,
+                    promptHooksEnabled = turnOptions.promptHooksEnabled,
                     systemPromptOverride = turnOptions.systemPromptOverride,
                 )
+                } catch (error: Throwable) {
+                    toolBoundaryMessageReady.complete(null)
+                    throw error
+                }
                 logMessageTiming(
                     stage = "delegate.prepareResponseStream",
                     startTimeMs = prepareResponseStreamStartTime,
@@ -1090,6 +1165,7 @@ class MessageProcessingDelegate(
                     modelName = modelName,
                     sentAt = requestSentAt
                 )
+                chatRuntime.streamingAiMessage = aiMessage
                 AppLogger.d(
                     TAG,
                     "创建带流的AI消息, stream is null: ${aiMessage.contentStream == null}, timestamp: ${aiMessage.timestamp}"
@@ -1098,6 +1174,11 @@ class MessageProcessingDelegate(
                 // 检查是否启用waifu模式来决定是否显示流式过程
                 val waifuPreferences = WaifuPreferences.getInstance(context)
                 isWaifuModeEnabled = waifuPreferences.enableWaifuModeFlow.first()
+                toolBoundaryMessageReady.complete(
+                    aiMessage.takeIf {
+                        effectivePersistTurn && chatId != null && !isWaifuModeEnabled
+                    }
+                )
                 val waifuCharDelay = waifuPreferences.waifuCharDelayFlow.first()
                 val waifuRemovePunctuation =
                     if (isWaifuModeEnabled) {
@@ -1167,7 +1248,13 @@ class MessageProcessingDelegate(
                 if (!isWaifuModeEnabled) {
                     withContext(Dispatchers.Main) {
                         if (effectivePersistTurn && chatId != null) {
-                            addMessageToChat(chatId, aiMessage)
+                            val initialContent =
+                                preferToolBoundarySnapshot(
+                                    toolBoundaryContentSnapshot.get(),
+                                    aiMessage.content,
+                                )
+                            aiMessage.content = initialContent
+                            addMessageToChat(chatId, aiMessage.copy(content = initialContent))
                         }
                     }
                 }
@@ -1180,7 +1267,8 @@ class MessageProcessingDelegate(
                             var hasLoggedFirstChunk = false
                             var lastStreamingPersistAt = 0L
                             val revisionTracker = TextStreamRevisionTracker()
-                            val revisionMutex = Mutex()
+                            var processedRevisionEventCount = 0
+                            var processedReplayCharCount = 0
                             val autoReadBuffer = StringBuilder()
                             var isFirstAutoReadSegment = true
                             val autoReadStream =
@@ -1243,6 +1331,36 @@ class MessageProcessingDelegate(
                                 addMessageToChat(targetChatId, aiMessage.copy(content = contentSnapshot))
                             }
 
+                            suspend fun drainRevisionEvents() {
+                                val events = revisableStream?.eventChannel?.replayCache.orEmpty()
+                                while (processedRevisionEventCount < events.size) {
+                                    val event = events[processedRevisionEventCount]
+                                    if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
+                                        break
+                                    }
+                                    processedRevisionEventCount++
+                                    when (event.eventType) {
+                                        TextStreamEventType.SAVEPOINT ->
+                                            revisionTracker.savepoint(event.id)
+
+                                        TextStreamEventType.ROLLBACK -> {
+                                            toolBoundaryContentSnapshot.set(null)
+                                            chatRuntime.toolBoundarySnapshot = null
+                                            val snapshot =
+                                                revisionTracker.rollback(event.id)?.toString()
+                                                    ?: continue
+                                            aiMessage.content = snapshot
+                                            if (claimStreamingSnapshot()) {
+                                                persistStreamingSnapshot(snapshot)
+                                            }
+                                            if (!isWaifuModeEnabled) {
+                                                tryEmitScrollToBottomThrottled(chatId)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             val autoReadJob =
                                 autoReadStream?.let { stream ->
                                     launch {
@@ -1267,42 +1385,9 @@ class MessageProcessingDelegate(
                                     null
                                 }
 
-                            val revisionJob =
-                                revisableStream?.let { carrier ->
-                                    launch {
-                                        carrier.eventChannel.collect { event ->
-                                            when (event.eventType) {
-                                                TextStreamEventType.SAVEPOINT -> {
-                                                    revisionMutex.withLock {
-                                                        revisionTracker.savepoint(event.id)
-                                                    }
-                                                }
-
-                                                TextStreamEventType.ROLLBACK -> {
-                                                    val rollbackResult =
-                                                        revisionMutex.withLock {
-                                                            revisionTracker.rollback(event.id)?.let { content ->
-                                                                content.toString() to claimStreamingSnapshot()
-                                                            }
-                                                        } ?: return@collect
-                                                    val (snapshot, shouldPersist) = rollbackResult
-
-                                                    aiMessage.content = snapshot
-
-                                                    if (shouldPersist) {
-                                                        persistStreamingSnapshot(snapshot)
-                                                    }
-                                                    if (!isWaifuModeEnabled) {
-                                                        tryEmitScrollToBottomThrottled(chatId)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
                             try {
                                 sharedCharStream.collect { chunk ->
+                                    drainRevisionEvents()
                                     if (!hasLoggedFirstChunk) {
                                         hasLoggedFirstChunk = true
                                         if (firstResponseElapsed == null) {
@@ -1315,29 +1400,43 @@ class MessageProcessingDelegate(
                                             details = "chatId=$activeChatId, firstChunkLength=${chunk.length}"
                                         )
                                     }
+                                    val liveContent = revisionTracker.append(chunk)
+                                    processedReplayCharCount += chunk.length
                                     val contentSnapshot =
-                                        revisionMutex.withLock {
-                                            val liveContent = revisionTracker.append(chunk)
-                                            // Claim the interval before materializing the mutable buffer;
-                                            // checking afterward recreates the original quadratic copying.
-                                            if (claimStreamingSnapshot()) liveContent.toString() else null
-                                        }
+                                        if (claimStreamingSnapshot()) liveContent.toString() else null
                                     if (contentSnapshot != null) {
-                                        aiMessage.content = contentSnapshot
-                                        persistStreamingSnapshot(contentSnapshot)
+                                        val nonRegressingSnapshot =
+                                            preferToolBoundarySnapshot(
+                                                toolBoundaryContentSnapshot.get(),
+                                                contentSnapshot,
+                                            )
+                                        aiMessage.content = nonRegressingSnapshot
+                                        persistStreamingSnapshot(nonRegressingSnapshot)
                                     }
                                     if (!isWaifuModeEnabled) {
                                         tryEmitScrollToBottomThrottled(chatId)
                                     }
                                 }
                             } finally {
-                                revisionJob?.cancelAndJoin()
+                                drainRevisionEvents()
                                 // The finalizer uses aiMessage.content when revision events exist,
                                 // so publish one immutable snapshot on every collection exit.
-                                aiMessage.content =
-                                    revisionMutex.withLock {
-                                        revisionTracker.currentContent().toString()
-                                    }
+                                val replaySnapshot = revisionTracker.currentContent().toString()
+                                val mergedContent =
+                                    preferToolBoundarySnapshot(
+                                        toolBoundaryContentSnapshot.get(),
+                                        replaySnapshot,
+                                    )
+                                aiMessage.content = mergedContent
+                                // The boundary merge is not idempotent: reapplying it against the
+                                // already-merged content would duplicate the boundary region (the
+                                // tail of the last tool call) whenever the round-manager display
+                                // content is longer than the emitted replay prefix. Record the
+                                // merged result and drop the raw snapshot so the finalizer keeps
+                                // exactly this content instead of re-merging or falling back to
+                                // the unmerged replay cache.
+                                boundaryMergedContent.set(mergedContent)
+                                toolBoundaryContentSnapshot.set(null)
                             }
 
                             autoReadJob?.join()
@@ -1474,6 +1573,17 @@ class MessageProcessingDelegate(
                                 syncWaifuMessageMetricsHandler?.invoke(sourceMessage)
                             },
                             calculateNextWindowSize = calculateNextWindowSize,
+                            finalContentTransform = { replayContent ->
+                                // The stream-collection exit already merged the tool-boundary
+                                // snapshot; reuse it so the raw replay cache (preferred by
+                                // resolveFinalContent when no revision event exists) can never
+                                // replace the merged content with a shorter unmerged prefix.
+                                boundaryMergedContent.get()
+                                    ?: preferToolBoundarySnapshot(
+                                        toolBoundaryContentSnapshot.get(),
+                                        replayContent,
+                                    )
+                            },
                             turnOptions = turnOptions
                         )
                     } else {
@@ -1581,6 +1691,7 @@ class MessageProcessingDelegate(
         requestMessageContent: String,
         requestHistory: List<ChatMessage>,
         workspacePath: String?,
+        workspaceEnv: String?,
         promptFunctionType: PromptFunctionType,
         roleCardId: String,
         currentRoleName: String,
@@ -1674,6 +1785,7 @@ class MessageProcessingDelegate(
                     messageContent = effectiveRequestMessageContent,
                     chatHistory = requestHistory,
                     workspacePath = workspacePath,
+                    workspaceEnv = workspaceEnv,
                     promptFunctionType = promptFunctionType,
                     enableThinking = enableThinking,
                     enableMemoryAutoUpdate = enableMemoryAutoUpdate,
@@ -1710,49 +1822,40 @@ class MessageProcessingDelegate(
                 )
             onVariantPreviewStarted(aiMessage)
 
-            coroutineScope {
-                val revisableStream = sharedResponseStream as? TextStreamEventCarrier
-                val revisionTracker = TextStreamRevisionTracker()
-                val revisionMutex = Mutex()
+            val revisableStream = sharedResponseStream as? TextStreamEventCarrier
+            val revisionTracker = TextStreamRevisionTracker()
+            var processedRevisionEventCount = 0
+            var processedReplayCharCount = 0
 
-                val revisionJob =
-                    revisableStream?.let { carrier ->
-                        launch {
-                            carrier.eventChannel.collect { event ->
-                                when (event.eventType) {
-                                    TextStreamEventType.SAVEPOINT -> {
-                                        revisionMutex.withLock {
-                                            revisionTracker.savepoint(event.id)
-                                        }
-                                    }
-
-                                    TextStreamEventType.ROLLBACK -> {
-                                        val snapshot =
-                                            revisionMutex.withLock {
-                                                revisionTracker.rollback(event.id)?.toString()
-                                            } ?: return@collect
-                                        aiMessage.content = snapshot
-                                    }
-                                }
+            fun drainRevisionEvents() {
+                val events = revisableStream?.eventChannel?.replayCache.orEmpty()
+                while (processedRevisionEventCount < events.size) {
+                    val event = events[processedRevisionEventCount]
+                    if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
+                        break
+                    }
+                    processedRevisionEventCount++
+                    when (event.eventType) {
+                        TextStreamEventType.SAVEPOINT -> revisionTracker.savepoint(event.id)
+                        TextStreamEventType.ROLLBACK ->
+                            revisionTracker.rollback(event.id)?.let { snapshot ->
+                                aiMessage.content = snapshot.toString()
                             }
-                        }
-                    }
-
-                sharedResponseStream.collect { chunk ->
-                    if (firstResponseElapsed == null) {
-                        firstResponseElapsed = messageTimingNow()
-                    }
-                    revisionMutex.withLock {
-                        revisionTracker.append(chunk)
                     }
                 }
-
-                revisionJob?.cancelAndJoin()
-                aiMessage.content =
-                    revisionMutex.withLock {
-                        revisionTracker.currentContent().toString()
-                    }
             }
+
+            sharedResponseStream.collect { chunk ->
+                drainRevisionEvents()
+                if (firstResponseElapsed == null) {
+                    firstResponseElapsed = messageTimingNow()
+                }
+                revisionTracker.append(chunk)
+                processedReplayCharCount += chunk.length
+            }
+
+            drainRevisionEvents()
+            aiMessage.content = revisionTracker.currentContent().toString()
 
             val finalContent = resolveFinalContent(aiMessage)
             var turnInputTokens = 0
@@ -1858,12 +1961,13 @@ class MessageProcessingDelegate(
         skipFinalAutoRead: Boolean,
         syncWaifuMessageMetrics: suspend (ChatMessage) -> Unit,
         calculateNextWindowSize: (suspend () -> Int?)? = null,
+        finalContentTransform: (String) -> String = { it },
         turnOptions: ChatTurnOptions = ChatTurnOptions()
     ): Boolean {
         try {
             val aiMessage = aiMessageProvider()
             // 优先使用共享流的全量重放缓存重建最终文本，避免完成信号早于收集协程处理尾部字符时丢字。
-            val finalContent = resolveFinalContent(aiMessage)
+            val finalContent = finalContentTransform(resolveFinalContent(aiMessage))
             aiMessage.content = finalContent
             val completedAt = System.currentTimeMillis()
 
@@ -1928,6 +2032,8 @@ class MessageProcessingDelegate(
         chatRuntime.stateCollectionJob?.cancel()
         chatRuntime.stateCollectionJob = null
         chatRuntime.responseStream = null
+        chatRuntime.streamingAiMessage = null
+        chatRuntime.toolBoundarySnapshot = null
         chatRuntime.currentTurnOptions = ChatTurnOptions()
         chatRuntime.requestSentAt = 0L
         chatRuntime.requestStartElapsed = 0L

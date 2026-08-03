@@ -40,6 +40,7 @@ import com.ai.assistance.operit.core.agent.SubagentCoordinator
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.floating.FloatingMode
+import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -95,6 +96,18 @@ fun ChatScreenHeader(
                 ?: flowOf(emptyList())
         }
     val parentRuns by parentRunsFlow.collectAsState(initial = emptyList())
+    remember(context) { PermissionReviewEventRepository.initialize(context); true }
+    val permissionReviewEvents by PermissionReviewEventRepository.events.collectAsState()
+    val permissionReviewCount =
+        remember(permissionReviewEvents, managementParentChatId, parentRuns) {
+            visiblePermissionReviewEvents(
+                runs = parentRuns,
+                events =
+                    permissionReviewEvents.filter { event ->
+                        event.parentChatId == managementParentChatId
+                    },
+            ).size
+        }
     val visibleParentRuns = remember(parentRuns) {
         parentRuns.filter { it.archivedAt == null }
     }
@@ -110,6 +123,7 @@ fun ChatScreenHeader(
 
     if (showSubagentManager && managementParentChatId != null) {
         SubagentManagementDialog(
+            parentChatId = managementParentChatId,
             parentTitle = managementParentTitle,
             runs = parentRuns,
             currentChildChatId =
@@ -180,6 +194,7 @@ fun ChatScreenHeader(
                 actualViewModel.switchChat(childChatId, scrollToBottom = false)
             },
             onManageSubagents = { showSubagentManager = true },
+            reviewCount = permissionReviewCount,
         )
         return
     }
@@ -276,9 +291,10 @@ fun ChatScreenHeader(
                  onCharacterClick = onCharacterSwitcherClick
         )
 
-        if (parentRuns.isNotEmpty()) {
+        if (parentRuns.isNotEmpty() || permissionReviewCount > 0) {
             SubagentManageButton(
                 hasActiveRun = hasActiveRun,
+                reviewCount = permissionReviewCount,
                 onClick = { showSubagentManager = true },
             )
         }
@@ -395,6 +411,7 @@ private fun SubagentChatHeader(
     onBackToParent: () -> Unit,
     onSwitchSubagent: (String) -> Unit,
     onManageSubagents: () -> Unit,
+    reviewCount: Int,
     modifier: Modifier = Modifier,
 ) {
     var showSwitcher by rememberSaveable { mutableStateOf(false) }
@@ -444,6 +461,7 @@ private fun SubagentChatHeader(
         )
         SubagentManageButton(
             hasActiveRun = hasActiveRun,
+            reviewCount = reviewCount,
             onClick = onManageSubagents,
         )
     }

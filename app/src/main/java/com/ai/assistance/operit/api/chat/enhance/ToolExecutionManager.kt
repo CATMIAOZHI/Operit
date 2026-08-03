@@ -7,6 +7,7 @@ import com.ai.assistance.operit.core.agent.SubagentToolPolicy
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.AIToolHookDecision
+import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.ToolExecutor
 import com.ai.assistance.operit.core.tools.ToolExecutionLimits
@@ -19,7 +20,6 @@ import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.util.stream.StreamCollector
 import com.ai.assistance.operit.data.preferences.CharacterCardToolAccessResolver
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -28,11 +28,20 @@ import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.ui.common.displays.MessageContentParser
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
+import com.ai.assistance.operit.ui.permissions.PermissionReviewCircuitBreaker
+import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
+import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
+import com.ai.assistance.operit.ui.permissions.ToolPermissionDecision
+import com.ai.assistance.operit.ui.permissions.ToolPermissionDenialSource
+import com.ai.assistance.operit.ui.permissions.resolveApprovalDecisionWithPermanentOverride
 import com.ai.assistance.operit.util.ChatMarkupRegex
+import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.markdown.NestedMarkdownProcessor
 import com.ai.assistance.operit.util.stream.plugins.StreamXmlPlugin
 import com.ai.assistance.operit.util.stream.splitBy
@@ -118,11 +127,17 @@ object ToolExecutionManager {
         val callerChatId: String? = null,
         val toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
         val conversationLabel: String? = null,
+        val workspacePath: String? = null,
+        val workspaceEnv: String? = null,
         val parentModelConfigId: String? = null,
         val parentModelIndex: Int? = null,
         val isSubagent: Boolean = false,
         val callId: String? = null,
         val invocationIndex: Int? = null,
+        val timingScopeId: String? = null,
+        val batchPosition: Int = 1,
+        val batchSize: Int = 1,
+        val permissionCheckedToolName: String? = null,
     )
 
     internal class BoundedToolResultAccumulator(
@@ -389,6 +404,7 @@ object ToolExecutionManager {
         toolExposureMode: ToolExposureMode
     ): ToolResult? {
         val toolName = invocation.tool.name.trim()
+        if (toolName in PermissionReviewInternalTools.names) return null
         val useEnglish = isEnglishLanguage(context)
         val errorMessage =
             when {
@@ -601,71 +617,88 @@ object ToolExecutionManager {
      * @param invocation The tool invocation to check permissions for
      * @return A pair containing (has permission, error result if no permission)
      */
-    suspend fun checkToolPermission(
+    internal suspend fun checkToolPermission(
         toolHandler: AIToolHandler,
         invocation: ToolInvocation,
         toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
-        conversationLabel: String? = null
-    ): Pair<Boolean, ToolResult?> {
+        conversationLabel: String? = null,
+        workspacePath: String? = null,
+        workspaceEnv: String? = null,
+        callerChatId: String? = null,
+        parentModelConfigId: String? = null,
+        parentModelIndex: Int? = null,
+        timingScopeId: String? = null,
+        batchPosition: Int = 1,
+        batchSize: Int = 1,
+        deferCircuitBreaker: Boolean = false,
+        liveAssistantContent: String? = null,
+    ): ToolPermissionCheckResult {
+        if (invocation.tool.name in PermissionReviewInternalTools.names) {
+            toolHandler.notifyToolPermissionChecked(
+                invocation.tool,
+                granted = true,
+                reason = "Capability-bound internal permission-review tool",
+            )
+            return ToolPermissionCheckResult(ToolPermissionDecision.Allowed, null)
+        }
+
         val resolvedTarget = resolveToolTarget(invocation.tool)
-        val permissionTool =
-            if (toolExposureMode == ToolExposureMode.CLI &&
-                invocation.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
-            ) {
-                invocation.tool
-            } else {
-                resolvedTarget.tool
-            }
+        val permissionTool = resolvedTarget.tool
 
         if (toolExposureMode == ToolExposureMode.CLI &&
-            (invocation.tool.name == CliToolModeSupport.SEARCH_TOOL_NAME ||
-                invocation.tool.name == CliToolModeSupport.PROXY_TOOL_NAME)
+            invocation.tool.name == CliToolModeSupport.SEARCH_TOOL_NAME
         ) {
             toolHandler.notifyToolPermissionChecked(
                 permissionTool,
                 granted = true,
                 reason = "CLI public tool"
             )
-            return Pair(true, null)
+            return ToolPermissionCheckResult(ToolPermissionDecision.Allowed, null)
         }
 
-        // 检查是否强制拒绝权限（deny_tool标记）
-        val hasPromptForPermission = !invocation.rawText.contains("deny_tool")
+        // Always check the resolved target. Model-controlled raw XML must never bypass permission.
+        val toolPermissionSystem = toolHandler.getToolPermissionSystem()
+        val permissionDecision =
+            toolPermissionSystem.checkToolPermission(
+                tool = permissionTool,
+                conversationLabel = conversationLabel,
+                workspacePath = workspacePath,
+                workspaceEnv = workspaceEnv,
+                callerChatId = callerChatId,
+                parentModelConfigId = parentModelConfigId,
+                parentModelIndex = parentModelIndex,
+                timingScopeId = timingScopeId,
+                targetId = invocation.callId ?: "$timingScopeId:${invocation.invocationIndex}",
+                invocationIndex = invocation.invocationIndex,
+                batchPosition = batchPosition,
+                batchSize = batchSize,
+                deferCircuitBreaker = deferCircuitBreaker,
+                liveAssistantContent = liveAssistantContent,
+            )
 
-        if (hasPromptForPermission) {
-            // 检查权限，如果需要则弹出权限请求界面
-            val toolPermissionSystem = toolHandler.getToolPermissionSystem()
-            val hasPermission =
-                toolPermissionSystem.checkToolPermission(permissionTool, conversationLabel)
-
-            // 如果权限被拒绝，创建错误结果
-            if (!hasPermission) {
-                val errorResult =
-                    ToolResult(
-                        toolName = resolvedTarget.displayName,
-                        success = false,
-                        result = StringResultData(""),
-                        error = "User cancelled the tool execution."
-                    )
-                toolHandler.notifyToolPermissionChecked(
-                    permissionTool,
-                    granted = false,
-                    reason = errorResult.error
+        if (permissionDecision is ToolPermissionDecision.Denied) {
+            val errorResult =
+                ToolResult(
+                    toolName = resolvedTarget.displayName,
+                    success = false,
+                    result = StringResultData(""),
+                    error = permissionDecision.rejection,
+                    interruptTurn = permissionDecision.interruptTurn,
                 )
-                return Pair(false, errorResult)
-            }
-
-            toolHandler.notifyToolPermissionChecked(permissionTool, granted = true)
-            return Pair(true, null)
+            toolHandler.notifyToolPermissionChecked(
+                permissionTool,
+                granted = false,
+                reason = errorResult.error
+            )
+            return ToolPermissionCheckResult(permissionDecision, errorResult)
         }
 
-        toolHandler.notifyToolPermissionChecked(
-            permissionTool,
-            granted = true,
-            reason = "Permission check bypassed by deny_tool tag."
-        )
-        return Pair(true, null)
+        toolHandler.notifyToolPermissionChecked(permissionTool, granted = true)
+        return ToolPermissionCheckResult(permissionDecision, null)
     }
+
+    internal suspend fun extractExecutableToolInvocations(response: String): List<ToolInvocation> =
+        extractToolInvocations(ChatUtils.removeThinkingContent(response))
 
     /**
      *
@@ -688,8 +721,11 @@ object ToolExecutionManager {
         callerChatId: String? = null,
         callerCardId: String? = null,
         conversationLabel: String? = null,
+        workspacePath: String? = null,
+        workspaceEnv: String? = null,
         parentModelConfigId: String? = null,
         parentModelIndex: Int? = null,
+        liveAssistantContent: String? = null,
         isSubagent: Boolean = false,
         subagentToolLoopGuard: SubagentToolLoopGuard? = null,
     ): List<ToolResult> = coroutineScope {
@@ -713,8 +749,11 @@ object ToolExecutionManager {
                         callerChatId = callerChatId,
                         callerCardId = callerCardId,
                         conversationLabel = conversationLabel,
+                        workspacePath = workspacePath,
+                        workspaceEnv = workspaceEnv,
                         parentModelConfigId = parentModelConfigId,
                         parentModelIndex = parentModelIndex,
+                        liveAssistantContent = liveAssistantContent,
                         isSubagent = true,
                         subagentToolLoopGuard = subagentToolLoopGuard,
                     )
@@ -731,8 +770,11 @@ object ToolExecutionManager {
                         callerChatId = callerChatId,
                         callerCardId = callerCardId,
                         conversationLabel = conversationLabel,
+                        workspacePath = workspacePath,
+                        workspaceEnv = workspaceEnv,
                         parentModelConfigId = parentModelConfigId,
                         parentModelIndex = parentModelIndex,
+                        liveAssistantContent = liveAssistantContent,
                         isSubagent = true,
                         subagentToolLoopGuard = subagentToolLoopGuard,
                     )
@@ -784,7 +826,7 @@ object ToolExecutionManager {
                     timingScopeId,
                     invocation,
                 )
-                val approved =
+                val approvedByPrompt =
                     permissionSystem.requestExplicitApproval(
                         tool = resolvedTool,
                         operationDescription =
@@ -794,6 +836,15 @@ object ToolExecutionManager {
                                 consecutiveCount,
                             ),
                         conversationLabel = conversationLabel,
+                    )
+                // Re-resolve the effective permission after the dialog: the user may have changed
+                // the master switch or the per-tool setting while it was pending, and a global
+                // FORBID must never be overridden by a stale dialog result.
+                val approved =
+                    resolveApprovalDecisionWithPermanentOverride(
+                        approvalGranted = approvedByPrompt,
+                        latestEffectiveLevel =
+                            permissionSystem.getEffectivePermissionLevel(resolvedTool.name),
                     )
                 if (!approved) {
                     throw SubagentLoopRejectedException(
@@ -825,9 +876,13 @@ object ToolExecutionManager {
                 callerChatId = callerChatId,
                 toolExposureMode = toolExposureMode,
                 conversationLabel = conversationLabel,
+                workspacePath = workspacePath,
+                workspaceEnv = workspaceEnv,
                 parentModelConfigId = parentModelConfigId,
                 parentModelIndex = parentModelIndex,
                 isSubagent = isSubagent,
+                timingScopeId = timingScopeId,
+                batchSize = invocations.size.coerceAtLeast(1),
             )
 
         // 1. 顶层工具暴露模式拦截
@@ -865,8 +920,6 @@ object ToolExecutionManager {
                     durationMs = null,
                     state = ToolExecutionState.NOT_EXECUTED,
                 )
-                toolHandler.notifyToolExecutionResult(invocation.tool, finalResult)
-                emitFinalResult(collector, finalResult)
             }
         }
 
@@ -898,64 +951,32 @@ object ToolExecutionManager {
                     durationMs = null,
                     state = ToolExecutionState.NOT_EXECUTED,
                 )
-                toolHandler.notifyToolExecutionResult(invocation.tool, finalResult)
-                emitFinalResult(collector, finalResult)
             }
         }
 
-        // 3. Hook 拦截与权限检查
+        // 3. Hook 拦截后并发完成整批权限检查。人工 ASK 仍由 ToolPermissionSystem 的
+        // askMutex 串行显示；自动审核则可按模型并发能力并行运行。
         val permittedInvocations = mutableListOf<ToolInvocation>()
         val hookDeniedResults = mutableListOf<ToolResult>()
         val permissionDeniedResults = mutableListOf<ToolResult>()
-        for (invocation in roleCardPermittedInvocations) {
+        val permissionCandidates =
+            mutableListOf<Triple<Int, ToolInvocation, AITool>>()
+        for ((batchIndex, invocation) in roleCardPermittedInvocations.withIndex()) {
             toolHandler.notifyToolCallRequested(invocation.tool)
             val interceptionTool = resolveToolTarget(invocation.tool).tool
-            when (val interception = toolHandler.checkToolInterception(interceptionTool)) {
+            val interception =
+                if (interceptionTool.name in PermissionReviewInternalTools.names) {
+                    AIToolHookDecision.Allow
+                } else {
+                    toolHandler.checkToolInterception(interceptionTool)
+                }
+            when (interception) {
                 AIToolHookDecision.Allow -> {
                     ToolExecutionTimingRepository.markWaitingAuthorization(
                         timingScopeId,
                         invocation,
                     )
-                    val (hasPermission, errorResult) =
-                        if (loopApprovedInvocations.containsKey(invocation)) {
-                            toolHandler.notifyToolPermissionChecked(
-                                interceptionTool,
-                                granted = true,
-                                reason = "Approved by Subagent exact-repeat loop review",
-                            )
-                            Pair(true, null)
-                        } else {
-                            checkToolPermission(
-                                toolHandler,
-                                invocation,
-                                toolExposureMode,
-                                conversationLabel
-                            )
-                        }
-                    if (hasPermission) {
-                        permittedInvocations.add(invocation)
-                        ToolExecutionTimingRepository.markWaitingExecution(
-                            timingScopeId,
-                            invocation,
-                        )
-                    } else {
-                        errorResult?.let {
-                            val finalResult =
-                                it.withExecutionMetadata(
-                                    invocation = invocation,
-                                    state = ToolExecutionState.NOT_EXECUTED,
-                                )
-                            permissionDeniedResults.add(finalResult)
-                            ToolExecutionTimingRepository.markFinished(
-                                timingScopeId,
-                                invocation,
-                                finalResult,
-                                durationMs = null,
-                                state = ToolExecutionState.NOT_EXECUTED,
-                            )
-                            emitFinalResult(collector, finalResult)
-                        }
-                    }
+                    permissionCandidates += Triple(batchIndex, invocation, interceptionTool)
                 }
 
                 is AIToolHookDecision.Block -> {
@@ -977,11 +998,135 @@ object ToolExecutionManager {
                         durationMs = null,
                         state = ToolExecutionState.NOT_EXECUTED,
                     )
-                    toolHandler.notifyToolExecutionResult(invocation.tool, finalResult)
                     toolHandler.notifyToolExecutionFinished(invocation.tool)
-                    emitFinalResult(collector, finalResult)
                 }
             }
+        }
+
+        val permissionChecks =
+            parallelMapPreservingOrder(permissionCandidates) {
+                    (batchIndex, invocation, interceptionTool) ->
+                        val check =
+                        if (loopApprovedInvocations.containsKey(invocation)) {
+                            toolHandler.notifyToolPermissionChecked(
+                                interceptionTool,
+                                granted = true,
+                                reason = "Approved by Subagent exact-repeat loop review",
+                            )
+                            ToolPermissionCheckResult(ToolPermissionDecision.Allowed, null)
+                        } else {
+                            checkToolPermission(
+                                toolHandler,
+                                invocation,
+                                toolExposureMode,
+                                conversationLabel,
+                                workspacePath,
+                                workspaceEnv,
+                                callerChatId,
+                                parentModelConfigId,
+                                parentModelIndex,
+                                timingScopeId,
+                                batchIndex + 1,
+                                roleCardPermittedInvocations.size,
+                                deferCircuitBreaker = true,
+                                liveAssistantContent = liveAssistantContent,
+                            )
+                        }
+                        val finalError =
+                            check.errorResult?.withExecutionMetadata(
+                                invocation = invocation,
+                                state = ToolExecutionState.NOT_EXECUTED,
+                            )
+                        if (check.granted) {
+                            ToolExecutionTimingRepository.markWaitingExecution(
+                                timingScopeId,
+                                invocation,
+                            )
+                        } else if (finalError != null) {
+                            ToolExecutionTimingRepository.markFinished(
+                                timingScopeId,
+                                invocation,
+                                finalError,
+                                durationMs = null,
+                                state = ToolExecutionState.NOT_EXECUTED,
+                            )
+                        }
+                        Triple(invocation, check, finalError)
+                }
+
+        // awaitAll preserves the candidate order, so UI state and later execution remain stable
+        // even when individual reviewers finish out of order.
+        for ((invocation, permissionCheck, initialErrorResult) in permissionChecks) {
+            var errorResult = initialErrorResult
+            if (!callerChatId.isNullOrBlank()) {
+                val adjustedDecision =
+                    applyDeferredPermissionReviewCircuit(
+                        parentChatId = callerChatId,
+                        turnScopeId = timingScopeId,
+                        decision = permissionCheck.decision,
+                        wasAutomaticallyReviewed =
+                            PermissionReviewEventRepository.findForInvocation(
+                                callerChatId,
+                                timingScopeId,
+                                invocation.invocationIndex,
+                            )?.status in
+                                setOf(
+                                    PermissionReviewStatus.APPROVED,
+                                    PermissionReviewStatus.DENIED,
+                                ),
+                    )
+                if (adjustedDecision is ToolPermissionDecision.Denied &&
+                    adjustedDecision.interruptTurn &&
+                    errorResult != null
+                ) {
+                    errorResult = errorResult.copy(interruptTurn = true)
+                    ToolExecutionTimingRepository.markFinished(
+                        timingScopeId,
+                        invocation,
+                        errorResult,
+                        durationMs = null,
+                        state = ToolExecutionState.NOT_EXECUTED,
+                    )
+                }
+            }
+            if (permissionCheck.granted) {
+                        permittedInvocations.add(invocation)
+            } else if (errorResult != null) {
+                permissionDeniedResults.add(errorResult)
+            }
+        }
+
+        // A Guardian circuit-breaker decision stops the whole pending batch. Permission checks are
+        // completed before execution, so previously approved siblings have not started yet and can
+        // still be cancelled atomically instead of partially executing a suspicious model turn.
+        if (shouldInterruptPendingToolBatch(permissionDeniedResults)) {
+            toolHandler.getToolPermissionSystem().showAutomaticReviewCircuitBreakerWarning()
+            val interruptedApprovedResults =
+                permittedInvocations.map { invocation ->
+                    val interrupted =
+                        ToolResult(
+                            toolName = resolveDisplayToolName(invocation.tool),
+                            success = false,
+                            result = StringResultData(""),
+                            error =
+                                "Tool execution cancelled because automatic permission review " +
+                                    "stopped this model turn after repeated denied actions.",
+                            interruptTurn = true,
+                        ).withExecutionMetadata(
+                            invocation = invocation,
+                            state = ToolExecutionState.NOT_EXECUTED,
+                        )
+                    ToolExecutionTimingRepository.markFinished(
+                        timingScopeId,
+                        invocation,
+                        interrupted,
+                        durationMs = null,
+                        state = ToolExecutionState.NOT_EXECUTED,
+                    )
+                    interrupted
+                }
+            permittedInvocations.clear()
+            permissionDeniedResults.addAll(interruptedApprovedResults)
         }
 
         val injectedInvocations =
@@ -1000,72 +1145,133 @@ object ToolExecutionManager {
                 }
             }
 
-        // 4. 按并行/串行对工具进行分组
-        val parallelizableToolNames = setOf(
-            "list_files", "read_file", "read_file_part", "read_file_full", "file_exists",
-            "find_files", "file_info", "grep_code", "calculate", "ffmpeg_info",
-            "visit_web", "download_file", "task"
-        )
-        val (parallelInvocations, serialInvocations) = injectedInvocations.partition {
-            parallelizableToolNames.contains(
-                it.tool.name
+        // 4. 所有权限结果齐备后，严格按模型原始调用顺序返回或执行。
+        // A rejected item occupies its original slot; a later rejection can no longer be emitted
+        // before an earlier allowed tool has finished.
+        // Subagent task invocations run in parallel: the coordinator already supports concurrent
+        // child runs per parent, so a sequential loop would needlessly serialize independent
+        // agents. Contiguous task runs form one parallel group; non-task tools stay serial and
+        // act as ordering barriers. Results are published strictly in the model's original call
+        // order from the single driver coroutine, so the shared collector and round manager are
+        // never written concurrently and the transcript cannot reorder tool results.
+        fun key(callId: String?, invocationIndex: Int?): String =
+            callId?.takeIf(String::isNotBlank) ?: "index:${invocationIndex ?: -1}"
+
+        val deniedByInvocation =
+            (
+                toolExposureDeniedResults +
+                    roleCardDeniedResults +
+                    hookDeniedResults +
+                    permissionDeniedResults
+                ).associateBy { result -> key(result.callId, result.invocationIndex) }
+        val executableByInvocation =
+            injectedInvocations.associateBy { invocation ->
+                key(invocation.callId, invocation.invocationIndex.takeIf { it >= 0 })
+            }
+        val orderedResults = mutableListOf<ToolResult>()
+
+        suspend fun runTool(
+            invocation: ToolInvocation,
+            deferredResultSink: java.util.concurrent.ConcurrentMap<ToolInvocation, ToolResult>? = null,
+        ): ToolResult =
+            executeAndEmitTool(
+                invocation = invocation,
+                toolHandler = toolHandler,
+                packageManager = packageManager,
+                collector = collector,
+                runtimeContext =
+                    toolRuntimeContext.copy(
+                        callId = invocation.callId,
+                        invocationIndex = invocation.invocationIndex.takeIf { it >= 0 },
+                        batchPosition = invocation.invocationIndex + 1,
+                        permissionCheckedToolName =
+                            resolveToolTarget(invocation.tool).tool.name,
+                    ),
+                timingScopeId = timingScopeId,
+                deferredResultSink = deferredResultSink,
             )
+
+        suspend fun publishResult(
+            invocation: ToolInvocation,
+            result: ToolResult,
+            sendFinished: Boolean = false,
+        ) {
+            toolHandler.notifyToolExecutionResult(invocation.tool, result)
+            emitFinalResult(collector, result)
+            // Parallel group members skipped the worker-side finished event; emit it here so the
+            // lifecycle stays started -> result -> finished in the driver's call order.
+            if (sendFinished) {
+                toolHandler.notifyToolExecutionFinished(invocation.tool)
+            }
         }
 
-            // 5. 执行工具并收集聚合结果
-            val executionResults = ConcurrentHashMap<ToolInvocation, ToolResult>()
-
-            // 启动并行工具
-            val parallelJobs = parallelInvocations.map { invocation ->
-                async {
-                    val result =
-                        executeAndEmitTool(
-                            invocation = invocation,
-                            toolHandler = toolHandler,
-                            packageManager = packageManager,
-                            collector = collector,
-                            runtimeContext =
-                                toolRuntimeContext.copy(
-                                    callId = invocation.callId,
-                                    invocationIndex =
-                                        invocation.invocationIndex.takeIf { it >= 0 },
-                                ),
-                            timingScopeId = timingScopeId,
-                        )
-                    executionResults[invocation] = result
-                }
+        // Walk invocations in the model's original order, executing each item at its slot and
+        // publishing its result before any later invocation is started.
+        var index = 0
+        while (index < invocations.size) {
+            val originalInvocation = invocations[index]
+            val invocationKey =
+                key(
+                    originalInvocation.callId,
+                    originalInvocation.invocationIndex.takeIf { it >= 0 },
+                )
+            val denied = deniedByInvocation[invocationKey]
+            if (denied != null) {
+                publishResult(originalInvocation, denied)
+                orderedResults += denied
+                index += 1
+                continue
             }
-
-            // 顺序执行串行工具
-            for (invocation in serialInvocations) {
-                val result =
-                    executeAndEmitTool(
-                        invocation = invocation,
-                        toolHandler = toolHandler,
-                        packageManager = packageManager,
-                        collector = collector,
-                        runtimeContext =
-                            toolRuntimeContext.copy(
-                                callId = invocation.callId,
-                                invocationIndex = invocation.invocationIndex.takeIf { it >= 0 },
-                            ),
-                        timingScopeId = timingScopeId,
+            val invocation = executableByInvocation[invocationKey]
+            if (invocation == null) {
+                index += 1
+                continue
+            }
+            if (invocation.tool.name != "task") {
+                val result = runTool(invocation)
+                orderedResults += result
+                index += 1
+                continue
+            }
+            // A contiguous run of executable task calls: launch them concurrently, then publish
+            // their results in call order once the whole group has finished.
+            var groupEnd = index + 1
+            while (groupEnd < invocations.size) {
+                val candidateKey =
+                    key(
+                        invocations[groupEnd].callId,
+                        invocations[groupEnd].invocationIndex.takeIf { it >= 0 },
                     )
-                executionResults[invocation] = result
+                val candidate = executableByInvocation[candidateKey]
+                if (candidate == null || candidate.tool.name != "task") break
+                groupEnd += 1
             }
+            val groupInvocations =
+                (index until groupEnd).mapNotNull { position ->
+                    val slotKey =
+                        key(
+                            invocations[position].callId,
+                            invocations[position].invocationIndex.takeIf { it >= 0 },
+                        )
+                    executableByInvocation[slotKey]
+                }
+            val executionResults =
+                java.util.concurrent.ConcurrentHashMap<ToolInvocation, ToolResult>()
+            runParallelGroupWithOrderedPublishing(
+                items = groupInvocations,
+                executionResults = executionResults,
+                execute = { taskInvocation ->
+                    runTool(taskInvocation, deferredResultSink = executionResults)
+                },
+                publish = { taskInvocation, result ->
+                    publishResult(taskInvocation, result, sendFinished = true)
+                },
+                record = { result -> orderedResults += result },
+            )
+            index = groupEnd
+        }
 
-            // 等待所有并行任务完成
-            parallelJobs.awaitAll()
-
-            // 6. 按原始顺序重新排序结果
-            val orderedAggregated = injectedInvocations.mapNotNull { executionResults[it] }
-
-            // 7. 组合所有结果并返回
-            toolExposureDeniedResults +
-                roleCardDeniedResults +
-                hookDeniedResults +
-                permissionDeniedResults +
-                orderedAggregated
+        orderedResults.sortedBy { result -> result.invocationIndex ?: Int.MAX_VALUE }
         } catch (cancellation: CancellationException) {
             withContext(NonCancellable) {
                 invocations.forEach { invocation ->
@@ -1164,6 +1370,53 @@ object ToolExecutionManager {
     }
 
     /**
+     * Runs a parallel group of tool invocations and publishes the results strictly in the given
+     * item order from the caller's (single driver) coroutine. Cancellation or failure of one item
+     * is rethrown to the caller after the finished portion has been published in order, but
+     * already-recorded results are never lost: publication runs in a NonCancellable context so a
+     * cancelled caller cannot silently drop the finished portion.
+     */
+    internal suspend fun runParallelGroupWithOrderedPublishing(
+        items: List<ToolInvocation>,
+        executionResults: java.util.concurrent.ConcurrentMap<ToolInvocation, ToolResult>,
+        execute: suspend (ToolInvocation) -> Unit,
+        publish: suspend (ToolInvocation, ToolResult) -> Unit,
+        record: (ToolResult) -> Unit = {},
+    ) {
+        try {
+            coroutineScope {
+                items.forEach { item ->
+                    async { execute(item) }
+                }
+            }
+        } catch (t: Throwable) {
+            withContext(NonCancellable) {
+                items.forEach { item ->
+                    executionResults[item]?.let { result ->
+                        publish(item, result)
+                        record(result)
+                    }
+                }
+            }
+            throw t
+        }
+        // All workers have terminated, so the ordered publication below must never be interrupted
+        // by a cancellation arriving in this window: a lost result would never be republished by
+        // the outer cancellation handler (the worker already marked the invocation COMPLETED).
+        withContext(NonCancellable) {
+            items.forEach { item ->
+                executionResults[item]?.let { result ->
+                    publish(item, result)
+                    record(result)
+                }
+            }
+        }
+        // Re-propagate a cancellation that arrived while the ordered publication was running so
+        // the caller still observes the cancelled state after all results were published.
+        currentCoroutineContext().ensureActive()
+    }
+
+    /**
      * 封装单个工具的执行、实时输出和结果聚合的辅助函数
      */
     private suspend fun executeAndEmitTool(
@@ -1173,6 +1426,7 @@ object ToolExecutionManager {
         collector: StreamCollector<String>,
         runtimeContext: ToolRuntimeContext,
         timingScopeId: String?,
+        deferredResultSink: java.util.concurrent.ConcurrentMap<ToolInvocation, ToolResult>? = null,
     ): ToolResult {
         val toolName = invocation.tool.name
         val displayToolName = resolveDisplayToolName(invocation.tool)
@@ -1180,6 +1434,18 @@ object ToolExecutionManager {
         return withContext(toolRuntimeContextThreadLocal.asContextElement(runtimeContext)) {
             var startedAtElapsedMs: Long? = null
             val collectedResults = BoundedToolResultAccumulator()
+            // Parallel group members run with a deferred result sink and publish later from the
+            // single driver coroutine so the shared collector, round manager and hook
+            // notifications stay strictly ordered. The sink also captures cancellation/failure
+            // results so the driver can still publish the finished portion of a group in order.
+            suspend fun publishResult(result: ToolResult) {
+                if (deferredResultSink != null) {
+                    deferredResultSink[invocation] = result
+                    return
+                }
+                toolHandler.notifyToolExecutionResult(invocation.tool, result)
+                emitFinalResult(collector, result)
+            }
             try {
                 val executor = toolHandler.getToolExecutorOrActivate(toolName)
                 if (executor == null) {
@@ -1203,8 +1469,7 @@ object ToolExecutionManager {
                         durationMs = null,
                         state = ToolExecutionState.NOT_EXECUTED,
                     )
-                    toolHandler.notifyToolExecutionResult(invocation.tool, notAvailableResult)
-                    emitFinalResult(collector, notAvailableResult)
+                    publishResult(notAvailableResult)
                     return@withContext notAvailableResult
                 }
 
@@ -1245,8 +1510,7 @@ object ToolExecutionManager {
                         durationMs = durationMs,
                         state = ToolExecutionState.COMPLETED,
                     )
-                    emitFinalResult(collector, emptyResult)
-                    toolHandler.notifyToolExecutionResult(invocation.tool, emptyResult)
+                    publishResult(emptyResult)
                     return@withContext emptyResult
                 }
 
@@ -1273,8 +1537,7 @@ object ToolExecutionManager {
                     durationMs = durationMs,
                     state = ToolExecutionState.COMPLETED,
                 )
-                emitFinalResult(collector, finalResult)
-                toolHandler.notifyToolExecutionResult(invocation.tool, finalResult)
+                publishResult(finalResult)
                 return@withContext finalResult
             } catch (cancellation: CancellationException) {
                 val start = startedAtElapsedMs
@@ -1297,19 +1560,24 @@ object ToolExecutionManager {
                             state = ToolExecutionState.COMPLETED,
                         )
                         try {
-                            emitFinalResult(collector, cancelledResult)
+                            publishResult(cancelledResult)
                         } catch (emitError: Exception) {
                             AppLogger.w(
                                 TAG,
                                 "Failed to persist cancelled tool result: ${emitError.message}",
                             )
                         }
-                        toolHandler.notifyToolExecutionResult(invocation.tool, cancelledResult)
                     }
                 }
                 throw cancellation
             } finally {
-                toolHandler.notifyToolExecutionFinished(invocation.tool)
+                // Deferred (parallel group) members publish their result from the single driver
+                // coroutine; the finished event must follow that result, so it is sent there too
+                // instead of here. Non-deferred tools keep the original started -> result ->
+                // finished order.
+                if (deferredResultSink == null) {
+                    toolHandler.notifyToolExecutionFinished(invocation.tool)
+                }
             }
         }
     }
@@ -1371,4 +1639,41 @@ object ToolExecutionManager {
         }
     }
 
+}
+
+internal fun shouldInterruptPendingToolBatch(results: List<ToolResult>): Boolean =
+    results.any { result -> result.interruptTurn }
+
+internal fun applyDeferredPermissionReviewCircuit(
+    parentChatId: String,
+    turnScopeId: String?,
+    decision: ToolPermissionDecision,
+    wasAutomaticallyReviewed: Boolean,
+): ToolPermissionDecision =
+    when {
+        decision is ToolPermissionDecision.Denied &&
+            decision.source == ToolPermissionDenialSource.AUTOMATIC_REVIEW -> {
+            val circuit = PermissionReviewCircuitBreaker.recordDenial(parentChatId, turnScopeId)
+            decision.copy(interruptTurn = circuit.interruptTurn)
+        }
+        decision is ToolPermissionDecision.Allowed && wasAutomaticallyReviewed -> {
+            PermissionReviewCircuitBreaker.recordNonDenial(parentChatId, turnScopeId)
+            decision
+        }
+        else -> decision
+    }
+
+internal data class ToolPermissionCheckResult(
+    val decision: ToolPermissionDecision,
+    val errorResult: ToolResult?,
+) {
+    val granted: Boolean
+        get() = decision is ToolPermissionDecision.Allowed
+}
+
+internal suspend fun <T, R> parallelMapPreservingOrder(
+    values: List<T>,
+    transform: suspend (T) -> R,
+): List<R> = coroutineScope {
+    values.map { value -> async { transform(value) } }.awaitAll()
 }

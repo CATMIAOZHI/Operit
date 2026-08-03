@@ -3,6 +3,7 @@ package com.ai.assistance.operit.core.tools.defaultTool.standard
 import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.core.agent.AgentProfileRepository
 import com.ai.assistance.operit.core.agent.SubagentCoordinator
 import com.ai.assistance.operit.core.agent.SubagentExecutionException
 import com.ai.assistance.operit.core.agent.SubagentResultExtractor
@@ -22,6 +23,7 @@ import kotlinx.coroutines.runBlocking
 class TaskToolExecutor(context: Context) : ToolExecutor {
     private val appContext = context.applicationContext
     private val coordinator = SubagentCoordinator.getInstance(appContext)
+    private val profileRepository = AgentProfileRepository.instance
 
     override fun invoke(tool: AITool): ToolResult {
         val runtime = ToolExecutionManager.currentToolRuntimeContext()
@@ -74,6 +76,7 @@ class TaskToolExecutor(context: Context) : ToolExecutor {
         }
 
         return try {
+            profileRepository.requireTaskToolSubagent(subagentType)
             val result =
                 coordinator.runTask(
                     SubagentTaskRequest(

@@ -2783,6 +2783,10 @@ private fun AgentToolsPermissionGroupItem(
     val valueText =
         when (effectiveLevel) {
             PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
+            PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
+            PermissionLevel.WORKSPACE_REVIEWER ->
+                stringResource(R.string.permission_level_workspace_reviewer)
+            PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
             PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
             PermissionLevel.FORBID -> stringResource(R.string.agent_menu_permission_disabled)
         }
@@ -2833,16 +2837,16 @@ private fun AgentToolsPermissionGroupItem(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun AgentPermissionSegmentedControl(
     selectedLevel: PermissionLevel,
     onSelectPermissionLevel: (PermissionLevel) -> Unit,
 ) {
-    Row(
+    Column(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .heightIn(min = 32.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = stringResource(R.string.permission_level),
@@ -2851,64 +2855,62 @@ private fun AgentPermissionSegmentedControl(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Spacer(modifier = Modifier.width(8.dp))
-        Row(
-            modifier = Modifier.weight(1f),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
+        Spacer(modifier = Modifier.height(6.dp))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-        listOf(PermissionLevel.FORBID, PermissionLevel.ASK, PermissionLevel.ALLOW).forEach { level ->
-            val isSelected = selectedLevel == level
-            val label =
-                when (level) {
-                    PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
-                    PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
-                    PermissionLevel.FORBID -> stringResource(R.string.agent_menu_permission_disabled)
+            listOf(
+                PermissionLevel.FORBID,
+                PermissionLevel.ASK,
+                PermissionLevel.WORKSPACE,
+                PermissionLevel.WORKSPACE_REVIEWER,
+                PermissionLevel.REVIEWER,
+                PermissionLevel.ALLOW,
+            ).forEach { level ->
+                val isSelected = selectedLevel == level
+                val label =
+                    when (level) {
+                        PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
+                        PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
+                        PermissionLevel.WORKSPACE_REVIEWER ->
+                            stringResource(R.string.permission_level_workspace_reviewer)
+                        PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
+                        PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
+                        PermissionLevel.FORBID -> stringResource(R.string.agent_menu_permission_disabled)
+                    }
+                Box(
+                    modifier =
+                        Modifier
+                            .height(32.dp)
+                            .widthIn(min = 72.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.primary
+                                else Color.Transparent
+                            )
+                            .border(
+                                1.dp,
+                                if (isSelected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
+                                RoundedCornerShape(999.dp),
+                            )
+                            .clickable { onSelectPermissionLevel(level) }
+                            .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label,
+                        color =
+                            if (isSelected) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurface,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                    )
                 }
-            Box(
-                modifier =
-                    Modifier
-                        .weight(1f)
-                        .height(28.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(
-                            if (isSelected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                Color.Transparent
-                            },
-                        )
-                        .border(
-                            1.dp,
-                            if (isSelected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)
-                            },
-                            RoundedCornerShape(999.dp),
-                        )
-                        .padding(horizontal = 10.dp)
-                        .clickable { onSelectPermissionLevel(level) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = label,
-                    color =
-                        if (isSelected) {
-                            MaterialTheme.colorScheme.onPrimary
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                    },
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
-            if (level != PermissionLevel.ALLOW) {
-                Spacer(modifier = Modifier.width(6.dp))
-            }
-        }
         }
     }
 }

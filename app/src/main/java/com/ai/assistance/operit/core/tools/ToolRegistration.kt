@@ -3,6 +3,7 @@ package com.ai.assistance.operit.core.tools
 import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.ui.permissions.ToolPermissionDecision
 import com.ai.assistance.operit.core.tools.climode.CliToolModeSupport
 import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
 import com.ai.assistance.operit.core.tools.defaultTool.ToolGetter
@@ -35,6 +36,17 @@ import org.json.JSONObject
  * @param context Application context for tools that need it
  */
 fun registerAllTools(handler: AIToolHandler, context: Context) {
+
+    // Hidden control-plane tool. It is never added to ordinary model tool prompts; permission
+    // review turns expose it explicitly through an isolated per-turn tool override.
+    handler.registerTool(
+        name = PermissionReviewSubmissionTool.NAME,
+        executor = { tool -> PermissionReviewSubmissionTool.acknowledge(context, tool) },
+    )
+    handler.registerTool(
+        name = PermissionReviewInspectionTool.NAME,
+        executor = PermissionReviewInspectionTool::inspect,
+    )
 
     // Helper function to wrap UI tool execution with visibility changes
     suspend fun executeUiToolWithVisibility(
@@ -239,11 +251,28 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             )
         }
 
-        val hasPermission = runBlocking {
-            handler.getToolPermissionSystem().checkToolPermission(proxiedTool, conversationLabel)
-        }
-        if (!hasPermission) {
-            val errorMessage = "User cancelled the tool execution."
+        val runtimeContext = ToolExecutionManager.currentToolRuntimeContext()
+        val permissionDecision =
+            if (runtimeContext?.permissionCheckedToolName == targetToolName) {
+                ToolPermissionDecision.Allowed
+            } else runBlocking {
+                handler.getToolPermissionSystem().checkToolPermission(
+                tool = proxiedTool,
+                conversationLabel = conversationLabel ?: runtimeContext?.conversationLabel,
+                workspacePath = runtimeContext?.workspacePath,
+                workspaceEnv = runtimeContext?.workspaceEnv,
+                callerChatId = runtimeContext?.callerChatId,
+                parentModelConfigId = runtimeContext?.parentModelConfigId,
+                parentModelIndex = runtimeContext?.parentModelIndex,
+                timingScopeId = runtimeContext?.timingScopeId,
+                targetId = runtimeContext?.callId,
+                invocationIndex = runtimeContext?.invocationIndex ?: -1,
+                batchPosition = runtimeContext?.batchPosition ?: 1,
+                batchSize = runtimeContext?.batchSize ?: 1,
+                )
+            }
+        if (permissionDecision is ToolPermissionDecision.Denied) {
+            val errorMessage = permissionDecision.rejection
             handler.notifyToolPermissionChecked(
                 proxiedTool,
                 granted = false,
@@ -253,7 +282,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 toolName = targetToolName,
                 success = false,
                 result = StringResultData(""),
-                error = errorMessage
+                error = errorMessage,
+                interruptTurn = permissionDecision.interruptTurn,
             )
         }
 
@@ -263,7 +293,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             toolName = targetToolName,
             success = proxiedResult.success,
             result = proxiedResult.result,
-            error = proxiedResult.error
+            error = proxiedResult.error,
+            interruptTurn = proxiedResult.interruptTurn,
         )
     }
 

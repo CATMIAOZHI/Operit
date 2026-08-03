@@ -9,6 +9,9 @@ import com.ai.assistance.operit.data.model.ChatTurnOptions
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.data.model.SubagentRunStatus
+import com.ai.assistance.operit.data.model.ToolPrompt
+import com.ai.assistance.operit.core.tools.PermissionReviewSubmissionTool
+import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.repository.CreateSubagentRunRequest
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
@@ -51,6 +54,14 @@ data class SubagentTaskRequest(
     /** Actual model used by the parent turn; inherited when the profile has no fixed model. */
     val parentModelConfigId: String? = null,
     val parentModelIndex: Int? = null,
+    /** False hides every tool schema and ignores tool-call markup for the turn. */
+    val toolsEnabled: Boolean = true,
+    /** Optional isolated result-tool surface used by internal reviewer turns. */
+    val isolatedToolPrompts: List<ToolPrompt>? = null,
+    val terminalToolNames: Set<String> = emptySet(),
+    val promptHooksEnabled: Boolean = true,
+    /** Actual model lease held by a running parent Subagent, for reviewer-only reentrancy. */
+    val reentrantParentModelConfigId: String? = null,
 )
 
 sealed interface SubagentTaskResult {
@@ -91,6 +102,7 @@ class SubagentCoordinator private constructor(context: Context) {
     private val parentSemaphores = ConcurrentHashMap<String, Semaphore>()
     private val modelSemaphores = ConcurrentHashMap<String, AdjustableConcurrencyGate>()
     private val modelSemaphoreUpdateMutexes = ConcurrentHashMap<String, Mutex>()
+    private val activeModelLeases = ConcurrentHashMap<String, String>()
     private val taskMutexes = ConcurrentHashMap<String, Mutex>()
     private val taskJobs = ConcurrentHashMap<String, Job>()
     private val taskParents = ConcurrentHashMap<String, String>()
@@ -344,7 +356,20 @@ class SubagentCoordinator private constructor(context: Context) {
             parentSemaphores.getOrPut(run.parentChatId) {
                 Semaphore(MAX_CONCURRENT_SUBAGENTS_PER_PARENT)
             }
-        var modelSemaphore = resolveModelSemaphore(run.modelConfigIdSnapshot)
+        val parentRun = runRepository.getByChildChatId(run.parentChatId)
+        val reusesParentModelLease =
+            PermissionReviewerModelLeasePolicy.canReuse(
+                parentRun = parentRun,
+                reviewerModelConfigId = run.modelConfigIdSnapshot,
+                reentrantParentModelConfigId = request.reentrantParentModelConfigId,
+                activeParentLeaseModelConfigId = parentRun?.let { activeModelLeases[it.id] },
+                reviewerProfileId = resolved.profile.id,
+                toolsEnabled = request.toolsEnabled,
+                isolatedToolPrompts = request.isolatedToolPrompts,
+                terminalToolNames = request.terminalToolNames,
+            )
+        var modelSemaphore =
+            if (reusesParentModelLease) null else resolveModelSemaphore(run.modelConfigIdSnapshot)
         var parentAcquired = semaphore.tryAcquire()
         var modelAcquired =
             if (parentAcquired) {
@@ -367,6 +392,9 @@ class SubagentCoordinator private constructor(context: Context) {
                     modelSemaphore?.acquire()
                     modelAcquired = true
                 }
+            }
+            if (modelAcquired && modelSemaphore != null) {
+                run.modelConfigIdSnapshot?.let { activeModelLeases[taskId] = it }
             }
 
             withTimeout(CHILD_VISIBILITY_TIMEOUT_MS) {
@@ -402,6 +430,10 @@ class SubagentCoordinator private constructor(context: Context) {
                                         persistTurn = true,
                                         notifyReply = false,
                                         isSubTask = true,
+                                        toolsEnabled = request.toolsEnabled,
+                                        isolatedToolPrompts = request.isolatedToolPrompts,
+                                        terminalToolNames = request.terminalToolNames,
+                                        promptHooksEnabled = request.promptHooksEnabled,
                                         systemPromptOverride =
                                             SubagentPromptBuilder.buildSystemPrompt(
                                                 resolved.profile
@@ -453,6 +485,7 @@ class SubagentCoordinator private constructor(context: Context) {
                         throw error
                     }
                     if (parentModelConfigId != run.modelConfigIdSnapshot) {
+                        activeModelLeases.remove(taskId)
                         if (modelAcquired) {
                             modelSemaphore?.release()
                             modelAcquired = false
@@ -460,6 +493,9 @@ class SubagentCoordinator private constructor(context: Context) {
                         modelSemaphore = resolveModelSemaphore(parentModelConfigId)
                         modelSemaphore?.acquire()
                         modelAcquired = true
+                        if (modelSemaphore != null) {
+                            activeModelLeases[taskId] = parentModelConfigId
+                        }
                     }
                     executeTurn(
                         message =
@@ -515,6 +551,7 @@ class SubagentCoordinator private constructor(context: Context) {
             }
             throw SubagentExecutionException(taskId, error)
         } finally {
+            activeModelLeases.remove(taskId)
             activeSessions.remove(taskId)
             taskJobs.remove(taskId, taskJob)
             taskParents.remove(taskId, run.parentChatId)
@@ -593,6 +630,28 @@ internal object SubagentConcurrencyPolicy {
             ApiProviderType.LLAMA_CPP -> 1
             else -> configuredMaxConcurrentRequests.coerceAtLeast(0)
         }
+}
+
+/** Avoids a local-model self-deadlock when a running Subagent synchronously invokes the reviewer. */
+internal object PermissionReviewerModelLeasePolicy {
+    fun canReuse(
+        parentRun: SubagentRunEntity?,
+        reviewerModelConfigId: String?,
+        reentrantParentModelConfigId: String?,
+        activeParentLeaseModelConfigId: String?,
+        reviewerProfileId: String,
+        toolsEnabled: Boolean,
+        isolatedToolPrompts: List<ToolPrompt>?,
+        terminalToolNames: Set<String>,
+    ): Boolean =
+        reviewerProfileId == AgentProfileRepository.PERMISSION_REVIEWER_ID &&
+            toolsEnabled &&
+            isolatedToolPrompts == PermissionReviewInternalTools.prompts &&
+            terminalToolNames == setOf(PermissionReviewSubmissionTool.NAME) &&
+            parentRun?.status == SubagentRunStatus.RUNNING.name &&
+            !reentrantParentModelConfigId.isNullOrBlank() &&
+            reentrantParentModelConfigId == reviewerModelConfigId &&
+            activeParentLeaseModelConfigId == reentrantParentModelConfigId
 }
 
 internal class AdjustableConcurrencyGate(initialLimit: Int) {

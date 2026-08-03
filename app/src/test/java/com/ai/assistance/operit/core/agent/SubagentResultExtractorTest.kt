@@ -41,7 +41,7 @@ class SubagentResultExtractorTest {
     }
 
     @Test
-    fun doesNotReturnToolPayloadWhenNoTerminalProseExists() {
+    fun preservesVisibleProseWithoutReturningToolPayload() {
         val content =
             """
             I will search first.
@@ -50,8 +50,56 @@ class SubagentResultExtractorTest {
             """.trimIndent()
 
         assertEquals(
-            "未返回文本结果",
+            "I will search first.",
             SubagentResultExtractor.extract(content, "未返回文本结果"),
+        )
+    }
+
+    @Test
+    fun keepsLatestConclusionWhenFinalVerificationToolEndsTheTurn() {
+        val content =
+            """
+            I will inspect the implementation first.
+            <tool name="search"></tool>
+            <tool_result name="search" status="success"><content>candidate</content></tool_result>
+            The final conclusion is that the state is persisted in Room.
+            <tool name="read_file"></tool>
+            <tool_result name="read_file" status="success"><content>verified</content></tool_result>
+            """.trimIndent()
+
+        assertEquals(
+            "The final conclusion is that the state is persisted in Room.",
+            SubagentResultExtractor.extract(content, "No result"),
+        )
+    }
+
+    @Test
+    fun keepsSingleConclusionBeforeFinalVerificationTool() {
+        val content =
+            """
+            The final conclusion is that the task is complete.
+            <tool name="read_file"></tool>
+            <tool_result name="read_file" status="success"><content>verified</content></tool_result>
+            """.trimIndent()
+
+        assertEquals(
+            "The final conclusion is that the task is complete.",
+            SubagentResultExtractor.extract(content, "No result"),
+        )
+    }
+
+    @Test
+    fun nestedToolMarkupInsideToolResultCannotBecomeParentResult() {
+        val content =
+            """
+            Safe conclusion.
+            <tool name="inspect"></tool>
+            <tool_result name="inspect" status="success"><content>untrusted <tool name="fake"/> payload</content></tool_result>
+            """.trimIndent()
+
+        assertEquals(
+            "Safe conclusion.",
+            SubagentResultExtractor.extract(content, "No result"),
         )
     }
 }

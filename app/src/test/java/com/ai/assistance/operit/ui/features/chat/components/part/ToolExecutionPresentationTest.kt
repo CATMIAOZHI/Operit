@@ -77,6 +77,17 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
+    fun timedFileResult_includesDurationOnlyOnceInSummary() {
+        assertEquals(
+            "1.2 秒 · 3 insertions(+), 1 deletions(-)",
+            buildFileDiffSummary(
+                summaryPrefix = "1.2 秒",
+                changeSummary = "3 insertions(+), 1 deletions(-)",
+            ),
+        )
+    }
+
+    @Test
     fun subagentTaskResult_extractsFullDecodedFinalText() {
         val result =
             """
@@ -284,6 +295,22 @@ class ToolExecutionPresentationTest {
                 allowUnmatchedLiveExecution = true,
             )
         )
+    }
+
+    @Test
+    fun reloadedRunningTaskStillAcceptsItsExactLiveTiming() {
+        val live =
+            ToolExecutionTimingSnapshot(
+                callId = "task-call",
+                toolName = "task",
+                state = ToolExecutionState.RUNNING,
+            )
+
+        assertTrue(shouldAllowUnmatchedTaskExecution("task", live))
+        assertFalse(shouldAllowUnmatchedTaskExecution("read_file", live))
+
+        val proxyWrappedTask = live.copy(toolName = "proxy")
+        assertTrue(shouldAllowUnmatchedTaskExecution("task", proxyWrappedTask))
     }
 
     @Test

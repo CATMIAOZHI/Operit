@@ -37,7 +37,9 @@ data class ToolResult(
         val invocationIndex: Int? = null,
         val executionDurationMs: Long? = null,
         val executionState: ToolExecutionState? = null,
-        val isFinal: Boolean = false
+        val isFinal: Boolean = false,
+        /** Host-only control signal: do not give denied results back to the same model turn. */
+        val interruptTurn: Boolean = false,
 )
 
 @Serializable

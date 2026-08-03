@@ -39,6 +39,8 @@ import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.FunctionConfigMapping
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.core.config.FunctionalPrompts
+import com.ai.assistance.operit.core.tools.PermissionReviewSubmissionTool
+import com.ai.assistance.operit.ui.permissions.PermissionReviewResponsePolicy
 import com.ai.assistance.operit.util.ImagePoolManager
 import com.ai.assistance.operit.util.MediaPoolManager
 import com.ai.assistance.operit.util.LocaleUtils
@@ -275,6 +277,11 @@ fun FunctionConfigCard(
     var testResult by remember { mutableStateOf<Result<String>?>(null) }
 
     var mediaSupportWarningResId by remember { mutableStateOf<Int?>(null) }
+
+    val permissionReviewerTestInvalidMessage =
+        stringResource(R.string.functional_config_permission_reviewer_test_invalid)
+    val permissionReviewerTestSuccessTemplate =
+        stringResource(R.string.functional_config_permission_reviewer_test_success)
 
     LaunchedEffect(functionType, currentConfig?.id) {
         mediaSupportWarningResId = null
@@ -688,6 +695,42 @@ fun FunctionConfigCard(
                                                         .collect { chunk -> buffer.append(chunk) }
                                                     buffer.toString()
                                                 }
+                                                FunctionType.PERMISSION_REVIEWER -> {
+                                                    val parameters =
+                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                    val compatibilityReviewId = "compat-test-review-id"
+                                                    val prompt =
+                                                        "Compatibility test: call ${PermissionReviewSubmissionTool.NAME} " +
+                                                            "exactly once with review_id=$compatibilityReviewId, " +
+                                                            "outcome=allow, risk_level=low, " +
+                                                            "user_authorization=low, and a concise rationale. " +
+                                                            "Echo review_id=$compatibilityReviewId unchanged. " +
+                                                            "Do not call any other tool."
+                                                    val buffer = StringBuilder()
+                                                    service.sendMessage(
+                                                        context,
+                                                        listOf(PromptTurn(kind = PromptTurnKind.USER, content = prompt)),
+                                                        parameters,
+                                                        stream = false,
+                                                        enableRetry = false,
+                                                        availableTools =
+                                                            listOf(PermissionReviewSubmissionTool.prompt),
+                                                    )
+                                                        .collect { chunk -> buffer.append(chunk) }
+                                                    val decision =
+                                                        PermissionReviewResponsePolicy.extractToolCallAndEnforce(
+                                                            buffer.toString(),
+                                                            expectedReviewId = compatibilityReviewId,
+                                                        )
+                                                            ?: error(
+                                                                permissionReviewerTestInvalidMessage
+                                                            )
+                                                    permissionReviewerTestSuccessTemplate.format(
+                                                        decision.outcome.name.lowercase(),
+                                                        decision.riskLevel.name.lowercase(),
+                                                        decision.userAuthorization.name.lowercase(),
+                                                    )
+                                                }
                                             }
                                             testResult = Result.success(result)
                                         } catch (e: Exception) {
@@ -928,6 +971,7 @@ fun getFunctionDisplayName(functionType: FunctionType): String {
         FunctionType.TRANSLATION -> stringResource(id = R.string.function_type_translation)
         FunctionType.GREP -> stringResource(id = R.string.function_type_grep)
         FunctionType.ROLE_RESPONSE_PLANNER -> stringResource(id = R.string.function_type_role_response_planner)
+        FunctionType.PERMISSION_REVIEWER -> stringResource(id = R.string.function_type_permission_reviewer)
         FunctionType.IMAGE_RECOGNITION -> stringResource(id = R.string.function_type_image_recognition)
         FunctionType.AUDIO_RECOGNITION -> stringResource(id = R.string.function_type_audio_recognition)
         FunctionType.VIDEO_RECOGNITION -> stringResource(id = R.string.function_type_video_recognition)
@@ -946,6 +990,7 @@ fun getFunctionDescription(functionType: FunctionType): String {
         FunctionType.TRANSLATION -> stringResource(id = R.string.function_desc_translation)
         FunctionType.GREP -> stringResource(id = R.string.function_desc_grep)
         FunctionType.ROLE_RESPONSE_PLANNER -> stringResource(id = R.string.function_desc_role_response_planner)
+        FunctionType.PERMISSION_REVIEWER -> stringResource(id = R.string.function_desc_permission_reviewer)
         FunctionType.IMAGE_RECOGNITION -> stringResource(id = R.string.function_desc_image_recognition)
         FunctionType.AUDIO_RECOGNITION -> stringResource(id = R.string.function_desc_audio_recognition)
         FunctionType.VIDEO_RECOGNITION -> stringResource(id = R.string.function_desc_video_recognition)

@@ -249,6 +249,10 @@ fun ClassicChatSettingsBar(
         when (if (enableTools) permissionLevel else PermissionLevel.FORBID) {
             PermissionLevel.FORBID -> stringResource(R.string.agent_menu_permission_disabled)
             PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
+            PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
+            PermissionLevel.WORKSPACE_REVIEWER ->
+                stringResource(R.string.permission_level_workspace_reviewer)
+            PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
             PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
         }
     val behaviorSummary =
@@ -1133,6 +1137,7 @@ private fun ClassicSettingsFoldSection(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun ToolPermissionSettingItem(
     enableTools: Boolean,
     permissionLevel: PermissionLevel,
@@ -1148,9 +1153,8 @@ private fun ToolPermissionSettingItem(
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
                 .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = stringResource(R.string.permission_level),
@@ -1159,25 +1163,36 @@ private fun ToolPermissionSettingItem(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.width(8.dp))
-            Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-            listOf(PermissionLevel.FORBID, PermissionLevel.ASK, PermissionLevel.ALLOW).forEach { level ->
+            listOf(
+                PermissionLevel.FORBID,
+                PermissionLevel.ASK,
+                PermissionLevel.WORKSPACE,
+                PermissionLevel.WORKSPACE_REVIEWER,
+                PermissionLevel.REVIEWER,
+                PermissionLevel.ALLOW,
+            ).forEach { level ->
                 val isSelected = selectedLevel == level
                 val label =
                     when (level) {
                         PermissionLevel.FORBID -> stringResource(R.string.agent_menu_permission_disabled)
                         PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
+                        PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
+                        PermissionLevel.WORKSPACE_REVIEWER ->
+                            stringResource(R.string.permission_level_workspace_reviewer)
+                        PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
                         PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
                     }
                 Box(
                     modifier =
                         Modifier
-                            .weight(1f)
-                            .height(28.dp)
+                            .height(32.dp)
+                            .widthIn(min = 72.dp)
                             .clip(RoundedCornerShape(999.dp))
                             .background(
                                 if (isSelected) MaterialTheme.colorScheme.primary
@@ -1189,7 +1204,6 @@ private fun ToolPermissionSettingItem(
                                 else MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
                                 RoundedCornerShape(999.dp)
                             )
-                            .padding(horizontal = 10.dp)
                             .clickable {
                                 if (!enableTools && level != PermissionLevel.FORBID) {
                                     onToggleTools()
@@ -1200,7 +1214,8 @@ private fun ToolPermissionSettingItem(
                                 if (permissionLevel != level) {
                                     onSetPermissionLevel(level)
                                 }
-                            },
+                            }
+                            .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -1211,14 +1226,10 @@ private fun ToolPermissionSettingItem(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                if (level != PermissionLevel.ALLOW) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                }
             }
-            }
+        }
         }
 
         Box(
