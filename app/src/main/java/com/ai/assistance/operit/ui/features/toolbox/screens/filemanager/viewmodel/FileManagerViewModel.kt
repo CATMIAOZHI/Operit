@@ -451,6 +451,10 @@ class FileManagerViewModel(private val context: Context) : ViewModel() {
                                                                 ToolParameter(
                                                                         "path",
                                                                         fullSourcePath
+                                                                ),
+                                                                ToolParameter(
+                                                                        "recursive",
+                                                                        file.isDirectory.toString()
                                                                 )
                                                         ))
                                         )

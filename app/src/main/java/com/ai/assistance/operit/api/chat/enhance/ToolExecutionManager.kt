@@ -344,14 +344,16 @@ object ToolExecutionManager {
     }
 
     /**
-     * Binds a proxy/package_proxy call to the host's package context parameters before permission
-     * review and execution, so the reviewed parameter set is exactly the executed one. Values the
-     * model supplied for these reserved parameters (at the proxy top level or inside the params
-     * JSON) are replaced by the authoritative host values, so a package can never observe a
-     * spoofed chat/caller identity.
+     * Binds a proxy/package_proxy call's package context parameters before permission review and
+     * execution, so the reviewed parameter set is exactly the executed one. The model can never
+     * supply a reserved package context value: forged values are always stripped (top level and
+     * inside params JSON). Host values are only injected when the target is an actual JavaScript
+     * package; other proxy targets (for example MCP tools) must not receive internal
+     * conversation metadata that could be forwarded to a third-party server.
      */
     private fun bindProxyContextParameters(
         tool: AITool,
+        jsPackageNames: Set<String>,
         callerName: String?,
         callerChatId: String?,
         callerCardId: String?,
@@ -361,6 +363,12 @@ object ToolExecutionManager {
         ) {
             return tool
         }
+        val targetToolName = tool.parameters
+            .firstOrNull { it.name == "tool_name" }
+            ?.value
+            ?.trim()
+            .orEmpty()
+        val isPackageTarget = isJsPackageTool(targetToolName, jsPackageNames)
         val contextValues =
             mapOf(
                 PACKAGE_CALLER_NAME_PARAM to callerName,
@@ -378,13 +386,13 @@ object ToolExecutionManager {
                 paramsObject.keys().asSequence().any { it in reservedPackageContextParams }
         val hostHasAny =
             !callerName.isNullOrBlank() || !callerChatId.isNullOrBlank() || !callerCardId.isNullOrBlank()
-        if (!topLevelHasReserved && !jsonHasReserved && !hostHasAny) {
+        if (!topLevelHasReserved && !jsonHasReserved && !(isPackageTarget && hostHasAny)) {
             return tool
         }
 
         val updated = tool.parameters.toMutableList()
         contextValues.forEach { (name, value) ->
-            if (value.isNullOrBlank()) {
+            if (!isPackageTarget || value.isNullOrBlank()) {
                 updated.removeAll { it.name == name }
             } else {
                 val existingIndex = updated.indexOfFirst { it.name == name }
@@ -399,9 +407,11 @@ object ToolExecutionManager {
             reservedPackageContextParams.forEach { name ->
                 if (paramsObject.has(name)) paramsObject.remove(name)
             }
-            contextValues.forEach { (name, value) ->
-                if (!value.isNullOrBlank() && !paramsObject.has(name)) {
-                    paramsObject.put(name, value)
+            if (isPackageTarget) {
+                contextValues.forEach { (name, value) ->
+                    if (!value.isNullOrBlank() && !paramsObject.has(name)) {
+                        paramsObject.put(name, value)
+                    }
                 }
             }
             val paramsIndex = updated.indexOfFirst { it.name == "params" }
@@ -807,6 +817,7 @@ object ToolExecutionManager {
         // Bind proxy context parameters to host values before any permission review or execution
         // happens, so the reviewed parameter set is exactly the executed one. The model can never
         // supply a reserved package context value.
+        val jsPackageNames = packageManager.getAvailablePackages().keys
         val boundInvocations =
             invocations.map { invocation ->
                 if (
@@ -817,6 +828,7 @@ object ToolExecutionManager {
                         tool =
                             bindProxyContextParameters(
                                 invocation.tool,
+                                jsPackageNames,
                                 callerName,
                                 callerChatId,
                                 callerCardId,
