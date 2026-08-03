@@ -290,30 +290,62 @@ object ToolExecutionManager {
     }
 
     /**
-     * A proxy target is a real JavaScript package tool only when the named package exists AND the
-     * package actually declares the target tool (in its base tools or one of its states). MCP
-     * servers share the same "server:tool" namespace, so a bare prefix match would misclassify an
-     * MCP-only target as a package and leak internal conversation metadata to the MCP server.
+     * Immutable snapshot of everything needed to decide whether a proxy target is a real
+     * JavaScript package tool and therefore eligible for host package-context injection. Taken
+     * once per batch and reused by binding and post-review injection so the reviewed parameter
+     * set equals the executed one even when package initialization fails transiently. A degraded
+     * snapshot carries empty catalogs and null caller values, so it strips forged parameters and
+     * injects nothing (fail closed).
      */
-    private fun isJsPackageTool(toolName: String, jsPackages: Map<String, ToolPackage>): Boolean {
-        val toolNameParts = toolName.split(':', limit = 2)
-        if (toolNameParts.size != 2) {
-            return false
+    private data class HostPackageContext(
+        val jsPackages: Map<String, ToolPackage> = emptyMap(),
+        val mcpServerNames: Set<String> = emptySet(),
+        val callerName: String? = null,
+        val callerChatId: String? = null,
+        val callerCardId: String? = null,
+    ) {
+        val hasHostContext: Boolean
+            get() =
+                !callerName.isNullOrBlank() ||
+                    !callerChatId.isNullOrBlank() ||
+                    !callerCardId.isNullOrBlank()
+
+        /**
+         * A proxy target is a real JavaScript package tool only when the named server is NOT a
+         * registered MCP server AND the package actually declares the target tool (in its base
+         * tools or one of its states). MCP servers share the same "server:tool" namespace, so a
+         * bare prefix match would misclassify an MCP-only target as a package and leak internal
+         * conversation metadata to the MCP server. Advice-only tools are never registered and
+         * therefore never injected.
+         */
+        fun isJsPackageTool(toolName: String): Boolean {
+            val toolNameParts = toolName.split(':', limit = 2)
+            if (toolNameParts.size != 2) {
+                return false
+            }
+            val packageName = toolNameParts[0]
+            val targetToolName = toolNameParts[1]
+            if (mcpServerNames.contains(packageName)) {
+                return false
+            }
+            val toolPackage = jsPackages[packageName] ?: return false
+            val declaredExecutableTools =
+                toolPackage.tools.filterNot { it.advice }.map { it.name } +
+                    toolPackage.states.flatMap { state ->
+                        state.tools.filterNot { it.advice }.map { it.name }
+                    }
+            return declaredExecutableTools.contains(targetToolName)
         }
-        val packageName = toolNameParts[0]
-        val targetToolName = toolNameParts[1]
-        val toolPackage = jsPackages[packageName] ?: return false
-        val declaredTools =
-            toolPackage.tools.map { it.name } +
-                toolPackage.states.flatMap { state -> state.tools.map { it.name } }
-        return declaredTools.contains(targetToolName)
     }
 
     /**
-     * Resolves the package context values (caller name, chat id, card id) from the host once for
-     * the whole batch. The package lookup is restricted to proxy calls and guarded, so a failing
-     * package initialization can never abort a tool turn that does not involve packages: binding
-     * degrades to stripping forged reserved parameters without host injection.
+     * Resolves the package/MCP snapshot and host caller values once for the whole batch. The
+     * lookup is restricted to batches that actually need it (host context present AND a proxy
+     * call or a qualified "server:tool" call) and guarded, so a failing package initialization
+     * can never abort a tool turn that does not involve packages: binding degrades to stripping
+     * forged reserved parameters without host injection. The snapshot is intentionally reused
+     * after permission review so a transient failure cannot make the reviewed parameter set
+     * differ from the executed one.
      */
     private fun resolveHostPackageContext(
         invocations: List<ToolInvocation>,
@@ -321,26 +353,40 @@ object ToolExecutionManager {
         callerName: String?,
         callerChatId: String?,
         callerCardId: String?,
-    ): Pair<Map<String, ToolPackage>, Triple<String?, String?, String?>> {
+    ): HostPackageContext {
         val hostHasAny =
             !callerName.isNullOrBlank() ||
                 !callerChatId.isNullOrBlank() ||
                 !callerCardId.isNullOrBlank()
         if (!hostHasAny) {
-            return emptyMap<String, ToolPackage>() to Triple(callerName, callerChatId, callerCardId)
+            return HostPackageContext()
         }
-        val hasProxyCall =
+        val needsPackageLookup =
             invocations.any { invocation ->
-                invocation.tool.name == PACKAGE_PROXY_TOOL_NAME ||
-                    invocation.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
+                val toolName = invocation.tool.name
+                toolName == PACKAGE_PROXY_TOOL_NAME ||
+                    toolName == CliToolModeSupport.PROXY_TOOL_NAME ||
+                    toolName.contains(':')
             }
-        if (!hasProxyCall) {
-            return emptyMap<String, ToolPackage>() to Triple(callerName, callerChatId, callerCardId)
+        if (!needsPackageLookup) {
+            return HostPackageContext()
         }
-        val jsPackages =
-            runCatching { packageManager.getAvailablePackages() }.getOrNull()
-                ?: emptyMap<String, ToolPackage>()
-        return jsPackages to Triple(callerName, callerChatId, callerCardId)
+        // Fail closed as a single unit: if either catalog lookup fails, the snapshot is unusable.
+        // A half-snapshot with a missing server set could misclassify an MCP target as a JS
+        // package and leak conversation metadata, so degrade to an empty snapshot instead.
+        val jsPackages = runCatching { packageManager.getAvailablePackages() }.getOrNull()
+        val mcpServerNames =
+            runCatching { packageManager.getAvailableServerPackages().keys }.getOrNull()
+        if (jsPackages == null || mcpServerNames == null) {
+            return HostPackageContext()
+        }
+        return HostPackageContext(
+            jsPackages = jsPackages.toMap(),
+            mcpServerNames = mcpServerNames.toSet(),
+            callerName = callerName,
+            callerChatId = callerChatId,
+            callerCardId = callerCardId,
+        )
     }
 
     internal fun currentToolRuntimeContext(): ToolRuntimeContext? =
@@ -362,20 +408,17 @@ object ToolExecutionManager {
 
     private fun injectPackageCallContext(
         invocation: ToolInvocation,
-        jsPackages: Map<String, ToolPackage>,
-        callerName: String?,
-        callerChatId: String?,
-        callerCardId: String?
+        hostContext: HostPackageContext,
     ): ToolInvocation {
         val resolvedTargetTool = resolveToolTarget(invocation.tool).tool
-        if (!isJsPackageTool(resolvedTargetTool.name, jsPackages)) {
+        if (!hostContext.isJsPackageTool(resolvedTargetTool.name)) {
             return invocation
         }
 
         val updatedParams = invocation.tool.parameters.toMutableList()
-        addPackageContextParamIfMissing(updatedParams, PACKAGE_CALLER_NAME_PARAM, callerName)
-        addPackageContextParamIfMissing(updatedParams, PACKAGE_CHAT_ID_PARAM, callerChatId)
-        addPackageContextParamIfMissing(updatedParams, PACKAGE_CALLER_CARD_ID_PARAM, callerCardId)
+        addPackageContextParamIfMissing(updatedParams, PACKAGE_CALLER_NAME_PARAM, hostContext.callerName)
+        addPackageContextParamIfMissing(updatedParams, PACKAGE_CHAT_ID_PARAM, hostContext.callerChatId)
+        addPackageContextParamIfMissing(updatedParams, PACKAGE_CALLER_CARD_ID_PARAM, hostContext.callerCardId)
 
         if (updatedParams.size == invocation.tool.parameters.size) {
             return invocation
@@ -400,10 +443,7 @@ object ToolExecutionManager {
      */
     private fun bindProxyContextParameters(
         tool: AITool,
-        jsPackages: Map<String, ToolPackage>,
-        callerName: String?,
-        callerChatId: String?,
-        callerCardId: String?,
+        hostContext: HostPackageContext,
     ): AITool {
         if (tool.name != PACKAGE_PROXY_TOOL_NAME &&
             tool.name != CliToolModeSupport.PROXY_TOOL_NAME
@@ -415,12 +455,12 @@ object ToolExecutionManager {
             ?.value
             ?.trim()
             .orEmpty()
-        val isPackageTarget = isJsPackageTool(targetToolName, jsPackages)
+        val isPackageTarget = hostContext.isJsPackageTool(targetToolName)
         val contextValues =
             mapOf(
-                PACKAGE_CALLER_NAME_PARAM to callerName,
-                PACKAGE_CHAT_ID_PARAM to callerChatId,
-                PACKAGE_CALLER_CARD_ID_PARAM to callerCardId,
+                PACKAGE_CALLER_NAME_PARAM to hostContext.callerName,
+                PACKAGE_CHAT_ID_PARAM to hostContext.callerChatId,
+                PACKAGE_CALLER_CARD_ID_PARAM to hostContext.callerCardId,
             )
         val topLevelHasReserved =
             tool.parameters.any { parameter -> parameter.name in reservedPackageContextParams }
@@ -431,8 +471,7 @@ object ToolExecutionManager {
         val jsonHasReserved =
             paramsObject != null &&
                 paramsObject.keys().asSequence().any { it in reservedPackageContextParams }
-        val hostHasAny =
-            !callerName.isNullOrBlank() || !callerChatId.isNullOrBlank() || !callerCardId.isNullOrBlank()
+        val hostHasAny = hostContext.hasHostContext
         if (!topLevelHasReserved && !jsonHasReserved && !(isPackageTarget && hostHasAny)) {
             return tool
         }
@@ -866,7 +905,7 @@ object ToolExecutionManager {
         // supply a reserved package context value. The package lookup is restricted to proxy
         // batches and guarded: a failing package initialization must never abort a tool turn, it
         // only degrades binding to stripping forged values without host injection.
-        val (jsPackages, resolvedHostContext) =
+        val hostContext =
             resolveHostPackageContext(
                 invocations = invocations,
                 packageManager = packageManager,
@@ -874,9 +913,6 @@ object ToolExecutionManager {
                 callerChatId = callerChatId,
                 callerCardId = callerCardId,
             )
-        val boundCallerName = resolvedHostContext.first
-        val boundCallerChatId = resolvedHostContext.second
-        val boundCallerCardId = resolvedHostContext.third
         val boundInvocations =
             invocations.map { invocation ->
                 if (
@@ -884,14 +920,7 @@ object ToolExecutionManager {
                     invocation.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
                 ) {
                     invocation.copy(
-                        tool =
-                            bindProxyContextParameters(
-                                invocation.tool,
-                                jsPackages,
-                                boundCallerName,
-                                boundCallerChatId,
-                                boundCallerCardId,
-                            )
+                        tool = bindProxyContextParameters(invocation.tool, hostContext)
                     )
                 } else {
                     invocation
@@ -909,10 +938,14 @@ object ToolExecutionManager {
                     threshold = SUBAGENT_EXACT_REPEAT_REVIEW_THRESHOLD,
                 )
             if (firstReviewIndex > 0) {
+                // Recurse on the RAW subset: each recursion re-derives its own bound copies, so
+                // the fingerprint stays the model's raw call at every level. Passing already-bound
+                // invocations here would canonicalize params before the deeper firstReviewIndex/
+                // record calls and reintroduce the format-only false repeat.
                 val commonPrefixResults =
                     executeInvocations(
                         context = context,
-                        invocations = boundInvocations.take(firstReviewIndex),
+                        invocations = rawInvocations.take(firstReviewIndex),
                         toolHandler = toolHandler,
                         packageManager = packageManager,
                         collector = collector,
@@ -933,7 +966,7 @@ object ToolExecutionManager {
                 val reviewedSuffixResults =
                     executeInvocations(
                         context = context,
-                        invocations = boundInvocations.drop(firstReviewIndex),
+                        invocations = rawInvocations.drop(firstReviewIndex),
                         toolHandler = toolHandler,
                         packageManager = packageManager,
                         collector = collector,
@@ -1305,19 +1338,15 @@ object ToolExecutionManager {
         }
 
         val injectedInvocations =
-            if (callerName.isNullOrBlank() && callerChatId.isNullOrBlank() && callerCardId.isNullOrBlank()) {
+            if (!hostContext.hasHostContext) {
                 permittedInvocations
             } else {
-                val jsPackages =
-                    runCatching { packageManager.getAvailablePackages() }.getOrNull()
-                        ?: emptyMap<String, ToolPackage>()
+                // Reuse the entry snapshot: a second lookup here could succeed after the entry
+                // one failed, silently changing the executed parameter set from the reviewed one.
                 permittedInvocations.map { invocation ->
                     injectPackageCallContext(
                         invocation = invocation,
-                        jsPackages = jsPackages,
-                        callerName = callerName,
-                        callerChatId = callerChatId,
-                        callerCardId = callerCardId
+                        hostContext = hostContext,
                     )
                 }
             }
