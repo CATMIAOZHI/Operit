@@ -5,20 +5,23 @@ import android.content.Context
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.ripgrep.NativeRipgrep
 import java.io.File
 import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.json.JSONObject
 
 @Serializable
 enum class PermissionReviewStatus {
@@ -264,23 +267,39 @@ object PermissionReviewEventRepository {
                     _events.value =
                         decoded
                         .map { event ->
-                            if (event.status == PermissionReviewStatus.IN_PROGRESS) {
-                                event.copy(
-                                    status = PermissionReviewStatus.ABORTED,
-                                    completedAt = System.currentTimeMillis(),
-                                    rationale = null,
-                                    exactOverrideRecorded = false,
-                                    exactOverrideState = null,
-                                    exactOverrideExpiresAt = null,
-                                    exactOverrideApplied = false,
+                            val base =
+                                if (event.status == PermissionReviewStatus.IN_PROGRESS) {
+                                    event.copy(
+                                        status = PermissionReviewStatus.ABORTED,
+                                        completedAt = System.currentTimeMillis(),
+                                        rationale = null,
+                                        exactOverrideRecorded = false,
+                                        exactOverrideState = null,
+                                        exactOverrideExpiresAt = null,
+                                        exactOverrideApplied = false,
+                                    )
+                                } else {
+                                    event.copy(
+                                        exactOverrideRecorded = false,
+                                        exactOverrideState = null,
+                                        exactOverrideExpiresAt = null,
+                                        exactOverrideApplied = false,
+                                    )
+                                }
+                            // Older builds wrote a single neutral value for both outcomes.
+                            // Re-derive allow/deny from the enforced status so the resolution
+                            // label stays consistent with the lifecycle.
+                            if (base.resolutionSource == "settings_refreshed_during_review") {
+                                base.copy(
+                                    resolutionSource =
+                                        if (base.status == PermissionReviewStatus.APPROVED) {
+                                            "settings_refreshed_allow"
+                                        } else {
+                                            "settings_refreshed_deny"
+                                        }
                                 )
                             } else {
-                                event.copy(
-                                    exactOverrideRecorded = false,
-                                    exactOverrideState = null,
-                                    exactOverrideExpiresAt = null,
-                                    exactOverrideApplied = false,
-                                )
+                                base
                             }
                         }
                         .takeLast(MAX_EVENTS)
@@ -514,38 +533,60 @@ object PermissionReviewCircuitBreaker {
 data class PermissionReviewInspectionScope(
     val reviewId: String,
     val workspaceRoot: File?,
-    val allowedTargets: List<File>,
-    val remainingCalls: AtomicInteger = AtomicInteger(12),
+    val environment: String?,
 )
 
 object PermissionReviewInspectionRegistry {
-    private const val MAX_TEXT_CHARS = 8_000
+    private const val MAX_TEXT_CHARS = 64 * 1024
     private const val MAX_DIRECTORY_ENTRIES = 80
+    private const val MAX_GREP_RESULTS = 100
     private val scopes = ConcurrentHashMap<String, PermissionReviewInspectionScope>()
 
     fun newReviewId(): String = UUID.randomUUID().toString()
 
-    fun register(reviewId: String, workspacePath: String?, action: PermissionReviewAction) {
-        val workspace = workspacePath?.takeIf(String::isNotBlank)?.let(::File)?.canonicalOrNull()
-        val targets =
-            action.paths
-                .mapNotNull { path -> resolvePath(path, workspace)?.canonicalOrNull() }
-                .distinctBy(File::getPath)
-        scopes[reviewId] = PermissionReviewInspectionScope(reviewId, workspace, targets)
+    fun register(
+        reviewId: String,
+        workspacePath: String?,
+        workspaceEnv: String?,
+        action: PermissionReviewAction,
+    ) {
+        // A repo:* workspace is virtual: its paths (commonly "/") have no local Android
+        // counterpart, so it must not anchor relative paths or .git discovery to a local
+        // directory.
+        val localWorkspace =
+            if (workspaceEnv?.startsWith("repo:", ignoreCase = true) == true) {
+                null
+            } else {
+                workspacePath?.takeIf(String::isNotBlank)?.let(::File)?.canonicalOrNull()
+            }
+        scopes[reviewId] =
+            PermissionReviewInspectionScope(
+                reviewId,
+                localWorkspace,
+                workspaceEnv,
+            )
     }
 
     fun unregister(reviewId: String) {
         scopes.remove(reviewId)
     }
 
-    fun inspect(reviewId: String, operation: String, requestedPath: String?): String {
+    fun inspect(
+        reviewId: String,
+        operation: String,
+        requestedPath: String?,
+        environment: String? = null,
+        startLine: Int? = null,
+        endLine: Int? = null,
+        pattern: String? = null,
+        caseInsensitive: Boolean = false,
+    ): String {
         val scope = scopes[reviewId] ?: return "Inspection rejected: review is not active."
-        if (scope.remainingCalls.getAndDecrement() <= 0) {
-            return "Inspection rejected: per-review inspection limit reached."
-        }
         return when (operation.trim().lowercase()) {
-            "path_metadata" -> inspectPath(scope, requestedPath, includeText = false)
-            "read_text" -> inspectPath(scope, requestedPath, includeText = true)
+            "path_metadata" -> inspectPath(scope, requestedPath, includeText = false, environment)
+            "read_text" ->
+                inspectPath(scope, requestedPath, includeText = true, environment, startLine, endLine)
+            "grep" -> inspectGrep(scope, requestedPath, environment, pattern, caseInsensitive)
             "git_context" -> inspectGitContext(scope)
             else -> "Inspection rejected: unsupported operation '$operation'."
         }
@@ -555,14 +596,14 @@ object PermissionReviewInspectionRegistry {
         scope: PermissionReviewInspectionScope,
         requestedPath: String?,
         includeText: Boolean,
+        environment: String?,
+        startLine: Int? = null,
+        endLine: Int? = null,
     ): String {
         val raw = requestedPath?.trim()?.takeIf(String::isNotEmpty)
             ?: return "Inspection rejected: path is required."
-        val file = resolvePath(raw, scope.workspaceRoot)?.canonicalOrNull()
+        val file = resolvePath(raw, scope, environment)?.canonicalOrNull()
             ?: return "Inspection rejected: path could not be resolved."
-        if (!isAllowed(file, scope)) {
-            return "Inspection rejected: path is outside the active workspace and reviewed targets."
-        }
         val metadata = buildString {
             appendLine("path=${file.path}")
             appendLine("exists=${file.exists()}")
@@ -576,12 +617,80 @@ object PermissionReviewInspectionRegistry {
             }
         }
         if (!includeText || !file.isFile) return metadata.trimEnd()
-        if (isSensitivePath(file)) {
-            return metadata + "content_redacted=true\nreason=sensitive credential-like path"
-        }
-        val text = runCatching { readBoundedText(file) }
-            .getOrElse { error -> return metadata + "read_error=${error.message}" }
+        val text =
+            if (startLine != null || endLine != null) {
+                runCatching {
+                    runBlocking(Dispatchers.IO) { readBoundedLines(file, startLine ?: 1, endLine) }
+                }.getOrElse { error -> return metadata + "read_error=${error.message}" }
+            } else {
+                runCatching {
+                    runBlocking(Dispatchers.IO) { readBoundedText(file) }
+                }.getOrElse { error -> return metadata + "read_error=${error.message}" }
+            }
         return metadata + "\ntext_preview:\n" + text
+    }
+
+    private fun inspectGrep(
+        scope: PermissionReviewInspectionScope,
+        requestedPath: String?,
+        environment: String?,
+        pattern: String?,
+        caseInsensitive: Boolean,
+    ): String {
+        val rawPath = requestedPath?.trim()?.takeIf(String::isNotEmpty)
+            ?: return "Inspection rejected: path is required."
+        val root = resolvePath(rawPath, scope, environment)
+            ?: return "Inspection rejected: path could not be resolved."
+        val normalizedPattern = pattern?.trim()?.takeIf(String::isNotEmpty)
+            ?: return "Inspection rejected: pattern is required."
+        return try {
+            val raw =
+                runBlocking(Dispatchers.IO) {
+                    NativeRipgrep.searchJson(
+                        path = root.path,
+                        patterns = arrayOf(normalizedPattern),
+                        filePattern = "*",
+                        caseInsensitive = caseInsensitive,
+                        literal = false,
+                        contextLines = 3,
+                        maxResults = MAX_GREP_RESULTS,
+                    )
+                }
+            val json = JSONObject(raw)
+            if (!json.optBoolean("success", false)) {
+                return "grep error: " + json.optString("error").ifBlank { "native ripgrep search failed" }
+            }
+            val blocks = json.optJSONArray("blocks")
+            if (blocks == null || blocks.length() == 0) {
+                return "grep: no matches."
+            }
+            // Each native block carries up to 4000 context chars, so the raw result may exceed
+            // the review output budget. Trim per-block context to stay within a bounded response.
+            val perBlockContextLimit = 800
+            val sb = StringBuilder()
+            sb.appendLine("grep matches (${blocks.length()}, searched ${json.optInt("filesSearched", 0)} files):")
+            for (index in 0 until blocks.length()) {
+                val block = blocks.optJSONObject(index) ?: continue
+                sb.appendLine("- ${block.optString("filePath")}:${block.optInt("firstMatchLine", 0)}")
+                    .appendLine("  ${block.optString("lineContent")}")
+                val context = block.optString("matchContext").trim()
+                if (context.isNotEmpty()) {
+                    val clippedContext =
+                        if (context.length > perBlockContextLimit) {
+                            context.take(perBlockContextLimit) + "...(context clipped)"
+                        } else {
+                            context
+                        }
+                    sb.append("  context:\n")
+                    clippedContext.lineSequence().forEach { line -> sb.appendLine("    $line") }
+                }
+            }
+            sb.trimEnd().toString()
+        } catch (error: LinkageError) {
+            "grep error: native ripgrep is unavailable: ${error.message}"
+        } catch (error: Exception) {
+            "grep error: ${error.message}"
+        }
     }
 
     private fun inspectGitContext(scope: PermissionReviewInspectionScope): String {
@@ -598,47 +707,19 @@ object PermissionReviewInspectionRegistry {
         }.trimEnd()
     }
 
-    private fun isAllowed(file: File, scope: PermissionReviewInspectionScope): Boolean {
-        val path = file.path
-        if (scope.workspaceRoot?.let { root -> path == root.path || path.startsWith(root.path + File.separator) } == true) {
-            return true
-        }
-        return scope.allowedTargets.any { target ->
-            path == target.path || path.startsWith(target.path + File.separator)
-        }
-    }
-
-    private fun resolvePath(path: String, workspace: File?): File? {
+    private fun resolvePath(path: String, scope: PermissionReviewInspectionScope, environment: String?): File? {
         val direct = File(path)
         return when {
             direct.isAbsolute -> direct
-            workspace != null -> File(workspace, path)
+            // A repo:* workspace is virtual: its paths (commonly "/") have no local Android
+            // counterpart, so relative paths cannot be anchored to a local directory.
+            scope.environment?.startsWith("repo:", ignoreCase = true) == true -> null
+            scope.workspaceRoot != null -> File(scope.workspaceRoot, path)
+            // No local workspace to anchor a relative path. Only android environment has a
+            // stable local root; virtual environments must pass absolute paths.
+            environment.isNullOrBlank() || environment.equals("android", ignoreCase = true) -> File(path)
             else -> null
         }
-    }
-
-    private fun isSensitivePath(file: File): Boolean {
-        val name = file.name.lowercase()
-        val path = file.path.replace('\\', '/').lowercase()
-        return name == ".env" || name.startsWith(".env.") ||
-            name in
-                setOf(
-                    "id_rsa",
-                    "id_ed25519",
-                    "shadow",
-                    "keystore",
-                    "credentials",
-                    ".git-credentials",
-                    ".npmrc",
-                    "local.properties",
-                    "key.properties",
-                    "gradle.properties",
-                    "google-services.json",
-                ) ||
-            name.endsWith(".jks") || name.endsWith(".p12") || name.endsWith(".pfx") ||
-            name.endsWith(".pem") || name.endsWith(".key") ||
-            path.contains("/.ssh/") || path.contains("/.aws/") ||
-            path.contains("/.config/gcloud/")
     }
 
     private fun File.canonicalOrNull(): File? = runCatching { canonicalFile }.getOrNull()
@@ -649,4 +730,36 @@ object PermissionReviewInspectionRegistry {
             val count = reader.read(buffer, 0, buffer.size).coerceAtLeast(0)
             String(buffer, 0, count)
         }
+
+    private fun readBoundedLines(file: File, startLine: Int, endLine: Int?): String {
+        val firstLine = startLine.coerceAtLeast(1)
+        val lastLine = endLine?.coerceAtLeast(firstLine)
+        val marker = "...(line truncated)"
+        val sb = StringBuilder()
+        file.bufferedReader().use { reader ->
+            var lineNumber = 0
+            while (sb.length < MAX_TEXT_CHARS && (lastLine == null || lineNumber < lastLine)) {
+                val line = reader.readLine() ?: break
+                lineNumber++
+                if (lineNumber < firstLine) continue
+                val prefix = "$lineNumber: "
+                val remaining = MAX_TEXT_CHARS - sb.length
+                if (remaining <= prefix.length) {
+                    sb.append(prefix.take(remaining))
+                    break
+                }
+                sb.append(prefix)
+                val textBudget = remaining - prefix.length
+                if (textBudget >= line.length + 1) {
+                    sb.append(line).append('\n')
+                } else {
+                    val fit = (textBudget - marker.length).coerceAtLeast(0)
+                    if (fit > 0) sb.append(line.take(fit))
+                    if (textBudget - fit >= marker.length) sb.append(marker)
+                    break
+                }
+            }
+        }
+        return sb.toString().trimEnd()
+    }
 }

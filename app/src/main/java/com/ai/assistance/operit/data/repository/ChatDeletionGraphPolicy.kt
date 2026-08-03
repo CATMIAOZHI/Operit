@@ -3,6 +3,31 @@ package com.ai.assistance.operit.data.repository
 import com.ai.assistance.operit.data.model.ChatEntity
 
 internal object ChatDeletionGraphPolicy {
+    /**
+     * Returns [rootId] and every id transitively reachable through the `chats.parentChatId` graph
+     * (SUBAGENT and BRANCH descendants), in discovery order. A rootId absent from the graph still
+     * yields a singleton set; callers verify existence separately.
+     *
+     * [childrenById] maps a parent id (null for roots) to its direct children ids.
+     * The `add` deduplication guarantees termination even if the graph contains a cycle.
+     */
+    fun descendantClosure(
+        rootId: String,
+        childrenById: Map<String?, List<String>>,
+    ): LinkedHashSet<String> {
+        val subtree = linkedSetOf(rootId)
+        val queue = ArrayDeque<String>()
+        queue.add(rootId)
+        while (queue.isNotEmpty()) {
+            childrenById[queue.removeFirst()]?.forEach { child ->
+                if (subtree.add(child)) {
+                    queue.add(child)
+                }
+            }
+        }
+        return subtree
+    }
+
     fun selectDeletableChats(
         allChats: List<ChatEntity>,
         scopedChatIds: Set<String>,

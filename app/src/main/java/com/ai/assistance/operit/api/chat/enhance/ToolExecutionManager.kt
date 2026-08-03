@@ -28,6 +28,8 @@ import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.ui.common.displays.MessageContentParser
@@ -835,11 +837,14 @@ object ToolExecutionManager {
                             ),
                         conversationLabel = conversationLabel,
                     )
+                // Re-resolve the effective permission after the dialog: the user may have changed
+                // the master switch or the per-tool setting while it was pending, and a global
+                // FORBID must never be overridden by a stale dialog result.
                 val approved =
                     resolveApprovalDecisionWithPermanentOverride(
                         approvalGranted = approvedByPrompt,
-                        latestToolOverride =
-                            permissionSystem.getToolPermissionOverride(resolvedTool.name),
+                        latestEffectiveLevel =
+                            permissionSystem.getEffectivePermissionLevel(resolvedTool.name),
                     )
                 if (!approved) {
                     throw SubagentLoopRejectedException(
@@ -1140,9 +1145,15 @@ object ToolExecutionManager {
                 }
             }
 
-        // 4. 所有权限结果齐备后，严格按模型原始调用顺序逐项返回或执行。
+        // 4. 所有权限结果齐备后，严格按模型原始调用顺序返回或执行。
         // A rejected item occupies its original slot; a later rejection can no longer be emitted
         // before an earlier allowed tool has finished.
+        // Subagent task invocations run in parallel: the coordinator already supports concurrent
+        // child runs per parent, so a sequential loop would needlessly serialize independent
+        // agents. Contiguous task runs form one parallel group; non-task tools stay serial and
+        // act as ordering barriers. Results are published strictly in the model's original call
+        // order from the single driver coroutine, so the shared collector and round manager are
+        // never written concurrently and the transcript cannot reorder tool results.
         fun key(callId: String?, invocationIndex: Int?): String =
             callId?.takeIf(String::isNotBlank) ?: "index:${invocationIndex ?: -1}"
 
@@ -1158,7 +1169,47 @@ object ToolExecutionManager {
                 key(invocation.callId, invocation.invocationIndex.takeIf { it >= 0 })
             }
         val orderedResults = mutableListOf<ToolResult>()
-        for (originalInvocation in invocations) {
+
+        suspend fun runTool(
+            invocation: ToolInvocation,
+            deferredResultSink: java.util.concurrent.ConcurrentMap<ToolInvocation, ToolResult>? = null,
+        ): ToolResult =
+            executeAndEmitTool(
+                invocation = invocation,
+                toolHandler = toolHandler,
+                packageManager = packageManager,
+                collector = collector,
+                runtimeContext =
+                    toolRuntimeContext.copy(
+                        callId = invocation.callId,
+                        invocationIndex = invocation.invocationIndex.takeIf { it >= 0 },
+                        batchPosition = invocation.invocationIndex + 1,
+                        permissionCheckedToolName =
+                            resolveToolTarget(invocation.tool).tool.name,
+                    ),
+                timingScopeId = timingScopeId,
+                deferredResultSink = deferredResultSink,
+            )
+
+        suspend fun publishResult(
+            invocation: ToolInvocation,
+            result: ToolResult,
+            sendFinished: Boolean = false,
+        ) {
+            toolHandler.notifyToolExecutionResult(invocation.tool, result)
+            emitFinalResult(collector, result)
+            // Parallel group members skipped the worker-side finished event; emit it here so the
+            // lifecycle stays started -> result -> finished in the driver's call order.
+            if (sendFinished) {
+                toolHandler.notifyToolExecutionFinished(invocation.tool)
+            }
+        }
+
+        // Walk invocations in the model's original order, executing each item at its slot and
+        // publishing its result before any later invocation is started.
+        var index = 0
+        while (index < invocations.size) {
+            val originalInvocation = invocations[index]
             val invocationKey =
                 key(
                     originalInvocation.callId,
@@ -1166,28 +1217,58 @@ object ToolExecutionManager {
                 )
             val denied = deniedByInvocation[invocationKey]
             if (denied != null) {
-                toolHandler.notifyToolExecutionResult(originalInvocation.tool, denied)
-                emitFinalResult(collector, denied)
+                publishResult(originalInvocation, denied)
                 orderedResults += denied
+                index += 1
                 continue
             }
-            val invocation = executableByInvocation[invocationKey] ?: continue
-            orderedResults +=
-                executeAndEmitTool(
-                    invocation = invocation,
-                    toolHandler = toolHandler,
-                    packageManager = packageManager,
-                    collector = collector,
-                    runtimeContext =
-                        toolRuntimeContext.copy(
-                            callId = invocation.callId,
-                            invocationIndex = invocation.invocationIndex.takeIf { it >= 0 },
-                            batchPosition = invocation.invocationIndex + 1,
-                            permissionCheckedToolName =
-                                resolveToolTarget(invocation.tool).tool.name,
-                    ),
-                    timingScopeId = timingScopeId,
-                )
+            val invocation = executableByInvocation[invocationKey]
+            if (invocation == null) {
+                index += 1
+                continue
+            }
+            if (invocation.tool.name != "task") {
+                val result = runTool(invocation)
+                orderedResults += result
+                index += 1
+                continue
+            }
+            // A contiguous run of executable task calls: launch them concurrently, then publish
+            // their results in call order once the whole group has finished.
+            var groupEnd = index + 1
+            while (groupEnd < invocations.size) {
+                val candidateKey =
+                    key(
+                        invocations[groupEnd].callId,
+                        invocations[groupEnd].invocationIndex.takeIf { it >= 0 },
+                    )
+                val candidate = executableByInvocation[candidateKey]
+                if (candidate == null || candidate.tool.name != "task") break
+                groupEnd += 1
+            }
+            val groupInvocations =
+                (index until groupEnd).mapNotNull { position ->
+                    val slotKey =
+                        key(
+                            invocations[position].callId,
+                            invocations[position].invocationIndex.takeIf { it >= 0 },
+                        )
+                    executableByInvocation[slotKey]
+                }
+            val executionResults =
+                java.util.concurrent.ConcurrentHashMap<ToolInvocation, ToolResult>()
+            runParallelGroupWithOrderedPublishing(
+                items = groupInvocations,
+                executionResults = executionResults,
+                execute = { taskInvocation ->
+                    runTool(taskInvocation, deferredResultSink = executionResults)
+                },
+                publish = { taskInvocation, result ->
+                    publishResult(taskInvocation, result, sendFinished = true)
+                },
+                record = { result -> orderedResults += result },
+            )
+            index = groupEnd
         }
 
         orderedResults.sortedBy { result -> result.invocationIndex ?: Int.MAX_VALUE }
@@ -1289,6 +1370,53 @@ object ToolExecutionManager {
     }
 
     /**
+     * Runs a parallel group of tool invocations and publishes the results strictly in the given
+     * item order from the caller's (single driver) coroutine. Cancellation or failure of one item
+     * is rethrown to the caller after the finished portion has been published in order, but
+     * already-recorded results are never lost: publication runs in a NonCancellable context so a
+     * cancelled caller cannot silently drop the finished portion.
+     */
+    internal suspend fun runParallelGroupWithOrderedPublishing(
+        items: List<ToolInvocation>,
+        executionResults: java.util.concurrent.ConcurrentMap<ToolInvocation, ToolResult>,
+        execute: suspend (ToolInvocation) -> Unit,
+        publish: suspend (ToolInvocation, ToolResult) -> Unit,
+        record: (ToolResult) -> Unit = {},
+    ) {
+        try {
+            coroutineScope {
+                items.forEach { item ->
+                    async { execute(item) }
+                }
+            }
+        } catch (t: Throwable) {
+            withContext(NonCancellable) {
+                items.forEach { item ->
+                    executionResults[item]?.let { result ->
+                        publish(item, result)
+                        record(result)
+                    }
+                }
+            }
+            throw t
+        }
+        // All workers have terminated, so the ordered publication below must never be interrupted
+        // by a cancellation arriving in this window: a lost result would never be republished by
+        // the outer cancellation handler (the worker already marked the invocation COMPLETED).
+        withContext(NonCancellable) {
+            items.forEach { item ->
+                executionResults[item]?.let { result ->
+                    publish(item, result)
+                    record(result)
+                }
+            }
+        }
+        // Re-propagate a cancellation that arrived while the ordered publication was running so
+        // the caller still observes the cancelled state after all results were published.
+        currentCoroutineContext().ensureActive()
+    }
+
+    /**
      * 封装单个工具的执行、实时输出和结果聚合的辅助函数
      */
     private suspend fun executeAndEmitTool(
@@ -1298,6 +1426,7 @@ object ToolExecutionManager {
         collector: StreamCollector<String>,
         runtimeContext: ToolRuntimeContext,
         timingScopeId: String?,
+        deferredResultSink: java.util.concurrent.ConcurrentMap<ToolInvocation, ToolResult>? = null,
     ): ToolResult {
         val toolName = invocation.tool.name
         val displayToolName = resolveDisplayToolName(invocation.tool)
@@ -1305,6 +1434,18 @@ object ToolExecutionManager {
         return withContext(toolRuntimeContextThreadLocal.asContextElement(runtimeContext)) {
             var startedAtElapsedMs: Long? = null
             val collectedResults = BoundedToolResultAccumulator()
+            // Parallel group members run with a deferred result sink and publish later from the
+            // single driver coroutine so the shared collector, round manager and hook
+            // notifications stay strictly ordered. The sink also captures cancellation/failure
+            // results so the driver can still publish the finished portion of a group in order.
+            suspend fun publishResult(result: ToolResult) {
+                if (deferredResultSink != null) {
+                    deferredResultSink[invocation] = result
+                    return
+                }
+                toolHandler.notifyToolExecutionResult(invocation.tool, result)
+                emitFinalResult(collector, result)
+            }
             try {
                 val executor = toolHandler.getToolExecutorOrActivate(toolName)
                 if (executor == null) {
@@ -1328,8 +1469,7 @@ object ToolExecutionManager {
                         durationMs = null,
                         state = ToolExecutionState.NOT_EXECUTED,
                     )
-                    toolHandler.notifyToolExecutionResult(invocation.tool, notAvailableResult)
-                    emitFinalResult(collector, notAvailableResult)
+                    publishResult(notAvailableResult)
                     return@withContext notAvailableResult
                 }
 
@@ -1370,8 +1510,7 @@ object ToolExecutionManager {
                         durationMs = durationMs,
                         state = ToolExecutionState.COMPLETED,
                     )
-                    emitFinalResult(collector, emptyResult)
-                    toolHandler.notifyToolExecutionResult(invocation.tool, emptyResult)
+                    publishResult(emptyResult)
                     return@withContext emptyResult
                 }
 
@@ -1398,8 +1537,7 @@ object ToolExecutionManager {
                     durationMs = durationMs,
                     state = ToolExecutionState.COMPLETED,
                 )
-                emitFinalResult(collector, finalResult)
-                toolHandler.notifyToolExecutionResult(invocation.tool, finalResult)
+                publishResult(finalResult)
                 return@withContext finalResult
             } catch (cancellation: CancellationException) {
                 val start = startedAtElapsedMs
@@ -1422,19 +1560,24 @@ object ToolExecutionManager {
                             state = ToolExecutionState.COMPLETED,
                         )
                         try {
-                            emitFinalResult(collector, cancelledResult)
+                            publishResult(cancelledResult)
                         } catch (emitError: Exception) {
                             AppLogger.w(
                                 TAG,
                                 "Failed to persist cancelled tool result: ${emitError.message}",
                             )
                         }
-                        toolHandler.notifyToolExecutionResult(invocation.tool, cancelledResult)
                     }
                 }
                 throw cancellation
             } finally {
-                toolHandler.notifyToolExecutionFinished(invocation.tool)
+                // Deferred (parallel group) members publish their result from the single driver
+                // coroutine; the finished event must follow that result, so it is sent there too
+                // instead of here. Non-deferred tools keep the original started -> result ->
+                // finished order.
+                if (deferredResultSink == null) {
+                    toolHandler.notifyToolExecutionFinished(invocation.tool)
+                }
             }
         }
     }

@@ -82,19 +82,31 @@ class ToolPermissionPoliciesTest {
         assertTrue(
             resolveApprovalDecisionWithPermanentOverride(
                 approvalGranted = false,
-                latestToolOverride = PermissionLevel.ALLOW,
+                latestEffectiveLevel = PermissionLevel.ALLOW,
             )
         )
         assertFalse(
             resolveApprovalDecisionWithPermanentOverride(
                 approvalGranted = true,
-                latestToolOverride = PermissionLevel.FORBID,
+                latestEffectiveLevel = PermissionLevel.FORBID,
             )
         )
         assertTrue(
             resolveApprovalDecisionWithPermanentOverride(
                 approvalGranted = true,
-                latestToolOverride = PermissionLevel.WORKSPACE_REVIEWER,
+                latestEffectiveLevel = PermissionLevel.WORKSPACE_REVIEWER,
+            )
+        )
+        assertFalse(
+            resolveApprovalDecisionWithPermanentOverride(
+                approvalGranted = false,
+                latestEffectiveLevel = PermissionLevel.ASK,
+            )
+        )
+        assertTrue(
+            resolveApprovalDecisionWithPermanentOverride(
+                approvalGranted = true,
+                latestEffectiveLevel = PermissionLevel.ASK,
             )
         )
     }
@@ -133,6 +145,28 @@ class ToolPermissionPoliciesTest {
         assertEquals(ToolPermissionDenialSource.AUTOMATIC_REVIEW, reviewDenial.source)
         assertTrue(reviewDenial.rejection.contains("Do not retry"))
         assertEquals("Tool execution denied by user.", permissionDeniedByUser().rejection)
+    }
+
+    @Test
+    fun reviewEventStatusReflectsTheDecisionActuallyEnforced() {
+        assertEquals(
+            PermissionReviewStatus.APPROVED,
+            reviewEventStatusForEnforcedDecision(ToolPermissionDecision.Allowed),
+        )
+        assertEquals(
+            PermissionReviewStatus.DENIED,
+            reviewEventStatusForEnforcedDecision(permissionDeniedByUser()),
+        )
+        assertEquals(
+            PermissionReviewStatus.DENIED,
+            reviewEventStatusForEnforcedDecision(permissionDeniedBySettings()),
+        )
+        assertEquals(
+            PermissionReviewStatus.DENIED,
+            reviewEventStatusForEnforcedDecision(
+                permissionDeniedByAutomaticReview("not authorized")
+            ),
+        )
     }
 
     @Test
@@ -519,6 +553,7 @@ class ToolPermissionPoliciesTest {
                     name = "submit_permission_review",
                     parameters =
                         listOf(
+                            ToolParameter("review_id", "review-tool-test"),
                             ToolParameter("outcome", "deny"),
                             ToolParameter("risk_level", "high"),
                             ToolParameter("user_authorization", "low"),
@@ -543,6 +578,7 @@ class ToolPermissionPoliciesTest {
                     name = "submit_permission_review",
                     parameters =
                         listOf(
+                            ToolParameter("review_id", "review-tool-test"),
                             ToolParameter("outcome", "allow"),
                             ToolParameter("outcome", "deny"),
                             ToolParameter("risk_level", "low"),
@@ -566,10 +602,29 @@ class ToolPermissionPoliciesTest {
     }
 
     @Test
+    fun reviewerSubmissionToolRejectsMissingReviewId() {
+        assertNull(
+            PermissionReviewResponsePolicy.parseAndEnforce(
+                AITool(
+                    name = "submit_permission_review",
+                    parameters =
+                        listOf(
+                            ToolParameter("outcome", "allow"),
+                            ToolParameter("risk_level", "low"),
+                            ToolParameter("user_authorization", "high"),
+                            ToolParameter("rationale", "Missing review id"),
+                        ),
+                )
+            )
+        )
+    }
+
+    @Test
     fun reviewerResponseExtractorAcceptsOneResultToolAndRejectsMultipleCalls() = runBlocking {
         val single =
             """
             <tool name="submit_permission_review">
+              <param name="review_id">review-tool-test</param>
               <param name="outcome">allow</param>
               <param name="risk_level">low</param>
               <param name="user_authorization">low</param>
@@ -593,7 +648,10 @@ class ToolPermissionPoliciesTest {
     }
 
     @Test
-    fun reviewerResponseExtractorAllowsInvestigationBeforeOneFinalSubmission() = runBlocking {
+    fun reviewerResponseExtractorRejectsInspectionAndSubmissionInOneTurn() = runBlocking {
+        // Investigation and the final submission must happen in separate turns. The runtime
+        // refuses a turn whose only terminal call is mixed with other tools, so the historical
+        // parser must not reconstruct a decision from such a response either.
         val response =
             """
             <tool name="inspect_permission_review_context">
@@ -601,6 +659,7 @@ class ToolPermissionPoliciesTest {
               <param name="operation">git_context</param>
             </tool>
             <tool name="submit_permission_review">
+              <param name="review_id">review-1</param>
               <param name="outcome">deny</param>
               <param name="risk_level">high</param>
               <param name="user_authorization">low</param>
@@ -609,10 +668,7 @@ class ToolPermissionPoliciesTest {
             """.trimIndent()
 
         withoutAndroidLogging {
-            assertEquals(
-                PermissionReviewOutcome.DENY,
-                PermissionReviewResponsePolicy.extractToolCallAndEnforce(response)?.outcome,
-            )
+            assertNull(PermissionReviewResponsePolicy.extractToolCallAndEnforce(response))
         }
     }
 
@@ -839,7 +895,7 @@ class ToolPermissionPoliciesTest {
     }
 
     @Test
-    fun reviewInspectionIsCapabilityBoundAndWorkspaceScoped() {
+    fun reviewInspectionIsCapabilityBoundAndUnrestricted() {
         val workspace = Files.createTempDirectory("operit-review-inspection").toFile()
         val inside = File(workspace, "evidence.txt").apply { writeText("bounded evidence") }
         val outside = File(workspace.parentFile, "outside-${System.nanoTime()}.txt")
@@ -852,7 +908,7 @@ class ToolPermissionPoliciesTest {
                 ToolPermissionReviewContext(workspacePath = workspace.path),
                 "target",
             )
-        PermissionReviewInspectionRegistry.register(reviewId, workspace.path, action)
+        PermissionReviewInspectionRegistry.register(reviewId, workspace.path, null, action)
         try {
             assertTrue(
                 PermissionReviewInspectionRegistry.inspect(reviewId, "read_text", inside.path)
@@ -860,7 +916,7 @@ class ToolPermissionPoliciesTest {
             )
             assertTrue(
                 PermissionReviewInspectionRegistry.inspect(reviewId, "read_text", outside.path)
-                    .startsWith("Inspection rejected")
+                    .contains("secret")
             )
             assertTrue(
                 PermissionReviewInspectionRegistry.inspect("wrong", "read_text", inside.path)
@@ -874,6 +930,155 @@ class ToolPermissionPoliciesTest {
         }
     }
 
+    @Test
+    fun reviewInspectionVirtualWorkspaceDoesNotAnchorRelativePaths() {
+        val evidence = File.createTempFile("operit-review-evidence", ".txt")
+            .apply { writeText("virtual evidence") }
+        val reviewId = PermissionReviewInspectionRegistry.newReviewId()
+        val action =
+            PermissionReviewAction.fromTool(
+                tool("read_file", "path" to evidence.path),
+                "read evidence",
+                ToolPermissionReviewContext(workspacePath = "/", workspaceEnv = "repo:my-repo"),
+                "target",
+            )
+        PermissionReviewInspectionRegistry.register(reviewId, "/", "repo:my-repo", action)
+        try {
+            // Absolute paths are resolved directly even in a virtual workspace.
+            val absolute =
+                PermissionReviewInspectionRegistry.inspect(
+                    reviewId,
+                    "read_text",
+                    evidence.path,
+                )
+            assertTrue(absolute.contains("virtual evidence"))
+            // A repo:* workspace is virtual, so relative paths must not resolve to the device.
+            val relative =
+                PermissionReviewInspectionRegistry.inspect(reviewId, "read_text", "etc/hosts")
+            assertTrue(relative.startsWith("Inspection rejected"))
+            assertTrue(
+                PermissionReviewInspectionRegistry.inspect(
+                    reviewId,
+                    "read_text",
+                    "etc/hosts",
+                    environment = "repo:my-repo",
+                ).startsWith("Inspection rejected")
+            )
+        } finally {
+            PermissionReviewInspectionRegistry.unregister(reviewId)
+            evidence.delete()
+        }
+    }
+
+    @Test
+    fun reviewInspectionReadTextBoundedAtSixtyFourK() {
+        val workspace = Files.createTempDirectory("operit-review-limit").toFile()
+        val file = File(workspace, "lines.txt").apply {
+            val sb = StringBuilder()
+            // A giant run of empty lines would defeat a naive character budget that only
+            // counts content, so the budget must include prefixes and separators.
+            repeat(200_000) { sb.appendLine("") }
+            writeText(sb.toString())
+        }
+        val reviewId = PermissionReviewInspectionRegistry.newReviewId()
+        val action =
+            PermissionReviewAction.fromTool(
+                tool("read_file", "path" to file.path),
+                "read lines",
+                ToolPermissionReviewContext(workspacePath = workspace.path),
+                "target",
+            )
+        PermissionReviewInspectionRegistry.register(reviewId, workspace.path, null, action)
+        try {
+            val result =
+                PermissionReviewInspectionRegistry.inspect(
+                    reviewId,
+                    "read_text",
+                    file.path,
+                    startLine = 1,
+                )
+            val preview = result.substringAfter("text_preview:\n", "")
+            assertTrue(preview.isNotEmpty())
+            assertTrue(preview.length <= 64 * 1024)
+            assertTrue(preview.startsWith("1: "))
+            assertFalse(preview.contains("200000: "))
+        } finally {
+            PermissionReviewInspectionRegistry.unregister(reviewId)
+            file.delete()
+            workspace.delete()
+        }
+    }
+
+    @Test
+    fun reviewInspectionReadTextTruncatesOversizedLine() {
+        val workspace = Files.createTempDirectory("operit-review-longline").toFile()
+        val file = File(workspace, "lines.txt").apply {
+            writeText("x".repeat(200_000))
+        }
+        val reviewId = PermissionReviewInspectionRegistry.newReviewId()
+        val action =
+            PermissionReviewAction.fromTool(
+                tool("read_file", "path" to file.path),
+                "read lines",
+                ToolPermissionReviewContext(workspacePath = workspace.path),
+                "target",
+            )
+        PermissionReviewInspectionRegistry.register(reviewId, workspace.path, null, action)
+        try {
+            val result =
+                PermissionReviewInspectionRegistry.inspect(
+                    reviewId,
+                    "read_text",
+                    file.path,
+                    startLine = 1,
+                    endLine = 1,
+                )
+            val preview = result.substringAfter("text_preview:\n", "")
+            assertTrue(preview.length <= 64 * 1024)
+            assertTrue(preview.contains("...(line truncated)"))
+            assertTrue(preview.startsWith("1: "))
+        } finally {
+            PermissionReviewInspectionRegistry.unregister(reviewId)
+            file.delete()
+            workspace.delete()
+        }
+    }
+
+    @Test
+    fun reviewInspectionReadTextSupportsLineRanges() {
+        val workspace = Files.createTempDirectory("operit-review-lines").toFile()
+        val file = File(workspace, "lines.txt").apply {
+            writeText((1..10).joinToString("\n") { "line $it" })
+        }
+        val reviewId = PermissionReviewInspectionRegistry.newReviewId()
+        val action =
+            PermissionReviewAction.fromTool(
+                tool("read_file", "path" to file.path),
+                "read lines",
+                ToolPermissionReviewContext(workspacePath = workspace.path),
+                "target",
+            )
+        PermissionReviewInspectionRegistry.register(reviewId, workspace.path, null, action)
+        try {
+            val window =
+                PermissionReviewInspectionRegistry.inspect(
+                    reviewId,
+                    "read_text",
+                    file.path,
+                    startLine = 3,
+                    endLine = 5,
+                )
+            assertTrue(window.contains("3: line 3"))
+            assertTrue(window.contains("5: line 5"))
+            assertFalse(window.contains("2: line 2"))
+            assertFalse(window.contains("6: line 6"))
+        } finally {
+            PermissionReviewInspectionRegistry.unregister(reviewId)
+            file.delete()
+            workspace.delete()
+        }
+    }
+
     private fun reviewTool(
         outcome: String,
         risk: String,
@@ -882,6 +1087,7 @@ class ToolPermissionPoliciesTest {
     ): AITool =
         tool(
             PermissionReviewSubmissionTool.NAME,
+            "review_id" to "review-tool-test",
             "outcome" to outcome,
             "risk_level" to risk,
             "user_authorization" to authorization,

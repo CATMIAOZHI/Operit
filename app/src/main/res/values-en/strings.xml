@@ -8182,10 +8182,10 @@
     <string name="add_to_favorites">Add to favorites</string>
     <string name="remove_from_favorites">Remove from favorites</string>
     <string name="permission_review_policy_title">Automatic review policy</string>
-    <string name="permission_review_policy_description">Host safety floors always apply. Add managed review rules here. Policy version: %1$s</string>
-    <string name="permission_review_policy_edit">Edit managed additions</string>
+    <string name="permission_review_policy_description">Add review rules here to reflect how you like to work; automatic review follows these rules. Policy version: %1$s</string>
+    <string name="permission_review_policy_edit">Edit managed rules</string>
     <string name="permission_review_policy_collapse">Collapse policy editor</string>
-    <string name="permission_review_policy_managed_hint">Managed additions may tighten or clarify review, but cannot disable permanent denies, critical-risk limits, or host-enforced inspection boundaries.</string>
+    <string name="permission_review_policy_managed_hint">These rules are sent to the review model as your custom requirements, and review judges risk and authorization according to your habits. Only add rules you truly intend to allow.</string>
     <string name="permission_review_policy_placeholder">Example: Any action publishing data publicly must require manual confirmation.</string>
     <string name="permission_review_recent_denials">Recent denials</string>
     <string name="permission_review_recent_denials_summary">%1$d denials across %2$d distinct actions</string>

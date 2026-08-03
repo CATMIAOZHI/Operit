@@ -3006,14 +3006,18 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 if (chat == null) {
                     return false
                 }
-                SubagentCoordinator.getInstance(context).withChatDeletionPrepared(chatId) {
-                    when {
-                        chat.chatKind == ChatKind.SUBAGENT.name ->
-                            subagentRunRepository.deleteChildChat(chatId)
-                        subagentRunRepository.countChildren(chatId) > 0 ->
-                            subagentRunRepository.deleteParentChatAndChildren(chatId)
-                        else -> chatDao.deleteChat(chatId)
-                    }
+                val subtreeChatIds = subagentRunRepository.getChatSubtreeChatIds(chatId).toSet()
+                val deleted =
+                    SubagentCoordinator.getInstance(context)
+                        .withChatDeletionsPrepared(subtreeChatIds) {
+                            subagentRunRepository.deleteChatSubtree(
+                                chatId = chatId,
+                                expectedChatIds = subtreeChatIds,
+                            )
+                        }
+                if (!deleted) {
+                    AppLogger.w(TAG, "Chat $chatId subtree deletion refused (locked or missing)")
+                    return false
                 }
 
                 // 如果删除的是当前聊天，清除当前聊天ID

@@ -75,9 +75,13 @@ internal object PermissionReviewResponsePolicy {
         if (tool.parameters.any { it.name !in expectedNames }) return null
         val grouped = tool.parameters.groupBy { it.name }
         if (grouped.values.any { it.size != 1 }) return null
-        if (expectedReviewId != null &&
-            grouped["review_id"]?.singleOrNull()?.value?.trim() != expectedReviewId
-        ) {
+        val reviewId = grouped["review_id"]?.singleOrNull()?.value?.trim()
+        // The review prompt always instructs the reviewer to echo the review_id, and the runtime
+        // rejects submissions that omit it. Requiring it here keeps historical reconstruction
+        // (where the expected value is unavailable) from ever reporting a malformed review as
+        // allowed.
+        if (reviewId.isNullOrBlank()) return null
+        if (expectedReviewId != null && reviewId != expectedReviewId) {
             return null
         }
         val outcome = grouped["outcome"]?.singleOrNull()?.value ?: return null
@@ -95,6 +99,7 @@ internal object PermissionReviewResponsePolicy {
     suspend fun extractToolCallAndEnforce(
         response: String,
         exactOverride: Boolean = false,
+        expectedReviewId: String? = null,
     ): PermissionReviewDecision? {
         val invocations = ToolExecutionManager.extractToolInvocations(response)
         if (invocations.any { invocation ->
@@ -103,11 +108,17 @@ internal object PermissionReviewResponsePolicy {
         ) {
             return null
         }
+        // Match the runtime terminal-call semantics: a final submission must be the sole
+        // tool call in its turn. A response mixing inspection and submission would have been
+        // refused by the runtime, so parsing it here must not reconstruct a different outcome.
+        if (invocations.size != 1) {
+            return null
+        }
         return invocations
             .filter { invocation -> invocation.tool.name == PermissionReviewSubmissionTool.NAME }
             .singleOrNull()
             ?.tool
-            ?.let { tool -> parseAndEnforce(tool, exactOverride) }
+            ?.let { tool -> parseAndEnforce(tool, exactOverride, expectedReviewId) }
     }
 
     private fun enforceFields(
@@ -285,7 +296,12 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
                 policySnapshot = policySnapshot,
                 exactOverrideReviewId = exactOverride?.originalReviewId,
             )
-        PermissionReviewInspectionRegistry.register(reviewId, reviewContext.workspacePath, action)
+        PermissionReviewInspectionRegistry.register(
+            reviewId,
+            reviewContext.workspacePath,
+            reviewContext.workspaceEnv,
+            action,
+        )
         PermissionReviewSubmissionRegistry.register(reviewId)
         val decision =
             try {
@@ -511,8 +527,10 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
         Submit the final decision by calling ${PermissionReviewSubmissionTool.NAME} exactly once
         with review_id=$reviewId.
         Before the final submission you may call ${PermissionReviewInspectionTool.NAME} with
-        review_id=$reviewId for bounded read-only evidence. The final submission must be the only
-        tool call in its response. Do not return a JSON object instead of the tool call.
+        review_id=$reviewId for read-only evidence, without any call limit. Evidence access is
+        unrestricted but never writes files, executes commands, or reaches the network. The final
+        submission must be the only tool call in its response. Do not return a JSON object instead
+        of the tool call.
 
         REVIEW LIFECYCLE:
         review_id=$reviewId
