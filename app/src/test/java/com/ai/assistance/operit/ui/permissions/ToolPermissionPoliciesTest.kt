@@ -648,7 +648,10 @@ class ToolPermissionPoliciesTest {
     }
 
     @Test
-    fun reviewerResponseExtractorAllowsInvestigationBeforeOneFinalSubmission() = runBlocking {
+    fun reviewerResponseExtractorRejectsInspectionAndSubmissionInOneTurn() = runBlocking {
+        // Investigation and the final submission must happen in separate turns. The runtime
+        // refuses a turn whose only terminal call is mixed with other tools, so the historical
+        // parser must not reconstruct a decision from such a response either.
         val response =
             """
             <tool name="inspect_permission_review_context">
@@ -665,10 +668,7 @@ class ToolPermissionPoliciesTest {
             """.trimIndent()
 
         withoutAndroidLogging {
-            assertEquals(
-                PermissionReviewOutcome.DENY,
-                PermissionReviewResponsePolicy.extractToolCallAndEnforce(response)?.outcome,
-            )
+            assertNull(PermissionReviewResponsePolicy.extractToolCallAndEnforce(response))
         }
     }
 

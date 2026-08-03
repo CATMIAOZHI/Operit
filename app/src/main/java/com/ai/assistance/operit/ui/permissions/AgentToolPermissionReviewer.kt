@@ -108,6 +108,12 @@ internal object PermissionReviewResponsePolicy {
         ) {
             return null
         }
+        // Match the runtime terminal-call semantics: a final submission must be the sole
+        // tool call in its turn. A response mixing inspection and submission would have been
+        // refused by the runtime, so parsing it here must not reconstruct a different outcome.
+        if (invocations.size != 1) {
+            return null
+        }
         return invocations
             .filter { invocation -> invocation.tool.name == PermissionReviewSubmissionTool.NAME }
             .singleOrNull()
