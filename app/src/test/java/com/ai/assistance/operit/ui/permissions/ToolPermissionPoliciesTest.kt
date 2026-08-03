@@ -895,7 +895,7 @@ class ToolPermissionPoliciesTest {
     }
 
     @Test
-    fun reviewInspectionIsCapabilityBoundAndWorkspaceScoped() {
+    fun reviewInspectionIsCapabilityBoundAndUnrestricted() {
         val workspace = Files.createTempDirectory("operit-review-inspection").toFile()
         val inside = File(workspace, "evidence.txt").apply { writeText("bounded evidence") }
         val outside = File(workspace.parentFile, "outside-${System.nanoTime()}.txt")
@@ -916,7 +916,7 @@ class ToolPermissionPoliciesTest {
             )
             assertTrue(
                 PermissionReviewInspectionRegistry.inspect(reviewId, "read_text", outside.path)
-                    .startsWith("Inspection rejected")
+                    .contains("secret")
             )
             assertTrue(
                 PermissionReviewInspectionRegistry.inspect("wrong", "read_text", inside.path)
@@ -931,27 +931,151 @@ class ToolPermissionPoliciesTest {
     }
 
     @Test
-    fun virtualWorkspaceEnvironmentDisablesLocalInspection() {
+    fun reviewInspectionVirtualWorkspaceDoesNotAnchorRelativePaths() {
+        val evidence = File.createTempFile("operit-review-evidence", ".txt")
+            .apply { writeText("virtual evidence") }
         val reviewId = PermissionReviewInspectionRegistry.newReviewId()
         val action =
             PermissionReviewAction.fromTool(
-                tool("read_file", "path" to "/sdcard/evidence.txt"),
+                tool("read_file", "path" to evidence.path),
                 "read evidence",
                 ToolPermissionReviewContext(workspacePath = "/", workspaceEnv = "repo:my-repo"),
                 "target",
             )
         PermissionReviewInspectionRegistry.register(reviewId, "/", "repo:my-repo", action)
         try {
+            // Absolute paths are resolved directly even in a virtual workspace.
+            val absolute =
+                PermissionReviewInspectionRegistry.inspect(
+                    reviewId,
+                    "read_text",
+                    evidence.path,
+                )
+            assertTrue(absolute.contains("virtual evidence"))
+            // A repo:* workspace is virtual, so relative paths must not resolve to the device.
+            val relative =
+                PermissionReviewInspectionRegistry.inspect(reviewId, "read_text", "etc/hosts")
+            assertTrue(relative.startsWith("Inspection rejected"))
+            assertTrue(
+                PermissionReviewInspectionRegistry.inspect(
+                    reviewId,
+                    "read_text",
+                    "etc/hosts",
+                    environment = "repo:my-repo",
+                ).startsWith("Inspection rejected")
+            )
+        } finally {
+            PermissionReviewInspectionRegistry.unregister(reviewId)
+            evidence.delete()
+        }
+    }
+
+    @Test
+    fun reviewInspectionReadTextBoundedAtSixtyFourK() {
+        val workspace = Files.createTempDirectory("operit-review-limit").toFile()
+        val file = File(workspace, "lines.txt").apply {
+            val sb = StringBuilder()
+            // A giant run of empty lines would defeat a naive character budget that only
+            // counts content, so the budget must include prefixes and separators.
+            repeat(200_000) { sb.appendLine("") }
+            writeText(sb.toString())
+        }
+        val reviewId = PermissionReviewInspectionRegistry.newReviewId()
+        val action =
+            PermissionReviewAction.fromTool(
+                tool("read_file", "path" to file.path),
+                "read lines",
+                ToolPermissionReviewContext(workspacePath = workspace.path),
+                "target",
+            )
+        PermissionReviewInspectionRegistry.register(reviewId, workspace.path, null, action)
+        try {
             val result =
                 PermissionReviewInspectionRegistry.inspect(
                     reviewId,
                     "read_text",
-                    "/sdcard/evidence.txt",
+                    file.path,
+                    startLine = 1,
                 )
-            assertTrue(result.startsWith("Inspection rejected"))
-            assertTrue(result.contains("not available for this workspace environment"))
+            val preview = result.substringAfter("text_preview:\n", "")
+            assertTrue(preview.isNotEmpty())
+            assertTrue(preview.length <= 64 * 1024)
+            assertTrue(preview.startsWith("1: "))
+            assertFalse(preview.contains("200000: "))
         } finally {
             PermissionReviewInspectionRegistry.unregister(reviewId)
+            file.delete()
+            workspace.delete()
+        }
+    }
+
+    @Test
+    fun reviewInspectionReadTextTruncatesOversizedLine() {
+        val workspace = Files.createTempDirectory("operit-review-longline").toFile()
+        val file = File(workspace, "lines.txt").apply {
+            writeText("x".repeat(200_000))
+        }
+        val reviewId = PermissionReviewInspectionRegistry.newReviewId()
+        val action =
+            PermissionReviewAction.fromTool(
+                tool("read_file", "path" to file.path),
+                "read lines",
+                ToolPermissionReviewContext(workspacePath = workspace.path),
+                "target",
+            )
+        PermissionReviewInspectionRegistry.register(reviewId, workspace.path, null, action)
+        try {
+            val result =
+                PermissionReviewInspectionRegistry.inspect(
+                    reviewId,
+                    "read_text",
+                    file.path,
+                    startLine = 1,
+                    endLine = 1,
+                )
+            val preview = result.substringAfter("text_preview:\n", "")
+            assertTrue(preview.length <= 64 * 1024)
+            assertTrue(preview.contains("...(line truncated)"))
+            assertTrue(preview.startsWith("1: "))
+        } finally {
+            PermissionReviewInspectionRegistry.unregister(reviewId)
+            file.delete()
+            workspace.delete()
+        }
+    }
+
+    @Test
+    fun reviewInspectionReadTextSupportsLineRanges() {
+        val workspace = Files.createTempDirectory("operit-review-lines").toFile()
+        val file = File(workspace, "lines.txt").apply {
+            writeText((1..10).joinToString("\n") { "line $it" })
+        }
+        val reviewId = PermissionReviewInspectionRegistry.newReviewId()
+        val action =
+            PermissionReviewAction.fromTool(
+                tool("read_file", "path" to file.path),
+                "read lines",
+                ToolPermissionReviewContext(workspacePath = workspace.path),
+                "target",
+            )
+        PermissionReviewInspectionRegistry.register(reviewId, workspace.path, null, action)
+        try {
+            val window =
+                PermissionReviewInspectionRegistry.inspect(
+                    reviewId,
+                    "read_text",
+                    file.path,
+                    startLine = 3,
+                    endLine = 5,
+                )
+            assertTrue(window.contains("3: line 3"))
+            assertTrue(window.contains("5: line 5"))
+            assertFalse(window.contains("2: line 2"))
+            assertFalse(window.contains("6: line 6"))
+        } finally {
+            PermissionReviewInspectionRegistry.unregister(reviewId)
+            file.delete()
+            workspace.delete()
         }
     }
 

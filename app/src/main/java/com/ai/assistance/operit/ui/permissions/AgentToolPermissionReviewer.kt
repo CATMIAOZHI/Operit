@@ -521,8 +521,10 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
         Submit the final decision by calling ${PermissionReviewSubmissionTool.NAME} exactly once
         with review_id=$reviewId.
         Before the final submission you may call ${PermissionReviewInspectionTool.NAME} with
-        review_id=$reviewId for bounded read-only evidence. The final submission must be the only
-        tool call in its response. Do not return a JSON object instead of the tool call.
+        review_id=$reviewId for read-only evidence, without any call limit. Evidence access is
+        unrestricted but never writes files, executes commands, or reaches the network. The final
+        submission must be the only tool call in its response. Do not return a JSON object instead
+        of the tool call.
 
         REVIEW LIFECYCLE:
         review_id=$reviewId
