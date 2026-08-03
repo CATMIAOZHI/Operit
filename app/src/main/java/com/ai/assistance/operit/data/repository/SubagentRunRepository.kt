@@ -31,7 +31,7 @@ data class SubagentRunWithChat(
  * The child chat and its run are created in one Room transaction so a task id can never point at
  * a missing transcript. Prompt and result content continue to live only in the child transcript.
  */
-class SubagentRunRepository private constructor(
+class SubagentRunRepository internal constructor(
     private val database: AppDatabase,
 ) {
     private val chatDao = database.chatDao()
@@ -157,8 +157,7 @@ class SubagentRunRepository private constructor(
     suspend fun deleteChildChat(childChatId: String): Boolean =
         database.withTransaction {
             val run = runDao.getByChildChatId(childChatId) ?: return@withTransaction false
-            chatDao.deleteChat(run.childChatId)
-            true
+            deleteChatSubtreeInternal(run.childChatId)
         }
 
     /**
@@ -170,12 +169,80 @@ class SubagentRunRepository private constructor(
             if (chatDao.getChatById(parentChatId) == null) {
                 return@withTransaction false
             }
-            runDao.getChildChatIds(parentChatId).forEach { childChatId ->
-                chatDao.deleteChat(childChatId)
-            }
-            chatDao.deleteChat(parentChatId)
-            true
+            deleteChatSubtreeInternal(parentChatId)
         }
+
+    /**
+     * Returns the ids of [chatId] and every chat transitively reachable through
+     * `chats.parentChatId` (SUBAGENT and BRANCH descendants). Empty when [chatId] does not exist.
+     *
+     * Callers pass the result to [SubagentCoordinator.withChatDeletionsPrepared] so every running
+     * task in the subtree is cancelled before the deletion transaction runs, then hand the same
+     * set to [deleteChatSubtree] as [expectedChatIds] for a transactional re-verification.
+     */
+    suspend fun getChatSubtreeChatIds(chatId: String): List<String> =
+        database.withTransaction {
+            val allChats = chatDao.getAllChatsDirectly()
+            if (allChats.none { it.id == chatId }) {
+                return@withTransaction emptyList()
+            }
+            subtreeIds(chatId, childrenById(allChats)).toList()
+        }
+
+    /**
+     * Computes the full descendant closure of [chatId] over the `chats.parentChatId` graph and
+     * deletes every unlocked chat child-first in one transaction.
+     *
+     * A chat can be the parent of both SUBAGENT runs (via `subagent_runs.parentChatId`, NO_ACTION)
+     * and BRANCH chats (via `chats.parentChatId`). Both can nest to arbitrary depth, so any
+     * single-level deletion either fails on the NO_ACTION foreign key or leaves orphaned branches.
+     * Deleting the whole closure child-first satisfies both constraints.
+     *
+     * Returns false (and deletes nothing) when the chat does not exist or any chat in the subtree
+     * is locked; locked chats protect their entire descendant graph.
+     *
+     * @param expectedChatIds the subtree ids captured before cancellation; the transaction aborts
+     * if the actual subtree changed, matching the folder-deletion verification pattern.
+     */
+    suspend fun deleteChatSubtree(
+        chatId: String,
+        expectedChatIds: Set<String>,
+    ): Boolean =
+        database.withTransaction {
+            if (chatDao.getChatById(chatId) == null) {
+                return@withTransaction false
+            }
+            deleteChatSubtreeInternal(chatId, expectedChatIds)
+        }
+
+    private suspend fun deleteChatSubtreeInternal(
+        chatId: String,
+        expectedChatIds: Set<String>? = null,
+    ): Boolean {
+        val allChats = chatDao.getAllChatsDirectly()
+        val byId = allChats.associateBy { it.id }
+        val subtree = subtreeIds(chatId, childrenById(allChats))
+        if (expectedChatIds != null) {
+            check(subtree == expectedChatIds) {
+                "Chat deletion candidates changed while preparing deletion"
+            }
+        }
+        if (subtree.any { byId.getValue(it).locked }) {
+            return false
+        }
+        ChatDeletionGraphPolicy.orderChildFirst(subtree.map { byId.getValue(it) })
+            .forEach { chat -> chatDao.deleteChat(chat.id) }
+        return true
+    }
+
+    private fun childrenById(allChats: List<ChatEntity>): Map<String?, List<String>> =
+        allChats.groupBy(keySelector = { it.parentChatId }, valueTransform = { it.id })
+
+    private fun subtreeIds(
+        rootId: String,
+        childrenById: Map<String?, List<String>>,
+    ): LinkedHashSet<String> =
+        ChatDeletionGraphPolicy.descendantClosure(rootId, childrenById)
 
     companion object {
         @Volatile

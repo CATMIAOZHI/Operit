@@ -264,23 +264,39 @@ object PermissionReviewEventRepository {
                     _events.value =
                         decoded
                         .map { event ->
-                            if (event.status == PermissionReviewStatus.IN_PROGRESS) {
-                                event.copy(
-                                    status = PermissionReviewStatus.ABORTED,
-                                    completedAt = System.currentTimeMillis(),
-                                    rationale = null,
-                                    exactOverrideRecorded = false,
-                                    exactOverrideState = null,
-                                    exactOverrideExpiresAt = null,
-                                    exactOverrideApplied = false,
+                            val base =
+                                if (event.status == PermissionReviewStatus.IN_PROGRESS) {
+                                    event.copy(
+                                        status = PermissionReviewStatus.ABORTED,
+                                        completedAt = System.currentTimeMillis(),
+                                        rationale = null,
+                                        exactOverrideRecorded = false,
+                                        exactOverrideState = null,
+                                        exactOverrideExpiresAt = null,
+                                        exactOverrideApplied = false,
+                                    )
+                                } else {
+                                    event.copy(
+                                        exactOverrideRecorded = false,
+                                        exactOverrideState = null,
+                                        exactOverrideExpiresAt = null,
+                                        exactOverrideApplied = false,
+                                    )
+                                }
+                            // Older builds wrote a single neutral value for both outcomes.
+                            // Re-derive allow/deny from the enforced status so the resolution
+                            // label stays consistent with the lifecycle.
+                            if (base.resolutionSource == "settings_refreshed_during_review") {
+                                base.copy(
+                                    resolutionSource =
+                                        if (base.status == PermissionReviewStatus.APPROVED) {
+                                            "settings_refreshed_allow"
+                                        } else {
+                                            "settings_refreshed_deny"
+                                        }
                                 )
                             } else {
-                                event.copy(
-                                    exactOverrideRecorded = false,
-                                    exactOverrideState = null,
-                                    exactOverrideExpiresAt = null,
-                                    exactOverrideApplied = false,
-                                )
+                                base
                             }
                         }
                         .takeLast(MAX_EVENTS)

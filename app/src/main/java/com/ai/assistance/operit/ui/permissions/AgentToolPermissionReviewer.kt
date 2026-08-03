@@ -75,9 +75,13 @@ internal object PermissionReviewResponsePolicy {
         if (tool.parameters.any { it.name !in expectedNames }) return null
         val grouped = tool.parameters.groupBy { it.name }
         if (grouped.values.any { it.size != 1 }) return null
-        if (expectedReviewId != null &&
-            grouped["review_id"]?.singleOrNull()?.value?.trim() != expectedReviewId
-        ) {
+        val reviewId = grouped["review_id"]?.singleOrNull()?.value?.trim()
+        // The review prompt always instructs the reviewer to echo the review_id, and the runtime
+        // rejects submissions that omit it. Requiring it here keeps historical reconstruction
+        // (where the expected value is unavailable) from ever reporting a malformed review as
+        // allowed.
+        if (reviewId.isNullOrBlank()) return null
+        if (expectedReviewId != null && reviewId != expectedReviewId) {
             return null
         }
         val outcome = grouped["outcome"]?.singleOrNull()?.value ?: return null

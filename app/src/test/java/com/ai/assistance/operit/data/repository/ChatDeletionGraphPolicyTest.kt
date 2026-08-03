@@ -52,6 +52,39 @@ class ChatDeletionGraphPolicyTest {
         )
     }
 
+    @Test
+    fun descendantClosureCoversMixedBranchAndSubagentNesting() {
+        val childrenById =
+            mapOf<String?, List<String>>(
+                "root" to listOf("subagent-a", "branch-b"),
+                "branch-b" to listOf("subagent-c"),
+                "subagent-c" to listOf("nested-branch-d"),
+                null to listOf("unrelated"),
+            )
+
+        assertEquals(
+            setOf("root", "subagent-a", "branch-b", "subagent-c", "nested-branch-d"),
+            ChatDeletionGraphPolicy.descendantClosure("root", childrenById),
+        )
+        assertEquals(setOf("unrelated"), ChatDeletionGraphPolicy.descendantClosure("unrelated", childrenById))
+        assertEquals(setOf("missing"), ChatDeletionGraphPolicy.descendantClosure("missing", childrenById))
+    }
+
+    @Test
+    fun descendantClosureTerminatesOnCycles() {
+        val childrenById =
+            mapOf<String?, List<String>>(
+                "a" to listOf("b"),
+                "b" to listOf("c"),
+                "c" to listOf("a"),
+            )
+
+        assertEquals(
+            setOf("a", "b", "c"),
+            ChatDeletionGraphPolicy.descendantClosure("a", childrenById),
+        )
+    }
+
     private fun chat(
         id: String,
         parentId: String? = null,

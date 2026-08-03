@@ -553,6 +553,7 @@ class ToolPermissionPoliciesTest {
                     name = "submit_permission_review",
                     parameters =
                         listOf(
+                            ToolParameter("review_id", "review-tool-test"),
                             ToolParameter("outcome", "deny"),
                             ToolParameter("risk_level", "high"),
                             ToolParameter("user_authorization", "low"),
@@ -577,6 +578,7 @@ class ToolPermissionPoliciesTest {
                     name = "submit_permission_review",
                     parameters =
                         listOf(
+                            ToolParameter("review_id", "review-tool-test"),
                             ToolParameter("outcome", "allow"),
                             ToolParameter("outcome", "deny"),
                             ToolParameter("risk_level", "low"),
@@ -600,10 +602,29 @@ class ToolPermissionPoliciesTest {
     }
 
     @Test
+    fun reviewerSubmissionToolRejectsMissingReviewId() {
+        assertNull(
+            PermissionReviewResponsePolicy.parseAndEnforce(
+                AITool(
+                    name = "submit_permission_review",
+                    parameters =
+                        listOf(
+                            ToolParameter("outcome", "allow"),
+                            ToolParameter("risk_level", "low"),
+                            ToolParameter("user_authorization", "high"),
+                            ToolParameter("rationale", "Missing review id"),
+                        ),
+                )
+            )
+        )
+    }
+
+    @Test
     fun reviewerResponseExtractorAcceptsOneResultToolAndRejectsMultipleCalls() = runBlocking {
         val single =
             """
             <tool name="submit_permission_review">
+              <param name="review_id">review-tool-test</param>
               <param name="outcome">allow</param>
               <param name="risk_level">low</param>
               <param name="user_authorization">low</param>
@@ -635,6 +656,7 @@ class ToolPermissionPoliciesTest {
               <param name="operation">git_context</param>
             </tool>
             <tool name="submit_permission_review">
+              <param name="review_id">review-1</param>
               <param name="outcome">deny</param>
               <param name="risk_level">high</param>
               <param name="user_authorization">low</param>
@@ -941,6 +963,7 @@ class ToolPermissionPoliciesTest {
     ): AITool =
         tool(
             PermissionReviewSubmissionTool.NAME,
+            "review_id" to "review-tool-test",
             "outcome" to outcome,
             "risk_level" to risk,
             "user_authorization" to authorization,

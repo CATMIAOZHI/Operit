@@ -250,6 +250,7 @@ class SubagentManagementPresentationTest {
         val allowed =
             """
             <tool name="submit_permission_review">
+              <param name="review_id">review-1</param>
               <param name="outcome">allow</param>
               <param name="risk_level">low</param>
               <param name="user_authorization">low</param>
@@ -265,6 +266,10 @@ class SubagentManagementPresentationTest {
             assertEquals(
                 PermissionReviewRunDisplayState.INVALID_OUTPUT,
                 resolvePermissionReviewRunDisplayState(SubagentRunStatus.COMPLETED, "not structured"),
+            )
+            assertEquals(
+                PermissionReviewRunDisplayState.INVALID_OUTPUT,
+                resolvePermissionReviewRunDisplayState(SubagentRunStatus.COMPLETED, allowed.replace("review-1", "")),
             )
             assertEquals(
                 PermissionReviewRunDisplayState.CANCELLED_OR_TIMED_OUT,

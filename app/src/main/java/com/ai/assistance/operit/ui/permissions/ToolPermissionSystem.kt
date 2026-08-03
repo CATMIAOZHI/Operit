@@ -448,7 +448,12 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                     PermissionReviewEventRepository.update(event.id) { current ->
                         current.copy(
                             status = enforcedStatus,
-                            resolutionSource = "settings_refreshed_during_review",
+                            resolutionSource =
+                                if (refreshedDecision is ToolPermissionDecision.Allowed) {
+                                    "settings_refreshed_allow"
+                                } else {
+                                    "settings_refreshed_deny"
+                                }
                         )
                     }
                 }
