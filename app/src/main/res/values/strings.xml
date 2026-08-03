@@ -8161,10 +8161,10 @@
     <string name="add_to_favorites">收藏对话</string>
     <string name="remove_from_favorites">取消收藏</string>
     <string name="permission_review_policy_title">自动审核策略</string>
-    <string name="permission_review_policy_description">内置安全下限始终生效；可在此追加托管规则。当前策略版本：%1$s</string>
+    <string name="permission_review_policy_description">可在此按你的使用习惯追加审核规则，自动审核会遵守这些规则。当前策略版本：%1$s</string>
     <string name="permission_review_policy_edit">编辑追加规则</string>
     <string name="permission_review_policy_collapse">收起策略编辑</string>
-    <string name="permission_review_policy_managed_hint">追加规则只能收紧或细化审核，不能关闭永久拒绝、关键风险和调查工具的宿主安全边界。</string>
+    <string name="permission_review_policy_managed_hint">这些规则会作为你的自定义要求发送给审核模型，审核会按你的习惯判断风险与授权。请只添加你真正愿意放行的规则。</string>
     <string name="permission_review_policy_placeholder">例如：所有发布到公网的操作都必须转为人工确认。</string>
     <string name="permission_review_recent_denials">最近拒绝</string>
     <string name="permission_review_recent_denials_summary">共 %1$d 次拒绝，涉及 %2$d 个不同操作</string>
