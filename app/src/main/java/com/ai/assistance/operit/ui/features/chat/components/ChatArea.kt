@@ -161,6 +161,7 @@ fun ChatArea(
     isLoading: Boolean,
     enableDialogs: Boolean = true,
     allowTranscriptMutation: Boolean = true,
+    enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
     userMessageColor: Color,
     aiMessageColor: Color,
     userTextColor: Color,
@@ -404,6 +405,7 @@ fun ChatArea(
                             message = message,
                             enableDialogs = enableDialogs,
                             allowTranscriptMutation = allowTranscriptMutation,
+                            enableToolDetailDialogs = enableToolDetailDialogs,
                             userMessageColor = userMessageColor,
                             aiMessageColor = aiMessageColor,
                             userTextColor = userTextColor,
@@ -574,6 +576,7 @@ private fun MessageItem(
     message: ChatMessage,
     enableDialogs: Boolean,
     allowTranscriptMutation: Boolean,
+    enableToolDetailDialogs: Boolean? = null,
     userMessageColor: Color,
     aiMessageColor: Color,
     userTextColor: Color,
@@ -682,6 +685,7 @@ private fun MessageItem(
                         onDeleteMessage = onDeleteMessage,
                         index = index,
                         enableDialogs = enableDialogs,
+                        enableToolDetailDialogs = enableToolDetailDialogs,
                         onEditSummary = { summaryMessage ->
                             onSelectMessageToEdit?.invoke(index, summaryMessage, "summary")
                         }
@@ -713,6 +717,7 @@ private fun MessageItem(
                         onDeleteMessage = onDeleteMessage,
                         index = index,
                         enableDialogs = enableDialogs,
+                        enableToolDetailDialogs = enableToolDetailDialogs,
                         onRoleAvatarLongPress = onMentionRoleFromAvatar,
                         onEditSummary = { summaryMessage ->
                             onSelectMessageToEdit?.invoke(index, summaryMessage, "summary")

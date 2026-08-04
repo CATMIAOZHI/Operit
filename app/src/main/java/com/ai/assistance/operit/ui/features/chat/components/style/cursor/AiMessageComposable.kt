@@ -53,6 +53,7 @@ fun AiMessageComposable(
     overrideStream: Stream<String>? = null,
     heightMemory: ChatMessageHeightMemory? = null,
     enableDialogs: Boolean = true,  // 新增参数：是否启用弹窗功能，默认启用
+    enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
 ) {
     val context = LocalContext.current
     val preferencesManager = remember { UserPreferencesManager.getInstance(context) }
@@ -82,6 +83,7 @@ fun AiMessageComposable(
         initialThinkingExpanded,
         allowExpandedThinkingFullHeight,
         enableDialogs,
+        enableToolDetailDialogs,
         message.timestamp,
         persistedToolExecutions,
     ) {
@@ -91,6 +93,7 @@ fun AiMessageComposable(
             initialThinkingExpanded = initialThinkingExpanded,
             allowExpandedThinkingFullHeight = allowExpandedThinkingFullHeight,
             enableDialogs = enableDialogs,  // 传递弹窗启用状态
+            enableToolDetailDialogs = enableToolDetailDialogs,
             toolTimingScopeId = message.timestamp.toString(),
             persistedToolExecutions = persistedToolExecutions,
         )
