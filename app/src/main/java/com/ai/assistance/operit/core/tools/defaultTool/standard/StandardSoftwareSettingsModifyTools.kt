@@ -50,6 +50,7 @@ import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.FunctionConfigMapping
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.preferences.SpeechServicesPreferences
+import com.ai.assistance.operit.data.skill.SkillRepository
 import com.ai.assistance.operit.ui.features.startup.screens.PluginLoadingStateRegistry
 import com.ai.assistance.operit.ui.features.startup.screens.PluginStatus
 import kotlinx.coroutines.delay
@@ -220,6 +221,24 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                         packageLoadErrors = emptyMap()
                     ),
                 error = e.message ?: "Failed to list sandbox packages"
+            )
+        }
+    }
+
+    fun getSkillsDirectory(tool: AITool): ToolResult {
+        return try {
+            val path = SkillRepository.getInstance(context).getSkillsDirectoryPath()
+            ToolResult(
+                toolName = tool.name,
+                success = true,
+                result = StringResultData(path)
+            )
+        } catch (e: Exception) {
+            ToolResult(
+                toolName = tool.name,
+                success = false,
+                result = StringResultData(""),
+                error = e.message ?: "Failed to get skills directory"
             )
         }
     }

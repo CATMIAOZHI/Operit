@@ -568,6 +568,17 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     )
 
     handler.registerTool(
+            name = "get_skills_directory",
+            descriptionGenerator = { _ ->
+                "Get the app-internal skills directory path where skills are stored"
+            },
+            executor = { tool ->
+                val softwareSettingsTools = ToolGetter.getSoftwareSettingsModifyTools(context)
+                softwareSettingsTools.getSkillsDirectory(tool)
+            }
+    )
+
+    handler.registerTool(
             name = "set_sandbox_package_enabled",
             descriptionGenerator = { tool ->
                 val packageName = tool.parameters.find { it.name == "package_name" }?.value ?: ""
