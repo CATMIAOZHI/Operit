@@ -186,10 +186,20 @@ internal fun resolveLiveToolExecution(
     val live = liveExecution ?: return null
     val persistedCallId = persistedExecution?.callId?.takeIf { it.isNotBlank() }
     if (persistedCallId == null) {
-        return live.takeIf { allowUnmatchedLiveExecution }
+        return live.takeIf { allowUnmatchedLiveExecution || it.state.isStillInFlight() }
     }
     return live.takeIf { it.callId == persistedCallId }
 }
+
+/**
+ * 非终止状态只存在于该调用正在当前轮次中真实处理的过程。聊天切换后消息按静态内容重载
+ * （无流、最终结果未写入内容），此时仍需继续展示审核横幅与执行耗时，因此运行中的调用
+ * 允许与持久化结果无关地直接匹配；终止状态仍要求 callId 一致，避免误配其他变体的快照。
+ */
+private fun ToolExecutionState.isStillInFlight(): Boolean =
+    this == ToolExecutionState.WAITING_AUTHORIZATION ||
+        this == ToolExecutionState.WAITING_EXECUTION ||
+        this == ToolExecutionState.RUNNING
 
 internal fun shouldAllowUnmatchedTaskExecution(
     requestedToolName: String?,

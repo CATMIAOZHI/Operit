@@ -314,6 +314,59 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
+    fun reloadedInFlightCall_keepsLiveTimingWithoutPersistedResult() {
+        val running =
+            ToolExecutionTimingSnapshot(
+                callId = "terminal-call",
+                toolName = "super_admin:terminal",
+                state = ToolExecutionState.RUNNING,
+                startedAtElapsedMs = 1_000L,
+            )
+
+        // 静态重载（聊天切换后无流、无最终结果）时，运行中的调用仍应展示审核横幅与耗时。
+        assertSame(
+            running,
+            resolveLiveToolExecution(
+                liveExecution = running,
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = false,
+            ),
+        )
+        assertEquals(
+            running.copy(state = ToolExecutionState.WAITING_EXECUTION),
+            resolveLiveToolExecution(
+                liveExecution = running.copy(state = ToolExecutionState.WAITING_EXECUTION),
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = false,
+            ),
+        )
+        assertEquals(
+            running.copy(state = ToolExecutionState.WAITING_AUTHORIZATION),
+            resolveLiveToolExecution(
+                liveExecution = running.copy(state = ToolExecutionState.WAITING_AUTHORIZATION),
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = false,
+            ),
+        )
+
+        // 终止状态仍不允许无匹配快照，防止误配其他变体。
+        assertNull(
+            resolveLiveToolExecution(
+                liveExecution = running.copy(state = ToolExecutionState.COMPLETED),
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = false,
+            )
+        )
+        assertNull(
+            resolveLiveToolExecution(
+                liveExecution = running.copy(state = ToolExecutionState.NOT_EXECUTED),
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = false,
+            )
+        )
+    }
+
+    @Test
     fun invalidatedToolReservation_keepsLaterExecutionAlignedWithRenderedOrdinal() = runBlocking {
         val nextInvocationIndex = AtomicInteger(0)
         val invalidatedContent =
