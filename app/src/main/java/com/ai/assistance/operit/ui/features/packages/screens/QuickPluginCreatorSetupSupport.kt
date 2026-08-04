@@ -1,7 +1,6 @@
 package com.ai.assistance.operit.ui.features.packages.screens
 
 import android.content.Context
-import android.os.Environment
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.core.tools.AIToolHandler
@@ -11,6 +10,7 @@ import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.OperitManagedPaths
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -19,7 +19,7 @@ import java.net.URL
 
 private const val OPERIT_EDITOR_PACKAGE_NAME = "operit_editor"
 private const val SANDBOX_PACKAGE_DEV_SCRIPT_RELATIVE_PATH =
-    "Download/Operit/skills/SandboxPackage_DEV/scripts/install_or_update.js"
+    "SandboxPackage_DEV/scripts/install_or_update.js"
 
 internal fun runQuickPluginCreatorSetup(
     context: Context,
@@ -27,7 +27,7 @@ internal fun runQuickPluginCreatorSetup(
     toolHandler: AIToolHandler
 ): ToolResult {
     return try {
-        val scriptFile = downloadSandboxPackageDevInstallScript()
+        val scriptFile = downloadSandboxPackageDevInstallScript(context)
         val enableMessage = packageManager.enablePackage(OPERIT_EDITOR_PACKAGE_NAME)
         if (enableMessage.startsWith("Package not found", ignoreCase = true)) {
             return ToolResult(
@@ -77,9 +77,8 @@ internal fun runQuickPluginCreatorSetup(
     }
 }
 
-private fun downloadSandboxPackageDevInstallScript(): File {
-    val rootDir = Environment.getExternalStorageDirectory()
-    val scriptFile = File(rootDir, SANDBOX_PACKAGE_DEV_SCRIPT_RELATIVE_PATH)
+private fun downloadSandboxPackageDevInstallScript(context: Context): File {
+    val scriptFile = File(OperitManagedPaths(context).internalSkills, SANDBOX_PACKAGE_DEV_SCRIPT_RELATIVE_PATH)
     scriptFile.parentFile?.mkdirs()
 
     val connection =

@@ -959,6 +959,9 @@ fun getJsToolsDefinition(): String {
                 listSandboxPackages: () => {
                     return toolCall("list_sandbox_packages", {});
                 },
+                getSkillsDirectory: () => {
+                    return toolCall("get_skills_directory", {});
+                },
                 setSandboxPackageEnabled: (packageName, enabled) => {
                     const params = { package_name: String(packageName ?? "") };
                     params.enabled = !!enabled;
