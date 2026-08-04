@@ -5,6 +5,7 @@ import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.mcp.MCPManager
 import com.ai.assistance.operit.core.tools.mcp.MCPToolExecutor
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
+import com.ai.assistance.operit.data.mcp.MCPLocalServer
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolInvocation
 import com.ai.assistance.operit.data.model.ToolParameter
@@ -340,12 +341,26 @@ class AIToolHandler private constructor(private val context: Context) {
                     val isMcpAvailable =
                             packageManager.getAvailableServerPackages().containsKey(packageName)
                     if (isMcpAvailable && !isMcpServiceActive(packageName)) {
-                        AppLogger.d(
-                                TAG,
-                                "MCP service '$packageName' is inactive while resolving $toolName, auto-reactivating package"
-                        )
-                        packageManager.usePackage(packageName)
-                        executor = availableTools[toolName]
+                        // Phase 4 guard: never auto-reactivate an MCP server that is DISABLED in
+                        // the MCP config (e.g. a legacy-only server stopped after the legacy read
+                        // switch was turned off, which stopAndUnregisterMcpServer marks disabled).
+                        // runCatching keeps the previous behavior if the lookup fails.
+                        val isDisabledInConfig = runCatching {
+                            !MCPLocalServer.getInstance(context).isServerEnabled(packageName)
+                        }.getOrDefault(false)
+                        if (isDisabledInConfig) {
+                            AppLogger.d(
+                                    TAG,
+                                    "MCP server '$packageName' is disabled in config, skipping auto-reactivation for $toolName"
+                            )
+                        } else {
+                            AppLogger.d(
+                                    TAG,
+                                    "MCP service '$packageName' is inactive while resolving $toolName, auto-reactivating package"
+                            )
+                            packageManager.usePackage(packageName)
+                            executor = availableTools[toolName]
+                        }
                     }
                 } catch (e: Exception) {
                     AppLogger.e(
