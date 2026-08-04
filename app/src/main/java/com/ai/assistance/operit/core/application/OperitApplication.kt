@@ -45,6 +45,7 @@ import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.ExternalHttpApiPreferences
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.preferences.WakeWordPreferences
+import com.ai.assistance.operit.data.preferences.LegacyStorageInitializer
 import com.ai.assistance.operit.data.preferences.initAndroidPermissionPreferences
 import com.ai.assistance.operit.data.preferences.initUserPreferencesManager
 import com.ai.assistance.operit.data.preferences.preferencesManager
@@ -276,6 +277,17 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             val characterStartTime = System.currentTimeMillis()
             CharacterCardManager.getInstance(applicationContext).initializeIfNeeded()
             AppLogger.d(TAG, "【启动计时】功能提示词管理器初始化完成（异步） - ${System.currentTimeMillis() - characterStartTime}ms")
+        }
+
+        // 初始化旧版 Download 存储兼容开关默认值（一次性，幂等）
+        applicationScope.launch {
+            val legacyStartTime = System.currentTimeMillis()
+            try {
+                LegacyStorageInitializer.initializeIfNeeded(applicationContext)
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Legacy storage initializer failed", e)
+            }
+            AppLogger.d(TAG, "【启动计时】旧版存储兼容开关初始化完成（异步） - ${System.currentTimeMillis() - legacyStartTime}ms")
         }
 
         // 初始化当前活跃角色目标的自定义表情
