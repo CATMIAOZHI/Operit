@@ -657,10 +657,14 @@ internal fun parseFileDiffResult(
     if (!isSuccess || toolName !in FILE_EDIT_TOOL_NAMES) return null
     if (!result.contains("<file-diff")) return null
 
-    val fileDiffBlock = Regex("""<file-diff\b[^>]*>[\s\S]*?</file-diff\s*>""")
-        .find(result)
-        ?.value
-        ?: return null
+    // 容忍尾部截断：结果文本超过持久化上限（MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS）
+    // 被截断时，截断点可能落在 </file-diff> 或 CDATA 闭合符内。此时仍渲染可用的
+    // 部分 diff，而不是回退为普通工具结果展示。
+    val fileDiffBlock =
+        Regex("""<file-diff\b[^>]*>[\s\S]*?(?:</file-diff\s*>|$)""")
+            .find(result)
+            ?.value
+            ?: return null
     val path = Regex("""<file-diff\s+[^>]*path="([^"]+)"""")
         .find(fileDiffBlock)
         ?.groupValues
@@ -672,11 +676,12 @@ internal fun parseFileDiffResult(
         ?.groupValues
         ?.getOrNull(1)
         .orEmpty()
-    val diffContent = Regex("""<!\[CDATA\[([\s\S]*?)]]>""")
-        .find(fileDiffBlock)
-        ?.groupValues
-        ?.getOrNull(1)
-        ?.trim()
+    val diffContent =
+        Regex("""<!\[CDATA\[([\s\S]*?)(?:]]>|$)""")
+            .find(fileDiffBlock)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
         ?: return null
     return FileDiff(path = path, diffContent = diffContent, details = details)
 }

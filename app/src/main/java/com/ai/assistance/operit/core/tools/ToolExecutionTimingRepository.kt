@@ -93,8 +93,18 @@ object ToolExecutionTimingRepository {
                 durationMs = durationMs,
                 success = result.success,
                 toolName = result.toolName.ifBlank { it.toolName },
-                resultText = result.result.toString().take(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH),
-                errorText = result.error.orEmpty().take(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH),
+                // 与持久化工具结果消息的上限保持一致：流式窗口内（工具边界快照使
+                // persisted 结果不可用）UI 依赖 live 快照展示结果，若按更小的
+                // MAX_TEXT_RESULT_LENGTH 截断，较大的 <file-diff> 块会被切断，
+                // 导致 diff 解析失败而回退为普通工具结果展示。
+                resultText =
+                    result.result
+                        .toString()
+                        .take(ToolExecutionLimits.MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS),
+                errorText =
+                    result.error
+                        .orEmpty()
+                        .take(ToolExecutionLimits.MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS),
             )
         }
     }
