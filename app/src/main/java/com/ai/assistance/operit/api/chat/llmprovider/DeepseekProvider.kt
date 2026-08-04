@@ -452,12 +452,18 @@ class DeepseekProvider(
             return null
         }
 
-        val efforts = listOf("high", "high", "max", "max", "max")
-        val qualityIndex = qualityLevel.coerceIn(
-            ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
-            ApiPreferences.MAX_THINKING_QUALITY_LEVEL
-        ) - 1
-        return efforts[qualityIndex]
+        // DeepSeek 官方文档枚举为 low/high/max，medium/xhigh 为兼容值（服务端会把 medium 映射为 high、
+        // xhigh 映射为 high/max）。medium 显式归一化为 high，与官方映射一致，避免发送未收录值。
+        return normalizeDeepseekEffort(ApiPreferences.thinkingQualityEffort(qualityLevel))
+    }
+
+    companion object {
+        /**
+         * 将档位映射出的 reasoning_effort 归一化到 DeepSeek 官方接受的集合：
+         * medium 映射为 high（官方服务端对 medium 的处理一致），其余值透传。
+         */
+        fun normalizeDeepseekEffort(effort: String): String =
+            if (effort == "medium") "high" else effort
     }
 
     override suspend fun sendMessage(

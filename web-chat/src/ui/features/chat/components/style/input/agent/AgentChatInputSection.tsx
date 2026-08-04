@@ -21,7 +21,8 @@ import {
 } from '../../../../util/chatIcons';
 import {
   clampThinkingQualityLevel,
-  MAX_THINKING_QUALITY_LEVEL
+  MAX_THINKING_QUALITY_LEVEL,
+  thinkingQualityLevelLabel
 } from '../../../../util/thinkingQuality';
 import { InputOverlayPopup } from '../common/InputOverlayPopup';
 import { CharacterCardModelBindingSwitchConfirmDialog } from '../common/CharacterCardModelBindingSwitchConfirmDialog';
@@ -63,7 +64,7 @@ const INFO_COPY = {
   },
   thinkingQuality: {
     title: '思考程度',
-    description: '仅在思考模式下生效；GPT-5.6 系列使用 5 档，其它模型保持原有 4 档。'
+    description: '仅在思考模式下生效；思考程度分为 5 档，档位越高思考越深。'
   },
   maxMode: {
     title: 'Max模式',
@@ -553,7 +554,7 @@ function AgentThinkingSettingsItem({
               >
                 {Array.from({ length: maxQualityLevel }, (_, index) => index + 1).map((level) => (
                   <option key={level} value={level}>
-                    {level}
+                    {thinkingQualityLevelLabel(level)}
                   </option>
                 ))}
               </select>

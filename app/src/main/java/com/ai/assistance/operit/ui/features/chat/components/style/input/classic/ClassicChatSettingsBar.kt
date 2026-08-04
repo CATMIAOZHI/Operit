@@ -89,6 +89,7 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.I
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuToggleDefinition
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuTogglePluginRegistry
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuToggleSlots
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabel
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardMemoryBindingSwitchConfirmDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardModelBindingSwitchConfirmDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ToolPromptManagerDialog
@@ -97,6 +98,7 @@ import java.text.DecimalFormat
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.ai.assistance.operit.R
+import kotlin.math.roundToInt
 
 @Composable
 fun ClassicChatSettingsBar(
@@ -929,7 +931,8 @@ private fun SettingSliderItem(
     valueRange: ClosedFloatingPointRange<Float>,
     steps: Int,
     decimalFormatPattern: String,
-    unitText: String? = null
+    unitText: String? = null,
+    valueFormatter: ((Float) -> String)? = null
 ) {
     var sliderValue by remember { mutableStateOf(value) }
     val df = remember(decimalFormatPattern) { DecimalFormat(decimalFormatPattern) }
@@ -967,52 +970,63 @@ private fun SettingSliderItem(
                 modifier = Modifier.padding(horizontal = 8.dp)
             )
             Spacer(modifier = Modifier.weight(1f))
-            BasicTextField(
-                value = textValue,
-                onValueChange = { newText ->
-                    textValue = newText
-                    newText.toFloatOrNull()?.let {
-                        sliderValue = it.coerceIn(valueRange)
-                    }
-                },
-                modifier = Modifier
-                    .width(50.dp)
-                    .background(
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        RoundedCornerShape(4.dp)
-                    )
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                textStyle = TextStyle(
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold,
+            // valueFormatter 与 unitText 互斥：使用文字标签模式时不显示数字输入框和单位
+            if (valueFormatter != null) {
+                Text(
+                    text = valueFormatter(sliderValue),
                     fontSize = 13.sp,
-                    textAlign = TextAlign.Center
-                ),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Number,
-                    imeAction = ImeAction.Done
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = {
-                        val finalValue = textValue.toFloatOrNull()?.coerceIn(valueRange) ?: sliderValue
-                        onValueChange(finalValue)
-                        textValue = df.format(finalValue)
-                        focusManager.clearFocus()
-                    }
-                ),
-                singleLine = true
-            )
-
-            // Here is the fix for alignment
-            Box(modifier = Modifier.width(24.dp), contentAlignment = Alignment.CenterStart) {
-                if (unitText != null) {
-                    Text(
-                        text = unitText,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+            } else {
+                BasicTextField(
+                    value = textValue,
+                    onValueChange = { newText ->
+                        textValue = newText
+                        newText.toFloatOrNull()?.let {
+                            sliderValue = it.coerceIn(valueRange)
+                        }
+                    },
+                    modifier = Modifier
+                        .width(50.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            RoundedCornerShape(4.dp)
+                        )
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    textStyle = TextStyle(
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(start = 2.dp)
-                    )
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
+                    ),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            val finalValue = textValue.toFloatOrNull()?.coerceIn(valueRange) ?: sliderValue
+                            onValueChange(finalValue)
+                            textValue = df.format(finalValue)
+                            focusManager.clearFocus()
+                        }
+                    ),
+                    singleLine = true
+                )
+
+                // Here is the fix for alignment
+                Box(modifier = Modifier.width(24.dp), contentAlignment = Alignment.CenterStart) {
+                    if (unitText != null) {
+                        Text(
+                            text = unitText,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 2.dp)
+                        )
+                    }
                 }
             }
         }
@@ -1021,7 +1035,9 @@ private fun SettingSliderItem(
             value = sliderValue,
             onValueChange = {
                 sliderValue = it
-                textValue = df.format(it)
+                if (valueFormatter == null) {
+                    textValue = df.format(it)
+                }
             },
             onValueChangeFinished = { onValueChange(sliderValue) },
             valueRange = valueRange,
@@ -1450,7 +1466,15 @@ private fun ThinkingSettingsItem(
                                     maxThinkingQualityLevel.toFloat(),
                             steps = (maxThinkingQualityLevel -
                                 ApiPreferences.MIN_THINKING_QUALITY_LEVEL - 1).coerceAtLeast(0),
-                            decimalFormatPattern = "0"
+                            decimalFormatPattern = "0",
+                            valueFormatter = { value ->
+                                thinkingQualityLevelLabel(
+                                    value.roundToInt().coerceIn(
+                                        ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
+                                        maxThinkingQualityLevel
+                                    )
+                                )
+                            }
                         )
                     }
                 }
