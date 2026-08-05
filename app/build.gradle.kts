@@ -395,6 +395,15 @@ dependencies {
     androidTestImplementation(libs.room.testing)
     androidTestImplementation(platform(libs.compose.bom))
 
+    // JVM 上的真实 Room 迁移/DAO 测试：Android Room 2.8 生成的实现基于
+    // androidx.sqlite KMP 接口，用 sqlite-jdbc 实现纯 JVM 驱动（见测试支撑类
+    // JdbcSQLiteDriver），仅在单元测试使用。
+    testImplementation("org.xerial:sqlite-jdbc:3.46.1.3")
+
+    // 入口级恢复测试：RawSnapshotBackupManager 内部使用 Dispatchers.Main 汇报
+    // 进度，JVM 测试用 setMain 安装测试主调度器。
+    testImplementation(libs.coroutines.test)
+
     // Apache POI - for Document processing (DOC, DOCX, etc.)
     implementation(libs.poi)
     implementation(libs.poi.ooxml)

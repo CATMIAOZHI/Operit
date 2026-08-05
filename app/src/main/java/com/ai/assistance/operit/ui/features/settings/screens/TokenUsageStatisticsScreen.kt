@@ -25,6 +25,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.collects.DefaultModelPricingCollect
 import com.ai.assistance.operit.data.collects.PricingCurrency
@@ -583,6 +584,9 @@ fun TokenUsageStatisticsScreen(
     }
 
     if (showResetModelDialog && resetModel.isNotEmpty()) {
+        // 重组安全位置预取失败文案：协程/Toast 分支不得在 Composable 中
+        // 调用 context.getString（触发 LocalContextGetResourceValueCall）。
+        val resetFailedMessage = stringResource(id = R.string.settings_token_stats_reset_failed)
         AlertDialog(
             onDismissRequest = { showResetModelDialog = false },
             title = {
@@ -595,8 +599,18 @@ fun TokenUsageStatisticsScreen(
                 TextButton(
                     onClick = {
                         scope.launch {
-                            apiPreferences.resetProviderModelTokenCounts(resetModel)
-                            providerModelRequestCounts.remove(resetModel)
+                            val succeeded =
+                                apiPreferences.resetProviderModelTokenCounts(resetModel)
+                            if (succeeded) {
+                                providerModelRequestCounts.remove(resetModel)
+                            } else {
+                                // 新账本清理失败：不伪装成功、不清本地展示
+                                Toast.makeText(
+                                    context,
+                                    resetFailedMessage,
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         }
                         showResetModelDialog = false
                     },
@@ -616,6 +630,8 @@ fun TokenUsageStatisticsScreen(
     }
 
     if (showResetDialog) {
+        // 重组安全位置预取失败文案（同 showResetModelDialog 分支）
+        val resetFailedMessage = stringResource(id = R.string.settings_token_stats_reset_failed)
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
             title = {
@@ -628,8 +644,17 @@ fun TokenUsageStatisticsScreen(
                 TextButton(
                     onClick = {
                         scope.launch {
-                            apiPreferences.resetAllProviderModelTokenCounts()
-                            providerModelRequestCounts.clear()
+                            val succeeded = apiPreferences.resetAllProviderModelTokenCounts()
+                            if (succeeded) {
+                                providerModelRequestCounts.clear()
+                            } else {
+                                // 新账本清理失败：不伪装成功、不清本地展示
+                                Toast.makeText(
+                                    context,
+                                    resetFailedMessage,
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         }
                         showResetDialog = false
                     },

@@ -249,6 +249,13 @@ class MainActivity : ComponentActivity() {
                 )
                 return
             }
+            MigrationStatePolicy.StartupAction.COMPLETE_RESTORE_REGISTRATION -> {
+                // 原始快照恢复的目录替换已成功完成、受控补导 generation 尚未登记：
+                // 自动补登记（不重新替换目录）后退出进程，下一个冷启动正常初始化
+                // 并消费 marker 完成补导。
+                completePendingRestoreRegistration()
+                return
+            }
             MigrationStatePolicy.StartupAction.SHOW_RECOVERY -> {
                 // The migration was interrupted and the data directory may be partially
                 // replaced, or the state file is corrupt. Do NOT initialize normally; show the
@@ -342,6 +349,44 @@ class MainActivity : ComponentActivity() {
         showMigrationInProgressSurface()
     }
 
+    /**
+     * Complete a pending raw-snapshot restore registration on cold start.
+     *
+     * Runs BEFORE [OperitApplication.initializeMainApplication], so no background writer can
+     * race with the registration. The directories were already replaced by the previous
+     * process; this only registers a fresh generation and completes the state machine
+     * (RESTORE_REPLACED -> IDLE/COMPLETED), then exits the process so the next cold start
+     * initializes normally and consumes the marker.
+     *
+     * On failure the process is NOT exited (that would create a cold-start retry loop); the
+     * user sees an error surface and can relaunch to retry, or exit manually.
+     */
+    private fun completePendingRestoreRegistration() {
+        setContent {
+            OperitTheme {
+                MigrationInProgressScreen()
+            }
+        }
+        GlobalScope.launch(Dispatchers.IO + NonCancellable, start = CoroutineStart.UNDISPATCHED) {
+            try {
+                RawSnapshotBackupManager.completePendingRestoreRegistration(applicationContext)
+                AppLogger.i(TAG, "Restore registration completed on cold start")
+                exitProcess(0)
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Restore registration completion failed: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    showMigrationStartupErrorSurface(
+                        message = getString(
+                            R.string.backup_raw_snapshot_restore_registration_failed,
+                            e.message ?: e.javaClass.name
+                        ),
+                        pendingResetRequired = false
+                    )
+                }
+            }
+        }
+    }
+
     private fun showMigrationInProgressSurface() {
         // Show a minimal migration surface so the user sees something is happening instead of a
         // black screen while the process-owned migration continues across Activity recreation.
@@ -378,7 +423,10 @@ class MainActivity : ComponentActivity() {
                 MigrationStateStore.State.REPLACING,
                 MigrationStateStore.State.COMPLETED,
                 MigrationStateStore.State.FAILED,
-                MigrationStateStore.State.NEEDS_RECOVERY -> exitProcess(0)
+                MigrationStateStore.State.NEEDS_RECOVERY,
+                // 官方迁移流程不会写入该状态；防御性退出，让下一个冷启动
+                // 走自动补登记路径。
+                MigrationStateStore.State.RESTORE_REPLACED -> exitProcess(0)
             }
         }
     }
