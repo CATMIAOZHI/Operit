@@ -3597,6 +3597,7 @@
     <string name="settings_reset_model_confirmation">Reset Model Confirmation</string>
     <string name="settings_reset_model_warning">This will clear token and request count statistics for %1$s. This action cannot be undone.</string>
     <string name="settings_reset">Reset</string>
+    <string name="settings_token_stats_reset_failed">Failed to reset statistics. Please try again.</string>
     <string name="settings_edit_pricing">Edit Pricing</string>
     <string name="settings_input_tokens">Input Tokens</string>
     <string name="settings_output_tokens">Output Tokens</string>
@@ -5322,6 +5323,7 @@
     <string name="backup_raw_snapshot_restart_title">App restart required</string>
     <string name="backup_raw_snapshot_restart_message">File snapshot restored. To avoid issues caused by old caches/connections, please restart the app now.</string>
     <string name="backup_raw_snapshot_restart_now">Restart now</string>
+    <string name="backup_raw_snapshot_restore_registration_failed">Restore registration failed: directories were replaced but the re-import marker was not registered. Please close and reopen the app to retry automatically: %1$s</string>
     <string name="backup_raw_snapshot_restart_later">Later</string>
     <string name="backup_official_operit_migration_action">Migrate from official Operit</string>
     <string name="backup_official_operit_migration_desc">Import an official Operit file snapshot once. Operit Ry backs up its current data first. After confirmation the app exits immediately and completes the migration in a safe mode on the next launch; this action is hidden after success.</string>

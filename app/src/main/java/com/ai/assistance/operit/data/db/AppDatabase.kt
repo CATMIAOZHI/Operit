@@ -5,17 +5,26 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
+import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.execSQL
 import com.ai.assistance.operit.data.dao.ChatDao
 import com.ai.assistance.operit.data.dao.ChatFolderDao
 import com.ai.assistance.operit.data.dao.MessageDao
 import com.ai.assistance.operit.data.dao.MessageVariantDao
 import com.ai.assistance.operit.data.dao.SubagentRunDao
+import com.ai.assistance.operit.data.dao.TokenStatsDao
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.MessageVariantEntity
 import com.ai.assistance.operit.data.model.SubagentRunEntity
+import com.ai.assistance.operit.data.model.TokenStatBaselineEntity
+import com.ai.assistance.operit.data.model.TokenStatDisplayModelEntity
+import com.ai.assistance.operit.data.model.TokenStatEventEntity
+import com.ai.assistance.operit.data.model.TokenStatIdentityEntity
+import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
+import com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity
 import com.ai.assistance.operit.util.ChatMarkupRegex
 
 /** 应用数据库，包含聊天表和消息表 */
@@ -26,8 +35,14 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         MessageEntity::class,
         MessageVariantEntity::class,
         SubagentRunEntity::class,
+        TokenStatEventEntity::class,
+        TokenStatIdentityEntity::class,
+        TokenStatDisplayModelEntity::class,
+        TokenStatPriceOverrideEntity::class,
+        TokenStatBaselineEntity::class,
+        TokenStatRestoreGenerationEntity::class,
     ],
-    version = 28,
+    version = 29,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -43,6 +58,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun messageVariantDao(): MessageVariantDao
 
     abstract fun subagentRunDao(): SubagentRunDao
+
+    /** 获取统计账本DAO */
+    abstract fun tokenStatsDao(): TokenStatsDao
 
     companion object {
         @Volatile
@@ -524,6 +542,186 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        /**
+         * v28 → v29：新增逐请求统计账本（阶段 1）。
+         *
+         * 只新增 5 张表与索引，不改动任何既有表；所有语句均可重入
+         * （CREATE TABLE/INDEX IF NOT EXISTS），便于 Room 打开时校验。
+         * 事件/价格/别名/baseline 全部位于 app_database 同一文件中，
+         * 现有整库文件级备份/恢复自动覆盖，无需逐表接线。
+         *
+         * 同时重写两个 migrate 变体：Room 2.8 在提供 SQLiteDriver 时调用
+         * migrate(SQLiteConnection)，未提供驱动（生产默认）时调用
+         * migrate(SupportSQLiteDatabase)；两条路径执行同一组 SQL。
+         */
+        internal val MIGRATION_28_29 =
+            object : Migration(28, 29) {
+
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    runMigration { sql -> db.execSQL(sql) }
+                    db.query("PRAGMA foreign_key_check").use { cursor ->
+                        check(!cursor.moveToFirst()) {
+                            "Foreign key violations after v28 to v29 migration"
+                        }
+                    }
+                }
+
+                override fun migrate(connection: SQLiteConnection) {
+                    runMigration { sql -> connection.execSQL(sql) }
+                    connection.prepare("PRAGMA foreign_key_check").use { statement ->
+                        check(!statement.step()) {
+                            "Foreign key violations after v28 to v29 migration"
+                        }
+                    }
+                }
+
+                private fun runMigration(execSql: (String) -> Unit) {
+                    execSql(
+                        """
+                        CREATE TABLE IF NOT EXISTS `token_stat_identities` (
+                            `identityId` TEXT NOT NULL,
+                            `configId` TEXT NOT NULL,
+                            `provider` TEXT NOT NULL,
+                            `model` TEXT NOT NULL,
+                            `displayModelId` TEXT NOT NULL,
+                            PRIMARY KEY(`identityId`)
+                        )
+                        """.trimIndent()
+                    )
+                    execSql(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                            "`index_token_stat_identities_configId_provider_model` " +
+                            "ON `token_stat_identities` (`configId`, `provider`, `model`)"
+                    )
+                    execSql(
+                        "CREATE INDEX IF NOT EXISTS `index_token_stat_identities_displayModelId` " +
+                            "ON `token_stat_identities` (`displayModelId`)"
+                    )
+
+                    execSql(
+                        """
+                        CREATE TABLE IF NOT EXISTS `token_stat_display_models` (
+                            `displayModelId` TEXT NOT NULL,
+                            `normalizedModel` TEXT NOT NULL,
+                            `displayName` TEXT NOT NULL,
+                            PRIMARY KEY(`displayModelId`)
+                        )
+                        """.trimIndent()
+                    )
+                    execSql(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                            "`index_token_stat_display_models_normalizedModel` " +
+                            "ON `token_stat_display_models` (`normalizedModel`)"
+                    )
+
+                    execSql(
+                        """
+                        CREATE TABLE IF NOT EXISTS `token_stat_price_overrides` (
+                            `rowId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            `scope` TEXT NOT NULL,
+                            `provider` TEXT NOT NULL,
+                            `model` TEXT NOT NULL,
+                            `configId` TEXT NOT NULL,
+                            `billingMode` TEXT NOT NULL,
+                            `pricingCurrency` TEXT NOT NULL,
+                            `inputPricePerMillion` REAL,
+                            `cachedInputPricePerMillion` REAL,
+                            `cacheWritePricePerMillion` REAL,
+                            `outputPricePerMillion` REAL,
+                            `pricePerRequest` REAL
+                        )
+                        """.trimIndent()
+                    )
+                    execSql(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                            "`index_token_stat_price_overrides_scope_provider_model_configId` " +
+                            "ON `token_stat_price_overrides` (`scope`, `provider`, `model`, `configId`)"
+                    )
+
+                    execSql(
+                        """
+                        CREATE TABLE IF NOT EXISTS `token_stat_events` (
+                            `eventId` TEXT NOT NULL,
+                            `statIdentityId` TEXT NOT NULL,
+                            `category` TEXT NOT NULL,
+                            `status` TEXT NOT NULL,
+                            `startedAtMs` INTEGER NOT NULL,
+                            `endedAtMs` INTEGER NOT NULL,
+                            `firstTokenAtMs` INTEGER,
+                            `uncachedInputTokens` INTEGER,
+                            `cachedInputTokens` INTEGER,
+                            `cacheWriteTokens` INTEGER,
+                            `outputTokens` INTEGER,
+                            `reasoningTokens` INTEGER,
+                            `reasoningIncludedInOutput` INTEGER,
+                            `billingMode` TEXT NOT NULL,
+                            `pricingCurrency` TEXT NOT NULL,
+                            `inputPricePerMillion` REAL,
+                            `cachedInputPricePerMillion` REAL,
+                            `cacheWritePricePerMillion` REAL,
+                            `outputPricePerMillion` REAL,
+                            `pricePerRequest` REAL,
+                            `pricingSource` TEXT NOT NULL,
+                            `costInPricingCurrency` REAL,
+                            PRIMARY KEY(`eventId`),
+                            FOREIGN KEY(`statIdentityId`)
+                                REFERENCES `token_stat_identities`(`identityId`)
+                                ON UPDATE NO ACTION ON DELETE CASCADE
+                        )
+                        """.trimIndent()
+                    )
+                    execSql(
+                        "CREATE INDEX IF NOT EXISTS " +
+                            "`index_token_stat_events_statIdentityId_startedAtMs` " +
+                            "ON `token_stat_events` (`statIdentityId`, `startedAtMs`)"
+                    )
+                    execSql(
+                        "CREATE INDEX IF NOT EXISTS `index_token_stat_events_startedAtMs` " +
+                            "ON `token_stat_events` (`startedAtMs`)"
+                    )
+                    execSql(
+                        "CREATE INDEX IF NOT EXISTS `index_token_stat_events_category_startedAtMs` " +
+                            "ON `token_stat_events` (`category`, `startedAtMs`)"
+                    )
+
+                    execSql(
+                        """
+                        CREATE TABLE IF NOT EXISTS `token_stat_baselines` (
+                            `identityId` TEXT NOT NULL,
+                            `inputTokens` INTEGER NOT NULL,
+                            `cachedInputTokens` INTEGER NOT NULL,
+                            `outputTokens` INTEGER NOT NULL,
+                            `requestCount` INTEGER NOT NULL,
+                            `pricingCurrency` TEXT NOT NULL,
+                            `costInPricingCurrency` REAL,
+                            `isEstimated` INTEGER NOT NULL,
+                            `fingerprint` TEXT NOT NULL,
+                            `importedAtMs` INTEGER NOT NULL,
+                            `frozenBillingMode` TEXT NOT NULL,
+                            `frozenInputPricePerMillion` REAL,
+                            `frozenCachedInputPricePerMillion` REAL,
+                            `frozenOutputPricePerMillion` REAL,
+                            `frozenPricePerRequest` REAL,
+                            PRIMARY KEY(`identityId`),
+                            FOREIGN KEY(`identityId`)
+                                REFERENCES `token_stat_identities`(`identityId`)
+                                ON UPDATE NO ACTION ON DELETE CASCADE
+                        )
+                        """.trimIndent()
+                    )
+
+                    execSql(
+                        """
+                        CREATE TABLE IF NOT EXISTS `token_stat_restore_generations` (
+                            `generation` TEXT NOT NULL,
+                            `appliedAtMs` INTEGER NOT NULL,
+                            PRIMARY KEY(`generation`)
+                        )
+                        """.trimIndent()
+                    )
+                }
+            }
+
         private val finalTrueAttributeRegex =
             Regex("""\bfinal\s*=\s*["']true["']""", RegexOption.IGNORE_CASE)
 
@@ -656,6 +854,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_25_26,
                                 MIGRATION_26_27,
                                 MIGRATION_27_28,
+                                MIGRATION_28_29,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

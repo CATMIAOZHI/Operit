@@ -17,6 +17,7 @@ import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -210,6 +211,8 @@ class ApiPreferences private constructor(private val context: Context) {
         // API 配置默认值
         const val DEFAULT_API_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
         const val DEFAULT_MODEL_NAME = "deepseek-v4-flash"
+
+        private const val TAG = "ApiPreferences"
     }
 
     @Serializable
@@ -646,8 +649,13 @@ class ApiPreferences private constructor(private val context: Context) {
         }
     }
 
-    // 重置所有供应商:模型的token计数
-    suspend fun resetAllProviderModelTokenCounts() {
+    /**
+     * 重置所有供应商:模型的token计数，并同步清空新统计账本（事件 + baseline）。
+     * @return true = 旧计数与新账本均清零成功；false = 旧计数已清零但新账本清理失败
+     * （已记录错误日志，调用方可据此提示用户重试，不假装成功）。
+     * 协程取消（CancellationException）不在此吞掉，向上传播。
+     */
+    suspend fun resetAllProviderModelTokenCounts(): Boolean {
         context.apiDataStore.edit { preferences ->
             val keysToRemove = mutableListOf<Preferences.Key<*>>()
             preferences.asMap().forEach { (key, _) ->
@@ -660,10 +668,26 @@ class ApiPreferences private constructor(private val context: Context) {
                 preferences.remove(key)
             }
         }
+        return try {
+            com.ai.assistance.operit.data.stats.TokenStatsResetCoordinator
+                .resetAllStatistics(context)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "重置全部统计：新账本清理失败", e)
+            false
+        }
     }
 
-    // 重置指定供应商:模型的token计数
-    suspend fun resetProviderModelTokenCounts(providerModel: String) {
+    /**
+     * 重置指定供应商:模型的token计数，并同步清空该模型在新账本中的事件与 baseline
+     * （所有配置实例身份，见 TokenStatsResetCoordinator）。
+     * @return true = 旧计数与新账本均清零成功；false = 旧计数已清零但新账本清理失败
+     * （已记录错误日志，调用方可据此提示用户重试，不假装成功）。
+     * 协程取消（CancellationException）不在此吞掉，向上传播。
+     */
+    suspend fun resetProviderModelTokenCounts(providerModel: String): Boolean {
         context.apiDataStore.edit { preferences ->
             removeTokenCountKeys(
                     preferences,
@@ -676,6 +700,27 @@ class ApiPreferences private constructor(private val context: Context) {
             preferences[getTokenOutputKey(providerModel)] = 0L
             preferences[getRequestCountKey(providerModel)] = 0
         }
+        return try {
+            com.ai.assistance.operit.data.stats.TokenStatsResetCoordinator
+                .resetStatisticsForProviderModel(context, providerModel)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "重置模型统计：新账本清理失败", e)
+            false
+        }
+    }
+
+    /**
+     * 旧累计统计快照（迁移来源）。新统计系统只把这里作为一次性迁移读取，
+     * 不再作为第二套账本写入点。
+     */
+    suspend fun legacyStatsSnapshot(): com.ai.assistance.operit.data.stats.LegacyTokenStatsSnapshot {
+        val preferences = context.apiDataStore.data.first()
+        return com.ai.assistance.operit.data.stats.LegacyTokenStatsSnapshot.parse(
+            preferences.asMap().mapKeys { it.key.name }
+        )
     }
 
     private fun removeTokenCountKeys(preferences: MutablePreferences, vararg keyNames: String) {

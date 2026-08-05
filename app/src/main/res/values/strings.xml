@@ -3514,6 +3514,7 @@
     <string name="settings_reset_model_confirmation">重置模型确认</string>
     <string name="settings_reset_model_warning">这将清除 %1$s 的Token和请求次数统计，此操作不可恢复。</string>
     <string name="settings_reset">重置</string>
+    <string name="settings_token_stats_reset_failed">重置统计失败，请重试</string>
     <string name="settings_edit_pricing">编辑定价</string>
     <string name="settings_input_tokens">输入Token</string>
     <string name="settings_output_tokens">输出Token</string>
@@ -5761,6 +5762,7 @@
     <string name="backup_raw_snapshot_restore_cancel_action">取消</string>
     <string name="backup_raw_snapshot_restart_title">需要重启应用</string>
     <string name="backup_raw_snapshot_restart_message">文件快照已恢复。为避免旧的缓存/连接导致异常，建议立即重启应用。</string>
+    <string name="backup_raw_snapshot_restore_registration_failed">恢复完成登记失败，目录已替换但补导标记未登记。请退出后重新打开应用自动重试：%1$s</string>
     <string name="backup_raw_snapshot_restart_now">立即重启</string>
     <string name="backup_raw_snapshot_restart_later">稍后</string>
     <string name="backup_official_operit_migration_action">从原版 Operit 迁移</string>
