@@ -13,6 +13,8 @@ import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
 import com.ai.assistance.operit.data.model.TokenStatResetCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity
 import com.ai.assistance.operit.data.stats.TokenStatIdentityResolver
+import com.ai.assistance.operit.data.stats.TokenStatsLifetimeRead
+import com.ai.assistance.operit.data.stats.TokenStatsQuerySnapshot
 import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
@@ -47,6 +49,162 @@ abstract class TokenStatsDao {
 
     @Query("SELECT COUNT(*) FROM token_stat_events")
     abstract suspend fun countEvents(): Int
+
+    /**
+     * 阶段 3 统计查询：单次读取指定时间范围（半开区间 [startMs, endMs)，
+     * 按 [TokenStatEventEntity.startedAtMs] 归属）内的全部事件，在内存中单遍聚合。
+     * 走 `index_token_stat_events_startedAtMs` 索引；禁止逐桶/逐模型拆分查询。
+     */
+    @Query(
+        "SELECT * FROM token_stat_events " +
+            "WHERE startedAtMs >= :startMs AND startedAtMs < :endMs"
+    )
+    abstract suspend fun getEventsInRange(startMs: Long, endMs: Long): List<TokenStatEventEntity>
+
+    /**
+     * 阶段 3 统计查询：单次读取时间范围内属于给定展示模型分组（identity 的
+     * displayModelId，单一事实来源）的事件。IN 列表由调用方提供，模型数再多也
+     * 只有一条查询，不产生按模型 N+1。
+     */
+    @Query(
+        "SELECT e.* FROM token_stat_events e " +
+            "INNER JOIN token_stat_identities i ON e.statIdentityId = i.identityId " +
+            "WHERE e.startedAtMs >= :startMs AND e.startedAtMs < :endMs " +
+            "AND i.displayModelId IN (:displayModelIds)"
+    )
+    abstract suspend fun getEventsInRangeForDisplayModels(
+        startMs: Long,
+        endMs: Long,
+        displayModelIds: List<String>,
+    ): List<TokenStatEventEntity>
+
+    /** 时间范围内是否存在事件（初始回退选择用，EXISTS 短路，走 startedAtMs 索引）。 */
+    @Query(
+        "SELECT EXISTS(" +
+            "SELECT 1 FROM token_stat_events " +
+            "WHERE startedAtMs >= :startMs AND startedAtMs < :endMs" +
+            ")"
+    )
+    abstract suspend fun rangeHasEvents(startMs: Long, endMs: Long): Boolean
+
+    /**
+     * 生命周期分页读取（P2-1）：`(startedAtMs, eventId)` 键集分页，升序、无重复、
+     * 无遗漏；配合 [loadLifetimeSnapshot] 在**同一事务**内逐页读取，避免整表
+     * 实体化的内存峰值。调用方只在 `page.size == limit` 时推进游标继续取下一页。
+     */
+    @Query(
+        "SELECT * FROM token_stat_events " +
+            "WHERE (startedAtMs > :afterStartMs OR " +
+            "(startedAtMs = :afterStartMs AND eventId > :afterEventId)) " +
+            "ORDER BY startedAtMs ASC, eventId ASC LIMIT :limit"
+    )
+    abstract suspend fun getEventsPage(
+        afterStartMs: Long,
+        afterEventId: String,
+        limit: Int,
+    ): List<TokenStatEventEntity>
+
+    /**
+     * 单条 IN 查询允许的最大参数个数（P2-2）：SQLite 变量上限默认 999，
+     * 留 99 余量取 900；超过时在同一事务内分块查询再合并。
+     */
+    companion object {
+        const val MAX_IN_VALUES = 900
+    }
+
+    /**
+     * 阶段 3 范围查询的**同事务只读快照**（P1-2）：identity/display model/价格覆盖
+     * （重估口径才读）/事件在同一个 Room 事务内固定读取，事务外纯聚合；并发写入
+     * 要么整体可见要么整体不可见，杜绝“summary 有事件但模型桶缺失”的拆分状态。
+     *
+     * [displayModelIds] 语义（P2-2）：null = 全部模型；空列表 = **无事件**（不是
+     * 全部）；非空 = 走 JOIN 单条 IN 查询；超过 [MAX_IN_VALUES] 时在**同一事务**
+     * 内按 ≤900 分块查询（去重后），合并结果按 (startedAtMs, eventId) 稳定排序。
+     */
+    @Transaction
+    open suspend fun loadRangeSnapshot(
+        startMs: Long,
+        endMs: Long,
+        displayModelIds: List<String>?,
+        includeOverrides: Boolean,
+    ): TokenStatsQuerySnapshot {
+        val identitiesById = getAllIdentities().associateBy { it.identityId }
+        val displayModelsById = getAllDisplayModels().associateBy { it.displayModelId }
+        val overrides = if (includeOverrides) getAllPriceOverrides() else emptyList()
+        val events =
+            when {
+                displayModelIds == null -> getEventsInRange(startMs, endMs)
+                displayModelIds.isEmpty() -> emptyList()
+                else -> getEventsInRangeForDisplayModelsChunked(startMs, endMs, displayModelIds)
+            }
+        return TokenStatsQuerySnapshot(
+            events = events,
+            identitiesById = identitiesById,
+            displayModelsById = displayModelsById,
+            overrides = overrides,
+            baselines = emptyList(),
+        )
+    }
+
+    /**
+     * 生命周期快照（P1-2/P2-1）：identity/display model/价格覆盖/baseline 在
+     * **同一事务**内一次读取；事件按 `(startedAtMs, eventId)` 键集分页（每页至多
+     * [pageSize] 条）逐页回调 [onEventsPage]，由聚合器增量累加——避免整表实体化
+     * 峰值，且分页与事务同界（页面间快照一致）。
+     */
+    @Transaction
+    open suspend fun loadLifetimeSnapshot(
+        includeOverrides: Boolean,
+        pageSize: Int,
+        onEventsPage: (
+            List<TokenStatEventEntity>,
+            Map<String, TokenStatIdentityEntity>,
+            List<TokenStatPriceOverrideEntity>,
+        ) -> Unit,
+    ): TokenStatsLifetimeRead {
+        val identitiesById = getAllIdentities().associateBy { it.identityId }
+        val displayModelsById = getAllDisplayModels().associateBy { it.displayModelId }
+        val overrides = if (includeOverrides) getAllPriceOverrides() else emptyList()
+        val baselines = getAllBaselines()
+        var afterStartMs = Long.MIN_VALUE
+        var afterEventId = ""
+        var totalEvents = 0L
+        while (true) {
+            val page = getEventsPage(afterStartMs, afterEventId, pageSize)
+            if (page.isEmpty()) break
+            totalEvents += page.size
+            onEventsPage(page, identitiesById, overrides)
+            if (page.size < pageSize) break
+            val last = page.last()
+            afterStartMs = last.startedAtMs
+            afterEventId = last.eventId
+        }
+        return TokenStatsLifetimeRead(
+            identitiesById = identitiesById,
+            displayModelsById = displayModelsById,
+            overrides = overrides,
+            baselines = baselines,
+            totalEvents = totalEvents,
+        )
+    }
+
+    private suspend fun getEventsInRangeForDisplayModelsChunked(
+        startMs: Long,
+        endMs: Long,
+        displayModelIds: List<String>,
+    ): List<TokenStatEventEntity> {
+        val distinct = displayModelIds.distinct()
+        if (distinct.size <= MAX_IN_VALUES) {
+            return getEventsInRangeForDisplayModels(startMs, endMs, distinct)
+        }
+        val merged = ArrayList<TokenStatEventEntity>()
+        for (chunk in distinct.chunked(MAX_IN_VALUES)) {
+            merged += getEventsInRangeForDisplayModels(startMs, endMs, chunk)
+        }
+        // 分块结果合并后按 (startedAtMs, eventId) 稳定排序（聚合对顺序不敏感，
+        // 这里只是为了契约明确；分块都在同一事务快照内，不产生拆分状态）。
+        return merged.sortedWith(compareBy({ it.startedAtMs }, { it.eventId }))
+    }
 
     @Query("SELECT * FROM token_stat_events WHERE statIdentityId = :identityId")
     abstract fun observeEventsByIdentity(identityId: String): Flow<List<TokenStatEventEntity>>

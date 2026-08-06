@@ -73,6 +73,12 @@ object TokenCostCalculator {
     }
 
     fun computeCost(usage: TokenUsageInput, pricing: ResolvedPricing): TokenCostResult {
+        // 统一边界（P1-1）：未知定价（known = false，如未知模型的内置全 0 缺省或
+        // 空价格覆盖行）无论用量是否完整，成本一律为 null（未知），绝不算出伪 0。
+        // 阶段 2 落账与阶段 3 重估都走本入口，因此该防线同时保护两条路径。
+        if (!pricing.known) {
+            return TokenCostResult(amount = null, currency = pricing.currency)
+        }
         if (pricing.billingMode == BillingMode.COUNT) {
             val price = pricing.pricePerRequest
             return TokenCostResult(

@@ -235,6 +235,47 @@ outputTokens = 500L,
     }
 
     @Test
+    fun `unknown pricing with zero prices is still unknown not zero`() {
+        // P1-1：默认价表对未知模型给出全 0 价格但 known = false（zeroPricing），
+        // 统一边界必须返回 null——即使用量完整也不能把“无法定价”算成 0 元。
+        val zeroValuedUnknown =
+            ResolvedPricing(
+                billingMode = BillingMode.TOKEN,
+                currency = PricingCurrency.USD,
+                inputPricePerMillion = 0.0,
+                cachedInputPricePerMillion = 0.0,
+                cacheWritePricePerMillion = 0.0,
+                outputPricePerMillion = 0.0,
+                source = PricingSource.UNKNOWN,
+                known = false,
+            )
+        val usage =
+            TokenUsageInput(
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
+cacheWriteTokens = 0L,
+outputTokens = 500L,
+            )
+
+        assertNull(TokenCostCalculator.computeCost(usage, zeroValuedUnknown).amount)
+    }
+
+    @Test
+    fun `unknown count pricing with zero per request price is still unknown`() {
+        // P1-1：COUNT 模式同样受 known 边界约束，不能按 0 元单次价算出伪 0。
+        val unknownCount =
+            ResolvedPricing(
+                billingMode = BillingMode.COUNT,
+                currency = PricingCurrency.USD,
+                pricePerRequest = 0.0,
+                source = PricingSource.UNKNOWN,
+                known = false,
+            )
+
+        assertNull(TokenCostCalculator.computeCost(TokenUsageInput(outputTokens = 500L), unknownCount).amount)
+    }
+
+    @Test
     fun `count mode cost equals per request price`() {
         val cost =
             TokenCostCalculator.computeCost(

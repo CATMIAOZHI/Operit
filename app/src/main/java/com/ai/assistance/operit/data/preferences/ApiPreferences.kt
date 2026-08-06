@@ -107,6 +107,11 @@ class ApiPreferences private constructor(private val context: Context) {
         fun getPricePerRequestKey(providerModel: String) =
                 floatPreferencesKey("price_per_request_${providerModel.replace(":", "_")}")
 
+        /** 旧系统价格/计费方式键前缀（与 [legacyPriceSettingsFrom] 的键构造对应）。 */
+        val LEGACY_PRICE_KEY_PREFIXES =
+                listOf("model_input_price_", "model_cached_input_price_", "model_output_price_",
+                        "billing_mode_", "price_per_request_")
+
         private val providerNameCandidates =
                 ApiProviderType.values().map { it.name }.sortedByDescending { it.length }
 
@@ -732,6 +737,36 @@ class ApiPreferences private constructor(private val context: Context) {
         providerModel: String
     ): com.ai.assistance.operit.data.stats.LegacyPriceSettings? {
         val preferences = context.apiDataStore.data.first()
+        return legacyPriceSettingsFrom(preferences, providerModel)
+    }
+
+    /**
+     * 旧系统**全部** provider:model 用户价格设置的一次快照读取（阶段 3 统计查询
+     * 重估口径用）：整个偏好文件只读一次（P1-2，杜绝按 identity 逐条读取 DataStore
+     * 的多次挂起）。键约定与 [legacyPriceSettingsFor] 完全一致：价格键缺失或为 0
+     * 视为未设置，只有 > 0 的值才算用户设置；无任何设置的模型不出现。
+     */
+    suspend fun allLegacyPriceSettings(): Map<String, com.ai.assistance.operit.data.stats.LegacyPriceSettings?> {
+        val preferences = context.apiDataStore.data.first()
+        val candidates = linkedSetOf<String>()
+        preferences.asMap().keys.forEach { key ->
+            val name = key.name
+            for (prefix in LEGACY_PRICE_KEY_PREFIXES) {
+                if (name.startsWith(prefix) && name.length > prefix.length) {
+                    candidates += decodeProviderModelFromKeySuffix(name.substring(prefix.length))
+                    break
+                }
+            }
+        }
+        return candidates.associateWith { providerModel ->
+            legacyPriceSettingsFrom(preferences, providerModel)
+        }
+    }
+
+    private fun legacyPriceSettingsFrom(
+        preferences: Preferences,
+        providerModel: String
+    ): com.ai.assistance.operit.data.stats.LegacyPriceSettings? {
         val billingRaw = preferences[getBillingModeKey(providerModel)]
         val settings =
             com.ai.assistance.operit.data.stats.LegacyPriceSettings(
