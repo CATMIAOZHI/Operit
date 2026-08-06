@@ -10,7 +10,10 @@ import com.ai.assistance.operit.data.model.TokenStatDisplayModelEntity
 import com.ai.assistance.operit.data.model.TokenStatEventEntity
 import com.ai.assistance.operit.data.model.TokenStatIdentityEntity
 import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
+import com.ai.assistance.operit.data.model.TokenStatResetCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity
+import com.ai.assistance.operit.data.stats.TokenStatIdentityResolver
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -38,6 +41,9 @@ abstract class TokenStatsDao {
 
     @Query("SELECT * FROM token_stat_events WHERE eventId = :eventId")
     abstract suspend fun getEvent(eventId: String): TokenStatEventEntity?
+
+    @Query("SELECT * FROM token_stat_events")
+    abstract suspend fun getAllEvents(): List<TokenStatEventEntity>
 
     @Query("SELECT COUNT(*) FROM token_stat_events")
     abstract suspend fun countEvents(): Int
@@ -206,6 +212,95 @@ abstract class TokenStatsDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun insertRestoreGeneration(generation: TokenStatRestoreGenerationEntity): Long
+
+    // ==== 重置 tombstone（reset cutoff） ====
+    // reset 与 spool 排空的一致同步边界：tombstone 与删除在同一事务提交，
+    // 排空插入在同一事务内检查，SQLite 事务串行化杜绝并发复活（P1-3）。
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    protected abstract suspend fun upsertResetCutoff(cutoff: TokenStatResetCutoffEntity)
+
+    @Query(
+        "SELECT * FROM token_stat_reset_cutoffs " +
+            "WHERE kind = 'FULL' LIMIT 1"
+    )
+    abstract suspend fun fullResetCutoff(): TokenStatResetCutoffEntity?
+
+    @Query("SELECT * FROM token_stat_reset_cutoffs WHERE kind = 'MODEL'")
+    abstract suspend fun modelResetCutoffs(): List<TokenStatResetCutoffEntity>
+
+    @Query("DELETE FROM token_stat_reset_cutoffs WHERE kind = 'MODEL'")
+    protected abstract suspend fun deleteModelResetCutoffs()
+
+    @Query("SELECT COALESCE(MAX(generation), 0) FROM token_stat_reset_cutoffs")
+    abstract suspend fun currentResetGeneration(): Long
+
+    /**
+     * 全量重置：写入 FULL tombstone 并与删除（事件按 startedAtMs 过滤、baseline
+     * 全清）同一事务提交。排空并发插入要么在本事务前（被本事务删除），要么在
+     * 本事务后（被 tombstone 在插入事务内跳过），不可能复活。
+     */
+    @Transaction
+    open suspend fun resetAllStatisticsTx() {
+        val generation = Math.addExact(currentResetGeneration(), 1L)
+        upsertResetCutoff(
+            TokenStatResetCutoffEntity(
+                kind = TokenStatResetCutoffEntity.KIND_FULL,
+                provider = "",
+                model = "",
+                generation = generation,
+            )
+        )
+        deleteModelResetCutoffs()
+        deleteAllEvents()
+        deleteAllBaselines()
+    }
+
+    /**
+     * 按模型重置：写入 MODEL tombstone（每 provider/model REPLACE 覆盖，取最近
+     * 时刻）并与删除同一事务提交；覆盖该模型下所有配置实例身份。
+     */
+    @Transaction
+    open suspend fun resetModelTx(provider: String, model: String) {
+        val generation = Math.addExact(currentResetGeneration(), 1L)
+        upsertResetCutoff(
+            TokenStatResetCutoffEntity(
+                kind = TokenStatResetCutoffEntity.KIND_MODEL,
+                provider = provider,
+                model = model,
+                generation = generation,
+            )
+        )
+        deleteEventsByProviderModel(provider, model)
+        deleteBaselinesByProviderModel(provider, model)
+    }
+
+    /**
+     * 排空路径的事件插入入口：tombstone 检查与插入在同一事务内。
+     * @return false = 事件被 reset tombstone 覆盖（跳过；调用方视为已处理，
+     *   段可删除，不重放）；true = 已插入。
+     */
+    @Transaction
+    open suspend fun insertEventIfNotResetCovered(event: TokenStatEventEntity): Boolean {
+        val full = fullResetCutoff()
+        if (full != null && event.acceptedGeneration < full.generation) return false
+        val identity =
+            getIdentity(event.statIdentityId)
+                ?: error("identity missing for event ${event.eventId} (ensureIdentity must run first)")
+        val models = modelResetCutoffs()
+        for (cutoff in models) {
+            if (event.acceptedGeneration < cutoff.generation &&
+                TokenStatIdentityResolver.normalizeProvider(cutoff.provider) ==
+                TokenStatIdentityResolver.normalizeProvider(identity.provider) &&
+                TokenStatIdentityResolver.normalizeModelName(cutoff.model) ==
+                TokenStatIdentityResolver.normalizeModelName(identity.model)
+            ) {
+                return false
+            }
+        }
+        insertEvent(event)
+        return true
+    }
 }
 
 /**

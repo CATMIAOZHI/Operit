@@ -109,8 +109,8 @@ class ApiPreferencesResetFailureTest {
         TokenStatsResetCoordinator.daoProvider = { dao }
         try {
             assertTrue(prefs.resetAllProviderModelTokenCounts())
-            verify(dao).deleteAllEvents()
-            verify(dao).deleteAllBaselines()
+            // 全量重置：tombstone 与删除在同一事务（resetAllStatisticsTx）
+            verify(dao).resetAllStatisticsTx()
             Unit
         } finally {
             TokenStatsResetCoordinator.daoProvider = null
@@ -126,8 +126,10 @@ class ApiPreferencesResetFailureTest {
         TokenStatsResetCoordinator.daoProvider = { dao }
         try {
             assertTrue(prefs.resetProviderModelTokenCounts("DEEPSEEK:deepseek-chat"))
-            verify(dao).deleteEventsByProviderModel("DEEPSEEK", "deepseek-chat")
-            verify(dao).deleteBaselinesByProviderModel("DEEPSEEK", "deepseek-chat")
+            verify(dao).resetModelTx(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+            )
             Unit
         } finally {
             TokenStatsResetCoordinator.daoProvider = null

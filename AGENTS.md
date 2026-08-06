@@ -17,6 +17,7 @@
 
 - Android 构建使用仓库自带的 `gradlew` / `gradlew.bat`，JDK 21 和 Android SDK 36。构建手册见 `docs/agent/build-guide.md`。
 - Windows 上固定使用 `.\gradlew.bat <任务> --no-daemon --console=plain` 执行 Gradle。禁止通过 `| Select-Object -Last`、`Tee-Object` 等 PowerShell 实时管道运行 Gradle；需要保留或截取输出时，先将完整输出重定向到日志文件，命令结束后再读取日志末尾。
+- 所有可能长期运行的命令必须设置硬超时。达到超时后立即终止本次命令的整个进程树并输出已保存的日志，禁止无限等待。
 - 首次构建先执行 `git submodule update --init --recursive terminal`。
 - 完整 Android 构建需要 README/编译指南列出的 `models.zip`、`subpack.zip`、`jniLibs.zip` 和 `libs.zip` 内容；这些本地依赖不得提交。
 - 原生第三方依赖（MNN、llama.cpp、ncnn、sherpa-ncnn、WAMR、QuickJS、Saba、Bullet3、ufbx、KleidiAI）已固定到具体 commit SHA，锁定清单见 `cmake/NATIVE_DEPENDENCY_LOCK.md`；升级时更新该清单和对应 `CMakeLists.txt`，不要通过 `OPERIT_*_GIT_REF` 命令行参数覆盖（已不再生效）。

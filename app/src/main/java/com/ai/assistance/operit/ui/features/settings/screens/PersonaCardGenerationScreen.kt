@@ -379,7 +379,8 @@ fun PersonaCardGenerationScreen(
 
         val stream = aiService.sendMessage(
             context = context,
-            chatHistory = (fullHistory + ("user" to prompt)).toPromptTurns()
+            chatHistory = (fullHistory + ("user" to prompt)).toPromptTurns(),
+            statsCategory = com.ai.assistance.operit.data.stats.TokenStatCategory.CHARACTER_GENERATION
         )
         Pair(stream, aiService)
     }
@@ -514,18 +515,6 @@ fun PersonaCardGenerationScreen(
                             scope.launch { listState.animateScrollToItem(chatMessages.lastIndex) }
                         }
                     }
-                }
-
-                // Update token and request count statistics
-                withContext(Dispatchers.IO) {
-                    val apiPreferences = ApiPreferences.getInstance(context)
-                    apiPreferences.updateTokensForProviderModel(
-                        aiService.providerModel,
-                        aiService.inputTokenCount,
-                        aiService.outputTokenCount,
-                        aiService.cachedInputTokenCount
-                    )
-                    apiPreferences.incrementRequestCountForProviderModel(aiService.providerModel)
                 }
 
                 // 流结束后解析并执行工具

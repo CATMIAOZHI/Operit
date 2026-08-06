@@ -43,10 +43,10 @@ class TokenCostCalculatorTest {
             TokenCostCalculator.computeCost(
                 usage =
                     TokenUsageInput(
-                        uncachedInputTokens = 800,
-                        cachedInputTokens = 200,
-                        cacheWriteTokens = 0,
-                        outputTokens = 500,
+uncachedInputTokens = 800L,
+cachedInputTokens = 200L,
+cacheWriteTokens = 0L,
+outputTokens = 500L,
                     ),
                 pricing = tokenPricing,
             )
@@ -54,25 +54,25 @@ class TokenCostCalculatorTest {
         assertEquals(0.0019, cost.amount!!, 1e-12)
         // 800/1e6*1 + 200/1e6*0.5 + 500/1e6*2 = 0.0008 + 0.0001 + 0.001
         assertEquals(PricingCurrency.USD, cost.currency)
-        assertEquals(1000, cost.billedInputTokens)
-        assertEquals(500, cost.billedOutputTokens)
+        assertEquals(1000L, cost.billedInputTokens)
+        assertEquals(500L, cost.billedOutputTokens)
     }
 
     @Test
     fun `reasoning included in output is not billed twice`() {
         val usage =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
-                cachedInputTokens = 0,
-                cacheWriteTokens = 0,
-                outputTokens = 500,
-                reasoningTokens = 300,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
+cacheWriteTokens = 0L,
+outputTokens = 500L,
+reasoningTokens = 300L,
                 reasoningIncludedInOutput = true,
             )
 
         val cost = TokenCostCalculator.computeCost(usage, tokenPricing)
 
-        assertEquals(500, cost.billedOutputTokens)
+        assertEquals(500L, cost.billedOutputTokens)
         // 1000/1e6*1 + 0 + 500/1e6*2 = 0.001 + 0.001
         assertEquals(0.002, cost.amount!!, 1e-12)
     }
@@ -81,17 +81,17 @@ class TokenCostCalculatorTest {
     fun `reasoning declared separate is added to billed output`() {
         val usage =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
-                cachedInputTokens = 0,
-                cacheWriteTokens = 0,
-                outputTokens = 500,
-                reasoningTokens = 300,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
+cacheWriteTokens = 0L,
+outputTokens = 500L,
+reasoningTokens = 300L,
                 reasoningIncludedInOutput = false,
             )
 
         val cost = TokenCostCalculator.computeCost(usage, tokenPricing)
 
-        assertEquals(800, cost.billedOutputTokens)
+        assertEquals(800L, cost.billedOutputTokens)
         // 1000/1e6*1 + 800/1e6*2 = 0.001 + 0.0016
         assertEquals(0.0026, cost.amount!!, 1e-12)
     }
@@ -100,24 +100,24 @@ class TokenCostCalculatorTest {
     fun `reasoning without inclusion declaration defaults to included`() {
         val usage =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
-                cachedInputTokens = 0,
-                outputTokens = 500,
-                reasoningTokens = 300,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
+outputTokens = 500L,
+reasoningTokens = 300L,
                 reasoningIncludedInOutput = null,
             )
 
         val cost = TokenCostCalculator.computeCost(usage, tokenPricing)
 
-        assertEquals(500, cost.billedOutputTokens)
+        assertEquals(500L, cost.billedOutputTokens)
     }
 
     @Test
     fun `unknown output tokens produce unknown cost not zero`() {
         val usage =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
-                cachedInputTokens = 0,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
                 outputTokens = null,
             )
 
@@ -131,8 +131,8 @@ class TokenCostCalculatorTest {
         val usage =
             TokenUsageInput(
                 uncachedInputTokens = null,
-                cachedInputTokens = 0,
-                outputTokens = 500,
+cachedInputTokens = 0L,
+outputTokens = 500L,
             )
 
         val cost = TokenCostCalculator.computeCost(usage, tokenPricing)
@@ -144,16 +144,16 @@ class TokenCostCalculatorTest {
     fun `null cached input keeps cost unknown while zero cached input is a real zero`() {
         val unknownCache =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
+uncachedInputTokens = 1000L,
                 cachedInputTokens = null,
-                outputTokens = 500,
+outputTokens = 500L,
             )
         val noCacheRead =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
-                cachedInputTokens = 0,
-                cacheWriteTokens = 0,
-                outputTokens = 500,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
+cacheWriteTokens = 0L,
+outputTokens = 500L,
             )
 
         assertNull(TokenCostCalculator.computeCost(unknownCache, tokenPricing).amount)
@@ -165,17 +165,17 @@ class TokenCostCalculatorTest {
     fun `null cache write keeps cost unknown while zero cache write is a real zero`() {
         val unknownWrite =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
-                cachedInputTokens = 0,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
                 cacheWriteTokens = null,
-                outputTokens = 500,
+outputTokens = 500L,
             )
         val noCacheWrite =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
-                cachedInputTokens = 0,
-                cacheWriteTokens = 0,
-                outputTokens = 500,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
+cacheWriteTokens = 0L,
+outputTokens = 500L,
             )
 
         assertNull(TokenCostCalculator.computeCost(unknownWrite, tokenPricing).amount)
@@ -190,17 +190,17 @@ class TokenCostCalculatorTest {
     fun `cache write tokens are billed at cache write price when known`() {
         val usage =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
-                cachedInputTokens = 0,
-                cacheWriteTokens = 400,
-                outputTokens = 500,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
+cacheWriteTokens = 400L,
+outputTokens = 500L,
             )
 
         val cost = TokenCostCalculator.computeCost(usage, tokenPricing)
 
         // 1000/1e6*1 + 0 + 400/1e6*0.75 + 500/1e6*2 = 0.001 + 0.0003 + 0.001
         assertEquals(0.0023, cost.amount!!, 1e-12)
-        assertEquals(400, cost.billedCacheWriteTokens)
+        assertEquals(400L, cost.billedCacheWriteTokens)
     }
 
     @Test
@@ -209,10 +209,10 @@ class TokenCostCalculatorTest {
             tokenPricing.copy(cacheWritePricePerMillion = null)
         val usage =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
-                cachedInputTokens = 0,
-                cacheWriteTokens = 400,
-                outputTokens = 500,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
+cacheWriteTokens = 400L,
+outputTokens = 500L,
             )
 
         val cost = TokenCostCalculator.computeCost(usage, pricingWithoutWritePrice)
@@ -224,9 +224,9 @@ class TokenCostCalculatorTest {
     fun `unknown pricing produces unknown cost not zero`() {
         val usage =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
-                cachedInputTokens = 0,
-                outputTokens = 500,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
+outputTokens = 500L,
             )
 
         val cost = TokenCostCalculator.computeCost(usage, unknownPricing)
@@ -238,7 +238,7 @@ class TokenCostCalculatorTest {
     fun `count mode cost equals per request price`() {
         val cost =
             TokenCostCalculator.computeCost(
-                usage = TokenUsageInput(outputTokens = 10),
+usage = TokenUsageInput(outputTokens = 500L),
                 pricing = countPricing,
             )
 
@@ -263,15 +263,67 @@ class TokenCostCalculatorTest {
             TokenCostCalculator.computeCost(
                 usage =
                     TokenUsageInput(
-                        uncachedInputTokens = 1000,
-                        cachedInputTokens = 0,
-                        cacheWriteTokens = 0,
-                        outputTokens = 500,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
+cacheWriteTokens = 0L,
+outputTokens = 500L,
                     ),
                 pricing = zeroPricing,
             )
 
         assertEquals(0.0, cost.amount!!, 1e-12)
+    }
+
+    @Test
+    fun `total input bills at unified price when split unknown and prices equal`() {
+        val equalPricing = tokenPricing.copy(cachedInputPricePerMillion = 1.0)
+        val usage =
+            TokenUsageInput(
+                uncachedInputTokens = null,
+                cachedInputTokens = null,
+totalInputTokens = 1000L,
+outputTokens = 500L,
+                // OpenAI 兼容系/Gemini：无独立缓存写入计费概念
+                cacheWriteSeparateBilling = false,
+            )
+
+        val cost = TokenCostCalculator.computeCost(usage, equalPricing)
+
+        // 1000/1e6*1 + 500/1e6*2 = 0.001 + 0.001
+        assertEquals(0.002, cost.amount!!, 1e-12)
+        assertEquals(1000L, cost.billedInputTokens)
+    }
+
+    @Test
+    fun `total input keeps cost unknown when split unknown and prices differ`() {
+        // tokenPricing：input 1.0 vs cached 0.5，单价不同且拆分未知 → 不得伪造 uncached
+        val usage =
+            TokenUsageInput(
+                uncachedInputTokens = null,
+                cachedInputTokens = null,
+totalInputTokens = 1000L,
+outputTokens = 500L,
+                cacheWriteSeparateBilling = false,
+            )
+
+        assertNull(TokenCostCalculator.computeCost(usage, tokenPricing).amount)
+    }
+
+    @Test
+    fun `split known ignores total input fallback`() {
+        val usage =
+            TokenUsageInput(
+uncachedInputTokens = 800L,
+cachedInputTokens = 200L,
+totalInputTokens = 1000L,
+outputTokens = 500L,
+                cacheWriteSeparateBilling = false,
+            )
+
+        val cost = TokenCostCalculator.computeCost(usage, tokenPricing)
+        assertEquals(1000L, cost.billedInputTokens)
+        // 800/1e6*1 + 200/1e6*0.5 + 500/1e6*2
+        assertEquals(0.0019, cost.amount!!, 1e-12)
     }
 }
 
@@ -346,10 +398,10 @@ class TokenCostCurrencyTest {
     fun `revaluation uses current pricing instead of historical snapshot`() {
         val usage =
             TokenUsageInput(
-                uncachedInputTokens = 1000,
-                cachedInputTokens = 0,
-                cacheWriteTokens = 0,
-                outputTokens = 500,
+uncachedInputTokens = 1000L,
+cachedInputTokens = 0L,
+cacheWriteTokens = 0L,
+outputTokens = 500L,
             )
         val historicalSnapshot =
             ResolvedPricing(

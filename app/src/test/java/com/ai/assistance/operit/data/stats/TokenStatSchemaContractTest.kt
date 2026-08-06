@@ -10,13 +10,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Room schema 导出契约测试（v28 → v29）。
+ * Room schema 导出契约测试（v28 → v29 → v30）。
  *
  * 解析仓库提交的 schema JSON（app/schemas），校验：
  * 1. v29 只新增统计账本 5 张表，既有表 createSql 完全不变（防迁移回归）；
- * 2. 新表的列/主键/索引/外键与迁移 SQL 一致（防迁移漏建索引导致
+ * 2. v30 只给事件表增加脱敏诊断列，其余表 createSql 完全不变；
+ * 3. 新表的列/主键/索引/外键与迁移 SQL 一致（防迁移漏建索引导致
  *    Room identityHash 校验失败）；
- * 3. 新表与既有表位于同一个 app_database 文件中 —— 现有整库文件级
+ * 4. 新表与既有表位于同一个 app_database 文件中 —— 现有整库文件级
  *    备份/恢复（RoomDatabaseBackupManager/RoomDatabaseRestoreManager）
  *    自动覆盖这些表，无需逐表接线。
  */
@@ -67,12 +68,13 @@ class TokenStatSchemaContractTest {
 
     @Test
     fun `event table carries the ledger contract`() {
-        val v29 = loadSchema(29)
-        val event = v29.entity("token_stat_events")
+        val v30 = loadSchema(30)
+        val event = v30.entity("token_stat_events")
         val createSql = event.normalizedCreateSql()
 
         // 稳定事件标识与时间
         assertContains(createSql, "`eventId` TEXT NOT NULL")
+        assertContains(createSql, "`acceptedGeneration` INTEGER NOT NULL")
         assertContains(createSql, "`startedAtMs` INTEGER NOT NULL")
         assertContains(createSql, "`endedAtMs` INTEGER NOT NULL")
         assertContains(createSql, "`firstTokenAtMs` INTEGER")
@@ -83,6 +85,9 @@ class TokenStatSchemaContractTest {
         assertContains(createSql, "`outputTokens` INTEGER")
         assertContains(createSql, "`reasoningTokens` INTEGER")
         assertContains(createSql, "`reasoningIncludedInOutput` INTEGER")
+        // 结构化计费列（v30）：总输入与缓存写入计费模型，重估直接读取
+        assertContains(createSql, "`totalInputTokens` INTEGER")
+        assertContains(createSql, "`cacheWriteSeparateBilling` INTEGER")
         // 原币价格快照与原币成本（不冻结汇率）
         assertContains(createSql, "`pricingCurrency` TEXT NOT NULL")
         assertContains(createSql, "`inputPricePerMillion` REAL")
@@ -91,6 +96,8 @@ class TokenStatSchemaContractTest {
         assertContains(createSql, "`outputPricePerMillion` REAL")
         assertContains(createSql, "`costInPricingCurrency` REAL")
         assertContains(createSql, "PRIMARY KEY(`eventId`)")
+        // 脱敏诊断列（阶段 2）：可空 TEXT，只存来源标签与计数
+        assertContains(createSql, "`diagnosticsJson` TEXT")
         // 不保存正文/凭据
         assertContains(createSql, "FOREIGN KEY(`statIdentityId`) REFERENCES `token_stat_identities`(`identityId`)")
 
@@ -99,6 +106,67 @@ class TokenStatSchemaContractTest {
         assertTrue(indexNames.contains("index_token_stat_events_statIdentityId_startedAtMs"))
         assertTrue(indexNames.contains("index_token_stat_events_startedAtMs"))
         assertTrue(indexNames.contains("index_token_stat_events_category_startedAtMs"))
+    }
+
+    @Test
+    fun `v30 only adds structured billing columns diagnostics and reset cutoff table`() {
+        val v29 = loadSchema(29)
+        val v30 = loadSchema(30)
+
+        assertEquals(30, v30.database.version)
+        val v29Tables = v29.database.entities.map { it.tableName }.toSet()
+        val v30Tables = v30.database.entities.map { it.tableName }.toSet()
+
+        // v30 只新增 reset tombstone 表（P1-3：reset 与 spool 排空的一致同步边界）
+        assertEquals(
+            setOf("token_stat_reset_cutoffs"),
+            v30Tables - v29Tables,
+        )
+
+        // 除 token_stat_events 外，其余 v29 表 createSql 完全一致
+        v29Tables.filter { it != "token_stat_events" }.forEach { table ->
+            val before = v29.entity(table).normalizedCreateSql()
+            val after = v30.entity(table).normalizedCreateSql()
+            assertEquals("table changed between v29 and v30: $table", before, after)
+        }
+
+        // 事件表只增加结构化列（totalInputTokens/cacheWriteSeparateBilling）与
+        // diagnosticsJson 一列，不改变既有列
+        val beforeEvent = v29.entity("token_stat_events").normalizedCreateSql()
+        val afterEvent = v30.entity("token_stat_events").normalizedCreateSql()
+        val beforeColumns = columnList(beforeEvent)
+        val afterColumns = columnList(afterEvent)
+        assertEquals(
+            "only structured billing columns and diagnosticsJson may be added between v29 and v30",
+            setOf(
+                "`totalInputTokens` INTEGER",
+                "`cacheWriteSeparateBilling` INTEGER",
+                "`diagnosticsJson` TEXT",
+                "`acceptedGeneration` INTEGER NOT NULL",
+            ),
+            afterColumns - beforeColumns,
+        )
+    }
+
+    @Test
+    fun `reset cutoff table is the durable reset tombstone anchor`() {
+        val v30 = loadSchema(30)
+        val cutoff = v30.entity("token_stat_reset_cutoffs")
+        val createSql = cutoff.normalizedCreateSql()
+
+        assertContains(createSql, "`kind` TEXT NOT NULL")
+        assertContains(createSql, "`provider` TEXT NOT NULL")
+        assertContains(createSql, "`model` TEXT NOT NULL")
+        assertContains(createSql, "`generation` INTEGER NOT NULL")
+        assertContains(createSql, "PRIMARY KEY(`kind`, `provider`, `model`)")
+        assertTrue("cutoff table must not carry foreign keys", !createSql.contains("FOREIGN KEY"))
+        assertTrue(cutoff.indices.isEmpty())
+    }
+
+    /** 从 CREATE TABLE 语句提取列定义集合（schema 导出为单行，按逗号切分）。 */
+    private fun columnList(createSql: String): Set<String> {
+        val inner = createSql.substringAfter("(").substringBeforeLast(")")
+        return inner.split(",").map { it.trim() }.filter { it.startsWith("`") }.toSet()
     }
 
     @Test

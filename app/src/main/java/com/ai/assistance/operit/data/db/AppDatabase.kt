@@ -24,6 +24,7 @@ import com.ai.assistance.operit.data.model.TokenStatDisplayModelEntity
 import com.ai.assistance.operit.data.model.TokenStatEventEntity
 import com.ai.assistance.operit.data.model.TokenStatIdentityEntity
 import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
+import com.ai.assistance.operit.data.model.TokenStatResetCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity
 import com.ai.assistance.operit.util.ChatMarkupRegex
 
@@ -41,8 +42,9 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         TokenStatPriceOverrideEntity::class,
         TokenStatBaselineEntity::class,
         TokenStatRestoreGenerationEntity::class,
+        TokenStatResetCutoffEntity::class,
     ],
-    version = 29,
+    version = 30,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -722,6 +724,75 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        /**
+         * v29 → v30：事件表增加脱敏诊断列与费用计算所需的**结构化**列：
+         * - `totalInputTokens`：provider 明确上报的总输入（拆分未知时费用重估直接读取）；
+         * - `cacheWriteSeparateBilling`：缓存写入是否独立计费（重估语义直接读取，
+         *   不依赖 JSON 解析或按 provider 推断）；
+         * - `diagnosticsJson`：来源标签、usageObserved、usageReportCount 等诊断元数据。
+         * 另新增 `token_stat_reset_cutoffs` 表（reset tombstone，见
+         * [com.ai.assistance.operit.data.model.TokenStatResetCutoffEntity]）。
+         * 全部为纯新增，对既有行无损，可重入（重复执行时列/表已存在即跳过）。
+         */
+        internal val MIGRATION_29_30 =
+            object : Migration(29, 30) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    addColumns { sql -> db.execSQL(sql) }
+                }
+
+                override fun migrate(connection: SQLiteConnection) {
+                    addColumns { sql -> connection.execSQL(sql) }
+                }
+
+                private fun addColumns(execSql: (String) -> Unit) {
+                    try {
+                        execSql(
+                            "ALTER TABLE `token_stat_events` ADD COLUMN " +
+                                "`acceptedGeneration` INTEGER NOT NULL DEFAULT 0"
+                        )
+                    } catch (_: Exception) {
+                        // 列已存在（幂等重放），忽略
+                    }
+                    try {
+                        execSql(
+                            "ALTER TABLE `token_stat_events` ADD COLUMN `totalInputTokens` INTEGER"
+                        )
+                    } catch (_: Exception) {
+                        // 列已存在（幂等重放），忽略
+                    }
+                    try {
+                        execSql(
+                            "ALTER TABLE `token_stat_events` ADD COLUMN " +
+                                "`cacheWriteSeparateBilling` INTEGER"
+                        )
+                    } catch (_: Exception) {
+                        // 列已存在（幂等重放），忽略
+                    }
+                    try {
+                        execSql(
+                            "ALTER TABLE `token_stat_events` ADD COLUMN `diagnosticsJson` TEXT"
+                        )
+                    } catch (_: Exception) {
+                        // 列已存在（幂等重放），忽略
+                    }
+                    try {
+                        execSql(
+                            """
+                            CREATE TABLE IF NOT EXISTS `token_stat_reset_cutoffs` (
+                                `kind` TEXT NOT NULL,
+                                `provider` TEXT NOT NULL,
+                                `model` TEXT NOT NULL,
+                                `generation` INTEGER NOT NULL,
+                                PRIMARY KEY(`kind`, `provider`, `model`)
+                            )
+                            """.trimIndent()
+                        )
+                    } catch (_: Exception) {
+                        // 表已存在（幂等重放），忽略
+                    }
+                }
+            }
+
         private val finalTrueAttributeRegex =
             Regex("""\bfinal\s*=\s*["']true["']""", RegexOption.IGNORE_CASE)
 
@@ -855,6 +926,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_26_27,
                                 MIGRATION_27_28,
                                 MIGRATION_28_29,
+                                MIGRATION_29_30,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

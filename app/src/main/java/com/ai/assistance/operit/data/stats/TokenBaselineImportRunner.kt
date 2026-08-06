@@ -235,36 +235,36 @@ object TokenBaselineImportRunner {
 /**
  * 统计重置接线：把新账本（事件 + baseline）接入仓库现有“全量重置/按模型重置”机制。
  *
- * - 全量重置：清空全部事件与 baseline（不删除身份、展示分组与价格覆盖，
+ * - 全量重置：递增 durable FULL generation 并在同一 Room 事务内无条件删除事件
+ *   与全部 baseline（不删除身份、展示分组与价格覆盖，
  *   与旧系统“重置只清计数、保留配置”语义一致）。
- * - 按模型重置：在单个数据库事务中删除该 provider/model 下**所有配置实例**
- *   身份的事件与 baseline；旧 DataStore 无配置实例区分，其 baseline 身份的
- *   configId 为空串，同样被覆盖。
+ * - 按模型重置：写 MODEL generation tombstone（每 provider/model REPLACE）
+ *   并在同一事务内删除该 provider/model 下**所有配置实例**身份的事件与 baseline；
+ *   旧 DataStore 无配置实例区分，其 baseline 身份的 configId 为空串，同样被覆盖。
+ * - spool 一致性（P1-3）：排空插入在同一 Room 事务内检查 tombstone
+ *   （[TokenStatsDao.insertEventIfNotResetCovered]），并发中已接受但未入 Room 的
+ *   事件不会复活；重置后触发 [TokenStatSpool.replay] 让排空丢弃被覆盖的行。
  *
  * [daoProvider] 为测试注入缝：生产代码始终为 null，走 [AppDatabase] 的真实事务；
- * 测试注入时由测试自行验证调用语义（生产原子性由 withTransaction 保证）。
+ * 测试注入时由测试自行验证调用语义（生产原子性由 DAO @Transaction 保证）。
  */
 object TokenStatsResetCoordinator {
 
     internal var daoProvider: ((Context) -> TokenStatsDao)? = null
 
     suspend fun resetAllStatistics(context: Context) {
-        withTransaction(context) { dao ->
-            dao.deleteAllEvents()
-            dao.deleteAllBaselines()
-        }
+        withDao(context) { dao -> dao.resetAllStatisticsTx() }
+        TokenStatSpool.replay(context.applicationContext)
     }
 
     suspend fun resetStatisticsForProviderModel(context: Context, providerModel: String) {
         val (provider, model) = TokenStatIdentityResolver.splitProviderModel(providerModel)
         if (model.isBlank()) return
-        withTransaction(context) { dao ->
-            dao.deleteEventsByProviderModel(provider, model)
-            dao.deleteBaselinesByProviderModel(provider, model)
-        }
+        withDao(context) { dao -> dao.resetModelTx(provider, model) }
+        TokenStatSpool.replay(context.applicationContext)
     }
 
-    private suspend fun withTransaction(
+    private suspend fun withDao(
         context: Context,
         block: suspend (TokenStatsDao) -> Unit,
     ) {
