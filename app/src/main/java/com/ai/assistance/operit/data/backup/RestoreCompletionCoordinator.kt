@@ -5,11 +5,9 @@ import com.ai.assistance.operit.util.AppLogger
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.nio.channels.FileChannel
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.nio.file.StandardOpenOption
 import java.util.UUID
 
 /**
@@ -146,10 +144,23 @@ internal interface RestoreMarkerStore {
  *
  * [read] 在目标缺失时先做残留恢复再返回，因此崩溃后下一次读取必然拿到完整的
  * 旧或新 generation，绝不会拿到 null 或半写内容而丢失 pending 信号。
+ *
+ * 严格目录项持久模式（P1-3 终审）：传入 [strictDirectorySync]（返回 true = 该
+ * 目录的目录项已确认持久）后，**所有**目录项变更（rename/删除已存在文件）之后
+ * 都必须经其确认；任一非 OK 抛 [IOException] fail-closed——write 只有目录项确认
+ * 持久才成功（canonical 可能已可见，调用方失败后下次读取按完整值幂等重放），
+ * read 的 sidecar 恢复 rename 同样严格同步。P1-2 终审：strict 模式下 [read] 在
+ * **返回任何 canonical 内容前**都必须先确认目录项持久（canonical 可见不等于
+ * 持久——上次 write 的提交 move 可能已可见但 sync 失败），非 OK 抛
+ * [IOException]，持续失败下每次 read 都失败，恢复 OK 才信任并返回；sidecar 清理
+ * 的删除 sync 失败同样抛错，绝不静默。默认 null 保持既有尽力而为行为
+ * （目录项同步失败仅静默吞掉，write/read 仍按协议返回），供
+ * [RestoreCompletionCoordinator] 等既有调用方使用。
  */
 internal class AtomicRestoreMarkerStore(
     private val file: File,
     private val atomicMove: (File, File) -> Boolean = AtomicRestoreMarkerStore::defaultAtomicMove,
+    private val strictDirectorySync: ((File) -> Boolean)? = null,
 ) : RestoreMarkerStore {
 
     private val parent: File
@@ -169,33 +180,29 @@ internal class AtomicRestoreMarkerStore(
         if (!file.isFile) {
             when {
                 newFile.isFile -> {
-                    if (!newFile.renameTo(file)) {
-                        throw IOException("Failed to restore new marker after interruption: ${file.path}")
-                    }
-                    deleteQuietly(bakFile)
+                    strictRename(newFile, file)
+                    strictDelete(bakFile)
                 }
                 bakFile.isFile -> {
-                    if (!bakFile.renameTo(file)) {
-                        throw IOException("Failed to restore backup marker after interruption: ${file.path}")
-                    }
+                    strictRename(bakFile, file)
                 }
                 else -> Unit
             }
         }
-        deleteQuietly(bakFile)
-        deleteQuietly(newFile)
+        strictDelete(bakFile)
+        strictDelete(newFile)
         deleteStaleTmpFiles()
 
         // 1. 写完整新内容到唯一临时文件并 fsync：此后内容在断电/崩溃后仍完整。
+        //    tmp 创建本身是临时暂存名（内容已 fsync），目录项不确认也不影响任何
+        //    提交值，不需要同步；真正进入协议的改名在 [strictRename] 中确认。
         val tmp = File(parent, "${file.name}.tmp${UUID.randomUUID()}")
         try {
             FileOutputStream(tmp).use { output ->
                 output.write(generation.toByteArray(Charsets.UTF_8))
                 output.fd.sync()
             }
-            if (!tmp.renameTo(newFile)) {
-                throw IOException("Failed to stage new marker: ${tmp.path}")
-            }
+            strictRename(tmp, newFile)
         } catch (e: Exception) {
             deleteQuietly(tmp)
             throw e
@@ -210,45 +217,51 @@ internal class AtomicRestoreMarkerStore(
             false
         }
         if (atomicMoved) {
-            syncDirQuietly()
+            // 提交点：canonical 已替换为完整新值，目录项必须确认持久才允许成功；
+            // sync 失败时 canonical 可能已可见——调用方失败，下次读取按完整值幂等。
+            requireDirSyncDurable()
             return
         }
 
         // 3. old/new/backup 回退：任意中断后目标必为完整旧或完整新值。
-        if (file.exists() && !file.renameTo(bakFile)) {
-            throw IOException("Failed to move existing marker to backup: ${file.path}")
-        }
+        if (file.exists()) strictRename(file, bakFile)
         if (!newFile.renameTo(file)) {
             // 提交失败：尽力把旧值放回目标，保持可读的完整旧 generation。
-            if (bakFile.exists() && !bakFile.renameTo(file)) {
-                throw IOException("Marker replacement failed and backup restore also failed: ${file.path}")
+            if (bakFile.exists()) {
+                strictRename(bakFile, file)
             }
             throw IOException("Failed to move new marker into place: ${file.path}")
         }
-        deleteQuietly(bakFile)
-        syncDirQuietly()
+        requireDirSyncDurable()
+        strictDelete(bakFile)
     }
 
     override suspend fun read(): String? {
         if (file.isFile) {
-            deleteQuietly(newFile)
-            deleteQuietly(bakFile)
+            strictDelete(newFile)
+            strictDelete(bakFile)
             deleteStaleTmpFiles()
+            // P1-2 终审修复：返回 canonical 内容前必须确认目录项持久（strict 模式）——
+            // canonical 可见不等于持久：上次 write 的提交 move 可能已可见但目录 sync 失败。
+            // 非 OK 抛 IOException fail-closed（持续失败下每次 read 都失败，恢复 OK 才信任
+            // canonical）；cleanup sidecar 的删除 sync 失败同样经 [strictDelete] 抛错，绝不
+            // 静默。
+            requireDirSyncDurable()
             return file.readText()
         }
-        // 目标缺失：恢复完整值（.new 已 fsync，存在即完整；优先新值）。
+        // 目标缺失：恢复完整值（.new 已 fsync，存在即完整；优先新值）。恢复 rename
+        // 是目录项变更，strict 模式必须确认持久（P1-3），非 OK 抛 IOException 让
+        // 调用方 fail-closed。
         return when {
             newFile.isFile -> {
-                if (!newFile.renameTo(file)) {
-                    throw IOException("Failed to restore new marker: ${file.path}")
-                }
-                deleteQuietly(bakFile)
+                strictRename(newFile, file)
+                strictDelete(bakFile)
+                requireDirSyncDurable()
                 file.readText()
             }
             bakFile.isFile -> {
-                if (!bakFile.renameTo(file)) {
-                    throw IOException("Failed to restore backup marker: ${file.path}")
-                }
+                strictRename(bakFile, file)
+                requireDirSyncDurable()
                 file.readText()
             }
             else -> {
@@ -259,27 +272,51 @@ internal class AtomicRestoreMarkerStore(
     }
 
     override suspend fun delete() {
-        file.delete()
-        deleteQuietly(newFile)
-        deleteQuietly(bakFile)
+        strictDelete(file)
+        strictDelete(newFile)
+        strictDelete(bakFile)
         deleteStaleTmpFiles()
     }
 
     private fun deleteStaleTmpFiles() {
-        parent.listFiles { f -> f.name.startsWith("${file.name}.tmp") }?.forEach { deleteQuietly(it) }
+        parent.listFiles { f -> f.name.startsWith("${file.name}.tmp") }?.forEach { strictDelete(it) }
+    }
+
+    /**
+     * 目录项持久确认（strict 模式，P1-3 终审）：回调返回 false（真实失败或平台
+     * 不支持，fail-closed）即抛 [IOException]。非 strict 模式不调用（保持尽力而为）。
+     */
+    private fun requireDirSyncDurable() {
+        val strict = strictDirectorySync ?: return
+        if (!strict(parent)) {
+            throw IOException(
+                "Directory entry not confirmed durable for marker: ${file.path}",
+            )
+        }
+    }
+
+    /**
+     * strict 模式的重命名：rename 失败抛 [IOException]；成功后必须确认目录项持久。
+     * 非 strict 模式与普通 renameTo 一致（失败返回 false 由调用方判断）。
+     */
+    private fun strictRename(from: File, to: File) {
+        if (!from.renameTo(to)) {
+            throw IOException("Failed to rename ${from.path} to ${to.path}")
+        }
+        requireDirSyncDurable()
+    }
+
+    /**
+     * strict 模式的删除：文件不存在时无目录项变更（不要求 sync）；删除成功且 strict
+     * 时必须确认目录项持久，非 OK 抛 [IOException]。删除失败静默（残留由下次清理）。
+     */
+    private fun strictDelete(f: File) {
+        if (f.exists() && f.delete()) requireDirSyncDurable()
     }
 
     private fun deleteQuietly(f: File) {
         try {
             f.delete()
-        } catch (_: Exception) {
-        }
-    }
-
-    /** 目录项持久化（rename 提交的落盘）：尽力而为，Windows 不支持目录 channel。 */
-    private fun syncDirQuietly() {
-        try {
-            FileChannel.open(parent.toPath(), StandardOpenOption.READ).use { it.force(true) }
         } catch (_: Exception) {
         }
     }

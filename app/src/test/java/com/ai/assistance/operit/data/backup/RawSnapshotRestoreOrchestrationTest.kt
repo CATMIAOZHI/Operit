@@ -4,13 +4,25 @@ import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.api.chat.llmprovider.TokenTrackingAIService
+import com.ai.assistance.operit.data.dao.TokenStatsDao
+import com.ai.assistance.operit.data.db.AppDatabase
+import com.ai.assistance.operit.data.stats.ProviderUsageSnapshot
+import com.ai.assistance.operit.data.stats.TokenStatCategory
+import com.ai.assistance.operit.data.stats.TokenStatRequestContext
+import com.ai.assistance.operit.data.stats.TokenStatStatus
+import com.ai.assistance.operit.data.stats.TokenStatsLedger
+import com.ai.assistance.operit.data.stats.TokenStatSpool
 import java.io.File
 import java.io.FileInputStream
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -62,6 +74,11 @@ class RawSnapshotRestoreOrchestrationTest {
         }
         // 真实 recovery 完成路径（读/写 MigrationStateStore）
         RestoreCompletionCoordinator.recoveryStateCompleter = null
+        TokenStatSpool.spoolDeleteForTest = null
+        TokenStatSpool.clearPendingStateForTest()
+        // P1 终审：Windows JVM 测试统一注入目录 fsync 成功（生产 Android/Linux 支持目录
+        // fd fsync；本类不测试 UNSUPPORTED 平台行为，真实探测在 Windows 会恒返回 UNSUPPORTED）
+        TokenStatSpool.dirSyncForTest = { TokenStatSpool.DirSyncResult.OK }
         Dispatchers.setMain(UnconfinedTestDispatcher())
     }
 
@@ -70,6 +87,9 @@ class RawSnapshotRestoreOrchestrationTest {
         MigrationStateStore.fileIoProvider = null
         RestoreCompletionCoordinator.markerStoreProvider = null
         RestoreCompletionCoordinator.recoveryStateCompleter = null
+        TokenStatSpool.spoolDeleteForTest = null
+        TokenStatSpool.dirSyncForTest = null
+        TokenStatSpool.clearPendingStateForTest()
         Dispatchers.resetMain()
         resetProcessRestartRequired()
     }
@@ -339,6 +359,30 @@ class RawSnapshotRestoreOrchestrationTest {
         }
 
     @Test
+    fun `restore fails in replacing state when old spool cannot be removed`() = runBlocking {
+        val zip = File(tempDir, "snapshot.zip")
+        createSnapshotZip(zip)
+        zipForOpen = zip
+        val spool = File(context.filesDir, TokenStatSpool.SPOOL_DIR_NAME)
+        spool.mkdirs()
+        File(spool, "sealed_1.jsonl").writeText("pending")
+        TokenStatSpool.spoolDeleteForTest = { false }
+
+        withContext(Dispatchers.IO) {
+            Mockito.mockStatic(AppLogger::class.java).use {
+                try {
+                    RawSnapshotBackupManager.restoreFromBackupFile(context, zip)
+                    fail("spool cleanup failure must fail restore")
+                } catch (e: java.io.IOException) {
+                    assertTrue(e.message!!.contains("cleanup failed"))
+                }
+            }
+        }
+        assertEquals(MigrationStateStore.State.REPLACING, state().state)
+        assertTrue(spool.exists())
+    }
+
+    @Test
     fun `uri entry with corrupt zip fails before replacement and leaves state untouched`() =
         runBlocking {
             val zip = File(tempDir, "corrupt.zip")
@@ -358,6 +402,136 @@ class RawSnapshotRestoreOrchestrationTest {
                 assertEquals("validation failure must not touch state", MigrationStateStore.State.IDLE, state().state)
                 assertFalse("no marker", markerFile().exists())
                 assertFalse("no restart requirement", RawSnapshotBackupManager.isProcessRestartRequired())
+            }
+        }
+
+    // ==== P1-2：恢复门闩与存活 insert 的隔离 ====
+
+    private fun request(id: String): TokenStatRequestContext =
+        TokenStatRequestContext(
+            eventId = id,
+            category = TokenStatCategory.CHAT,
+            configId = "cfg",
+            provider = "DEEPSEEK",
+            model = "deepseek-chat",
+            startedAtMs = 1_000L,
+        ).apply {
+            onUsage(ProviderUsageSnapshot(uncachedInputTokens = 1L, outputTokens = 1L, source = "test"))
+            finish(TokenStatStatus.COMPLETED, 1_000L)
+        }
+
+    private suspend fun line(request: TokenStatRequestContext): String =
+        TokenStatsLedger.prepareEventLine(context, request, request.toSpoolBaseJson())
+
+    /** 模拟 SQLite 忽略线程中断但可释放的挂起：任何 cancel(true) 都无法终止，直到门闩
+     *  打开才返回（释放后线程能真正终止，测试结束不留遗留线程）。 */
+    private fun gateIgnoringInterrupts(gate: CountDownLatch) {
+        while (true) {
+            try {
+                if (gate.await(1, TimeUnit.SECONDS)) return
+            } catch (_: InterruptedException) {
+            }
+        }
+    }
+
+    /** 等待 spool 专属 worker 线程全部终止；超时即失败（测试结束必须无遗留线程）。 */
+    private fun awaitNoSpoolWorkerThreads() {
+        fun live(): List<String> =
+            Thread.getAllStackTraces().entries
+                .filter { it.key.isAlive && it.key.name.startsWith("operit-token-stats-") }
+                .map { it.key.name }
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (System.nanoTime() < deadline) {
+            if (live().isEmpty()) return
+            Thread.sleep(20)
+        }
+        fail("spool worker threads leaked: ${live()}")
+    }
+
+    @Test
+    fun `restore entry with a live insert fails bounded before replacement and leaves state untouched`() =
+        runBlocking {
+            val zip = File(tempDir, "snapshot.zip")
+            createSnapshotZip(zip)
+            zipForOpen = zip
+            // 必须在构造 spool 行之前安装 provider：line() 的价格解析走注入的 DAO，
+            // 否则会落到真实 AppDatabase.getDatabase（JVM 上无框架 SQLite 驱动）
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val blockingDao = mock<TokenStatsDao>()
+            whenever(blockingDao.insertIdentityIfAbsent(any())).thenAnswer {
+                entered.countDown()
+                gateIgnoringInterrupts(release)
+                true
+            }
+            // 未打桩的 suspend 查询在 mock 上返回 null（擦除为 Object），
+            // 价格解析必须拿到空覆盖列表而不是 null
+            whenever(blockingDao.getAllPriceOverrides()).thenReturn(emptyList())
+            val proxy = mock<AppDatabase>()
+            whenever(proxy.tokenStatsDao()).thenReturn(blockingDao)
+            TokenStatsLedger.databaseProvider = { proxy }
+            TokenStatsLedger.legacyPriceProvider = { _, _ -> null }
+            val spool = File(context.filesDir, TokenStatSpool.SPOOL_DIR_NAME).apply { mkdirs() }
+            File(spool, "sealed_1.jsonl").writeText(line(request("stale-live")) + "\n")
+
+            // 旧 insert 已通过 fence 并在 DAO 内永久挂起（模拟 SQLite 忽略中断）
+            val previousInsert = TokenStatSpool.insertTimeoutMs
+            val previousQuiesce = TokenStatSpool.exclusiveQuiesceTimeoutMs
+            TokenStatSpool.insertTimeoutMs = 100
+            // 0：barrier 第一次轮询即失败，awaitActiveInsertsEmpty 不进入 delay 挂起——
+            // 恢复协程全程不离开安装线程局部 AppLogger mock 的 IO 线程（Mockito 5 的
+            // mockStatic 是线程局部，delay 恢复可能落到其他 IO 线程使真实 Log.e 抛
+            // "not mocked" 误失败）；"still active" 有界失败语义不变。
+            TokenStatSpool.exclusiveQuiesceTimeoutMs = 0
+            try {
+                TokenStatSpool.replay(context)
+                assertTrue("insert must be live inside Room", entered.await(10, TimeUnit.SECONDS))
+
+                // 等首轮 drain 的 insert 超时（insertTimeoutMs）并释放 lifecycleMutex 后再进入
+                // 恢复：insert 在门闩上阻塞的整个期间都保持登记（registry 不空），barrier 依然
+                // 有界失败，语义不变。若不等待，恢复协程会在 barrier 的 lifecycleMutex 上挂起并
+                // 被重新调度到 IO 池的其他线程——那里看不到线程局部的 AppLogger mock
+                // （Mockito 5 的 mockStatic 是线程局部），真实 Log.e 会抛 "not mocked" 使测试
+                // 误失败。释放时刻锚定于 entered（drain 必然先持锁再提交 insert），因此
+                // entered + insertTimeoutMs + 200ms 保证恢复时锁已被释放。
+                delay(TokenStatSpool.insertTimeoutMs + 200)
+
+                withContext(Dispatchers.IO) {
+                    Mockito.mockStatic(AppLogger::class.java).use {
+                        try {
+                            RawSnapshotBackupManager.restoreFromBackupFile(context, zip)
+                            fail("restore must fail bounded while an old insert is live")
+                        } catch (e: java.io.IOException) {
+                            assertTrue("restore must report the live insert", e.message!!.contains("still active"))
+                        }
+                    }
+                }
+                // 替换从未开始：状态不被触碰、无 marker、不要求重启、目录未被覆盖
+                assertEquals("replacement must never start", MigrationStateStore.State.IDLE, state().state)
+                assertFalse("no marker", markerFile().exists())
+                assertFalse("no restart requirement", RawSnapshotBackupManager.isProcessRestartRequired())
+                assertFalse(
+                    "datastore must not be replaced",
+                    File(tempDir, "data/datastore/api_settings.preferences_pb").exists()
+                )
+
+                // 模拟重启前必须释放旧 insert 并确认其真实终止，绝不遗留线程
+                release.countDown()
+                val registryDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+                while (TokenStatSpool.activeInsertCountForTest() != 0 && System.nanoTime() < registryDeadline) {
+                    delay(10)
+                }
+                assertEquals(0, TokenStatSpool.activeInsertCountForTest())
+                TokenTrackingAIService.resetPricingExecutorForTest()
+                TokenStatSpool.resetExecutorsForTest()
+                TokenStatSpool.shutdownWriterForTest()
+                awaitNoSpoolWorkerThreads()
+            } finally {
+                TokenStatsLedger.databaseProvider = null
+                TokenStatsLedger.legacyPriceProvider = null
+                TokenStatSpool.resetExecutorsForTest()
+                TokenStatSpool.insertTimeoutMs = previousInsert
+                TokenStatSpool.exclusiveQuiesceTimeoutMs = previousQuiesce
             }
         }
 }

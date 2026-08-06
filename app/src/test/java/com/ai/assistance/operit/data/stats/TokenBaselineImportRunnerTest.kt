@@ -108,7 +108,7 @@ class TokenBaselineImportRunnerTest {
     private fun openDatabase(filesDir: File): AppDatabase =
         Room.databaseBuilder(mockContext(filesDir), AppDatabase::class.java, "app_database")
             .setDriver(JdbcSQLiteDriver())
-            .addMigrations(AppDatabase.MIGRATION_28_29)
+            .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30)
             .allowMainThreadQueries()
             .build()
 
@@ -864,9 +864,9 @@ class TokenBaselineImportRunnerTest {
                         status = TokenStatStatus.COMPLETED.name,
                         startedAtMs = 1000L,
                         endedAtMs = 2000L,
-                        uncachedInputTokens = 800,
-                        cachedInputTokens = 200,
-                        outputTokens = 500,
+                        uncachedInputTokens = 800L,
+                        cachedInputTokens = 200L,
+                        outputTokens = 500L,
                         billingMode = BillingMode.TOKEN.name,
                         pricingCurrency = "USD",
                         inputPricePerMillion = 1.0,
@@ -905,7 +905,7 @@ class TokenBaselineImportRunnerTest {
                 // 事件必须完整保留（identity 未走删除式 REPLACE）
                 assertEquals(1, dao.countEvents())
                 val readBack = dao.getEvent("req-1")!!
-                assertEquals(800, readBack.uncachedInputTokens)
+                assertEquals(800L, readBack.uncachedInputTokens)
                 assertEquals(0.0019, readBack.costInPricingCurrency!!, 1e-12)
 
                 // baseline 受控补导更新：1.8M*1 + 200k*0.02 + 1M*99 = 1.8+0.004+99

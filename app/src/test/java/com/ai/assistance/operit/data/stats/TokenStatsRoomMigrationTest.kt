@@ -99,7 +99,7 @@ class TokenStatsRoomMigrationTest {
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_28_29)
+                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30)
                     .allowMainThreadQueries()
                     .build()
 
@@ -117,10 +117,11 @@ class TokenStatsRoomMigrationTest {
                 assertTrue("token_stat_price_overrides", tables.contains("token_stat_price_overrides"))
                 assertTrue("token_stat_baselines", tables.contains("token_stat_baselines"))
 
-                // 迁移可重入（CREATE IF NOT EXISTS）：以驱动变体再跑一次
+                // 迁移可重入（CREATE IF NOT EXISTS）：以驱动变体再跑一次；
+                // Room 打开时已应用 28→29→30，重放 28→29 不改变版本号
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_28_29.migrate(connection)
-                    assertEquals(29, userVersion(connection))
+                    assertEquals(30, userVersion(connection))
                 }
             } finally {
                 database.close()
@@ -137,7 +138,7 @@ class TokenStatsRoomMigrationTest {
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_28_29)
+                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30)
                     .allowMainThreadQueries()
                     .build()
 
@@ -173,11 +174,11 @@ class TokenStatsRoomMigrationTest {
                         startedAtMs = 1000L,
                         endedAtMs = 2000L,
                         firstTokenAtMs = 1200L,
-                        uncachedInputTokens = 800,
-                        cachedInputTokens = 200,
-                        cacheWriteTokens = 100,
-                        outputTokens = 500,
-                        reasoningTokens = 100,
+uncachedInputTokens = 800L,
+cachedInputTokens = 200L,
+cacheWriteTokens = 100L,
+outputTokens = 500L,
+reasoningTokens = 50L,
                         reasoningIncludedInOutput = true,
                         billingMode = BillingMode.TOKEN.name,
                         pricingCurrency = "USD",
@@ -193,7 +194,7 @@ class TokenStatsRoomMigrationTest {
                 assertEquals(1, dao.countEvents())
                 val readBack = dao.getEvent("req-1")!!
                 assertEquals(0.001975, readBack.costInPricingCurrency!!, 1e-12)
-                assertEquals(100, readBack.cacheWriteTokens)
+                assertEquals(100L, readBack.cacheWriteTokens)
                 assertEquals(0.75, readBack.cacheWritePricePerMillion!!, 1e-12)
 
                 // 未知分量以 null 落库，0 是确认值：null vs 0 必须可区分
@@ -365,7 +366,7 @@ class TokenStatsRoomMigrationTest {
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_28_29)
+                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30)
                     .allowMainThreadQueries()
                     .build()
 
@@ -401,10 +402,10 @@ class TokenStatsRoomMigrationTest {
                         status = TokenStatStatus.COMPLETED.name,
                         startedAtMs = 1000L,
                         endedAtMs = 2000L,
-                        uncachedInputTokens = 100,
-                        cachedInputTokens = 0,
-                        cacheWriteTokens = 0,
-                        outputTokens = 50,
+uncachedInputTokens = 800L,
+cachedInputTokens = 200L,
+cacheWriteTokens = 100L,
+outputTokens = 500L,
                         billingMode = BillingMode.TOKEN.name,
                         pricingCurrency = "USD",
                         inputPricePerMillion = 1.0,
@@ -468,7 +469,7 @@ class TokenStatsRoomMigrationTest {
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_28_29)
+                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30)
                     .allowMainThreadQueries()
                     .build()
 
@@ -493,9 +494,9 @@ class TokenStatsRoomMigrationTest {
                         status = TokenStatStatus.COMPLETED.name,
                         startedAtMs = 1000L,
                         endedAtMs = 2000L,
-                        uncachedInputTokens = 800,
-                        cachedInputTokens = 200,
-                        outputTokens = 500,
+uncachedInputTokens = 800L,
+cachedInputTokens = 200L,
+outputTokens = 500L,
                         billingMode = BillingMode.TOKEN.name,
                         pricingCurrency = "USD",
                         inputPricePerMillion = 1.0,
@@ -519,8 +520,104 @@ class TokenStatsRoomMigrationTest {
                 assertEquals(1, dao.countEvents())
                 assertEquals("merged-group", dao.getIdentity(identityId)!!.displayModelId)
                 val readBack = dao.getEvent("req-1")!!
-                assertEquals(800, readBack.uncachedInputTokens)
+                assertEquals(800L, readBack.uncachedInputTokens)
                 assertEquals(0.0019, readBack.costInPricingCurrency!!, 1e-12)
+            } finally {
+                database.close()
+            }
+        }
+
+    /** 用导出的 v29 schema JSON 构造一个真实的 v29 数据库文件（含一条事件行）。 */
+    private fun buildV29Database(dbPath: String) {
+        val schemaFile = File(schemaDir, "29.json")
+        assertTrue("schema export missing: ${schemaFile.absolutePath}", schemaFile.isFile)
+        val schema = json.decodeFromString<RoomSchema>(schemaFile.readText())
+        assertEquals(29, schema.database.version)
+
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { connection ->
+            connection.createStatement().use { statement ->
+                schema.database.entities.forEach { entity ->
+                    statement.execute(entity.createSql.replace("\${TABLE_NAME}", entity.tableName))
+                    entity.indices.forEach { index ->
+                        statement.execute(index.createSql.replace("\${TABLE_NAME}", entity.tableName))
+                    }
+                }
+                statement.execute(
+                    "CREATE TABLE IF NOT EXISTS room_master_table " +
+                        "(id INTEGER PRIMARY KEY, identity_hash TEXT NOT NULL)"
+                )
+                statement.execute(
+                    "INSERT OR REPLACE INTO room_master_table (id, identity_hash) " +
+                        "VALUES(42, '${schema.database.identityHash}')"
+                )
+                statement.execute("PRAGMA user_version = 29")
+                // 旧数据：迁移前插入一条事件，验证迁移后数据保留（含价格快照）
+                statement.execute(
+                    "INSERT INTO token_stat_identities " +
+                        "(identityId, configId, provider, model, displayModelId) " +
+                        "VALUES ('identity-1', '', 'DEEPSEEK', 'deepseek-chat', 'deepseek-chat')"
+                )
+                statement.execute(
+                    "INSERT INTO token_stat_events " +
+                        "(eventId, statIdentityId, category, status, startedAtMs, endedAtMs, " +
+                        "firstTokenAtMs, uncachedInputTokens, cachedInputTokens, cacheWriteTokens, " +
+                        "outputTokens, reasoningTokens, reasoningIncludedInOutput, billingMode, " +
+                        "pricingCurrency, inputPricePerMillion, cachedInputPricePerMillion, " +
+                        "cacheWritePricePerMillion, outputPricePerMillion, pricePerRequest, " +
+                        "pricingSource, costInPricingCurrency) " +
+                        "VALUES ('evt-v29', 'identity-1', 'CHAT', 'COMPLETED', 1000, 2000, 1200, " +
+                        "800, 200, 100, 500, 50, 1, 'TOKEN', 'USD', 1.0, 0.5, 2.0, 3.0, NULL, " +
+                        "'DEFAULT', 0.0019)"
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `v29 database migrates to v30 keeping events and adding diagnostics column`() =
+        runBlocking {
+            val tempDir = kotlin.io.path.createTempDirectory("room-migration-test").toFile()
+            val dbFile = File(tempDir, "app_database")
+            buildV29Database(dbFile.absolutePath)
+
+            val database =
+                Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
+                    .setDriver(JdbcSQLiteDriver())
+                    .addMigrations(AppDatabase.MIGRATION_29_30)
+                    .allowMainThreadQueries()
+                    .build()
+
+            try {
+                // 触发打开与迁移（Room 内部校验 identityHash 与 TableInfo，包括新列）
+                val dao = database.tokenStatsDao()
+                val readBack = dao.getEvent("evt-v29")
+                assertNotNull("migration must preserve legacy event rows", readBack)
+                assertEquals(800L, readBack!!.uncachedInputTokens)
+                assertEquals("DEFAULT", readBack.pricingSource)
+                assertNull("v29 rows have no diagnostics", readBack.diagnosticsJson)
+                // v30 新增的结构化列对旧行保持 null（未知），与新写入可区分
+                assertNull(readBack.totalInputTokens)
+                assertNull(readBack.cacheWriteSeparateBilling)
+
+                // 新列可写
+                dao.insertEvent(
+                    readBack.copy(
+                        eventId = "evt-v30",
+totalInputTokens = 1000L,
+                        cacheWriteSeparateBilling = false,
+                        diagnosticsJson = "{\"source\":\"openai_chat_completions\",\"usageObserved\":true}",
+                    )
+                )
+                val v30Event = dao.getEvent("evt-v30")!!
+                assertEquals(1000L, v30Event.totalInputTokens)
+                assertEquals(false, v30Event.cacheWriteSeparateBilling)
+                assertTrue(v30Event.diagnosticsJson!!.contains("\"source\":\"openai_chat_completions\""))
+
+                // 迁移可重入（ALTER 幂等）：以驱动变体再跑一次
+                JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
+                    AppDatabase.MIGRATION_29_30.migrate(connection)
+                    assertEquals(30, userVersion(connection))
+                }
             } finally {
                 database.close()
             }

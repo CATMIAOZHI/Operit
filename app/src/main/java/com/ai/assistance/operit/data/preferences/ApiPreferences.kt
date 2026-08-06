@@ -734,6 +734,31 @@ class ApiPreferences private constructor(private val context: Context) {
         )
     }
 
+    /**
+     * 读取指定 provider:model 的旧系统用户价格设置（阶段 2 事件记录用）。
+     * 旧约定：价格键缺失或为 0 视为未设置（0 与“未设置”不可区分），
+     * 只有 > 0 的值才算用户设置；无任何设置时返回 null。
+     */
+    suspend fun legacyPriceSettingsFor(
+        providerModel: String
+    ): com.ai.assistance.operit.data.stats.LegacyPriceSettings? {
+        val preferences = context.apiDataStore.data.first()
+        val billingRaw = preferences[getBillingModeKey(providerModel)]
+        val settings =
+            com.ai.assistance.operit.data.stats.LegacyPriceSettings(
+                billingMode = billingRaw?.let { com.ai.assistance.operit.data.model.BillingMode.fromString(it) },
+                inputPricePerMillion =
+                    preferences[getModelInputPriceKey(providerModel)]?.toDouble()?.takeIf { it > 0.0 },
+                cachedInputPricePerMillion =
+                    preferences[getModelCachedInputPriceKey(providerModel)]?.toDouble()?.takeIf { it > 0.0 },
+                outputPricePerMillion =
+                    preferences[getModelOutputPriceKey(providerModel)]?.toDouble()?.takeIf { it > 0.0 },
+                pricePerRequest =
+                    preferences[getPricePerRequestKey(providerModel)]?.toDouble()?.takeIf { it > 0.0 },
+            )
+        return settings.takeIf { it.hasAnyUserSetting() }
+    }
+
     private fun removeTokenCountKeys(preferences: MutablePreferences, vararg keyNames: String) {
         val names = keyNames.toSet()
         preferences.asMap().keys

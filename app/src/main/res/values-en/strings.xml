@@ -5325,6 +5325,25 @@
     <string name="backup_raw_snapshot_restart_now">Restart now</string>
     <string name="backup_raw_snapshot_restore_registration_failed">Restore registration failed: directories were replaced but the re-import marker was not registered. Please close and reopen the app to retry automatically: %1$s</string>
     <string name="backup_raw_snapshot_restart_later">Later</string>
+    <string name="stats_quarantine_title">Statistics quarantine evidence</string>
+    <string name="stats_quarantine_subtitle">Preserve and maintain corrupt statistics evidence</string>
+    <string name="stats_quarantine_desc">Event segments that cannot be parsed are preserved as quarantine evidence and never block healthy statistics recording. Full evidence is retained up to the %1$s cap; beyond it only count, hash, byte and time summaries are kept, never content. Export the evidence first, then acknowledge deletion explicitly.</string>
+    <string name="stats_quarantine_info_empty">No quarantine evidence</string>
+    <string name="stats_quarantine_info">%1$d file(s) quarantined, %2$s total</string>
+    <string name="stats_quarantine_stuck_trash_info">%1$d incomplete deletion transaction(s) (%2$s), cleared together on delete confirmation</string>
+    <string name="stats_quarantine_summary_info">%1$d summary record(s) (%2$s) for the over-cap portion, without content</string>
+    <string name="stats_quarantine_export">Export evidence</string>
+    <string name="stats_quarantine_export_success">Evidence exported to: %1$s</string>
+    <string name="stats_quarantine_export_failed">Evidence export failed: %1$s</string>
+    <string name="stats_quarantine_export_failed_cleanup">Evidence export failed: %1$s (export directory cleanup also failed, please remove it manually: %2$s)</string>
+    <string name="stats_quarantine_delete">Delete evidence</string>
+    <string name="stats_quarantine_delete_confirm_title">Delete statistics quarantine evidence?</string>
+    <string name="stats_quarantine_delete_confirm_message">This permanently deletes %1$d quarantine evidence file(s) (%2$s total). This cannot be undone; exporting the evidence first is recommended.</string>
+    <string name="stats_quarantine_delete_confirm_action">Delete</string>
+    <string name="stats_quarantine_delete_cancel_action">Cancel</string>
+    <string name="stats_quarantine_delete_success">Deleted %1$d quarantine evidence file(s)</string>
+    <string name="stats_quarantine_delete_failed">Deletion failed: %1$s</string>
+    <string name="stats_quarantine_info_error">Quarantine evidence info unavailable: %1$s (keeping the last shown values)</string>
     <string name="backup_official_operit_migration_action">Migrate from official Operit</string>
     <string name="backup_official_operit_migration_desc">Import an official Operit file snapshot once. Operit Ry backs up its current data first. After confirmation the app exits immediately and completes the migration in a safe mode on the next launch; this action is hidden after success.</string>
     <string name="backup_official_operit_migration_confirm_title">Migrate from official Operit?</string>
@@ -6894,6 +6913,7 @@
     <string name="mnn_error_with_message">Error: %1$s</string>
     <string name="mnn_session_not_initialized">Error: LLM session not initialized</string>
     <string name="mnn_reasoning_error">\n\n[Reasoning process error]</string>
+    <string name="mnn_error_request_cancelled">Request cancelled by user</string>
     <string name="mnn_generic_error">Error: %1$s</string>
     <string name="mnn_model_not_configured">Model name not configured</string>
     <string name="mnn_model_dir_missing">Model directory does not exist: %1$s\nPlease download the model first</string>
@@ -7164,6 +7184,7 @@
     <string name="llama_error_chat_template_failed">Error: Cannot apply model chat template (llama_model_chat_template/llama_chat_apply_template)</string>
     <string name="llama_error_inference_failed">llama.cpp inference process error</string>
     <string name="llama_error_inference_tag">[Inference error occurred]</string>
+    <string name="llama_error_request_cancelled">Request cancelled by user</string>
 
     <!-- TaskExecutor -->
     <string name="task_error_execution_failed">Task execution failed: %1$s</string>

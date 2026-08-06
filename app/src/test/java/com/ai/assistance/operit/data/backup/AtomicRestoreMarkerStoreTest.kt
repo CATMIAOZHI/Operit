@@ -206,4 +206,128 @@ class AtomicRestoreMarkerStoreTest {
             assertNull(store.read())
             assertFalse(File(dir, "marker.txt.tmpabc").exists())
         }
+
+    // ── P1-3 终审：严格目录项持久模式（TokenStatSpool 的 summary/manifest/ack state 使用）──
+
+    private fun strictStoreAt(
+        dir: File,
+        strictSync: (File) -> Boolean,
+        atomicMove: (File, File) -> Boolean = ::realAtomicMove,
+    ): Pair<File, AtomicRestoreMarkerStore> {
+        val markerFile = File(dir, "marker.txt")
+        return markerFile to AtomicRestoreMarkerStore(markerFile, atomicMove, strictSync)
+    }
+
+    @Test
+    fun `strict write fails when the commit dir sync is not OK and canonical may already be visible`() =
+        runBlocking {
+            val dir = kotlin.io.path.createTempDirectory("marker-strict-write").toFile()
+            var syncCalls = 0
+            // 第一次写入的 staging sync 成功，commit（atomic move 提交点）sync 失败
+            val (markerFile, store) = strictStoreAt(dir, strictSync = {
+                syncCalls += 1
+                syncCalls != 2
+            })
+            try {
+                store.write("generation-old")
+                fail("strict write must fail when the commit dir sync is not OK")
+            } catch (e: java.io.IOException) {
+            }
+            assertEquals(2, syncCalls)
+            // canonical 发布已可见但 sync 失败：内容是完整新值（调用方失败，下次重读幂等）
+            assertFullUuid(markerFile.readText(), "generation-old")
+
+            // P1-2 终审：write 提交 move 成功但 sync 失败——canonical 已可见但目录项未确认
+            // 持久。持续失败下 read 必须继续失败（绝不信任 canonical），恢复 OK 才返回。
+            val (_, failing) = strictStoreAt(dir, strictSync = { false })
+            try {
+                failing.read()
+                fail("strict read must fail while the commit sync failure persists")
+            } catch (e: java.io.IOException) {
+                assertTrue(e.message!!.contains("durable"))
+            }
+            try {
+                failing.read()
+                fail("strict read must keep failing under persistent dir sync failure")
+            } catch (e: java.io.IOException) {
+                assertTrue(e.message!!.contains("durable"))
+            }
+
+            // 恢复严格回调（总是 OK）：重试写入成功
+            val (_, recovered) = strictStoreAt(dir, strictSync = { true })
+            recovered.write("generation-new")
+            assertFullUuid(markerFile.readText(), "generation-new")
+            // 幂等：canonical 是完整新值，后续读取不受影响
+            assertFullUuid(recovered.read(), "generation-new")
+            assertFalse(File(dir, "marker.txt.new").exists())
+        }
+
+    @Test
+    fun `strict write fails when any directory entry change cannot be confirmed`() =
+        runBlocking {
+            val dir = kotlin.io.path.createTempDirectory("marker-strict-stage").toFile()
+            // staging rename（tmp→.new）后的目录项 sync 失败 → 整个 write 抛 IOException
+            val (_, store) = strictStoreAt(dir, strictSync = { false })
+            try {
+                store.write("generation-new")
+                fail("strict write must fail when a directory entry change is not confirmed")
+            } catch (e: java.io.IOException) {
+                assertTrue(e.message!!.contains("durable"))
+            }
+            // canonical 从未发布：读取仍为 null（无半写/部分状态冒充完整值）
+            assertNull(File(dir, "marker.txt").let { if (it.exists()) it.readText() else null })
+        }
+
+    @Test
+    fun `strict read fails while canonical exists until the dir sync recovers`() =
+        runBlocking {
+            val dir = kotlin.io.path.createTempDirectory("marker-strict-canonical-gate").toFile()
+            var syncOk = true
+            val (markerFile, store) = strictStoreAt(dir, strictSync = { syncOk })
+            store.write("generation-1")
+            assertEquals("generation-1", markerFile.readText())
+            // P1-2 终审：canonical 可见但目录项未确认持久 → read 必须失败，绝不信任 canonical
+            syncOk = false
+            try {
+                store.read()
+                fail("strict read must fail while the dir sync is not OK even with canonical present")
+            } catch (e: java.io.IOException) {
+                assertTrue(e.message!!.contains("durable"))
+            }
+            // 持续失败：再次 read 仍然失败（canonical 存在不放行）
+            try {
+                store.read()
+                fail("strict read must keep failing while the dir sync stays not OK")
+            } catch (e: java.io.IOException) {
+                assertTrue(e.message!!.contains("durable"))
+            }
+            // 恢复：dir sync OK 后 read 返回完整 canonical
+            syncOk = true
+            assertFullUuid(store.read(), "generation-1")
+            assertFalse(File(dir, "marker.txt.new").exists())
+        }
+
+    @Test
+    fun `strict read sidecar recovery rename must be confirmed durable`() =
+        runBlocking {
+            val dir = kotlin.io.path.createTempDirectory("marker-strict-read").toFile()
+            // 崩溃窗口：目标缺失、.new 完整（恢复 rename 是目录项变更）
+            File(dir, "marker.txt.new").writeText("generation-new")
+            val (markerFile, store) = strictStoreAt(dir, strictSync = { false })
+            try {
+                store.read()
+                fail("strict read recovery must fail when the rename is not confirmed durable")
+            } catch (e: java.io.IOException) {
+                assertTrue(e.message!!.contains("durable"))
+            }
+            // 失败后状态保留：恢复 rename 已可见（canonical = 完整新值，绝不截断/半写），
+            // 调用方失败——下一轮重读按完整值幂等完成
+            assertTrue(markerFile.exists())
+            assertEquals("generation-new", markerFile.readText())
+            assertFalse(File(dir, "marker.txt.new").exists())
+            // 恢复严格回调：同一完整值直接读取成功
+            val (_, recovered) = strictStoreAt(dir, strictSync = { true })
+            assertFullUuid(recovered.read(), "generation-new")
+            assertTrue(markerFile.isFile)
+        }
 }

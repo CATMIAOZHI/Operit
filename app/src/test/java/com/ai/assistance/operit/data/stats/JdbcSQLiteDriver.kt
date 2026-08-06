@@ -14,7 +14,6 @@ import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.ResultSetMetaData
 import java.sql.SQLException
-import java.sql.Savepoint
 import java.sql.Types
 
 /**
@@ -46,8 +45,6 @@ class JdbcSQLiteConnection(fileName: String) : SQLiteConnection {
             createStatement().use { it.execute("PRAGMA journal_mode = MEMORY") }
         }
 
-    private val savepoints = HashMap<String, Savepoint>()
-
     override fun prepare(sql: String): SQLiteStatement {
         val trimmed = sql.trim()
         return when {
@@ -55,14 +52,15 @@ class JdbcSQLiteConnection(fileName: String) : SQLiteConnection {
                 TransactionStatement { beginJdbcTransaction() }
             trimmed == "END TRANSACTION" ->
                 TransactionStatement { endJdbcTransaction(commit = true) }
-            trimmed.startsWith("ROLLBACK TRANSACTION TO SAVEPOINT") ->
-                TransactionStatement { rollbackToSavepoint(extractName(trimmed)) }
+            trimmed.startsWith("ROLLBACK TRANSACTION TO SAVEPOINT") ||
+                trimmed.startsWith("SAVEPOINT ") ||
+                trimmed.startsWith("RELEASE SAVEPOINT ") ->
+                // Room 连接池的嵌套事务通过 SAVEPOINT 实现（语句形如
+                // `SAVEPOINT '1'`）：原样执行即可，不要拆名字（sqlite-jdbc
+                // 的 JDBC Savepoint API 转义有问题）
+                TransactionStatement { executeRawSql(trimmed) }
             trimmed == "ROLLBACK TRANSACTION" ->
                 TransactionStatement { endJdbcTransaction(commit = false) }
-            trimmed.startsWith("SAVEPOINT ") ->
-                TransactionStatement { createSavepoint(extractName(trimmed)) }
-            trimmed.startsWith("RELEASE SAVEPOINT ") ->
-                TransactionStatement { releaseSavepoint(extractName(trimmed)) }
             else -> JdbcSQLiteStatement(connection.prepareStatement(sql))
         }
     }
@@ -71,6 +69,14 @@ class JdbcSQLiteConnection(fileName: String) : SQLiteConnection {
 
     override fun close() {
         connection.close()
+    }
+
+    private fun executeRawSql(sql: String) {
+        try {
+            connection.createStatement().use { it.execute(sql) }
+        } catch (e: Exception) {
+            throw IllegalStateException("raw sql failed: [$sql]", e)
+        }
     }
 
     private fun beginJdbcTransaction() {
@@ -83,28 +89,6 @@ class JdbcSQLiteConnection(fileName: String) : SQLiteConnection {
         if (connection.autoCommit) return
         if (commit) connection.commit() else connection.rollback()
         connection.autoCommit = true
-    }
-
-    private fun createSavepoint(name: String) {
-        savepoints[name] = connection.setSavepoint(name)
-    }
-
-    private fun releaseSavepoint(name: String) {
-        val savepoint = savepoints.remove(name) ?: return
-        connection.releaseSavepoint(savepoint)
-    }
-
-    private fun rollbackToSavepoint(name: String) {
-        // SQL 语义：回滚到保存点不会释放保存点。
-        val savepoint = savepoints[name] ?: return
-        connection.rollback(savepoint)
-    }
-
-    private fun extractName(sql: String): String {
-        val start = sql.indexOf('\'')
-        val end = sql.lastIndexOf('\'')
-        if (start < 0 || end <= start) return sql.substringAfterLast(' ').trim()
-        return sql.substring(start + 1, end)
     }
 
     private class TransactionStatement(private val action: () -> Unit) : SQLiteStatement {

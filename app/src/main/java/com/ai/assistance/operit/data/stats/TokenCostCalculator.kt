@@ -8,55 +8,68 @@ import com.ai.assistance.operit.data.model.BillingMode
  *
  * - null 字段表示“未知”，不允许静默当作 0；0 表示 provider 确认该分量为 0
  *   （例如确认无缓存读取/无缓存写入）。任一未知分量导致 TOKEN 模式成本未知。
+ * - token 字段为 [Long]：provider 原值可能超过 Int 范围，聚合与计费全程 Long
+ *   运算，绝不因 Int 溢出产生负数落账；负值在适配层已被拒绝为未知。
+ * - [totalInputTokens]：provider 明确上报的总输入（含缓存命中/写入）。当
+ *   cached/uncached 拆分未知（[uncachedInputTokens]/[cachedInputTokens] 为 null）
+ *   时，**只有**在输入与缓存输入单价相同（拆分不影响计费）的前提下才允许按
+ *   总输入计费；单价不同则成本仍保持未知，绝不伪造 uncached。
+ * - [cacheWriteSeparateBilling]：false = provider 无独立缓存写入计费概念
+ *   （OpenAI 兼容系/Gemini/本地/ToolPkg），cacheWriteTokens 缺失或为 0 都不阻碍
+ *   费用计算（写入成本已包含在输入单价内）；true = 缓存写入独立计费（Anthropic），
+ *   此时该分量未知会导致费用未知。
  * - [reasoningIncludedInOutput] 是推理 token 归一化边界：
  *   true = provider 的 output 计数已包含推理 token；
  *   false = 推理 token 独立计数，计费时按输出单价补算；
  *   null = provider 未声明，按“已包含”处理，避免重复收费。
  */
 data class TokenUsageInput(
-    val uncachedInputTokens: Int? = null,
-    val cachedInputTokens: Int? = null,
-    val cacheWriteTokens: Int? = null,
-    val outputTokens: Int? = null,
-    val reasoningTokens: Int? = null,
+    val uncachedInputTokens: Long? = null,
+    val cachedInputTokens: Long? = null,
+    val cacheWriteTokens: Long? = null,
+    val totalInputTokens: Long? = null,
+    val outputTokens: Long? = null,
+    val reasoningTokens: Long? = null,
     val reasoningIncludedInOutput: Boolean? = null,
+    val cacheWriteSeparateBilling: Boolean = true,
 )
 
 /** 单次请求的原币成本计算结果；[amount] 为 null 表示未知（非 0）。 */
 data class TokenCostResult(
     val amount: Double?,
     val currency: PricingCurrency,
-    val billedInputTokens: Int? = null,
-    val billedCacheWriteTokens: Int? = null,
-    val billedOutputTokens: Int? = null,
+    val billedInputTokens: Long? = null,
+    val billedCacheWriteTokens: Long? = null,
+    val billedOutputTokens: Long? = null,
 )
 
 /**
  * 原币费用计算。
  *
  * - TOKEN 模式：计费输入 = uncached + cached（两者都必须已知，null 即未知→成本 null）；
- *   缓存写入按 cacheWriteTokens 独立计费（未知→成本 null；0 跳过；>0 需要缓存写入单价，
- *   该单价未解析到时成本 null）；计费输出 = output + 独立计数的 reasoning。
+ *   缓存写入在 [TokenUsageInput.cacheWriteSeparateBilling] 为 true 时独立计费
+ *   （未知→成本 null；0 跳过；>0 需要缓存写入单价，缺失则成本 null）；
+ *   为 false（无独立缓存写入概念）时不单独计费，字段缺失不影响成本。
  * - COUNT 模式：成本 = 单次价格（每事件一次请求）。
  * - 价格为“每百万 token”原币单价；cached 单价缺省已由 [TokenPriceResolver] 回填。
  */
 object TokenCostCalculator {
 
-    fun billedOutputTokens(usage: TokenUsageInput): Int? {
+    fun billedOutputTokens(usage: TokenUsageInput): Long? {
         val output = usage.outputTokens ?: return null
         val separateReasoning =
             if (usage.reasoningIncludedInOutput == false && usage.reasoningTokens != null) {
                 usage.reasoningTokens
             } else {
-                0
+                0L
             }
-        return output + separateReasoning
+        return saturatedAdd(output, separateReasoning)
     }
 
-    fun billedInputTokens(usage: TokenUsageInput): Int? {
+    fun billedInputTokens(usage: TokenUsageInput): Long? {
         val uncached = usage.uncachedInputTokens ?: return null
         val cached = usage.cachedInputTokens ?: return null
-        return uncached + cached
+        return saturatedAdd(uncached, cached)
     }
 
     fun computeCost(usage: TokenUsageInput, pricing: ResolvedPricing): TokenCostResult {
@@ -68,9 +81,8 @@ object TokenCostCalculator {
             )
         }
 
-        val billedInput = billedInputTokens(usage)
         val billedOutput = billedOutputTokens(usage)
-        if (billedInput == null || billedOutput == null) {
+        if (billedOutput == null) {
             return TokenCostResult(amount = null, currency = pricing.currency)
         }
         val inputPrice = pricing.inputPricePerMillion
@@ -80,16 +92,37 @@ object TokenCostCalculator {
             return TokenCostResult(amount = null, currency = pricing.currency)
         }
 
-        val cachedTokens = usage.cachedInputTokens ?: 0
-        val uncachedTokens = billedInput - cachedTokens
-        var amount =
-            uncachedTokens / 1_000_000.0 * inputPrice +
-                cachedTokens / 1_000_000.0 * cachedPrice +
-                billedOutput / 1_000_000.0 * outputPrice
+        // 输入计费：
+        // - 拆分已知 → 按 uncached/cached 分量各自计价；
+        // - 拆分未知（cached details 缺失）但总输入已知 → 仅当输入与缓存输入
+        //   单价相同（拆分不影响计费）时按总输入计价；单价不同则成本保持未知，
+        //   绝不把总输入伪装成 uncached。
+        val cachedTokens = usage.cachedInputTokens
+        val uncachedTokens = usage.uncachedInputTokens
+        val billedInput: Long
+        val inputAmount: Double
+        if (cachedTokens != null && uncachedTokens != null) {
+            billedInput = saturatedAdd(uncachedTokens, cachedTokens)
+            inputAmount =
+                uncachedTokens / 1_000_000.0 * inputPrice +
+                    cachedTokens / 1_000_000.0 * cachedPrice
+        } else {
+            val total = usage.totalInputTokens
+            if (total == null || inputPrice != cachedPrice) {
+                return TokenCostResult(amount = null, currency = pricing.currency)
+            }
+            billedInput = total
+            inputAmount = total / 1_000_000.0 * inputPrice
+        }
+        var amount = inputAmount + billedOutput / 1_000_000.0 * outputPrice
 
-        // 缓存写入：未知 → 成本未知；确认 0 → 不参与；> 0 → 需要缓存写入单价
+        // 缓存写入：
+        // - 独立计费概念下未知 → 成本未知（不静默当作 0）；
+        // - 确认 0 → 不参与；
+        // - > 0 且独立计费 → 需要缓存写入单价，缺失则成本未知；
+        // - 非独立计费（OpenAI 兼容系等）→ 写入成本已包含在输入单价内，不单独计费。
         val cacheWriteTokens = usage.cacheWriteTokens
-        if (cacheWriteTokens == null) {
+        if (cacheWriteTokens == null && usage.cacheWriteSeparateBilling) {
             return TokenCostResult(
                 amount = null,
                 currency = pricing.currency,
@@ -98,10 +131,16 @@ object TokenCostCalculator {
                 billedOutputTokens = billedOutput,
             )
         }
-        if (cacheWriteTokens > 0) {
+        if (cacheWriteTokens != null && cacheWriteTokens > 0 && usage.cacheWriteSeparateBilling) {
             val cacheWritePrice = pricing.cacheWritePricePerMillion
             if (cacheWritePrice == null) {
-                return TokenCostResult(amount = null, currency = pricing.currency)
+                return TokenCostResult(
+                    amount = null,
+                    currency = pricing.currency,
+                    billedInputTokens = billedInput,
+                    billedCacheWriteTokens = cacheWriteTokens,
+                    billedOutputTokens = billedOutput,
+                )
             }
             amount += cacheWriteTokens / 1_000_000.0 * cacheWritePrice
         }
@@ -114,6 +153,13 @@ object TokenCostCalculator {
             billedOutputTokens = billedOutput,
         )
     }
+
+    /**
+     * 饱和加法：溢出时钳制到 [Long.MAX_VALUE]，绝不出现负数或回绕；调用方
+     * 只接受非负分量，负数视为异常数据在适配层已拒绝，这里做最终防线。
+     */
+    internal fun saturatedAdd(left: Long, right: Long): Long =
+        if (right > 0 && left > Long.MAX_VALUE - right) Long.MAX_VALUE else left + right
 }
 
 /**

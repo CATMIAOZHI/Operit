@@ -5765,6 +5765,25 @@
     <string name="backup_raw_snapshot_restore_registration_failed">恢复完成登记失败，目录已替换但补导标记未登记。请退出后重新打开应用自动重试：%1$s</string>
     <string name="backup_raw_snapshot_restart_now">立即重启</string>
     <string name="backup_raw_snapshot_restart_later">稍后</string>
+    <string name="stats_quarantine_title">统计隔离证据</string>
+    <string name="stats_quarantine_subtitle">损坏的统计事件证据保留与维护</string>
+    <string name="stats_quarantine_desc">统计落盘中无法解析的事件段会保留为隔离证据，不会阻断后续正常事件的记录。完整证据保留到 %1$s 上限；超出上限的部分只保留计数、哈希、字节与时间摘要，不保留正文。请先导出证据，再明确确认删除。</string>
+    <string name="stats_quarantine_info_empty">暂无隔离证据</string>
+    <string name="stats_quarantine_info">已隔离 %1$d 个文件，共 %2$s</string>
+    <string name="stats_quarantine_stuck_trash_info">其中未完成删除事务 %1$d 个（共 %2$s），确认删除时一并清除</string>
+    <string name="stats_quarantine_summary_info">其中超出上限的部分仅保留 %1$d 条摘要（%2$s），不含正文</string>
+    <string name="stats_quarantine_export">导出证据</string>
+    <string name="stats_quarantine_export_success">证据已导出到：%1$s</string>
+    <string name="stats_quarantine_export_failed">证据导出失败：%1$s</string>
+    <string name="stats_quarantine_export_failed_cleanup">证据导出失败：%1$s（导出目录清理也失败，请手动删除：%2$s）</string>
+    <string name="stats_quarantine_delete">确认删除</string>
+    <string name="stats_quarantine_delete_confirm_title">确认删除统计隔离证据</string>
+    <string name="stats_quarantine_delete_confirm_message">将永久删除 %1$d 个隔离证据文件（共 %2$s）。此操作不可撤销，建议先导出证据。</string>
+    <string name="stats_quarantine_delete_confirm_action">确认删除</string>
+    <string name="stats_quarantine_delete_cancel_action">取消</string>
+    <string name="stats_quarantine_delete_success">已删除 %1$d 个隔离证据文件</string>
+    <string name="stats_quarantine_delete_failed">删除失败：%1$s</string>
+    <string name="stats_quarantine_info_error">隔离证据信息读取失败：%1$s（保留上次显示，请稍后重试）</string>
     <string name="backup_official_operit_migration_action">从原版 Operit 迁移</string>
     <string name="backup_official_operit_migration_desc">一次性导入原版 Operit 的文件快照。迁移前会自动备份当前 Operit Ry 数据；确认后应用会立即重启并在安全模式下完成迁移，迁移成功后此入口将隐藏。</string>
     <string name="backup_official_operit_migration_confirm_title">确认从原版 Operit 迁移</string>
@@ -7363,6 +7382,7 @@
     <string name="mnn_error_with_message">错误: %1$s</string>
     <string name="mnn_session_not_initialized">错误: LLM会话未初始化</string>
     <string name="mnn_reasoning_error">\n\n[推理过程出现错误]</string>
+    <string name="mnn_error_request_cancelled">请求已被用户取消</string>
     <string name="mnn_generic_error">错误: %1$s</string>
     <string name="mnn_model_not_configured">未配置模型名称</string>
     <string name="mnn_model_dir_missing">模型目录不存在: %1$s\n请先下载模型</string>
@@ -7691,6 +7711,7 @@
     <string name="llama_error_chat_template_failed">错误: 无法应用模型对话模板（llama_model_chat_template/llama_chat_apply_template）</string>
     <string name="llama_error_inference_failed">llama.cpp 推理过程出现错误</string>
     <string name="llama_error_inference_tag">[推理过程出现错误]</string>
+    <string name="llama_error_request_cancelled">请求已被用户取消</string>
 
     <!-- TaskExecutor -->
     <string name="task_error_execution_failed">任务执行失败: %1$s</string>

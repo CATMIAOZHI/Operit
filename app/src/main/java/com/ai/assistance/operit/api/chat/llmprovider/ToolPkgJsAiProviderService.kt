@@ -28,7 +28,7 @@ internal class ToolPkgJsAiProviderService(
     private val config: ModelConfigData,
     private val provider: ToolPkgAiProviderRegistration
 ) : AIService {
-    private sealed interface ProviderHookValue {
+    internal sealed interface ProviderHookValue {
         data object NullValue : ProviderHookValue
 
         data class TextValue(
@@ -89,6 +89,13 @@ internal class ToolPkgJsAiProviderService(
         toolPkgPackageManager().cancelToolPkgExecutionsForChat(executionChatId)
     }
 
+    /**
+     * 测试缝：替换真实包管理器 hook 调用，使 sendMessage 的真实 hook 编排层
+     * （intermediate channel、解码、usage 提取、chunk 发射、attempt 语义）
+     * 可在 JVM 测试中验证；生产为 null（走真实 [PackageManager]）。
+     */
+    internal var mainHookRunnerOverride: ToolPkgMainHookRunner? = null
+
     override suspend fun getModelsList(context: Context): Result<List<ModelOption>> {
         return runCatching {
             val decoded =
@@ -112,8 +119,10 @@ internal class ToolPkgJsAiProviderService(
         availableTools: List<ToolPrompt>?,
         preserveThinkInHistory: Boolean,
         onTokensUpdated: suspend (input: Int, cachedInput: Int, output: Int) -> Unit,
+        onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, attempt: Int) -> Unit)?,
         onNonFatalError: suspend (error: String) -> Unit,
-        enableRetry: Boolean
+        enableRetry: Boolean,
+        statsCategory: com.ai.assistance.operit.data.stats.TokenStatCategory?
     ): Stream<String> = com.ai.assistance.operit.util.stream.stream {
         var hasIntermediateTextChunk = false
         val decoded =
@@ -135,14 +144,11 @@ internal class ToolPkgJsAiProviderService(
                         put("enableRetry", enableRetry)
                     },
                 onIntermediateResult = { intermediateDecoded ->
-                    extractUsage(intermediateDecoded)?.let { usage ->
-                        applyUsage(usage)
-                        onTokensUpdated(
-                            currentInputTokenCount,
-                            currentCachedInputTokenCount,
-                            currentOutputTokenCount
-                        )
-                    }
+                    applyAndForwardUsage(
+                        intermediateDecoded,
+                        onTokensUpdated,
+                        onUsageReported,
+                    )
                     extractNonFatalError(intermediateDecoded)?.let { error ->
                         onNonFatalError(error)
                     }
@@ -154,14 +160,7 @@ internal class ToolPkgJsAiProviderService(
             )
 
         ensureNoFatalError(decoded)
-        extractUsage(decoded)?.let { usage ->
-            applyUsage(usage)
-            onTokensUpdated(
-                currentInputTokenCount,
-                currentCachedInputTokenCount,
-                currentOutputTokenCount
-            )
-        }
+        applyAndForwardUsage(decoded, onTokensUpdated, onUsageReported)
         extractNonFatalError(decoded)?.let { error ->
             onNonFatalError(error)
         }
@@ -172,15 +171,28 @@ internal class ToolPkgJsAiProviderService(
         }
     }
 
-    override suspend fun testConnection(context: Context): Result<String> {
-        return runCatching {
-            val decoded =
+    override suspend fun testConnection(
+        context: Context,
+        onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, attempt: Int) -> Unit)?
+    ): Result<String> {
+        // 评审 P1-7：中间结果 + 最终结果与普通请求走同一 usage 提取/attempt 转发；
+        // 取消必须原样传播，不能被 runCatching 吞成 Result.failure
+        val decoded =
+            try {
                 invokeProviderFunction(
                     functionName = provider.testConnectionFunctionName,
                     functionSource = provider.testConnectionFunctionSource,
                     event = TOOLPKG_EVENT_AI_PROVIDER_TEST_CONNECTION,
-                    eventPayload = buildBasePayload(context)
+                    eventPayload = buildBasePayload(context),
+                    onIntermediateResult = { intermediateDecoded ->
+                        forwardUsage(intermediateDecoded, onUsageReported)
+                    }
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            }
+        forwardUsage(decoded, onUsageReported)
+        return runCatching {
             ensureNoFatalError(decoded)
             parseConnectionMessage(decoded)
         }
@@ -219,7 +231,6 @@ internal class ToolPkgJsAiProviderService(
         eventPayload: JSONObject,
         onIntermediateResult: (suspend (ProviderHookValue) -> Unit)? = null
     ): ProviderHookValue = coroutineScope {
-        val manager = toolPkgPackageManager()
         val intermediateChannel =
             if (onIntermediateResult == null) {
                 null
@@ -240,26 +251,50 @@ internal class ToolPkgJsAiProviderService(
         try {
             val result =
                 withContext(Dispatchers.IO) {
-                    manager.runToolPkgMainHook(
-                        containerPackageName = provider.containerPackageName,
-                        functionName = functionName,
-                        event = event,
-                        pluginId = "${provider.providerId}:$event",
-                        inlineFunctionSource = functionSource,
-                        eventPayload =
-                            jsonObjectToMap(
-                                JSONObject(eventPayload.toString()).put("chatId", executionChatId)
-                            ),
-                        executionContextKey = providerRuntimeContextKey,
-                        runtimeKind = "provider",
-                        dispatchIntermediateOnMain = false,
-                        onIntermediateResult =
-                            intermediateChannel?.let { channel ->
-                                { raw ->
-                                    channel.trySend(raw)
+                    val override = mainHookRunnerOverride
+                    if (override != null) {
+                        override.run(
+                            containerPackageName = provider.containerPackageName,
+                            functionName = functionName,
+                            event = event,
+                            pluginId = "${provider.providerId}:$event",
+                            inlineFunctionSource = functionSource,
+                            eventPayload =
+                                jsonObjectToMap(
+                                    JSONObject(eventPayload.toString()).put("chatId", executionChatId)
+                                ),
+                            executionContextKey = providerRuntimeContextKey,
+                            runtimeKind = "provider",
+                            onIntermediateResult =
+                                intermediateChannel?.let { channel ->
+                                    { raw ->
+                                        channel.trySend(raw)
+                                    }
                                 }
-                            }
-                    )
+                        )
+                    } else {
+                        val manager = toolPkgPackageManager()
+                        manager.runToolPkgMainHook(
+                            containerPackageName = provider.containerPackageName,
+                            functionName = functionName,
+                            event = event,
+                            pluginId = "${provider.providerId}:$event",
+                            inlineFunctionSource = functionSource,
+                            eventPayload =
+                                jsonObjectToMap(
+                                    JSONObject(eventPayload.toString()).put("chatId", executionChatId)
+                                ),
+                            executionContextKey = providerRuntimeContextKey,
+                            runtimeKind = "provider",
+                            dispatchIntermediateOnMain = false,
+                            onIntermediateResult =
+                                intermediateChannel?.let { channel ->
+                                    { raw ->
+                                        channel.trySend(raw)
+                                    }
+                                }
+                        )
+                    }
                 }
             decodeProviderHookValue(
                 result.getOrElse { error -> throw error }?.let { raw -> decodeToolPkgHookResult(raw) }
@@ -480,6 +515,26 @@ internal class ToolPkgJsAiProviderService(
         return null
     }
 
+    /**
+     * 账本路径的 Long 读取（评审 P2-1）：全程 Long，绝不 Int 截断/回绕；
+     * 负值拒绝为未知（null）。
+     */
+    private fun JSONObject.optTokenCountLong(vararg keys: String): Long? {
+        for (key in keys) {
+            if (!has(key) || isNull(key)) continue
+            val parsed = when (val raw = opt(key)) {
+                is Number -> raw.toLong()
+                is String -> raw.trim().toBigDecimalOrNull()?.toLong()
+                else -> null
+            }
+            if (parsed != null) return parsed.takeIf { it >= 0 }
+        }
+        return null
+    }
+
+    /** 旧 UI 计数边界（评审 P2-1）：Long 饱和为 Int，绝不回绕为负。 */
+    private fun Long.saturateToInt(): Int = coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+
     private fun ensureNoFatalError(decoded: ProviderHookValue) {
         when (decoded) {
             is ProviderHookValue.ObjectValue -> {
@@ -507,7 +562,19 @@ internal class ToolPkgJsAiProviderService(
         }
     }
 
-    private fun extractUsage(decoded: ProviderHookValue): TokenUsage? {
+    /**
+     * 提取 usage。usage 协议（评审 P1-6/P2-1，**不猜测 attempt、不继承全局计数**）：
+     * - **新协议**：usage 对象（或顶层）携带 `attempt` / `attemptNumber`
+     *   （provider 内部第几次尝试，从 1 开始）。同 attempt 的多次上报是流式
+     *   部分更新（省略字段保留旧值）；不同 attempt 分别记账，聚合时累加。
+     * - **旧协议**：不携带 attempt 字段。语义为**整个逻辑请求的累计快照**
+     *   （跨内部重试累计的最终数字），固定按 attempt 1 完整快照记账（后报覆盖
+     *   先报，绝不把多个无 attempt 上报误累加）。内部按 attempt 逐次上报的
+     *   插件必须迁移到新协议。
+     * - 账本字段可空：缺省字段 = 未知，**绝不**用全局 current 计数填充（避免
+     *   跨 attempt 继承造成虚假累计）；负值拒绝为未知。
+     */
+    internal fun extractUsage(decoded: ProviderHookValue): TokenUsage? {
         return when (decoded) {
             is ProviderHookValue.ObjectValue -> extractUsageFromJson(decoded.value)
             else -> null
@@ -517,23 +584,69 @@ internal class ToolPkgJsAiProviderService(
     private fun extractUsageFromJson(json: JSONObject): TokenUsage? {
         val usageObject = json.optJSONObject("usage")
         val source = usageObject ?: json
-        val input = source.optTokenCount("input", "inputTokens")
-        val cachedInput = source.optTokenCount("cachedInput", "cachedInputTokens")
-        val output = source.optTokenCount("output", "outputTokens")
+        val input = source.optTokenCountLong("input", "inputTokens")
+        val cachedInput = source.optTokenCountLong("cachedInput", "cachedInputTokens")
+        val output = source.optTokenCountLong("output", "outputTokens")
         if (input == null && cachedInput == null && output == null) {
             return null
         }
+        val attemptPresent = source.has("attempt") || source.has("attemptNumber")
+        val attempt =
+            source.optTokenCountLong("attempt", "attemptNumber")?.coerceAtLeast(1)?.toInt() ?: 1
         return TokenUsage(
-            input = input ?: currentInputTokenCount,
-            cachedInput = cachedInput ?: currentCachedInputTokenCount,
-            output = output ?: currentOutputTokenCount
+            input = input,
+            cachedInput = cachedInput,
+            output = output,
+            attempt = attempt,
+            attemptPresent = attemptPresent,
         )
     }
 
+    /**
+     * sendMessage 通道：提取 → 更新 UI 累计计数 → 转发规范化 usage。
+     * UI 计数器与账本快照分离（评审 P1-6）：缺省字段只保留 UI 侧全局累计值，
+     * 账本快照保持未知（由 [TokenStatRequestContext] 按 attempt 合并）。
+     */
+    private suspend fun applyAndForwardUsage(
+        decoded: ProviderHookValue,
+        onTokensUpdated: suspend (input: Int, cachedInput: Int, output: Int) -> Unit,
+        onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, attempt: Int) -> Unit)?,
+    ) {
+        extractUsage(decoded)?.let { usage ->
+            applyUsage(usage)
+            onTokensUpdated(
+                currentInputTokenCount,
+                currentCachedInputTokenCount,
+                currentOutputTokenCount
+            )
+            forwardUsage(decoded, onUsageReported)
+        }
+    }
+
+    /** 只转发规范化 usage（testConnection 等无 UI 计数通道的场景共用）。 */
+    private suspend fun forwardUsage(
+        decoded: ProviderHookValue,
+        onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, Int) -> Unit)?,
+    ) {
+        extractUsage(decoded)?.let { usage ->
+            onUsageReported?.invoke(
+                com.ai.assistance.operit.data.stats.ProviderUsageNormalizer.toolPkg(
+                    input = usage.input,
+                    cachedInput = usage.cachedInput,
+                    output = usage.output,
+                    // 协议语义：attempt 在场 = 同 attempt 部分更新；缺省 = 整个
+                    // 逻辑请求的累计完整快照
+                    completeSnapshot = !usage.attemptPresent,
+                ),
+                usage.attempt
+            )
+        }
+    }
+
     private fun applyUsage(usage: TokenUsage) {
-        currentInputTokenCount = usage.input.coerceAtLeast(0)
-        currentCachedInputTokenCount = usage.cachedInput.coerceAtLeast(0)
-        currentOutputTokenCount = usage.output.coerceAtLeast(0)
+        usage.input?.let { currentInputTokenCount = it.saturateToInt() }
+        usage.cachedInput?.let { currentCachedInputTokenCount = it.saturateToInt() }
+        usage.output?.let { currentOutputTokenCount = it.saturateToInt() }
     }
 
     private fun extractMessageChunks(decoded: ProviderHookValue): List<String> {
@@ -583,9 +696,32 @@ internal class ToolPkgJsAiProviderService(
         }
     }
 
-    private data class TokenUsage(
-        val input: Int,
-        val cachedInput: Int,
-        val output: Int
+    internal data class TokenUsage(
+        /** 可空（评审 P1-6）：缺省字段 = 未知，绝不继承全局累计计数。 */
+        val input: Long?,
+        val cachedInput: Long?,
+        val output: Long?,
+        val attempt: Int = 1,
+        /** 上报是否显式携带 attempt 字段（新协议）；false = 旧协议累计快照。 */
+        val attemptPresent: Boolean = false,
     )
+}
+
+/**
+ * ToolPkg hook 调用抽象（测试缝）：与 [PackageManager.runToolPkgMainHook] 相同的
+ * 调用面。生产路径由 [ToolPkgJsAiProviderService.mainHookRunnerOverride] 为 null
+ * 时走真实包管理器；测试注入假 runner 驱动真实 hook 编排层。
+ */
+internal fun interface ToolPkgMainHookRunner {
+    suspend fun run(
+        containerPackageName: String,
+        functionName: String,
+        event: String,
+        pluginId: String?,
+        inlineFunctionSource: String?,
+        eventPayload: Map<String, Any?>,
+        executionContextKey: String?,
+        runtimeKind: String?,
+        onIntermediateResult: ((Any?) -> Unit)?,
+    ): Result<Any?>
 }

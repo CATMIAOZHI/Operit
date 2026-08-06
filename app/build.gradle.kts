@@ -400,6 +400,10 @@ dependencies {
     // JdbcSQLiteDriver），仅在单元测试使用。
     testImplementation("org.xerial:sqlite-jdbc:3.46.1.3")
 
+    // 单元测试中真实 org.json（Android 桩在 JVM 测试里会抛 Stub! 异常）；
+    // 统计 usage 归一化测试需要解析 JSONObject。
+    testImplementation("org.json:json:20240303")
+
     // 入口级恢复测试：RawSnapshotBackupManager 内部使用 Dispatchers.Main 汇报
     // 进度，JVM 测试用 setMain 安装测试主调度器。
     testImplementation(libs.coroutines.test)
