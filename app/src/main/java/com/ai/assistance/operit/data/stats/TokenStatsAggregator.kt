@@ -170,8 +170,8 @@ object TokenStatsAggregator {
         zone: ZoneId,
         params: TokenStatsQueryParams,
     ): TokenStatsRangeData {
-        // 分类筛选在聚合入口统一应用：汇总、桶、明细反映同一筛选结果
-        val filtered = filterByCategory(events, params)
+        // 分类/状态筛选在聚合入口统一应用：汇总、桶、明细反映同一筛选结果
+        val filtered = filterByCategory(events, params).filterByStatus(params)
         val pricing = pricingContext(overrides, legacyPrices, params)
 
         val summary = totalsOf(filtered, identitiesById, pricing, params)
@@ -635,6 +635,13 @@ object TokenStatsAggregator {
     ): List<TokenStatEventEntity> {
         val categories = params.categories ?: return events
         return events.filter { TokenStatCategory.fromName(it.category) in categories }
+    }
+
+    private fun List<TokenStatEventEntity>.filterByStatus(
+        params: TokenStatsQueryParams,
+    ): List<TokenStatEventEntity> {
+        val statuses = params.statuses ?: return this
+        return filter { TokenStatStatus.fromName(it.status) in statuses }
     }
 
     private fun parseCurrency(raw: String): PricingCurrency =

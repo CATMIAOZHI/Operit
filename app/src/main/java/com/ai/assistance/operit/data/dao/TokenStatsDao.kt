@@ -13,6 +13,7 @@ import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
 import com.ai.assistance.operit.data.model.TokenStatResetCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity
 import com.ai.assistance.operit.data.stats.TokenStatIdentityResolver
+import com.ai.assistance.operit.data.stats.TokenStatsGroupMetadataSnapshot
 import com.ai.assistance.operit.data.stats.TokenStatsLifetimeRead
 import com.ai.assistance.operit.data.stats.TokenStatsQuerySnapshot
 import androidx.room.Transaction
@@ -188,6 +189,22 @@ abstract class TokenStatsDao {
         )
     }
 
+    /**
+     * 分组元数据快照（阶段 4 P1 修复）：全量身份 + 展示模型行在**同一个事务**内
+     * 固定读取，与统计筛选（时间/模型/分类/状态）无关——分组管理与合并的
+     * 成员/目标必须来自完整归属，而筛选范围明细只包含有事件的身份/分组
+     * （事件存在与否不影响身份的分组成员身份）。
+     */
+    @Transaction
+    open suspend fun loadGroupMetadataSnapshot(): TokenStatsGroupMetadataSnapshot {
+        val identities = getAllIdentities()
+        val displayModels = getAllDisplayModels()
+        return TokenStatsGroupMetadataSnapshot(
+            identities = identities,
+            displayModels = displayModels,
+        )
+    }
+
     private suspend fun getEventsInRangeForDisplayModelsChunked(
         startMs: Long,
         endMs: Long,
@@ -270,6 +287,91 @@ abstract class TokenStatsDao {
     @Query("SELECT * FROM token_stat_display_models")
     abstract suspend fun getAllDisplayModels(): List<TokenStatDisplayModelEntity>
 
+    // ==== 展示分组受控写入（阶段 4 别名/合并） ====
+    // 身份绝不可走删除式 REPLACE（级联删事件），只走安全 UPDATE；
+    // 展示模型行是纯展示元数据，创建用 INSERT IGNORE，改名用 UPDATE。
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    abstract suspend fun insertDisplayModelIfAbsent(model: TokenStatDisplayModelEntity): Long
+
+    @Query(
+        "UPDATE token_stat_display_models SET displayName = :displayName " +
+            "WHERE displayModelId = :displayModelId"
+    )
+    abstract suspend fun updateDisplayModelName(displayModelId: String, displayName: String): Int
+
+    /** 展示分组行不存在时创建（displayModelId 同时作为规范化模型名），已存在则忽略。 */
+    private suspend fun ensureDisplayModelRow(displayModelId: String, displayName: String? = null) {
+        if (getDisplayModel(displayModelId) == null) {
+            insertDisplayModelIfAbsent(
+                TokenStatDisplayModelEntity(
+                    displayModelId = displayModelId,
+                    normalizedModel = displayModelId,
+                    displayName = displayName ?: displayModelId,
+                )
+            )
+        }
+    }
+
+    /**
+     * 把一组身份安全移动到目标展示分组（P4 别名/合并）：
+     * 目标分组行不存在时先创建；身份只走 [updateIdentityDisplayModel] 的
+     * 安全 UPDATE，绝不 REPLACE（REPLACE = DELETE + INSERT，会经外键级联
+     * 删除该身份下的全部事件）。同一事务内完成，避免半移状态。
+     */
+    @Transaction
+    open suspend fun moveIdentitiesToDisplayModelTx(
+        identityIds: List<String>,
+        displayModelId: String,
+    ) {
+        require(displayModelId.isNotBlank()) { "displayModelId must not be blank" }
+        ensureDisplayModelRow(displayModelId)
+        for (identityId in identityIds.distinct()) {
+            updateIdentityDisplayModel(identityId, displayModelId)
+        }
+    }
+
+    /**
+     * 创建自定义展示分组（新 displayModelId + 展示名）并把指定身份移入，
+     * 同一事务内完成；[groupId] 必须不与既有分组冲突。
+     */
+    @Transaction
+    open suspend fun createDisplayGroupTx(
+        groupId: String,
+        groupName: String,
+        identityIds: List<String>,
+    ) {
+        require(groupId.isNotBlank()) { "groupId must not be blank" }
+        require(groupName.isNotBlank()) { "groupName must not be blank" }
+        require(getDisplayModel(groupId) == null) { "display model already exists: $groupId" }
+        insertDisplayModelIfAbsent(
+            TokenStatDisplayModelEntity(
+                displayModelId = groupId,
+                normalizedModel = groupId,
+                displayName = groupName.trim(),
+            )
+        )
+        for (identityId in identityIds.distinct()) {
+            updateIdentityDisplayModel(identityId, groupId)
+        }
+    }
+
+    /**
+     * 恢复默认规范分组：把指定展示组下每个身份按其自身模型名归回默认组
+     * （displayModelId = 规范化模型名，[TokenStatIdentityResolver.displayModelIdFor]），
+     * 默认组行不存在时自动创建。同一事务内完成；事件/baseline 随身份跟随，
+     * 无任何删除或 REPLACE。
+     */
+    @Transaction
+    open suspend fun restoreDefaultGroupsTx(displayModelId: String) {
+        val identities = getAllIdentities().filter { it.displayModelId == displayModelId }
+        for (identity in identities) {
+            val defaultId = TokenStatIdentityResolver.displayModelIdFor(identity.model)
+            ensureDisplayModelRow(defaultId, displayName = identity.model)
+            updateIdentityDisplayModel(identity.identityId, defaultId)
+        }
+    }
+
     // ==== 价格覆盖 ====
     // 唯一性由 (scope, provider, model, configId) 规范化业务字段的唯一索引强制；
     // rowId 是内部自增主键，不承载业务语义。公开写入唯一入口会校验 scope 枚举
@@ -329,6 +431,19 @@ abstract class TokenStatsDao {
 
     @Query("SELECT * FROM token_stat_price_overrides")
     abstract suspend fun getAllPriceOverrides(): List<TokenStatPriceOverrideEntity>
+
+    /** 按规范化业务组合删除价格覆盖（阶段 4 管理入口；参数须为规范化后的值）。 */
+    @Query(
+        "DELETE FROM token_stat_price_overrides " +
+            "WHERE scope = :scope AND provider = :provider " +
+            "AND model = :model AND configId = :configId"
+    )
+    abstract suspend fun deletePriceOverride(
+        scope: String,
+        provider: String,
+        model: String,
+        configId: String,
+    ): Int
 
     // ==== baseline ====
 

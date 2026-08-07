@@ -66,7 +66,7 @@ import com.ai.assistance.operit.ui.features.settings.screens.ThemeSettingsScreen
 import com.ai.assistance.operit.ui.features.settings.screens.ToolPermissionSettingsScreen
 import com.ai.assistance.operit.ui.features.settings.screens.UserPreferencesSettingsScreen
 import com.ai.assistance.operit.ui.features.settings.screens.MnnModelDownloadScreen
-import com.ai.assistance.operit.ui.features.settings.screens.TokenUsageStatisticsScreen
+import com.ai.assistance.operit.ui.features.tokenstats.TokenUsageStatisticsScreen
 import com.ai.assistance.operit.ui.features.token.TokenConfigWebViewScreen
 import com.ai.assistance.operit.ui.features.toolbox.screens.AppPermissionsToolScreen
 import com.ai.assistance.operit.ui.features.toolbox.screens.FileManagerToolScreen
@@ -107,9 +107,24 @@ sealed class Screen(
         // 是否参与 AppContent 的跨页淡入淡出。
         // 某些包含实时渲染视图的页面在转场中保留上一页会产生明显残影。
         open val participatesInCrossfadeTransition: Boolean = true,
-        open val keepAlive: Boolean = false
+        open val keepAlive: Boolean = false,
+        /**
+         * 是否使用路由级 ViewModelStore（AppContent 按 screenKey 通过
+         * [com.ai.assistance.operit.ui.main.navigation.ScreenRouteViewModelStoreOwnerManager]
+         * 管理）：配置变化保留实例，路由出栈/替换/清栈时 store.clear() 触发
+         * onCleared（viewModelScope 取消）。
+         * 默认 false 保持 Activity 级语义，防止影响其他页面。
+         */
+        open val usesRouteViewModelStore: Boolean = false
 ) {
     open fun stableScreenKey(): String? = null
+
+    /**
+     * AppContent 使用的屏幕键：keepAlive 屏幕用 [stableScreenKey]（同路由
+     * 实例复用），否则用路由实例 id（每次进入独立）。
+     */
+    fun screenKey(routeInstanceId: String): String =
+        if (keepAlive) stableScreenKey() ?: routeInstanceId else routeInstanceId
 
     // 屏幕内容渲染函数
     @Composable
@@ -1111,7 +1126,11 @@ sealed class Screen(
     }
 
     data object TokenUsageStatistics :
-            Screen(navItem = NavItem.Settings, titleRes = R.string.settings_token_usage_stats) {
+            Screen(
+                    navItem = NavItem.Settings,
+                    titleRes = R.string.settings_token_usage_stats,
+                    usesRouteViewModelStore = true
+            ) {
         @Composable
         override fun Content(
                 navController: NavController,

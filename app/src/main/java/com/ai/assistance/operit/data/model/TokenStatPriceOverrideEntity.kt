@@ -90,16 +90,22 @@ data class TokenStatPriceOverrideEntity(
             val canonicalModel = normalizeModel(model)
             require(canonicalProvider.isNotEmpty()) { "provider must not be blank" }
             require(canonicalModel.isNotEmpty()) { "model must not be blank" }
+            val canonicalConfigId =
+                if (validScope == PriceOverrideScope.PROVIDER_MODEL) {
+                    ""
+                } else {
+                    configId?.trim().orEmpty()
+                }
+            // CONFIG 作用域必须携带具体配置 ID：空 configId 的覆盖不会匹配任何
+            // 配置实例，属于输入错误，直接拒绝落库（P1-7）。
+            if (validScope == PriceOverrideScope.CONFIG) {
+                require(canonicalConfigId.isNotEmpty()) { "configId must not be blank for CONFIG scope" }
+            }
             return TokenStatPriceOverrideEntity(
                 scope = validScope.name,
                 provider = canonicalProvider,
                 model = canonicalModel,
-                configId =
-                    if (validScope == PriceOverrideScope.PROVIDER_MODEL) {
-                        ""
-                    } else {
-                        configId?.trim().orEmpty()
-                    },
+                configId = canonicalConfigId,
                 billingMode = billingMode,
                 pricingCurrency = pricingCurrency,
                 inputPricePerMillion = inputPricePerMillion,
