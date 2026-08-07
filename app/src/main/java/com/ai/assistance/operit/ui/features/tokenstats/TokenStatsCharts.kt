@@ -441,6 +441,7 @@ private fun ChartTooltip(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ChartLegend(items: List<Pair<String, Color>>) {
+    val colors = LocalTokenStatsColors.current
     FlowRow(
         modifier = Modifier
             .fillMaxWidth()
@@ -458,7 +459,7 @@ internal fun ChartLegend(items: List<Pair<String, Color>>) {
                 Text(
                     text = label,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = colors.chartLabel,
                 )
             }
             if (i < items.size - 1) Spacer(Modifier.width(12.dp))
@@ -468,11 +469,12 @@ internal fun ChartLegend(items: List<Pair<String, Color>>) {
 
 @Composable
 private fun ChartEmptyText(text: String, modifier: Modifier = Modifier) {
+    val colors = LocalTokenStatsColors.current
     Box(modifier = modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = colors.chartLabel,
         )
     }
 }

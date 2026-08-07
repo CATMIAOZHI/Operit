@@ -31,6 +31,11 @@ interface TokenStatsSettingsStore {
 
     suspend fun saveCostMode(mode: TokenStatsCostMode)
 
+    /** 是否在生命周期累计中加入迁移的旧版 baseline；默认 true。 */
+    suspend fun loadIncludeLegacy(): Boolean
+
+    suspend fun saveIncludeLegacy(include: Boolean)
+
     /**
      * 当前时间选择（首次自动回退结果或用户手选）；null = 从未有任何选择，
      * 进入页面时允许执行首次自动回退并持久化。
@@ -78,6 +83,12 @@ class ApiPreferencesTokenStatsSettingsStore(context: Context) : TokenStatsSettin
 
     override suspend fun saveCostMode(mode: TokenStatsCostMode) {
         api.setStatsCostMode(mode)
+    }
+
+    override suspend fun loadIncludeLegacy(): Boolean = api.getStatsIncludeLegacy()
+
+    override suspend fun saveIncludeLegacy(include: Boolean) {
+        api.setStatsIncludeLegacy(include)
     }
 
     override suspend fun loadTimeSelection(): TokenStatsTimeSelection? =

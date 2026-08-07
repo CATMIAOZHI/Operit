@@ -135,6 +135,7 @@ class ApiPreferences private constructor(private val context: Context) {
 
         private val STATS_TARGET_CURRENCY = stringPreferencesKey("stats_target_currency")
         private val STATS_COST_MODE = stringPreferencesKey("stats_cost_mode")
+        private val STATS_INCLUDE_LEGACY = booleanPreferencesKey("stats_include_legacy")
         private val STATS_TIME_PRESET = stringPreferencesKey("stats_time_preset")
         private val STATS_TIME_CUSTOM_START = longPreferencesKey("stats_time_custom_start")
         private val STATS_TIME_CUSTOM_END = longPreferencesKey("stats_time_custom_end")
@@ -828,6 +829,17 @@ class ApiPreferences private constructor(private val context: Context) {
         }
     }
 
+    /** 恢复内置定价时清除旧系统遗留的 provider:model 价格层。 */
+    suspend fun clearLegacyPriceSettings(providerModel: String) {
+        context.apiDataStore.edit { preferences ->
+            preferences.remove(getModelInputPriceKey(providerModel))
+            preferences.remove(getModelCachedInputPriceKey(providerModel))
+            preferences.remove(getModelOutputPriceKey(providerModel))
+            preferences.remove(getBillingModeKey(providerModel))
+            preferences.remove(getPricePerRequestKey(providerModel))
+        }
+    }
+
     private fun legacyPriceSettingsFrom(
         preferences: Preferences,
         providerModel: String
@@ -1068,6 +1080,18 @@ class ApiPreferences private constructor(private val context: Context) {
     suspend fun setStatsCostMode(mode: com.ai.assistance.operit.data.stats.TokenStatsCostMode) {
         context.apiDataStore.edit { preferences ->
             preferences[STATS_COST_MODE] = mode.name
+        }
+    }
+
+    /** 旧版累计 baseline 是否加入生命周期累计；缺省开启以保持升级前后的总计连续。 */
+    suspend fun getStatsIncludeLegacy(): Boolean {
+        val preferences = context.apiDataStore.data.first()
+        return preferences[STATS_INCLUDE_LEGACY] ?: true
+    }
+
+    suspend fun setStatsIncludeLegacy(include: Boolean) {
+        context.apiDataStore.edit { preferences ->
+            preferences[STATS_INCLUDE_LEGACY] = include
         }
     }
 
