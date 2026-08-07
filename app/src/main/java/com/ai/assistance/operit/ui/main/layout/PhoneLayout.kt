@@ -78,7 +78,9 @@ fun PhoneLayout(
         onGoBack: () -> Unit,
         isNavigatingBack: Boolean = false,
         topBarActions: @Composable RowScope.() -> Unit = {},
-        topBarTitleContent: TopBarTitleContent? = null
+        topBarTitleContent: TopBarTitleContent? = null,
+        /** 当前导航栈中仍存活的路由 screenKey（路由级 ViewModelStore 清理依据）。 */
+        aliveScreenKeys: Set<String>
 ) {
         // 使用 updateTransition 来创建更复杂的动画
         val transition = updateTransition(drawerState.targetValue, label = "drawer_transition")
@@ -242,7 +244,8 @@ fun PhoneLayout(
                         onGoBack = onGoBack,
                         isNavigatingBack = isNavigatingBack,
                         actions = topBarActions,
-                        titleContent = topBarTitleContent
+                        titleContent = topBarTitleContent,
+                        aliveScreenKeys = aliveScreenKeys
                     )
                 }
 

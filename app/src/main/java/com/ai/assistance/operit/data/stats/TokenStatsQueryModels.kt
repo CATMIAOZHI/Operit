@@ -45,6 +45,8 @@ data class TokenStatsQueryParams(
     val displayModelIds: Set<String>? = null,
     /** 业务分类筛选；null = 全部分类。 */
     val categories: Set<TokenStatCategory>? = null,
+    /** 请求状态筛选（阶段 4）；null = 全部状态。 */
+    val statuses: Set<TokenStatStatus>? = null,
 ) {
     init {
         require(manualRate > 0.0) { "manual rate must be positive" }
@@ -210,6 +212,21 @@ data class TokenStatsDisplayModelBreakdown(
     val identities: List<TokenStatsIdentityBreakdown>,
 )
 
+/**
+ * 展示分组完整元数据（阶段 4 P1 修复）：与统计筛选（时间/模型/分类/状态）完全
+ * 无关的分组成员/合并目标事实来源。identity.displayModelId 是分组的单一事实
+ * 来源；成员 = 全量身份按 displayModelId 分组（事件存在与否不影响成员身份），
+ * 组名取 display_models 行（缺失时回退 displayModelId）。筛选范围明细
+ * （[TokenStatsDisplayModelBreakdown]）只包含当前筛选下有事件的身份/分组，
+ * 不得作为分组操作的成员或目标依据。
+ */
+data class TokenStatsGroupModelInfo(
+    val displayModelId: String,
+    val displayName: String,
+    /** 该分组下的全部身份 id（完整归属，非当前筛选范围所见）。 */
+    val memberIdentityIds: List<String>,
+)
+
 /** 业务分类合计。 */
 data class TokenStatsCategoryBreakdown(
     val category: TokenStatCategory,
@@ -267,4 +284,16 @@ data class TokenStatsLifetimeRead(
     val overrides: List<TokenStatPriceOverrideEntity>,
     val baselines: List<TokenStatBaselineEntity>,
     val totalEvents: Long,
+)
+
+/**
+ * 分组元数据快照（阶段 4 P1 修复）：全量身份 + 展示模型行在**同一个 Room 事务**内
+ * 固定读取（[com.ai.assistance.operit.data.dao.TokenStatsDao.loadGroupMetadataSnapshot]），
+ * 与统计筛选无关；事务外由设置管理器构建 [TokenStatsGroupModelInfo]。
+ * 快照一致性原则同 [TokenStatsQuerySnapshot]（并发分组变更要么整体可见要么
+ * 整体不可见）。
+ */
+data class TokenStatsGroupMetadataSnapshot(
+    val identities: List<TokenStatIdentityEntity>,
+    val displayModels: List<TokenStatDisplayModelEntity>,
 )

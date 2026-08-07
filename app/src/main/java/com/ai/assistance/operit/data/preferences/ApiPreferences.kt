@@ -133,6 +133,13 @@ class ApiPreferences private constructor(private val context: Context) {
 
         val USD_TO_CNY_EXCHANGE_RATE = floatPreferencesKey("usd_to_cny_exchange_rate")
 
+        private val STATS_TARGET_CURRENCY = stringPreferencesKey("stats_target_currency")
+        private val STATS_COST_MODE = stringPreferencesKey("stats_cost_mode")
+        private val STATS_TIME_PRESET = stringPreferencesKey("stats_time_preset")
+        private val STATS_TIME_CUSTOM_START = longPreferencesKey("stats_time_custom_start")
+        private val STATS_TIME_CUSTOM_END = longPreferencesKey("stats_time_custom_end")
+        private val STATS_TIME_MANUAL = booleanPreferencesKey("stats_time_manual")
+
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
         val FEATURE_TOGGLES_JSON = stringPreferencesKey("feature_toggles_json")
         // Default values
@@ -966,9 +973,116 @@ class ApiPreferences private constructor(private val context: Context) {
         return preferences[USD_TO_CNY_EXCHANGE_RATE]?.toDouble() ?: 7.2
     }
 
+    /**
+     * 统计页汇率读取（阶段 4）：区分“用户手动设置”与“未设置”。
+     * 未设置时返回默认估算 7.0（[com.ai.assistance.operit.data.stats.TokenCostCurrency]
+     * 契约）并标记 estimated = true，界面必须显示估算提示；不联网获取汇率。
+     */
+    suspend fun usdToCnyRateWithEstimate(): Pair<Double, Boolean> {
+        val preferences = context.apiDataStore.data.first()
+        val stored = preferences[USD_TO_CNY_EXCHANGE_RATE]
+        return if (stored != null) {
+            stored.toDouble() to false
+        } else {
+            7.0 to true
+        }
+    }
+
     suspend fun setUsdToCnyExchangeRate(rate: Double) {
         context.apiDataStore.edit { preferences ->
             preferences[USD_TO_CNY_EXCHANGE_RATE] = rate.toFloat()
+        }
+    }
+
+    // ===== 统计页偏好（阶段 4；与汇率共用 api_settings 文件，备份自动覆盖） =====
+
+    suspend fun getStatsTargetCurrency(): com.ai.assistance.operit.data.collects.PricingCurrency {
+        val preferences = context.apiDataStore.data.first()
+        val raw = preferences[STATS_TARGET_CURRENCY]
+        return if (raw.equals(com.ai.assistance.operit.data.collects.PricingCurrency.USD.name, ignoreCase = true)) {
+            com.ai.assistance.operit.data.collects.PricingCurrency.USD
+        } else {
+            com.ai.assistance.operit.data.collects.PricingCurrency.CNY
+        }
+    }
+
+    suspend fun setStatsTargetCurrency(
+        currency: com.ai.assistance.operit.data.collects.PricingCurrency
+    ) {
+        context.apiDataStore.edit { preferences ->
+            preferences[STATS_TARGET_CURRENCY] = currency.name
+        }
+    }
+
+    suspend fun getStatsCostMode(): com.ai.assistance.operit.data.stats.TokenStatsCostMode {
+        val preferences = context.apiDataStore.data.first()
+        val raw = preferences[STATS_COST_MODE]
+        return com.ai.assistance.operit.data.stats.TokenStatsCostMode.entries
+            .firstOrNull { it.name == raw }
+            ?: com.ai.assistance.operit.data.stats.TokenStatsCostMode.HISTORICAL
+    }
+
+    suspend fun setStatsCostMode(mode: com.ai.assistance.operit.data.stats.TokenStatsCostMode) {
+        context.apiDataStore.edit { preferences ->
+            preferences[STATS_COST_MODE] = mode.name
+        }
+    }
+
+    /**
+     * 统计页时间选择（阶段 4）：null = 从未有任何选择（首次进入，允许自动回退）。
+     * CUSTOM 预设必须同时存在合法自定义边界，否则视为未选择（防御损坏状态）。
+     */
+    suspend fun getStatsTimeSelection(): com.ai.assistance.operit.data.stats.TokenStatsTimeSelection? {
+        val preferences = context.apiDataStore.data.first()
+        val presetRaw = preferences[STATS_TIME_PRESET] ?: return null
+        val preset = com.ai.assistance.operit.data.stats.TokenStatsPreset.entries
+            .firstOrNull { it.name == presetRaw }
+            ?: return null
+        if (preset != com.ai.assistance.operit.data.stats.TokenStatsPreset.CUSTOM) {
+            return com.ai.assistance.operit.data.stats.TokenStatsTimeSelection(preset)
+        }
+        val start = preferences[STATS_TIME_CUSTOM_START] ?: return null
+        val end = preferences[STATS_TIME_CUSTOM_END] ?: return null
+        if (end <= start) return null
+        return com.ai.assistance.operit.data.stats.TokenStatsTimeSelection(preset, start, end)
+    }
+
+    /**
+     * 统计页时间选择是否由用户手动做出（阶段 4）。
+     * false = 首次自动回退结果；旧版本持久化的选择没有该键，按 false 处理
+     * （选择本身仍被复用，只是不再区分来源，迁移合理）。
+     */
+    suspend fun getStatsSelectionWasManual(): Boolean {
+        val preferences = context.apiDataStore.data.first()
+        return preferences[STATS_TIME_MANUAL] ?: false
+    }
+
+    /**
+     * 统计页时间选择保存（阶段 4）：[manual] = 用户手动选择（true）或首次
+     * 自动回退（false）。清除时（[selection] = null）一并移除 manual 键，
+     * 回到“从未选择”的首次回退语义。
+     */
+    suspend fun setStatsTimeSelection(
+        selection: com.ai.assistance.operit.data.stats.TokenStatsTimeSelection?,
+        manual: Boolean,
+    ) {
+        context.apiDataStore.edit { preferences ->
+            if (selection == null) {
+                preferences.remove(STATS_TIME_PRESET)
+                preferences.remove(STATS_TIME_CUSTOM_START)
+                preferences.remove(STATS_TIME_CUSTOM_END)
+                preferences.remove(STATS_TIME_MANUAL)
+                return@edit
+            }
+            preferences[STATS_TIME_PRESET] = selection.preset.name
+            preferences[STATS_TIME_MANUAL] = manual
+            if (selection.preset == com.ai.assistance.operit.data.stats.TokenStatsPreset.CUSTOM) {
+                preferences[STATS_TIME_CUSTOM_START] = selection.customStartMs ?: 0L
+                preferences[STATS_TIME_CUSTOM_END] = selection.customEndMs ?: 0L
+            } else {
+                preferences.remove(STATS_TIME_CUSTOM_START)
+                preferences.remove(STATS_TIME_CUSTOM_END)
+            }
         }
     }
 
