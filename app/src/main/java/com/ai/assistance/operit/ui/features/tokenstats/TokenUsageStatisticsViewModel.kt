@@ -160,7 +160,7 @@ class TokenUsageStatisticsViewModel(
     private val knownModelNames = mutableMapOf<String, String>()
 
     init {
-        load()
+        loadForEntry()
     }
 
     fun consumeActionMessage() {
@@ -170,6 +170,15 @@ class TokenUsageStatisticsViewModel(
     // ==== 查询 ====
 
     fun load() {
+        loadInternal(reconsiderAutomaticTime = false)
+    }
+
+    /** 进入/返回统计页时重新探测自动时间范围；用户手选范围始终保持不变。 */
+    fun loadForEntry() {
+        loadInternal(reconsiderAutomaticTime = true)
+    }
+
+    private fun loadInternal(reconsiderAutomaticTime: Boolean) {
         loadJob?.cancel()
         val generation = ++loadGeneration
         // 筛选状态同步快照：偏好读取挂起期间用户可能已改筛选并触发新 load，
@@ -189,17 +198,37 @@ class TokenUsageStatisticsViewModel(
                 val preset: TokenStatsPreset
                 val customRange: TokenStatsTimeRange?
                 val userChoseTime: Boolean
-                if (savedSelection != null) {
-                    // 已有选择（用户手选或上次自动回退）：直接复用，不再探测（P1-2）
+                val savedRange = savedSelection?.let { selection ->
+                    selection.customRangeOrNull()
+                        ?: selection.preset.takeIf { it != TokenStatsPreset.CUSTOM }?.let {
+                            TokenStatsTimeRanges.rangeFor(it, nowMs(), zone)
+                        }
+                }
+                val emptyManualRollingSelection =
+                    reconsiderAutomaticTime &&
+                        selectionWasManual &&
+                        savedSelection?.preset in TokenStatsPreset.INITIAL_FALLBACK_ORDER &&
+                        savedRange != null &&
+                        !TokenStatsQueryService.rangeHasEvents(appContext, savedRange)
+                val shouldProbeAutomaticRange =
+                    reconsiderAutomaticTime &&
+                        (savedSelection == null || !selectionWasManual || emptyManualRollingSelection)
+
+                if (savedSelection != null && !shouldProbeAutomaticRange) {
+                    // 普通刷新直接复用；手选范围有数据时也保持用户选择。
                     preset = savedSelection.preset
                     customRange = savedSelection.customRangeOrNull()
                     userChoseTime = selectionWasManual
                 } else {
-                    // 首次进入（无任何持久化状态）：自动回退并持久化（manual=false），
-                    // 下次进入的 VM 直接复用，不再探测（P1-2）。
+                    // 自动模式每次进入重探测；手选滚动范围为空时才扩展到更大窗口。
                     val suggested =
                         TokenStatsQueryService.initialPresetWithData(appContext, zone, nowMs())
-                    settings.saveTimeSelection(TokenStatsTimeSelection(suggested), manual = false)
+                    if (savedSelection?.preset != suggested ||
+                        savedSelection.customRangeOrNull() != null ||
+                        selectionWasManual
+                    ) {
+                        settings.saveTimeSelection(TokenStatsTimeSelection(suggested), manual = false)
+                    }
                     preset = suggested
                     customRange = null
                     userChoseTime = false

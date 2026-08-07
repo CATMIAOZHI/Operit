@@ -29,6 +29,8 @@ data class TokenStatsConfigOption(
     val name: String,
     val provider: String,
     val models: List<String>,
+    val endpoint: String = "",
+    val available: Boolean = true,
 )
 
 data class TokenStatsPricingModelOption(
@@ -170,6 +172,7 @@ private fun ModelConfigSummary.toTokenStatsOption() = TokenStatsConfigOption(
     name = name,
     provider = apiProviderTypeId,
     models = getModelList(modelName),
+    endpoint = apiEndpoint,
 )
 
 internal fun buildPricingModels(
@@ -178,13 +181,23 @@ internal fun buildPricingModels(
     overrides: List<TokenStatPriceOverrideEntity>,
     legacyPrices: Map<String, LegacyPriceSettings> = emptyMap(),
 ): List<TokenStatsPricingModelOption> {
+    val observedMembers = groups.flatMap { it.members }
+    fun observedProvider(configId: String, model: String): String? =
+        observedMembers.firstOrNull { member ->
+            member.configId == configId && member.model.equals(model, ignoreCase = true)
+        }?.provider
+
     val keys = linkedMapOf<String, Pair<String, String>>()
     fun add(provider: String, model: String) {
         val key = "${provider.trim().lowercase()}\u0000${model.trim().lowercase()}"
         keys.putIfAbsent(key, provider to model)
     }
-    groups.flatMap { it.members }.forEach { add(it.provider, it.model) }
-    configs.forEach { config -> config.models.forEach { add(config.provider, it) } }
+    observedMembers.forEach { add(it.provider, it.model) }
+    configs.forEach { config ->
+        config.models.forEach { model ->
+            add(observedProvider(config.id, model) ?: config.provider, model)
+        }
+    }
     overrides.forEach { add(it.provider, it.model) }
     legacyPrices.keys.forEach { providerModel ->
         val separator = providerModel.indexOf(':')
@@ -192,8 +205,9 @@ internal fun buildPricingModels(
     }
     return keys.values.map { (provider, model) ->
         val matchingConfigs = configs.filter { config ->
-            config.provider.equals(provider, ignoreCase = true) &&
-                config.models.any { it.equals(model, ignoreCase = true) }
+            config.models.any { it.equals(model, ignoreCase = true) } &&
+                (observedProvider(config.id, model) ?: config.provider)
+                    .equals(provider, ignoreCase = true)
         }
         val missingConfigIds = overrides.asSequence().filter {
             it.scope == PriceOverrideScope.CONFIG.name &&
@@ -203,7 +217,13 @@ internal fun buildPricingModels(
             provider = provider,
             model = model,
             configs = matchingConfigs + missingConfigIds.map { id ->
-                TokenStatsConfigOption(id = id, name = id, provider = provider, models = listOf(model))
+                TokenStatsConfigOption(
+                    id = id,
+                    name = id,
+                    provider = provider,
+                    models = listOf(model),
+                    available = false,
+                )
             },
             legacyProviderModel = legacyPrices.keys.firstOrNull { key ->
                 val separator = key.indexOf(':')

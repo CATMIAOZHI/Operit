@@ -297,7 +297,7 @@ class TokenUsageStatisticsViewModelTest {
         awaitRefresh(viewModel, 0)
         assertEquals(TokenStatsPreset.LAST_7D, viewModel.state.value.selectedPreset)
         assertFalse(viewModel.state.value.userChoseTime)
-        // 自动回退结果已持久化（manual=false）：下次进入直接复用，不再探测（P1-2）
+        // 自动回退结果持久化为 manual=false，下次进入仍可按最新数据重新探测。
         assertNotNull(settings.savedSelection)
         assertEquals(TokenStatsPreset.LAST_7D, settings.savedSelection!!.preset)
         assertFalse(settings.savedManual)
@@ -305,7 +305,7 @@ class TokenUsageStatisticsViewModelTest {
     }
 
     @Test
-    fun `second viewmodel reuses persisted auto fallback without probing`() {
+    fun `second viewmodel rechecks persisted automatic fallback on entry`() {
         kotlinx.coroutines.runBlocking {
             seedIdentity("id-1", configId = "cfg-a")
             // 事件只在 6 天前：5h/12h/24h 空，7d 有数据
@@ -316,34 +316,53 @@ class TokenUsageStatisticsViewModelTest {
         assertEquals(TokenStatsPreset.LAST_7D, vm1.state.value.selectedPreset)
         assertEquals(1, settings.timeSelectionSaveCount)
 
-        // 清空事件：若第二个 VM 重新探测会回退到 5h（无任何数据）；必须复用
-        // 已保存的自动选择且不再次保存（P1-2 跨 VM 验证）
+        // 清空事件后再次进入：全部范围为空，自动回退应回到最短 5h。
         runBlocking { dao.deleteAllEvents() }
         val vm2 = newViewModel()
         awaitRefresh(vm2, 0)
-        assertEquals(TokenStatsPreset.LAST_7D, vm2.state.value.selectedPreset)
+        assertEquals(TokenStatsPreset.LAST_5H, vm2.state.value.selectedPreset)
         assertFalse(vm2.state.value.userChoseTime)
-        assertEquals(1, settings.timeSelectionSaveCount)
+        assertEquals(2, settings.timeSelectionSaveCount)
         assertEquals(0L, vm2.state.value.range?.eventCount)
     }
 
     @Test
-    fun `user selection locks time and disables auto fallback`() {
+    fun `manual rolling selection with data stays locked`() {
         kotlinx.coroutines.runBlocking {
             seedIdentity("id-1", configId = "cfg-a")
-            // 数据在 30 小时前：5h/12h/24h 全空（自动回退会选 7d），但用户已选择 24h
-            dao.insertEvent(event("e1", "id-1", nowMs - 30 * 3600_000L))
+            // 24h 内有数据，保留用户手动选择，不缩短到 5h。
+            dao.insertEvent(event("e1", "id-1", nowMs - 20 * 3600_000L))
             settings.savedSelection = TokenStatsTimeSelection(TokenStatsPreset.LAST_24H)
             settings.savedManual = true
         }
         val viewModel = newViewModel()
         awaitRefresh(viewModel, 0)
-        // 用户选择过 → 不自动回退
+        // 手动范围本身有数据 → 不自动跳转
         assertEquals(TokenStatsPreset.LAST_24H, viewModel.state.value.selectedPreset)
         assertTrue(viewModel.state.value.userChoseTime)
-        assertTrue(viewModel.state.value.range?.eventCount == 0L)
+        assertEquals(1L, viewModel.state.value.range?.eventCount)
         // 已有选择 → 本次 load 不再保存
         assertEquals(0, settings.timeSelectionSaveCount)
+    }
+
+    @Test
+    fun `empty manual rolling selection expands on entry`() {
+        kotlinx.coroutines.runBlocking {
+            seedIdentity("id-1", configId = "cfg-a")
+            // 手选 24h 无数据，但 7d 有数据，进入页面时自动扩展。
+            dao.insertEvent(event("e1", "id-1", nowMs - 30 * 3600_000L))
+            settings.savedSelection = TokenStatsTimeSelection(TokenStatsPreset.LAST_24H)
+            settings.savedManual = true
+        }
+
+        val viewModel = newViewModel()
+        awaitRefresh(viewModel, 0)
+
+        assertEquals(TokenStatsPreset.LAST_7D, viewModel.state.value.selectedPreset)
+        assertFalse(viewModel.state.value.userChoseTime)
+        assertEquals(1L, viewModel.state.value.range?.eventCount)
+        assertFalse(settings.savedManual)
+        assertEquals(1, settings.timeSelectionSaveCount)
     }
 
     // ==== 自定义范围 ====
