@@ -146,40 +146,62 @@ internal fun CustomRangeDialog(
 @Composable
 internal fun PriceOverrideDialog(
     existing: TokenStatPriceOverrideEntity?,
+    initialDraft: TokenStatsPriceOverrideDraft? = null,
     onSave: (TokenStatsPriceOverrideDraft) -> Unit,
     onDelete: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
-    var scope by remember(existing) {
+    var scope by remember(existing, initialDraft) {
         mutableStateOf(
-            existing?.let { PriceOverrideScope.fromNameOrNull(it.scope) } ?: PriceOverrideScope.PROVIDER_MODEL
+            existing?.let { PriceOverrideScope.fromNameOrNull(it.scope) }
+                ?: initialDraft?.scope
+                ?: PriceOverrideScope.PROVIDER_MODEL
         )
     }
-    var provider by remember(existing) { mutableStateOf(existing?.provider.orEmpty()) }
-    var model by remember(existing) { mutableStateOf(existing?.model.orEmpty()) }
-    var configId by remember(existing) { mutableStateOf(existing?.configId.orEmpty()) }
-    var billingMode by remember(existing) {
+    var provider by remember(existing, initialDraft) {
+        mutableStateOf(existing?.provider ?: initialDraft?.provider.orEmpty())
+    }
+    var model by remember(existing, initialDraft) {
+        mutableStateOf(existing?.model ?: initialDraft?.model.orEmpty())
+    }
+    var configId by remember(existing, initialDraft) {
+        mutableStateOf(existing?.configId ?: initialDraft?.configId.orEmpty())
+    }
+    var billingMode by remember(existing, initialDraft) {
         mutableStateOf(
-            existing?.let { BillingMode.fromString(it.billingMode) } ?: BillingMode.TOKEN
+            existing?.let { BillingMode.fromString(it.billingMode) }
+                ?: initialDraft?.billingMode
+                ?: BillingMode.TOKEN
         )
     }
-    var currency by remember(existing) {
+    var currency by remember(existing, initialDraft) {
         mutableStateOf(
             existing?.let {
                 if (it.pricingCurrency.equals("CNY", ignoreCase = true)) PricingCurrency.CNY else PricingCurrency.USD
-            } ?: PricingCurrency.CNY
+            } ?: initialDraft?.currency ?: PricingCurrency.CNY
         )
     }
-    var inputPrice by remember(existing) { mutableStateOf(formatEditablePrice(existing?.inputPricePerMillion)) }
-    var cachedInputPrice by remember(existing) { mutableStateOf(formatEditablePrice(existing?.cachedInputPricePerMillion)) }
-    var cacheWritePrice by remember(existing) { mutableStateOf(formatEditablePrice(existing?.cacheWritePricePerMillion)) }
-    var outputPrice by remember(existing) { mutableStateOf(formatEditablePrice(existing?.outputPricePerMillion)) }
-    var pricePerRequest by remember(existing) { mutableStateOf(formatEditablePrice(existing?.pricePerRequest)) }
+    var inputPrice by remember(existing, initialDraft) {
+        mutableStateOf(formatEditablePrice(existing?.inputPricePerMillion ?: initialDraft?.inputPricePerMillion))
+    }
+    var cachedInputPrice by remember(existing, initialDraft) {
+        mutableStateOf(formatEditablePrice(existing?.cachedInputPricePerMillion ?: initialDraft?.cachedInputPricePerMillion))
+    }
+    var cacheWritePrice by remember(existing, initialDraft) {
+        mutableStateOf(formatEditablePrice(existing?.cacheWritePricePerMillion ?: initialDraft?.cacheWritePricePerMillion))
+    }
+    var outputPrice by remember(existing, initialDraft) {
+        mutableStateOf(formatEditablePrice(existing?.outputPricePerMillion ?: initialDraft?.outputPricePerMillion))
+    }
+    var pricePerRequest by remember(existing, initialDraft) {
+        mutableStateOf(formatEditablePrice(existing?.pricePerRequest ?: initialDraft?.pricePerRequest))
+    }
     var inlineError by remember { mutableStateOf<String?>(null) }
     val pricingInvalidText = stringResource(R.string.token_stats_pricing_invalid)
     // P1-7：编辑已有覆盖时业务键（scope/provider/model/configId）只读，
     // 只允许修改价格/币种/计费方式，防止键被改掉产生第二行或误覆盖。
     val editing = existing != null
+    val targetLocked = editing || initialDraft != null
 
     val priceFields =
         if (billingMode == BillingMode.TOKEN) {
@@ -215,15 +237,15 @@ internal fun PriceOverrideDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = scope == PriceOverrideScope.PROVIDER_MODEL,
-                        onClick = { if (!editing) scope = PriceOverrideScope.PROVIDER_MODEL },
-                        enabled = !editing,
+                        onClick = { if (!targetLocked) scope = PriceOverrideScope.PROVIDER_MODEL },
+                        enabled = !targetLocked,
                         label = { Text(stringResource(R.string.token_stats_pricing_scope_provider)) },
                         modifier = Modifier.weight(1f),
                     )
                     FilterChip(
                         selected = scope == PriceOverrideScope.CONFIG,
-                        onClick = { if (!editing) scope = PriceOverrideScope.CONFIG },
-                        enabled = !editing,
+                        onClick = { if (!targetLocked) scope = PriceOverrideScope.CONFIG },
+                        enabled = !targetLocked,
                         label = { Text(stringResource(R.string.token_stats_pricing_scope_config)) },
                         modifier = Modifier.weight(1f),
                     )
@@ -231,27 +253,27 @@ internal fun PriceOverrideDialog(
 
                 OutlinedTextField(
                     value = provider,
-                    onValueChange = { if (!editing) provider = it },
+                    onValueChange = { if (!targetLocked) provider = it },
                     label = { Text(stringResource(R.string.token_stats_pricing_provider_label)) },
                     singleLine = true,
-                    enabled = !editing,
+                    enabled = !targetLocked,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = model,
-                    onValueChange = { if (!editing) model = it },
+                    onValueChange = { if (!targetLocked) model = it },
                     label = { Text(stringResource(R.string.token_stats_pricing_model_label)) },
                     singleLine = true,
-                    enabled = !editing,
+                    enabled = !targetLocked,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (scope == PriceOverrideScope.CONFIG) {
                     OutlinedTextField(
                         value = configId,
-                        onValueChange = { if (!editing) configId = it },
+                        onValueChange = { if (!targetLocked) configId = it },
                         label = { Text(stringResource(R.string.token_stats_pricing_config_label)) },
                         singleLine = true,
-                        enabled = !editing,
+                        enabled = !targetLocked,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

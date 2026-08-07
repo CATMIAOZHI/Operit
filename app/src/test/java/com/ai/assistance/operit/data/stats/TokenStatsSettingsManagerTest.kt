@@ -464,6 +464,13 @@ class TokenStatsSettingsManagerTest {
             val merged = groups.first { it.displayModelId == groupId }
             assertEquals("组合", merged.displayName)
             assertEquals(setOf("id-1", "id-2"), merged.memberIdentityIds.toSet())
+            assertEquals(
+                setOf(
+                    TokenStatsGroupMemberInfo("id-1", "cfg-1", "OPENAI", "gpt-4o"),
+                    TokenStatsGroupMemberInfo("id-2", "cfg-2", "OPENAI", "claude-3-5-sonnet"),
+                ),
+                merged.members.toSet(),
+            )
 
             // 默认分组（成员被移出后变空）仍在列表中：空组是合法合并目标
             val gptId = TokenStatIdentityResolver.displayModelIdFor("gpt-4o")

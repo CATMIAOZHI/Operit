@@ -677,6 +677,10 @@ class TokenUsageStatisticsViewModelTest {
         assertEquals(TokenStatsCostMode.REVALUED, viewModel.state.value.costMode)
         assertEquals(TokenStatsCostMode.REVALUED, settings.savedMode)
 
+        viewModel.setIncludeLegacy(false)
+        assertFalse(viewModel.state.value.includeLegacy)
+        assertFalse(settings.savedIncludeLegacy)
+
         // 手动汇率：合法保存后不再标记估算
         val v3 = viewModel.state.value.refreshVersion
         assertTrue(viewModel.setManualRate(7.35))
@@ -1132,6 +1136,7 @@ private class FakeSettingsStore : TokenStatsSettingsStore {
     var rateEstimated: Boolean = true
     var savedCurrency: PricingCurrency = PricingCurrency.CNY
     var savedMode: TokenStatsCostMode = TokenStatsCostMode.HISTORICAL
+    var savedIncludeLegacy: Boolean = true
     var savedSelection: TokenStatsTimeSelection? = null
     var savedManual: Boolean = false
     /** saveTimeSelection 调用次数（P1-2：第二个 VM 不得再次保存/探测）。 */
@@ -1157,6 +1162,12 @@ private class FakeSettingsStore : TokenStatsSettingsStore {
         savedMode = mode
     }
 
+    override suspend fun loadIncludeLegacy(): Boolean = savedIncludeLegacy
+
+    override suspend fun saveIncludeLegacy(include: Boolean) {
+        savedIncludeLegacy = include
+    }
+
     override suspend fun loadTimeSelection(): TokenStatsTimeSelection? = savedSelection
 
     override suspend fun loadSelectionWasManual(): Boolean = savedManual
@@ -1177,6 +1188,7 @@ private class GatedSettingsStore : TokenStatsSettingsStore {
     var rateEstimated: Boolean = true
     var savedCurrency: PricingCurrency = PricingCurrency.CNY
     var savedMode: TokenStatsCostMode = TokenStatsCostMode.HISTORICAL
+    var savedIncludeLegacy: Boolean = true
     var savedSelection: TokenStatsTimeSelection? = null
     var savedManual: Boolean = false
     val firstLoadStarted = CompletableDeferred<Unit>()
@@ -1207,6 +1219,12 @@ private class GatedSettingsStore : TokenStatsSettingsStore {
 
     override suspend fun saveCostMode(mode: TokenStatsCostMode) {
         savedMode = mode
+    }
+
+    override suspend fun loadIncludeLegacy(): Boolean = savedIncludeLegacy
+
+    override suspend fun saveIncludeLegacy(include: Boolean) {
+        savedIncludeLegacy = include
     }
 
     override suspend fun loadTimeSelection(): TokenStatsTimeSelection? = savedSelection

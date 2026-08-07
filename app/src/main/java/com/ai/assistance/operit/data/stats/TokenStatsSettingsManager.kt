@@ -164,20 +164,29 @@ class TokenStatsSettingsManager(private val dao: TokenStatsDao) {
     suspend fun groupModels(): List<TokenStatsGroupModelInfo> {
         val snapshot = dao.loadGroupMetadataSnapshot()
         val displayNames = snapshot.displayModels.associateBy { it.displayModelId }
-        val membersByGroup = LinkedHashMap<String, MutableList<String>>()
+        val membersByGroup = LinkedHashMap<String, MutableList<TokenStatsGroupMemberInfo>>()
         for (identity in snapshot.identities) {
             membersByGroup.getOrPut(identity.displayModelId) { mutableListOf() }
-                .add(identity.identityId)
+                .add(
+                    TokenStatsGroupMemberInfo(
+                        identityId = identity.identityId,
+                        configId = identity.configId,
+                        provider = identity.provider,
+                        model = identity.model,
+                    )
+                )
         }
         // 有展示行但无身份的空分组：仍可作为合并目标，必须保留
         for (display in snapshot.displayModels) {
             membersByGroup.putIfAbsent(display.displayModelId, mutableListOf())
         }
-        return membersByGroup.map { (displayModelId, memberIds) ->
+        return membersByGroup.map { (displayModelId, members) ->
+            val sortedMembers = members.sortedWith(compareBy({ it.model.lowercase() }, { it.provider.lowercase() }, { it.configId }))
             TokenStatsGroupModelInfo(
                 displayModelId = displayModelId,
                 displayName = displayNames[displayModelId]?.displayName ?: displayModelId,
-                memberIdentityIds = memberIds.sorted(),
+                memberIdentityIds = sortedMembers.map { it.identityId },
+                members = sortedMembers,
             )
         }.sortedWith(compareBy({ it.displayName.lowercase() }, { it.displayModelId }))
     }

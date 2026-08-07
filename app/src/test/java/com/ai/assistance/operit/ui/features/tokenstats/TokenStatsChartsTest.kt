@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.ui.features.tokenstats
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -66,5 +67,22 @@ class TokenStatsChartsTest {
         assertEquals(listOf(p1 to p2), lineSegments(listOf(p0, null, p1, p2)))
         // 全空 → 无线段
         assertEquals(emptyList<Pair<Offset, Offset>>(), lineSegments(listOf(null, null)))
+    }
+
+    @Test
+    fun `lifetime token sum includes migrated baseline without overflow`() {
+        val legacyTotal = saturatedTokenSum(15_530_991L, 13_717_376L, 320_485L)
+
+        assertEquals(29_568_852L, legacyTotal)
+        assertEquals(Long.MAX_VALUE, saturatedTokenSum(Long.MAX_VALUE, 1L))
+        assertEquals(12L, includeLegacyValue(5L, 7L, true))
+        assertEquals(5L, includeLegacyValue(5L, 7L, false))
+    }
+
+    @Test
+    fun `token trend uses Rainytoken palette`() {
+        assertEquals(Color(0xFFFFD1DC), RainyTokenCacheRead)
+        assertEquals(Color(0xFFFF85A2), RainyTokenUncachedInput)
+        assertEquals(Color(0xFFE91E63), RainyTokenOutput)
     }
 }

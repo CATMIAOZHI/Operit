@@ -1,9 +1,9 @@
 package com.ai.assistance.operit.ui.features.tokenstats
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -13,15 +13,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AttachMoney
-import androidx.compose.material.icons.filled.CurrencyYen
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -34,9 +33,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,13 +45,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.collects.PricingCurrency
 import com.ai.assistance.operit.data.stats.TokenStatCategory
 import com.ai.assistance.operit.data.stats.TokenStatStatus
+import com.ai.assistance.operit.data.stats.TokenCostCalculator
+import com.ai.assistance.operit.data.stats.TokenStatsBaselineTotals
 import com.ai.assistance.operit.data.stats.TokenStatsCostMode
 import com.ai.assistance.operit.data.stats.TokenStatsDisplayModelBreakdown
 import com.ai.assistance.operit.data.stats.TokenStatsDurationAggregate
@@ -77,6 +82,35 @@ internal fun formatPricePerRequest(price: Double, currency: PricingCurrency): St
 
 internal fun formatCount(value: Long): String = String.format(Locale.US, "%,d", value)
 
+/** 统计页统一白色卡片；局部浅色 scheme 保证深色主题下控件与文字仍清晰。 */
+@Composable
+internal fun TokenStatsWhiteCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    MaterialTheme(
+        colorScheme =
+            scheme.copy(
+                surface = TokenStatsCardContainer,
+                onSurface = TokenStatsCardContent,
+                surfaceVariant = Color(0xFFF5F5F5),
+                onSurfaceVariant = TokenStatsCardMuted,
+                outline = Color(0xFFBDBDBD),
+                outlineVariant = Color(0xFFE0E0E0),
+            ),
+    ) {
+        Card(
+            modifier = modifier,
+            colors = CardDefaults.cardColors(
+                containerColor = TokenStatsCardContainer,
+                contentColor = TokenStatsCardContent,
+            ),
+            content = content,
+        )
+    }
+}
+
 // ==== 生命周期累计总览（不受筛选） ====
 
 @Composable
@@ -85,11 +119,12 @@ internal fun TokenStatsLifetimeCard(
     currency: PricingCurrency,
     manualRate: Double,
     rateIsEstimated: Boolean,
+    includeLegacy: Boolean,
+    onIncludeLegacyChange: (Boolean) -> Unit,
 ) {
     val colors = LocalTokenStatsColors.current
-    Card(
+    TokenStatsWhiteCard(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = colors.summaryCardContainer),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -110,39 +145,72 @@ internal fun TokenStatsLifetimeCard(
 
             Spacer(Modifier.height(8.dp))
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.token_stats_include_legacy),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.summaryCardContent,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = includeLegacy,
+                    onCheckedChange = onIncludeLegacyChange,
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
             val eventTotals = overview.eventTotals
+            val baseline = overview.baselineTotals
+            val unknownCostContributions =
+                includeLegacyValue(
+                    eventTotals.cost.unknownContributionCount,
+                    baseline.cost.unknownContributionCount,
+                    includeLegacy,
+                )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 BigNumber(
                     label = stringResource(R.string.settings_total_requests),
-                    value = formatCount(overview.combinedRequests),
+                    value =
+                        formatCount(
+                            includeLegacyValue(eventTotals.requests, baseline.requests, includeLegacy)
+                        ),
                     color = colors.summaryCardContent,
                 )
                 BigNumber(
                     label = stringResource(R.string.token_stats_tokens_total),
-                    value = formatCompactCount(knownTokenSum(eventTotals)),
+                    value = formatCompactCount(knownLifetimeTokenSum(overview, includeLegacy)),
                     color = colors.summaryCardContent,
                 )
                 BigNumber(
                     label = stringResource(R.string.settings_total_cost),
-                    value = formatMoney(eventTotals.cost.knownAmount, currency),
+                    value =
+                        formatMoney(
+                            eventTotals.cost.knownAmount +
+                                if (includeLegacy) baseline.cost.knownAmount else 0.0,
+                            currency,
+                        ),
                     color = colors.chartAccent,
                     alignEnd = true,
                 )
             }
 
-            if (eventTotals.cost.unknownContributionCount > 0L) {
+            if (unknownCostContributions > 0L) {
                 UnknownHint(
                     text = stringResource(
                         R.string.token_stats_unknown_cost,
-                        eventTotals.cost.unknownContributionCount,
+                        unknownCostContributions,
                     ),
                     color = colors.unknownHint,
                 )
             }
-            if (eventTotals.cost.unknownContributionCount == 0L &&
+            if (unknownCostContributions == 0L &&
                 eventTotals.cost.rateIsEstimated
             ) {
                 Text(
@@ -157,8 +225,7 @@ internal fun TokenStatsLifetimeCard(
             TokenComponentLines(totals = eventTotals, textColor = colors.summaryCardContent)
 
             // 旧数据 baseline（估算口径，明确标注）
-            val baseline = overview.baselineTotals
-            if (baseline.identityCount > 0L) {
+            if (includeLegacy && baseline.identityCount > 0L) {
                 Spacer(Modifier.height(12.dp))
                 HorizontalDivider(color = colors.summaryCardContent.copy(alpha = 0.2f))
                 Spacer(Modifier.height(12.dp))
@@ -185,6 +252,11 @@ internal fun TokenStatsLifetimeCard(
                     color = colors.summaryCardContent.copy(alpha = 0.8f),
                 )
                 Spacer(Modifier.height(8.dp))
+                BaselineLine(
+                    label = stringResource(R.string.token_stats_tokens_total),
+                    value = formatCount(knownBaselineTokenSum(baseline)),
+                    color = colors.summaryCardContent,
+                )
                 BaselineLine(
                     label = stringResource(R.string.settings_total_requests),
                     value = formatCount(baseline.requests),
@@ -359,14 +431,34 @@ private fun BaselineLine(
 /** 已知 token 分量合计（uncached+cached+cacheWrite+output+reasoning，未知不算 0）。 */
 internal fun knownTokenSum(
     totals: com.ai.assistance.operit.data.stats.TokenStatsTotals,
-): Long =
-    listOf(
+): Long = saturatedTokenSum(
         totals.uncachedInput.knownSum,
         totals.cachedInput.knownSum,
         totals.cacheWrite.knownSum,
         totals.output.knownSum,
         totals.reasoning.knownSum,
-    ).sum()
+    )
+
+/** 旧累计值没有额外 token 分类，只能按输入、缓存输入和输出合计。 */
+internal fun knownBaselineTokenSum(totals: TokenStatsBaselineTotals): Long =
+    saturatedTokenSum(totals.inputTokens, totals.cachedInputTokens, totals.outputTokens)
+
+/** 生命周期总 Token 必须同时包含新事件与迁移的旧累计 baseline。 */
+internal fun knownLifetimeTokenSum(
+    overview: TokenStatsLifetimeOverview,
+    includeLegacy: Boolean = true,
+): Long =
+    includeLegacyValue(
+        knownTokenSum(overview.eventTotals),
+        knownBaselineTokenSum(overview.baselineTotals),
+        includeLegacy,
+    )
+
+internal fun includeLegacyValue(eventValue: Long, baselineValue: Long, includeLegacy: Boolean): Long =
+    if (includeLegacy) TokenCostCalculator.saturatedAdd(eventValue, baselineValue) else eventValue
+
+internal fun saturatedTokenSum(vararg values: Long): Long =
+    values.fold(0L, TokenCostCalculator::saturatedAdd)
 
 // ==== 筛选栏 ====
 
@@ -394,31 +486,34 @@ internal fun TokenStatsFilterBar(
     onSetCostMode: (TokenStatsCostMode) -> Unit,
     onSetCurrency: (PricingCurrency) -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    TokenStatsWhiteCard(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            // 时间预设：横向滚动，手机不拥挤
+            var showCostModeHelp by remember { mutableStateOf(false) }
+
+            // 时间、展示币种和范围删除属于同一层级。
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                TokenStatsPreset.entries.forEach { preset ->
-                    FilterChip(
-                        selected = selectedPreset == preset,
-                        onClick = {
-                            if (preset == TokenStatsPreset.CUSTOM) onCustomRange() else onSelectPreset(preset)
-                        },
-                        label = {
-                            Text(
-                                when (preset) {
-                                    TokenStatsPreset.CUSTOM -> stringResource(R.string.token_stats_custom_range)
-                                    else -> stringResource(preset.labelRes())
-                                }
-                            )
-                        },
-                    )
-                }
+                TimePresetDropdown(
+                    selectedPreset,
+                    onSelectPreset,
+                    onCustomRange,
+                    Modifier.weight(1f),
+                )
+                CurrencyChip(
+                    currency = PricingCurrency.CNY,
+                    selected = targetCurrency == PricingCurrency.CNY,
+                    onClick = { onSetCurrency(PricingCurrency.CNY) },
+                )
+                CurrencyChip(
+                    currency = PricingCurrency.USD,
+                    selected = targetCurrency == PricingCurrency.USD,
+                    onClick = { onSetCurrency(PricingCurrency.USD) },
+                )
                 // 删除当前时间范围：只删有时间戳的事件，不触碰 baseline（阶段 5）
                 IconButton(onClick = onDeleteRange) {
                     Icon(
@@ -431,11 +526,9 @@ internal fun TokenStatsFilterBar(
 
             Spacer(Modifier.height(8.dp))
 
-            // 第二行：模型/分类/状态多选 + 口径/币种（窄屏横向滚动）
+            // 查询维度固定三列，避免重要筛选藏在横向滚动区域。
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 ModelFilterDropdown(
@@ -444,53 +537,90 @@ internal fun TokenStatsFilterBar(
                     knownModelNames,
                     onToggleModel,
                     onSelectAllModels,
+                    Modifier.weight(1f),
                 )
-                CategoryFilterDropdown(selectedCategories, onToggleCategory, onClearAllCategories)
-                StatusFilterDropdown(selectedStatuses, onToggleStatus, onClearAllStatuses)
+                CategoryFilterDropdown(
+                    selectedCategories,
+                    onToggleCategory,
+                    onClearAllCategories,
+                    Modifier.weight(1f),
+                )
+                StatusFilterDropdown(
+                    selectedStatuses,
+                    onToggleStatus,
+                    onClearAllStatuses,
+                    Modifier.weight(1f),
+                )
+            }
 
+            Spacer(Modifier.height(8.dp))
+
+            // 计价口径独占一行，帮助入口解释它只影响费用计算。
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 FilterChip(
                     selected = costMode == TokenStatsCostMode.HISTORICAL,
                     onClick = { onSetCostMode(TokenStatsCostMode.HISTORICAL) },
                     label = { Text(stringResource(R.string.token_stats_mode_historical)) },
+                    modifier = Modifier.weight(1f),
                 )
                 FilterChip(
                     selected = costMode == TokenStatsCostMode.REVALUED,
                     onClick = { onSetCostMode(TokenStatsCostMode.REVALUED) },
                     label = { Text(stringResource(R.string.token_stats_mode_revalued)) },
+                    modifier = Modifier.weight(1f),
                 )
-                FilterChip(
-                    selected = targetCurrency == PricingCurrency.CNY,
-                    onClick = { onSetCurrency(PricingCurrency.CNY) },
-                    label = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.CurrencyYen,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
+                IconButton(onClick = { showCostModeHelp = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.HelpOutline,
+                        contentDescription = stringResource(R.string.token_stats_mode_help_title),
+                        tint = TokenStatsCardMuted,
+                    )
+                }
+            }
+
+            if (showCostModeHelp) {
+                AlertDialog(
+                    onDismissRequest = { showCostModeHelp = false },
+                    title = { Text(stringResource(R.string.token_stats_mode_help_title)) },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(stringResource(R.string.token_stats_mode_historical_help))
+                            Text(stringResource(R.string.token_stats_mode_revalued_help))
+                            Text(
+                                text = stringResource(R.string.token_stats_mode_rate_help),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TokenStatsCardMuted,
                             )
-                            Spacer(Modifier.width(4.dp))
-                            Text(stringResource(R.string.token_stats_currency_cny))
                         }
                     },
-                )
-                FilterChip(
-                    selected = targetCurrency == PricingCurrency.USD,
-                    onClick = { onSetCurrency(PricingCurrency.USD) },
-                    label = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.AttachMoney,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(stringResource(R.string.token_stats_currency_usd))
+                    confirmButton = {
+                        TextButton(onClick = { showCostModeHelp = false }) {
+                            Text(stringResource(R.string.token_stats_help_got_it))
                         }
                     },
                 )
             }
         }
     }
+}
+
+@Composable
+private fun CurrencyChip(
+    currency: PricingCurrency,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = {
+            Text(currency.code)
+        },
+    )
 }
 
 private fun TokenStatsPreset.labelRes(): Int =
@@ -508,12 +638,41 @@ private fun TokenStatsPreset.labelRes(): Int =
     }
 
 @Composable
+private fun TimePresetDropdown(
+    selected: TokenStatsPreset,
+    onSelect: (TokenStatsPreset) -> Unit,
+    onCustomRange: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    FilterDropdown(
+        label = stringResource(selected.labelRes()),
+        modifier = modifier,
+    ) { dismiss ->
+        TokenStatsPreset.entries.forEach { preset ->
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        text = stringResource(preset.labelRes()),
+                        fontWeight = if (preset == selected) FontWeight.Bold else FontWeight.Normal,
+                    )
+                },
+                onClick = {
+                    dismiss()
+                    if (preset == TokenStatsPreset.CUSTOM) onCustomRange() else onSelect(preset)
+                },
+            )
+        }
+    }
+}
+
+@Composable
 private fun ModelFilterDropdown(
     selectedModels: Set<String>,
     availableModels: List<TokenStatsDisplayModelBreakdown>,
     knownModelNames: Map<String, String>,
     onToggleModel: (String) -> Unit,
     onSelectAllModels: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     // 可选项 = 当前范围可用模型 + 已被选中但被筛选出当前结果的模型（P1-5）
     val options: List<Pair<String, String>> = remember(availableModels, selectedModels, knownModelNames) {
@@ -526,6 +685,7 @@ private fun ModelFilterDropdown(
         }
     }
     FilterDropdown(
+        modifier = modifier,
         label = if (selectedModels.isEmpty()) {
             stringResource(R.string.token_stats_filter_all_models)
         } else {
@@ -571,8 +731,10 @@ private fun CategoryFilterDropdown(
     selected: Set<TokenStatCategory>?,
     onToggle: (TokenStatCategory) -> Unit,
     onClearAll: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     FilterDropdown(
+        modifier = modifier,
         label = if (selected == null) {
             stringResource(R.string.token_stats_filter_all_categories)
         } else {
@@ -616,8 +778,10 @@ private fun StatusFilterDropdown(
     selected: Set<TokenStatStatus>?,
     onToggle: (TokenStatStatus) -> Unit,
     onClearAll: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     FilterDropdown(
+        modifier = modifier,
         label = if (selected == null) {
             stringResource(R.string.token_stats_filter_all_statuses)
         } else {
@@ -659,14 +823,22 @@ private fun StatusFilterDropdown(
 @Composable
 private fun FilterDropdown(
     label: String,
+    modifier: Modifier = Modifier,
     content: @Composable (dismiss: () -> Unit) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    Box {
+    Box(modifier = modifier) {
         FilterChip(
             selected = false,
             onClick = { expanded = true },
-            label = { Text(label) },
+            label = {
+                Text(
+                    text = label,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             content { expanded = false }
@@ -704,25 +876,37 @@ internal fun TokenStatsChartCard(
     headerExtra: @Composable () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
-    Card(modifier = modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = summary,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = LocalTokenStatsColors.current.chartAccent,
-                )
+    val chartColors =
+        LocalTokenStatsColors.current.copy(
+            chartGrid = Color(0xFFE0E0E0),
+            chartLabel = Color(0xFF5F6368),
+            tooltipContainer = TokenStatsCardContainer,
+            tooltipContent = Color(0xFF202124),
+            unknownHint = Color(0xFF8A4B00),
+        )
+    CompositionLocalProvider(LocalTokenStatsColors provides chartColors) {
+        TokenStatsWhiteCard(
+            modifier = modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = chartColors.chartAccent,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                headerExtra()
+                content()
             }
-            Spacer(Modifier.height(8.dp))
-            headerExtra()
-            content()
         }
     }
 }
@@ -764,7 +948,9 @@ internal fun TokenStatsModelCard(
     val colors = LocalTokenStatsColors.current
     var expanded by remember(model.displayModelId) { mutableStateOf(false) }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    TokenStatsWhiteCard(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { expanded = !expanded }) {
@@ -785,7 +971,7 @@ internal fun TokenStatsModelCard(
                             model.identities.size,
                         ),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = TokenStatsCardMuted,
                     )
                 }
                 Column(horizontalAlignment = Alignment.End) {
@@ -798,7 +984,7 @@ internal fun TokenStatsModelCard(
                     Text(
                         text = stringResource(R.string.settings_request_count_label, model.totals.requests),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = TokenStatsCardMuted,
                     )
                 }
                 // 阶段 5：删除对完整展示分组生效（可跨 provider/模型合并组），
@@ -815,7 +1001,7 @@ internal fun TokenStatsModelCard(
                     Icon(
                         imageVector = Icons.Filled.Groups,
                         contentDescription = stringResource(R.string.token_stats_group_manage),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = TokenStatsCardMuted,
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -853,7 +1039,7 @@ private fun TokenStatsIdentityRow(
             Text(
                 text = stringResource(R.string.token_stats_config_id, identity.configId),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = TokenStatsCardMuted,
             )
         }
 
@@ -867,7 +1053,7 @@ private fun TokenStatsIdentityRow(
                     " · ${stringResource(R.string.token_stats_token_cached)} ${formatCompactCount(totals.cachedInput.knownSum)}" +
                     " · ${stringResource(R.string.token_stats_token_output)} ${formatCompactCount(totals.output.knownSum)}",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = TokenStatsCardMuted,
             )
             Text(
                 text = formatMoney(totals.cost.knownAmount, currency),
@@ -909,7 +1095,7 @@ private fun TokenStatsIdentityRow(
             Text(
                 text = "${stringResource(R.string.token_stats_price_label)} $priceText",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = TokenStatsCardMuted,
             )
         }
     }
@@ -957,9 +1143,7 @@ private fun buildPricingText(
 internal fun TokenStatsRateCard(
     manualRate: Double,
     rateIsEstimated: Boolean,
-    currency: PricingCurrency,
     onSaveRate: (Double) -> Boolean,
-    onSetCurrency: (PricingCurrency) -> Unit,
 ) {
     val colors = LocalTokenStatsColors.current
     var rateInput by remember { mutableStateOf(formatRateInput(manualRate)) }
@@ -968,7 +1152,9 @@ internal fun TokenStatsRateCard(
         rateInput = formatRateInput(manualRate)
     }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    TokenStatsWhiteCard(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -983,14 +1169,14 @@ internal fun TokenStatsRateCard(
                 if (rateIsEstimated) {
                     EstimatedBadge(
                         text = stringResource(R.string.token_stats_rate_default_badge),
-                        textColor = MaterialTheme.colorScheme.onSurface,
+                        textColor = TokenStatsCardContent,
                     )
                 }
             }
             Text(
                 text = stringResource(R.string.settings_exchange_rate_subtitle),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = TokenStatsCardMuted,
             )
 
             Row(
@@ -1020,45 +1206,6 @@ internal fun TokenStatsRateCard(
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = stringResource(R.string.token_stats_currency),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(end = 8.dp),
-                )
-                FilterChip(
-                    selected = currency == PricingCurrency.CNY,
-                    onClick = { onSetCurrency(PricingCurrency.CNY) },
-                    label = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.CurrencyYen,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(stringResource(R.string.token_stats_currency_cny))
-                        }
-                    },
-                )
-                Spacer(Modifier.width(8.dp))
-                FilterChip(
-                    selected = currency == PricingCurrency.USD,
-                    onClick = { onSetCurrency(PricingCurrency.USD) },
-                    label = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.AttachMoney,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(stringResource(R.string.token_stats_currency_usd))
-                        }
-                    },
-                )
-            }
             if (rateIsEstimated) {
                 Text(
                     text = stringResource(R.string.token_stats_rate_default_hint, manualRate),

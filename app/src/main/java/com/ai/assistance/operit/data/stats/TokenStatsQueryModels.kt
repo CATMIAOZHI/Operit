@@ -225,6 +225,15 @@ data class TokenStatsGroupModelInfo(
     val displayName: String,
     /** 该分组下的全部身份 id（完整归属，非当前筛选范围所见）。 */
     val memberIdentityIds: List<String>,
+    /** 可供管理界面搜索与辨识的完整身份元数据。 */
+    val members: List<TokenStatsGroupMemberInfo> = emptyList(),
+)
+
+data class TokenStatsGroupMemberInfo(
+    val identityId: String,
+    val configId: String,
+    val provider: String,
+    val model: String,
 )
 
 /** 业务分类合计。 */

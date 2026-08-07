@@ -71,6 +71,8 @@ data class TokenStatsUiState(
     val userChoseTime: Boolean = false,
     val targetCurrency: PricingCurrency = PricingCurrency.CNY,
     val costMode: TokenStatsCostMode = TokenStatsCostMode.HISTORICAL,
+    /** true = 生命周期累计包含迁移的旧版 baseline；关闭只影响展示，不删除数据。 */
+    val includeLegacy: Boolean = true,
     val manualRate: Double = TokenCostCurrency.DEFAULT_USD_TO_CNY_RATE,
     /** true = 汇率是默认估算值（用户未设置），界面必须明显标注。 */
     val rateIsEstimated: Boolean = true,
@@ -180,6 +182,7 @@ class TokenUsageStatisticsViewModel(
                 val rateInfo = settings.loadRateWithEstimate()
                 val currency = settings.loadTargetCurrency()
                 val mode = settings.loadCostMode()
+                val includeLegacy = settings.loadIncludeLegacy()
                 val savedSelection = settings.loadTimeSelection()
                 val selectionWasManual = settings.loadSelectionWasManual()
 
@@ -273,6 +276,7 @@ class TokenUsageStatisticsViewModel(
                         manualRate = rateInfo.first,
                         rateIsEstimated = rateInfo.second,
                         costMode = mode,
+                        includeLegacy = includeLegacy,
                         selectedPreset = preset,
                         customRange = customRange,
                         currentRange = range,
@@ -400,6 +404,13 @@ class TokenUsageStatisticsViewModel(
     }
 
     // ==== 口径/币种/汇率 ====
+
+    fun setIncludeLegacy(include: Boolean) {
+        viewModelScope.launch(dispatcher) {
+            settings.saveIncludeLegacy(include)
+            _state.update { it.copy(includeLegacy = include) }
+        }
+    }
 
     fun setCostMode(mode: TokenStatsCostMode) {
         viewModelScope.launch(dispatcher) {

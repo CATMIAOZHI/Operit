@@ -7,8 +7,6 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import com.ai.assistance.operit.ui.theme.RainyPink
-import com.ai.assistance.operit.ui.theme.RainyPinkHover
-import com.ai.assistance.operit.ui.theme.RainyRose
 import com.ai.assistance.operit.ui.theme.RainySakura
 import com.ai.assistance.operit.ui.theme.RainyWarning
 
@@ -52,6 +50,15 @@ data class TokenStatsColors(
     val summaryCardContent: Color,
 )
 
+internal val TokenStatsCardContainer = Color.White
+internal val TokenStatsCardContent = Color(0xFF202124)
+internal val TokenStatsCardMuted = Color(0xFF5F6368)
+
+// Rainytoken Token 堆叠色板：缓存读取（顶）、未缓存输入（中）、输出（底）。
+internal val RainyTokenCacheRead = Color(0xFFFFD1DC)
+internal val RainyTokenUncachedInput = Color(0xFFFF85A2)
+internal val RainyTokenOutput = Color(0xFFE91E63)
+
 /** 组件默认入口：从当前 [MaterialTheme] 派生，明暗自适应。 */
 @Composable
 fun tokenStatsColors(): TokenStatsColors {
@@ -63,10 +70,10 @@ fun tokenStatsColors(): TokenStatsColors {
 
 private fun lightTokenStatsColors(scheme: androidx.compose.material3.ColorScheme): TokenStatsColors =
     TokenStatsColors(
-        uncachedInput = RainyRose,
-        cachedInput = RainyPink,
+        uncachedInput = RainyTokenUncachedInput,
+        cachedInput = RainyTokenCacheRead,
         cacheWrite = RainySakura,
-        output = Color(0xFFC2185B),
+        output = RainyTokenOutput,
         reasoning = Color(0xFFF48FB1),
         chartAccent = RainyPink,
         chartGrid = scheme.outlineVariant,
@@ -77,16 +84,16 @@ private fun lightTokenStatsColors(scheme: androidx.compose.material3.ColorScheme
         unknownHint = RainyWarning,
         estimatedBadgeContainer = scheme.tertiaryContainer,
         estimatedBadgeContent = scheme.onTertiaryContainer,
-        summaryCardContainer = scheme.primaryContainer,
-        summaryCardContent = scheme.onPrimaryContainer,
+        summaryCardContainer = TokenStatsCardContainer,
+        summaryCardContent = TokenStatsCardContent,
     )
 
 private fun darkTokenStatsColors(scheme: androidx.compose.material3.ColorScheme): TokenStatsColors =
     TokenStatsColors(
-        uncachedInput = RainyPinkHover,
-        cachedInput = RainyPink,
+        uncachedInput = RainyTokenUncachedInput,
+        cachedInput = RainyTokenCacheRead,
         cacheWrite = RainySakura,
-        output = Color(0xFFF06292),
+        output = RainyTokenOutput,
         reasoning = Color(0xFFF8BBD0),
         chartAccent = RainyPink,
         chartGrid = scheme.outlineVariant,
@@ -97,8 +104,8 @@ private fun darkTokenStatsColors(scheme: androidx.compose.material3.ColorScheme)
         unknownHint = RainyWarning,
         estimatedBadgeContainer = scheme.tertiaryContainer,
         estimatedBadgeContent = scheme.onTertiaryContainer,
-        summaryCardContainer = scheme.primaryContainer,
-        summaryCardContent = scheme.onPrimaryContainer,
+        summaryCardContainer = TokenStatsCardContainer,
+        summaryCardContent = TokenStatsCardContent,
     )
 
 /** 模型费用堆叠色板（与 Rainytoken 参考实现一致，12 色足够区分常见模型数）。 */

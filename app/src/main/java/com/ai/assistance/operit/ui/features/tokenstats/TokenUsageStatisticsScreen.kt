@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -22,7 +21,6 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -34,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -42,6 +41,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -49,10 +51,10 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.PriceOverrideScope
 import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
 import com.ai.assistance.operit.data.stats.TokenStatsDisplayModelBreakdown
-import com.ai.assistance.operit.data.stats.TokenStatsGroupModelInfo
 import com.ai.assistance.operit.data.stats.TokenStatsRangeData
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import java.time.ZoneId
+import kotlinx.coroutines.delay
 
 /** 性能卡指标切换。 */
 internal enum class PerfMetric { TTFT, GENERATION }
@@ -64,7 +66,11 @@ internal enum class PerfMetric { TTFT, GENERATION }
  * 四张图表卡 + 模型明细 + 汇率/币种/价格覆盖/分组管理设置。
  */
 @Composable
-fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
+fun TokenUsageStatisticsScreen(
+    onBackPressed: () -> Unit,
+    onOpenGroupManagement: () -> Unit,
+    onOpenPricingManagement: () -> Unit,
+) {
     val context = LocalContext.current
     // P1-3：VM 由路由级 ViewModelStore 管理（AppContent 为该 route 提供
     // LocalViewModelStoreOwner，键 = screenKey）——配置变化保留实例，
@@ -85,8 +91,6 @@ fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
     // 模型删除两步确认：目标模型 + baseline 选择
     var deleteModel by remember { mutableStateOf<TokenStatsDisplayModelBreakdown?>(null) }
     var showDeleteModelBaseline by rememberSaveable { mutableStateOf(false) }
-    var pricingTarget by remember { mutableStateOf<PricingTarget?>(null) }
-    var groupTarget by remember { mutableStateOf<TokenStatsDisplayModelBreakdown?>(null) }
     var perfMetric by rememberSaveable { mutableStateOf(PerfMetric.TTFT) }
 
     LaunchedEffect(actionMessage) {
@@ -95,6 +99,7 @@ fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
             viewModel.consumeActionMessage()
         }
     }
+    LaunchedEffect(Unit) { viewModel.load() }
 
     TokenStatsColorsProvider {
         CustomScaffold(
@@ -132,9 +137,8 @@ fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
                             onCustomRange = { showCustomRange = true },
                             onDeleteRange = { showDeleteRangeDialog = true },
                             onDeleteModel = { deleteModel = it },
-                            onEditPricing = { pricingTarget = PricingTarget.Edit(it) },
-                            onAddPricing = { pricingTarget = PricingTarget.New },
-                            onGroupManage = { groupTarget = it },
+                            onOpenGroupManagement = onOpenGroupManagement,
+                            onOpenPricingManagement = onOpenPricingManagement,
                         )
                     }
                 }
@@ -158,61 +162,6 @@ fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
         )
     }
 
-    pricingTarget?.let { target ->
-        PriceOverrideDialog(
-            existing = (target as? PricingTarget.Edit)?.override,
-            onSave = { draft ->
-                // P1-7：编辑走键校验入口（业务键只读），新增走 upsert
-                val existingOverride = (target as? PricingTarget.Edit)?.override
-                if (existingOverride == null) {
-                    viewModel.upsertPriceOverride(draft)
-                } else {
-                    viewModel.updatePriceOverride(existingOverride, draft)
-                }
-            },
-            onDelete = (target as? PricingTarget.Edit)?.let { edit ->
-                {
-                    val override = edit.override
-                    PriceOverrideScope.fromNameOrNull(override.scope)?.let { scope ->
-                        viewModel.deletePriceOverride(
-                            scope = scope,
-                            provider = override.provider,
-                            model = override.model,
-                            configId = override.configId,
-                        )
-                    }
-                }
-            },
-            onDismiss = { pricingTarget = null },
-        )
-    }
-
-    groupTarget?.let { model ->
-        // P1 修复：成员与目标来自独立于统计筛选的完整分组元数据（state.groupModels，
-        // 全量身份/展示模型表）——范围明细只含当前筛选下有事件的身份，直接用它
-        // 做合并会把无事件成员漏掉；无事件的目标组也不可选出。
-        val group =
-            state.groupModels.firstOrNull { it.displayModelId == model.displayModelId }
-                ?: TokenStatsGroupModelInfo(
-                    displayModelId = model.displayModelId,
-                    displayName = model.displayName,
-                    memberIdentityIds = model.identities.map { it.identityId },
-                )
-        GroupManageDialog(
-            groupInfo = group,
-            otherGroups = state.groupModels.filter { it.displayModelId != group.displayModelId },
-            onRename = { name -> viewModel.renameDisplayGroup(group.displayModelId, name) },
-            onCreateAndMerge = { name ->
-                viewModel.createGroupAndMerge(name, group.memberIdentityIds)
-            },
-            onMergeInto = { targetId ->
-                viewModel.mergeIntoGroup(group.memberIdentityIds, targetId)
-            },
-            onRestoreDefault = { viewModel.restoreDefaultGroup(group.displayModelId) },
-            onDismiss = { groupTarget = null },
-        )
-    }
-
     // ==== 阶段 5 删除对话框 ====
     // 危险操作明确确认：范围删除单步确认（绝不触碰 baseline）；
     // 模型/全部删除两步确认（第一步危险确认 → 第二步选择是否同时删除 baseline）。
@@ -223,17 +172,12 @@ fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
             title = { Text(stringResource(R.string.token_stats_delete_range_title)) },
             text = { Text(stringResource(R.string.token_stats_delete_range_message)) },
             confirmButton = {
-                TextButton(
+                CountdownDeleteButton(
                     onClick = {
                         viewModel.deleteRangeEvents()
                         showDeleteRangeDialog = false
                     },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error,
-                    ),
-                ) {
-                    Text(stringResource(R.string.token_stats_delete_confirm))
-                }
+                )
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteRangeDialog = false }) {
@@ -258,7 +202,7 @@ fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
                         contentColor = MaterialTheme.colorScheme.error,
                     ),
                 ) {
-                    Text(stringResource(R.string.token_stats_delete_confirm))
+                    Text(stringResource(R.string.token_stats_delete_continue))
                 }
             },
             dismissButton = {
@@ -332,7 +276,7 @@ fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
                             contentColor = MaterialTheme.colorScheme.error,
                         ),
                     ) {
-                        Text(stringResource(R.string.token_stats_delete_confirm))
+                        Text(stringResource(R.string.token_stats_delete_continue))
                     }
                 },
                 dismissButton = {
@@ -358,25 +302,31 @@ private fun DeleteBaselineDialog(
     onEventsAndBaseline: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var remainingSeconds by rememberSaveable { mutableIntStateOf(DELETE_COUNTDOWN_SECONDS) }
+    LaunchedEffect(Unit) {
+        while (remainingSeconds > 0) {
+            delay(1_000)
+            remainingSeconds--
+        }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = { Text(message) },
         confirmButton = {
-            TextButton(
+            CountdownDeleteButton(
                 onClick = onEventsAndBaseline,
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error,
-                ),
-            ) {
-                Text(stringResource(R.string.token_stats_delete_events_and_baseline))
-            }
+                remainingSeconds = remainingSeconds,
+                readyLabel = stringResource(R.string.token_stats_delete_events_and_baseline),
+            )
         },
         dismissButton = {
             Row {
-                TextButton(onClick = onEventsOnly) {
-                    Text(stringResource(R.string.token_stats_delete_events_only))
-                }
+                CountdownDeleteButton(
+                    onClick = onEventsOnly,
+                    remainingSeconds = remainingSeconds,
+                    readyLabel = stringResource(R.string.token_stats_delete_events_only),
+                )
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onDismiss) {
                     Text(stringResource(R.string.settings_cancel))
@@ -386,9 +336,42 @@ private fun DeleteBaselineDialog(
     )
 }
 
-private sealed interface PricingTarget {
-    data object New : PricingTarget
-    data class Edit(val override: TokenStatPriceOverrideEntity) : PricingTarget
+private const val DELETE_COUNTDOWN_SECONDS = 5
+
+/** 最终危险操作在对话框出现后等待五秒；取消始终保持可用。 */
+@Composable
+private fun CountdownDeleteButton(
+    onClick: () -> Unit,
+    remainingSeconds: Int? = null,
+    readyLabel: String = stringResource(R.string.token_stats_delete_confirm),
+) {
+    var localRemaining by rememberSaveable { mutableIntStateOf(DELETE_COUNTDOWN_SECONDS) }
+    val remaining = remainingSeconds ?: localRemaining
+    if (remainingSeconds == null) {
+        LaunchedEffect(Unit) {
+            while (localRemaining > 0) {
+                delay(1_000)
+                localRemaining--
+            }
+        }
+    }
+    TextButton(
+        enabled = remaining == 0,
+        onClick = onClick,
+        colors = ButtonDefaults.textButtonColors(
+            contentColor = MaterialTheme.colorScheme.error,
+            disabledContentColor = MaterialTheme.colorScheme.error.copy(alpha = 0.5f),
+        ),
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Text(
+            if (remaining > 0) {
+                stringResource(R.string.token_stats_delete_countdown, readyLabel, remaining)
+            } else {
+                readyLabel
+            }
+        )
+    }
 }
 
 @Composable
@@ -425,9 +408,8 @@ private fun TokenStatsPageContent(
     onCustomRange: () -> Unit,
     onDeleteRange: () -> Unit,
     onDeleteModel: (TokenStatsDisplayModelBreakdown) -> Unit,
-    onEditPricing: (TokenStatPriceOverrideEntity) -> Unit,
-    onAddPricing: () -> Unit,
-    onGroupManage: (TokenStatsDisplayModelBreakdown) -> Unit,
+    onOpenGroupManagement: () -> Unit,
+    onOpenPricingManagement: () -> Unit,
 ) {
     val lifetime = state.lifetime ?: return
     val hasAnyData = lifetime.eventTotals.requests > 0L || lifetime.baselineTotals.identityCount > 0L
@@ -445,6 +427,8 @@ private fun TokenStatsPageContent(
                 currency = state.targetCurrency,
                 manualRate = state.manualRate,
                 rateIsEstimated = state.rateIsEstimated,
+                includeLegacy = state.includeLegacy,
+                onIncludeLegacyChange = viewModel::setIncludeLegacy,
             )
         }
 
@@ -506,19 +490,23 @@ private fun TokenStatsPageContent(
                                 text = stringResource(R.string.settings_model_details),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f),
                             )
                             Text(
                                 text = stringResource(R.string.token_stats_model_count, range.displayModels.size),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            TextButton(onClick = onOpenGroupManagement) {
+                                Text(stringResource(R.string.token_stats_group_manage))
+                            }
                         }
                         TokenStatsModelCardsSection(
                             models = range.displayModels,
                             currency = state.targetCurrency,
                             costMode = state.costMode,
                             zone = zone,
-                            onGroupManage = onGroupManage,
+                            onGroupManage = { onOpenGroupManagement() },
                             onDelete = onDeleteModel,
                         )
                     }
@@ -531,7 +519,6 @@ private fun TokenStatsPageContent(
             TokenStatsRateCard(
                 manualRate = state.manualRate,
                 rateIsEstimated = state.rateIsEstimated,
-                currency = state.targetCurrency,
                 onSaveRate = { rate ->
                     val ok = viewModel.setManualRate(rate)
                     if (!ok) {
@@ -539,7 +526,6 @@ private fun TokenStatsPageContent(
                     }
                     ok
                 },
-                onSetCurrency = viewModel::setTargetCurrency,
             )
         }
 
@@ -547,19 +533,7 @@ private fun TokenStatsPageContent(
             TokenStatsPricingSection(
                 range = range,
                 overrides = state.overrides,
-                onAdd = onAddPricing,
-                onEdit = onEditPricing,
-                onDelete = { override ->
-                    val scope =
-                        PriceOverrideScope.fromNameOrNull(override.scope)
-                            ?: return@TokenStatsPricingSection
-                    viewModel.deletePriceOverride(
-                        scope = scope,
-                        provider = override.provider,
-                        model = override.model,
-                        configId = override.configId,
-                    )
-                },
+                onManage = onOpenPricingManagement,
             )
         }
 
@@ -571,7 +545,9 @@ private fun TokenStatsPageContent(
 
 @Composable
 private fun EmptyStateCard() {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    TokenStatsWhiteCard(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -582,19 +558,19 @@ private fun EmptyStateCard() {
                 imageVector = Icons.Default.Analytics,
                 contentDescription = null,
                 modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = TokenStatsCardMuted,
             )
             Spacer(Modifier.height(16.dp))
             Text(
                 text = stringResource(R.string.token_stats_empty),
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = TokenStatsCardMuted,
             )
             Spacer(Modifier.height(4.dp))
             Text(
                 text = stringResource(R.string.token_stats_empty_hint),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                color = TokenStatsCardMuted.copy(alpha = 0.8f),
             )
         }
     }
@@ -602,11 +578,13 @@ private fun EmptyStateCard() {
 
 @Composable
 private fun NoDataCard(text: String) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    TokenStatsWhiteCard(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = TokenStatsCardMuted,
             modifier = Modifier.padding(24.dp),
         )
     }
@@ -750,10 +728,8 @@ private fun TokenChartCard(
     val colors = LocalTokenStatsColors.current
     // 预取模板：chart 回调是非 Composable lambda，不能在回调内解析资源
     val outputLabel = stringResource(R.string.token_stats_token_output)
-    val cacheWriteLabel = stringResource(R.string.token_stats_token_cache_write)
     val cachedLabel = stringResource(R.string.token_stats_token_cached)
     val uncachedLabel = stringResource(R.string.token_stats_token_uncached)
-    val reasoningLabel = stringResource(R.string.token_stats_token_reasoning)
     val unknownPartsTemplate = stringResource(R.string.token_stats_unknown_parts)
     val chartTitle = stringResource(R.string.token_stats_chart_tokens)
 
@@ -765,11 +741,11 @@ private fun TokenChartCard(
     TokenStatsChartCard(
         title = chartTitle,
         summary = formatCompactCount(
-            range.summary.uncachedInput.knownSum +
-                range.summary.cachedInput.knownSum +
-                range.summary.cacheWrite.knownSum +
-                range.summary.output.knownSum +
-                range.summary.reasoning.knownSum
+            saturatedTokenSum(
+                range.summary.uncachedInput.knownSum,
+                range.summary.cachedInput.knownSum,
+                range.summary.output.knownSum,
+            )
         ),
     ) {
         if (totalUnknown > 0L) {
@@ -785,14 +761,12 @@ private fun TokenChartCard(
             stackSelector = { bucket ->
                 listOf(
                     bucket.totals.output.knownSum.toDouble() to colors.output,
-                    bucket.totals.cacheWrite.knownSum.toDouble() to colors.cacheWrite,
-                    bucket.totals.cachedInput.knownSum.toDouble() to colors.cachedInput,
                     bucket.totals.uncachedInput.knownSum.toDouble() to colors.uncachedInput,
-                    bucket.totals.reasoning.knownSum.toDouble() to colors.reasoning,
+                    bucket.totals.cachedInput.knownSum.toDouble() to colors.cachedInput,
                 )
             },
             stackLabels = {
-                listOf(outputLabel, cacheWriteLabel, cachedLabel, uncachedLabel, reasoningLabel)
+                listOf(outputLabel, uncachedLabel, cachedLabel)
             },
             unknownNote = { bucket ->
                 val unknown =
@@ -804,9 +778,7 @@ private fun TokenChartCard(
             legendItems = listOf(
                 uncachedLabel to colors.uncachedInput,
                 cachedLabel to colors.cachedInput,
-                cacheWriteLabel to colors.cacheWrite,
                 outputLabel to colors.output,
-                reasoningLabel to colors.reasoning,
             ),
         )
     }
@@ -888,13 +860,13 @@ private fun RangeUnknownHint(text: String) {
 private fun TokenStatsPricingSection(
     range: TokenStatsRangeData?,
     overrides: List<TokenStatPriceOverrideEntity>,
-    onAdd: () -> Unit,
-    onEdit: (TokenStatPriceOverrideEntity) -> Unit,
-    onDelete: (TokenStatPriceOverrideEntity) -> Unit,
+    onManage: () -> Unit,
 ) {
     var showBuiltin by remember { mutableStateOf(false) }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    TokenStatsWhiteCard(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -909,13 +881,13 @@ private fun TokenStatsPricingSection(
                     Text(
                         text = stringResource(R.string.token_stats_pricing_subtitle),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = TokenStatsCardMuted,
                     )
                 }
-                IconButton(onClick = onAdd) {
+                IconButton(onClick = onManage) {
                     Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = stringResource(R.string.token_stats_pricing_add),
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = stringResource(R.string.token_stats_management_open),
                     )
                 }
             }
@@ -964,14 +936,14 @@ private fun TokenStatsPricingSection(
                                 }
                             },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = TokenStatsCardMuted,
                         )
                     }
                     if (providerModels.size > 12) {
                         Text(
                             text = stringResource(R.string.token_stats_more_count, providerModels.size - 12),
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = TokenStatsCardMuted,
                         )
                     }
                 }
@@ -981,15 +953,11 @@ private fun TokenStatsPricingSection(
                 Text(
                     text = stringResource(R.string.token_stats_pricing_none),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = TokenStatsCardMuted,
                 )
             } else {
                 overrides.forEach { override ->
-                    PriceOverrideRow(
-                        override = override,
-                        onEdit = { onEdit(override) },
-                        onDelete = { onDelete(override) },
-                    )
+                    PriceOverrideRow(override = override)
                 }
             }
         }
@@ -999,8 +967,6 @@ private fun TokenStatsPricingSection(
 @Composable
 private fun PriceOverrideRow(
     override: TokenStatPriceOverrideEntity,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
 ) {
     val scopeText =
         if (override.scope == PriceOverrideScope.CONFIG.name) {
@@ -1038,7 +1004,7 @@ private fun PriceOverrideRow(
                     Text(
                         text = stringResource(R.string.token_stats_config_id, override.configId),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = TokenStatsCardMuted,
                     )
                 }
                 Text(
@@ -1048,24 +1014,7 @@ private fun PriceOverrideRow(
                         prices.joinToString(" · ")
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            // 触摸目标保持 IconButton 默认 48dp（P1-8：不低于 48dp）
-            IconButton(onClick = onEdit) {
-                Icon(
-                    imageVector = Icons.Default.Edit,
-                    contentDescription = stringResource(R.string.token_stats_pricing_edit),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            IconButton(onClick = onDelete) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = stringResource(R.string.token_stats_pricing_delete),
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(18.dp),
+                    color = TokenStatsCardMuted,
                 )
             }
         }
