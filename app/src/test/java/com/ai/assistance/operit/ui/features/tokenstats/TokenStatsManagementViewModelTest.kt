@@ -66,6 +66,49 @@ class TokenStatsManagementViewModelTest {
         assertEquals(legacy, result.legacyPricing)
     }
 
+    @Test
+    fun `same provider and model expose each api configuration independently`() {
+        val groups = listOf(
+            TokenStatsGroupModelInfo(
+                displayModelId = "deepseek",
+                displayName = "DeepSeek",
+                memberIdentityIds = listOf("official-id", "relay-id"),
+                members = listOf(
+                    TokenStatsGroupMemberInfo("official-id", "official", "DEEPSEEK", "deepseek-chat"),
+                    TokenStatsGroupMemberInfo("relay-id", "relay", "DEEPSEEK", "deepseek-chat"),
+                ),
+            )
+        )
+        val configs = listOf(
+            TokenStatsConfigOption(
+                id = "official",
+                name = "官方配置",
+                provider = "DEEPSEEK",
+                models = listOf("deepseek-chat"),
+                endpoint = "https://api.deepseek.com",
+            ),
+            TokenStatsConfigOption(
+                id = "relay",
+                name = "中转站",
+                provider = "DEEPSEEK",
+                models = listOf("deepseek-chat"),
+                endpoint = "https://relay.example.com",
+            ),
+        )
+        val overrides = listOf(
+            override("DEEPSEEK", "deepseek-chat", "official", PriceOverrideScope.CONFIG),
+            override("DEEPSEEK", "deepseek-chat", "relay", PriceOverrideScope.CONFIG),
+        )
+
+        val result = buildPricingModels(groups, configs, overrides).single()
+
+        assertEquals(listOf("official", "relay"), result.configs.map { it.id })
+        assertEquals(
+            listOf("https://api.deepseek.com", "https://relay.example.com"),
+            result.configs.map { it.endpoint },
+        )
+    }
+
     private fun override(
         provider: String,
         model: String,

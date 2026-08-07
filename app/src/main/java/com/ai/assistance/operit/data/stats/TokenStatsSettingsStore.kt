@@ -12,8 +12,8 @@ import com.ai.assistance.operit.data.preferences.ApiPreferences
  * - 汇率**只由用户手动设置**：未设置时 [loadRateWithEstimate] 返回默认估算
  *   7.0（[TokenCostCurrency.DEFAULT_USD_TO_CNY_RATE]）并标记 estimated，
  *   界面必须明显标注“默认估算”；不联网获取汇率。
- * - 时间选择持久化的是“用户是否手动选过”：null = 从未选择（允许每次进入
- *   时按 5h→…→30d 自动回退）；非 null = 用户选择，不再自动跳转。
+ * - 时间选择持久化用户是否手动选过；进入页面时，自动选择会重新探测，手动滚动
+ *   范围仅在自身无数据时扩展，自定义/日历范围保持用户选择。
  */
 interface TokenStatsSettingsStore {
 
@@ -42,7 +42,7 @@ interface TokenStatsSettingsStore {
      */
     suspend fun loadTimeSelection(): TokenStatsTimeSelection?
 
-    /** 当前时间选择是否由用户手动做出；false = 首次自动回退（或旧数据迁移）。 */
+    /** 当前时间选择是否由用户手动做出；false = 自动回退（或旧数据迁移）。 */
     suspend fun loadSelectionWasManual(): Boolean
 
     /**

@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachMoney
@@ -151,6 +153,10 @@ internal fun PriceOverrideDialog(
     onDelete: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
+    val storedBillingMode =
+        existing?.let { BillingMode.fromString(it.billingMode) }
+            ?: initialDraft?.billingMode
+            ?: BillingMode.TOKEN
     var scope by remember(existing, initialDraft) {
         mutableStateOf(
             existing?.let { PriceOverrideScope.fromNameOrNull(it.scope) }
@@ -169,9 +175,7 @@ internal fun PriceOverrideDialog(
     }
     var billingMode by remember(existing, initialDraft) {
         mutableStateOf(
-            existing?.let { BillingMode.fromString(it.billingMode) }
-                ?: initialDraft?.billingMode
-                ?: BillingMode.TOKEN
+            storedBillingMode
         )
     }
     var currency by remember(existing, initialDraft) {
@@ -182,19 +186,49 @@ internal fun PriceOverrideDialog(
         )
     }
     var inputPrice by remember(existing, initialDraft) {
-        mutableStateOf(formatEditablePrice(existing?.inputPricePerMillion ?: initialDraft?.inputPricePerMillion))
+        mutableStateOf(
+            formatEditablePrice(
+                if (storedBillingMode == BillingMode.TOKEN) {
+                    existing?.inputPricePerMillion ?: initialDraft?.inputPricePerMillion
+                } else null
+            )
+        )
     }
     var cachedInputPrice by remember(existing, initialDraft) {
-        mutableStateOf(formatEditablePrice(existing?.cachedInputPricePerMillion ?: initialDraft?.cachedInputPricePerMillion))
+        mutableStateOf(
+            formatEditablePrice(
+                if (storedBillingMode == BillingMode.TOKEN) {
+                    existing?.cachedInputPricePerMillion ?: initialDraft?.cachedInputPricePerMillion
+                } else null
+            )
+        )
     }
     var cacheWritePrice by remember(existing, initialDraft) {
-        mutableStateOf(formatEditablePrice(existing?.cacheWritePricePerMillion ?: initialDraft?.cacheWritePricePerMillion))
+        mutableStateOf(
+            formatEditablePrice(
+                if (storedBillingMode == BillingMode.TOKEN) {
+                    existing?.cacheWritePricePerMillion ?: initialDraft?.cacheWritePricePerMillion
+                } else null
+            )
+        )
     }
     var outputPrice by remember(existing, initialDraft) {
-        mutableStateOf(formatEditablePrice(existing?.outputPricePerMillion ?: initialDraft?.outputPricePerMillion))
+        mutableStateOf(
+            formatEditablePrice(
+                if (storedBillingMode == BillingMode.TOKEN) {
+                    existing?.outputPricePerMillion ?: initialDraft?.outputPricePerMillion
+                } else null
+            )
+        )
     }
     var pricePerRequest by remember(existing, initialDraft) {
-        mutableStateOf(formatEditablePrice(existing?.pricePerRequest ?: initialDraft?.pricePerRequest))
+        mutableStateOf(
+            formatEditablePrice(
+                if (storedBillingMode == BillingMode.COUNT) {
+                    existing?.pricePerRequest ?: initialDraft?.pricePerRequest
+                } else null
+            )
+        )
     }
     var inlineError by remember { mutableStateOf<String?>(null) }
     val pricingInvalidText = stringResource(R.string.token_stats_pricing_invalid)
@@ -233,7 +267,10 @@ internal fun PriceOverrideDialog(
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = scope == PriceOverrideScope.PROVIDER_MODEL,
@@ -281,13 +318,26 @@ internal fun PriceOverrideDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = billingMode == BillingMode.TOKEN,
-                        onClick = { billingMode = BillingMode.TOKEN },
+                        onClick = {
+                            if (billingMode != BillingMode.TOKEN) {
+                                pricePerRequest = ""
+                                billingMode = BillingMode.TOKEN
+                            }
+                        },
                         label = { Text(stringResource(R.string.settings_billing_mode_token)) },
                         modifier = Modifier.weight(1f),
                     )
                     FilterChip(
                         selected = billingMode == BillingMode.COUNT,
-                        onClick = { billingMode = BillingMode.COUNT },
+                        onClick = {
+                            if (billingMode != BillingMode.COUNT) {
+                                inputPrice = ""
+                                cachedInputPrice = ""
+                                cacheWritePrice = ""
+                                outputPrice = ""
+                                billingMode = BillingMode.COUNT
+                            }
+                        },
                         label = { Text(stringResource(R.string.settings_billing_mode_count)) },
                         modifier = Modifier.weight(1f),
                     )
@@ -351,13 +401,11 @@ internal fun PriceOverrideDialog(
 
                 builtinReference?.let { defaults ->
                     val referenceText =
-                        buildString {
-                            append("${defaults.currency.symbol}${defaults.inputPricePerMillion}/1M")
-                            append(" · ")
-                            append("${defaults.currency.symbol}${defaults.outputPricePerMillion}/1M")
-                            if (defaults.billingMode == BillingMode.COUNT) {
-                                append(" · ${stringResource(R.string.settings_billing_mode_count)}")
-                            }
+                        if (billingMode == BillingMode.COUNT) {
+                            "${defaults.currency.symbol}${defaults.pricePerRequest}/${stringResource(R.string.settings_billing_mode_count)}"
+                        } else {
+                            "${defaults.currency.symbol}${defaults.inputPricePerMillion}/1M · " +
+                                "${defaults.currency.symbol}${defaults.outputPricePerMillion}/1M"
                         }
                     Text(
                         text = stringResource(R.string.token_stats_pricing_reference, referenceText),
@@ -388,11 +436,16 @@ internal fun PriceOverrideDialog(
                             configId = configId.ifBlank { null },
                             billingMode = billingMode,
                             currency = currency,
-                            inputPricePerMillion = parse(inputPrice),
-                            cachedInputPricePerMillion = parse(cachedInputPrice),
-                            cacheWritePricePerMillion = parse(cacheWritePrice),
-                            outputPricePerMillion = parse(outputPrice),
-                            pricePerRequest = parse(pricePerRequest),
+                            inputPricePerMillion =
+                                if (billingMode == BillingMode.TOKEN) parse(inputPrice) else null,
+                            cachedInputPricePerMillion =
+                                if (billingMode == BillingMode.TOKEN) parse(cachedInputPrice) else null,
+                            cacheWritePricePerMillion =
+                                if (billingMode == BillingMode.TOKEN) parse(cacheWritePrice) else null,
+                            outputPricePerMillion =
+                                if (billingMode == BillingMode.TOKEN) parse(outputPrice) else null,
+                            pricePerRequest =
+                                if (billingMode == BillingMode.COUNT) parse(pricePerRequest) else null,
                         )
                     runCatching { onSave(draft) }
                         .onSuccess { onDismiss() }

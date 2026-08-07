@@ -74,13 +74,26 @@ class TokenStatsSettingsManager(private val dao: TokenStatsDao) {
             configId = configId,
             billingMode = billingMode.name,
             pricingCurrency = pricingCurrency.name,
-            inputPricePerMillion = validatePriceValue("inputPrice", inputPricePerMillion),
+            inputPricePerMillion =
+                if (billingMode == BillingMode.TOKEN) {
+                    validatePriceValue("inputPrice", inputPricePerMillion)
+                } else null,
             cachedInputPricePerMillion =
-                validatePriceValue("cachedInputPrice", cachedInputPricePerMillion),
+                if (billingMode == BillingMode.TOKEN) {
+                    validatePriceValue("cachedInputPrice", cachedInputPricePerMillion)
+                } else null,
             cacheWritePricePerMillion =
-                validatePriceValue("cacheWritePrice", cacheWritePricePerMillion),
-            outputPricePerMillion = validatePriceValue("outputPrice", outputPricePerMillion),
-            pricePerRequest = validatePriceValue("pricePerRequest", pricePerRequest),
+                if (billingMode == BillingMode.TOKEN) {
+                    validatePriceValue("cacheWritePrice", cacheWritePricePerMillion)
+                } else null,
+            outputPricePerMillion =
+                if (billingMode == BillingMode.TOKEN) {
+                    validatePriceValue("outputPrice", outputPricePerMillion)
+                } else null,
+            pricePerRequest =
+                if (billingMode == BillingMode.COUNT) {
+                    validatePriceValue("pricePerRequest", pricePerRequest)
+                } else null,
         )
     }
 
@@ -129,7 +142,37 @@ class TokenStatsSettingsManager(private val dao: TokenStatsDao) {
 
     /** 全部价格覆盖（管理区展示用；小表，一次读取）。 */
     suspend fun allPriceOverrides(): List<TokenStatPriceOverrideEntity> =
-        dao.getAllPriceOverrides()
+        dao.getAllPriceOverrides().map { row ->
+            val normalized = row.activeBillingFieldsOnly()
+            if (normalized != row) {
+                dao.upsertPriceOverride(
+                    scope = normalized.scope,
+                    provider = normalized.provider,
+                    model = normalized.model,
+                    configId = normalized.configId,
+                    billingMode = normalized.billingMode,
+                    pricingCurrency = normalized.pricingCurrency,
+                    inputPricePerMillion = normalized.inputPricePerMillion,
+                    cachedInputPricePerMillion = normalized.cachedInputPricePerMillion,
+                    cacheWritePricePerMillion = normalized.cacheWritePricePerMillion,
+                    outputPricePerMillion = normalized.outputPricePerMillion,
+                    pricePerRequest = normalized.pricePerRequest,
+                )
+            }
+            normalized
+        }
+
+    private fun TokenStatPriceOverrideEntity.activeBillingFieldsOnly(): TokenStatPriceOverrideEntity =
+        if (BillingMode.fromString(billingMode) == BillingMode.COUNT) {
+            copy(
+                inputPricePerMillion = null,
+                cachedInputPricePerMillion = null,
+                cacheWritePricePerMillion = null,
+                outputPricePerMillion = null,
+            )
+        } else {
+            copy(pricePerRequest = null)
+        }
 
     /** 删除价格覆盖（按规范化业务组合；不存在的组合静默成功）。 */
     suspend fun deletePriceOverride(

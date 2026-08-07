@@ -3700,6 +3700,7 @@
     <string name="token_stats_group_selected_count">%1$d identities selected</string>
     <string name="token_stats_group_new_short">New group</string>
     <string name="token_stats_group_move">Move</string>
+    <string name="token_stats_group_edit_pricing">Edit pricing for %1$s</string>
     <string name="token_stats_group_move_title">Move to group</string>
     <string name="token_stats_group_custom_summary">Custom group · %1$d identities</string>
     <string name="token_stats_group_default_summary">Default group · %1$d identities</string>
@@ -3710,6 +3711,11 @@
     <string name="token_stats_pricing_search_hint">Search models, providers, or API configs</string>
     <string name="token_stats_filter_all_providers">All providers</string>
     <string name="token_stats_pricing_inherits_model">Uses model price</string>
+    <string name="token_stats_pricing_model_default">Model default price</string>
+    <string name="token_stats_pricing_config_prices">Configuration-specific prices</string>
+    <string name="token_stats_pricing_config_prices_hint">Different API configurations can have separate prices even when they use the same provider and model.</string>
+    <string name="token_stats_pricing_edit_config">Edit the specific price for “%1$s”</string>
+    <string name="token_stats_config_deleted_with_id">Deleted configuration (%1$s)</string>
     <string name="token_stats_pricing_restore_builtin">Restore built-in price</string>
     <string name="token_stats_pricing_restore_model">Restore model price</string>
     <string name="token_stats_pricing_restore_message">The effective price will fall back to the next level.</string>

@@ -211,6 +211,65 @@ class TokenStatsSettingsManagerTest {
     }
 
     @Test
+    fun `price override drops fields from the inactive billing mode`() = runBlocking {
+        manager.upsertPriceOverride(
+            scope = PriceOverrideScope.PROVIDER_MODEL,
+            provider = "OPENAI",
+            model = "gpt-4o",
+            configId = null,
+            billingMode = BillingMode.TOKEN,
+            pricingCurrency = PricingCurrency.USD,
+            inputPricePerMillion = 1.0,
+            cachedInputPricePerMillion = 0.5,
+            cacheWritePricePerMillion = 0.8,
+            outputPricePerMillion = 2.0,
+            pricePerRequest = 99.0,
+        )
+        val tokenRow = dao.getAllPriceOverrides().single()
+        assertNull(tokenRow.pricePerRequest)
+
+        manager.upsertPriceOverride(
+            scope = PriceOverrideScope.PROVIDER_MODEL,
+            provider = "OPENAI",
+            model = "gpt-4o",
+            configId = null,
+            billingMode = BillingMode.COUNT,
+            pricingCurrency = PricingCurrency.USD,
+            inputPricePerMillion = 99.0,
+            cachedInputPricePerMillion = 99.0,
+            cacheWritePricePerMillion = 99.0,
+            outputPricePerMillion = 99.0,
+            pricePerRequest = 0.01,
+        )
+        val countRow = dao.getAllPriceOverrides().single()
+        assertNull(countRow.inputPricePerMillion)
+        assertNull(countRow.cachedInputPricePerMillion)
+        assertNull(countRow.cacheWritePricePerMillion)
+        assertNull(countRow.outputPricePerMillion)
+        assertEquals(0.01, countRow.pricePerRequest!!, 0.0)
+    }
+
+    @Test
+    fun `reading overrides repairs mixed fields saved by older versions`() = runBlocking {
+        dao.upsertPriceOverride(
+            scope = PriceOverrideScope.PROVIDER_MODEL.name,
+            provider = "OPENAI",
+            model = "gpt-4o",
+            configId = null,
+            billingMode = BillingMode.TOKEN.name,
+            pricingCurrency = PricingCurrency.USD.name,
+            inputPricePerMillion = 1.0,
+            outputPricePerMillion = 2.0,
+            pricePerRequest = 99.0,
+        )
+
+        val repaired = manager.allPriceOverrides().single()
+
+        assertNull(repaired.pricePerRequest)
+        assertNull(dao.getAllPriceOverrides().single().pricePerRequest)
+    }
+
+    @Test
     fun `config scope override keeps configId and is independent from provider scope`() = runBlocking {
         manager.upsertPriceOverride(
             scope = PriceOverrideScope.CONFIG,

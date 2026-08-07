@@ -3619,6 +3619,7 @@
     <string name="token_stats_group_selected_count">已选择 %1$d 个身份</string>
     <string name="token_stats_group_new_short">新建分组</string>
     <string name="token_stats_group_move">移动</string>
+    <string name="token_stats_group_edit_pricing">修改 %1$s 的定价</string>
     <string name="token_stats_group_move_title">移动到分组</string>
     <string name="token_stats_group_custom_summary">自定义分组 · %1$d 个身份</string>
     <string name="token_stats_group_default_summary">默认分组 · %1$d 个身份</string>
@@ -3629,6 +3630,11 @@
     <string name="token_stats_pricing_search_hint">搜索模型、Provider 或 API 配置</string>
     <string name="token_stats_filter_all_providers">全部 Provider</string>
     <string name="token_stats_pricing_inherits_model">使用模型价格</string>
+    <string name="token_stats_pricing_model_default">模型默认价格</string>
+    <string name="token_stats_pricing_config_prices">模型配置专属价格</string>
+    <string name="token_stats_pricing_config_prices_hint">相同 Provider 和模型的不同 API 配置可分别设置价格。</string>
+    <string name="token_stats_pricing_edit_config">编辑“%1$s”的专属价格</string>
+    <string name="token_stats_config_deleted_with_id">已删除的配置（%1$s）</string>
     <string name="token_stats_pricing_restore_builtin">恢复内置价格</string>
     <string name="token_stats_pricing_restore_model">恢复模型价格</string>
     <string name="token_stats_pricing_restore_message">恢复后将自动使用上一级有效价格。</string>

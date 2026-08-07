@@ -99,7 +99,7 @@ fun TokenUsageStatisticsScreen(
             viewModel.consumeActionMessage()
         }
     }
-    LaunchedEffect(Unit) { viewModel.load() }
+    LaunchedEffect(Unit) { viewModel.loadForEntry() }
 
     TokenStatsColorsProvider {
         CustomScaffold(
@@ -980,13 +980,23 @@ private fun PriceOverrideRow(
         } else {
             com.ai.assistance.operit.data.collects.PricingCurrency.USD
         }
-    val prices = buildList {
-        override.inputPricePerMillion?.let { add("${stringResource(R.string.token_stats_token_uncached)} ${formatPricePerMillion(it, currency)}") }
-        override.cachedInputPricePerMillion?.let { add("${stringResource(R.string.token_stats_token_cached)} ${formatPricePerMillion(it, currency)}") }
-        override.cacheWritePricePerMillion?.let { add("${stringResource(R.string.token_stats_token_cache_write)} ${formatPricePerMillion(it, currency)}") }
-        override.outputPricePerMillion?.let { add("${stringResource(R.string.token_stats_token_output)} ${formatPricePerMillion(it, currency)}") }
-        override.pricePerRequest?.let { add("${stringResource(R.string.settings_billing_mode_count)} ${formatPricePerRequest(it, currency)}") }
-    }
+    val prices =
+        if (com.ai.assistance.operit.data.model.BillingMode.fromString(override.billingMode) ==
+            com.ai.assistance.operit.data.model.BillingMode.COUNT
+        ) {
+            listOfNotNull(
+                override.pricePerRequest?.let {
+                    "${stringResource(R.string.settings_billing_mode_count)} ${formatPricePerRequest(it, currency)}"
+                }
+            )
+        } else {
+            buildList {
+                override.inputPricePerMillion?.let { add("${stringResource(R.string.token_stats_token_uncached)} ${formatPricePerMillion(it, currency)}") }
+                override.cachedInputPricePerMillion?.let { add("${stringResource(R.string.token_stats_token_cached)} ${formatPricePerMillion(it, currency)}") }
+                override.cacheWritePricePerMillion?.let { add("${stringResource(R.string.token_stats_token_cache_write)} ${formatPricePerMillion(it, currency)}") }
+                override.outputPricePerMillion?.let { add("${stringResource(R.string.token_stats_token_output)} ${formatPricePerMillion(it, currency)}") }
+            }
+        }
 
     Column(
         modifier = Modifier

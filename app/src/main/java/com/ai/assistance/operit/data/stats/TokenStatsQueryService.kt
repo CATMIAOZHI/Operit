@@ -108,11 +108,16 @@ object TokenStatsQueryService {
     suspend fun rangeHasEvents(dao: TokenStatsDao, range: TokenStatsTimeRange): Boolean =
         dao.rangeHasEvents(range.startMs, range.endMs)
 
+    suspend fun rangeHasEvents(context: Context, range: TokenStatsTimeRange): Boolean =
+        withContext(queryDispatcher) {
+            rangeHasEvents(daoOf(context), range)
+        }
+
     /**
-     * 首次进入的初始回退建议：按 `5h -> 12h -> 24h -> 7d -> 30d` 顺序返回
+     * 进入统计页时的自动回退建议：按 `5h -> 12h -> 24h -> 7d -> 30d` 顺序返回
      * 最近有实际事件的范围；全部为空时返回 5h。
      * “用户手选后不再自动跳转”由调用方（阶段 4 UI/ViewModel）持久化，
-     * 本函数只计算首次建议，不改变任何状态。
+     * 本函数只计算建议，不改变任何状态。
      */
     suspend fun initialPresetWithData(
         dao: TokenStatsDao,

@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -38,6 +39,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -112,10 +114,13 @@ fun TokenStatsManagementScreen(initialPricingTab: Boolean = false) {
                 selectedTab == ManagementTab.GROUPS -> GroupManagementTab(
                     groups = state.groups,
                     configs = state.configs,
+                    pricingModels = state.pricingModels,
+                    overrides = state.overrides,
                     onRename = viewModel::renameGroup,
                     onCreate = viewModel::createGroup,
                     onMove = viewModel::moveToGroup,
                     onRestore = viewModel::restoreDefaultGroup,
+                    onSavePrice = viewModel::savePriceOverride,
                 )
                 else -> PricingManagementTab(
                     models = state.pricingModels,
@@ -133,10 +138,13 @@ fun TokenStatsManagementScreen(initialPricingTab: Boolean = false) {
 private fun GroupManagementTab(
     groups: List<TokenStatsGroupModelInfo>,
     configs: List<TokenStatsConfigOption>,
+    pricingModels: List<TokenStatsPricingModelOption>,
+    overrides: List<TokenStatPriceOverrideEntity>,
     onRename: (String, String) -> Unit,
     onCreate: (String, List<String>) -> Unit,
     onMove: (List<String>, String) -> Unit,
     onRestore: (String) -> Unit,
+    onSavePrice: (TokenStatPriceOverrideEntity?, TokenStatsPriceOverrideDraft) -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var selectedIds by remember { mutableStateOf(emptySet<String>()) }
@@ -144,6 +152,7 @@ private fun GroupManagementTab(
     var showCreate by remember { mutableStateOf(false) }
     var showMove by remember { mutableStateOf(false) }
     var restoreTarget by remember { mutableStateOf<TokenStatsGroupModelInfo?>(null) }
+    var pricingEditor by remember { mutableStateOf<PricingEditor?>(null) }
     val configNames = remember(configs) { configs.associate { it.id to it.name } }
     val normalizedQuery = query.trim().lowercase()
     val visibleGroups = remember(groups, normalizedQuery, configNames) {
@@ -180,6 +189,9 @@ private fun GroupManagementTab(
                     },
                     onRename = { renameTarget = group },
                     onRestore = { restoreTarget = group },
+                    onEditPricing = { member ->
+                        pricingEditor = pricingEditorForMember(member, pricingModels, overrides)
+                    },
                 )
             }
         }
@@ -259,6 +271,15 @@ private fun GroupManagementTab(
             },
         )
     }
+    pricingEditor?.let { target ->
+        PriceOverrideDialog(
+            existing = target.existing,
+            initialDraft = if (target.existing == null) target.draft else null,
+            onSave = { onSavePrice(target.existing, it) },
+            onDelete = null,
+            onDismiss = { pricingEditor = null },
+        )
+    }
 }
 
 @Composable
@@ -269,6 +290,7 @@ private fun GroupCard(
     onToggleMember: (String) -> Unit,
     onRename: () -> Unit,
     onRestore: () -> Unit,
+    onEditPricing: (TokenStatsGroupMemberInfo) -> Unit,
 ) {
     var expanded by rememberSaveable(group.displayModelId) { mutableStateOf(false) }
     val custom = group.displayModelId.startsWith(TokenStatsSettingsManager.CUSTOM_GROUP_ID_PREFIX)
@@ -312,6 +334,7 @@ private fun GroupCard(
                         configName = configNames[member.configId],
                         checked = member.identityId in selectedIds,
                         onToggle = { onToggleMember(member.identityId) },
+                        onEditPricing = { onEditPricing(member) },
                     )
                 }
             }
@@ -325,6 +348,7 @@ private fun GroupMemberRow(
     configName: String?,
     checked: Boolean,
     onToggle: () -> Unit,
+    onEditPricing: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(vertical = 4.dp),
@@ -345,6 +369,12 @@ private fun GroupMemberRow(
                 color = TokenStatsCardMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onEditPricing) {
+            Icon(
+                Icons.Default.AttachMoney,
+                stringResource(R.string.token_stats_group_edit_pricing, member.model),
             )
         }
     }
@@ -371,7 +401,9 @@ private fun PricingManagementTab(
             (selectedProvider == null || option.provider == selectedProvider) &&
                 (query.isBlank() || option.model.contains(query, true) ||
                     option.provider.contains(query, true) ||
-                    option.configs.any { it.name.contains(query, true) })
+                    option.configs.any {
+                        it.name.contains(query, true) || it.endpoint.contains(query, true)
+                    })
         }
     }
 
@@ -467,33 +499,43 @@ private fun PricingModelCard(
     val providerDraft = providerOverride?.toDraft()
         ?: option.legacyPricing?.let { legacyDraft(option.provider, option.model, it) }
         ?: builtinDraft(option.provider, option.model)
+    val providerSourceRes = when {
+        providerOverride != null -> R.string.token_stats_pricing_source_override
+        option.legacyPricing != null -> R.string.token_stats_pricing_source_legacy
+        else -> R.string.token_stats_pricing_source_builtin
+    }
     TokenStatsWhiteCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(option.model, fontWeight = FontWeight.Bold)
                     Text(option.provider, style = MaterialTheme.typography.bodySmall, color = TokenStatsCardMuted)
                 }
-                Text(
-                    stringResource(
-                        when {
-                            providerOverride != null -> R.string.token_stats_pricing_source_override
-                            option.legacyPricing != null -> R.string.token_stats_pricing_source_legacy
-                            else -> R.string.token_stats_pricing_source_builtin
-                        }
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = LocalTokenStatsColors.current.chartAccent,
-                )
+            }
+
+            HorizontalDivider()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.token_stats_pricing_model_default),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        stringResource(providerSourceRes),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LocalTokenStatsColors.current.chartAccent,
+                    )
+                    Text(
+                        priceSummary(providerDraft),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TokenStatsCardMuted,
+                    )
+                }
                 IconButton(onClick = { onEdit(providerOverride, providerDraft) }) {
                     Icon(Icons.Default.Edit, stringResource(R.string.token_stats_pricing_edit))
                 }
             }
-            Text(
-                priceSummary(providerDraft),
-                style = MaterialTheme.typography.bodySmall,
-                color = TokenStatsCardMuted,
-            )
             if (providerOverride != null || option.legacyPricing != null) {
                 TextButton(onClick = {
                     onRestoreBuiltIn(providerOverride, option.legacyProviderModel)
@@ -501,43 +543,79 @@ private fun PricingModelCard(
                     Text(stringResource(R.string.token_stats_pricing_restore_builtin))
                 }
             }
-            option.configs.forEach { config ->
-                val configOverride = overrides.firstOrNull {
-                    it.scope == PriceOverrideScope.CONFIG.name &&
-                        it.provider.equals(option.provider, true) &&
-                        it.model.equals(option.model, true) && it.configId == config.id
-                }
-                val draft = configOverride?.toDraft() ?: providerDraft.copy(
-                    scope = PriceOverrideScope.CONFIG,
-                    configId = config.id,
-                )
+
+            if (option.configs.isNotEmpty()) {
                 HorizontalDivider()
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(config.name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                        Text(
-                            stringResource(
-                                if (configOverride == null) R.string.token_stats_pricing_inherits_model
-                                else R.string.token_stats_pricing_source_config
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = TokenStatsCardMuted,
-                        )
-                        Text(
-                            priceSummary(draft),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = TokenStatsCardMuted,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                Text(
+                    stringResource(R.string.token_stats_pricing_config_prices),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    stringResource(R.string.token_stats_pricing_config_prices_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TokenStatsCardMuted,
+                )
+                option.configs.forEach { config ->
+                    val configOverride = overrides.firstOrNull {
+                        it.scope == PriceOverrideScope.CONFIG.name &&
+                            it.provider.equals(option.provider, true) &&
+                            it.model.equals(option.model, true) && it.configId == config.id
                     }
-                    if (configOverride != null) {
-                        IconButton(onClick = { onResetConfig(configOverride) }) {
-                            Icon(Icons.Default.Restore, stringResource(R.string.token_stats_pricing_restore_model))
+                    val draft = configOverride?.toDraft() ?: providerDraft.copy(
+                        scope = PriceOverrideScope.CONFIG,
+                        configId = config.id,
+                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    if (config.available) config.name
+                                    else stringResource(R.string.token_stats_config_deleted_with_id, config.id),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                if (config.endpoint.isNotBlank()) {
+                                    Text(
+                                        config.endpoint,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = TokenStatsCardMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Text(
+                                    stringResource(
+                                        if (configOverride == null) R.string.token_stats_pricing_inherits_model
+                                        else R.string.token_stats_pricing_source_config
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = LocalTokenStatsColors.current.chartAccent,
+                                )
+                                Text(
+                                    priceSummary(draft),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TokenStatsCardMuted,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (configOverride != null) {
+                                IconButton(onClick = { onResetConfig(configOverride) }) {
+                                    Icon(Icons.Default.Restore, stringResource(R.string.token_stats_pricing_restore_model))
+                                }
+                            }
+                            IconButton(onClick = { onEdit(configOverride, draft) }) {
+                                Icon(Icons.Default.Edit, stringResource(R.string.token_stats_pricing_edit_config, config.name))
+                            }
                         }
-                    }
-                    IconButton(onClick = { onEdit(configOverride, draft) }) {
-                        Icon(Icons.Default.Edit, stringResource(R.string.token_stats_pricing_edit))
                     }
                 }
             }
@@ -666,6 +744,41 @@ private fun builtinDraft(provider: String, model: String): TokenStatsPriceOverri
         cachedInputPricePerMillion = defaults.cachedInputPricePerMillion,
         outputPricePerMillion = defaults.outputPricePerMillion,
         pricePerRequest = defaults.pricePerRequest,
+    )
+}
+
+private fun pricingEditorForMember(
+    member: TokenStatsGroupMemberInfo,
+    pricingModels: List<TokenStatsPricingModelOption>,
+    overrides: List<TokenStatPriceOverrideEntity>,
+): PricingEditor {
+    val option = pricingModels.firstOrNull {
+        it.provider.equals(member.provider, true) && it.model.equals(member.model, true)
+    }
+    val providerOverride = overrides.firstOrNull {
+        it.scope == PriceOverrideScope.PROVIDER_MODEL.name &&
+            it.provider.equals(member.provider, true) && it.model.equals(member.model, true)
+    }
+    val inherited = providerOverride?.toDraft()
+        ?: option?.legacyPricing?.let { legacyDraft(member.provider, member.model, it) }
+        ?: builtinDraft(member.provider, member.model)
+    val scope = if (member.configId.isBlank()) {
+        PriceOverrideScope.PROVIDER_MODEL
+    } else {
+        PriceOverrideScope.CONFIG
+    }
+    val existing = overrides.firstOrNull {
+        it.scope == scope.name &&
+            it.provider.equals(member.provider, true) &&
+            it.model.equals(member.model, true) &&
+            (scope == PriceOverrideScope.PROVIDER_MODEL || it.configId == member.configId)
+    }
+    return PricingEditor(
+        existing = existing,
+        draft = existing?.toDraft() ?: inherited.copy(
+            scope = scope,
+            configId = member.configId.ifBlank { null },
+        ),
     )
 }
 
