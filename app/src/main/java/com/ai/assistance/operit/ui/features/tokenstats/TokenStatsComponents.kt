@@ -384,6 +384,7 @@ internal fun TokenStatsFilterBar(
     targetCurrency: PricingCurrency,
     onSelectPreset: (TokenStatsPreset) -> Unit,
     onCustomRange: () -> Unit,
+    onDeleteRange: () -> Unit,
     onToggleModel: (String) -> Unit,
     onSelectAllModels: () -> Unit,
     onToggleCategory: (TokenStatCategory) -> Unit,
@@ -416,6 +417,14 @@ internal fun TokenStatsFilterBar(
                                 }
                             )
                         },
+                    )
+                }
+                // 删除当前时间范围：只删有时间戳的事件，不触碰 baseline（阶段 5）
+                IconButton(onClick = onDeleteRange) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = stringResource(R.string.token_stats_delete_range),
+                        tint = MaterialTheme.colorScheme.error,
                     )
                 }
             }
@@ -727,7 +736,7 @@ internal fun TokenStatsModelCardsSection(
     costMode: TokenStatsCostMode,
     zone: ZoneId,
     onGroupManage: (TokenStatsDisplayModelBreakdown) -> Unit,
-    onReset: (TokenStatsDisplayModelBreakdown) -> Unit,
+    onDelete: (TokenStatsDisplayModelBreakdown) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         models.forEach { model ->
@@ -737,7 +746,7 @@ internal fun TokenStatsModelCardsSection(
                 costMode = costMode,
                 zone = zone,
                 onGroupManage = { onGroupManage(model) },
-                onReset = { onReset(model) },
+                onDelete = { onDelete(model) },
             )
         }
     }
@@ -750,11 +759,10 @@ internal fun TokenStatsModelCard(
     costMode: TokenStatsCostMode,
     zone: ZoneId,
     onGroupManage: () -> Unit,
-    onReset: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val colors = LocalTokenStatsColors.current
     var expanded by remember(model.displayModelId) { mutableStateOf(false) }
-    val canReset = model.identities.map { it.provider to it.model }.distinct().size == 1
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -793,15 +801,15 @@ internal fun TokenStatsModelCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (canReset) {
-                    IconButton(onClick = onReset) {
-                        Icon(
-                            imageVector = Icons.Filled.Delete,
-                            contentDescription = stringResource(R.string.settings_reset_model_counts),
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
+                // 阶段 5：删除对完整展示分组生效（可跨 provider/模型合并组），
+                // 不再限制单 provider:model；危险操作在对话框两步确认。
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = stringResource(R.string.token_stats_delete_model),
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
                 IconButton(onClick = onGroupManage) {
                     Icon(

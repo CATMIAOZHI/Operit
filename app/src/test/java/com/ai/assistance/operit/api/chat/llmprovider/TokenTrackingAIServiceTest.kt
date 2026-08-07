@@ -8,6 +8,7 @@ import com.ai.assistance.operit.data.dao.TokenStatsDao
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ModelOption
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.TokenStatIdentityEntity
 import com.ai.assistance.operit.data.model.ToolPrompt
 import com.ai.assistance.operit.data.stats.JdbcSQLiteDriver
 import com.ai.assistance.operit.data.stats.PricingSource
@@ -15,6 +16,7 @@ import com.ai.assistance.operit.data.stats.ProviderUsageSnapshot
 import com.ai.assistance.operit.data.stats.ProviderUsageNormalizer
 import com.ai.assistance.operit.data.stats.TokenPriceResolver
 import com.ai.assistance.operit.data.stats.TokenStatCategory
+import com.ai.assistance.operit.data.stats.TokenStatIdentityResolver
 import com.ai.assistance.operit.data.stats.TokenStatSpool
 import com.ai.assistance.operit.data.stats.TokenStatStatus
 import com.ai.assistance.operit.data.stats.TokenStatsLedger
@@ -85,7 +87,7 @@ class TokenTrackingAIServiceTest {
         database =
             Room.databaseBuilder(context, AppDatabase::class.java, "app_database")
                 .setDriver(JdbcSQLiteDriver())
-                .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30)
+                .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31)
                 .allowMainThreadQueries()
                 .build()
         TokenStatsLedger.databaseProvider = { database }
@@ -203,6 +205,9 @@ class TokenTrackingAIServiceTest {
     private fun tracked(fake: FakeAiService): TokenTrackingAIService =
         TokenTrackingAIService(delegate = fake, context = context, configId = "cfg-1")
 
+    private fun tracked(fake: FakeAiService, configId: String): TokenTrackingAIService =
+        TokenTrackingAIService(delegate = fake, context = context, configId = configId)
+
     private fun usage(): ProviderUsageSnapshot =
         ProviderUsageSnapshot(
             uncachedInputTokens = 800L,
@@ -253,6 +258,9 @@ class TokenTrackingAIServiceTest {
                 val release = CountDownLatch(1)
                 val hangingDao = mock<TokenStatsDao>()
                 whenever(hangingDao.currentResetGeneration()).thenReturn(0L)
+                // P1-1：请求接受边界在同一事务内建身份+取 generation——本测试聚焦 restore
+                // 对 wedged insert 的有界失败，边界直接返回 generation，不触碰挂起门闩
+                whenever(hangingDao.ensureIdentityAndCaptureGenerationTx(any(), any())).thenReturn(0L)
                 whenever(hangingDao.getAllPriceOverrides()).thenReturn(emptyList())
                 whenever(hangingDao.insertIdentityIfAbsent(any())).thenAnswer {
                     gateIgnoringInterrupts(release)
@@ -904,6 +912,79 @@ class TokenTrackingAIServiceTest {
             assertFalse("model must not be invoked", invoked)
         }
     }
+
+    @Test
+    fun `first request identity cannot bypass group deletion tombstone`() = runBlocking {
+        org.mockito.Mockito.mockStatic(com.ai.assistance.operit.util.AppLogger::class.java).use {
+            val dao = database.tokenStatsDao()
+            // cfg-a 已在默认展示组 deepseek-chat（FakeAiService 的 provider:model）
+            val identityA = TokenStatIdentityResolver.identityId("cfg-a", "DEEPSEEK", "deepseek-chat")
+            dao.insertIdentityIfAbsent(
+                TokenStatIdentityEntity(
+                    identityId = identityA,
+                    configId = "cfg-a",
+                    provider = "DEEPSEEK",
+                    model = "deepseek-chat",
+                    displayModelId = "deepseek-chat",
+                )
+            )
+            // cfg-b 首次请求：sendMessage 的接受边界原子创建身份并捕获 generation 0
+            val fake =
+                FakeAiService { onUsage ->
+                    stream { emit("hello"); onUsage?.invoke(usage(), 1) }
+                }
+            val stream = tracked(fake, configId = "cfg-b").sendMessage(context = context)
+
+            // 请求进行中删除默认展示组：成员解析必须看见边界已创建的身份并写 tombstone
+            dao.deleteDisplayModelEventsTx("deepseek-chat", deleteBaselines = false)
+            assertEquals(1L, dao.currentResetGeneration())
+
+            stream.collect { }
+            // 事件接受于删除前：排空被 IDENTITY tombstone 跳过，绝不复活
+            assertEquals("old event must not resurrect", 0, dao.countEvents())
+            assertNotNull(
+                "identity must exist (created atomically at the request boundary)",
+                dao.getIdentityByTriple("cfg-b", "DEEPSEEK", "deepseek-chat"),
+            )
+        }
+    }
+
+    @Test
+    fun `request after group deletion records normally with newer generation`() = runBlocking {
+        org.mockito.Mockito.mockStatic(com.ai.assistance.operit.util.AppLogger::class.java).use {
+            val dao = database.tokenStatsDao()
+            val identityA = TokenStatIdentityResolver.identityId("cfg-a", "DEEPSEEK", "deepseek-chat")
+            dao.insertIdentityIfAbsent(
+                TokenStatIdentityEntity(
+                    identityId = identityA,
+                    configId = "cfg-a",
+                    provider = "DEEPSEEK",
+                    model = "deepseek-chat",
+                    displayModelId = "deepseek-chat",
+                )
+            )
+            dao.deleteDisplayModelEventsTx("deepseek-chat", deleteBaselines = false)
+            assertEquals(1L, dao.currentResetGeneration())
+
+            // 删除后的新请求：边界捕获 ≥ tombstone 的新 generation
+            val fake =
+                FakeAiService { onUsage ->
+                    stream { emit("hello"); onUsage?.invoke(usage(), 1) }
+                }
+            val stream = tracked(fake, configId = "cfg-b").sendMessage(context = context)
+            stream.collect { }
+
+            val events = dao.getAllEvents()
+            assertEquals(1, events.size)
+            val event = events.single()
+            assertEquals(
+                TokenStatIdentityResolver.identityId("cfg-b", "DEEPSEEK", "deepseek-chat"),
+                event.statIdentityId,
+            )
+            assertEquals("post-deletion request must carry the new generation", 1L, event.acceptedGeneration)
+        }
+    }
+
 
     @Test
     fun `claude same attempt incremental usage keeps full snapshot and cost`() = runBlocking {

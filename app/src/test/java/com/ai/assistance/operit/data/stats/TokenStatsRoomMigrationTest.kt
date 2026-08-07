@@ -45,11 +45,22 @@ class TokenStatsRoomMigrationTest {
         val context = mock<Context>()
         whenever(context.applicationContext).thenReturn(context)
         whenever(context.packageName).thenReturn("com.ai.assistance.operit")
+        // DataStore 委托在 coordinator 排空时按 filesDir 定位偏好文件（隔离到临时目录）
+        whenever(context.filesDir).thenReturn(tempDir)
         // 模拟 Android Context 的数据库目录解析：<tempDir>/<name>
         whenever(context.getDatabasePath(any())).thenAnswer { invocation ->
             File(tempDir, invocation.getArgument<String>(0))
         }
         return context
+    }
+
+    /** 注入 ApiPreferences 单例（排空协议测试隔离；null 还原）。 */
+    private fun injectApiPreferences(instance: com.ai.assistance.operit.data.preferences.ApiPreferences?) {
+        val field =
+            com.ai.assistance.operit.data.preferences.ApiPreferences::class.java
+                .getDeclaredField("INSTANCE")
+                .apply { isAccessible = true }
+        field.set(null, instance)
     }
 
     /** 用导出的 v28 schema JSON 构造一个真实的 v28 数据库文件。 */
@@ -99,7 +110,7 @@ class TokenStatsRoomMigrationTest {
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30)
+                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31)
                     .allowMainThreadQueries()
                     .build()
 
@@ -121,7 +132,7 @@ class TokenStatsRoomMigrationTest {
                 // Room 打开时已应用 28→29→30，重放 28→29 不改变版本号
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_28_29.migrate(connection)
-                    assertEquals(30, userVersion(connection))
+                    assertEquals(31, userVersion(connection))
                 }
             } finally {
                 database.close()
@@ -138,7 +149,7 @@ class TokenStatsRoomMigrationTest {
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30)
+                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31)
                     .allowMainThreadQueries()
                     .build()
 
@@ -366,7 +377,7 @@ reasoningTokens = 50L,
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30)
+                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31)
                     .allowMainThreadQueries()
                     .build()
 
@@ -442,13 +453,18 @@ outputTokens = 500L,
 
                 // 按 provider/model 重置：所有配置实例的事件 + 全部匹配 baseline 一起清。
                 // 通过 daoProvider 注入缝把真实 DAO 交给协调器（生产路径用
-                // AppDatabase.withTransaction 包同一组删除）。
+                // AppDatabase.withTransaction 包同一组删除）。P1 闭环：删除后协调器
+                // 排空 legacy cleanup——DataStore 侧注入 mock 隔离（真实键级协议由
+                // TokenStatsCleanupOutboxTest 覆盖，此处聚焦 Room 语义与删除矩阵）。
                 TokenStatsResetCoordinator.daoProvider = { dao }
+                val prefsMock = mock<com.ai.assistance.operit.data.preferences.ApiPreferences>()
+                injectApiPreferences(prefsMock)
                 try {
                     TokenStatsResetCoordinator
                         .resetStatisticsForProviderModel(mockContext(tempDir), "DEEPSEEK:deepseek-chat")
                 } finally {
                     TokenStatsResetCoordinator.daoProvider = null
+                    injectApiPreferences(null)
                 }
 
                 assertEquals(1, dao.countEvents())
@@ -469,7 +485,7 @@ outputTokens = 500L,
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30)
+                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31)
                     .allowMainThreadQueries()
                     .build()
 
@@ -574,7 +590,7 @@ outputTokens = 500L,
     }
 
     @Test
-    fun `v29 database migrates to v30 keeping events and adding diagnostics column`() =
+    fun `v29 database migrates through v30 to v31 keeping events and adding diagnostics column`() =
         runBlocking {
             val tempDir = kotlin.io.path.createTempDirectory("room-migration-test").toFile()
             val dbFile = File(tempDir, "app_database")
@@ -583,7 +599,7 @@ outputTokens = 500L,
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_29_30)
+                    .addMigrations(AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31)
                     .allowMainThreadQueries()
                     .build()
 
@@ -616,12 +632,167 @@ totalInputTokens = 1000L,
                 // 迁移可重入（ALTER 幂等）：以驱动变体再跑一次
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_29_30.migrate(connection)
-                    assertEquals(30, userVersion(connection))
+                    assertEquals(31, userVersion(connection))
                 }
             } finally {
                 database.close()
             }
         }
+
+    @Test
+    fun `v30 database migrates to v31 keeping data and adding range cutoff table`() =
+        runBlocking {
+            val tempDir = kotlin.io.path.createTempDirectory("room-migration-test").toFile()
+            val dbFile = File(tempDir, "app_database")
+            buildV30Database(dbFile.absolutePath)
+
+            val database =
+                Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
+                    .setDriver(JdbcSQLiteDriver())
+                    .addMigrations(AppDatabase.MIGRATION_30_31)
+                    .allowMainThreadQueries()
+                    .build()
+
+            try {
+                // 触发打开与迁移（Room 内部校验 identityHash 与 TableInfo）
+                val dao = database.tokenStatsDao()
+                assertNotNull("migration must preserve v30 event rows", dao.getEvent("evt-v30"))
+                assertNotNull("migration must preserve v30 identity rows", dao.getIdentity("identity-1"))
+
+                // v31 新增范围删除 tombstone 表可读写
+                dao.deleteRangeEventsTx(100L, 200L)
+                assertEquals(1, dao.rangeCutoffs().size)
+                assertEquals(1L, dao.currentResetGeneration())
+
+                // v31 新增 legacy cleanup outbox 两张表真实存在
+                val tables = queryTables(dbFile.absolutePath)
+                assertTrue("token_stat_cleanup_operations", tables.contains("token_stat_cleanup_operations"))
+                assertTrue("token_stat_cleanup_items", tables.contains("token_stat_cleanup_items"))
+
+                // 迁移可重入（CREATE IF NOT EXISTS）：以驱动变体再跑一次
+                JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
+                    AppDatabase.MIGRATION_30_31.migrate(connection)
+                    assertEquals(31, userVersion(connection))
+                }
+            } finally {
+                database.close()
+            }
+        }
+
+    @Test
+    fun `v31 cleanup outbox tables enforce foreign key and cascade on operation delete`() =
+        runBlocking {
+            val tempDir = kotlin.io.path.createTempDirectory("room-migration-test").toFile()
+            val dbFile = File(tempDir, "app_database")
+            buildV30Database(dbFile.absolutePath)
+
+            val database =
+                Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
+                    .setDriver(JdbcSQLiteDriver())
+                    .addMigrations(AppDatabase.MIGRATION_30_31)
+                    .allowMainThreadQueries()
+                    .build()
+
+            try {
+                val dao = database.tokenStatsDao()
+                // 通过删除事务（真实路径）创建 operation + items
+                dao.insertIdentityIfAbsent(
+                    TokenStatIdentityEntity(
+                        identityId = "id-legacy",
+                        configId = "",
+                        provider = "DEEPSEEK",
+                        model = "deepseek-chat",
+                        displayModelId = "deepseek-chat",
+                    )
+                )
+                dao.upsertDisplayModel(
+                    TokenStatDisplayModelEntity(
+                        displayModelId = "deepseek-chat",
+                        normalizedModel = "deepseek-chat",
+                        displayName = "deepseek-chat",
+                    )
+                )
+                val result = dao.deleteDisplayModelEventsTx("deepseek-chat", deleteBaselines = true)
+                val op = result.cleanupOperation!!
+                assertEquals(1, dao.getCleanupItems(op.operationId).size)
+                assertEquals(1, dao.countPendingCleanupOperations())
+
+                // 外键：孤儿 item（operation 不存在）必须被拒绝
+                JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
+                    connection.prepare("PRAGMA journal_mode = OFF").use { it.step() }
+                    connection.prepare("PRAGMA foreign_keys = ON").use { it.step() }
+                    val orphan =
+                        runCatching {
+                            connection.prepare(
+                                "INSERT INTO token_stat_cleanup_items " +
+                                    "(operationId, identityId, provider, model) " +
+                                    "VALUES ('no-such-op', 'id', 'P', 'M')"
+                            ).use { it.step() }
+                        }
+                    assertTrue("orphan item must violate the FK", orphan.isFailure)
+                }
+                // 级联：删除 operation → items 跟随删除（生产保留历史，此处验证 FK 行为）
+                JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
+                    connection.prepare("PRAGMA journal_mode = OFF").use { it.step() }
+                    connection.prepare("PRAGMA foreign_keys = ON").use { it.step() }
+                    connection.prepare(
+                        "DELETE FROM token_stat_cleanup_operations " +
+                            "WHERE operationId = '${op.operationId}'"
+                    ).use { it.step() }
+                }
+                assertEquals(0, dao.getCleanupItems(op.operationId).size)
+            } finally {
+                database.close()
+            }
+        }
+
+    /** 用导出的 v30 schema JSON 构造一个真实的 v30 数据库文件（含一条事件行）。 */
+    private fun buildV30Database(dbPath: String) {
+        val schemaFile = File(schemaDir, "30.json")
+        assertTrue("schema export missing: ${schemaFile.absolutePath}", schemaFile.isFile)
+        val schema = json.decodeFromString<RoomSchema>(schemaFile.readText())
+        assertEquals(30, schema.database.version)
+
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { connection ->
+            connection.createStatement().use { statement ->
+                schema.database.entities.forEach { entity ->
+                    statement.execute(entity.createSql.replace("\${TABLE_NAME}", entity.tableName))
+                    entity.indices.forEach { index ->
+                        statement.execute(index.createSql.replace("\${TABLE_NAME}", entity.tableName))
+                    }
+                }
+                statement.execute(
+                    "CREATE TABLE IF NOT EXISTS room_master_table " +
+                        "(id INTEGER PRIMARY KEY, identity_hash TEXT NOT NULL)"
+                )
+                statement.execute(
+                    "INSERT OR REPLACE INTO room_master_table (id, identity_hash) " +
+                        "VALUES(42, '${schema.database.identityHash}')"
+                )
+                statement.execute("PRAGMA user_version = 30")
+                // 旧数据：迁移前插入一条事件，验证迁移后数据保留（含 v30 结构化列）
+                statement.execute(
+                    "INSERT INTO token_stat_identities " +
+                        "(identityId, configId, provider, model, displayModelId) " +
+                        "VALUES ('identity-1', '', 'DEEPSEEK', 'deepseek-chat', 'deepseek-chat')"
+                )
+                statement.execute(
+                    "INSERT INTO token_stat_events " +
+                        "(eventId, statIdentityId, category, status, acceptedGeneration, " +
+                        "startedAtMs, endedAtMs, firstTokenAtMs, uncachedInputTokens, " +
+                        "cachedInputTokens, cacheWriteTokens, totalInputTokens, outputTokens, " +
+                        "reasoningTokens, reasoningIncludedInOutput, cacheWriteSeparateBilling, " +
+                        "billingMode, pricingCurrency, inputPricePerMillion, " +
+                        "cachedInputPricePerMillion, cacheWritePricePerMillion, " +
+                        "outputPricePerMillion, pricePerRequest, pricingSource, " +
+                        "costInPricingCurrency, diagnosticsJson) " +
+                        "VALUES ('evt-v30', 'identity-1', 'CHAT', 'COMPLETED', 0, 1000, 2000, " +
+                        "1200, 800, 200, 100, 1100, 500, 50, 1, 0, 'TOKEN', 'USD', 1.0, 0.5, 2.0, " +
+                        "3.0, NULL, 'DEFAULT', 0.0019, NULL)"
+                )
+            }
+        }
+    }
 
     @Test
     fun `production support sqlite migration variant runs the shared sql on a real v28 database`() {

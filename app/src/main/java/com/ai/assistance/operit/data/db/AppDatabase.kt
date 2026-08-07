@@ -20,10 +20,13 @@ import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.MessageVariantEntity
 import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.data.model.TokenStatBaselineEntity
+import com.ai.assistance.operit.data.model.TokenStatCleanupItemEntity
+import com.ai.assistance.operit.data.model.TokenStatCleanupOperationEntity
 import com.ai.assistance.operit.data.model.TokenStatDisplayModelEntity
 import com.ai.assistance.operit.data.model.TokenStatEventEntity
 import com.ai.assistance.operit.data.model.TokenStatIdentityEntity
 import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
+import com.ai.assistance.operit.data.model.TokenStatRangeCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatResetCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity
 import com.ai.assistance.operit.util.ChatMarkupRegex
@@ -43,8 +46,11 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         TokenStatBaselineEntity::class,
         TokenStatRestoreGenerationEntity::class,
         TokenStatResetCutoffEntity::class,
+        TokenStatRangeCutoffEntity::class,
+        TokenStatCleanupOperationEntity::class,
+        TokenStatCleanupItemEntity::class,
     ],
-    version = 30,
+    version = 31,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -793,6 +799,85 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        /**
+         * v30 → v31：新增 `token_stat_range_cutoffs` 表（阶段 5 范围删除 tombstone，
+         * 见 [com.ai.assistance.operit.data.model.TokenStatRangeCutoffEntity]）与
+         * legacy cleanup outbox 两张表（operation + items，见
+         * [com.ai.assistance.operit.data.model.TokenStatCleanupOperationEntity] /
+         * [com.ai.assistance.operit.data.model.TokenStatCleanupItemEntity]）。
+         * 纯新增表，对既有行无损，可重入（重复执行时表已存在即跳过）。
+         */
+        internal val MIGRATION_30_31 =
+            object : Migration(30, 31) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    createTable { sql -> db.execSQL(sql) }
+                }
+
+                override fun migrate(connection: SQLiteConnection) {
+                    createTable { sql -> connection.execSQL(sql) }
+                }
+
+                private fun createTable(execSql: (String) -> Unit) {
+                    try {
+                        execSql(
+                            """
+                            CREATE TABLE IF NOT EXISTS `token_stat_range_cutoffs` (
+                                `generation` INTEGER NOT NULL,
+                                `startMs` INTEGER NOT NULL,
+                                `endMs` INTEGER NOT NULL,
+                                PRIMARY KEY(`generation`)
+                            )
+                            """.trimIndent()
+                        )
+                    } catch (_: Exception) {
+                        // 表已存在（幂等重放），忽略
+                    }
+                    try {
+                        execSql(
+                            """
+                            CREATE TABLE IF NOT EXISTS `token_stat_cleanup_operations` (
+                                `operationId` TEXT NOT NULL,
+                                `scope` TEXT NOT NULL,
+                                `targetRef` TEXT NOT NULL,
+                                `deleteBaselines` INTEGER NOT NULL,
+                                `status` TEXT NOT NULL,
+                                `createdAtMs` INTEGER NOT NULL,
+                                PRIMARY KEY(`operationId`)
+                            )
+                            """.trimIndent()
+                        )
+                    } catch (_: Exception) {
+                        // 表已存在（幂等重放），忽略
+                    }
+                    try {
+                        execSql(
+                            """
+                            CREATE TABLE IF NOT EXISTS `token_stat_cleanup_items` (
+                                `operationId` TEXT NOT NULL,
+                                `identityId` TEXT NOT NULL,
+                                `provider` TEXT NOT NULL,
+                                `model` TEXT NOT NULL,
+                                PRIMARY KEY(`operationId`, `identityId`),
+                                FOREIGN KEY(`operationId`)
+                                    REFERENCES `token_stat_cleanup_operations`(`operationId`)
+                                    ON UPDATE NO ACTION ON DELETE CASCADE
+                            )
+                            """.trimIndent()
+                        )
+                    } catch (_: Exception) {
+                        // 表已存在（幂等重放），忽略
+                    }
+                    try {
+                        execSql(
+                            "CREATE INDEX IF NOT EXISTS `index_token_stat_cleanup_items_operationId` " +
+                                "ON `token_stat_cleanup_items` (`operationId`)"
+                        )
+                    } catch (_: Exception) {
+                        // 索引已存在（幂等重放），忽略
+                    }
+                }
+            }
+
         private val finalTrueAttributeRegex =
             Regex("""\bfinal\s*=\s*["']true["']""", RegexOption.IGNORE_CASE)
 
@@ -927,6 +1012,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_27_28,
                                 MIGRATION_28_29,
                                 MIGRATION_29_30,
+                                MIGRATION_30_31,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

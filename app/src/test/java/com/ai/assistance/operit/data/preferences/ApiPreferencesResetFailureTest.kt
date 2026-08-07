@@ -105,6 +105,8 @@ class ApiPreferencesResetFailureTest {
         val tempDir = kotlin.io.path.createTempDirectory("apiprefs-reset").toFile()
         val prefs = constructApiPreferences(contextWithFiles(tempDir))
         val dao = mock<TokenStatsDao>()
+        // P1 闭环：coordinator 删除后立即排空 pending cleanup——mock 无 operation
+        whenever(dao.getPendingCleanupOperations()).thenReturn(emptyList())
 
         TokenStatsResetCoordinator.daoProvider = { dao }
         try {
@@ -122,6 +124,7 @@ class ApiPreferencesResetFailureTest {
         val tempDir = kotlin.io.path.createTempDirectory("apiprefs-reset").toFile()
         val prefs = constructApiPreferences(contextWithFiles(tempDir))
         val dao = mock<TokenStatsDao>()
+        whenever(dao.getPendingCleanupOperations()).thenReturn(emptyList())
 
         TokenStatsResetCoordinator.daoProvider = { dao }
         try {
@@ -134,6 +137,20 @@ class ApiPreferencesResetFailureTest {
         } finally {
             TokenStatsResetCoordinator.daoProvider = null
         }
+    }
+
+    @Test
+    fun `apply legacy cleanup is a safe single write and marker is readable`() = runBlocking {
+        val tempDir = kotlin.io.path.createTempDirectory("apiprefs-reset").toFile()
+        val prefs = constructApiPreferences(contextWithFiles(tempDir))
+        // Windows DataStore 约束（本 JVM 环境同一文件只能“首写”一次）：本测试的唯一
+        // 真实写入。apply 的键级精准语义由 TokenStatsCleanupOutboxTest 的纯变更函数
+        // 与真实排空测试覆盖；这里验证 edit 薄壳 + marker 读取（导入 fence 数据源）。
+        prefs.applyLegacyCleanup("op-1", listOf("OPENAI:gpt-4o"))
+        assertEquals(setOf("op-1"), prefs.appliedLegacyCleanupMarkerIds())
+        assertEquals(0L, prefs.getInputTokensForProviderModel("OPENAI:gpt-4o"))
+        assertTrue(prefs.legacyStatsSnapshotWithMarkers().cleanupMarkerIds == setOf("op-1"))
+        assertTrue(prefs.legacyStatsSnapshotWithMarkers().snapshot.providerModels.isEmpty())
     }
 
     @Test

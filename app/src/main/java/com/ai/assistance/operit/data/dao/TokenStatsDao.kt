@@ -6,10 +6,13 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.ai.assistance.operit.data.model.PriceOverrideScope
 import com.ai.assistance.operit.data.model.TokenStatBaselineEntity
+import com.ai.assistance.operit.data.model.TokenStatCleanupItemEntity
+import com.ai.assistance.operit.data.model.TokenStatCleanupOperationEntity
 import com.ai.assistance.operit.data.model.TokenStatDisplayModelEntity
 import com.ai.assistance.operit.data.model.TokenStatEventEntity
 import com.ai.assistance.operit.data.model.TokenStatIdentityEntity
 import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
+import com.ai.assistance.operit.data.model.TokenStatRangeCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatResetCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity
 import com.ai.assistance.operit.data.stats.TokenStatIdentityResolver
@@ -17,6 +20,7 @@ import com.ai.assistance.operit.data.stats.TokenStatsGroupMetadataSnapshot
 import com.ai.assistance.operit.data.stats.TokenStatsLifetimeRead
 import com.ai.assistance.operit.data.stats.TokenStatsQuerySnapshot
 import androidx.room.Transaction
+import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -229,6 +233,36 @@ abstract class TokenStatsDao {
     @Query("DELETE FROM token_stat_events WHERE statIdentityId = :identityId")
     abstract suspend fun deleteEventsByIdentity(identityId: String): Int
 
+    /** 按成员身份批量删除事件（仅由事务方法分块调用，IN 数量受 [MAX_IN_VALUES] 限制）。 */
+    @Query("DELETE FROM token_stat_events WHERE statIdentityId IN (:identityIds)")
+    protected abstract suspend fun deleteEventsByIdentitiesQuery(identityIds: List<String>): Int
+
+    /** 按成员身份批量删除 baseline（仅由事务方法分块调用）。 */
+    @Query("DELETE FROM token_stat_baselines WHERE identityId IN (:identityIds)")
+    protected abstract suspend fun deleteBaselinesByIdentitiesQuery(identityIds: List<String>): Int
+
+    /** 分块删除指定身份集合的事件（同一调用方事务内执行，结果计数累加）。 */
+    protected suspend fun deleteEventsByIdentities(identityIds: List<String>): Int {
+        var deleted = 0
+        for (chunk in identityIds.distinct().chunked(MAX_IN_VALUES)) {
+            deleted += deleteEventsByIdentitiesQuery(chunk)
+        }
+        return deleted
+    }
+
+    /** 分块删除指定身份集合的 baseline。 */
+    protected suspend fun deleteBaselinesByIdentities(identityIds: List<String>): Int {
+        var deleted = 0
+        for (chunk in identityIds.distinct().chunked(MAX_IN_VALUES)) {
+            deleted += deleteBaselinesByIdentitiesQuery(chunk)
+        }
+        return deleted
+    }
+
+    /** 删除半开区间 [startMs, endMs) 内的事件（走 startedAtMs 索引；仅事务方法调用）。 */
+    @Query("DELETE FROM token_stat_events WHERE startedAtMs >= :startMs AND startedAtMs < :endMs")
+    protected abstract suspend fun deleteEventsInRange(startMs: Long, endMs: Long): Int
+
     @Query(
         "DELETE FROM token_stat_events WHERE statIdentityId IN " +
             "(SELECT identityId FROM token_stat_identities " +
@@ -272,6 +306,23 @@ abstract class TokenStatsDao {
 
     @Query("SELECT * FROM token_stat_identities")
     abstract suspend fun getAllIdentities(): List<TokenStatIdentityEntity>
+
+    /**
+     * 请求接受边界原子操作（P1-1）：身份不存在时创建（INSERT IGNORE，绝不 REPLACE）、
+     * 默认展示分组补齐、读取当前 generation，全部在**同一事务**内完成。展示分组删除
+     * 与请求开始按 SQLite 事务串行化（写事务原子性）：删除要么看见该身份并写 IDENTITY
+     * tombstone（删除前接受的事件被跳过），要么请求捕获 ≥ tombstone 的新 generation
+     * （删除后请求正常入账）——首次请求的身份不再可能绕过分组删除 tombstone 复活旧事件。
+     */
+    @Transaction
+    open suspend fun ensureIdentityAndCaptureGenerationTx(
+        identity: TokenStatIdentityEntity,
+        displayModel: TokenStatDisplayModelEntity,
+    ): Long {
+        insertIdentityIfAbsent(identity)
+        upsertDisplayModel(displayModel)
+        return currentResetGeneration()
+    }
 
     // ==== 展示模型分组 ====
 
@@ -486,9 +537,105 @@ abstract class TokenStatsDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun insertRestoreGeneration(generation: TokenStatRestoreGenerationEntity): Long
 
+    // ==== legacy cleanup outbox（阶段 5 P1 闭环） ====
+    // 跨存储删除的线性化点：operation/items 与 tombstone/删除在**同一 Room 事务**
+    // 提交（见 deleteDisplayModelEventsTx / resetModelTx / deleteAllStatisticsTx）。
+    // drain 顺序固定：Room 读 PENDING → DataStore apply（marker 幂等）→ Room ACK；
+    // 失败保持 PENDING 下次重试。历史行不删除（导入 fence 与备份 lineage）。
+
+    @Query(
+        "SELECT * FROM token_stat_cleanup_operations " +
+            "WHERE status = 'PENDING' ORDER BY createdAtMs ASC, operationId ASC"
+    )
+    abstract suspend fun getPendingCleanupOperations(): List<TokenStatCleanupOperationEntity>
+
+    @Query(
+        "SELECT * FROM token_stat_cleanup_operations " +
+            "ORDER BY createdAtMs ASC, operationId ASC"
+    )
+    abstract suspend fun getAllCleanupOperations(): List<TokenStatCleanupOperationEntity>
+
+    @Query("SELECT * FROM token_stat_cleanup_items WHERE operationId = :operationId")
+    abstract suspend fun getCleanupItems(operationId: String): List<TokenStatCleanupItemEntity>
+
+    @Query("SELECT COUNT(*) FROM token_stat_cleanup_operations WHERE status = 'PENDING'")
+    abstract suspend fun countPendingCleanupOperations(): Int
+
+    /**
+     * drain ACK：只把仍为 PENDING 的 operation 标记 APPLIED（@return 0 = 已由
+     * 其他排空完成，幂等安全）。
+     */
+    @Query(
+        "UPDATE token_stat_cleanup_operations SET status = 'APPLIED' " +
+            "WHERE operationId = :operationId AND status = 'PENDING'"
+    )
+    abstract suspend fun ackCleanupOperation(operationId: String): Int
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    protected abstract suspend fun insertCleanupOperation(
+        operation: TokenStatCleanupOperationEntity
+    ): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    protected abstract suspend fun insertCleanupItems(
+        items: List<TokenStatCleanupItemEntity>
+    ): List<Long>
+
+    /**
+     * 在删除事务内创建 PENDING cleanup operation（+ 不可变 items 快照）。
+     * 只供本类事务方法调用；items 为空表示 ALL kind 或无需逐项清理。
+     */
+    protected suspend fun createCleanupOperation(
+        scope: String,
+        targetRef: String,
+        deleteBaselines: Boolean,
+        items: List<Triple<String, String, String>>,
+    ): TokenStatCleanupOperationEntity {
+        val operation =
+            TokenStatCleanupOperationEntity(
+                operationId = UUID.randomUUID().toString(),
+                scope = scope,
+                targetRef = targetRef,
+                deleteBaselines = deleteBaselines,
+                status = TokenStatCleanupOperationEntity.STATUS_PENDING,
+                createdAtMs = System.currentTimeMillis(),
+            )
+        insertCleanupOperation(operation)
+        if (items.isNotEmpty()) {
+            insertCleanupItems(
+                items.map { (identityId, provider, model) ->
+                    TokenStatCleanupItemEntity(
+                        operationId = operation.operationId,
+                        identityId = identityId,
+                        provider = provider,
+                        model = model,
+                    )
+                }
+            )
+        }
+        return operation
+    }
+
+    /**
+     * 导入 fence（P1 闭环）：当前快照（含同时读取的 applied marker ID 集合）能否
+     * 安全用于 baseline 导入。返回 true 当且仅当：
+     * 1. 不存在 PENDING cleanup operation（未排空的清理不得被导入覆盖）；
+     * 2. Room 中**全部** cleanup operation ID 都包含在该快照的 marker 集合里——
+     *    否则快照早于某次 legacy cleanup 完成，直接应用会复活已删除的 baseline。
+     * 必须在 Room 事务内调用（与快照读取后的写入线性化）。
+     */
+    @Transaction
+    open suspend fun cleanupFenceSatisfied(markerOperationIds: Set<String>): Boolean {
+        if (countPendingCleanupOperations() > 0) return false
+        return getAllCleanupOperations().all { it.operationId in markerOperationIds }
+    }
+
     // ==== 重置 tombstone（reset cutoff） ====
     // reset 与 spool 排空的一致同步边界：tombstone 与删除在同一事务提交，
     // 排空插入在同一事务内检查，SQLite 事务串行化杜绝并发复活（P1-3）。
+    // 阶段 5 扩展：IDENTITY kind（按展示分组删除，精确到身份）与
+    // token_stat_range_cutoffs 表（时间范围删除）共用同一 generation 计数器，
+    // 删除后新接受的事件（acceptedGeneration ≥ cutoff）永不误伤。
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     protected abstract suspend fun upsertResetCutoff(cutoff: TokenStatResetCutoffEntity)
@@ -502,19 +649,129 @@ abstract class TokenStatsDao {
     @Query("SELECT * FROM token_stat_reset_cutoffs WHERE kind = 'MODEL'")
     abstract suspend fun modelResetCutoffs(): List<TokenStatResetCutoffEntity>
 
+    /** IDENTITY tombstone（阶段 5 展示分组删除）：provider 空串、model 列 = identityId。 */
+    @Query(
+        "SELECT * FROM token_stat_reset_cutoffs " +
+            "WHERE kind = 'IDENTITY' AND provider = '' AND model = :identityId LIMIT 1"
+    )
+    protected abstract suspend fun identityResetCutoff(identityId: String): TokenStatResetCutoffEntity?
+
     @Query("DELETE FROM token_stat_reset_cutoffs WHERE kind = 'MODEL'")
     protected abstract suspend fun deleteModelResetCutoffs()
 
-    @Query("SELECT COALESCE(MAX(generation), 0) FROM token_stat_reset_cutoffs")
-    abstract suspend fun currentResetGeneration(): Long
+    @Query("DELETE FROM token_stat_reset_cutoffs WHERE kind = 'IDENTITY'")
+    protected abstract suspend fun deleteIdentityResetCutoffs()
 
     /**
-     * 全量重置：写入 FULL tombstone 并与删除（事件按 startedAtMs 过滤、baseline
-     * 全清）同一事务提交。排空并发插入要么在本事务前（被本事务删除），要么在
-     * 本事务后（被 tombstone 在插入事务内跳过），不可能复活。
+     * 统一 generation 计数器：跨 reset_cutoffs 与 range_cutoffs 两表取最大值。
+     * 阶段 5 必须统一：范围删除 tombstone 与 reset tombstone 共用单调序列，
+     * 否则“删除当前范围”后新请求捕获的 acceptedGeneration 可能低于范围 tombstone，
+     * 导致新事件被误判为删除前事件而跳过入账。
+     */
+    @Query(
+        "SELECT COALESCE(MAX(generation), 0) FROM (" +
+            "SELECT generation FROM token_stat_reset_cutoffs " +
+            "UNION ALL " +
+            "SELECT generation FROM token_stat_range_cutoffs" +
+            ")"
+    )
+    abstract suspend fun currentResetGeneration(): Long
+
+    // ==== 阶段 5：时间范围删除 tombstone ====
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    protected abstract suspend fun upsertRangeCutoff(cutoff: TokenStatRangeCutoffEntity)
+
+    @Query("SELECT * FROM token_stat_range_cutoffs")
+    abstract suspend fun rangeCutoffs(): List<TokenStatRangeCutoffEntity>
+
+    @Query("DELETE FROM token_stat_range_cutoffs")
+    protected abstract suspend fun deleteAllRangeCutoffs()
+
+    /**
+     * 删除时间范围 [startMs, endMs) 内的事件：写入 RANGE tombstone 并与删除
+     * 同一事务提交。**绝不触碰 baseline**（baseline 无时间分布，只有按模型/全部
+     * 删除且用户确认后才删除）。身份/展示分组/价格覆盖一律保留。
+     * @return 删除的事件数。
      */
     @Transaction
-    open suspend fun resetAllStatisticsTx() {
+    open suspend fun deleteRangeEventsTx(startMs: Long, endMs: Long): Int {
+        require(endMs > startMs) { "range end must be after start" }
+        val generation = Math.addExact(currentResetGeneration(), 1L)
+        upsertRangeCutoff(
+            TokenStatRangeCutoffEntity(
+                generation = generation,
+                startMs = startMs,
+                endMs = endMs,
+            )
+        )
+        return deleteEventsInRange(startMs, endMs)
+    }
+
+    /**
+     * 按展示分组删除（阶段 5 + P1 闭环）：事务内从 **identity 全表**解析组成员（不依赖
+     * 任何统计筛选），为该组全部成员写 IDENTITY tombstone（精确到身份，同一
+     * provider:model 的其他分组不受影响），再按成员删除事件；[deleteBaselines]
+     * 为 true 时同步删除这些成员的 baseline，并**在同一事务内**为其中 configId
+     * 为空串的 legacy 成员持久化 cleanup operation + items（不可变快照，供
+     * DataStore 累计键排空；为 false 时 baseline 与旧键一律保留、不建 operation）。
+     * 身份行/展示分组/价格覆盖不删除（保持“只清计数、保留配置”语义）。
+     * 任何读取失败都会让整个事务回滚（不产生 tombstone/operation 半状态）。
+     */
+    @Transaction
+    open suspend fun deleteDisplayModelEventsTx(
+        displayModelId: String,
+        deleteBaselines: Boolean,
+    ): TokenStatDisplayGroupDeletionResult {
+        require(displayModelId.isNotBlank()) { "displayModelId must not be blank" }
+        val members = getAllIdentities().filter { it.displayModelId == displayModelId }
+        if (members.isEmpty()) return TokenStatDisplayGroupDeletionResult(0, null)
+        val memberIds = members.map { it.identityId }
+        val generation = Math.addExact(currentResetGeneration(), 1L)
+        for (identityId in memberIds) {
+            upsertResetCutoff(
+                TokenStatResetCutoffEntity(
+                    kind = TokenStatResetCutoffEntity.KIND_IDENTITY,
+                    provider = "",
+                    model = identityId,
+                    generation = generation,
+                )
+            )
+        }
+        val deleted = deleteEventsByIdentities(memberIds)
+        var operation: TokenStatCleanupOperationEntity? = null
+        if (deleteBaselines) {
+            deleteBaselinesByIdentities(memberIds)
+            val legacyMembers = members.filter { it.configId == "" }
+            if (legacyMembers.isNotEmpty()) {
+                operation =
+                    createCleanupOperation(
+                        scope = TokenStatCleanupOperationEntity.SCOPE_DISPLAY_GROUP,
+                        targetRef = displayModelId,
+                        deleteBaselines = true,
+                        items =
+                            legacyMembers.map {
+                                Triple(it.identityId, it.provider, it.model)
+                            },
+                    )
+            }
+        }
+        return TokenStatDisplayGroupDeletionResult(deleted, operation)
+    }
+
+    /**
+     * 全部删除（阶段 5 + P1 闭环）：写入 FULL tombstone 并与删除同一事务提交；
+     * [deleteBaselines] 为 true 时同时清空全部 baseline，并创建 ALL kind 的
+     * cleanup operation（无 items，排空时清除全部旧累计键——不触碰价格等配置）；
+     * 为 false 时 baseline 与旧累计键一律保留、不建 operation。
+     * 顺带清理 MODEL/IDENTITY/RANGE tombstone（与既有
+     * [resetAllStatisticsTx] 的卫生语义一致：FULL 覆盖所有更早的删除边界，
+     * 事件只按 FULL generation 判断，旧边界不再需要）。
+     */
+    @Transaction
+    open suspend fun deleteAllStatisticsTx(
+        deleteBaselines: Boolean,
+    ): TokenStatAllDeletionResult {
         val generation = Math.addExact(currentResetGeneration(), 1L)
         upsertResetCutoff(
             TokenStatResetCutoffEntity(
@@ -525,16 +782,43 @@ abstract class TokenStatsDao {
             )
         )
         deleteModelResetCutoffs()
-        deleteAllEvents()
-        deleteAllBaselines()
+        deleteIdentityResetCutoffs()
+        deleteAllRangeCutoffs()
+        val deleted = deleteAllEvents()
+        var operation: TokenStatCleanupOperationEntity? = null
+        if (deleteBaselines) {
+            deleteAllBaselines()
+            operation =
+                createCleanupOperation(
+                    scope = TokenStatCleanupOperationEntity.SCOPE_ALL,
+                    targetRef = "",
+                    deleteBaselines = true,
+                    items = emptyList(),
+                )
+        }
+        return TokenStatAllDeletionResult(deleted, operation)
     }
 
     /**
-     * 按模型重置：写入 MODEL tombstone（每 provider/model REPLACE 覆盖，取最近
-     * 时刻）并与删除同一事务提交；覆盖该模型下所有配置实例身份。
+     * 全量重置（既有语义，阶段 1 确认）：事件 + 全部 baseline 一并删除，并创建
+     * ALL kind 的 legacy cleanup operation（P1 闭环：跨存储窗口统一走 outbox）。
+     * 阶段 5 保留为旧重置流程的别名；新删除流程直接使用
+     * [deleteAllStatisticsTx]（可单独选择是否删除 baseline）。
+     * @return 创建的 cleanup operation（null 表示无需清理——本路径恒删除 baseline）。
      */
     @Transaction
-    open suspend fun resetModelTx(provider: String, model: String) {
+    open suspend fun resetAllStatisticsTx(): TokenStatCleanupOperationEntity? =
+        deleteAllStatisticsTx(deleteBaselines = true).cleanupOperation
+
+    /**
+     * 按模型重置（P1 闭环）：写入 MODEL tombstone（每 provider/model REPLACE 覆盖，
+     * 取最近时刻）并与删除同一事务提交；覆盖该模型下所有配置实例身份，并为其中
+     * configId 为空串的 legacy 成员持久化 cleanup operation + items（精确到成员，
+     * 不误清其他模型/配置身份对应的旧键）。
+     * @return 创建的 cleanup operation（null = 无 legacy 成员，无需清旧键）。
+     */
+    @Transaction
+    open suspend fun resetModelTx(provider: String, model: String): TokenStatCleanupOperationEntity? {
         val generation = Math.addExact(currentResetGeneration(), 1L)
         upsertResetCutoff(
             TokenStatResetCutoffEntity(
@@ -546,12 +830,34 @@ abstract class TokenStatsDao {
         )
         deleteEventsByProviderModel(provider, model)
         deleteBaselinesByProviderModel(provider, model)
+        // 与 delete*ByProviderModel 相同（非规范化）匹配口径：只登记实际被删的 legacy 成员
+        val legacyMembers =
+            getAllIdentities().filter {
+                it.configId == "" && it.provider == provider && it.model == model
+            }
+        return if (legacyMembers.isEmpty()) {
+            null
+        } else {
+            createCleanupOperation(
+                scope = TokenStatCleanupOperationEntity.SCOPE_MODEL,
+                targetRef = "$provider:$model",
+                deleteBaselines = true,
+                items = legacyMembers.map { Triple(it.identityId, it.provider, it.model) },
+            )
+        }
     }
 
     /**
      * 排空路径的事件插入入口：tombstone 检查与插入在同一事务内。
-     * @return false = 事件被 reset tombstone 覆盖（跳过；调用方视为已处理，
+     * @return false = 事件被 reset/删除 tombstone 覆盖（跳过；调用方视为已处理，
      *   段可删除，不重放）；true = 已插入。
+     *
+     * 阶段 5 检查链（与删除矩阵一一对应）：
+     * - FULL：全量删除/重置后不接受任何更早接受的事件；
+     * - IDENTITY：按展示分组删除后不接受该身份更早接受的事件（精确到身份）；
+     * - MODEL：按 provider:model 重置后不接受该模型更早接受的事件；
+     * - RANGE：范围删除后不接受 startedAtMs 落在已删范围且更早接受的事件。
+     * 统一 generation 计数（两表 UNION）保证“接受于删除前”判断不依赖墙钟。
      */
     @Transaction
     open suspend fun insertEventIfNotResetCovered(event: TokenStatEventEntity): Boolean {
@@ -560,6 +866,8 @@ abstract class TokenStatsDao {
         val identity =
             getIdentity(event.statIdentityId)
                 ?: error("identity missing for event ${event.eventId} (ensureIdentity must run first)")
+        val identityCutoff = identityResetCutoff(event.statIdentityId)
+        if (identityCutoff != null && event.acceptedGeneration < identityCutoff.generation) return false
         val models = modelResetCutoffs()
         for (cutoff in models) {
             if (event.acceptedGeneration < cutoff.generation &&
@@ -567,6 +875,14 @@ abstract class TokenStatsDao {
                 TokenStatIdentityResolver.normalizeProvider(identity.provider) &&
                 TokenStatIdentityResolver.normalizeModelName(cutoff.model) ==
                 TokenStatIdentityResolver.normalizeModelName(identity.model)
+            ) {
+                return false
+            }
+        }
+        for (cutoff in rangeCutoffs()) {
+            if (event.acceptedGeneration < cutoff.generation &&
+                event.startedAtMs >= cutoff.startMs &&
+                event.startedAtMs < cutoff.endMs
             ) {
                 return false
             }
@@ -583,3 +899,18 @@ abstract class TokenStatsDao {
 object TokenStatRestoreGenerationContract {
     const val TABLE_NAME = "token_stat_restore_generations"
 }
+
+/**
+ * 按展示分组删除的结果：删除的事件数与（baseline=yes 且组内存在 legacy 成员时）
+ * 在同一事务内创建的 cleanup operation（否则为 null）。
+ */
+data class TokenStatDisplayGroupDeletionResult(
+    val deletedEvents: Int,
+    val cleanupOperation: TokenStatCleanupOperationEntity?,
+)
+
+/** 全部删除的结果：删除的事件数与（baseline=yes 时）ALL kind cleanup operation。 */
+data class TokenStatAllDeletionResult(
+    val deletedEvents: Int,
+    val cleanupOperation: TokenStatCleanupOperationEntity?,
+)
