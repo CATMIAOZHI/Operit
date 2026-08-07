@@ -235,6 +235,26 @@ class ApiPreferences private constructor(private val context: Context) {
         const val DEFAULT_API_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
         const val DEFAULT_MODEL_NAME = "deepseek-v4-flash"
 
+        // legacy cleanup applied marker 键前缀（P1 闭环）：marker 与累计键清理在
+        // 同一次 DataStore.edit 内原子完成；marker 已存在时同 operation 重试为
+        // 幂等 no-op。marker ID 集合与 baseline 快照同一次读取，供导入 fence 校验
+        // （见 legacyStatsSnapshotWithMarkers）。
+        val LEGACY_CLEANUP_MARKER_PREFIX = "legacy_cleanup_applied_"
+
+        fun legacyCleanupMarkerKey(operationId: String): Preferences.Key<Boolean> =
+            booleanPreferencesKey("$LEGACY_CLEANUP_MARKER_PREFIX$operationId")
+
+        /** 移除指定键名的累计计数键（实例方法与 outbox 纯变更函数共用）。 */
+        internal fun removeTokenCountKeysForMutation(
+            preferences: MutablePreferences,
+            vararg keyNames: String,
+        ) {
+            val names = keyNames.toSet()
+            preferences.asMap().keys
+                    .filter { it.name in names }
+                    .forEach { preferences.remove(it) }
+        }
+
         private const val TAG = "ApiPreferences"
     }
 
@@ -673,24 +693,72 @@ class ApiPreferences private constructor(private val context: Context) {
     }
 
     /**
+     * legacy cleanup applied marker 键前缀（P1 闭环）：marker 与累计键清理在
+     * **同一次** DataStore.edit 内原子完成；marker 已存在时同 operation 重试
+     * 为幂等 no-op。marker ID 集合与 baseline 快照同一次读取，供导入 fence 校验
+     * （见 [legacyStatsSnapshotWithMarkers]）。
+     */
+    val LEGACY_CLEANUP_MARKER_PREFIX = "legacy_cleanup_applied_"
+
+    fun legacyCleanupMarkerKey(operationId: String): Preferences.Key<Boolean> =
+        booleanPreferencesKey("$LEGACY_CLEANUP_MARKER_PREFIX$operationId")
+
+    /** 读取全部已应用的 legacy cleanup marker operationId 集合（导入 fence 用）。 */
+    suspend fun appliedLegacyCleanupMarkerIds(): Set<String> {
+        val preferences = context.apiDataStore.data.first()
+        return appliedMarkerIdsFrom(preferences)
+    }
+
+    /**
+     * 应用一次 legacy cleanup（P1 闭环 drain 的 DataStore 侧）：
+     * 单次 DataStore.edit 内，若该 operation 的 applied marker 不存在，则精准清除
+     * 累计键并写入 marker；marker 已存在则幂等 no-op（崩溃后重放不二次清键）。
+     * [providerModels] 为 null 表示 ALL kind：清除全部旧累计键
+     * （token_input_ / token_cached_input_ / token_output_ / request_count_ 前缀），
+     * **绝不触碰价格/计费方式等配置键**与 marker 键。取消向上传播。
+     */
+    suspend fun applyLegacyCleanup(operationId: String, providerModels: List<String>?) {
+        require(operationId.isNotBlank()) { "operationId must not be blank" }
+        context.apiDataStore.edit { preferences ->
+            applyLegacyCleanupMutation(preferences, operationId, providerModels)
+        }
+    }
+
+    private fun appliedMarkerIdsFrom(preferences: Preferences): Set<String> =
+        preferences.asMap().keys.asSequence()
+            .map { it.name }
+            .filter { it.startsWith(LEGACY_CLEANUP_MARKER_PREFIX) }
+            .map { it.removePrefix(LEGACY_CLEANUP_MARKER_PREFIX) }
+            .toSet()
+
+    /**
+     * 旧累计统计快照 + **同一次读取**的 applied marker ID 集合（P1 闭环导入 fence）：
+     * baseline 快照与 marker 集合来自同一个 DataStore 读取，Room 事务内校验全部
+     * cleanup operation ID 均包含在该 marker 集合（且无 PENDING）后才允许导入，
+     * 杜绝“先读旧快照 → cleanup 完成 → 旧快照写回”复活已删除的 baseline。
+     */
+    suspend fun legacyStatsSnapshotWithMarkers(): LegacyStatsSnapshotRead {
+        val preferences = context.apiDataStore.data.first()
+        return LegacyStatsSnapshotRead(
+            snapshot =
+                com.ai.assistance.operit.data.stats.LegacyTokenStatsSnapshot.parse(
+                    preferences.asMap().mapKeys { it.key.name }
+                ),
+            cleanupMarkerIds = appliedMarkerIdsFrom(preferences),
+        )
+    }
+
+    /**
      * 重置所有供应商:模型的token计数，并同步清空新统计账本（事件 + baseline）。
-     * @return true = 旧计数与新账本均清零成功；false = 旧计数已清零但新账本清理失败
+     * P1 闭环：顺序改为 **Room 先删（同一事务写 FULL tombstone + 删除 + 创建
+     * ALL cleanup operation）→ 排空 DataStore 累计键（marker 幂等）**，消除
+     * 旧的“先清 DataStore 再删新账本”跨存储窗口（新账本删除失败时旧计数不会被
+     * 静默清掉；排空失败时 operation 保持 PENDING 由下次启动重试）。
+     * @return true = 旧计数与新账本均清零成功；false = 任一步失败
      * （已记录错误日志，调用方可据此提示用户重试，不假装成功）。
      * 协程取消（CancellationException）不在此吞掉，向上传播。
      */
     suspend fun resetAllProviderModelTokenCounts(): Boolean {
-        context.apiDataStore.edit { preferences ->
-            val keysToRemove = mutableListOf<Preferences.Key<*>>()
-            preferences.asMap().forEach { (key, _) ->
-                val keyName = key.name
-                if (keyName.startsWith("token_input_") || keyName.startsWith("token_output_") || keyName.startsWith("token_cached_input_") || keyName.startsWith("request_count_")) {
-                    keysToRemove.add(key)
-                }
-            }
-            keysToRemove.forEach { key ->
-                preferences.remove(key)
-            }
-        }
         return try {
             com.ai.assistance.operit.data.stats.TokenStatsResetCoordinator
                 .resetAllStatistics(context)
@@ -705,24 +773,14 @@ class ApiPreferences private constructor(private val context: Context) {
 
     /**
      * 重置指定供应商:模型的token计数，并同步清空该模型在新账本中的事件与 baseline
-     * （所有配置实例身份，见 TokenStatsResetCoordinator）。
-     * @return true = 旧计数与新账本均清零成功；false = 旧计数已清零但新账本清理失败
+     * （所有配置实例身份，见 TokenStatsResetCoordinator）。P1 闭环：顺序与
+     * [resetAllProviderModelTokenCounts] 一致（Room 先删 + 创建精确 items 的
+     * cleanup operation → 排空 DataStore 累计键）。
+     * @return true = 旧计数与新账本均清零成功；false = 任一步失败
      * （已记录错误日志，调用方可据此提示用户重试，不假装成功）。
      * 协程取消（CancellationException）不在此吞掉，向上传播。
      */
     suspend fun resetProviderModelTokenCounts(providerModel: String): Boolean {
-        context.apiDataStore.edit { preferences ->
-            removeTokenCountKeys(
-                    preferences,
-                    getTokenInputKey(providerModel).name,
-                    getTokenCachedInputKey(providerModel).name,
-                    getTokenOutputKey(providerModel).name
-            )
-            preferences[getTokenInputKey(providerModel)] = 0L
-            preferences[getTokenCachedInputKey(providerModel)] = 0L
-            preferences[getTokenOutputKey(providerModel)] = 0L
-            preferences[getRequestCountKey(providerModel)] = 0
-        }
         return try {
             com.ai.assistance.operit.data.stats.TokenStatsResetCoordinator
                 .resetStatisticsForProviderModel(context, providerModel)
@@ -733,17 +791,6 @@ class ApiPreferences private constructor(private val context: Context) {
             AppLogger.e(TAG, "重置模型统计：新账本清理失败", e)
             false
         }
-    }
-
-    /**
-     * 旧累计统计快照（迁移来源）。新统计系统只把这里作为一次性迁移读取，
-     * 不再作为第二套账本写入点。
-     */
-    suspend fun legacyStatsSnapshot(): com.ai.assistance.operit.data.stats.LegacyTokenStatsSnapshot {
-        val preferences = context.apiDataStore.data.first()
-        return com.ai.assistance.operit.data.stats.LegacyTokenStatsSnapshot.parse(
-            preferences.asMap().mapKeys { it.key.name }
-        )
     }
 
     /**
@@ -801,12 +848,8 @@ class ApiPreferences private constructor(private val context: Context) {
         return settings.takeIf { it.hasAnyUserSetting() }
     }
 
-    private fun removeTokenCountKeys(preferences: MutablePreferences, vararg keyNames: String) {
-        val names = keyNames.toSet()
-        preferences.asMap().keys
-                .filter { it.name in names }
-                .forEach { preferences.remove(it) }
-    }
+    private fun removeTokenCountKeys(preferences: MutablePreferences, vararg keyNames: String) =
+        removeTokenCountKeysForMutation(preferences, *keyNames)
 
     private fun readTokenCount(preferences: Preferences, keyName: String): Long {
         val values = preferences.asMap().entries
@@ -1115,3 +1158,52 @@ class ApiPreferences private constructor(private val context: Context) {
         }
     }
 }
+
+/**
+ * 单次 DataStore.edit 内的 legacy cleanup 变更（P1 闭环，纯函数）：
+ * - marker 已存在 → 严格 no-op（崩溃后重放不二次清键，也不写任何值）；
+ * - [providerModels] == null（ALL kind）→ 清除全部旧累计键
+ *   （token_input_/token_cached_input_/token_output_/request_count_ 前缀），
+ *   价格/计费方式等配置键与 marker 键一律保留；
+ * - 否则只清除这些 provider:model 的累计键与 request_count；
+ * 之后写入 operation marker（与清理同一次 edit 原子提交）。
+ * 独立为纯函数以便 Windows JVM 测试直接验证键级语义（DataStore.edit 只是薄壳）。
+ */
+internal fun applyLegacyCleanupMutation(
+    preferences: MutablePreferences,
+    operationId: String,
+    providerModels: List<String>?,
+) {
+    require(operationId.isNotBlank()) { "operationId must not be blank" }
+    val markerKey = ApiPreferences.legacyCleanupMarkerKey(operationId)
+    if (preferences[markerKey] == true) return
+    if (providerModels == null) {
+        val keysToRemove =
+            preferences.asMap().keys.filter { key ->
+                key.name.startsWith("token_input_") ||
+                    key.name.startsWith("token_cached_input_") ||
+                    key.name.startsWith("token_output_") ||
+                    key.name.startsWith("request_count_")
+            }
+        keysToRemove.forEach { preferences.remove(it) }
+    } else {
+        providerModels.distinct().forEach { providerModel ->
+            ApiPreferences.removeTokenCountKeysForMutation(
+                preferences,
+                ApiPreferences.getTokenInputKey(providerModel).name,
+                ApiPreferences.getTokenCachedInputKey(providerModel).name,
+                ApiPreferences.getTokenOutputKey(providerModel).name,
+            )
+            preferences.remove(ApiPreferences.getRequestCountKey(providerModel))
+        }
+    }
+    preferences[markerKey] = true
+}
+
+/**
+ * baseline 快照 + 同一次 DataStore 读取的 applied marker ID 集合（导入 fence 用）。
+ */
+data class LegacyStatsSnapshotRead(
+    val snapshot: com.ai.assistance.operit.data.stats.LegacyTokenStatsSnapshot,
+    val cleanupMarkerIds: Set<String>,
+)

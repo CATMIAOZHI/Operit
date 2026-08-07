@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -79,8 +78,13 @@ fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
     // 瞬态 UI 状态：可存 rememberSaveable 的在配置变化后保留（P1-3）；
     // 筛选已在 VM state 中，天然跨配置变化保留。
     var showCustomRange by rememberSaveable { mutableStateOf(false) }
-    var showResetAllDialog by rememberSaveable { mutableStateOf(false) }
-    var resetModel by remember { mutableStateOf<TokenStatsDisplayModelBreakdown?>(null) }
+    var showDeleteRangeDialog by rememberSaveable { mutableStateOf(false) }
+    // 全部删除两步确认：第一步危险确认，第二步 baseline 选择（阶段 5）
+    var showDeleteAllConfirm by rememberSaveable { mutableStateOf(false) }
+    var showDeleteAllBaseline by rememberSaveable { mutableStateOf(false) }
+    // 模型删除两步确认：目标模型 + baseline 选择
+    var deleteModel by remember { mutableStateOf<TokenStatsDisplayModelBreakdown?>(null) }
+    var showDeleteModelBaseline by rememberSaveable { mutableStateOf(false) }
     var pricingTarget by remember { mutableStateOf<PricingTarget?>(null) }
     var groupTarget by remember { mutableStateOf<TokenStatsDisplayModelBreakdown?>(null) }
     var perfMetric by rememberSaveable { mutableStateOf(PerfMetric.TTFT) }
@@ -96,13 +100,13 @@ fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
         CustomScaffold(
             floatingActionButton = {
                 FloatingActionButton(
-                    onClick = { showResetAllDialog = true },
+                    onClick = { showDeleteAllConfirm = true },
                     containerColor = MaterialTheme.colorScheme.errorContainer,
                     contentColor = MaterialTheme.colorScheme.onErrorContainer,
                 ) {
                     Icon(
-                        imageVector = Icons.Default.RestartAlt,
-                        contentDescription = stringResource(id = R.string.settings_reset_all_counts),
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = stringResource(id = R.string.token_stats_delete_all_title),
                     )
                 }
             },
@@ -126,7 +130,8 @@ fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
                             perfMetric = perfMetric,
                             onTogglePerfMetric = { perfMetric = it },
                             onCustomRange = { showCustomRange = true },
-                            onResetModel = { resetModel = it },
+                            onDeleteRange = { showDeleteRangeDialog = true },
+                            onDeleteModel = { deleteModel = it },
                             onEditPricing = { pricingTarget = PricingTarget.Edit(it) },
                             onAddPricing = { pricingTarget = PricingTarget.New },
                             onGroupManage = { groupTarget = it },
@@ -208,66 +213,177 @@ fun TokenUsageStatisticsScreen(onBackPressed: () -> Unit) {
         )
     }
 
-    if (showResetAllDialog) {
-        val resetFailedMessage = stringResource(id = R.string.settings_token_stats_reset_failed)
+    // ==== 阶段 5 删除对话框 ====
+    // 危险操作明确确认：范围删除单步确认（绝不触碰 baseline）；
+    // 模型/全部删除两步确认（第一步危险确认 → 第二步选择是否同时删除 baseline）。
+
+    if (showDeleteRangeDialog) {
         AlertDialog(
-            onDismissRequest = { showResetAllDialog = false },
-            title = { Text(stringResource(R.string.settings_reset_confirmation)) },
-            text = { Text(stringResource(R.string.settings_reset_warning)) },
+            onDismissRequest = { showDeleteRangeDialog = false },
+            title = { Text(stringResource(R.string.token_stats_delete_range_title)) },
+            text = { Text(stringResource(R.string.token_stats_delete_range_message)) },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.resetAllStatistics { error ->
-                            if (error != null) {
-                                Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                        showResetAllDialog = false
+                        viewModel.deleteRangeEvents()
+                        showDeleteRangeDialog = false
                     },
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error,
                     ),
                 ) {
-                    Text(stringResource(R.string.settings_reset))
+                    Text(stringResource(R.string.token_stats_delete_confirm))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showResetAllDialog = false }) {
+                TextButton(onClick = { showDeleteRangeDialog = false }) {
                     Text(stringResource(R.string.settings_cancel))
                 }
             },
         )
     }
 
-    resetModel?.let { model ->
+    if (showDeleteAllConfirm) {
         AlertDialog(
-            onDismissRequest = { resetModel = null },
-            title = { Text(stringResource(R.string.settings_reset_model_confirmation)) },
-            text = { Text(stringResource(R.string.settings_reset_model_warning, model.displayName)) },
+            onDismissRequest = { showDeleteAllConfirm = false },
+            title = { Text(stringResource(R.string.token_stats_delete_all_title)) },
+            text = { Text(stringResource(R.string.token_stats_delete_all_message)) },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.resetDisplayModel(model.displayModelId) { error ->
-                            if (error != null) {
-                                Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                        resetModel = null
+                        showDeleteAllConfirm = false
+                        showDeleteAllBaseline = true
                     },
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error,
                     ),
                 ) {
-                    Text(stringResource(R.string.settings_reset))
+                    Text(stringResource(R.string.token_stats_delete_confirm))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { resetModel = null }) {
+                TextButton(onClick = { showDeleteAllConfirm = false }) {
                     Text(stringResource(R.string.settings_cancel))
                 }
             },
         )
     }
+
+    if (showDeleteAllBaseline) {
+        val baselineRows = state.lifetime?.baselineTotals?.identityCount ?: 0L
+        DeleteBaselineDialog(
+            title = stringResource(R.string.token_stats_delete_baseline_title),
+            message = stringResource(R.string.token_stats_delete_baseline_message_all, baselineRows),
+            onEventsOnly = {
+                showDeleteAllBaseline = false
+                viewModel.deleteAllStatistics(deleteBaselines = false)
+            },
+            onEventsAndBaseline = {
+                showDeleteAllBaseline = false
+                viewModel.deleteAllStatistics(deleteBaselines = true)
+            },
+            onDismiss = { showDeleteAllBaseline = false },
+        )
+    }
+
+    deleteModel?.let { model ->
+        // 成员数取完整分组元数据（state.groupModels），与统计筛选无关（P1 修复）
+        val groupMembers =
+            state.groupModels.firstOrNull { it.displayModelId == model.displayModelId }
+                ?.memberIdentityIds?.size ?: model.identities.size
+        if (showDeleteModelBaseline) {
+            DeleteBaselineDialog(
+                title = stringResource(R.string.token_stats_delete_baseline_title),
+                message = stringResource(
+                    R.string.token_stats_delete_baseline_message_model,
+                    model.displayName,
+                ),
+                onEventsOnly = {
+                    showDeleteModelBaseline = false
+                    viewModel.deleteDisplayModel(model.displayModelId, deleteBaselines = false)
+                    deleteModel = null
+                },
+                onEventsAndBaseline = {
+                    showDeleteModelBaseline = false
+                    viewModel.deleteDisplayModel(model.displayModelId, deleteBaselines = true)
+                    deleteModel = null
+                },
+                onDismiss = { showDeleteModelBaseline = false },
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { deleteModel = null },
+                title = { Text(stringResource(R.string.token_stats_delete_model_title)) },
+                text = {
+                    Text(
+                        stringResource(
+                            R.string.token_stats_delete_model_message,
+                            model.displayName,
+                            groupMembers,
+                        )
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showDeleteModelBaseline = true
+                        },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error,
+                        ),
+                    ) {
+                        Text(stringResource(R.string.token_stats_delete_confirm))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { deleteModel = null }) {
+                        Text(stringResource(R.string.settings_cancel))
+                    }
+                },
+            )
+        }
+    }
+}
+
+/**
+ * 删除的第二步：是否同时删除迁移的旧统计 baseline（阶段 5）。
+ * 选择“仅删除事件”只删事件并保留 baseline；选择“删除事件与 baseline”
+ * 才删对应/全部 baseline；取消不做任何删除。
+ */
+@Composable
+private fun DeleteBaselineDialog(
+    title: String,
+    message: String,
+    onEventsOnly: () -> Unit,
+    onEventsAndBaseline: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = {
+            TextButton(
+                onClick = onEventsAndBaseline,
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
+            ) {
+                Text(stringResource(R.string.token_stats_delete_events_and_baseline))
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onEventsOnly) {
+                    Text(stringResource(R.string.token_stats_delete_events_only))
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.settings_cancel))
+                }
+            }
+        },
+    )
 }
 
 private sealed interface PricingTarget {
@@ -307,7 +423,8 @@ private fun TokenStatsPageContent(
     perfMetric: PerfMetric,
     onTogglePerfMetric: (PerfMetric) -> Unit,
     onCustomRange: () -> Unit,
-    onResetModel: (TokenStatsDisplayModelBreakdown) -> Unit,
+    onDeleteRange: () -> Unit,
+    onDeleteModel: (TokenStatsDisplayModelBreakdown) -> Unit,
     onEditPricing: (TokenStatPriceOverrideEntity) -> Unit,
     onAddPricing: () -> Unit,
     onGroupManage: (TokenStatsDisplayModelBreakdown) -> Unit,
@@ -343,6 +460,7 @@ private fun TokenStatsPageContent(
                 targetCurrency = state.targetCurrency,
                 onSelectPreset = viewModel::selectPreset,
                 onCustomRange = onCustomRange,
+                onDeleteRange = onDeleteRange,
                 onToggleModel = viewModel::toggleModel,
                 onSelectAllModels = viewModel::selectAllModels,
                 onToggleCategory = viewModel::toggleCategory,
@@ -401,7 +519,7 @@ private fun TokenStatsPageContent(
                             costMode = state.costMode,
                             zone = zone,
                             onGroupManage = onGroupManage,
-                            onReset = onResetModel,
+                            onDelete = onDeleteModel,
                         )
                     }
                 }

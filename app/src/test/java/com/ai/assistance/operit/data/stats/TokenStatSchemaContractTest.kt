@@ -10,14 +10,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Room schema 导出契约测试（v28 → v29 → v30）。
+ * Room schema 导出契约测试（v28 → v29 → v30 → v31）。
  *
  * 解析仓库提交的 schema JSON（app/schemas），校验：
  * 1. v29 只新增统计账本 5 张表，既有表 createSql 完全不变（防迁移回归）；
  * 2. v30 只给事件表增加脱敏诊断列，其余表 createSql 完全不变；
- * 3. 新表的列/主键/索引/外键与迁移 SQL 一致（防迁移漏建索引导致
+ * 3. v31 只新增范围删除 tombstone 表（token_stat_range_cutoffs）与 legacy cleanup
+ *    outbox 两张表（token_stat_cleanup_operations/items），其余表不变；
+ * 4. 新表的列/主键/索引/外键与迁移 SQL 一致（防迁移漏建索引导致
  *    Room identityHash 校验失败）；
- * 4. 新表与既有表位于同一个 app_database 文件中 —— 现有整库文件级
+ * 5. 新表与既有表位于同一个 app_database 文件中 —— 现有整库文件级
  *    备份/恢复（RoomDatabaseBackupManager/RoomDatabaseRestoreManager）
  *    自动覆盖这些表，无需逐表接线。
  */
@@ -146,6 +148,81 @@ class TokenStatSchemaContractTest {
             ),
             afterColumns - beforeColumns,
         )
+    }
+
+    @Test
+    fun `v31 only adds the range cutoff and cleanup outbox tables`() {
+        val v30 = loadSchema(30)
+        val v31 = loadSchema(31)
+
+        assertEquals(31, v31.database.version)
+        val v30Tables = v30.database.entities.map { it.tableName }.toSet()
+        val v31Tables = v31.database.entities.map { it.tableName }.toSet()
+
+        // v31 只新增范围删除 tombstone 表与 legacy cleanup outbox 两张表
+        // （阶段 5：范围删除/跨存储清理与导入 fence 的持久化锚点）
+        assertEquals(
+            setOf(
+                "token_stat_range_cutoffs",
+                "token_stat_cleanup_operations",
+                "token_stat_cleanup_items",
+            ),
+            v31Tables - v30Tables,
+        )
+
+        // 除新增表外，其余全部 v30 表 createSql 完全一致（防迁移回归）
+        v30Tables.forEach { table ->
+            val before = v30.entity(table).normalizedCreateSql()
+            val after = v31.entity(table).normalizedCreateSql()
+            assertEquals("table changed between v30 and v31: $table", before, after)
+        }
+    }
+
+    @Test
+    fun `cleanup outbox tables carry the operation and item contracts`() {
+        val v31 = loadSchema(31)
+
+        val op = v31.entity("token_stat_cleanup_operations")
+        val opSql = op.normalizedCreateSql()
+        assertContains(opSql, "`operationId` TEXT NOT NULL")
+        assertContains(opSql, "`scope` TEXT NOT NULL")
+        assertContains(opSql, "`targetRef` TEXT NOT NULL")
+        assertContains(opSql, "`deleteBaselines` INTEGER NOT NULL")
+        assertContains(opSql, "`status` TEXT NOT NULL")
+        assertContains(opSql, "`createdAtMs` INTEGER NOT NULL")
+        assertContains(opSql, "PRIMARY KEY(`operationId`)")
+        assertTrue(op.indices.isEmpty())
+
+        val item = v31.entity("token_stat_cleanup_items")
+        val itemSql = item.normalizedCreateSql()
+        assertContains(itemSql, "`operationId` TEXT NOT NULL")
+        assertContains(itemSql, "`identityId` TEXT NOT NULL")
+        assertContains(itemSql, "`provider` TEXT NOT NULL")
+        assertContains(itemSql, "`model` TEXT NOT NULL")
+        assertContains(itemSql, "PRIMARY KEY(`operationId`, `identityId`)")
+        assertContains(
+            itemSql,
+            "FOREIGN KEY(`operationId`) REFERENCES `token_stat_cleanup_operations`(`operationId`)",
+        )
+        assertTrue(
+            item.indices.any {
+                it.name == "index_token_stat_cleanup_items_operationId" && !it.unique
+            }
+        )
+    }
+
+    @Test
+    fun `range cutoff table is the durable range deletion tombstone anchor`() {
+        val v31 = loadSchema(31)
+        val cutoff = v31.entity("token_stat_range_cutoffs")
+        val createSql = cutoff.normalizedCreateSql()
+
+        assertContains(createSql, "`generation` INTEGER NOT NULL")
+        assertContains(createSql, "`startMs` INTEGER NOT NULL")
+        assertContains(createSql, "`endMs` INTEGER NOT NULL")
+        assertContains(createSql, "PRIMARY KEY(`generation`)")
+        assertTrue("cutoff table must not carry foreign keys", !createSql.contains("FOREIGN KEY"))
+        assertTrue(cutoff.indices.isEmpty())
     }
 
     @Test

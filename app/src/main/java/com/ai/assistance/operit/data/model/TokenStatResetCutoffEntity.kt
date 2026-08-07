@@ -32,5 +32,12 @@ data class TokenStatResetCutoffEntity(
     companion object {
         const val KIND_FULL = "FULL"
         const val KIND_MODEL = "MODEL"
+
+        /**
+         * 按展示分组删除的身份级 tombstone（阶段 5）：provider 为空串、
+         * model 列存 identityId。精确到身份——同一 provider:model 的其他分组
+         * 不受影响；排空插入时事件 identityId 匹配且 acceptedGeneration 更低则跳过。
+         */
+        const val KIND_IDENTITY = "IDENTITY"
     }
 }

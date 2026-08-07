@@ -58,6 +58,28 @@ object TokenStatsLedger {
     }
 
     /**
+     * 请求接受边界（P1-1 修复）：在**同一 Room 事务**内确保身份存在（INSERT IGNORE +
+     * 默认展示分组补齐）并读取当前 generation。展示分组删除与请求开始因此按事务原子
+     * 串行化：删除要么看见该身份并写 IDENTITY tombstone（删除前接受的事件被跳过），
+     * 要么请求捕获 ≥ tombstone 的新 generation（删除后请求正常入账）——首次请求的
+     * 身份绝不可能绕过分组删除 tombstone 复活旧事件。
+     * @throws CancellationException 协程取消向上传播。
+     */
+    internal suspend fun ensureIdentityAndCaptureGeneration(
+        context: Context,
+        configId: String,
+        provider: String,
+        model: String,
+    ): Long {
+        val appContext = context.applicationContext
+        val database = databaseProvider?.invoke(appContext) ?: AppDatabase.getDatabase(appContext)
+        return database.tokenStatsDao().ensureIdentityAndCaptureGenerationTx(
+            identityEntityFor(configId, provider, model),
+            displayModelEntityFor(model),
+        )
+    }
+
+    /**
      * 记录一个请求事件。写入失败（非取消）只记录日志，不影响原响应/取消传播。
      * @throws CancellationException 协程取消时向上传播，不吞掉。
      */
@@ -260,30 +282,33 @@ object TokenStatsLedger {
         dao: TokenStatsDao,
         request: TokenStatRequestContext,
     ): TokenStatIdentityEntity {
-        val identity =
-            TokenStatIdentityEntity(
-                identityId =
-                    TokenStatIdentityResolver.identityId(
-                        request.configId,
-                        request.provider,
-                        request.model,
-                    ),
-                configId = request.configId,
-                provider = request.provider,
-                model = request.model,
-                displayModelId =
-                    TokenStatIdentityResolver.displayModelIdFor(request.model),
-            )
+        val identity = identityEntityFor(request.configId, request.provider, request.model)
         dao.insertIdentityIfAbsent(identity)
-        dao.upsertDisplayModel(
-            TokenStatDisplayModelEntity(
-                displayModelId = identity.displayModelId,
-                normalizedModel = TokenStatIdentityResolver.normalizeModelName(request.model),
-                displayName = request.model,
-            )
-        )
+        dao.upsertDisplayModel(displayModelEntityFor(request.model))
         return identity
     }
+
+    /** 身份行构造（请求边界与落账共用，与既有 [ensureIdentity] 规范化完全一致）。 */
+    private fun identityEntityFor(
+        configId: String,
+        provider: String,
+        model: String,
+    ): TokenStatIdentityEntity =
+        TokenStatIdentityEntity(
+            identityId = TokenStatIdentityResolver.identityId(configId, provider, model),
+            configId = configId,
+            provider = provider,
+            model = model,
+            displayModelId = TokenStatIdentityResolver.displayModelIdFor(model),
+        )
+
+    /** 默认展示分组行构造（默认规范化模型名分组，与既有 [ensureIdentity] 完全一致）。 */
+    private fun displayModelEntityFor(model: String): TokenStatDisplayModelEntity =
+        TokenStatDisplayModelEntity(
+            displayModelId = TokenStatIdentityResolver.displayModelIdFor(model),
+            normalizedModel = TokenStatIdentityResolver.normalizeModelName(model),
+            displayName = model,
+        )
 
     /** 脱敏诊断字段：来源标签、是否观察到 usage、上报次数、attempt 数；无正文/凭据。 */
     private fun buildDiagnosticsJson(request: TokenStatRequestContext): String? {

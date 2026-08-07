@@ -7,17 +7,21 @@ import com.ai.assistance.operit.data.dao.TokenStatsDao
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.BillingMode
 import com.ai.assistance.operit.data.model.PriceOverrideScope
+import com.ai.assistance.operit.data.model.TokenStatBaselineEntity
 import com.ai.assistance.operit.data.model.TokenStatDisplayModelEntity
 import com.ai.assistance.operit.data.model.TokenStatEventEntity
 import com.ai.assistance.operit.data.model.TokenStatIdentityEntity
+import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.stats.JdbcSQLiteDriver
 import com.ai.assistance.operit.data.stats.TokenCostCurrency
 import com.ai.assistance.operit.data.stats.TokenStatCategory
 import com.ai.assistance.operit.data.stats.TokenStatIdentityResolver
 import com.ai.assistance.operit.data.stats.TokenStatStatus
 import com.ai.assistance.operit.data.stats.TokenStatsCostMode
+import com.ai.assistance.operit.data.stats.TokenStatsLedger
 import com.ai.assistance.operit.data.stats.TokenStatsPreset
 import com.ai.assistance.operit.data.stats.TokenStatsQueryService
+import com.ai.assistance.operit.data.stats.TokenStatsResetCoordinator
 import com.ai.assistance.operit.data.stats.TokenStatsSettingsStore
 import com.ai.assistance.operit.data.stats.TokenStatsTimeSelection
 import com.ai.assistance.operit.data.stats.TokenStatsPriceOverrideDraft
@@ -68,12 +72,16 @@ class TokenUsageStatisticsViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
+        // ApiPreferences 是 JVM 级单例：删除“全部 + baseline”路径会走真实 DataStore，
+        // 每个测试前清空单例，保证绑定到本测试的临时目录（与 ApiPreferencesResetFailureTest
+        // 的隔离方式一致，避免跨测试共享 DataStore 文件）。
+        clearApiPreferencesSingletons()
         tempDir = kotlin.io.path.createTempDirectory("token-vm-test").toFile()
         context = mockContext(tempDir)
         database =
             Room.databaseBuilder(context, AppDatabase::class.java, "app_database")
                 .setDriver(JdbcSQLiteDriver())
-                .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30)
+                .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31)
                 .allowMainThreadQueries()
                 .build()
         dao = database.tokenStatsDao()
@@ -81,6 +89,9 @@ class TokenUsageStatisticsViewModelTest {
         TokenStatsQueryService.databaseProvider = { database }
         TokenStatsQueryService.legacyPricesProvider = { emptyMap() }
         TokenStatsQueryService.queryDispatcher = UnconfinedTestDispatcher()
+        // 阶段 5 删除走 TokenStatsResetCoordinator（spool replay 用注入的数据库）
+        TokenStatsResetCoordinator.daoProvider = { dao }
+        TokenStatsLedger.databaseProvider = { database }
     }
 
     @After
@@ -88,8 +99,24 @@ class TokenUsageStatisticsViewModelTest {
         TokenStatsQueryService.databaseProvider = null
         TokenStatsQueryService.legacyPricesProvider = null
         TokenStatsQueryService.queryDispatcher = Dispatchers.IO
+        TokenStatsResetCoordinator.daoProvider = null
+        TokenStatsLedger.databaseProvider = null
         database.close()
         Dispatchers.resetMain()
+    }
+
+    /** 清空 `Context.apiDataStore` 委托缓存与 ApiPreferences INSTANCE（跨测试隔离）。 */
+    private fun clearApiPreferencesSingletons() {
+        val facade = Class.forName("com.ai.assistance.operit.data.preferences.ApiPreferencesKt")
+        val delegateField = facade.getDeclaredField("apiDataStore\$delegate")
+        delegateField.isAccessible = true
+        val delegate = delegateField.get(null)
+        val instanceField =
+            delegate.javaClass.getDeclaredField("INSTANCE").apply { isAccessible = true }
+        instanceField.set(delegate, null)
+        val prefsInstanceField =
+            ApiPreferences::class.java.getDeclaredField("INSTANCE").apply { isAccessible = true }
+        prefsInstanceField.set(null, null)
     }
 
     private fun mockContext(filesDir: File): Context {
@@ -101,6 +128,41 @@ class TokenUsageStatisticsViewModelTest {
             File(filesDir, invocation.getArgument<String>(0))
         }
         return context
+    }
+
+    /**
+     * 直接以 DataStore 的 protobuf 文件格式（datastore/<name>.preferences_pb）写入
+     * legacy 累计键（token_input_/token_cached_input_/token_output_<provider_model>）。
+     * Windows JVM 上同一 DataStore 文件每测试只能经 DataStore 写入一次（见
+     * ApiPreferencesResetFailureTest 类注释：二次写入的原子替换 rename 失败），因此
+     * 种子键绕过 DataStore 写管线、用库自身 PreferencesProto 编码直接落盘，把唯一
+     * 一次真实 DataStore 写入留给被测删除流程（生产路径不受该测试环境约束）。
+     * 键名/文件路径与 `preferencesDataStore(name = "api_settings")` 约定一致。
+     */
+    private fun seedLegacyTokenCountsFile(
+        filesDir: File,
+        providerModel: String,
+        input: Long,
+        cached: Long,
+        output: Long,
+    ) {
+        val datastoreDir = File(filesDir, "datastore")
+        check(datastoreDir.mkdirs() || datastoreDir.isDirectory)
+        val mapBuilder = androidx.datastore.preferences.PreferencesProto.PreferenceMap.newBuilder()
+        fun putLong(key: String, value: Long) {
+            mapBuilder.putPreferences(
+                key,
+                androidx.datastore.preferences.PreferencesProto.Value.newBuilder()
+                    .setLong(value)
+                    .build(),
+            )
+        }
+        putLong("token_input_${providerModel.replace(":", "_")}", input)
+        putLong("token_cached_input_${providerModel.replace(":", "_")}", cached)
+        putLong("token_output_${providerModel.replace(":", "_")}", output)
+        File(datastoreDir, "api_settings.preferences_pb").outputStream().use { output ->
+            mapBuilder.build().writeTo(output)
+        }
     }
 
     private fun newViewModel(): TokenUsageStatisticsViewModel =
@@ -145,8 +207,8 @@ class TokenUsageStatisticsViewModelTest {
         configId: String = "cfg-1",
         provider: String = "OPENAI",
         model: String = "gpt-4o",
+        displayModelId: String = TokenStatIdentityResolver.displayModelIdFor(model),
     ) {
-        val displayModelId = TokenStatIdentityResolver.displayModelIdFor(model)
         dao.insertIdentityIfAbsent(
             TokenStatIdentityEntity(
                 identityId = identityId,
@@ -161,6 +223,26 @@ class TokenUsageStatisticsViewModelTest {
                 displayModelId = displayModelId,
                 normalizedModel = TokenStatIdentityResolver.normalizeModelName(model),
                 displayName = model,
+            )
+        )
+    }
+
+    private suspend fun seedBaseline(identityId: String, requestCount: Long = 3L) {
+        dao.upsertBaseline(
+            TokenStatBaselineEntity(
+                identityId = identityId,
+                inputTokens = 100L * requestCount,
+                cachedInputTokens = 0L,
+                outputTokens = 50L * requestCount,
+                requestCount = requestCount,
+                pricingCurrency = PricingCurrency.USD.name,
+                costInPricingCurrency = 0.01 * requestCount,
+                isEstimated = true,
+                fingerprint = "fp-$identityId",
+                importedAtMs = 1L,
+                frozenBillingMode = BillingMode.TOKEN.name,
+                frozenInputPricePerMillion = 1.0,
+                frozenOutputPricePerMillion = 2.0,
             )
         )
     }
@@ -207,7 +289,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `initial fallback picks first preset with data and persists it as auto`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             // 事件只在 6 天前：5h/12h/24h 空，7d 有数据
             dao.insertEvent(event("e1", "id-1", nowMs - 6L * 24 * 3600_000L + 12 * 3600_000L))
         }
@@ -225,7 +307,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `second viewmodel reuses persisted auto fallback without probing`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             // 事件只在 6 天前：5h/12h/24h 空，7d 有数据
             dao.insertEvent(event("e1", "id-1", nowMs - 6L * 24 * 3600_000L + 12 * 3600_000L))
         }
@@ -248,7 +330,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `user selection locks time and disables auto fallback`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             // 数据在 30 小时前：5h/12h/24h 全空（自动回退会选 7d），但用户已选择 24h
             dao.insertEvent(event("e1", "id-1", nowMs - 30 * 3600_000L))
             settings.savedSelection = TokenStatsTimeSelection(TokenStatsPreset.LAST_24H)
@@ -269,7 +351,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `custom range rejects invalid and accepts valid bounds`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             dao.insertEvent(event("e1", "id-1", nowMs - 2 * 3600_000L))
         }
         val viewModel = newViewModel()
@@ -342,7 +424,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `category and status filters refresh range data`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             dao.insertEvents(
                 listOf(
                     event("e1", "id-1", nowMs - 3_600_000L),
@@ -444,7 +526,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `clearing all categories or statuses triggers exactly one load`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             dao.insertEvents(
                 listOf(
                     event("e1", "id-1", nowMs - 3_600_000L),
@@ -498,7 +580,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `stale load cannot overwrite newer load result`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             dao.insertEvent(event("e1", "id-1", nowMs - 3_600_000L))
         }
         val gated = GatedSettingsStore()
@@ -544,7 +626,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `viewmodel clear cancels pending load before it writes state`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             dao.insertEvent(event("e1", "id-1", nowMs - 3_600_000L))
         }
         val dispatcher = StandardTestDispatcher()
@@ -574,7 +656,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `currency cost mode and rate changes persist and refresh`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             dao.insertEvent(event("e1", "id-1", nowMs - 3_600_000L))
         }
         val viewModel = newViewModel()
@@ -613,7 +695,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `price override save updates overrides and negative value fails with message`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             dao.insertEvent(event("e1", "id-1", nowMs - 3_600_000L))
         }
         val viewModel = newViewModel()
@@ -661,7 +743,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `editing price override keeps business key and only updates values`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             dao.insertEvent(event("e1", "id-1", nowMs - 3_600_000L))
         }
         val viewModel = newViewModel()
@@ -706,7 +788,7 @@ class TokenUsageStatisticsViewModelTest {
     @Test
     fun `group rename and create reflect in range display models`() {
         kotlinx.coroutines.runBlocking {
-            seedIdentity("id-1")
+            seedIdentity("id-1", configId = "cfg-a")
             seedIdentity("id-2", configId = "cfg-2")
             dao.insertEvents(
                 listOf(
@@ -812,6 +894,235 @@ class TokenUsageStatisticsViewModelTest {
             geminiId,
             kotlinx.coroutines.runBlocking { dao.getIdentity("id-1")!!.displayModelId },
         )
+    }
+
+    // ==== 阶段 5：删除（范围 / 模型 / 全部；删除后页面状态刷新一致） ====
+
+    @Test
+    fun `delete current range removes in range events only and refreshes state`() {
+        kotlinx.coroutines.runBlocking {
+            seedIdentity("id-1", configId = "cfg-a")
+            seedIdentity("id-2", configId = "cfg-b")
+            dao.insertEvent(event("e-in", "id-1", startedAtMs = nowMs - 3_600_000L))
+            dao.insertEvent(event("e-out", "id-1", startedAtMs = nowMs - 7L * 86_400_000L))
+            seedBaseline("id-1")
+            seedBaseline("id-2")
+
+            val viewModel = newViewModel()
+            awaitRefresh(viewModel, 0)
+            // 首次回退：5h 内恰有事件 → LAST_5H；currentRange 与查询同界
+            assertEquals(TokenStatsPreset.LAST_5H, viewModel.state.value.selectedPreset)
+            val range = viewModel.state.value.currentRange
+            assertNotNull(range)
+            assertTrue(range!!.startMs <= nowMs - 3_600_000L)
+            assertTrue(nowMs - 3_600_000L < range.endMs)
+
+            val from = viewModel.state.value.refreshVersion
+            viewModel.deleteRangeEvents()
+            awaitRefresh(viewModel, from)
+
+            // 删除真实生效：范围内事件消失，范围外保留
+            assertNull(dao.getEvent("e-in"))
+            assertNotNull(dao.getEvent("e-out"))
+            // baseline 绝不因范围删除被触碰
+            assertNotNull(dao.getBaseline("id-1"))
+            assertNotNull(dao.getBaseline("id-2"))
+            // 页面状态刷新一致：生命周期只剩 1 条事件、2 行 baseline；范围空数据
+            val lifetime = viewModel.state.value.lifetime!!
+            assertEquals(1L, lifetime.eventTotals.requests)
+            assertEquals(2L, lifetime.baselineTotals.identityCount)
+            assertEquals(0L, viewModel.state.value.range!!.eventCount)
+        }
+    }
+
+    @Test
+    fun `delete display model covers full group members and keeps baseline by choice`() {
+        kotlinx.coroutines.runBlocking {
+            // 展示组 group-x：跨 provider:model 的两个身份 + 组外同 provider:model 身份
+            seedIdentity("x-1", configId = "cfg-a", provider = "OPENAI", model = "gpt-4o", displayModelId = "group-x")
+            seedIdentity("x-2", provider = "DEEPSEEK", model = "deepseek-chat", displayModelId = "group-x")
+            seedIdentity("y-1", configId = "cfg-b", provider = "OPENAI", model = "gpt-4o", displayModelId = "group-y")
+            dao.insertEvent(event("e-x1", "x-1", startedAtMs = nowMs - 3_600_000L))
+            dao.insertEvent(event("e-x2", "x-2", startedAtMs = nowMs - 3_600_000L))
+            dao.insertEvent(event("e-y1", "y-1", startedAtMs = nowMs - 3_600_000L))
+            seedBaseline("x-1")
+            seedBaseline("y-1")
+
+            val viewModel = newViewModel()
+            awaitRefresh(viewModel, 0)
+
+            // 第二步选择“仅删除事件”：组内全部成员事件删除（含无事件组成员身份影响
+            // 由 DAO 全表解析验证），baseline 保留，组外同 provider:model 不受影响
+            val from = viewModel.state.value.refreshVersion
+            viewModel.deleteDisplayModel("group-x", deleteBaselines = false)
+            awaitRefresh(viewModel, from)
+
+            assertNull(dao.getEvent("e-x1"))
+            assertNull(dao.getEvent("e-x2"))
+            assertNotNull("same provider:model in another group must survive", dao.getEvent("e-y1"))
+            assertNotNull(dao.getBaseline("x-1"))
+            assertNotNull(dao.getBaseline("y-1"))
+            assertEquals(1L, viewModel.state.value.lifetime!!.eventTotals.requests)
+        }
+    }
+
+    @Test
+    fun `delete display model with baseline removes member baselines and refreshes`() {
+        kotlinx.coroutines.runBlocking {
+            seedIdentity("x-1", configId = "cfg-a", provider = "OPENAI", model = "gpt-4o", displayModelId = "group-x")
+            seedIdentity("y-1", provider = "DEEPSEEK", model = "deepseek-chat", displayModelId = "group-y")
+            dao.insertEvent(event("e-x1", "x-1", startedAtMs = nowMs - 3_600_000L))
+            dao.insertEvent(event("e-y1", "y-1", startedAtMs = nowMs - 3_600_000L))
+            seedBaseline("x-1")
+            seedBaseline("y-1")
+
+            val viewModel = newViewModel()
+            awaitRefresh(viewModel, 0)
+            val from = viewModel.state.value.refreshVersion
+            viewModel.deleteDisplayModel("group-x", deleteBaselines = true)
+            awaitRefresh(viewModel, from)
+
+            assertNull(dao.getEvent("e-x1"))
+            assertNotNull(dao.getEvent("e-y1"))
+            assertNull(dao.getBaseline("x-1"))
+            assertNotNull("other group baseline must survive", dao.getBaseline("y-1"))
+            assertEquals(1L, viewModel.state.value.lifetime!!.baselineTotals.identityCount)
+        }
+    }
+
+    @Test
+    fun `legacy datastore keys are cleared only when the deleted group contains the legacy identity`() {
+        kotlinx.coroutines.runBlocking {
+            // 两组同 provider:model：group-x 只含配置身份 cfg-a；group-y 含 legacy 身份
+            // （configId=""，旧 DataStore 累计键的 baseline 迁移目标，键按 provider:model 共享）
+            seedIdentity("x-1", configId = "cfg-a", provider = "OPENAI", model = "gpt-4o", displayModelId = "group-x")
+            seedIdentity("y-legacy", configId = "", provider = "OPENAI", model = "gpt-4o", displayModelId = "group-y")
+            seedBaseline("x-1")
+            seedBaseline("y-legacy")
+            val prefs = ApiPreferences.getInstance(context)
+            // Windows JVM 约束（见 ApiPreferencesResetFailureTest 类注释）：DataStore 1.0.0
+            // 以 File.renameTo 原子替换，Windows 上目标文件已存在时替换失败——同一文件
+            // 每测试只能被 DataStore 写入一次。因此 legacy 键用库自身 PreferencesProto
+            // 直接落盘（读断言可用），被测流程的唯一真实 DataStore 写入留给排空
+            // （applyLegacyCleanup，P1 闭环：删除事务 → 排空清键 + marker）。
+            seedLegacyTokenCountsFile(tempDir, "OPENAI:gpt-4o", input = 100L, cached = 10L, output = 50L)
+
+            val viewModel = newViewModel()
+            awaitRefresh(viewModel, 0)
+
+            // 删除只含 cfg-a 的组（baseline=yes）：legacy 身份不在目标组 → 不得清旧键
+            val from = viewModel.state.value.refreshVersion
+            viewModel.deleteDisplayModel("group-x", deleteBaselines = true)
+            awaitRefresh(viewModel, from)
+
+            assertNull("cfg-a baseline must be deleted", dao.getBaseline("x-1"))
+            assertNotNull("legacy baseline in other group must survive", dao.getBaseline("y-legacy"))
+            assertEquals(
+                "legacy DataStore key must survive a non-legacy group deletion",
+                100L,
+                prefs.getInputTokensForProviderModel("OPENAI:gpt-4o"),
+            )
+            assertEquals(50L, prefs.getOutputTokensForProviderModel("OPENAI:gpt-4o"))
+
+            // 删除含 legacy 身份的组（baseline=yes）：其 baseline 随组删除、旧键必须清除。
+            // 先移除磁盘文件，使排空（applyLegacyCleanup）成为该文件的首次写入
+            // （DataStore 内存状态已在上面读断言时缓存，编辑仍基于含键的状态）。
+            check(File(File(tempDir, "datastore"), "api_settings.preferences_pb").delete())
+            val from2 = viewModel.state.value.refreshVersion
+            viewModel.deleteDisplayModel("group-y", deleteBaselines = true)
+            awaitRefresh(viewModel, from2)
+
+            assertNull(dao.getBaseline("y-legacy"))
+            assertEquals(
+                "legacy DataStore key must be cleared with its baseline",
+                0L,
+                prefs.getInputTokensForProviderModel("OPENAI:gpt-4o"),
+            )
+            assertEquals(0L, prefs.getOutputTokensForProviderModel("OPENAI:gpt-4o"))
+        }
+    }
+
+    @Test
+    fun `delete all events only keeps baseline and refreshes`() {
+        kotlinx.coroutines.runBlocking {
+            seedIdentity("id-1", configId = "cfg-a")
+            seedIdentity("id-2", configId = "cfg-b")
+            dao.insertEvent(event("e-1", "id-1", startedAtMs = nowMs - 3_600_000L))
+            dao.insertEvent(event("e-2", "id-2", startedAtMs = nowMs - 3_600_000L))
+            seedBaseline("id-1")
+            seedBaseline("id-2")
+
+            val viewModel = newViewModel()
+            awaitRefresh(viewModel, 0)
+            val from = viewModel.state.value.refreshVersion
+            viewModel.deleteAllStatistics(deleteBaselines = false)
+            awaitRefresh(viewModel, from)
+
+            assertEquals(0, dao.countEvents())
+            assertEquals("baseline must survive", 2, dao.countBaselines())
+            val lifetime = viewModel.state.value.lifetime!!
+            assertEquals(0L, lifetime.eventTotals.requests)
+            assertEquals(2L, lifetime.baselineTotals.identityCount)
+            assertEquals(0L, viewModel.state.value.range!!.eventCount)
+        }
+    }
+
+    @Test
+    fun `delete all with baseline clears legacy keys and refreshes`() {
+        kotlinx.coroutines.runBlocking {
+            seedIdentity("id-1", configId = "cfg-a")
+            seedIdentity("id-2", configId = "cfg-b")
+            dao.insertEvent(event("e-1", "id-1", startedAtMs = nowMs - 3_600_000L))
+            dao.insertEvent(event("e-2", "id-2", startedAtMs = nowMs - 3_600_000L))
+            seedBaseline("id-1")
+            seedBaseline("id-2")
+
+            val viewModel = newViewModel()
+            awaitRefresh(viewModel, 0)
+            val from = viewModel.state.value.refreshVersion
+            viewModel.deleteAllStatistics(deleteBaselines = true)
+            awaitRefresh(viewModel, from)
+
+            assertEquals(0, dao.countEvents())
+            assertEquals(0, dao.countBaselines())
+            val lifetime = viewModel.state.value.lifetime!!
+            assertEquals(0L, lifetime.eventTotals.requests)
+            assertEquals(0L, lifetime.baselineTotals.identityCount)
+        }
+    }
+
+    @Test
+    fun `delete failures surface error message and keep data intact`() {
+        kotlinx.coroutines.runBlocking {
+            seedIdentity("id-1", configId = "cfg-a")
+            dao.insertEvent(event("e-1", "id-1", startedAtMs = nowMs - 3_600_000L))
+            seedBaseline("id-1")
+
+            val viewModel = newViewModel()
+            awaitRefresh(viewModel, 0)
+            // 数据库不可用：三种删除都应报错而不是假装成功
+            val failures =
+                listOf(
+                    { viewModel.deleteRangeEvents() },
+                    { viewModel.deleteDisplayModel("id-1", deleteBaselines = false) },
+                    { viewModel.deleteAllStatistics(deleteBaselines = false) },
+                )
+            for (action in failures) {
+                TokenStatsResetCoordinator.daoProvider =
+                    { _: Context -> throw RuntimeException("db down") }
+                try {
+                    action()
+                    awaitActionMessage(viewModel)
+                    assertTrue("error message expected", viewModel.actionMessage.value!!.isError)
+                    viewModel.consumeActionMessage()
+                } finally {
+                    TokenStatsResetCoordinator.daoProvider = { dao }
+                }
+            }
+            // 失败不产生任何删除
+            assertEquals(1, dao.countEvents())
+            assertEquals(1, dao.countBaselines())
+        }
     }
 }
 

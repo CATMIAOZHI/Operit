@@ -29,6 +29,7 @@ import com.ai.assistance.operit.data.stats.TokenStatsTimeRange
 import com.ai.assistance.operit.data.stats.TokenStatsTimeRanges
 import com.ai.assistance.operit.data.stats.TokenStatsTimeSelection
 import com.ai.assistance.operit.data.stats.TokenStatsPriceOverrideDraft
+import com.ai.assistance.operit.data.stats.TokenStatsResetCoordinator
 import com.ai.assistance.operit.util.AppLogger
 import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
@@ -60,6 +61,12 @@ data class TokenStatsUiState(
     val selectedPreset: TokenStatsPreset = TokenStatsPreset.LAST_5H,
     /** 自定义范围的显式边界；非 CUSTOM 预设时为 null。 */
     val customRange: TokenStatsTimeRange? = null,
+    /**
+     * 当前查询实际使用的时间范围（阶段 5 删除入口）：与展示/查询完全同界——
+     * CUSTOM 用自定义边界，其余预设用 [TokenStatsTimeRanges.rangeFor] 实时计算。
+     * 删除当前范围必须与用户所见范围一致，不能在 UI 侧另行计算。
+     */
+    val currentRange: TokenStatsTimeRange? = null,
     /** true = 用户手动选择过时间（不再自动回退）。 */
     val userChoseTime: Boolean = false,
     val targetCurrency: PricingCurrency = PricingCurrency.CNY,
@@ -268,6 +275,7 @@ class TokenUsageStatisticsViewModel(
                         costMode = mode,
                         selectedPreset = preset,
                         customRange = customRange,
+                        currentRange = range,
                         userChoseTime = userChoseTime,
                         overrides = result.overrides,
                         groupModels = result.groups,
@@ -535,53 +543,104 @@ class TokenUsageStatisticsViewModel(
         }
     }
 
-    // ==== 旧重置入口（阶段 5 的完整删除语义不在本阶段实现，保持现有行为正确） ====
+    // ==== 阶段 5：删除（范围/模型/全部，危险操作由 UI 两步确认） ====
+    // 删除后统一 load() 全量重查：生命周期、范围、图表与模型明细全部刷新，
+    // 不留任何缓存旧数据。删除语义（baseline 只随“全部/模型 + 用户确认”删除）：
+    // - 范围删除：只删有时间戳的事件（RANGE tombstone），绝不触碰 baseline；
+    // - 模型删除：完整展示分组（identity 全表解析成员，不依赖当前筛选），
+    //   baseline 是否删除由 UI 第二步确认；确认删除时经 outbox 清理旧 DataStore
+    //   累计键（否则下次启动迁移会按旧快照把已删 baseline 重新导入）；
+    // - 全部删除：FULL tombstone + 全部事件；baseline 是否删除由 UI 第二步
+    //   确认，确认时走 resetAllProviderModelTokenCounts（Room 先删 + ALL cleanup
+    //   operation 排空旧计数，保持已确认语义）。
+    // 所有删 baseline 的路径都满足 P1 闭环：删除事务是唯一线性化点，operation
+    // 持久化在同一事务，DataStore 清理在事务外排空且 marker 幂等。
 
-    /** 重置全部统计（旧计数 + 新账本），失败时返回错误消息。 */
-    fun resetAllStatistics(onResult: (String?) -> Unit) {
+    /**
+     * 删除当前时间范围的事件（[TokenStatsUiState.currentRange]，与显示同界）。
+     * 只删事件，绝不删除 baseline；失败时通过 [actionMessage] 提示。
+     */
+    fun deleteRangeEvents() {
+        val range = _state.value.currentRange ?: return
         viewModelScope.launch(dispatcher) {
-            val ok = runCatching {
-                ApiPreferences.getInstance(appContext).resetAllProviderModelTokenCounts()
-            }.getOrDefault(false)
-            onResult(
-                if (ok) {
-                    null
-                } else {
-                    stringResolver(R.string.settings_token_stats_reset_failed)
-                }
-            )
-            load()
+            runCatching {
+                TokenStatsResetCoordinator.deleteEventsInRange(appContext, range.startMs, range.endMs)
+            }.onSuccess { load() }.onFailure { e ->
+                _actionMessage.value =
+                    TokenStatsActionMessage(
+                        text = stringResolver(R.string.token_stats_delete_range_failed),
+                        isError = true,
+                    )
+                runCatching { AppLogger.e(tag, "删除时间范围统计失败", e) }
+            }
         }
     }
 
     /**
-     * 重置指定展示分组：仅当组内所有身份属于同一 provider:model 时支持
-     * （与旧入口的 provider:model 语义一致）；跨 provider/模型合并组
-     * 返回错误消息，不扩展阶段 5 才实现的删除语义。
+     * 删除指定展示分组的全部事件（完整组成员，DAO 事务内从 identity 全表解析）。
+     * [deleteBaselines] 为 true 时同时删除该组成员的 baseline，并清理这些成员
+     * 中**确实对应 legacy 身份**（configId 为空串）的 provider:model 旧 DataStore
+     * 累计键（防迁移重导复活）；为 false 时 baseline 与旧键一律保留。身份行/分组/
+     * 价格覆盖不删除。
+     *
+     * P1 闭环：成员解析、tombstone、删除与 cleanup operation 持久化全部在 DAO
+     * **同一事务**内线性化（不再 VM 事务外预读），事务提交后由
+     * [TokenStatsResetCoordinator] 立即排空 DataStore 累计键（marker 幂等，
+     * 失败保持 PENDING 由下次启动重试并向上报错）。
      */
-    fun resetDisplayModel(displayModelId: String, onResult: (String?) -> Unit) {
+    fun deleteDisplayModel(displayModelId: String, deleteBaselines: Boolean) {
         viewModelScope.launch(dispatcher) {
-            val identities =
-                runCatching { statsDao.getAllIdentities() }.getOrDefault(emptyList())
-                    .filter { it.displayModelId == displayModelId }
-            val providerModels = identities.map { it.provider to it.model }.distinct()
-            if (providerModels.size != 1) {
-                onResult(stringResolver(R.string.token_stats_reset_merged_unsupported))
-                return@launch
+            try {
+                TokenStatsResetCoordinator.deleteDisplayModel(appContext, displayModelId, deleteBaselines)
+                load()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _actionMessage.value =
+                    TokenStatsActionMessage(
+                        text = stringResolver(R.string.token_stats_delete_model_failed),
+                        isError = true,
+                    )
+                runCatching { AppLogger.e(tag, "删除模型统计失败", e) }
             }
-            val (provider, model) = providerModels.single()
-            val ok = runCatching {
-                ApiPreferences.getInstance(appContext)
-                    .resetProviderModelTokenCounts("$provider:$model")
-            }.getOrDefault(false)
-            onResult(
+        }
+    }
+
+    /**
+     * 删除全部统计事件。 [deleteBaselines] 为 true 时走既有
+     * [ApiPreferences.resetAllProviderModelTokenCounts]（旧 DataStore 累计键 +
+     * 新账本事件与 baseline 一并清空）；为 false 时只删新账本事件，baseline 与
+     * 旧累计键保留。失败时通过 [actionMessage] 提示。
+     */
+    fun deleteAllStatistics(deleteBaselines: Boolean) {
+        viewModelScope.launch(dispatcher) {
+            try {
+                val ok =
+                    if (deleteBaselines) {
+                        ApiPreferences.getInstance(appContext).resetAllProviderModelTokenCounts()
+                    } else {
+                        TokenStatsResetCoordinator.deleteAllEvents(appContext, deleteBaselines = false)
+                        true
+                    }
                 if (ok) {
-                    null
+                    load()
                 } else {
-                    stringResolver(R.string.settings_token_stats_reset_failed)
+                    _actionMessage.value =
+                        TokenStatsActionMessage(
+                            text = stringResolver(R.string.settings_token_stats_reset_failed),
+                            isError = true,
+                        )
                 }
-            )
-            load()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _actionMessage.value =
+                    TokenStatsActionMessage(
+                        text = stringResolver(R.string.token_stats_delete_all_failed),
+                        isError = true,
+                    )
+                runCatching { AppLogger.e(tag, "删除全部统计失败", e) }
+            }
         }
     }
 

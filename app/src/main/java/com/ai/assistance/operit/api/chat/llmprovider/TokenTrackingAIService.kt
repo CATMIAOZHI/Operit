@@ -190,7 +190,17 @@ class TokenTrackingAIService(
             )
         }
         val (provider, model) = TokenStatIdentityResolver.splitProviderModel(delegate.providerModel)
-        val acceptedGeneration = TokenStatsLedger.currentResetGeneration(appContext)
+        // P1-1：请求接受边界在**同一事务**内原子确保身份存在并读取 generation——删除展示
+        // 分组要么看见该身份（写 IDENTITY tombstone，删除前接受的事件被跳过），要么请求
+        // 拿到 ≥ tombstone 的新 generation（删除后请求正常入账）。首次请求的身份绝不可能
+        // 绕过分组删除 tombstone 复活旧事件。
+        val acceptedGeneration =
+            TokenStatsLedger.ensureIdentityAndCaptureGeneration(
+                appContext,
+                configId,
+                provider,
+                model,
+            )
         return TokenStatRequestContext(
             eventId = "evt_${UUID.randomUUID().toString().replace("-", "")}",
             category = category ?: TokenStatCategory.OTHER,
