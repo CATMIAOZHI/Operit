@@ -324,18 +324,18 @@ object ProviderUsageNormalizer {
         output: Long?,
         completeSnapshot: Boolean,
     ): ProviderUsageSnapshot {
+        val validInput = input?.takeIf { it >= 0 }
+        val validCachedInput = cachedInput?.takeIf { it >= 0 }
+        val splitIsValid =
+            validInput != null && validCachedInput != null && validCachedInput <= validInput
         val uncached =
-            when {
-                input == null || cachedInput == null -> null
-                input >= cachedInput -> (input - cachedInput).coerceAtLeast(0)
-                else -> input
-            }
+            if (splitIsValid) validInput!! - validCachedInput!! else null
         return ProviderUsageSnapshot(
             uncachedInputTokens = uncached,
-            cachedInputTokens = cachedInput?.coerceAtLeast(0),
+            cachedInputTokens = validCachedInput.takeIf { splitIsValid },
             cacheWriteTokens = null,
-            totalInputTokens = input?.coerceAtLeast(0),
-            outputTokens = output?.coerceAtLeast(0),
+            totalInputTokens = validInput,
+            outputTokens = output?.takeIf { it >= 0 },
             reasoningTokens = null,
             reasoningIncludedInOutput = null,
             cacheWriteSeparateBilling = false,

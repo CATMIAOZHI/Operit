@@ -4,6 +4,7 @@ import com.ai.assistance.operit.data.collects.PricingCurrency
 import com.ai.assistance.operit.data.model.BillingMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TokenCostCalculatorTest {
@@ -366,9 +367,49 @@ outputTokens = 500L,
         // 800/1e6*1 + 200/1e6*0.5 + 500/1e6*2
         assertEquals(0.0019, cost.amount!!, 1e-12)
     }
+
+    @Test
+    fun `non finite token price and overflowing token cost are unknown`() {
+        val usage =
+            TokenUsageInput(
+                uncachedInputTokens = Long.MAX_VALUE,
+                cachedInputTokens = 0L,
+                cacheWriteTokens = 0L,
+                outputTokens = Long.MAX_VALUE,
+            )
+        assertNull(
+            TokenCostCalculator.computeCost(
+                usage,
+                tokenPricing.copy(inputPricePerMillion = 1e308),
+            ).amount
+        )
+        assertNull(
+            TokenCostCalculator.computeCost(
+                usage.copy(uncachedInputTokens = 1L, outputTokens = 1L),
+                tokenPricing.copy(outputPricePerMillion = Double.NaN),
+            ).amount
+        )
+    }
+
+    @Test
+    fun `non finite count price is unknown`() {
+        assertNull(
+            TokenCostCalculator.computeCost(
+                TokenUsageInput(),
+                countPricing.copy(pricePerRequest = Double.POSITIVE_INFINITY),
+            ).amount
+        )
+    }
 }
 
 class TokenCostCurrencyTest {
+
+    @Test
+    fun `query params reject non finite manual rate`() {
+        assertTrue(runCatching { TokenStatsQueryParams(manualRate = Double.POSITIVE_INFINITY) }.isFailure)
+        assertTrue(runCatching { TokenStatsQueryParams(manualRate = Double.NaN) }.isFailure)
+    }
+
 
     @Test
     fun `default manual rate is 7`() {
@@ -384,7 +425,7 @@ class TokenCostCurrencyTest {
                 to = PricingCurrency.CNY,
                 manualRate = 7.0,
             )
-        assertEquals(70.0, converted, 1e-12)
+        assertEquals(70.0, converted!!, 1e-12)
     }
 
     @Test
@@ -396,7 +437,7 @@ class TokenCostCurrencyTest {
                 to = PricingCurrency.USD,
                 manualRate = 7.0,
             )
-        assertEquals(10.0, converted, 1e-12)
+        assertEquals(10.0, converted!!, 1e-12)
     }
 
     @Test
@@ -408,7 +449,7 @@ class TokenCostCurrencyTest {
                 to = PricingCurrency.CNY,
                 manualRate = 7.0,
             )
-        assertEquals(5.0, converted, 1e-12)
+        assertEquals(5.0, converted!!, 1e-12)
     }
 
     @Test
@@ -418,8 +459,8 @@ class TokenCostCurrencyTest {
         val atRate7 = TokenCostCurrency.convertTo(nativeCost, PricingCurrency.USD, PricingCurrency.CNY, 7.0)
         val atRate8 = TokenCostCurrency.convertTo(nativeCost, PricingCurrency.USD, PricingCurrency.CNY, 8.0)
 
-        assertEquals(70.0, atRate7, 1e-12)
-        assertEquals(80.0, atRate8, 1e-12)
+        assertEquals(70.0, atRate7!!, 1e-12)
+        assertEquals(80.0, atRate8!!, 1e-12)
         assertEquals(10.0, nativeCost, 1e-12) // 原币成本不受汇率影响
     }
 
@@ -488,6 +529,26 @@ outputTokens = 500L,
                 7.0,
             )
         assertEquals(0.014, historicalCny!!, 1e-12)
-        assertEquals(0.028, revaluedCny, 1e-12)
+        assertEquals(0.028, revaluedCny!!, 1e-12)
+    }
+
+    @Test
+    fun `currency conversion overflow returns unknown`() {
+        assertNull(
+            TokenCostCurrency.convertTo(
+                Double.MAX_VALUE,
+                PricingCurrency.USD,
+                PricingCurrency.CNY,
+                2.0,
+            )
+        )
+        assertNull(
+            TokenCostCurrency.historicalCostConverted(
+                Double.MAX_VALUE,
+                PricingCurrency.USD,
+                PricingCurrency.CNY,
+                2.0,
+            )
+        )
     }
 }

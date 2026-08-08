@@ -261,6 +261,32 @@ class TokenStatsAggregatorTest {
     }
 
     @Test
+    fun `non finite historical costs are unknown and never reach BigDecimal`() {
+        val id = identity("id-1")
+        val events =
+            listOf(
+                event("finite", id.identityId, 1000L, cost = 1.0),
+                event("infinite", id.identityId, 2000L, cost = Double.POSITIVE_INFINITY),
+                event("nan", id.identityId, 3000L, cost = Double.NaN),
+            )
+        val rangeCost = aggregated(events, listOf(id)).cost
+        assertEquals(7.0, rangeCost.knownAmount, 1e-9)
+        assertEquals(2L, rangeCost.unknownContributionCount)
+
+        val lifetime =
+            TokenStatsAggregator.lifetime(
+                events = events,
+                baselines = listOf(baseline(id.identityId, cost = Double.POSITIVE_INFINITY)),
+                identitiesById = mapOf(id.identityId to id),
+                overrides = emptyList(),
+                legacyPrices = emptyMap(),
+                params = params,
+            )
+        assertEquals(2L, lifetime.eventTotals.cost.unknownContributionCount)
+        assertEquals(1L, lifetime.baselineTotals.cost.unknownContributionCount)
+    }
+
+    @Test
     fun `zero cost is a known contribution`() {
         val cost = aggregated(listOf(event("e1", "id-1", 1000L, cost = 0.0)), listOf(identity("id-1"))).cost
         assertEquals(0.0, cost.knownAmount, 1e-9)

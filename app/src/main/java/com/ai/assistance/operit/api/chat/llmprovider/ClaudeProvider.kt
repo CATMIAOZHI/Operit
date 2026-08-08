@@ -39,6 +39,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Anthropic Claude API的实现，处理Claude特有的API格式 */
+internal fun shouldPropagateClaudeCancellation(isManuallyCancelled: Boolean): Boolean =
+    isManuallyCancelled
+
 class ClaudeProvider(
     private val apiEndpoint: String,
     private val apiKeyProvider: ApiKeyProvider,
@@ -1608,6 +1611,11 @@ class ClaudeProvider(
                                     tokenCacheManager.outputTokenCount
                                 )
                             }
+                            if (shouldPropagateClaudeCancellation(isManuallyCancelled)) {
+                                throw UserCancellationException(
+                                    context.getString(R.string.openai_error_request_cancelled)
+                                )
+                            }
                             return@withContext
                         }
 
@@ -1890,6 +1898,12 @@ class ClaudeProvider(
                             }
                         }
 
+                        if (shouldPropagateClaudeCancellation(isManuallyCancelled)) {
+                            throw UserCancellationException(
+                                context.getString(R.string.openai_error_request_cancelled)
+                            )
+                        }
+
                         if (!emittedAny && nonSseJsonLinesBuffer.isNotBlank()) {
                             val buffered = nonSseJsonLinesBuffer.toString().trim()
                             AppLogger.w(
@@ -1958,6 +1972,13 @@ class ClaudeProvider(
                     }
                 }
 
+                // Cancellation can race with fallback parsing after the stream loop. Recheck at
+                // the final success boundary so a manually cancelled request is never completed.
+                if (shouldPropagateClaudeCancellation(isManuallyCancelled)) {
+                    throw UserCancellationException(
+                        context.getString(R.string.openai_error_request_cancelled)
+                    )
+                }
                 AppLogger.d("AIService", "【Claude】请求成功完成")
                 logFinalOutput(receivedContent, "Claude final output summary: ")
                 return@stream

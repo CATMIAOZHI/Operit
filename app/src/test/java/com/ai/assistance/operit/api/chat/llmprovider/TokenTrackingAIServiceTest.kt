@@ -673,6 +673,10 @@ class TokenTrackingAIServiceTest {
             TokenTrackingAIService.classify(CancellationException("c")),
         )
         assertEquals(TokenStatStatus.FAILED, TokenTrackingAIService.classify(IOException("f")))
+        assertEquals(
+            TokenStatStatus.CANCELLED,
+            TokenTrackingAIService.classify(UserCancellationException("manual stream cancellation")),
+        )
         // 明确非超时取消优先于 cause 链：UserCancellationException(cause=InterruptedIOException)
         // 必须 CANCELLED，不能被 cause 里的 InterruptedIOException 误判为超时
         assertEquals(

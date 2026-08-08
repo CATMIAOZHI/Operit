@@ -80,6 +80,9 @@ class TokenStatRequestContext(
     /** attempt -> 该 attempt 最后一次上报的快照（同一 attempt 重复上报取最后）。 */
     private val attemptUsages = LinkedHashMap<Int, ProviderUsageSnapshot>()
 
+    /** spool 中的 usage 已在写入前聚合，重放时不得按原 attemptCount 再检查缺口。 */
+    private var replayAggregatedUsage: ProviderUsageSnapshot? = null
+
     /** 仅在首个真实内容 chunk 到达时记录一次。 */
     fun onFirstToken(nowMs: Long = System.currentTimeMillis()) {
         if (firstTokenAtMs == null) {
@@ -158,15 +161,18 @@ class TokenStatRequestContext(
      * 来源/包含推理声明取最后一次。
      */
     fun aggregatedUsage(): ProviderUsageSnapshot? {
+        replayAggregatedUsage?.let { return it }
         val snapshots = attemptUsages.values.toList()
         if (snapshots.isEmpty()) return null
+        val allAttemptsReported =
+            attemptCount > 0 && (1..attemptCount).all { attemptUsages.containsKey(it) }
         return ProviderUsageSnapshot(
-            uncachedInputTokens = sumComponent(snapshots) { it.uncachedInputTokens },
-            cachedInputTokens = sumComponent(snapshots) { it.cachedInputTokens },
-            cacheWriteTokens = sumComponent(snapshots) { it.cacheWriteTokens },
-            totalInputTokens = sumComponent(snapshots) { it.totalInputTokens },
-            outputTokens = sumComponent(snapshots) { it.outputTokens },
-            reasoningTokens = sumComponent(snapshots) { it.reasoningTokens },
+            uncachedInputTokens = sumComponent(snapshots, allAttemptsReported) { it.uncachedInputTokens },
+            cachedInputTokens = sumComponent(snapshots, allAttemptsReported) { it.cachedInputTokens },
+            cacheWriteTokens = sumComponent(snapshots, allAttemptsReported) { it.cacheWriteTokens },
+            totalInputTokens = sumComponent(snapshots, allAttemptsReported) { it.totalInputTokens },
+            outputTokens = sumComponent(snapshots, allAttemptsReported) { it.outputTokens },
+            reasoningTokens = sumComponent(snapshots, allAttemptsReported) { it.reasoningTokens },
             reasoningIncludedInOutput = snapshots.lastOrNull()?.reasoningIncludedInOutput,
             cacheWriteSeparateBilling = snapshots.lastOrNull()?.cacheWriteSeparateBilling ?: true,
             completeSnapshot = true,
@@ -176,8 +182,10 @@ class TokenStatRequestContext(
 
     private fun sumComponent(
         snapshots: List<ProviderUsageSnapshot>,
+        allAttemptsReported: Boolean,
         pick: (ProviderUsageSnapshot) -> Long?,
     ): Long? {
+        if (!allAttemptsReported) return null
         val values = snapshots.mapNotNull(pick)
         if (values.size != snapshots.size) return null
         return values.fold(0L) { acc, value -> TokenCostCalculator.saturatedAdd(acc, value) }
@@ -255,7 +263,7 @@ class TokenStatRequestContext(
             json.optJSONObject("usage")?.let { usageJson ->
                 val usage = usageFromJson(usageJson)
                 context.lastUsage = usage
-                context.attemptUsages[1] = usage
+                context.replayAggregatedUsage = usage
             }
             val pricingJson =
                 json.optJSONObject("pricing")

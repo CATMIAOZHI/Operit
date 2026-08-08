@@ -109,7 +109,7 @@ object TokenStatsAggregator {
                 totalTokens.accept(canonicalTotalTokens(event))
                 val (amount, currency) =
                     eventCost(event, identities[event.statIdentityId], pricing!!, params)
-                if (amount == null) {
+                if (amount == null || !amount.isFinite()) {
                     costUnknownCount += 1
                 } else {
                     originalCosts.merge(currency, BigDecimal(amount)) { left, right -> left.add(right) }
@@ -417,7 +417,7 @@ object TokenStatsAggregator {
         var unknownCount = 0L
         for (event in events) {
             val (amount, currency) = eventCost(event, identitiesById[event.statIdentityId], pricing, params)
-            if (amount == null) {
+            if (amount == null || !amount.isFinite()) {
                 unknownCount += 1
                 continue
             }
@@ -471,7 +471,7 @@ object TokenStatsAggregator {
             outputTokens = TokenCostCalculator.saturatedAdd(outputTokens, baseline.outputTokens)
             anyEstimated = anyEstimated || baseline.isEstimated
             val amount = baseline.costInPricingCurrency
-            if (amount == null) {
+            if (amount == null || !amount.isFinite()) {
                 unknownCount += 1
             } else {
                 original.merge(
