@@ -40,6 +40,9 @@ class ApiPreferences private constructor(private val context: Context) {
         @Volatile
         private var INSTANCE: ApiPreferences? = null
 
+        /** JVM tests can avoid initializing the application-scoped ToolPkg runtime. */
+        internal var toolPkgProviderNamesProvider: (() -> List<String>)? = null
+
         fun getInstance(context: Context): ApiPreferences {
             return INSTANCE ?: synchronized(this) {
                 val instance = ApiPreferences(context.applicationContext)
@@ -1065,7 +1068,8 @@ class ApiPreferences private constructor(private val context: Context) {
     }
 
     private fun registeredToolPkgProviderNames(): List<String> =
-            ToolPkgAiProviderRegistry.list().map { it.displayName }
+            toolPkgProviderNamesProvider?.invoke()
+                ?: ToolPkgAiProviderRegistry.list().map { it.displayName }
 
     /** 旧版累计 baseline 是否加入生命周期累计；缺省开启以保持升级前后的总计连续。 */
     suspend fun getStatsIncludeLegacy(): Boolean {

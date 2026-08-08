@@ -56,7 +56,8 @@ abstract class TokenStatsDao {
     /** 活动热力图只读取所需列，避免把价格、诊断等完整事件字段整表实体化。 */
     @Query(
         "SELECT startedAtMs, uncachedInputTokens, cachedInputTokens, cacheWriteTokens, " +
-            "totalInputTokens, outputTokens, reasoningTokens, reasoningIncludedInOutput " +
+            "totalInputTokens, outputTokens, reasoningTokens, reasoningIncludedInOutput, " +
+            "cacheWriteSeparateBilling " +
             "FROM token_stat_events"
     )
     abstract suspend fun getTokenActivityRows(): List<TokenActivityEventRow>
@@ -694,6 +695,24 @@ abstract class TokenStatsDao {
     @Query("SELECT * FROM token_stat_range_cutoffs")
     abstract suspend fun rangeCutoffs(): List<TokenStatRangeCutoffEntity>
 
+    /**
+     * RANGE tombstone 覆盖检查（排空插入用）：是否存在 generation **大于**事件
+     * 接受 generation 且半开区间 [startMs, endMs) 包含事件 startedAtMs 的
+     * tombstone。单条 EXISTS 短路查询，避免把 range cutoffs 全表 materialize
+     * 后在 JVM 侧遍历（行数 = 用户范围删除次数）。
+     */
+    @Query(
+        "SELECT EXISTS(" +
+            "SELECT 1 FROM token_stat_range_cutoffs " +
+            "WHERE generation > :acceptedGeneration " +
+            "AND startMs <= :startedAtMs AND endMs > :startedAtMs" +
+            ")"
+    )
+    protected abstract suspend fun rangeCutoffCoversEvent(
+        acceptedGeneration: Long,
+        startedAtMs: Long,
+    ): Boolean
+
     @Query("DELETE FROM token_stat_range_cutoffs")
     protected abstract suspend fun deleteAllRangeCutoffs()
 
@@ -865,7 +884,8 @@ abstract class TokenStatsDao {
      * - FULL：全量删除/重置后不接受任何更早接受的事件；
      * - IDENTITY：按展示分组删除后不接受该身份更早接受的事件（精确到身份）；
      * - MODEL：按 provider:model 重置后不接受该模型更早接受的事件；
-     * - RANGE：范围删除后不接受 startedAtMs 落在已删范围且更早接受的事件。
+     * - RANGE：范围删除后不接受 startedAtMs 落在已删范围且更早接受的事件
+     *   （单条 EXISTS 短路，不整表 materialize range cutoffs）。
      * 统一 generation 计数（两表 UNION）保证“接受于删除前”判断不依赖墙钟。
      */
     @Transaction
@@ -888,14 +908,9 @@ abstract class TokenStatsDao {
                 return false
             }
         }
-        for (cutoff in rangeCutoffs()) {
-            if (event.acceptedGeneration < cutoff.generation &&
-                event.startedAtMs >= cutoff.startMs &&
-                event.startedAtMs < cutoff.endMs
-            ) {
-                return false
-            }
-        }
+        // RANGE tombstone 用单条 EXISTS 判断（半开区间 [startMs, endMs)，
+        // generation > acceptedGeneration 等价于 acceptedGeneration < generation）。
+        if (rangeCutoffCoversEvent(event.acceptedGeneration, event.startedAtMs)) return false
         insertEvent(event)
         return true
     }

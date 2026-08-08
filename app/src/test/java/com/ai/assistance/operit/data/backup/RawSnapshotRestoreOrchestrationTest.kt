@@ -52,6 +52,8 @@ import org.mockito.kotlin.whenever
  *   processRestartRequired 为 true；
  * - 恢复前为 COMPLETED 时登记完成后保持 COMPLETED（官方迁移标记不丢失）；
  * - 偏好/数据库目录替换失败：状态停在 REPLACING，无 marker，不要求重启；
+ * - 目录替换成功但 RESTORE_REPLACED 状态写入失败：重启门立即生效（替换成功即
+ *   要求重启），状态文件停留在 REPLACING、无 marker；
  * - 目录替换成功但 marker 登记失败：状态停在 RESTORE_REPLACED 且记录 finalState，
  *   要求重启——冷启动自动补登记，无需重新替换目录；
  * - 冷启动自动补登记：RESTORE_REPLACED → 登记新 generation → 完成状态；
@@ -225,6 +227,51 @@ class RawSnapshotRestoreOrchestrationTest {
                 assertEquals(MigrationStateStore.State.RESTORE_REPLACED, state().state)
                 assertEquals(MigrationStateStore.State.IDLE, state().finalState)
                 assertTrue("restart must be required so cold start auto-registers", RawSnapshotBackupManager.isProcessRestartRequired())
+            }
+        }
+
+    @Test
+    fun `replacement success but RESTORE_REPLACED write failure still requires restart`() =
+        runBlocking {
+            Mockito.mockStatic(AppLogger::class.java).use {
+                // 状态写入在 RESTORE_REPLACED 时失败（模拟持久化磁盘满）：
+                // REPLACING（performRestore 内）仍走真实文件 IO，便于断言状态。
+                val realIo = { ctx: Context -> PlainFileStateIo(File(ctx.noBackupFilesDir, "official_operit_migration_state.txt")) }
+                MigrationStateStore.fileIoProvider = { ctx ->
+                    object : MigrationStateFileIo {
+                        override fun read(): String? = realIo(ctx).read()
+
+                        override fun write(payload: String) {
+                            if (payload.contains("RESTORE_REPLACED")) {
+                                throw java.io.IOException("state disk full")
+                            }
+                            realIo(ctx).write(payload)
+                        }
+                    }
+                }
+                try {
+                    RawSnapshotBackupManager.runRestoreEntry(
+                        context = context,
+                        finalState = RawSnapshotBackupManager.restoreFinalState(context),
+                        performRestore = {
+                            MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.REPLACING)
+                        }
+                    )
+                    fail("state write failure must propagate")
+                } catch (e: IllegalStateException) {
+                    // MigrationStateStore.write 吞掉底层 IOException 返回 false，
+                    // writeOrThrow 以 IllegalStateException 终止编排。
+                    assertTrue(e.message!!.contains("Failed to persist migration state RESTORE_REPLACED"))
+                }
+                // 替换已成功：即使 RESTORE_REPLACED 写入失败，重启门也必须立即生效，
+                // 本进程绝不允许再对已替换的数据目录执行任何替换/导出。
+                assertTrue(
+                    "restart must be required once replacement succeeded, even if state write failed",
+                    RawSnapshotBackupManager.isProcessRestartRequired()
+                )
+                assertFalse("no marker when state write failed", markerFile().exists())
+                // 写失败不产生半状态：状态文件停留在 performRestore 已持久化的 REPLACING
+                assertEquals(MigrationStateStore.State.REPLACING, state().state)
             }
         }
 

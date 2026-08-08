@@ -429,16 +429,16 @@ private fun BaselineLine(
     }
 }
 
-/** 已知 token 分量合计（uncached+cached+cacheWrite+output+独立计费 reasoning，未知不算 0）。 */
+/**
+ * 事件 canonical 总 Token（聚合器逐事件推导，口径见
+ * [com.ai.assistance.operit.data.stats.TokenStatsTotals.totalTokens]：
+ * 权威 totalInputTokens 优先，fallback 按 cacheWriteSeparateBilling 决定输入口径，
+ * 输出按 reasoningIncludedInOutput 决定是否补推理；未知分量保持 unknown 不当作 0）。
+ * UI 展示总 Token 的唯一事实来源，不再从原始聚合字段自行重组。
+ */
 internal fun knownTokenSum(
     totals: com.ai.assistance.operit.data.stats.TokenStatsTotals,
-): Long = saturatedTokenSum(
-        totals.uncachedInput.knownSum,
-        totals.cachedInput.knownSum,
-        totals.cacheWrite.knownSum,
-        totals.output.knownSum,
-        totals.reasoning.knownSum,
-    )
+): Long = totals.totalTokens.knownSum
 
 /** 旧累计值没有额外 token 分类：inputTokens 已含缓存命中，只能按总输入和输出合计。 */
 internal fun knownBaselineTokenSum(totals: TokenStatsBaselineTotals): Long =

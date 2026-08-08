@@ -51,14 +51,20 @@ object TokenBaselineImportRunner {
     internal var databaseProvider: ((Context) -> AppDatabase)? = null
 
     suspend fun ensureMigrated(context: Context) {
+        ensureMigratedStrict(context)
+    }
+
+    /** Startup readiness entry point: false means this attempt must not be treated as ready. */
+    internal suspend fun ensureMigratedStrict(context: Context): Boolean {
         try {
-            runImport(context.applicationContext, forceReplace = false)
+            return runImport(context.applicationContext, forceReplace = false)
         } catch (e: CancellationException) {
             // 取消必须向上传播，不能当作迁移失败吞掉
             throw e
         } catch (e: Exception) {
             // 迁移失败不影响主流程；下次启动会重试（指纹与事务保证幂等）。
             AppLogger.e(TAG, "旧累计统计导入失败（将在下次启动重试）", e)
+            return false
         }
     }
 
@@ -71,9 +77,23 @@ object TokenBaselineImportRunner {
      * 新 generation（不静默删除信号）。
      */
     suspend fun consumePendingRestore(context: Context) {
+        consumePendingRestoreStrict(context)
+    }
+
+    /**
+     * Startup readiness entry point. No marker and a fully consumed marker are ready; a retained
+     * marker (fence refusal or failure) is not ready and must be retried.
+     */
+    internal suspend fun consumePendingRestoreStrict(context: Context): Boolean {
         val appContext = context.applicationContext
-        val generation =
-            RestoreCompletionCoordinator.readPendingGeneration(appContext) ?: return
+        val generation = try {
+            RestoreCompletionCoordinator.readPendingGeneration(appContext) ?: return true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "读取受控补导标记失败（下次启动重试）", e)
+            return false
+        }
         try {
             val injected = databaseProvider
             val database = injected?.invoke(appContext) ?: AppDatabase.getDatabase(appContext)
@@ -96,11 +116,17 @@ object TokenBaselineImportRunner {
             if (applied) {
                 RestoreCompletionCoordinator.consumeMarker(appContext)
             }
+            return applied
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             // 补导失败保留标记，下次启动重试（幂等锚点保证不重复计账）。
             AppLogger.e(TAG, "受控补导失败（保留标记，下次启动重试）", e)
+            return try {
+                RestoreCompletionCoordinator.readPendingGeneration(appContext) == null
+            } catch (_: Exception) {
+                false
+            }
         }
     }
 
@@ -134,7 +160,9 @@ object TokenBaselineImportRunner {
         // forceReplace 语义进入同一 Room 事务：planImport 对空快照仍会产出
         // removedBaselineIdentityIds（全部 configId 为空的 legacy baseline），
         // 删除它们、保留非空 configId 的 baseline，并记录 generation。
-        runImport(appContext, dao, read.snapshot, read.cleanupMarkerIds, forceReplace = true)
+        if (!runImport(appContext, dao, read.snapshot, read.cleanupMarkerIds, forceReplace = true)) {
+            return false
+        }
         dao.insertRestoreGeneration(
             com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity(
                 generation = generation,
@@ -147,7 +175,7 @@ object TokenBaselineImportRunner {
 
     // ==== 导入 ====
 
-    internal suspend fun runImport(appContext: Context, forceReplace: Boolean) {
+    internal suspend fun runImport(appContext: Context, forceReplace: Boolean): Boolean {
         val injected = databaseProvider
         val database = injected?.invoke(appContext) ?: AppDatabase.getDatabase(appContext)
         val dao = database.tokenStatsDao()
@@ -159,8 +187,8 @@ object TokenBaselineImportRunner {
         // 普通启动守卫：空快照直接返回，不触碰数据库（取消/空源都安全，绝不删除）。
         // 注意：受控补导（consumePendingLocked）不走此入口，空快照也以
         // forceReplace 语义执行删除计划。
-        if (read.snapshot.providerModels.isEmpty()) return
-        if (injected != null) {
+        if (read.snapshot.providerModels.isEmpty()) return true
+        return if (injected != null) {
             runImport(appContext, dao, read.snapshot, read.cleanupMarkerIds, forceReplace)
         } else {
             database.withTransaction {
@@ -175,7 +203,7 @@ object TokenBaselineImportRunner {
         snapshot: LegacyTokenStatsSnapshot,
         cleanupMarkerIds: Set<String>,
         forceReplace: Boolean,
-    ) {
+    ): Boolean {
         // 导入 fence（P1 闭环）：Room 侧无 PENDING cleanup 且**全部** cleanup
         // operation ID 都包含在本快照的 marker 集合中，才允许应用该快照——
         // 否则快照早于某次 legacy cleanup（或清理尚未排空），应用会复活已删除
@@ -185,7 +213,7 @@ object TokenBaselineImportRunner {
                 TAG,
                 "legacy cleanup 未排空或快照 marker 过期，跳过本次 baseline 导入（下次启动重试）"
             )
-            return
+            return false
         }
         val existingBaselines = dao.getAllBaselines().associateBy { it.identityId }
         val existingIdentities = dao.getAllIdentities().associateBy { it.identityId }
@@ -246,6 +274,7 @@ object TokenBaselineImportRunner {
             "旧累计统计导入完成: 导入 ${preserved.baselines.size} 个 baseline, " +
                 "跳过 ${preserved.skippedProviderModels.size} 个无模型键"
         )
+        return true
     }
 
     private fun ensureIdentity(providerModel: String): TokenStatIdentityEntity {

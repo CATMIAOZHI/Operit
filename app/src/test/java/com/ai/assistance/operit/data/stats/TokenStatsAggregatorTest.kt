@@ -235,6 +235,8 @@ class TokenStatsAggregatorTest {
         assertEquals(a.totalInput, b.totalInput)
         assertEquals(a.output, b.output)
         assertEquals(a.reasoning, b.reasoning)
+        // canonical 总 token 同样必须逐字段一致（P2-1 分页等价）
+        assertEquals(a.totalTokens, b.totalTokens)
         assertEquals(a.cost.knownAmount, b.cost.knownAmount, 1e-9)
         assertEquals(a.cost.unknownContributionCount, b.cost.unknownContributionCount)
         assertEquals(a.cost.totalContributionCount, b.cost.totalContributionCount)
@@ -630,6 +632,76 @@ class TokenStatsAggregatorTest {
         assertEquals(1L, bucket.byModel["gpt-4o"]!!.requests)
         assertEquals(7.0, bucket.byModel["gpt-4o"]!!.cost.knownAmount, 1e-9)
         assertEquals(2, data.summary.requests)
+    }
+
+    @Test
+    fun `canonical totals aggregate per event across summary buckets and model buckets`() {
+        val id1 = identity("id-1", provider = "OPENAI", model = "gpt-4o")
+        val id2 = identity("id-2", configId = "cfg-2", provider = "ANTHROPIC", model = "claude-3-5-sonnet")
+        val openaiModelId = TokenStatIdentityResolver.displayModelIdFor("gpt-4o")
+        val anthropicModelId = TokenStatIdentityResolver.displayModelIdFor("claude-3-5-sonnet")
+        val events =
+            listOf(
+                // OpenAI：权威 totalInput（600）即使拆分未知也能用 → 600+400
+                event(
+                    "e1", "id-1", alignedDayStart,
+                    uncached = null, cached = null, totalInput = 600L, output = 400L,
+                    cacheWriteSeparateBilling = false,
+                ),
+                // OpenAI 无 totalInput：输入 = uncached+cached，cacheWrite 不重复 → 500+100+400
+                event(
+                    "e2", "id-1", alignedDayStart + TokenStatsTimeRanges.HOUR_MS,
+                    uncached = 500L, cached = 100L, cacheWrite = 50L, output = 400L,
+                    cacheWriteSeparateBilling = false,
+                ),
+                // Anthropic：权威 totalInput = 三分量之和，cacheWrite 只计一次 → 650+400
+                event(
+                    "e3", "id-2", alignedDayStart + 2L * TokenStatsTimeRanges.HOUR_MS,
+                    uncached = 500L, cached = 100L, cacheWrite = 50L, totalInput = 650L, output = 400L,
+                    cacheWriteSeparateBilling = true,
+                ),
+                // 独立推理：output + reasoning → 0+100+20
+                event(
+                    "e4", "id-2", alignedDayStart + 3L * TokenStatsTimeRanges.HOUR_MS,
+                    uncached = 0L, cached = 0L, cacheWrite = 0L, totalInput = 0L, output = 100L,
+                    reasoning = 20L, reasoningIncluded = false, cacheWriteSeparateBilling = true,
+                ),
+                // 输入未知 → canonical unknown（输出已知也不拼 0）
+                event(
+                    "e5", "id-1", alignedDayStart + 4L * TokenStatsTimeRanges.HOUR_MS,
+                    uncached = null, cached = null, totalInput = null, output = 50L,
+                    cacheWriteSeparateBilling = false,
+                ),
+            )
+        val data = hourlyRangeData(events, identities = listOf(id1, id2))
+        val summary = data.summary
+        assertEquals(1000L + 1000L + 1050L + 120L, summary.totalTokens.knownSum)
+        assertEquals(4L, summary.totalTokens.knownEventCount)
+        assertEquals(1L, summary.totalTokens.unknownEventCount)
+        assertEquals(5L, summary.totalTokens.totalEventCount)
+        // 桶合计 == 范围总计（canonical 与分量同样守恒）
+        assertEquals(
+            summary.totalTokens.knownSum,
+            data.buckets.sumOf { it.totals.totalTokens.knownSum },
+        )
+        assertEquals(
+            summary.totalTokens.unknownEventCount,
+            data.buckets.sumOf { it.totals.totalTokens.unknownEventCount },
+        )
+        // 模型桶同样聚合 canonical（按桶×模型分组）：跨桶合计与范围总计一致
+        // OpenAI e1+e2=2000、e5 unknown；Anthropic e3+e4=1170
+        val openaiTotal = data.buckets.sumOf { it.byModel[openaiModelId]?.totalTokens ?: 0L }
+        val openaiUnknown =
+            data.buckets.sumOf { it.byModel[openaiModelId]?.totalTokensUnknownEventCount ?: 0L }
+        assertEquals(2000L, openaiTotal)
+        assertEquals(1L, openaiUnknown)
+        val anthropicTotal = data.buckets.sumOf { it.byModel[anthropicModelId]?.totalTokens ?: 0L }
+        val anthropicUnknown =
+            data.buckets.sumOf { it.byModel[anthropicModelId]?.totalTokensUnknownEventCount ?: 0L }
+        assertEquals(1170L, anthropicTotal)
+        assertEquals(0L, anthropicUnknown)
+        // 桶 0 只有 e1：该桶 OpenAI 模型桶的 canonical = e1 单事件
+        assertEquals(1000L, data.buckets[0].byModel.getValue(openaiModelId).totalTokens)
     }
 
     // ==== 模型分组与明细 ====

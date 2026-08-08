@@ -708,6 +708,11 @@ private fun TokenStatsChartDetailDialog(
                         }
                     }
                     ChartDetailMetric.TOKENS -> {
+                        // canonical 总 Token 为权威合计；缓存/非缓存/输出仍是诊断分量
+                        TokenStatsDetailRow(
+                            stringResource(R.string.token_stats_tokens_total),
+                            formatCount(range.summary.totalTokens.knownSum),
+                        )
                         TokenStatsDetailRow(
                             stringResource(R.string.token_stats_token_cached),
                             formatCount(range.summary.cachedInput.knownSum),
@@ -843,20 +848,12 @@ private fun TokenChartCard(
     val unknownPartsTemplate = stringResource(R.string.token_stats_unknown_parts)
     val chartTitle = stringResource(R.string.token_stats_chart_tokens)
 
-    val totalUnknown =
-        range.summary.uncachedInput.unknownEventCount +
-            range.summary.cachedInput.unknownEventCount +
-            range.summary.output.unknownEventCount
+    val totalUnknown = range.summary.totalTokens.unknownEventCount
 
     TokenStatsChartCard(
         title = chartTitle,
-        summary = formatCompactCount(
-            saturatedTokenSum(
-                range.summary.uncachedInput.knownSum,
-                range.summary.cachedInput.knownSum,
-                range.summary.output.knownSum,
-            )
-        ),
+        // canonical 总 Token（聚合器逐事件推导，口径与 headline/detail 一致）
+        summary = formatCompactCount(range.summary.totalTokens.knownSum),
         onSummaryClick = onSummaryClick,
     ) {
         if (totalUnknown > 0L) {
@@ -879,11 +876,11 @@ private fun TokenChartCard(
             stackLabels = {
                 listOf(outputLabel, uncachedLabel, cachedLabel)
             },
+            // 堆叠分量是诊断明细（可能因 provider 口径不完全等于总量），
+            // tooltip/无障碍合计必须用 canonical 总 Token
+            stackTotalSelector = { bucket -> bucket.totals.totalTokens.knownSum.toDouble() },
             unknownNote = { bucket ->
-                val unknown =
-                    bucket.totals.uncachedInput.unknownEventCount +
-                        bucket.totals.cachedInput.unknownEventCount +
-                        bucket.totals.output.unknownEventCount
+                val unknown = bucket.totals.totalTokens.unknownEventCount
                 if (unknown > 0L) String.format(unknownPartsTemplate, unknown) else null
             },
             legendItems = listOf(

@@ -23,6 +23,8 @@ import com.ai.assistance.operit.data.stats.TokenStatsPreset
 import com.ai.assistance.operit.data.stats.TokenStatsQueryService
 import com.ai.assistance.operit.data.stats.TokenStatsResetCoordinator
 import com.ai.assistance.operit.data.stats.TokenStatsSettingsStore
+import com.ai.assistance.operit.data.stats.TokenStatsReadiness
+import com.ai.assistance.operit.data.stats.TokenStatsStartupCoordinator
 import com.ai.assistance.operit.data.stats.TokenStatsTimeSelection
 import com.ai.assistance.operit.data.stats.TokenStatsPriceOverrideDraft
 import java.io.File
@@ -176,6 +178,8 @@ class TokenUsageStatisticsViewModelTest {
             // 避免 TestMainDispatcher/不可 mock 的 Context.getString
             stringResolver = { "msg-$it" },
             dispatcher = Dispatchers.Unconfined,
+            // P1 关键链路：readiness 门控注入 no-op（不触碰真实 spool/协调器）
+            readiness = TokenStatsReadiness { true },
         )
 
     /**
@@ -594,6 +598,174 @@ class TokenUsageStatisticsViewModelTest {
         assertNull(viewModel.state.value.selectedStatuses)
     }
 
+    // ==== P1 关键链路：readiness 门控 ====
+
+    @Test
+    fun `first query waits for the readiness gate before loading data`() {
+        kotlinx.coroutines.runBlocking {
+            seedIdentity("id-1", configId = "cfg-a")
+            dao.insertEvent(event("e1", "id-1", nowMs - 3_600_000L))
+        }
+        val gate = CompletableDeferred<Unit>()
+        val readiness = TokenStatsReadiness { _ ->
+            gate.await()
+            true
+        }
+        val vm =
+            TokenUsageStatisticsViewModel(
+                context = context,
+                settings = settings,
+                zone = shanghai,
+                nowMs = { nowMs },
+                dao = dao,
+                stringResolver = { "msg-$it" },
+                dispatcher = Dispatchers.Unconfined,
+                readiness = readiness,
+            )
+        // 门控挂起期间：首次查询不得完成（loading 保持、无结果、无版本推进）
+        assertTrue(vm.state.value.loading)
+        assertEquals(0L, vm.state.value.refreshVersion)
+        assertNull(vm.state.value.range)
+        // 释放门控：查询执行并携带数据完成
+        gate.complete(Unit)
+        awaitRefresh(vm, 0)
+        assertEquals(1L, vm.state.value.range!!.eventCount)
+        assertFalse(vm.state.value.loading)
+    }
+
+    @Test
+    fun `not ready within timeout falls back to query then auto-refreshes after readiness`() {
+        kotlinx.coroutines.runBlocking {
+            seedIdentity("id-1", configId = "cfg-a")
+            dao.insertEvent(event("e1", "id-1", nowMs - 3_600_000L))
+        }
+        val calls = java.util.concurrent.atomic.AtomicInteger(0)
+        val timeouts = mutableListOf<Long>()
+        val gate = CompletableDeferred<Unit>()
+        val readiness = TokenStatsReadiness { timeoutMs ->
+            timeouts += timeoutMs
+            if (calls.getAndIncrement() == 0) {
+                // 首次：模拟超时未就绪——VM 必须先按现状查询，不能无限等待
+                false
+            } else {
+                gate.await()
+                true
+            }
+        }
+        val vm =
+            TokenUsageStatisticsViewModel(
+                context = context,
+                settings = settings,
+                zone = shanghai,
+                nowMs = { nowMs },
+                dao = dao,
+                stringResolver = { "msg-$it" },
+                dispatcher = Dispatchers.Unconfined,
+                readiness = readiness,
+            )
+        // 首次未就绪：按现状完成查询（pre-replay 快照可暂时展示，但不无限停留）
+        awaitRefresh(vm, 0)
+        assertEquals(1L, vm.state.value.range!!.eventCount)
+        // 后台等待就绪：完成后自动刷新（第二次查询）
+        gate.complete(Unit)
+        val versionAfterFallback = vm.state.value.refreshVersion
+        awaitRefresh(vm, versionAfterFallback)
+        assertEquals(1L, vm.state.value.range!!.eventCount)
+        assertFalse(vm.state.value.loading)
+        assertEquals("readiness must be awaited exactly twice (gate + refresh)", 2, calls.get())
+        assertEquals(listOf(5_000L, 65_000L), timeouts)
+    }
+
+    @Test
+    fun `initial timeout joins delayed coordinator flight and auto loads once`() {
+        val migrationCalls = java.util.concurrent.atomic.AtomicInteger(0)
+        val drainCalls = java.util.concurrent.atomic.AtomicInteger(0)
+        TokenStatsStartupCoordinator.initializationTimeoutMsForTest = 500L
+        TokenStatsStartupCoordinator.ensureMigratedStep = {
+            migrationCalls.incrementAndGet()
+            kotlinx.coroutines.delay(200)
+            true
+        }
+        TokenStatsStartupCoordinator.consumePendingRestoreStep = { true }
+        TokenStatsStartupCoordinator.initialDrainStep = { _, remainingMs ->
+            assertTrue(remainingMs in 1L until 500L)
+            drainCalls.incrementAndGet()
+            true
+        }
+        try {
+            val vm =
+                TokenUsageStatisticsViewModel(
+                    context = context,
+                    settings = settings,
+                    zone = shanghai,
+                    nowMs = { nowMs },
+                    dao = dao,
+                    stringResolver = { "msg-$it" },
+                    dispatcher = Dispatchers.Unconfined,
+                    readiness = TokenStatsStartupCoordinator.readiness(context),
+                    readinessInitialWaitMs = 10L,
+                    readinessRefreshWaitMs = 600L,
+                )
+
+            awaitRefresh(vm, 0)
+            val fallbackVersion = vm.state.value.refreshVersion
+            awaitRefresh(vm, fallbackVersion)
+            Thread.sleep(100)
+            assertEquals(fallbackVersion + 1, vm.state.value.refreshVersion)
+            assertEquals("both waits must share one initialization", 1, migrationCalls.get())
+            assertEquals(1, drainCalls.get())
+        } finally {
+            TokenStatsStartupCoordinator.ensureMigratedStep = null
+            TokenStatsStartupCoordinator.consumePendingRestoreStep = null
+            TokenStatsStartupCoordinator.initialDrainStep = null
+            TokenStatsStartupCoordinator.initializationTimeoutMsForTest = null
+        }
+    }
+
+    @Test
+    fun `failed background readiness can retry without duplicate refresh tasks`() {
+        val calls = java.util.concurrent.atomic.AtomicInteger(0)
+        val secondAttempt = CompletableDeferred<Unit>()
+        val releaseSecondAttempt = CompletableDeferred<Unit>()
+        val readiness = TokenStatsReadiness { _ ->
+            when (calls.incrementAndGet()) {
+                1 -> false // initial gate
+                2 -> {
+                    secondAttempt.complete(Unit)
+                    releaseSecondAttempt.await()
+                    false // first full-lifecycle subscription fails
+                }
+                else -> true
+            }
+        }
+        val vm =
+            TokenUsageStatisticsViewModel(
+                context = context,
+                settings = settings,
+                zone = shanghai,
+                nowMs = { nowMs },
+                dao = dao,
+                stringResolver = { "msg-$it" },
+                dispatcher = Dispatchers.Unconfined,
+                readiness = readiness,
+            )
+        runBlocking { withTimeout(5_000) { secondAttempt.await() } }
+
+        val initialVersion = vm.state.value.refreshVersion
+        vm.load()
+        vm.load()
+        assertEquals("active readiness subscription must remain single-flight in the VM", 2, calls.get())
+        releaseSecondAttempt.complete(Unit)
+        awaitRefresh(vm, initialVersion)
+
+        val beforeRetry = vm.state.value.refreshVersion
+        vm.load()
+        awaitRefresh(vm, beforeRetry)
+        Thread.sleep(100)
+        assertEquals("successful readiness must trigger exactly one load", beforeRetry + 1, vm.state.value.refreshVersion)
+        assertEquals("later load must retry readiness once", 3, calls.get())
+    }
+
     // ==== P1-4：旧 load 不得污染共享 state ====
 
     @Test
@@ -612,6 +784,7 @@ class TokenUsageStatisticsViewModelTest {
                 dao = dao,
                 stringResolver = { "msg-$it" },
                 dispatcher = Dispatchers.Unconfined,
+                readiness = TokenStatsReadiness { true },
             )
         // 第一次 load 卡在偏好读取（构造期间已挂起，尚未写任何 state）
         runBlocking { withTimeout(5_000) { gated.firstLoadStarted.await() } }
@@ -658,6 +831,7 @@ class TokenUsageStatisticsViewModelTest {
                 dao = dao,
                 stringResolver = { "msg-$it" },
                 dispatcher = dispatcher,
+                readiness = TokenStatsReadiness { true },
             )
         // load 已入队但未执行；ViewModelStore.clear() 触发 onCleared →
         // viewModelScope 取消 → 任务不运行、不写 state、不执行首次回退持久化

@@ -159,8 +159,11 @@ internal class ToolPkgJsAiProviderService(
                 }
             )
 
-        ensureNoFatalError(decoded)
+        // 最终结果先 apply/forward usage，再检查致命错误：失败结果里的 usage
+        // 不能丢（与 intermediate 同一通道、同一 attempt 合并语义）；fatal
+        // 抛出后不会执行下方最终 chunk 发射，因此失败结果不产生最终文本。
         applyAndForwardUsage(decoded, onTokensUpdated, onUsageReported)
+        ensureNoFatalError(decoded)
         extractNonFatalError(decoded)?.let { error ->
             onNonFatalError(error)
         }
@@ -185,13 +188,18 @@ internal class ToolPkgJsAiProviderService(
                     event = TOOLPKG_EVENT_AI_PROVIDER_TEST_CONNECTION,
                     eventPayload = buildBasePayload(context),
                     onIntermediateResult = { intermediateDecoded ->
-                        forwardUsage(intermediateDecoded, onUsageReported)
+                        extractUsage(intermediateDecoded)?.let { usage ->
+                            forwardUsage(usage, onUsageReported)
+                        }
                     }
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             }
-        forwardUsage(decoded, onUsageReported)
+        // 失败结果里的 usage 同样先转发（不丢），再走致命检查
+        extractUsage(decoded)?.let { usage ->
+            forwardUsage(usage, onUsageReported)
+        }
         return runCatching {
             ensureNoFatalError(decoded)
             parseConnectionMessage(decoded)
@@ -619,28 +627,26 @@ internal class ToolPkgJsAiProviderService(
                 currentCachedInputTokenCount,
                 currentOutputTokenCount
             )
-            forwardUsage(decoded, onUsageReported)
+            forwardUsage(usage, onUsageReported)
         }
     }
 
-    /** 只转发规范化 usage（testConnection 等无 UI 计数通道的场景共用）。 */
+    /** 只转发规范化 usage（testConnection 等无 UI 计数通道的场景共用）；接收已解析的 usage，避免重复解析。 */
     private suspend fun forwardUsage(
-        decoded: ProviderHookValue,
+        usage: TokenUsage,
         onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, Int) -> Unit)?,
     ) {
-        extractUsage(decoded)?.let { usage ->
-            onUsageReported?.invoke(
-                com.ai.assistance.operit.data.stats.ProviderUsageNormalizer.toolPkg(
-                    input = usage.input,
-                    cachedInput = usage.cachedInput,
-                    output = usage.output,
-                    // 协议语义：attempt 在场 = 同 attempt 部分更新；缺省 = 整个
-                    // 逻辑请求的累计完整快照
-                    completeSnapshot = !usage.attemptPresent,
-                ),
-                usage.attempt
-            )
-        }
+        onUsageReported?.invoke(
+            com.ai.assistance.operit.data.stats.ProviderUsageNormalizer.toolPkg(
+                input = usage.input,
+                cachedInput = usage.cachedInput,
+                output = usage.output,
+                // 协议语义：attempt 在场 = 同 attempt 部分更新；缺省 = 整个
+                // 逻辑请求的累计完整快照
+                completeSnapshot = !usage.attemptPresent,
+            ),
+            usage.attempt
+        )
     }
 
     private fun applyUsage(usage: TokenUsage) {

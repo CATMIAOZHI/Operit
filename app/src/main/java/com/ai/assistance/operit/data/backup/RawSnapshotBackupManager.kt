@@ -365,13 +365,18 @@ object RawSnapshotBackupManager {
 
     /**
      * 两个公开恢复入口（[restoreFromBackupUri] / [restoreFromBackupFile]）共用的
-     * 编排：执行目录替换 → 持久化“替换完成待登记” → 要求进程重启 → 崩溃安全
-     * 登记 generation 并完成 recovery state。
+     * 编排：执行目录替换 → 立即要求进程重启 → 持久化“替换完成待登记” →
+     * 崩溃安全登记 generation 并完成 recovery state。
      *
      * 状态机（持久化在 noBackupFilesDir，不随恢复覆盖）：
      * - [performRestore] 的 prepare 阶段必须先持久化 REPLACING 再关闭数据库并
      *   替换目录：进程在任何边界退出，冷启动都会进入恢复面而不是误以 IDLE 正常
      *   初始化（目录可能部分替换）。
+     * - **重启门先于一切 fallible 步骤**：performRestore 成功返回后立即置
+     *   processRestartRequired = true，再执行 RESTORE_REPLACED 写入与登记。
+     *   状态写入/登记失败时，本进程同样绝不允许再次替换/导出（数据目录已被
+     *   替换、旧缓存已持有替换后的文件）；performRestore 自身失败则不算替换
+     *   成功，不要求重启。
      * - 替换成功但登记失败（异常/进程死亡）：状态保持 RESTORE_REPLACED，冷启动
      *   通过 [completePendingRestoreRegistration] 自动补登记新 generation，无需
      *   重新替换目录；同一次替换绝不会把凭空生成的新 generation 与已应用的旧
@@ -385,15 +390,17 @@ object RawSnapshotBackupManager {
         performRestore: suspend () -> Unit,
     ) {
         performRestore()
-        // 替换成功：先持久化“替换完成待登记”，再登记 generation。
+        // 替换成功：**先**要求/维持进程重启。替换后的文件在本进程已被旧缓存持有，
+        // 且后续快照/恢复操作必须等冷启动消费完 marker 后才能再次进行；重启门在
+        // fallible 的 RESTORE_REPLACED 写入/登记之前生效，写失败也绝不允许本进程
+        // 对已替换的数据目录再执行任何替换/导出。
+        processRestartRequired = true
+        // 再持久化“替换完成待登记”（fallible），最后登记 generation（fallible）。
         MigrationStateStore.writeOrThrow(
             context,
             MigrationStateStore.State.RESTORE_REPLACED,
             finalState = finalState
         )
-        // 要求/维持进程重启：替换后的文件在本进程已被旧缓存持有，且后续快照
-        // 操作必须等冷启动消费完 marker 后才能再次进行。
-        processRestartRequired = true
         withContext(NonCancellable) {
             RestoreCompletionCoordinator.registerAfterRestore(context)
         }

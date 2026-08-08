@@ -85,6 +85,14 @@ internal fun TokenStatsStackedBarChart(
     chartLabel: String = "",
     stackSelector: (TokenStatsTrendBucket) -> List<Pair<Double, Color>>,
     stackLabels: (TokenStatsTrendBucket) -> List<String>,
+    /**
+     * tooltip/无障碍里的“合计”数值。默认 = 堆叠分量之和（诊断口径）；调用方可
+     * 传入 canonical 合计（如 [com.ai.assistance.operit.data.stats.TokenStatsTotals.totalTokens]）
+     * 使展示总 Token 与聚合器口径一致，堆叠分量仍作为诊断明细展示。
+     */
+    stackTotalSelector: (TokenStatsTrendBucket) -> Double = { bucket ->
+        stackSelector(bucket).sumOf { it.first }
+    },
     unknownNote: (TokenStatsTrendBucket) -> String? = { null },
     legendItems: List<Pair<String, Color>> = emptyList(),
 ) {
@@ -130,7 +138,7 @@ internal fun TokenStatsStackedBarChart(
                             chartLabel,
                             bucketTimeLabel(selected.bucketStartMs, granularity, zone),
                             positionText,
-                            formatValue(stacks.sumOf { it.first }),
+                            formatValue(stackTotalSelector(selected)),
                         )
                         val rows = stacks.mapIndexedNotNull { index, (value, color) ->
                             val label = stackLabels(selected).getOrNull(index) ?: ""
@@ -226,7 +234,7 @@ internal fun TokenStatsStackedBarChart(
                         null
                     }
                 },
-                total = formatValue(stacks.sumOf { it.first }),
+                total = formatValue(stackTotalSelector(selected)),
                 unknownNote = unknownNote(selected),
             )
         }

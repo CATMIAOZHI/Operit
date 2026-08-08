@@ -3,6 +3,7 @@ package com.ai.assistance.operit.api.chat.llmprovider
 import android.content.Context
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistration
+import com.ai.assistance.operit.util.stream.StreamLogger
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -79,6 +80,33 @@ class ToolPkgJsAiProviderServiceTest {
             onUsageReported = onUsageReported,
         ).collect { collected.append(it) }
         collected.toString()
+    }
+
+    /** 期望失败的 sendMessage 运行：返回已收集文本与 collect 传播出的异常。 */
+    private fun runSendMessageExpectFailure(
+        svc: ToolPkgJsAiProviderService,
+        runner: ToolPkgMainHookRunner,
+        onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, Int) -> Unit)?,
+    ): Pair<String, Throwable?> = runBlocking {
+        svc.mainHookRunnerOverride = runner
+        val collected = StringBuilder()
+        // JVM 测试环境没有可用的 android.util.Log：stream 构建器捕获异常后
+        // StreamLogger.e → AppLogger.e → Log.e 会抛 "not mocked" 掩盖原始错误，
+        // 关闭日志使真实异常原样传播出来
+        StreamLogger.setEnabled(false)
+        val failure =
+            try {
+                svc.sendMessage(
+                    context = mock(Context::class.java),
+                    onUsageReported = onUsageReported,
+                ).collect { collected.append(it) }
+                null
+            } catch (e: Throwable) {
+                e
+            } finally {
+                StreamLogger.setEnabled(true)
+            }
+        collected.toString() to failure
     }
 
     @Test
@@ -355,6 +383,56 @@ class ToolPkgJsAiProviderServiceTest {
         val aggregated = ctx.aggregatedUsage()!!
         assertNull("aggregated input must stay unknown, not fabricated", aggregated.uncachedInputTokens)
         assertEquals(60L, aggregated.outputTokens)
+    }
+
+    // ==== 聚焦修复：final 致命失败结果 ====
+
+    @Test
+    fun `final failure with usage reports usage once, propagates error, and emits no final text`() {
+        val svc = service()
+        val reports = mutableListOf<ReportedUsage>()
+        val (text, failure) =
+            runSendMessageExpectFailure(
+                svc,
+                runnerWith(
+                    intermediates = emptyList(),
+                    final =
+                        """{"usage": {"input": 80, "output": 9, "attempt": 1}, "success": false, "error": "denied"}""",
+                ),
+            ) { usage, attempt ->
+                reports.add(report(usage, attempt))
+            }
+        // 致命错误必须传播（stream collect 抛出，不吞成空结果）
+        assertTrue(
+            "fatal result must propagate error, failure=$failure text=<$text>",
+            failure is IllegalStateException,
+        )
+        assertEquals("denied", failure?.message)
+        // 最终失败结果里的 usage 先于致命检查被转发，且只解析/上报一次
+        assertEquals(1, reports.size)
+        assertEquals(80L, reports[0].input)
+        assertEquals(9L, reports[0].output)
+        assertEquals(1, reports[0].attempt)
+        // fatal 结果不得发射最终文本
+        assertEquals("", text)
+    }
+
+    @Test
+    fun `final failure without usage emits no final text and propagates error`() {
+        val svc = service()
+        val (text, failure) =
+            runSendMessageExpectFailure(
+                svc,
+                runnerWith(
+                    intermediates = emptyList(),
+                    final = """{"success": false, "error": "boom"}""",
+                ),
+            ) { _, _ ->
+                error("usage callback must not fire without usage")
+            }
+        assertTrue("fatal result must propagate error, failure=$failure text=<$text>", failure is IllegalStateException)
+        assertEquals("boom", failure?.message)
+        assertEquals("", text)
     }
 
     // ==== 评审 P1-7：testConnection 的 usage 提取与 attempt 转发 ====

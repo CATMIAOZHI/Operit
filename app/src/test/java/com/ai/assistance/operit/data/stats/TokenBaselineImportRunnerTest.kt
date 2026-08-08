@@ -5,8 +5,11 @@ import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.edit
 import androidx.room.Room
+import com.ai.assistance.operit.data.backup.AtomicRestoreMarkerStore
 import com.ai.assistance.operit.data.db.AppDatabase
+import com.ai.assistance.operit.data.backup.MigrationStateStore
 import com.ai.assistance.operit.data.backup.RestoreCompletionCoordinator
+import com.ai.assistance.operit.data.backup.RestoreMarkerStore
 import com.ai.assistance.operit.data.model.BillingMode
 import com.ai.assistance.operit.data.model.TokenStatEventEntity
 import com.ai.assistance.operit.data.model.TokenStatIdentityEntity
@@ -24,6 +27,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito
@@ -60,11 +64,28 @@ class TokenBaselineImportRunnerTest {
     fun isolate() {
         clearApiDataStoreSingleton()
         TokenBaselineImportRunner.databaseProvider = null
-        RestoreCompletionCoordinator.markerStoreProvider = null
+        RestoreCompletionCoordinator.markerStoreProvider = { context ->
+            AtomicRestoreMarkerStore(pendingMarkerFile(context.filesDir))
+        }
+        MigrationStateStore.fileIoProvider = null
+        TokenStatsResetCoordinator.daoProvider = null
         // 默认 completeRecoveryState 走 MigrationStateStore（android.util.AtomicFile，
         // JVM 测试不可用）：测试注入 no-op，验证顺序由协调器测试覆盖。
         RestoreCompletionCoordinator.recoveryStateCompleter = {}
+        ApiPreferences.toolPkgProviderNamesProvider = { emptyList() }
         injectApiPreferences(null)
+    }
+
+    @After
+    fun tearDown() {
+        injectApiPreferences(null)
+        clearApiDataStoreSingleton()
+        TokenBaselineImportRunner.databaseProvider = null
+        TokenStatsResetCoordinator.daoProvider = null
+        RestoreCompletionCoordinator.markerStoreProvider = null
+        RestoreCompletionCoordinator.recoveryStateCompleter = null
+        MigrationStateStore.fileIoProvider = null
+        ApiPreferences.toolPkgProviderNamesProvider = null
     }
 
     /** 清空 `Context.apiDataStore` 委托缓存的数据存储单例（隔离生命周期）。 */
@@ -210,6 +231,33 @@ class TokenBaselineImportRunnerTest {
     }
 
     // ==== 测试 ====
+
+    @Test
+    fun `strict pending restore is ready when no marker exists`() = runBlocking {
+        RestoreCompletionCoordinator.markerStoreProvider = {
+            object : RestoreMarkerStore {
+                override suspend fun write(generation: String) = Unit
+                override suspend fun read(): String? = null
+                override suspend fun delete() = Unit
+            }
+        }
+        val context = mock<Context>()
+        whenever(context.applicationContext).thenReturn(context)
+
+        assertTrue(TokenBaselineImportRunner.consumePendingRestoreStrict(context))
+    }
+
+    @Test
+    fun `strict migration reports database failure as not ready`() = runBlocking {
+        TokenBaselineImportRunner.databaseProvider = { throw java.io.IOException("database unavailable") }
+        val context = mock<Context>()
+        whenever(context.applicationContext).thenReturn(context)
+
+        val ready = Mockito.mockStatic(AppLogger::class.java).use {
+            TokenBaselineImportRunner.ensureMigratedStrict(context)
+        }
+        assertFalse(ready)
+    }
 
     @Test
     fun `cancellation propagates through import runner instead of being swallowed`() =
@@ -1079,9 +1127,16 @@ class TokenBaselineImportRunnerTest {
             injectApiPreferences(realPrefs)
             realPrefs.getInputTokensForProviderModel(providerA)
             check(File(File(phase, "datastore"), "api_settings.preferences_pb").delete())
-            Mockito.mockStatic(AppLogger::class.java).use {
-                TokenBaselineImportRunner.ensureMigrated(ctx)
+            val retryReady = Mockito.mockStatic(AppLogger::class.java).use {
+                TokenBaselineImportRunner.ensureMigratedStrict(ctx)
             }
+            val retryRead = realPrefs.legacyStatsSnapshotWithMarkers()
+            assertTrue(
+                "retry not ready: pending=${dao.countPendingCleanupOperations()}, " +
+                    "markers=${retryRead.cleanupMarkerIds}, " +
+                    "models=${retryRead.snapshot.providerModels.keys}",
+                retryReady,
+            )
             assertNull(dao.getBaseline(identityIdA))
             assertNotNull(dao.getBaseline(identityIdB))
             assertEquals(0, dao.countPendingCleanupOperations())
@@ -1228,9 +1283,10 @@ class TokenBaselineImportRunnerTest {
                     )
                 )
             injectApiPreferences(stalePrefs)
-            Mockito.mockStatic(AppLogger::class.java).use {
-                TokenBaselineImportRunner.consumePendingRestore(ctx)
+            val ready = Mockito.mockStatic(AppLogger::class.java).use {
+                TokenBaselineImportRunner.consumePendingRestoreStrict(ctx)
             }
+            assertFalse("stale pending marker fence must block startup readiness", ready)
             assertTrue("restore marker must be kept for retry", pendingMarkerFile(phase).exists())
             assertEquals(0, dao.restoreGenerationExists(generation))
             assertEquals(
