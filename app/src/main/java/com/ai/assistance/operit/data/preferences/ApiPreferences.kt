@@ -33,6 +33,18 @@ import kotlinx.serialization.json.Json
 private val Context.apiDataStore: DataStore<Preferences> by
         preferencesDataStore(name = "api_settings")
 
+internal fun usdToCnyStorageValue(rate: Double): Float? =
+    rate.toFloat().takeIf { it.isFinite() && it > 0f }
+
+internal fun validStoredUsdToCnyRate(stored: Float?): Double? =
+    stored?.takeIf { it.isFinite() && it > 0f }?.toDouble()
+
+internal fun resolveUsdToCnyExchangeRate(stored: Float?): Double =
+    validStoredUsdToCnyRate(stored) ?: 7.2
+
+internal fun resolveUsdToCnyRateWithEstimate(stored: Float?): Pair<Double, Boolean> =
+    validStoredUsdToCnyRate(stored)?.let { it to false } ?: (7.0 to true)
+
 class ApiPreferences private constructor(private val context: Context) {
 
     // Define our preferences keys
@@ -1009,7 +1021,7 @@ class ApiPreferences private constructor(private val context: Context) {
 
     suspend fun getUsdToCnyExchangeRate(): Double {
         val preferences = context.apiDataStore.data.first()
-        return preferences[USD_TO_CNY_EXCHANGE_RATE]?.toDouble() ?: 7.2
+        return resolveUsdToCnyExchangeRate(preferences[USD_TO_CNY_EXCHANGE_RATE])
     }
 
     /**
@@ -1019,17 +1031,15 @@ class ApiPreferences private constructor(private val context: Context) {
      */
     suspend fun usdToCnyRateWithEstimate(): Pair<Double, Boolean> {
         val preferences = context.apiDataStore.data.first()
-        val stored = preferences[USD_TO_CNY_EXCHANGE_RATE]
-        return if (stored != null) {
-            stored.toDouble() to false
-        } else {
-            7.0 to true
-        }
+        return resolveUsdToCnyRateWithEstimate(preferences[USD_TO_CNY_EXCHANGE_RATE])
     }
 
     suspend fun setUsdToCnyExchangeRate(rate: Double) {
+        val stored = requireNotNull(usdToCnyStorageValue(rate)) {
+            "USD to CNY exchange rate must remain finite and positive as Float"
+        }
         context.apiDataStore.edit { preferences ->
-            preferences[USD_TO_CNY_EXCHANGE_RATE] = rate.toFloat()
+            preferences[USD_TO_CNY_EXCHANGE_RATE] = stored
         }
     }
 

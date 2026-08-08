@@ -51,7 +51,7 @@ import org.mockito.kotlin.whenever
  * - 初始 IDLE 成功：REPLACING → RESTORE_REPLACED → IDLE，marker 为完整 UUID，
  *   processRestartRequired 为 true；
  * - 恢复前为 COMPLETED 时登记完成后保持 COMPLETED（官方迁移标记不丢失）；
- * - 偏好/数据库目录替换失败：状态停在 REPLACING，无 marker，不要求重启；
+ * - 偏好/数据库目录替换失败：状态停在 REPLACING，无 marker，要求重启；
  * - 目录替换成功但 RESTORE_REPLACED 状态写入失败：重启门立即生效（替换成功即
  *   要求重启），状态文件停留在 REPLACING、无 marker；
  * - 目录替换成功但 marker 登记失败：状态停在 RESTORE_REPLACED 且记录 finalState，
@@ -77,6 +77,7 @@ class RawSnapshotRestoreOrchestrationTest {
         // 真实 recovery 完成路径（读/写 MigrationStateStore）
         RestoreCompletionCoordinator.recoveryStateCompleter = null
         TokenStatSpool.spoolDeleteForTest = null
+        TokenStatSpool.rejectDrainScheduleForTest = false
         TokenStatSpool.clearPendingStateForTest()
         // P1 终审：Windows JVM 测试统一注入目录 fsync 成功（生产 Android/Linux 支持目录
         // fd fsync；本类不测试 UNSUPPORTED 平台行为，真实探测在 Windows 会恒返回 UNSUPPORTED）
@@ -90,6 +91,7 @@ class RawSnapshotRestoreOrchestrationTest {
         RestoreCompletionCoordinator.markerStoreProvider = null
         RestoreCompletionCoordinator.recoveryStateCompleter = null
         TokenStatSpool.spoolDeleteForTest = null
+        TokenStatSpool.rejectDrainScheduleForTest = false
         TokenStatSpool.dirSyncForTest = null
         TokenStatSpool.clearPendingStateForTest()
         Dispatchers.resetMain()
@@ -140,10 +142,10 @@ class RawSnapshotRestoreOrchestrationTest {
                 RawSnapshotBackupManager.runRestoreEntry(
                     context = context,
                     finalState = RawSnapshotBackupManager.restoreFinalState(context),
-                    performRestore = {
-                        // 与真实入口的 prepareForReplacement 一致：替换前先持久化 REPLACING
-                        MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.REPLACING)
+                    performRestore = { prepare ->
+                        prepare()
                         assertEquals("inside replacement the state must be REPLACING", MigrationStateStore.State.REPLACING, state().state)
+                        assertTrue("gate must close before replacement", RawSnapshotBackupManager.isProcessRestartRequired())
                     }
                 )
                 assertEquals(MigrationStateStore.State.IDLE, state().state)
@@ -160,8 +162,8 @@ class RawSnapshotRestoreOrchestrationTest {
                 RawSnapshotBackupManager.runRestoreEntry(
                     context = context,
                     finalState = RawSnapshotBackupManager.restoreFinalState(context),
-                    performRestore = {
-                        MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.REPLACING)
+                    performRestore = { prepare ->
+                        prepare()
                     }
                 )
                 assertEquals(
@@ -175,15 +177,15 @@ class RawSnapshotRestoreOrchestrationTest {
         }
 
     @Test
-    fun `replacement failure leaves REPLACING with no marker and no restart requirement`() =
+    fun `replacement failure after prepare leaves REPLACING and requires restart`() =
         runBlocking {
             Mockito.mockStatic(AppLogger::class.java).use {
                 try {
                     RawSnapshotBackupManager.runRestoreEntry(
                         context = context,
                         finalState = RawSnapshotBackupManager.restoreFinalState(context),
-                        performRestore = {
-                            MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.REPLACING)
+                        performRestore = { prepare ->
+                            prepare()
                             throw java.io.IOException("databases replacement failed")
                         }
                     )
@@ -193,7 +195,7 @@ class RawSnapshotRestoreOrchestrationTest {
                 }
                 assertEquals(MigrationStateStore.State.REPLACING, state().state)
                 assertFalse("no marker when replacement failed", markerFile().exists())
-                assertFalse("restart must not be required on failure", RawSnapshotBackupManager.isProcessRestartRequired())
+                assertTrue("restart must be required after entering replacement", RawSnapshotBackupManager.isProcessRestartRequired())
             }
         }
 
@@ -215,8 +217,8 @@ class RawSnapshotRestoreOrchestrationTest {
                     RawSnapshotBackupManager.runRestoreEntry(
                         context = context,
                         finalState = RawSnapshotBackupManager.restoreFinalState(context),
-                        performRestore = {
-                            MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.REPLACING)
+                        performRestore = { prepare ->
+                            prepare()
                         }
                     )
                     fail("marker write failure must propagate")
@@ -253,8 +255,8 @@ class RawSnapshotRestoreOrchestrationTest {
                     RawSnapshotBackupManager.runRestoreEntry(
                         context = context,
                         finalState = RawSnapshotBackupManager.restoreFinalState(context),
-                        performRestore = {
-                            MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.REPLACING)
+                        performRestore = { prepare ->
+                            prepare()
                         }
                     )
                     fail("state write failure must propagate")
@@ -274,6 +276,76 @@ class RawSnapshotRestoreOrchestrationTest {
                 assertEquals(MigrationStateStore.State.REPLACING, state().state)
             }
         }
+
+    @Test
+    fun `REPLACING write failure does not require restart`() = runBlocking {
+        Mockito.mockStatic(AppLogger::class.java).use {
+            MigrationStateStore.fileIoProvider = {
+                object : MigrationStateFileIo {
+                    override fun read(): String? = null
+                    override fun write(payload: String) = throw java.io.IOException("state disk full")
+                }
+            }
+            try {
+                RawSnapshotBackupManager.runRestoreEntry(
+                    context = context,
+                    finalState = MigrationStateStore.State.IDLE,
+                    performRestore = { prepare -> prepare() },
+                )
+                fail("REPLACING write failure must propagate")
+            } catch (e: IllegalStateException) {
+                assertTrue(e.message!!.contains("Failed to persist migration state REPLACING"))
+            }
+            assertFalse(RawSnapshotBackupManager.isProcessRestartRequired())
+            assertFalse(markerFile().exists())
+        }
+    }
+
+    @Test
+    fun `public restore REPLACING write failure preserves spool epoch and event acceptance`() = runBlocking {
+        val zip = File(tempDir, "snapshot.zip")
+        createSnapshotZip(zip)
+        zipForOpen = zip
+        val oldEpoch = TokenStatSpool.captureRestoreEpoch()
+        val realIo = { ctx: Context -> PlainFileStateIo(File(ctx.noBackupFilesDir, "official_operit_migration_state.txt")) }
+        MigrationStateStore.fileIoProvider = { ctx ->
+            object : MigrationStateFileIo {
+                override fun read(): String? = realIo(ctx).read()
+                override fun write(payload: String) {
+                    if (payload.contains("REPLACING")) throw java.io.IOException("state disk full")
+                    realIo(ctx).write(payload)
+                }
+            }
+        }
+        TokenStatSpool.rejectDrainScheduleForTest = true
+
+        withContext(Dispatchers.IO) {
+            Mockito.mockStatic(AppLogger::class.java).use {
+                try {
+                    RawSnapshotBackupManager.restoreFromBackupFile(context, zip)
+                    fail("REPLACING write failure must propagate")
+                } catch (e: IllegalStateException) {
+                    assertTrue(e.message!!.contains("Failed to persist migration state REPLACING"))
+                }
+            }
+        }
+
+        assertFalse(RawSnapshotBackupManager.isProcessRestartRequired())
+        assertEquals(oldEpoch, TokenStatSpool.captureRestoreEpoch())
+        assertTrue(TokenStatSpool.isAcceptingEvents())
+        try {
+            assertTrue(TokenStatSpool.append(context, "{\"eventId\":\"old-epoch\"}", "old-epoch", oldEpoch))
+            val newEpoch = TokenStatSpool.captureRestoreEpoch()
+            assertEquals(oldEpoch, newEpoch)
+            assertTrue(TokenStatSpool.append(context, "{\"eventId\":\"new-request\"}", "new-request", newEpoch))
+            val durableBytes = File(context.filesDir, TokenStatSpool.SPOOL_DIR_NAME)
+                .walkTopDown().filter { it.isFile }.joinToString("\n") { it.readText() }
+            assertTrue(durableBytes.contains("old-epoch"))
+            assertTrue(durableBytes.contains("new-request"))
+        } finally {
+            TokenStatSpool.rejectDrainScheduleForTest = false
+        }
+    }
 
     @Test
     fun `cold start auto registration completes without re-replacement`() =
@@ -414,6 +486,7 @@ class RawSnapshotRestoreOrchestrationTest {
         spool.mkdirs()
         File(spool, "sealed_1.jsonl").writeText("pending")
         TokenStatSpool.spoolDeleteForTest = { false }
+        val oldEpoch = TokenStatSpool.captureRestoreEpoch()
 
         withContext(Dispatchers.IO) {
             Mockito.mockStatic(AppLogger::class.java).use {
@@ -426,6 +499,13 @@ class RawSnapshotRestoreOrchestrationTest {
             }
         }
         assertEquals(MigrationStateStore.State.REPLACING, state().state)
+        assertTrue("restart required once REPLACING was persisted", RawSnapshotBackupManager.isProcessRestartRequired())
+        assertFalse("same process must stop accepting events", TokenStatSpool.isAcceptingEvents())
+        assertTrue(TokenStatSpool.captureRestoreEpoch() > oldEpoch)
+        assertFalse(
+            "old generation must not revive after replacement starts",
+            TokenStatSpool.append(context, "{\"eventId\":\"stale-after-restore\"}", "stale-after-restore", oldEpoch),
+        )
         assertTrue(spool.exists())
     }
 

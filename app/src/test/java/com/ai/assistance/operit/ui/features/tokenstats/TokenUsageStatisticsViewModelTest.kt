@@ -167,7 +167,7 @@ class TokenUsageStatisticsViewModelTest {
         }
     }
 
-    private fun newViewModel(): TokenUsageStatisticsViewModel =
+    private fun constructViewModel(): TokenUsageStatisticsViewModel =
         TokenUsageStatisticsViewModel(
             context = context,
             settings = settings,
@@ -181,6 +181,9 @@ class TokenUsageStatisticsViewModelTest {
             // P1 关键链路：readiness 门控注入 no-op（不触碰真实 spool/协调器）
             readiness = TokenStatsReadiness { true },
         )
+
+    private fun newViewModel(): TokenUsageStatisticsViewModel =
+        constructViewModel().also { it.loadForEntry() }
 
     /**
      * 等待异步查询落定：Room 在 arch 后台线程恢复协程，不能靠虚拟时间推进；
@@ -291,6 +294,21 @@ class TokenUsageStatisticsViewModelTest {
     // ==== 首次自动回退 ====
 
     @Test
+    fun `construction does not load and each route entry loads once`() {
+        val viewModel = constructViewModel()
+        Thread.sleep(50)
+        assertEquals(0L, viewModel.state.value.refreshVersion)
+
+        viewModel.loadForEntry()
+        awaitRefresh(viewModel, 0)
+        assertEquals(1L, viewModel.state.value.refreshVersion)
+
+        viewModel.loadForEntry()
+        awaitRefresh(viewModel, 1)
+        assertEquals(2L, viewModel.state.value.refreshVersion)
+    }
+
+    @Test
     fun `initial fallback picks first preset with data and persists it as auto`() {
         kotlinx.coroutines.runBlocking {
             seedIdentity("id-1", configId = "cfg-a")
@@ -388,9 +406,16 @@ class TokenUsageStatisticsViewModelTest {
         assertEquals(TokenStatsPreset.LAST_5H, viewModel.state.value.selectedPreset)
 
         // 超过 3 年 → 拒绝
+        val tooEarly = java.time.Instant.ofEpochMilli(start)
+            .atZone(shanghai)
+            .toLocalDate()
+            .minusDays(TokenUsageStatisticsViewModel.MAX_CUSTOM_RANGE_DAYS + 1L)
+            .atStartOfDay(shanghai)
+            .toInstant()
+            .toEpochMilli()
         val tooLong =
             viewModel.setCustomRange(
-                start - TokenUsageStatisticsViewModel.MAX_CUSTOM_RANGE_DAYS * 24 * 3600_000L - 1,
+                tooEarly,
                 start,
             )
         assertFalse(tooLong)
@@ -622,6 +647,7 @@ class TokenUsageStatisticsViewModelTest {
                 dispatcher = Dispatchers.Unconfined,
                 readiness = readiness,
             )
+        vm.loadForEntry()
         // 门控挂起期间：首次查询不得完成（loading 保持、无结果、无版本推进）
         assertTrue(vm.state.value.loading)
         assertEquals(0L, vm.state.value.refreshVersion)
@@ -663,6 +689,7 @@ class TokenUsageStatisticsViewModelTest {
                 dispatcher = Dispatchers.Unconfined,
                 readiness = readiness,
             )
+        vm.loadForEntry()
         // 首次未就绪：按现状完成查询（pre-replay 快照可暂时展示，但不无限停留）
         awaitRefresh(vm, 0)
         assertEquals(1L, vm.state.value.range!!.eventCount)
@@ -706,6 +733,7 @@ class TokenUsageStatisticsViewModelTest {
                     readinessInitialWaitMs = 10L,
                     readinessRefreshWaitMs = 600L,
                 )
+            vm.loadForEntry()
 
             awaitRefresh(vm, 0)
             val fallbackVersion = vm.state.value.refreshVersion
@@ -749,6 +777,7 @@ class TokenUsageStatisticsViewModelTest {
                 dispatcher = Dispatchers.Unconfined,
                 readiness = readiness,
             )
+        vm.loadForEntry()
         runBlocking { withTimeout(5_000) { secondAttempt.await() } }
 
         val initialVersion = vm.state.value.refreshVersion
@@ -786,6 +815,7 @@ class TokenUsageStatisticsViewModelTest {
                 dispatcher = Dispatchers.Unconfined,
                 readiness = TokenStatsReadiness { true },
             )
+        vm.loadForEntry()
         // 第一次 load 卡在偏好读取（构造期间已挂起，尚未写任何 state）
         runBlocking { withTimeout(5_000) { gated.firstLoadStarted.await() } }
 
@@ -833,6 +863,7 @@ class TokenUsageStatisticsViewModelTest {
                 dispatcher = dispatcher,
                 readiness = TokenStatsReadiness { true },
             )
+        vm.loadForEntry()
         // load 已入队但未执行；ViewModelStore.clear() 触发 onCleared →
         // viewModelScope 取消 → 任务不运行、不写 state、不执行首次回退持久化
         val store = androidx.lifecycle.ViewModelStore()
@@ -884,6 +915,10 @@ class TokenUsageStatisticsViewModelTest {
 
         // 非法汇率：拒绝且不持久化
         assertFalse(viewModel.setManualRate(-1.0))
+        assertFalse(viewModel.setManualRate(1e-50))
+        assertFalse(viewModel.setManualRate(1e50))
+        assertFalse(viewModel.setManualRate(Double.NaN))
+        assertFalse(viewModel.setManualRate(Double.POSITIVE_INFINITY))
         assertEquals(7.35, settings.savedRate, 0.0)
     }
 

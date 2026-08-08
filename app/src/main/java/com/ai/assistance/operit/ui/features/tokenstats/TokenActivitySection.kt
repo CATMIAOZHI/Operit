@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Paint
 import android.net.Uri
+import android.util.AtomicFile
 import android.widget.Toast
 import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -93,6 +94,7 @@ import com.canhub.cropper.CropImageContractOptions
 import com.canhub.cropper.CropImageOptions
 import com.canhub.cropper.CropImageView
 import java.io.File
+import java.io.FileOutputStream
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
@@ -105,6 +107,28 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+
+internal data class AvatarImportDecision(
+    val applyAvatar: Boolean,
+    val avatarPath: String?,
+    val avatarRevision: Long,
+)
+
+internal fun decideAvatarImport(
+    globalAvatarUri: String?,
+    persistedPath: String?,
+    currentPath: String?,
+    currentRevision: Long,
+    nowMs: Long,
+): AvatarImportDecision {
+    if (globalAvatarUri.isNullOrBlank()) {
+        return AvatarImportDecision(true, null, maxOf(nowMs, currentRevision + 1L))
+    }
+    if (persistedPath == null) {
+        return AvatarImportDecision(false, currentPath, currentRevision)
+    }
+    return AvatarImportDecision(true, persistedPath, maxOf(nowMs, currentRevision + 1L))
+}
 
 @Composable
 internal fun TokenActivitySection(
@@ -332,18 +356,24 @@ private fun TokenActivityProfileCard() {
 
     suspend fun persistAvatar(uri: Uri?): String? = withContext(Dispatchers.IO) {
         val target = File(context.filesDir, AVATAR_FILE)
+        val atomicFile = AtomicFile(target)
         if (uri == null) {
-            target.delete()
+            atomicFile.delete()
             return@withContext null
         }
-        val temp = File(context.filesDir, "$AVATAR_FILE.tmp")
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            temp.outputStream().use { output -> input.copyTo(output) }
-        } ?: error("Unable to open avatar")
-        if (target.exists()) target.delete()
-        if (!temp.renameTo(target)) {
-            temp.delete()
-            error("Unable to persist avatar")
+        val input = context.contentResolver.openInputStream(uri) ?: error("Unable to open avatar")
+        var output: FileOutputStream? = null
+        try {
+            input.use {
+                val stream = atomicFile.startWrite()
+                output = stream
+                it.copyTo(stream)
+                atomicFile.finishWrite(stream)
+                output = null
+            }
+        } catch (e: Exception) {
+            output?.let(atomicFile::failWrite)
+            throw e
         }
         target.absolutePath
     }
@@ -486,20 +516,36 @@ private fun TokenActivityProfileCard() {
                         scope.launch {
                             val global = DisplayPreferencesManager.getInstance(context)
                             val importedName = global.globalUserName.first().orEmpty()
-                            val importedAvatar = global.globalUserAvatarUri.first()?.let(Uri::parse)
-                            val importedPath = runCatching { persistAvatar(importedAvatar) }.getOrNull()
-                            val revision = maxOf(System.currentTimeMillis(), avatarRevision + 1L)
+                            val globalAvatarUri = global.globalUserAvatarUri.first()?.takeUnless { it.isBlank() }
+                            val importedPath = if (globalAvatarUri == null) {
+                                persistAvatar(null)
+                            } else {
+                                runCatching { persistAvatar(Uri.parse(globalAvatarUri)) }.getOrNull()
+                            }
+                            val decision = decideAvatarImport(
+                                globalAvatarUri,
+                                importedPath,
+                                avatarPath,
+                                avatarRevision,
+                                System.currentTimeMillis(),
+                            )
                             nickname = importedName
-                            avatarPath = importedPath
-                            avatarRevision = revision
-                            prefs.edit()
-                                .putString(KEY_NICKNAME, importedName)
-                                .putLong(KEY_AVATAR_REVISION, revision)
-                                .apply {
-                                    if (importedPath == null) remove(KEY_AVATAR_PATH)
-                                    else putString(KEY_AVATAR_PATH, importedPath)
+                            val editor = prefs.edit().putString(KEY_NICKNAME, importedName)
+                            if (decision.applyAvatar) {
+                                avatarPath = decision.avatarPath
+                                avatarRevision = decision.avatarRevision
+                                editor.putLong(KEY_AVATAR_REVISION, decision.avatarRevision).apply {
+                                    if (decision.avatarPath == null) remove(KEY_AVATAR_PATH)
+                                    else putString(KEY_AVATAR_PATH, decision.avatarPath)
                                 }
-                                .apply()
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.token_activity_profile_avatar_import_failed),
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                            editor.apply()
                         }
                     },
                 ) {

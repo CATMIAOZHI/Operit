@@ -72,4 +72,21 @@ class TokenStatsDatePickerTest {
         }
         assertTrue("end before start must be rejected", failure.isFailure)
     }
+
+    @Test
+    fun `fall back range at maximum natural days is accepted despite extra elapsed hour`() {
+        val maxDays = 10L
+        val start = LocalDate.of(2026, 10, 25).atStartOfDay(newYork).toInstant().toEpochMilli()
+        val end = LocalDate.of(2026, 11, 4).atStartOfDay(newYork).toInstant().toEpochMilli()
+        assertEquals(10L * TokenStatsTimeRanges.DAY_MS + TokenStatsTimeRanges.HOUR_MS, end - start)
+        assertEquals(CustomRangeValidation.VALID, validateCustomRange(start, end, newYork, maxDays))
+    }
+
+    @Test
+    fun `range one natural day over maximum is rejected across fall back`() {
+        val maxDays = 10L
+        val start = LocalDate.of(2026, 10, 25).atStartOfDay(newYork).toInstant().toEpochMilli()
+        val end = LocalDate.of(2026, 11, 5).atStartOfDay(newYork).toInstant().toEpochMilli()
+        assertEquals(CustomRangeValidation.TOO_LONG, validateCustomRange(start, end, newYork, maxDays))
+    }
 }

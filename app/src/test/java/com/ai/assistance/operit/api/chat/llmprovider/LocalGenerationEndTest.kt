@@ -4,6 +4,10 @@ import com.ai.assistance.operit.data.stats.ProviderUsageNormalizer
 import com.ai.assistance.operit.data.stats.ProviderUsageSnapshot
 import com.ai.assistance.operit.util.exceptions.UserCancellationException
 import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -22,6 +26,10 @@ class LocalGenerationEndTest {
     @Test
     fun `cancel reports usage then throws without emitting tool result`() = runBlocking {
         val usageReports = mutableListOf<ProviderUsageSnapshot>()
+        val reporter = LocalUsageReporter(ProviderUsageNormalizer.SOURCE_LLAMA) { usage, attempt ->
+            assertEquals(1, attempt)
+            usageReports.add(usage)
+        }
         var toolEmitted = false
         try {
             LocalGenerationEnd.end(
@@ -29,12 +37,8 @@ class LocalGenerationEndTest {
                 success = false,
                 inputTokens = 300,
                 outputTokens = 12,
-                source = ProviderUsageNormalizer.SOURCE_LLAMA,
+                usageReporter = reporter,
                 cancelMessage = "cancelled by user",
-                onUsageReported = { usage, attempt ->
-                    assertEquals(1, attempt)
-                    usageReports.add(usage)
-                },
                 emitToolResult = { toolEmitted = true },
                 failWith = { fail("cancel path must not reach failWith") },
             )
@@ -53,15 +57,15 @@ class LocalGenerationEndTest {
     @Test
     fun `success emits tool result and reports usage without throwing`() = runBlocking {
         val usageReports = mutableListOf<ProviderUsageSnapshot>()
+        val reporter = LocalUsageReporter(ProviderUsageNormalizer.SOURCE_MNN) { usage, _ -> usageReports.add(usage) }
         var toolEmitted = false
         LocalGenerationEnd.end(
             cancelled = false,
             success = true,
             inputTokens = 100,
                 outputTokens = 30,
-            source = ProviderUsageNormalizer.SOURCE_MNN,
+            usageReporter = reporter,
             cancelMessage = "cancelled",
-            onUsageReported = { usage, _ -> usageReports.add(usage) },
             emitToolResult = { toolEmitted = true },
             failWith = { fail("success path must not fail") },
         )
@@ -74,6 +78,7 @@ class LocalGenerationEndTest {
     @Test
     fun `failure reports usage then fails without emitting tool result`() = runBlocking {
         val usageReports = mutableListOf<ProviderUsageSnapshot>()
+        val reporter = LocalUsageReporter(ProviderUsageNormalizer.SOURCE_LLAMA) { usage, _ -> usageReports.add(usage) }
         var toolEmitted = false
         try {
             LocalGenerationEnd.end(
@@ -81,9 +86,8 @@ class LocalGenerationEndTest {
                 success = false,
                 inputTokens = 200,
                 outputTokens = 5,
-                source = ProviderUsageNormalizer.SOURCE_LLAMA,
+                usageReporter = reporter,
                 cancelMessage = "cancelled",
-                onUsageReported = { usage, _ -> usageReports.add(usage) },
                 emitToolResult = { toolEmitted = true },
                 failWith = { throw IOException("inference failed") },
             )
@@ -102,15 +106,15 @@ class LocalGenerationEndTest {
     @Test
     fun `failure never emits tool result even if failWith returns normally`() = runBlocking {
         val usageReports = mutableListOf<ProviderUsageSnapshot>()
+        val reporter = LocalUsageReporter(ProviderUsageNormalizer.SOURCE_MNN) { usage, _ -> usageReports.add(usage) }
         var toolEmitted = false
         LocalGenerationEnd.end(
             cancelled = false,
             success = false,
             inputTokens = 80,
             outputTokens = 2,
-            source = ProviderUsageNormalizer.SOURCE_MNN,
+            usageReporter = reporter,
             cancelMessage = "cancelled",
-            onUsageReported = { usage, _ -> usageReports.add(usage) },
             emitToolResult = { toolEmitted = true },
             failWith = {},
         )
@@ -118,5 +122,69 @@ class LocalGenerationEndTest {
         assertFalse("tool buffer must never be emitted on failure", toolEmitted)
         assertEquals(1, usageReports.size)
         assertEquals(80L, usageReports[0].uncachedInputTokens)
+    }
+
+    @Test
+    fun `coroutine cancellation reports latest usage once and still propagates`() = runBlocking {
+        val reports = mutableListOf<ProviderUsageSnapshot>()
+        val reporter = LocalUsageReporter(ProviderUsageNormalizer.SOURCE_LLAMA) { usage, _ -> reports += usage }
+        val entered = CompletableDeferred<Unit>()
+        val job = launch {
+            reporter.runReportingFinally({ 42 }, { 7 }) {
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        entered.await()
+        job.cancelAndJoin()
+
+        assertTrue(job.isCancelled)
+        assertEquals(1, reports.size)
+        assertEquals(42L, reports.single().uncachedInputTokens)
+        assertEquals(7L, reports.single().outputTokens)
+        reporter.report(99, 99)
+        assertEquals("reporter must be once-only", 1, reports.size)
+    }
+
+    @Test
+    fun `native exception reports usage once without running success payload`() = runBlocking {
+        val reports = mutableListOf<ProviderUsageSnapshot>()
+        val reporter = LocalUsageReporter(ProviderUsageNormalizer.SOURCE_MNN) { usage, _ -> reports += usage }
+        var toolEmitted = false
+        try {
+            reporter.runReportingFinally({ 15 }, { 4 }) {
+                throw IOException("native failure")
+            }
+            toolEmitted = true
+        } catch (e: IOException) {
+            assertEquals("native failure", e.message)
+        }
+
+        assertFalse(toolEmitted)
+        assertEquals(1, reports.size)
+        assertEquals(15L, reports.single().uncachedInputTokens)
+        assertEquals(4L, reports.single().outputTokens)
+    }
+
+    @Test
+    fun `usage callback failure cannot mask cancellation`() = runBlocking {
+        val reporter = LocalUsageReporter(ProviderUsageNormalizer.SOURCE_LLAMA) { _, _ ->
+            throw IOException("ledger unavailable")
+        }
+        try {
+            LocalGenerationEnd.end(
+                cancelled = true,
+                success = false,
+                usageReporter = reporter,
+                inputTokens = 10,
+                outputTokens = 2,
+                cancelMessage = "cancelled",
+                emitToolResult = { fail("cancel must not emit") },
+                failWith = { fail("cancel must not use failure payload") },
+            )
+            fail("cancellation must propagate")
+        } catch (e: UserCancellationException) {
+            assertEquals("cancelled", e.message)
+        }
     }
 }

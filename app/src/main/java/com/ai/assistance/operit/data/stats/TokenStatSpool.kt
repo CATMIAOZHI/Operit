@@ -74,10 +74,9 @@ import org.json.JSONObject
  * - Every request captures [restoreEpoch] synchronously at its start via [captureRestoreEpoch]
  *   (pure in-memory, no Room) and carries it in its [TokenStatRequestContext.sessionEpoch].
  * - [append] validates the captured epoch against the current [restoreEpoch] AND
- *   [acceptingEventsThisProcess] inside [lifecycleMutex] before any spool write. A restore
- *   barrier (clearAfter=true) atomically increments [restoreEpoch] at its start, so every old
- *   request fails the epoch check and is rejected with a clear persistence failure — it never
- *   writes the (replaced) spool/Room, and the epoch is never round-tripped through JSON/Room.
+ *   [acceptingEventsThisProcess] inside [lifecycleMutex] before any spool write. Raw restore uses
+ *   [withExclusiveRestoreAccess] to increment [restoreEpoch] only after its durable REPLACING
+ *   commit; every old request is then rejected before stores close or directories are replaced.
  * - Once a restore replacement actually starts (right before [block] runs), the process stops
  *   accepting ALL statistics events ([acceptingEventsThisProcess] = false) until it restarts:
  *   the UI allows restarting later, so same-process new requests must be explicitly rejected
@@ -258,7 +257,8 @@ internal object TokenStatSpool {
     private val activeInserts = HashMap<String, Long>()
 
     /**
-     * Request/session fencing epoch（P1 终审）：只在恢复屏障（clearAfter=true）开始时原子递增，
+     * Request/session fencing epoch（P1 终审）：通用恢复屏障开始时递增；Raw restore 则在
+     * 外部 REPLACING 状态成功持久化后、关闭 stores 前原子递增，
      * 使所有在屏障开始前开始（已捕获旧 epoch）的 in-flight provider/stream 请求在收尾
      * [append] 时被明确拒绝——绝不写入可能已被恢复替换的 spool/Room。导出/快照屏障
      * （clearAfter=false）不递增：进行中的请求在导出期间正常收尾。进程内单调递增，
@@ -652,6 +652,41 @@ internal object TokenStatSpool {
         drainBefore: Boolean,
         clearAfter: Boolean = false,
         block: suspend () -> T,
+    ): T = withExclusiveSnapshotAccessInternal(
+        context = context,
+        drainBefore = drainBefore,
+        clearAfter = clearAfter,
+        deferredRestoreCommit = null,
+        block = block,
+    )
+
+    /**
+     * Raw restore two-phase barrier. [prepareBeforeCommit] may do fallible, non-replacement work;
+     * [commitReplacement] must persist the external REPLACING state. Request fencing changes only
+     * after that commit succeeds, and before [block] closes stores or replaces any directory.
+     */
+    internal suspend fun <T> withExclusiveRestoreAccess(
+        context: Context,
+        prepareBeforeCommit: suspend () -> Unit,
+        commitReplacement: suspend () -> Unit,
+        block: suspend () -> T,
+    ): T = withExclusiveSnapshotAccessInternal(
+        context = context,
+        drainBefore = false,
+        clearAfter = true,
+        deferredRestoreCommit = {
+            prepareBeforeCommit()
+            commitReplacement()
+        },
+        block = block,
+    )
+
+    private suspend fun <T> withExclusiveSnapshotAccessInternal(
+        context: Context,
+        drainBefore: Boolean,
+        clearAfter: Boolean,
+        deferredRestoreCommit: (suspend () -> Unit)?,
+        block: suspend () -> T,
     ): T = lifecycleMutex.withLock {
         val appContext = context.applicationContext
         // P1-1 终审：快照/恢复前必须先确认 spool 目录项持久（上一进程可见未确认的目录项
@@ -664,7 +699,7 @@ internal object TokenStatSpool {
         val generation = synchronized(stateLock) {
             sessionGeneration += 1L
             drainScheduled = false
-            if (clearAfter) {
+            if (clearAfter && deferredRestoreCommit == null) {
                 // P1 终审：恢复屏障开始即原子递增 restore epoch——所有在屏障前开始的请求
                 // 收尾 append 时 epoch 不匹配而被明确拒绝；导出/快照（clearAfter=false）
                 // 不递增，进行中的请求在导出期间正常收尾。
@@ -690,11 +725,32 @@ internal object TokenStatSpool {
                 )
             }
             if (clearAfter) {
-                // P1 终审：替换开始（block 即将执行）——本进程不再接受任何统计事件，直到
-                // 进程重启（UI 允许稍后重启；替换后失败同样保持拒绝，绝不写入已部分替换的
-                // 数据库）。此前任何失败（bootstrap/drain/quiesce）都不触碰该标志，新请求
-                // 可继续（替换前失败可恢复）。
-                synchronized(stateLock) { acceptingEventsThisProcess = false }
+                if (deferredRestoreCommit != null) {
+                    var restoreFenceCommitted = false
+                    try {
+                        withContext(kotlinx.coroutines.NonCancellable) {
+                            deferredRestoreCommit()
+                            synchronized(stateLock) {
+                                restoreEpoch += 1L
+                                acceptingEventsThisProcess = false
+                            }
+                            restoreFenceCommitted = true
+                        }
+                    } catch (e: Exception) {
+                        if (!restoreFenceCommitted) {
+                            // The request fence is unchanged. Resume normal draining after releasing
+                            // lifecycleMutex so durable old/new events can still reach the old DB.
+                            scheduleDrain(appContext)
+                        }
+                        throw e
+                    }
+                } else {
+                    // P1 终审：替换开始（block 即将执行）——本进程不再接受任何统计事件，直到
+                    // 进程重启（UI 允许稍后重启；替换后失败同样保持拒绝，绝不写入已部分替换的
+                    // 数据库）。此前任何失败（bootstrap/drain/quiesce）都不触碰该标志，新请求
+                    // 可继续（替换前失败可恢复）。
+                    synchronized(stateLock) { acceptingEventsThisProcess = false }
+                }
             }
             val result = block()
             if (clearAfter) clearForRestoreLocked(appContext)
