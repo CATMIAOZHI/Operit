@@ -284,7 +284,7 @@ object TokenStatsLedger {
     ): TokenStatIdentityEntity {
         val identity = identityEntityFor(request.configId, request.provider, request.model)
         dao.insertIdentityIfAbsent(identity)
-        dao.upsertDisplayModel(displayModelEntityFor(request.model))
+        dao.insertDisplayModelIfAbsent(displayModelEntityFor(request.model))
         return identity
     }
 

@@ -147,6 +147,29 @@ reasoningTokens = 50L,
     }
 
     @Test
+    fun `accepting and recording requests preserve renamed default display group`() = runBlocking {
+        val dao = database.tokenStatsDao()
+        val model = "gpt-4o-2024-11-20"
+        val displayModelId = TokenStatIdentityResolver.displayModelIdFor(model)
+        TokenStatsLedger.record(context, request(eventId = "evt-alias-1", model = model))
+        dao.updateDisplayModelName(displayModelId, "Primary GPT")
+
+        TokenStatsLedger.ensureIdentityAndCaptureGeneration(
+            context = context,
+            configId = "cfg-2",
+            provider = "OPENAI",
+            model = model,
+        )
+        assertEquals("Primary GPT", dao.getDisplayModel(displayModelId)!!.displayName)
+
+        TokenStatsLedger.record(
+            context,
+            request(eventId = "evt-alias-2", configId = "cfg-2", model = model),
+        )
+        assertEquals("Primary GPT", dao.getDisplayModel(displayModelId)!!.displayName)
+    }
+
+    @Test
     fun `duplicate usage callbacks keep last snapshot only`() = runBlocking {
         val ctx = request(eventId = "evt-last")
         ctx.onUsage(
