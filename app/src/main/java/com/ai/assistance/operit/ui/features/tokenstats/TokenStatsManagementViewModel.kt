@@ -17,6 +17,7 @@ import com.ai.assistance.operit.data.stats.LegacyPriceSettings
 import com.ai.assistance.operit.data.stats.TokenStatsGroupModelInfo
 import com.ai.assistance.operit.data.stats.TokenStatsPriceOverrideDraft
 import com.ai.assistance.operit.data.stats.TokenStatsSettingsManager
+import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -170,7 +171,9 @@ class TokenStatsManagementViewModel(
 private fun ModelConfigSummary.toTokenStatsOption() = TokenStatsConfigOption(
     id = id,
     name = name,
-    provider = apiProviderTypeId,
+    // ToolPkg 事件的 provider 记录为 displayName；未产生事件时也按同一名称解析，
+    // 否则价格覆盖保存后 TokenPriceResolver 按 displayName 查不到。
+    provider = ToolPkgAiProviderRegistry.get(apiProviderTypeId)?.displayName ?: apiProviderTypeId,
     models = getModelList(modelName),
     endpoint = apiEndpoint,
 )

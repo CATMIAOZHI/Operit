@@ -72,6 +72,7 @@ open class KimiProvider(
         val jsonObject = JSONObject()
         jsonObject.put("model", modelName)
         jsonObject.put("stream", stream)
+        jsonObject.putStreamUsageOption(stream)
         applyThinkingParams(jsonObject)
 
         for (param in modelParameters) {

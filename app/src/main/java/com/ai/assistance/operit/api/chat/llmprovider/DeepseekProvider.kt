@@ -81,6 +81,7 @@ class DeepseekProvider(
         val jsonObject = JSONObject()
         jsonObject.put("model", modelName)
         jsonObject.put("stream", stream)
+        jsonObject.putStreamUsageOption(stream)
 
         // DeepSeek Thinking Mode 默认开启，关闭时也必须显式发送 thinking.type=disabled。
         applyThinkingParamsIfNeeded(jsonObject)

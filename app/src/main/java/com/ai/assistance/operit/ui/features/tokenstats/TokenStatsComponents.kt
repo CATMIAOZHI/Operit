@@ -429,7 +429,7 @@ private fun BaselineLine(
     }
 }
 
-/** 已知 token 分量合计（uncached+cached+cacheWrite+output+reasoning，未知不算 0）。 */
+/** 已知 token 分量合计（uncached+cached+cacheWrite+output+独立计费 reasoning，未知不算 0）。 */
 internal fun knownTokenSum(
     totals: com.ai.assistance.operit.data.stats.TokenStatsTotals,
 ): Long = saturatedTokenSum(
@@ -440,9 +440,9 @@ internal fun knownTokenSum(
         totals.reasoning.knownSum,
     )
 
-/** 旧累计值没有额外 token 分类，只能按输入、缓存输入和输出合计。 */
+/** 旧累计值没有额外 token 分类：inputTokens 已含缓存命中，只能按总输入和输出合计。 */
 internal fun knownBaselineTokenSum(totals: TokenStatsBaselineTotals): Long =
-    saturatedTokenSum(totals.inputTokens, totals.cachedInputTokens, totals.outputTokens)
+    saturatedTokenSum(totals.inputTokens, totals.outputTokens)
 
 /** 生命周期总 Token 必须同时包含新事件与迁移的旧累计 baseline。 */
 internal fun knownLifetimeTokenSum(
