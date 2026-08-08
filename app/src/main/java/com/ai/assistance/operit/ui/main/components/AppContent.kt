@@ -53,6 +53,8 @@ import com.ai.assistance.operit.ui.main.NavigationTransitionSource
 import com.ai.assistance.operit.ui.main.TopBarTitleContent
 import com.ai.assistance.operit.ui.main.navigation.RouteEntry
 import com.ai.assistance.operit.ui.main.navigation.LocalRouteInstanceId
+import com.ai.assistance.operit.ui.main.navigation.ScreenRouteViewModelStoreOwnerManager
+import com.ai.assistance.operit.ui.main.navigation.retainedRouteKeysOnContentAttach
 import com.ai.assistance.operit.ui.main.screens.Screen
 import com.ai.assistance.operit.ui.common.composedsl.ToolPkgComposeDslToolScreen
 import kotlinx.coroutines.CoroutineScope
@@ -73,6 +75,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.zIndex
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
@@ -152,7 +156,9 @@ fun AppContent(
         onGoBack: () -> Unit,
         isNavigatingBack: Boolean = false,
         actions: @Composable RowScope.() -> Unit = {},
-        titleContent: TopBarTitleContent? = null
+        titleContent: TopBarTitleContent? = null,
+        /** 当前导航栈中仍存活的路由 screenKey（路由级 ViewModelStore 清理依据）。 */
+        aliveScreenKeys: Set<String>
 ) {
     // Get background image state
     val context = LocalContext.current
@@ -224,16 +230,29 @@ fun AppContent(
     val screenCache = remember { mutableStateMapOf<String, @Composable () -> Unit>() }
     val screenKeepAliveCache = remember { mutableStateMapOf<String, Boolean>() }
     val screenStateHolder = rememberSaveableStateHolder()
+    // 路由级 ViewModelStore 管理器：自身是 Activity 级 ViewModel（跨配置变化
+    // 保留 owner/VM）；路由出栈/替换/清栈时清理对应 store（P1：离页查询不保留）。
+    val routeViewModelStoreManager: ScreenRouteViewModelStoreOwnerManager = viewModel()
     val currentScreenKey =
         remember(currentRouteEntry.instanceId, currentScreen) {
-            if (currentScreen.keepAlive) {
-                currentScreen.stableScreenKey() ?: currentRouteEntry.instanceId
-            } else {
-                currentRouteEntry.instanceId
-            }
+            currentScreen.screenKey(currentRouteEntry.instanceId)
         }
     var currentScreenSoftInputMode by remember(currentScreenKey) { mutableStateOf<Int?>(null) }
     var currentScreenUsesImePadding by remember(currentScreenKey) { mutableStateOf(false) }
+
+    // 全新组合（配置变化/跨 600dp 布局重建）：screenCache 已随组合重置，
+    // 但 Activity 级 manager/routerState 保留的导航栈仍存活，只保留当前页会
+    // 误清 backStack 其他路由的 owner（P1）。首次组合（attach）时按
+    // aliveScreenKeys + 当前键同步一次。key 必须用 Unit：只在组合进入时执行
+    // 一次，不得随 alive 变化重启——pop 后 alive 立即更新，若按它重启会在
+    // 退出动画完成前清理仍渲染的离页 owner。pop/replace/clear 的清理只由
+    // 转场完成分支 retainOnly(aliveRouteKeys()) 执行（含过渡/keepAlive 时机）；
+    // Phone/Tablet 切换会销毁本组合，新组合 attach 时重新执行并用新传入 alive。
+    LaunchedEffect(Unit) {
+        routeViewModelStoreManager.retainOnly(
+            retainedRouteKeysOnContentAttach(currentScreenKey, aliveScreenKeys)
+        )
+    }
     val effectiveSoftInputMode =
         currentScreenSoftInputMode
             ?: manifestSoftInputMode
@@ -431,16 +450,32 @@ fun AppContent(
                                             uiModuleId = screenSnapshot.uiModuleId,
                                             fallbackTitle = screenSnapshot.title
                                         )
-                                    else ->
-                                        screenSnapshot.Content(
-                                            navController = navController,
-                                            navigateTo = onScreenChange,
-                                            onGoBack = onGoBack,
-                                            hasBackgroundImage = hasBackgroundImage,
-                                            onLoading = onLoading,
-                                            onError = onError,
-                                            onGestureConsumed = if (screenSnapshot is Screen.AiChat) onGestureConsumed else { _ -> }
-                                        )
+                                    else -> {
+                                        val content: @Composable () -> Unit = {
+                                            screenSnapshot.Content(
+                                                navController = navController,
+                                                navigateTo = onScreenChange,
+                                                onGoBack = onGoBack,
+                                                hasBackgroundImage = hasBackgroundImage,
+                                                onLoading = onLoading,
+                                                onError = onError,
+                                                onGestureConsumed = if (screenSnapshot is Screen.AiChat) onGestureConsumed else { _ -> }
+                                            )
+                                        }
+                                        if (screenSnapshot.usesRouteViewModelStore) {
+                                            // 路由级 ViewModelStore（P1）：配置变化保留实例，
+                                            // 路由出栈/替换/清栈时 store.clear() 触发 onCleared
+                                            val routeOwner =
+                                                routeViewModelStoreManager.ownerFor(currentScreenKey)
+                                            CompositionLocalProvider(
+                                                LocalViewModelStoreOwner provides routeOwner
+                                            ) {
+                                                content()
+                                            }
+                                        } else {
+                                            content()
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -471,6 +506,13 @@ fun AppContent(
                                 else -> null
                             }
 
+                        // 计算当前仍应存活的路由键：导航栈 + 仍渲染的 keepAlive 缓存 +
+                        // 当前键（在转场完成时执行，避免清理仍在渲染的过渡页）
+                        fun aliveRouteKeys(): Set<String> =
+                            aliveScreenKeys +
+                                screenKeepAliveCache.filterValues { it }.keys +
+                                currentScreenKey
+
                         LaunchedEffect(currentScreenKey) {
                             val fromKey = lastObservedCurrentKey
                             if (currentScreenKey == fromKey) return@LaunchedEffect
@@ -493,6 +535,8 @@ fun AppContent(
                                     screenKeepAliveCache.remove(removalKey)
                                     screenStateHolder.removeState(removalKey)
                                 }
+                                // 路由已离开栈：清理其 ViewModelStore（pop/replace/清栈）
+                                routeViewModelStoreManager.retainOnly(aliveRouteKeys())
                                 pendingRemovalKey = null
                                 return@LaunchedEffect
                             }
@@ -519,6 +563,8 @@ fun AppContent(
                                     screenStateHolder.removeState(keyToRemove)
                                 }
                             }
+                            // 动画结束、旧路由已离开栈：清理其 ViewModelStore
+                            routeViewModelStoreManager.retainOnly(aliveRouteKeys())
                             pendingRemovalKey = null
                         }
 

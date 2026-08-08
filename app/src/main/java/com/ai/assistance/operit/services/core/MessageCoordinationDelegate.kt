@@ -1050,7 +1050,8 @@ class MessageCoordinationDelegate(
                 modelParameters = modelParameters,
                 enableThinking = false,
                 stream = false,
-                preserveThinkInHistory = false
+                preserveThinkInHistory = false,
+                statsCategory = com.ai.assistance.operit.data.stats.TokenStatCategory.OTHER
             )
             stream.collect { chunk -> contentBuilder.append(chunk) }
         }.onFailure {

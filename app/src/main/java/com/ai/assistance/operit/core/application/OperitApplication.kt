@@ -51,6 +51,7 @@ import com.ai.assistance.operit.data.preferences.initUserPreferencesManager
 import com.ai.assistance.operit.data.preferences.preferencesManager
 import com.ai.assistance.operit.data.repository.CustomEmojiRepository
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
+import com.ai.assistance.operit.data.stats.TokenStatsStartupCoordinator
 import com.ai.assistance.operit.ui.features.chat.webview.LocalWebServer
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.editor.language.LanguageFactory
 import com.ai.assistance.operit.util.GlobalExceptionHandler
@@ -365,6 +366,20 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                 )
             }
             AppLogger.d(TAG, "【启动计时】数据库预加载完成（异步） - ${System.currentTimeMillis() - dbStartTime}ms")
+        }
+
+        // 启动统计 single-flight 初始化（P1 关键链路）：旧 DataStore 累计统计 → baseline
+        // 幂等导入 → 消费备份恢复 pending 标记 → 等待 spool 初始 drain 完成，保证统计页
+        // 首次查询看到重放完成后的数据。失败不缓存：统计页首次查询的 readiness 门控会
+        // 自动重试（spool drain 另有退避重试）。
+        applicationScope.launch {
+            val statsStartTime = System.currentTimeMillis()
+            val ready = TokenStatsStartupCoordinator.awaitInitialized(applicationContext)
+            AppLogger.d(
+                TAG,
+                "【启动计时】旧累计统计 baseline 导入完成（异步，ready=$ready） - " +
+                    "${System.currentTimeMillis() - statsStartTime}ms"
+            )
         }
 
         // 初始化全局图片加载器，设置强大的缓存策略

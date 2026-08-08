@@ -6,6 +6,8 @@ import android.os.Handler
 import android.os.Looper
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.db.ObjectBoxManager
+import com.ai.assistance.operit.data.stats.TokenBaselineImportRunner
+import com.ai.assistance.operit.data.stats.TokenStatSpool
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.OperitPaths
 import java.io.BufferedInputStream
@@ -56,7 +58,7 @@ object RawSnapshotBackupManager {
 
     @Volatile
     private var processRestartRequired = false
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     @Serializable
     data class Manifest(
@@ -114,7 +116,14 @@ object RawSnapshotBackupManager {
     ): File = withContext(Dispatchers.IO) {
         mutex.withLock {
             check(!processRestartRequired) { "Application restart required before another snapshot operation" }
-            exportToBackupDirLocked(context, options, onProgress)
+            TokenStatSpool.withExclusiveSnapshotAccess(context, drainBefore = true) {
+                exportToBackupDirLocked(
+                    context,
+                    options,
+                    onProgress,
+                    requireDatabaseCheckpoint = true,
+                )
+            }
         }
     }
 
@@ -341,6 +350,79 @@ object RawSnapshotBackupManager {
 
     fun officialOperitMigrationFailureMessage(): String? = officialMigrationFailureMessage
 
+    /**
+     * 恢复前先把恢复流程接入持久状态机：仅官方迁移处于 COMPLETED 时恢复完成后
+     * 保持 COMPLETED，其余（IDLE/REPLACING/FAILED/虚拟 NEEDS_RECOVERY）落回 IDLE。
+     */
+    internal fun restoreFinalState(context: Context): MigrationStateStore.State {
+        val current = MigrationStateStore.read(context).state
+        return if (current == MigrationStateStore.State.COMPLETED) {
+            MigrationStateStore.State.COMPLETED
+        } else {
+            MigrationStateStore.State.IDLE
+        }
+    }
+
+    /**
+     * 两个公开恢复入口（[restoreFromBackupUri] / [restoreFromBackupFile]）共用的
+     * 编排：持久化 REPLACING → 立即要求进程重启 → 执行目录替换 →
+     * 持久化“替换完成待登记” →
+     * 崩溃安全登记 generation 并完成 recovery state。
+     *
+     * 状态机（持久化在 noBackupFilesDir，不随恢复覆盖）：
+     * - [performRestore] 的 prepare 阶段必须先持久化 REPLACING 再关闭数据库并
+     *   替换目录：进程在任何边界退出，冷启动都会进入恢复面而不是误以 IDLE 正常
+     *   初始化（目录可能部分替换）。
+     * - [performRestore] 在关闭数据库及任何目录替换前调用所给 prepare 回调。
+     *   只有 REPLACING 成功持久化后才立即置 processRestartRequired = true；写入
+     *   REPLACING 本身失败不要求重启。一旦回调成功，后续关闭存储、目录替换、
+     *   RESTORE_REPLACED 写入或登记的任何失败都必须重启。
+     * - 替换成功但登记失败（异常/进程死亡）：状态保持 RESTORE_REPLACED，冷启动
+     *   通过 [completePendingRestoreRegistration] 自动补登记新 generation，无需
+     *   重新替换目录；同一次替换绝不会把凭空生成的新 generation 与已应用的旧
+     *   generation 混淆（generation 每次登记都是全新 UUID，幂等锚点在数据库侧）。
+     * - 登记用 NonCancellable 包裹：协程取消不会在“marker 已写、状态未完成”的
+     *   中间态放弃登记。
+     */
+    internal suspend fun runRestoreEntry(
+        context: Context,
+        finalState: MigrationStateStore.State,
+        performRestore: suspend (prepareForReplacement: suspend () -> Unit) -> Unit,
+    ) {
+        performRestore {
+            MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.REPLACING)
+            // REPLACING 已落盘，破坏阶段从这里开始。必须先关门，再关闭任何存储。
+            processRestartRequired = true
+        }
+        // 再持久化“替换完成待登记”（fallible），最后登记 generation（fallible）。
+        MigrationStateStore.writeOrThrow(
+            context,
+            MigrationStateStore.State.RESTORE_REPLACED,
+            finalState = finalState
+        )
+        withContext(NonCancellable) {
+            RestoreCompletionCoordinator.registerAfterRestore(context)
+        }
+    }
+
+    /**
+     * 冷启动自动补登记：目录替换已完成（状态 RESTORE_REPLACED），只补登记
+     * generation 并完成状态，**不重新替换任何目录**。之后调用方应退出进程，
+     * 下一个冷启动在正常初始化前消费 marker 完成受控补导。
+     *
+     * @throws IllegalStateException 状态不是 RESTORE_REPLACED。
+     */
+    suspend fun completePendingRestoreRegistration(context: Context) {
+        val snapshot = MigrationStateStore.read(context)
+        check(snapshot.state == MigrationStateStore.State.RESTORE_REPLACED) {
+            "No pending restore registration (state=${snapshot.state})"
+        }
+        processRestartRequired = true
+        withContext(NonCancellable) {
+            RestoreCompletionCoordinator.registerAfterRestore(context)
+        }
+    }
+
     suspend fun restoreFromBackupUri(
         context: Context,
         uri: Uri,
@@ -348,17 +430,21 @@ object RawSnapshotBackupManager {
     ) = withContext(Dispatchers.IO) {
         mutex.withLock {
             check(!processRestartRequired) { "Application restart required before another snapshot operation" }
-            restoreFromBackupUriLocked(
+            runRestoreEntry(
                 context = context,
-                uri = uri,
-                expectedPackageName = context.packageName,
-                prepareForReplacement = {
-                    AppDatabase.closeDatabase()
-                    ObjectBoxManager.closeAll()
-                },
-                onProgress = onProgress
+                finalState = restoreFinalState(context),
+                performRestore = { prepareForReplacement ->
+                    restoreFromBackupLocked(
+                        context = context,
+                        openInput = { context.contentResolver.openInputStream(uri) },
+                        expectedPackageName = context.packageName,
+                        prepareBeforeCommit = {},
+                        commitReplacement = prepareForReplacement,
+                        closeStoresAfterCommit = true,
+                        onProgress = onProgress
+                    )
+                }
             )
-            completeRecoveryIfNeeded(context)
         }
     }
 
@@ -367,8 +453,10 @@ object RawSnapshotBackupManager {
      * Used by the recovery surface, which operates on files inside the app's private backup
      * directory and therefore does not need a persisted URI permission.
      *
-     * On success, an interrupted recovery state is atomically reset to IDLE and the caller should
-     * exit the process so the next cold start enters normal mode. A COMPLETED marker is preserved.
+     * Shares the exact same orchestration and state machine as [restoreFromBackupUri]:
+     * REPLACING → (directories replaced) → RESTORE_REPLACED → registration → IDLE/COMPLETED.
+     * On success the caller should exit the process so the next cold start consumes the
+     * registered generation; a COMPLETED marker is preserved.
      */
     suspend fun restoreFromBackupFile(
         context: Context,
@@ -377,30 +465,21 @@ object RawSnapshotBackupManager {
     ) = withContext(Dispatchers.IO) {
         mutex.withLock {
             check(!processRestartRequired) { "Application restart required before another snapshot operation" }
-            restoreFromBackupUriLocked(
+            runRestoreEntry(
                 context = context,
-                uri = Uri.fromFile(file),
-                expectedPackageName = context.packageName,
-                prepareForReplacement = {
-                    AppDatabase.closeDatabase()
-                    ObjectBoxManager.closeAll()
-                },
-                onProgress = onProgress
+                finalState = restoreFinalState(context),
+                performRestore = { prepareForReplacement ->
+                    restoreFromBackupLocked(
+                        context = context,
+                        openInput = { FileInputStream(file) },
+                        expectedPackageName = context.packageName,
+                        prepareBeforeCommit = {},
+                        commitReplacement = prepareForReplacement,
+                        closeStoresAfterCommit = true,
+                        onProgress = onProgress
+                    )
+                }
             )
-            completeRecoveryIfNeeded(context)
-        }
-    }
-
-    private fun completeRecoveryIfNeeded(context: Context) {
-        when (MigrationStateStore.read(context).state) {
-            MigrationStateStore.State.REPLACING,
-            MigrationStateStore.State.FAILED,
-            MigrationStateStore.State.NEEDS_RECOVERY ->
-                MigrationStateStore.writeOrThrow(context, MigrationStateStore.State.IDLE)
-            MigrationStateStore.State.IDLE,
-            MigrationStateStore.State.PENDING,
-            MigrationStateStore.State.PREPARING,
-            MigrationStateStore.State.COMPLETED -> Unit
         }
     }
 
@@ -467,25 +546,22 @@ object RawSnapshotBackupManager {
             }
 
             // State machine guard: stays PENDING until the zip is read, extracted and validated
-            // inside restoreFromBackupUriLocked. A corrupt zip, wrong source package, or URI
+            // inside restoreFromBackupLocked. A corrupt zip, wrong source package, or URI
             // permission failure throws before prepareForReplacement runs. The catch atomically
             // returns the state to IDLE so the next launch reaches Settings and the user can pick
             // another archive instead of retrying the same bad request forever.
             //
-            // The destructive phase (close databases, checkpoint, take safety snapshot, replace
-            // directories) runs inside prepareForReplacement, which is wrapped in
-            // NonCancellable and only invoked after validation succeeds. The state transitions
-            // PREPARING -> REPLACING happen inside prepareForReplacement at the precise points
-            // where the data directory becomes at risk.
+            // Preparation and the REPLACING commit run inside the restore barrier after validation.
+            // The request fence changes only after REPLACING is durable and before replacement.
             var enteredReplacing = false
             var safetyBackupPath: String? = null
             lateinit var safetyBackup: File
             try {
-                restoreFromBackupUriLocked(
+                restoreFromBackupLocked(
                     context = context,
-                    uri = uri,
+                    openInput = { context.contentResolver.openInputStream(uri) },
                     expectedPackageName = RawSnapshotPackagePolicy.OFFICIAL_OPERIT_PACKAGE,
-                    prepareForReplacement = {
+                    prepareBeforeCommit = {
                         // Transition to PREPARING before closing databases and taking the safety
                         // snapshot. Validation has already succeeded at this point, so a crash
                         // here leaves state=PREPARING with data untouched; the next MainActivity
@@ -511,10 +587,8 @@ object RawSnapshotBackupManager {
                             performDatabaseCheckpoint = false
                         )
                         safetyBackupPath = safetyBackup.absolutePath
-                        // Transition to REPLACING after the safety snapshot is on disk. If the
-                        // process dies during directory replacement, the next cold start observes
-                        // REPLACING and the recovery surface recommends the safety snapshot whose
-                        // path is recorded in the state file.
+                    },
+                    commitReplacement = {
                         MigrationStateStore.writeOrThrow(
                             context,
                             MigrationStateStore.State.REPLACING,
@@ -523,6 +597,8 @@ object RawSnapshotBackupManager {
                         )
                         enteredReplacing = true
                     },
+                    // Stores were closed before the safety snapshot; do not reopen or close twice.
+                    closeStoresAfterCommit = false,
                     onProgress = onProgress
                 )
             } catch (e: Exception) {
@@ -561,11 +637,13 @@ object RawSnapshotBackupManager {
         }
     }
 
-    private suspend fun restoreFromBackupUriLocked(
+    private suspend fun restoreFromBackupLocked(
         context: Context,
-        uri: Uri,
+        openInput: () -> java.io.InputStream?,
         expectedPackageName: String,
-        prepareForReplacement: suspend () -> Unit,
+        prepareBeforeCommit: suspend () -> Unit,
+        commitReplacement: suspend () -> Unit,
+        closeStoresAfterCommit: Boolean,
         onProgress: ((RestoreProgress) -> Unit)?
     ) {
             val cacheZip = File.createTempFile("raw_snapshot_restore_", ".zip", context.cacheDir)
@@ -575,14 +653,14 @@ object RawSnapshotBackupManager {
             }
 
             try {
-                AppLogger.i(TAG, "restore start uri=$uri")
+                AppLogger.i(TAG, "restore start")
                 withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.PREPARING) }
                 withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.READING_ZIP) }
-                context.contentResolver.openInputStream(uri)?.use { input ->
+                openInput()?.use { input ->
                     FileOutputStream(cacheZip).use { output ->
                         input.copyTo(output)
                     }
-                } ?: throw IllegalStateException("Failed to open uri")
+                } ?: throw IllegalStateException("Failed to open restore source")
 
                 AppLogger.i(TAG, "restore cached zip: ${cacheZip.absolutePath} (${cacheZip.length()} bytes)")
 
@@ -606,29 +684,38 @@ object RawSnapshotBackupManager {
                     "restore manifest ok (formatVersion=${manifest.formatVersion}, includeTerminalData=${manifest.includeTerminalData})"
                 )
 
-                withContext(NonCancellable) {
-                    prepareForReplacement()
-
-                    AppLogger.i(TAG, "restore closed databases (room + objectbox)")
-                    AppLogger.i(TAG, "restore replace dirs (preserveTerminalTopLevel=${preservedNames.isNotEmpty()})")
-
-                    withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_FILES) }
-                    replaceDirContents(File(payloadDir, "files"), context.filesDir, preservedTopLevelDirNames = preservedNames)
-                    if (externalFilesPayloadDir.exists()) {
-                        val externalFilesDir = requireNotNull(context.getExternalFilesDir(null)) {
-                            "External files dir is unavailable"
+                TokenStatSpool.withExclusiveRestoreAccess(
+                    context = context,
+                    prepareBeforeCommit = prepareBeforeCommit,
+                    commitReplacement = commitReplacement,
+                ) {
+                    withContext(NonCancellable) {
+                        if (closeStoresAfterCommit) {
+                            AppDatabase.closeDatabase()
+                            ObjectBoxManager.closeAll()
                         }
-                        withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_EXTERNAL_FILES) }
-                        replaceDirContents(externalFilesPayloadDir, externalFilesDir)
-                    }
-                    withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_SHARED_PREFS) }
-                    replaceDirContents(File(payloadDir, "shared_prefs"), File(context.dataDir, "shared_prefs"))
-                    withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_DATASTORE) }
-                    replaceDirContents(File(payloadDir, "datastore"), File(context.dataDir, "datastore"))
-                    withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_DATABASES) }
-                    replaceDirContents(File(payloadDir, "databases"), File(context.dataDir, "databases"))
 
-                    withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.FINALIZING) }
+                        AppLogger.i(TAG, "restore closed databases (room + objectbox)")
+                        AppLogger.i(TAG, "restore replace dirs (preserveTerminalTopLevel=${preservedNames.isNotEmpty()})")
+
+                        withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_FILES) }
+                        replaceDirContents(File(payloadDir, "files"), context.filesDir, preservedTopLevelDirNames = preservedNames)
+                        if (externalFilesPayloadDir.exists()) {
+                            val externalFilesDir = requireNotNull(context.getExternalFilesDir(null)) {
+                                "External files dir is unavailable"
+                            }
+                            withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_EXTERNAL_FILES) }
+                            replaceDirContents(externalFilesPayloadDir, externalFilesDir)
+                        }
+                        withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_SHARED_PREFS) }
+                        replaceDirContents(File(payloadDir, "shared_prefs"), File(context.dataDir, "shared_prefs"))
+                        withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_DATASTORE) }
+                        replaceDirContents(File(payloadDir, "datastore"), File(context.dataDir, "datastore"))
+                        withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_DATABASES) }
+                        replaceDirContents(File(payloadDir, "databases"), File(context.dataDir, "databases"))
+
+                        withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.FINALIZING) }
+                    }
                 }
 
                 AppLogger.i(TAG, "restore done: ${manifest.packageName}")

@@ -93,7 +93,8 @@ object ModelConfigConnectionTester {
                     listOf(PromptTurn(kind = PromptTurnKind.USER, content = "Hi")),
                     parameters,
                     stream = false,
-                    enableRetry = false
+                    enableRetry = false,
+                    statsCategory = com.ai.assistance.operit.data.stats.TokenStatCategory.CONNECTION_TEST
                 ).collect { }
             }
 
@@ -134,7 +135,8 @@ object ModelConfigConnectionTester {
                             parameters,
                             stream = false,
                             availableTools = availableTools,
-                            enableRetry = false
+                            enableRetry = false,
+                            statsCategory = com.ai.assistance.operit.data.stats.TokenStatCategory.CONNECTION_TEST
                         ).collect { }
                     }
 
@@ -161,7 +163,8 @@ object ModelConfigConnectionTester {
                             listOf(PromptTurn(kind = PromptTurnKind.USER, content = prompt)),
                             parameters,
                             stream = false,
-                            enableRetry = false
+                            enableRetry = false,
+                            statsCategory = com.ai.assistance.operit.data.stats.TokenStatCategory.CONNECTION_TEST
                         ).collect { }
                     } finally {
                         ImagePoolManager.removeImage(imageId)
@@ -189,7 +192,8 @@ object ModelConfigConnectionTester {
                             listOf(PromptTurn(kind = PromptTurnKind.USER, content = prompt)),
                             parameters,
                             stream = false,
-                            enableRetry = false
+                            enableRetry = false,
+                            statsCategory = com.ai.assistance.operit.data.stats.TokenStatCategory.CONNECTION_TEST
                         ).collect { }
                     } finally {
                         MediaPoolManager.removeMedia(audioId)
@@ -217,7 +221,8 @@ object ModelConfigConnectionTester {
                             listOf(PromptTurn(kind = PromptTurnKind.USER, content = prompt)),
                             parameters,
                             stream = false,
-                            enableRetry = false
+                            enableRetry = false,
+                            statsCategory = com.ai.assistance.operit.data.stats.TokenStatCategory.CONNECTION_TEST
                         ).collect { }
                     } finally {
                         MediaPoolManager.removeMedia(videoId)
