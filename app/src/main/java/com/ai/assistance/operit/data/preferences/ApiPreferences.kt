@@ -17,6 +17,8 @@ import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
+import com.ai.assistance.operit.data.stats.LegacyProviderModelKeyDecoder
+import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -111,25 +113,6 @@ class ApiPreferences private constructor(private val context: Context) {
         val LEGACY_PRICE_KEY_PREFIXES =
                 listOf("model_input_price_", "model_cached_input_price_", "model_output_price_",
                         "billing_mode_", "price_per_request_")
-
-        private val providerNameCandidates =
-                ApiProviderType.values().map { it.name }.sortedByDescending { it.length }
-
-        private fun decodeProviderModelFromKeySuffix(encoded: String): String {
-                val matchedProvider = providerNameCandidates.firstOrNull {
-                        encoded == it || encoded.startsWith("${it}_")
-                }
-
-                return if (matchedProvider != null) {
-                        if (encoded.length == matchedProvider.length) {
-                                matchedProvider
-                        } else {
-                                "$matchedProvider:${encoded.substring(matchedProvider.length + 1)}"
-                        }
-                } else {
-                        encoded.replaceFirst("_", ":")
-                }
-        }
 
         val USD_TO_CNY_EXCHANGE_RATE = floatPreferencesKey("usd_to_cny_exchange_rate")
 
@@ -621,13 +604,15 @@ class ApiPreferences private constructor(private val context: Context) {
     suspend fun getAllProviderModelTokens(): Map<String, Triple<Long, Long, Long>> {
         val preferences = context.apiDataStore.data.first()
         val result = mutableMapOf<String, Triple<Long, Long, Long>>()
+        val providerNames = registeredToolPkgProviderNames()
         
         // 遍历所有preferences，查找token相关的key
         preferences.asMap().forEach { (key, value) ->
             val keyName = key.name
             if (keyName.startsWith("token_input_")) {
                 val providerModel =
-                        decodeProviderModelFromKeySuffix(keyName.removePrefix("token_input_"))
+                        LegacyProviderModelKeyDecoder.decode(
+                                keyName.removePrefix("token_input_"), providerNames)
                 val inputTokens = readTokenCountValue(value)
                 val outputTokens = readTokenCount(preferences, getTokenOutputKey(providerModel).name)
                 val cachedInputTokens =
@@ -648,13 +633,15 @@ class ApiPreferences private constructor(private val context: Context) {
     val allProviderModelTokensFlow: Flow<Map<String, Triple<Long, Long, Long>>> =
         context.apiDataStore.data.map { preferences ->
             val result = mutableMapOf<String, Triple<Long, Long, Long>>()
+            val providerNames = registeredToolPkgProviderNames()
             
             // 遍历所有preferences，查找token相关的key
             preferences.asMap().forEach { (key, value) ->
                 val keyName = key.name
                 if (keyName.startsWith("token_input_")) {
                     val providerModel =
-                            decodeProviderModelFromKeySuffix(keyName.removePrefix("token_input_"))
+                            LegacyProviderModelKeyDecoder.decode(
+                                    keyName.removePrefix("token_input_"), providerNames)
                     val inputTokens = readTokenCountValue(value)
                     val outputTokens = readTokenCount(preferences, getTokenOutputKey(providerModel).name)
                     val cachedInputTokens =
@@ -732,7 +719,8 @@ class ApiPreferences private constructor(private val context: Context) {
         return LegacyStatsSnapshotRead(
             snapshot =
                 com.ai.assistance.operit.data.stats.LegacyTokenStatsSnapshot.parse(
-                    preferences.asMap().mapKeys { it.key.name }
+                    preferences.asMap().mapKeys { it.key.name },
+                    registeredToolPkgProviderNames(),
                 ),
             cleanupMarkerIds = appliedMarkerIdsFrom(preferences),
         )
@@ -804,11 +792,13 @@ class ApiPreferences private constructor(private val context: Context) {
     suspend fun allLegacyPriceSettings(): Map<String, com.ai.assistance.operit.data.stats.LegacyPriceSettings?> {
         val preferences = context.apiDataStore.data.first()
         val candidates = linkedSetOf<String>()
+        val providerNames = registeredToolPkgProviderNames()
         preferences.asMap().keys.forEach { key ->
             val name = key.name
             for (prefix in LEGACY_PRICE_KEY_PREFIXES) {
                 if (name.startsWith(prefix) && name.length > prefix.length) {
-                    candidates += decodeProviderModelFromKeySuffix(name.substring(prefix.length))
+                    candidates += LegacyProviderModelKeyDecoder.decode(
+                            name.substring(prefix.length), providerNames)
                     break
                 }
             }
@@ -938,13 +928,15 @@ class ApiPreferences private constructor(private val context: Context) {
     suspend fun getAllProviderModelRequestCounts(): Map<String, Int> {
         val preferences = context.apiDataStore.data.first()
         val result = mutableMapOf<String, Int>()
+        val providerNames = registeredToolPkgProviderNames()
         
         // 遍历所有preferences，查找请求次数相关的key
         preferences.asMap().forEach { (key, value) ->
             val keyName = key.name
             if (keyName.startsWith("request_count_")) {
                 val providerModel =
-                        decodeProviderModelFromKeySuffix(keyName.removePrefix("request_count_"))
+                        LegacyProviderModelKeyDecoder.decode(
+                                keyName.removePrefix("request_count_"), providerNames)
                 val count = value as? Int ?: 0
                 if (count > 0) {
                     result[providerModel] = count
@@ -1071,6 +1063,9 @@ class ApiPreferences private constructor(private val context: Context) {
             preferences[STATS_COST_MODE] = mode.name
         }
     }
+
+    private fun registeredToolPkgProviderNames(): List<String> =
+            ToolPkgAiProviderRegistry.list().map { it.displayName }
 
     /** 旧版累计 baseline 是否加入生命周期累计；缺省开启以保持升级前后的总计连续。 */
     suspend fun getStatsIncludeLegacy(): Boolean {

@@ -32,18 +32,20 @@ data class LegacyTokenStatsSnapshot(
     val providerModels: Map<String, LegacyProviderModelStats>,
 ) {
     companion object {
-
-        private val providerNameCandidates =
-            ApiProviderType.entries.map { it.name }.sortedByDescending { it.length }
-
-        fun parse(rawPreferences: Map<String, Any?>): LegacyTokenStatsSnapshot {
+        fun parse(
+            rawPreferences: Map<String, Any?>,
+            additionalProviderNames: Collection<String> = emptyList(),
+        ): LegacyTokenStatsSnapshot {
             val builders = linkedMapOf<String, StatsBuilder>()
 
             rawPreferences.forEach { (key, value) ->
                 val keyName = key
                 if (keyName.startsWith(TOKEN_INPUT_PREFIX)) {
                     val providerModel =
-                        decodeProviderModelFromKeySuffix(keyName.removePrefix(TOKEN_INPUT_PREFIX))
+                        LegacyProviderModelKeyDecoder.decode(
+                            keyName.removePrefix(TOKEN_INPUT_PREFIX),
+                            additionalProviderNames,
+                        )
                     if (providerModel.isNotBlank()) {
                         builders.getOrPut(providerModel) { StatsBuilder(providerModel) }
                             .inputTokens = readTokenCountValue(value)
@@ -55,7 +57,10 @@ data class LegacyTokenStatsSnapshot(
                 val keyName = key
                 if (keyName.startsWith(TOKEN_CACHED_PREFIX)) {
                     val providerModel =
-                        decodeProviderModelFromKeySuffix(keyName.removePrefix(TOKEN_CACHED_PREFIX))
+                        LegacyProviderModelKeyDecoder.decode(
+                            keyName.removePrefix(TOKEN_CACHED_PREFIX),
+                            additionalProviderNames,
+                        )
                     if (providerModel.isNotBlank()) {
                         builders.getOrPut(providerModel) { StatsBuilder(providerModel) }
                             .cachedInputTokens = readTokenCountValue(value)
@@ -67,7 +72,10 @@ data class LegacyTokenStatsSnapshot(
                 val keyName = key
                 if (keyName.startsWith(TOKEN_OUTPUT_PREFIX)) {
                     val providerModel =
-                        decodeProviderModelFromKeySuffix(keyName.removePrefix(TOKEN_OUTPUT_PREFIX))
+                        LegacyProviderModelKeyDecoder.decode(
+                            keyName.removePrefix(TOKEN_OUTPUT_PREFIX),
+                            additionalProviderNames,
+                        )
                     if (providerModel.isNotBlank()) {
                         builders.getOrPut(providerModel) { StatsBuilder(providerModel) }
                             .outputTokens = readTokenCountValue(value)
@@ -79,7 +87,10 @@ data class LegacyTokenStatsSnapshot(
                 val keyName = key
                 if (keyName.startsWith(REQUEST_COUNT_PREFIX)) {
                     val providerModel =
-                        decodeProviderModelFromKeySuffix(keyName.removePrefix(REQUEST_COUNT_PREFIX))
+                        LegacyProviderModelKeyDecoder.decode(
+                            keyName.removePrefix(REQUEST_COUNT_PREFIX),
+                            additionalProviderNames,
+                        )
                     if (providerModel.isNotBlank()) {
                         builders.getOrPut(providerModel) { StatsBuilder(providerModel) }
                             .requestCount = (value as? Int)?.toLong() ?: 0L
@@ -91,7 +102,10 @@ data class LegacyTokenStatsSnapshot(
                 val keyName = key
                 if (keyName.startsWith(PRICE_INPUT_PREFIX)) {
                     val providerModel =
-                        decodeProviderModelFromKeySuffix(keyName.removePrefix(PRICE_INPUT_PREFIX))
+                        LegacyProviderModelKeyDecoder.decode(
+                            keyName.removePrefix(PRICE_INPUT_PREFIX),
+                            additionalProviderNames,
+                        )
                     if (providerModel.isNotBlank()) {
                         val price = (value as? Float)?.toDouble()
                         if (price != null) {
@@ -109,7 +123,10 @@ data class LegacyTokenStatsSnapshot(
                 val keyName = key
                 if (keyName.startsWith(PRICE_CACHED_PREFIX)) {
                     val providerModel =
-                        decodeProviderModelFromKeySuffix(keyName.removePrefix(PRICE_CACHED_PREFIX))
+                        LegacyProviderModelKeyDecoder.decode(
+                            keyName.removePrefix(PRICE_CACHED_PREFIX),
+                            additionalProviderNames,
+                        )
                     if (providerModel.isNotBlank()) {
                         val price = (value as? Float)?.toDouble()
                         if (price != null) {
@@ -127,7 +144,10 @@ data class LegacyTokenStatsSnapshot(
                 val keyName = key
                 if (keyName.startsWith(PRICE_OUTPUT_PREFIX)) {
                     val providerModel =
-                        decodeProviderModelFromKeySuffix(keyName.removePrefix(PRICE_OUTPUT_PREFIX))
+                        LegacyProviderModelKeyDecoder.decode(
+                            keyName.removePrefix(PRICE_OUTPUT_PREFIX),
+                            additionalProviderNames,
+                        )
                     if (providerModel.isNotBlank()) {
                         val price = (value as? Float)?.toDouble()
                         if (price != null) {
@@ -145,7 +165,10 @@ data class LegacyTokenStatsSnapshot(
                 val keyName = key
                 if (keyName.startsWith(BILLING_MODE_PREFIX)) {
                     val providerModel =
-                        decodeProviderModelFromKeySuffix(keyName.removePrefix(BILLING_MODE_PREFIX))
+                        LegacyProviderModelKeyDecoder.decode(
+                            keyName.removePrefix(BILLING_MODE_PREFIX),
+                            additionalProviderNames,
+                        )
                     if (providerModel.isNotBlank()) {
                         val mode = BillingMode.fromString(value as? String)
                         builders.getOrPut(providerModel) { StatsBuilder(providerModel) }
@@ -161,7 +184,10 @@ data class LegacyTokenStatsSnapshot(
                 val keyName = key
                 if (keyName.startsWith(PRICE_PER_REQUEST_PREFIX)) {
                     val providerModel =
-                        decodeProviderModelFromKeySuffix(keyName.removePrefix(PRICE_PER_REQUEST_PREFIX))
+                        LegacyProviderModelKeyDecoder.decode(
+                            keyName.removePrefix(PRICE_PER_REQUEST_PREFIX),
+                            additionalProviderNames,
+                        )
                     if (providerModel.isNotBlank()) {
                         val price = (value as? Float)?.toDouble()
                         if (price != null) {
@@ -209,23 +235,6 @@ data class LegacyTokenStatsSnapshot(
                 else -> 0L
             }
 
-        /** 与 ApiPreferences 一致的 “provider:model” 后缀解码。 */
-        private fun decodeProviderModelFromKeySuffix(encoded: String): String {
-            val matchedProvider =
-                providerNameCandidates.firstOrNull {
-                    encoded == it || encoded.startsWith("${it}_")
-                }
-            return if (matchedProvider != null) {
-                if (encoded.length == matchedProvider.length) {
-                    matchedProvider
-                } else {
-                    "$matchedProvider:${encoded.substring(matchedProvider.length + 1)}"
-                }
-            } else {
-                encoded.replaceFirst("_", ":")
-            }
-        }
-
         private const val TOKEN_INPUT_PREFIX = "token_input_"
         private const val TOKEN_CACHED_PREFIX = "token_cached_input_"
         private const val TOKEN_OUTPUT_PREFIX = "token_output_"
@@ -235,5 +244,25 @@ data class LegacyTokenStatsSnapshot(
         private const val PRICE_OUTPUT_PREFIX = "model_output_price_"
         private const val BILLING_MODE_PREFIX = "billing_mode_"
         private const val PRICE_PER_REQUEST_PREFIX = "price_per_request_"
+    }
+}
+
+/** 统一旧键解码，优先匹配内置或当前注册 provider 的完整名称。 */
+internal object LegacyProviderModelKeyDecoder {
+    private val builtInProviderNames = ApiProviderType.entries.map { it.name }
+
+    fun decode(encoded: String, additionalProviderNames: Collection<String> = emptyList()): String {
+        val matchedProvider =
+            (builtInProviderNames.asSequence() + additionalProviderNames.asSequence())
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+                .distinct()
+                .sortedByDescending(String::length)
+                .firstOrNull { encoded == it || encoded.startsWith("${it}_") }
+        return when {
+            matchedProvider == null -> encoded.replaceFirst("_", ":")
+            encoded.length == matchedProvider.length -> matchedProvider
+            else -> "$matchedProvider:${encoded.substring(matchedProvider.length + 1)}"
+        }
     }
 }
