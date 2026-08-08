@@ -49,6 +49,20 @@ import org.json.JSONArray
 import org.json.JSONObject
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
 
+internal fun JSONObject.applyChatCompletionsStreamUsageOption(
+    stream: Boolean,
+    providerType: ApiProviderType,
+    useResponsesApi: Boolean,
+) {
+    val supportsIncludeUsage =
+        providerType == ApiProviderType.OPENAI ||
+            providerType == ApiProviderType.DEEPSEEK ||
+            providerType == ApiProviderType.MOONSHOT
+    if (stream && !useResponsesApi && supportsIncludeUsage) {
+        put("stream_options", JSONObject().put("include_usage", true))
+    }
+}
+
 /**
  * OpenAI API格式的实现，支持标准OpenAI接口和兼容此格式的其他提供商
  *
@@ -632,12 +646,11 @@ open class OpenAIProvider(
     /**
      * 流式 Chat Completions 请求体附加 usage 返回选项：OpenAI 只在显式请求时于
      * 末块返回 usage；Responses API 始终自带 usage（response.completed），不需要
-     * 也不接受 stream_options。DeepSeek/Kimi 等自建请求体的子类必须复用本方法。
+     * 也不接受 stream_options。仅对明确支持 include_usage 的服务发送，避免通用或
+     * 本地兼容端点因未知字段拒绝请求。DeepSeek/Kimi 自建请求体复用本方法。
      */
     protected fun JSONObject.putStreamUsageOption(stream: Boolean) {
-        if (stream && !useResponsesApi) {
-            put("stream_options", JSONObject().put("include_usage", true))
-        }
+        applyChatCompletionsStreamUsageOption(stream, providerType, useResponsesApi)
     }
 
     /**

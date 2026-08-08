@@ -11,6 +11,7 @@ import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.PriceOverrideScope
 import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
 import com.ai.assistance.operit.data.preferences.ApiPreferences
+import com.ai.assistance.operit.data.preferences.usdToCnyStorageValue
 import com.ai.assistance.operit.data.stats.ApiPreferencesTokenStatsSettingsStore
 import com.ai.assistance.operit.data.stats.TokenActivityAggregator
 import com.ai.assistance.operit.data.stats.TokenActivityInsights
@@ -200,10 +201,6 @@ class TokenUsageStatisticsViewModel(
 
     /** 已知展示模型 id → 最近一次查询所见名称（P1-5，永不清除，只增补）。 */
     private val knownModelNames = mutableMapOf<String, String>()
-
-    init {
-        loadForEntry()
-    }
 
     fun consumeActionMessage() {
         _actionMessage.value = null
@@ -503,27 +500,28 @@ class TokenUsageStatisticsViewModel(
 
     /**
      * 设置自定义范围（半开区间 [startMs, endMs)）。
-     * 校验：end > start 且时长不超过 [MAX_CUSTOM_RANGE_DAYS] 天；
+     * 校验：end > start 且设备时区自然日数不超过 [MAX_CUSTOM_RANGE_DAYS] 天；
      * 非法时不持久化、不触发查询，返回 false 并由 [actionMessage] 说明原因。
      */
     fun setCustomRange(startMs: Long, endMs: Long): Boolean {
-        if (endMs <= startMs) {
-            _actionMessage.value =
-                TokenStatsActionMessage(
+        when (validateCustomRange(startMs, endMs, zone, MAX_CUSTOM_RANGE_DAYS)) {
+            CustomRangeValidation.INVALID_BOUNDS -> {
+                _actionMessage.value = TokenStatsActionMessage(
                     text = stringResolver(R.string.token_stats_custom_range_invalid),
                     isError = true,
                 )
-            return false
-        }
-        val range = TokenStatsTimeRanges.customRange(startMs, endMs)
-        if (range.durationMs > MAX_CUSTOM_RANGE_DAYS * TokenStatsTimeRanges.DAY_MS) {
-            _actionMessage.value =
-                TokenStatsActionMessage(
+                return false
+            }
+            CustomRangeValidation.TOO_LONG -> {
+                _actionMessage.value = TokenStatsActionMessage(
                     text = stringResolver(R.string.token_stats_custom_range_too_long),
                     isError = true,
                 )
-            return false
+                return false
+            }
+            CustomRangeValidation.VALID -> Unit
         }
+        val range = TokenStatsTimeRanges.customRange(startMs, endMs)
         viewModelScope.launch(dispatcher) {
             settings.saveTimeSelection(
                 TokenStatsTimeSelection(
@@ -611,7 +609,7 @@ class TokenUsageStatisticsViewModel(
 
     /** 手动汇率：非正或非有限值拒绝（不改持久化、不重查），返回 false。 */
     fun setManualRate(rate: Double): Boolean {
-        if (!rate.isFinite() || rate <= 0.0) return false
+        if (usdToCnyStorageValue(rate) == null) return false
         viewModelScope.launch(dispatcher) {
             settings.saveRate(rate)
             load()

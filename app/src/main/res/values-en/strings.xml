@@ -8455,6 +8455,7 @@
     <string name="token_activity_profile_import_message">This replaces the independent Token Activity nickname and avatar with Operit’s global name and avatar. The independent email is preserved.</string>
     <string name="token_activity_profile_import_countdown">Confirm in %1$d s</string>
     <string name="token_activity_profile_import_confirm">Confirm reset</string>
+    <string name="token_activity_profile_avatar_import_failed">Could not import the global avatar. The current avatar was kept.</string>
     <string name="token_activity_nickname">Nickname</string>
     <string name="token_activity_email">Email</string>
     <string name="token_activity_save">Save</string>

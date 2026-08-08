@@ -289,6 +289,32 @@ class TokenStatReliabilityTest {
     }
 
     @Test
+    fun `deferred restore commit failure preserves old and new request accounting`() = runBlocking {
+        val oldRequest = request("old-request-after-commit-failure")
+        val oldEpoch = oldRequest.sessionEpoch
+        try {
+            TokenStatSpool.withExclusiveRestoreAccess(
+                context = context,
+                prepareBeforeCommit = {},
+                commitReplacement = { throw IOException("REPLACING write failed") },
+            ) {
+                fail("replacement must not run when commit fails")
+            }
+            fail("commit failure must propagate")
+        } catch (e: IOException) {
+            assertEquals("REPLACING write failed", e.message)
+        }
+
+        assertEquals(oldEpoch, TokenStatSpool.captureRestoreEpoch())
+        assertTrue(TokenStatSpool.isAcceptingEvents())
+        TokenTrackingAIService.recordSafely(context, oldRequest)
+        TokenTrackingAIService.recordSafely(context, request("new-request-after-commit-failure"))
+        awaitEvent("old-request-after-commit-failure")
+        awaitEvent("new-request-after-commit-failure")
+        assertEquals(2, database.tokenStatsDao().countEvents())
+    }
+
+    @Test
     fun `interrupt ignoring insert never locks spool and restore barrier stays clean`() = runBlocking {
         Mockito.mockStatic(AppLogger::class.java).use {
             val previousInsert = TokenStatSpool.insertTimeoutMs

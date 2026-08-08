@@ -153,14 +153,11 @@ internal fun CustomRangeDialog(
                     // 非法边界在对话框内就地提示（不静默停留）。
                     val startMs = start.atStartOfDay(zone).toInstant().toEpochMilli()
                     val endMs = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-                    inlineError =
-                        when {
-                            endMs <= startMs -> invalidRangeText
-                            (endMs - startMs) > maxRangeDays *
-                                com.ai.assistance.operit.data.stats.TokenStatsTimeRanges.DAY_MS ->
-                                rangeTooLongText
-                            else -> null
-                        }
+                    inlineError = when (validateCustomRange(startMs, endMs, zone, maxRangeDays)) {
+                        CustomRangeValidation.INVALID_BOUNDS -> invalidRangeText
+                        CustomRangeValidation.TOO_LONG -> rangeTooLongText
+                        CustomRangeValidation.VALID -> null
+                    }
                     if (inlineError == null && onConfirm(startMs, endMs)) {
                         onDismiss()
                     }

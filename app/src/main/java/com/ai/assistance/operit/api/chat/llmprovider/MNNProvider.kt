@@ -678,58 +678,59 @@ class MNNProvider(
             val toolCallOutputBuffer = StringBuilder()
             val finalOutputBuffer = StringBuilder()
             val emitDirectly = !useInternalToolCall
-            val success = session.generateStream(safeHistory, requestedMaxNewTokens) { token ->
-                if (isCancelled) {
-                    false
-                } else {
-                    outputTokenCount += 1
-                    _outputTokenCount = outputTokenCount
-
-                    if (emitDirectly) {
-                        finalOutputBuffer.append(token)
-                        runBlocking { emit(token) }
-                    } else {
-                        toolCallOutputBuffer.append(token)
-                    }
-
-                    kotlin.runCatching {
-                        kotlinx.coroutines.runBlocking {
-                            onTokensUpdated(_inputTokenCount, 0, _outputTokenCount)
-                        }
-                    }
-
-                    true
-                }
-            }
-
-            // 结束顺序即契约（评审 P2-3）：取消优先判定——先上报已实测 usage 再抛
-            // 取消，绝不转换/emit 不完整的工具 XML；未取消才处理工具缓冲
-            LocalGenerationEnd.end(
-                cancelled = isCancelled,
-                success = success,
-                inputTokens = _inputTokenCount,
-                outputTokens = _outputTokenCount,
-                source = com.ai.assistance.operit.data.stats.ProviderUsageNormalizer.SOURCE_MNN,
-                cancelMessage = context.getString(R.string.mnn_error_request_cancelled),
-                onUsageReported = onUsageReported,
-                emitToolResult = {
-                    if (useInternalToolCall && toolCallOutputBuffer.isNotEmpty()) {
-                        val converted =
-                            StructuredToolCallBridge.convertToolCallPayloadToXml(
-                                toolCallOutputBuffer.toString()
-                            )
-                        if (converted.isNotBlank()) {
-                            finalOutputBuffer.append(converted)
-                            emit(converted)
-                        }
-                    }
-                },
-                failWith = {
-                    // 推理失败：先上报已实测的 usage，再以失败终止（用户可见错误
-                    // 文本由下方 catch 统一 emit）
-                    throw IOException(context.getString(R.string.mnn_reasoning_error))
-                },
+            val usageReporter = LocalUsageReporter(
+                com.ai.assistance.operit.data.stats.ProviderUsageNormalizer.SOURCE_MNN,
+                onUsageReported,
             )
+            usageReporter.runReportingFinally({ _inputTokenCount }, { _outputTokenCount }) {
+                val success = session.generateStream(safeHistory, requestedMaxNewTokens) { token ->
+                    if (isCancelled) {
+                        false
+                    } else {
+                        outputTokenCount += 1
+                        _outputTokenCount = outputTokenCount
+
+                        if (emitDirectly) {
+                            finalOutputBuffer.append(token)
+                            runBlocking { emit(token) }
+                        } else {
+                            toolCallOutputBuffer.append(token)
+                        }
+
+                        kotlin.runCatching {
+                            kotlinx.coroutines.runBlocking {
+                                onTokensUpdated(_inputTokenCount, 0, _outputTokenCount)
+                            }
+                        }
+
+                        true
+                    }
+                }
+
+                LocalGenerationEnd.end(
+                    cancelled = isCancelled,
+                    success = success,
+                    usageReporter = usageReporter,
+                    inputTokens = _inputTokenCount,
+                    outputTokens = _outputTokenCount,
+                    cancelMessage = context.getString(R.string.mnn_error_request_cancelled),
+                    emitToolResult = {
+                        if (useInternalToolCall && toolCallOutputBuffer.isNotEmpty()) {
+                            val converted =
+                                StructuredToolCallBridge.convertToolCallPayloadToXml(
+                                    toolCallOutputBuffer.toString()
+                                )
+                            if (converted.isNotBlank()) {
+                                finalOutputBuffer.append(converted)
+                                emit(converted)
+                            }
+                        }
+                    },
+                    failWith = {
+                        throw IOException(context.getString(R.string.mnn_reasoning_error))
+                    },
+                )
+            }
 
             AppLogger.i(TAG, "MNN LLM推理完成，输出token数: $_outputTokenCount")
             logFinalOutput(finalOutputBuffer, "Final MNN output summary: ")

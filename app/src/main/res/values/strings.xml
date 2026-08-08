@@ -8436,6 +8436,7 @@
     <string name="token_activity_profile_import_message">将用 Operit 的全局用户名和头像覆盖 Token 活动中的独立昵称和头像。独立邮箱不会改变。</string>
     <string name="token_activity_profile_import_countdown">%1$d 秒后确认</string>
     <string name="token_activity_profile_import_confirm">确认重置</string>
+    <string name="token_activity_profile_avatar_import_failed">全局头像导入失败，已保留当前头像</string>
     <string name="token_activity_nickname">昵称</string>
     <string name="token_activity_email">邮箱</string>
     <string name="token_activity_save">保存</string>
