@@ -58,6 +58,7 @@ import kotlinx.coroutines.delay
 
 /** 性能卡指标切换。 */
 internal enum class PerfMetric { TTFT, GENERATION }
+private enum class ChartDetailMetric { COST, REQUESTS, TOKENS }
 
 /**
  * Token 统计完整页面（阶段 4）。
@@ -422,6 +423,16 @@ private fun TokenStatsPageContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
+            TokenActivitySection(
+                state = state.activity,
+                zone = zone,
+                onSelectRecent = viewModel::setActivityRecent,
+                onSelectYear = viewModel::setActivityYear,
+                onSelectMode = viewModel::setActivityViewMode,
+            )
+        }
+
+        item {
             TokenStatsLifetimeCard(
                 overview = lifetime,
                 currency = state.targetCurrency,
@@ -600,6 +611,7 @@ private fun TokenStatsChartsSection(
     perfMetric: PerfMetric,
     onTogglePerfMetric: (PerfMetric) -> Unit,
 ) {
+    var detailMetric by rememberSaveable { mutableStateOf<ChartDetailMetric?>(null) }
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val wide = maxWidth > 700.dp
         if (wide) {
@@ -611,14 +623,20 @@ private fun TokenStatsChartsSection(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    CostChartCard(range = range, currency = currency, zone = zone)
-                    TokenChartCard(range = range, currency = currency, zone = zone)
+                    CostChartCard(range = range, currency = currency, zone = zone) {
+                        detailMetric = ChartDetailMetric.COST
+                    }
+                    TokenChartCard(range = range, currency = currency, zone = zone) {
+                        detailMetric = ChartDetailMetric.TOKENS
+                    }
                 }
                 Column(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    RequestChartCard(range = range, currency = currency, zone = zone)
+                    RequestChartCard(range = range, currency = currency, zone = zone) {
+                        detailMetric = ChartDetailMetric.REQUESTS
+                    }
                     PerformanceChartCard(
                         range = range,
                         zone = zone,
@@ -629,9 +647,15 @@ private fun TokenStatsChartsSection(
             }
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                CostChartCard(range = range, currency = currency, zone = zone)
-                RequestChartCard(range = range, currency = currency, zone = zone)
-                TokenChartCard(range = range, currency = currency, zone = zone)
+                CostChartCard(range = range, currency = currency, zone = zone) {
+                    detailMetric = ChartDetailMetric.COST
+                }
+                RequestChartCard(range = range, currency = currency, zone = zone) {
+                    detailMetric = ChartDetailMetric.REQUESTS
+                }
+                TokenChartCard(range = range, currency = currency, zone = zone) {
+                    detailMetric = ChartDetailMetric.TOKENS
+                }
                 PerformanceChartCard(
                     range = range,
                     zone = zone,
@@ -641,6 +665,86 @@ private fun TokenStatsChartsSection(
             }
         }
     }
+
+    detailMetric?.let { metric ->
+        TokenStatsChartDetailDialog(
+            metric = metric,
+            range = range,
+            currency = currency,
+            onDismiss = { detailMetric = null },
+        )
+    }
+}
+
+@Composable
+private fun TokenStatsChartDetailDialog(
+    metric: ChartDetailMetric,
+    range: TokenStatsRangeData,
+    currency: com.ai.assistance.operit.data.collects.PricingCurrency,
+    onDismiss: () -> Unit,
+) {
+    val title = stringResource(
+        when (metric) {
+            ChartDetailMetric.COST -> R.string.token_stats_detail_cost
+            ChartDetailMetric.REQUESTS -> R.string.token_stats_detail_requests
+            ChartDetailMetric.TOKENS -> R.string.token_stats_detail_tokens
+        }
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                when (metric) {
+                    ChartDetailMetric.COST -> range.displayModels.forEach { model ->
+                        if (model.totals.cost.knownAmount > 0.0) {
+                            TokenStatsDetailRow(model.displayName, formatMoney(model.totals.cost.knownAmount, currency))
+                        }
+                    }
+                    ChartDetailMetric.REQUESTS -> range.displayModels.forEach { model ->
+                        if (model.totals.requests > 0L) {
+                            TokenStatsDetailRow(model.displayName, formatCount(model.totals.requests))
+                        }
+                    }
+                    ChartDetailMetric.TOKENS -> {
+                        TokenStatsDetailRow(
+                            stringResource(R.string.token_stats_token_cached),
+                            formatCount(range.summary.cachedInput.knownSum),
+                        )
+                        TokenStatsDetailRow(
+                            stringResource(R.string.token_stats_token_uncached),
+                            formatCount(range.summary.uncachedInput.knownSum),
+                        )
+                        TokenStatsDetailRow(
+                            stringResource(R.string.token_stats_token_output),
+                            formatCount(range.summary.output.knownSum),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.token_stats_detail_close))
+            }
+        },
+    )
+}
+
+@Composable
+private fun TokenStatsDetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+        Text(
+            value,
+            style = MaterialTheme.typography.bodySmall,
+            color = LocalTokenStatsColors.current.chartAccent,
+            fontWeight = FontWeight.Medium,
+        )
+    }
 }
 
 @Composable
@@ -648,6 +752,7 @@ private fun CostChartCard(
     range: TokenStatsRangeData,
     currency: com.ai.assistance.operit.data.collects.PricingCurrency,
     zone: ZoneId,
+    onSummaryClick: () -> Unit,
 ) {
     val colors = LocalTokenStatsColors.current
     val models = range.displayModels
@@ -662,6 +767,7 @@ private fun CostChartCard(
     TokenStatsChartCard(
         title = chartTitle,
         summary = formatMoney(range.summary.cost.knownAmount, currency),
+        onSummaryClick = onSummaryClick,
     ) {
         if (range.summary.cost.unknownContributionCount > 0L) {
             RangeUnknownHint(
@@ -701,11 +807,13 @@ private fun RequestChartCard(
     range: TokenStatsRangeData,
     currency: com.ai.assistance.operit.data.collects.PricingCurrency,
     zone: ZoneId,
+    onSummaryClick: () -> Unit,
 ) {
     val chartTitle = stringResource(R.string.token_stats_chart_requests)
     TokenStatsChartCard(
         title = chartTitle,
         summary = formatCount(range.summary.requests),
+        onSummaryClick = onSummaryClick,
     ) {
         TokenStatsLineChart(
             buckets = range.buckets,
@@ -724,6 +832,7 @@ private fun TokenChartCard(
     range: TokenStatsRangeData,
     currency: com.ai.assistance.operit.data.collects.PricingCurrency,
     zone: ZoneId,
+    onSummaryClick: () -> Unit,
 ) {
     val colors = LocalTokenStatsColors.current
     // 预取模板：chart 回调是非 Composable lambda，不能在回调内解析资源
@@ -747,6 +856,7 @@ private fun TokenChartCard(
                 range.summary.output.knownSum,
             )
         ),
+        onSummaryClick = onSummaryClick,
     ) {
         if (totalUnknown > 0L) {
             RangeUnknownHint(stringResource(R.string.token_stats_unknown_parts, totalUnknown))

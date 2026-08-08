@@ -12,6 +12,10 @@ import com.ai.assistance.operit.data.model.PriceOverrideScope
 import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.stats.ApiPreferencesTokenStatsSettingsStore
+import com.ai.assistance.operit.data.stats.TokenActivityAggregator
+import com.ai.assistance.operit.data.stats.TokenActivityInsights
+import com.ai.assistance.operit.data.stats.TokenActivityViewMode
+import com.ai.assistance.operit.data.stats.TokenActivityYearData
 import com.ai.assistance.operit.data.stats.TokenCostCurrency
 import com.ai.assistance.operit.data.stats.TokenStatCategory
 import com.ai.assistance.operit.data.stats.TokenStatStatus
@@ -43,6 +47,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+data class TokenActivityUiState(
+    val loading: Boolean = true,
+    val viewMode: TokenActivityViewMode = TokenActivityViewMode.DAILY,
+    val recentSelected: Boolean = true,
+    val selectedYear: Int = 0,
+    val availableYears: List<Int> = emptyList(),
+    val yearData: TokenActivityYearData? = null,
+    val insights: TokenActivityInsights = TokenActivityInsights(),
+)
 
 /** 页面 UI 状态（阶段 4）。 */
 data class TokenStatsUiState(
@@ -97,6 +112,8 @@ data class TokenStatsUiState(
      * 目标组列表）必须用完整归属，否则无事件成员被漏移、无事件目标组不可选。
      */
     val groupModels: List<TokenStatsGroupModelInfo> = emptyList(),
+    /** 全局历史活动；独立于下方时间、模型、分类和状态筛选。 */
+    val activity: TokenActivityUiState = TokenActivityUiState(),
 )
 
 /** 一次性操作结果消息（Toast）：错误或成功提示，消费后清除。 */
@@ -156,6 +173,9 @@ class TokenUsageStatisticsViewModel(
     /** 当前加载任务：新一轮 [load] 先取消旧任务，旧任务不得写 state（P1-4）。 */
     private var loadJob: Job? = null
 
+    private var activityLoadJob: Job? = null
+    private var activityLoadGeneration = 0
+
     /** 已知展示模型 id → 最近一次查询所见名称（P1-5，永不清除，只增补）。 */
     private val knownModelNames = mutableMapOf<String, String>()
 
@@ -175,7 +195,78 @@ class TokenUsageStatisticsViewModel(
 
     /** 进入/返回统计页时重新探测自动时间范围；用户手选范围始终保持不变。 */
     fun loadForEntry() {
+        loadActivity()
         loadInternal(reconsiderAutomaticTime = true)
+    }
+
+    private fun loadActivity(requestedRecent: Boolean = true, requestedYear: Int? = null) {
+        activityLoadJob?.cancel()
+        val generation = ++activityLoadGeneration
+        _state.update {
+            it.copy(
+                activity = it.activity.copy(
+                    loading = true,
+                    recentSelected = requestedRecent,
+                    selectedYear = requestedYear ?: it.activity.selectedYear,
+                )
+            )
+        }
+        activityLoadJob = viewModelScope.launch(dispatcher) {
+            try {
+                val records = TokenStatsQueryService.activityRecords(appContext)
+                val result = withContext(Dispatchers.Default) {
+                    val years = TokenActivityAggregator.availableYears(records, zone, nowMs())
+                    val recent = requestedRecent || requestedYear !in years
+                    val year = requestedYear?.takeIf { it in years } ?: years.first()
+                    ActivityLoadResult(
+                        years = years,
+                        year = year,
+                        recent = recent,
+                        data = if (recent) {
+                            TokenActivityAggregator.recentData(records, zone, nowMs())
+                        } else {
+                            TokenActivityAggregator.yearData(records, zone, year, nowMs())
+                        },
+                        insights = TokenActivityAggregator.insights(records, zone),
+                    )
+                }
+                if (generation != activityLoadGeneration) return@launch
+                _state.update {
+                    it.copy(
+                        activity = it.activity.copy(
+                            loading = false,
+                            recentSelected = result.recent,
+                            selectedYear = result.year,
+                            availableYears = result.years,
+                            yearData = result.data,
+                            insights = result.insights,
+                        )
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (generation == activityLoadGeneration) {
+                    _state.update { it.copy(activity = it.activity.copy(loading = false)) }
+                }
+                runCatching { AppLogger.e(tag, "Token 活动加载失败", e) }
+            }
+        }
+    }
+
+    fun setActivityViewMode(mode: TokenActivityViewMode) {
+        _state.update { it.copy(activity = it.activity.copy(viewMode = mode)) }
+    }
+
+    fun setActivityYear(year: Int) {
+        val activity = _state.value.activity
+        if ((!activity.recentSelected && year == activity.selectedYear) || year !in activity.availableYears) return
+        loadActivity(requestedRecent = false, requestedYear = year)
+    }
+
+    fun setActivityRecent() {
+        if (_state.value.activity.recentSelected) return
+        loadActivity(requestedRecent = true)
     }
 
     private fun loadInternal(reconsiderAutomaticTime: Boolean) {
@@ -605,7 +696,10 @@ class TokenUsageStatisticsViewModel(
         viewModelScope.launch(dispatcher) {
             runCatching {
                 TokenStatsResetCoordinator.deleteEventsInRange(appContext, range.startMs, range.endMs)
-            }.onSuccess { load() }.onFailure { e ->
+            }.onSuccess {
+                loadActivity()
+                load()
+            }.onFailure { e ->
                 _actionMessage.value =
                     TokenStatsActionMessage(
                         text = stringResolver(R.string.token_stats_delete_range_failed),
@@ -632,6 +726,7 @@ class TokenUsageStatisticsViewModel(
         viewModelScope.launch(dispatcher) {
             try {
                 TokenStatsResetCoordinator.deleteDisplayModel(appContext, displayModelId, deleteBaselines)
+                loadActivity()
                 load()
             } catch (e: CancellationException) {
                 throw e
@@ -663,6 +758,7 @@ class TokenUsageStatisticsViewModel(
                         true
                     }
                 if (ok) {
+                    loadActivity()
                     load()
                 } else {
                     _actionMessage.value =
@@ -711,6 +807,14 @@ private data class QueryLoadResult(
     val available: TokenStatsRangeData?,
     val overrides: List<TokenStatPriceOverrideEntity>,
     val groups: List<TokenStatsGroupModelInfo>,
+)
+
+private data class ActivityLoadResult(
+    val years: List<Int>,
+    val year: Int,
+    val recent: Boolean,
+    val data: TokenActivityYearData,
+    val insights: TokenActivityInsights,
 )
 
 /** 保存范围时用：无效自定义边界返回 null（防御损坏状态）。 */

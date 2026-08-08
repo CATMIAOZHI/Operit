@@ -16,6 +16,7 @@ import com.ai.assistance.operit.data.model.TokenStatRangeCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatResetCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity
 import com.ai.assistance.operit.data.stats.TokenStatIdentityResolver
+import com.ai.assistance.operit.data.stats.TokenActivityEventRow
 import com.ai.assistance.operit.data.stats.TokenStatsGroupMetadataSnapshot
 import com.ai.assistance.operit.data.stats.TokenStatsLifetimeRead
 import com.ai.assistance.operit.data.stats.TokenStatsQuerySnapshot
@@ -51,6 +52,14 @@ abstract class TokenStatsDao {
 
     @Query("SELECT * FROM token_stat_events")
     abstract suspend fun getAllEvents(): List<TokenStatEventEntity>
+
+    /** 活动热力图只读取所需列，避免把价格、诊断等完整事件字段整表实体化。 */
+    @Query(
+        "SELECT startedAtMs, uncachedInputTokens, cachedInputTokens, cacheWriteTokens, " +
+            "totalInputTokens, outputTokens, reasoningTokens, reasoningIncludedInOutput " +
+            "FROM token_stat_events"
+    )
+    abstract suspend fun getTokenActivityRows(): List<TokenActivityEventRow>
 
     @Query("SELECT COUNT(*) FROM token_stat_events")
     abstract suspend fun countEvents(): Int
