@@ -133,6 +133,13 @@ data class TokenStatsTotals(
     val totalInput: TokenStatsTokenAggregate,
     val output: TokenStatsTokenAggregate,
     val reasoning: TokenStatsTokenAggregate,
+    /**
+     * canonical 总 token（逐事件 [canonicalTotalTokens] 推导：权威 totalInputTokens
+     * 优先，fallback 按 cacheWriteSeparateBilling 决定输入口径，输出按
+     * reasoningIncludedInOutput 决定是否补推理；未知分量保持 unknown）。
+     * 是 UI 展示总 Token 的唯一事实来源，Compose 不得再从原始聚合字段重组。
+     */
+    val totalTokens: TokenStatsTokenAggregate,
     val cost: TokenStatsCostSummary,
 )
 
@@ -175,6 +182,10 @@ data class TokenStatsModelBucket(
     val cacheWrite: Long,
     val output: Long,
     val reasoning: Long,
+    /** canonical 总 token 已知和（逐事件推导，口径见 [TokenStatsTotals.totalTokens]）。 */
+    val totalTokens: Long,
+    /** canonical 总 token 未知的事件数（不把 null 当 0）。 */
+    val totalTokensUnknownEventCount: Long,
     /** 任一核心 token 分量（uncached/cached/output）未知的事件数。 */
     val unknownTokenEventCount: Long,
     val cost: TokenStatsCostSummary,

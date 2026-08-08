@@ -33,7 +33,9 @@ import com.ai.assistance.operit.data.stats.TokenStatsTimeRange
 import com.ai.assistance.operit.data.stats.TokenStatsTimeRanges
 import com.ai.assistance.operit.data.stats.TokenStatsTimeSelection
 import com.ai.assistance.operit.data.stats.TokenStatsPriceOverrideDraft
+import com.ai.assistance.operit.data.stats.TokenStatsReadiness
 import com.ai.assistance.operit.data.stats.TokenStatsResetCoordinator
+import com.ai.assistance.operit.data.stats.TokenStatsStartupCoordinator
 import com.ai.assistance.operit.util.AppLogger
 import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
@@ -150,6 +152,14 @@ class TokenUsageStatisticsViewModel(
      * TestMainDispatcher 冲突）；生产默认 = Main.immediate（与 viewModelScope 一致）。
      */
     private val dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    /**
+     * 启动统计 readiness 门控（P1 关键链路）：首次数据查询等待初始 spool 重放完成，
+     * 避免无限展示 pre-replay 快照。测试注入 no-op 或门控实现；生产默认绑定
+     * [TokenStatsStartupCoordinator]（single-flight，失败不缓存可重试）。
+     */
+    private val readiness: TokenStatsReadiness = TokenStatsStartupCoordinator.readiness(context),
+    private val readinessInitialWaitMs: Long = READINESS_WAIT_MS,
+    private val readinessRefreshWaitMs: Long = READINESS_REFRESH_WAIT_MS,
 ) : ViewModel() {
 
     // 只保存 applicationContext（进程级单例，无泄漏风险；与 CustomEmojiViewModel 同模式）
@@ -175,6 +185,18 @@ class TokenUsageStatisticsViewModel(
 
     private var activityLoadJob: Job? = null
     private var activityLoadGeneration = 0
+
+    /**
+     * 首次查询 readiness 门控（P1 关键链路）：单 VM 生命周期只等待一次。置位先于等待，
+     * 即使等待被 loadJob 取消也不会重复等待（取消时另行安排后台刷新兜底）。
+     */
+    private var readinessGateDone = false
+
+    /** Once true, all later loads can skip readiness retry scheduling. */
+    private var readinessReady = false
+
+    /** 首次 readiness 未就绪时安排的后台“就绪后自动刷新”任务（独立于 loadJob）。 */
+    private var readinessRefreshJob: Job? = null
 
     /** 已知展示模型 id → 最近一次查询所见名称（P1-5，永不清除，只增补）。 */
     private val knownModelNames = mutableMapOf<String, String>()
@@ -277,6 +299,24 @@ class TokenUsageStatisticsViewModel(
         val filterSnapshot = _state.value
         loadJob = viewModelScope.launch(dispatcher) {
             try {
+                // 首次数据查询 readiness 门控（P1 关键链路）：等待初始 spool 重放完成，
+                // 首次渲染即包含 pre-replay 事件。等待有界——超时/失败先按现状查询，
+                // 并由 [scheduleRefreshAfterReadiness] 在就绪后自动刷新，绝不无限展示
+                // pre-replay 快照。
+                if (!readinessGateDone) {
+                    readinessGateDone = true
+                    val ready = try {
+                        readiness.awaitReady(readinessInitialWaitMs)
+                    } catch (e: CancellationException) {
+                        // loadJob 被新操作取消：数据可能仍是 pre-replay 快照，后台兜底刷新
+                        scheduleRefreshAfterReadiness()
+                        throw e
+                    }
+                    readinessReady = ready
+                    if (!ready) scheduleRefreshAfterReadiness()
+                } else if (!readinessReady) {
+                    scheduleRefreshAfterReadiness()
+                }
                 // 偏好全部读取为不可变本地快照：任何 _state.update 之前先核对
                 // generation，旧 load 即使恢复也不污染共享 state（P1-4）。
                 val rateInfo = settings.loadRateWithEstimate()
@@ -425,6 +465,29 @@ class TokenUsageStatisticsViewModel(
     /** 记录最近一次查询所见模型名（供被筛选出当前结果但仍选中的模型显示）。 */
     private fun rememberModelNames(models: List<TokenStatsDisplayModelBreakdown>) {
         models.forEach { knownModelNames[it.displayModelId] = it.displayName }
+    }
+
+    /**
+     * 首次 readiness 未就绪（超时/失败）时的兜底（P1 关键链路）：后台等待就绪（含
+     * 协调器后续重试成功），完成后触发一次 [load] 自动刷新，绝不无限展示 pre-replay
+     * 快照。独立于 loadJob（不被用户操作取消）；同一时刻只调度一次。等待 coordinator
+     * 的完整有界生命周期；失败后由下一次 load/进入页面重新尝试。
+     */
+    private fun scheduleRefreshAfterReadiness() {
+        if (readinessRefreshJob?.isActive == true) return
+        readinessRefreshJob = viewModelScope.launch(dispatcher) {
+            try {
+                val ready = readiness.awaitReady(readinessRefreshWaitMs)
+                if (ready) {
+                    readinessReady = true
+                    load()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                runCatching { AppLogger.e(tag, "统计就绪后自动刷新失败", e) }
+            }
+        }
     }
 
     // ==== 时间选择 ====
@@ -797,6 +860,14 @@ class TokenUsageStatisticsViewModel(
     companion object {
         /** 自定义范围时长上限（天）：与聚合器 10k 桶上限留出余量。 */
         const val MAX_CUSTOM_RANGE_DAYS = 3 * 366L
+
+        /** 首次查询等待 readiness 的时长上限；超时先按现状查询并安排就绪后自动刷新。 */
+        private const val READINESS_WAIT_MS = 5_000L
+
+        /** Covers a newly started end-to-end coordinator flight without racing its boundary. */
+        private const val READINESS_REFRESH_WAIT_MS =
+            TokenStatsStartupCoordinator.INITIALIZATION_TIMEOUT_MS + READINESS_WAIT_MS
+
     }
 }
 

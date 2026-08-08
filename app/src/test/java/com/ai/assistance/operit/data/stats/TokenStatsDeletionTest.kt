@@ -224,6 +224,42 @@ class TokenStatsDeletionTest {
             assertNotNull(dao.getEvent("new-in"))
         }
 
+    @Test
+    fun `range tombstone covers half open boundaries and generation equality`() =
+        runBlocking {
+            seedIdentity("id-a", configId = "cfg-a")
+            dao.deleteRangeEventsTx(10_000L, 20_000L)
+            assertEquals(1L, dao.currentResetGeneration())
+
+            // 半开区间 [10_000, 20_000)：startMs == 左边界被覆盖；startMs == 右边界不被覆盖
+            assertFalse(
+                "startMs at the left boundary must be covered",
+                dao.insertEventIfNotResetCovered(event("at-start", "id-a", startedAtMs = 10_000L, generation = 0L))
+            )
+            assertTrue(
+                "startMs at the right boundary must not be covered",
+                dao.insertEventIfNotResetCovered(event("at-end", "id-a", startedAtMs = 20_000L, generation = 0L))
+            )
+            assertNull(dao.getEvent("at-start"))
+            assertNotNull(dao.getEvent("at-end"))
+
+            // generation == tombstone（删除后接受）→ 不覆盖，即使 startedAtMs 落在范围内
+            assertTrue(
+                "generation equal to the cutoff must not be covered",
+                dao.insertEventIfNotResetCovered(event("gen-equal", "id-a", startedAtMs = 15_000L, generation = 1L))
+            )
+            assertNotNull(dao.getEvent("gen-equal"))
+
+            // generation 低于 cutoff 但 startedAtMs 在范围外 → 不覆盖
+            assertTrue(
+                "out of range startedAtMs must not be covered",
+                dao.insertEventIfNotResetCovered(event("out-of-range", "id-a", startedAtMs = 30_000L, generation = 0L))
+            )
+            assertNotNull(dao.getEvent("out-of-range"))
+
+            assertEquals(3, dao.countEvents())
+        }
+
     // ==== 按展示分组删除 ====
 
     @Test

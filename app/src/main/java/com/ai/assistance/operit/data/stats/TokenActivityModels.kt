@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.data.stats
 
+import com.ai.assistance.operit.data.model.TokenStatEventEntity
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -22,6 +23,8 @@ data class TokenActivityEventRow(
     val outputTokens: Long?,
     val reasoningTokens: Long?,
     val reasoningIncludedInOutput: Boolean?,
+    /** null = 旧行未声明，按保守默认 true（独立计费）处理。 */
+    val cacheWriteSeparateBilling: Boolean? = null,
 )
 
 data class TokenActivityDay(
@@ -56,17 +59,84 @@ data class TokenActivityYearData(
     val stats: TokenActivityStats,
 )
 
-internal fun TokenActivityEventRow.toActivityRecord(): TokenActivityRecord {
-    val input = totalInputTokens ?: listOf(uncachedInputTokens, cachedInputTokens, cacheWriteTokens)
-        .fold(0L) { total, value ->
-            if (value != null && value > 0L) saturatedAdd(total, value) else total
+/**
+ * 逐事件 canonical token 总量推导（聚合器与活动热力图共用同一纯 helper）。
+ *
+ * - 输入：权威 [totalInputTokens]（provider 明确上报的总输入，含缓存命中/写入）
+ *   已知则直接使用；未知时按 [cacheWriteSeparateBilling] 决定 fallback：
+ *   true（Anthropic：缓存写入独立计费，输入总量 = uncached + cached + cacheWrite，
+ *   漏加即漏算）；false（OpenAI/Gemini/本地/ToolPkg：写入成本已包含在输入单价内，
+ *   输入总量 = uncached + cached，再加 cacheWrite 即重复）。null（旧行未声明）
+ *   按 true 保守默认，与费用重估（[TokenCostCalculator]）同一边界。
+ * - 输出：outputTokens +（[reasoningIncludedInOutput] == false 时的 reasoningTokens）；
+ *   推理已包含在输出（true/null）时不再加，避免双重计数。
+ * - 任一所必需分量未知（null）→ 整体 unknown（返回 null），绝不把 null 当作 0；
+ *   使用饱和加法（[TokenCostCalculator.saturatedAdd]），Long 溢出钳制不回绕。
+ * - 旧 baseline 无上述细分字段，只能按 input + output 合计（见
+ *   [com.ai.assistance.operit.ui.features.tokenstats.knownBaselineTokenSum]）。
+ */
+internal fun canonicalTotalTokens(
+    totalInputTokens: Long?,
+    uncachedInputTokens: Long?,
+    cachedInputTokens: Long?,
+    cacheWriteTokens: Long?,
+    cacheWriteSeparateBilling: Boolean?,
+    outputTokens: Long?,
+    reasoningTokens: Long?,
+    reasoningIncludedInOutput: Boolean?,
+): Long? {
+    val input =
+        totalInputTokens ?: run {
+            val uncached = uncachedInputTokens ?: return null
+            val cached = cachedInputTokens ?: return null
+            val sum = TokenCostCalculator.saturatedAdd(uncached, cached)
+            if (cacheWriteSeparateBilling ?: true) {
+                val cacheWrite = cacheWriteTokens ?: return null
+                TokenCostCalculator.saturatedAdd(sum, cacheWrite)
+            } else {
+                sum
+            }
         }
-    var total = input.coerceAtLeast(0L)
-    outputTokens?.takeIf { it > 0L }?.let { total = saturatedAdd(total, it) }
-    if (reasoningIncludedInOutput == false) {
-        reasoningTokens?.takeIf { it > 0L }?.let { total = saturatedAdd(total, it) }
-    }
-    return TokenActivityRecord(startedAtMs = startedAtMs, tokens = total)
+    val output = outputTokens ?: return null
+    val billedOutput =
+        if (reasoningIncludedInOutput == false) {
+            val reasoning = reasoningTokens ?: return null
+            TokenCostCalculator.saturatedAdd(output, reasoning)
+        } else {
+            output
+        }
+    return TokenCostCalculator.saturatedAdd(input, billedOutput)
+}
+
+/** [canonicalTotalTokens] 的事件实体重载（聚合器按事件列表逐条推导）。 */
+internal fun canonicalTotalTokens(event: TokenStatEventEntity): Long? =
+    canonicalTotalTokens(
+        totalInputTokens = event.totalInputTokens,
+        uncachedInputTokens = event.uncachedInputTokens,
+        cachedInputTokens = event.cachedInputTokens,
+        cacheWriteTokens = event.cacheWriteTokens,
+        cacheWriteSeparateBilling = event.cacheWriteSeparateBilling,
+        outputTokens = event.outputTokens,
+        reasoningTokens = event.reasoningTokens,
+        reasoningIncludedInOutput = event.reasoningIncludedInOutput,
+    )
+
+internal fun TokenActivityEventRow.toActivityRecord(): TokenActivityRecord {
+    // 复用与聚合器相同的 canonical 推导；活动热力图只展示“已知 token 活动”，
+    // canonical 未知（必需分量缺失）的事件按 0 计，不假装精确——请求计数
+    // 仍然准确（记录不因 0 被丢弃），未知明细由统计页的 unknown 计数表达。
+    val tokens =
+        canonicalTotalTokens(
+            totalInputTokens = totalInputTokens,
+            uncachedInputTokens = uncachedInputTokens,
+            cachedInputTokens = cachedInputTokens,
+            cacheWriteTokens = cacheWriteTokens,
+            cacheWriteSeparateBilling = cacheWriteSeparateBilling,
+            outputTokens = outputTokens,
+            reasoningTokens = reasoningTokens,
+            reasoningIncludedInOutput = reasoningIncludedInOutput,
+        ) ?: 0L
+    return TokenActivityRecord(startedAtMs = startedAtMs, tokens = tokens)
 }
 
 object TokenActivityAggregator {
@@ -186,9 +256,10 @@ object TokenActivityAggregator {
             run = if (day.tokens > 0L) run + 1 else 0
             longest = maxOf(longest, run)
         }
-        var index = days.lastIndex
-        while (index >= 0 && days[index].tokens == 0L) index--
+        // currentStreak 只看 days **尾部**：从最后一天起连续正值；尾日 0 则 0
+        // （绝不跳过尾部零日——今天无活动就是断更，不能用更早的活跃日续算）。
         var current = 0
+        var index = days.lastIndex
         while (index >= 0 && days[index].tokens > 0L) {
             current++
             index--

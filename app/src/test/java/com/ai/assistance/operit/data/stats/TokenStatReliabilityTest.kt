@@ -117,6 +117,8 @@ class TokenStatReliabilityTest {
         TokenStatSpool.fileSyncForTest = null
         TokenStatSpool.dirSyncForTest = null
         TokenStatSpool.sealCopyForTest = null
+        TokenStatSpool.afterDrainRoundForTest = null
+        TokenStatSpool.rejectDrainScheduleForTest = false
         TokenStatSpool.prepareTimeoutMs = 5_000L
         TokenStatSpool.insertTimeoutMs = 5_000L
         TokenStatSpool.exclusiveQuiesceTimeoutMs = 5_000L
@@ -5541,6 +5543,98 @@ class TokenStatReliabilityTest {
                 }
             }
         }
+
+    // ==== P1 关键链路：drain 请求合并（丢失唤醒修复）====
+
+    @Test
+    fun `schedule during an in-flight drain round is not lost and the worker reruns`() = runBlocking {
+        val spool = File(root, TokenStatSpool.SPOOL_DIR_NAME).apply { mkdirs() }
+        val lineA = line(request("rerun-a"))
+        val lineB = line(request("rerun-b"))
+        File(spool, "sealed_1.jsonl").writeText(lineA + "\n" + lineB + "\n")
+        var rounds = 0
+        var replayInjected = false
+        TokenStatSpool.afterDrainRoundForTest = {
+            rounds += 1
+            // 第一轮结束、轮末决策之前注入一次 replay：请求必须被保留并由同一 worker
+            // 立即 rerun（旧实现：drainScheduled=true 直接丢弃该请求，轮数恒为 1）。
+            if (!replayInjected) {
+                replayInjected = true
+                TokenStatSpool.replay(context)
+            }
+        }
+        try {
+            TokenStatSpool.replay(context)
+            // 两轮结束：第 1 轮排空数据，第 2 轮消费注入的请求（维护轮）后 retire
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+            while (rounds < 2 && System.nanoTime() < deadline) delay(10)
+            assertEquals("injected replay must trigger a rerun round", 2, rounds)
+            awaitEvent("rerun-a")
+            awaitEvent("rerun-b")
+            awaitNoSealedSegments(spool)
+            assertFalse("request must be consumed by the rerun", TokenStatSpool.drainRequestPendingForTest())
+            assertFalse("worker must retire after the rerun", TokenStatSpool.drainScheduledForTest())
+        } finally {
+            TokenStatSpool.afterDrainRoundForTest = null
+        }
+    }
+
+    @Test
+    fun `rejected drain schedule retains the request and recovers on the next schedule`() = runBlocking {
+        TokenStatSpool.rejectDrainScheduleForTest = true
+        try {
+            val lineA = line(request("rejected-schedule-a"))
+            assertTrue("append must succeed durably despite rejected scheduling", TokenStatSpool.append(context, lineA, "rejected-schedule-a"))
+            assertTrue("request must be retained after rejection", TokenStatSpool.drainRequestPendingForTest())
+            assertFalse("schedule token must be released after rejection", TokenStatSpool.drainScheduledForTest())
+            // 恢复调度能力后 replay：请求不丢，事件最终入 Room
+            TokenStatSpool.rejectDrainScheduleForTest = false
+            TokenStatSpool.replay(context)
+            awaitEvent("rejected-schedule-a")
+            assertFalse(TokenStatSpool.drainRequestPendingForTest())
+            assertFalse(TokenStatSpool.drainScheduledForTest())
+        } finally {
+            TokenStatSpool.rejectDrainScheduleForTest = false
+        }
+    }
+
+    @Test
+    fun `await initial drain joins concurrent waiters and failed rounds are retryable`() = runBlocking {
+        val spool = File(root, TokenStatSpool.SPOOL_DIR_NAME).apply { mkdirs() }
+        val lineA = line(request("init-drain-a"))
+        val lineB = line(request("init-drain-b"))
+        File(spool, "sealed_1.jsonl").writeText(lineA + "\n" + lineB + "\n")
+        // 失败轮：bootstrap gate 目录 sync 失败 → drainCore false → 等待者按失败完成
+        TokenStatSpool.dirSyncForTest = { TokenStatSpool.DirSyncResult.FAILED }
+        try {
+            assertFalse("failed round must complete the waiter with false", TokenStatSpool.awaitInitialDrain(context, 5_000))
+            // 失败不缓存：恢复后重试成功；并发调用 join 同一轮
+            TokenStatSpool.dirSyncForTest = { TokenStatSpool.DirSyncResult.OK }
+            val r1 = async { TokenStatSpool.awaitInitialDrain(context, 10_000) }
+            val r2 = async { TokenStatSpool.awaitInitialDrain(context, 10_000) }
+            assertTrue("retry must succeed", r1.await())
+            assertTrue("concurrent join must see the same success", r2.await())
+            awaitEvent("init-drain-a")
+            awaitEvent("init-drain-b")
+            awaitNoSealedSegments(spool)
+            assertFalse(TokenStatSpool.drainRequestPendingForTest())
+            assertFalse(TokenStatSpool.drainScheduledForTest())
+        } finally {
+            TokenStatSpool.dirSyncForTest = null
+        }
+    }
+
+    @Test
+    fun `timed out initial drain waiter is removed when scheduling stays rejected`() = runBlocking {
+        TokenStatSpool.rejectDrainScheduleForTest = true
+        try {
+            assertFalse(TokenStatSpool.awaitInitialDrain(context, 25))
+            assertEquals(0, TokenStatSpool.initialDrainWaiterCountForTest())
+            assertTrue("drain request remains retryable", TokenStatSpool.drainRequestPendingForTest())
+        } finally {
+            TokenStatSpool.rejectDrainScheduleForTest = false
+        }
+    }
 
     private fun padLineTo(line: String, targetBytes: Int): String {
         val overhead = ",\"pad\":\"\"".toByteArray(Charsets.UTF_8).size

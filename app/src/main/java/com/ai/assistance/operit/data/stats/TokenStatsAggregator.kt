@@ -87,6 +87,7 @@ object TokenStatsAggregator {
         private val totalInput = TokenComponentAccumulator()
         private val output = TokenComponentAccumulator()
         private val reasoning = TokenComponentAccumulator()
+        private val totalTokens = TokenComponentAccumulator()
         private val originalCosts = EnumMap<PricingCurrency, BigDecimal>(PricingCurrency::class.java)
         private var costUnknownCount = 0L
 
@@ -105,6 +106,7 @@ object TokenStatsAggregator {
                 totalInput.accept(event.totalInputTokens)
                 output.accept(event.outputTokens)
                 reasoning.accept(independentlyBilledReasoning(event))
+                totalTokens.accept(canonicalTotalTokens(event))
                 val (amount, currency) =
                     eventCost(event, identities[event.statIdentityId], pricing!!, params)
                 if (amount == null) {
@@ -124,6 +126,7 @@ object TokenStatsAggregator {
                 totalInput = totalInput.aggregate(requests),
                 output = output.aggregate(requests),
                 reasoning = reasoning.aggregate(requests),
+                totalTokens = totalTokens.aggregate(requests),
                 cost =
                     buildCostSummary(
                         original = originalCosts,
@@ -253,6 +256,9 @@ object TokenStatsAggregator {
                 cacheWrite = sumKnownTokens(modelEvents) { it.cacheWriteTokens },
                 output = sumKnownTokens(modelEvents) { it.outputTokens },
                 reasoning = sumKnownTokens(modelEvents, ::independentlyBilledReasoning),
+                totalTokens = sumKnownTokens(modelEvents, ::canonicalTotalTokens),
+                totalTokensUnknownEventCount =
+                    modelEvents.count { canonicalTotalTokens(it) == null }.toLong(),
                 unknownTokenEventCount =
                     modelEvents.count {
                         it.uncachedInputTokens == null || it.cachedInputTokens == null || it.outputTokens == null
@@ -359,6 +365,7 @@ object TokenStatsAggregator {
             totalInput = tokenAggregateOf(events) { it.totalInputTokens },
             output = tokenAggregateOf(events) { it.outputTokens },
             reasoning = tokenAggregateOf(events, ::independentlyBilledReasoning),
+            totalTokens = tokenAggregateOf(events, ::canonicalTotalTokens),
             cost = costSummaryOf(events, identitiesById, pricing, params),
         )
 

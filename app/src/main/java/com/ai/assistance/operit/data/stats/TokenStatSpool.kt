@@ -224,7 +224,27 @@ internal object TokenStatSpool {
 
     private val lifecycleMutex = Mutex()
     private val stateLock = Any()
+
+    /**
+     * 调度令牌：有 worker 任务已入队/正在运行（用于入队去重）。快照屏障在递增
+     * [sessionGeneration] 时同步清空，使旧 generation 的排队 worker 失效。
+     */
     private var drainScheduled = false
+
+    /**
+     * 未消费的 drain 请求（丢失唤醒修复）：每次 [scheduleDrain] 都在 [stateLock] 下
+     * 置位；worker 每轮开始前消费，轮末在同一锁内决定 retire/立即 rerun/失败 backoff。
+     * 请求在轮内到达时由同一 worker 接管，绝不依赖下一次外部触发；RejectedExecution
+     * 时请求保留、仅释放调度令牌（见 [scheduleDrain]）。
+     */
+    private var drainRequested = false
+
+    /**
+     * [awaitInitialDrain] 的等待者：worker 轮末决策点持 [stateLock] 统一完成并清空；
+     * 完成/失败都不保留——下次调用重新登记并触发新轮（失败不缓存，可重试）。
+     */
+    private val initialDrainWaiters = ArrayList<CompletableDeferred<Boolean>>()
+
     private var sessionGeneration = 0L
     private var retryDelayMs = RETRY_BACKOFF_BASE_MS
     private var writerExecutor = newWriterExecutor()
@@ -292,6 +312,12 @@ internal object TokenStatSpool {
      * 保持不变。返回 null 表示无操作。
      */
     internal var beforeSealPublishForTest: ((File) -> Boolean?)? = null
+
+    /** 测试注入缝：返回 true 时 [scheduleDrain] 的入队被模拟拒绝（RejectedExecution 状态恢复）。 */
+    internal var rejectDrainScheduleForTest: Boolean = false
+
+    /** 测试注入缝：每轮 drain（runBlocking 结束、轮末决策前）在 worker 线程调用。 */
+    internal var afterDrainRoundForTest: (() -> Unit)? = null
 
     /** 测试注入缝：返回 false 强制模拟硬链接不受支持（走 copy 回退发布）；其余走真实 createLink。 */
     internal var sealHardLinkForTest: ((File, File) -> Boolean?)? = null
@@ -1617,49 +1643,139 @@ internal object TokenStatSpool {
         }
     }
 
+    /**
+     * 请求合并式 drain 调度（丢失唤醒修复）：每次调用都在 [stateLock] 下置位
+     * [drainRequested]——请求绝不丢失；仅当没有 worker 在跑/在队列（[drainScheduled]
+     * 为 false）时才入队新任务。worker 每轮开始前消费请求，轮末在同一锁内决定
+     * retire/立即 rerun/失败 backoff，请求在轮内到达时由同一 worker 接管。
+     *
+     * RejectedExecution 恢复正确状态：请求保留（drainRequested=true，绝不丢），仅释放
+     * 调度令牌（drainScheduled=false）；下一次 schedule（append/replay/awaitInitialDrain）
+     * 会重建 executor（isShutdown 检查）并重新入队。
+     */
     private fun scheduleDrain(context: Context, delayMs: Long = 0L) {
         val generation: Long
         synchronized(stateLock) {
-            if (drainScheduled) return
             if (writerExecutor.isShutdown) writerExecutor = newWriterExecutor()
+            drainRequested = true
+            if (drainScheduled) return
             drainScheduled = true
             generation = sessionGeneration
         }
         try {
+            if (rejectDrainScheduleForTest) {
+                throw RejectedExecutionException("drain schedule rejected (injected)")
+            }
             val task = Runnable { runDrain(context, generation) }
             if (delayMs == 0L) writerExecutor.execute(task)
             else writerExecutor.schedule(task, delayMs, TimeUnit.MILLISECONDS)
         } catch (e: RejectedExecutionException) {
             synchronized(stateLock) { drainScheduled = false }
-            logE("statistics drain scheduling failed", e)
+            logE("statistics drain scheduling failed; request retained", e)
         }
     }
 
-    private fun runDrain(context: Context, generation: Long) {
-        var success = false
-        try {
-            success = runBlocking {
-                lifecycleMutex.withLock {
-                    if (synchronized(stateLock) { sessionGeneration != generation }) return@withLock true
-                    drainCore(context, generation)
-                }
-            }
-        } catch (e: Throwable) {
-            logE("statistics spool drain failed", e)
-        } finally {
-            var retry = 0L
-            synchronized(stateLock) {
+    /**
+     * 每轮开始前消费 drain 请求（持 [stateLock]）。返回 false 表示本轮无需运行：
+     * - 无请求：释放调度令牌并 retire；
+     * - 已被快照 generation 取代：不触碰任何标志——快照屏障已清 [drainScheduled]，
+     *   新 generation 的请求由新 schedule 自行记账，旧 worker 绝不消费新请求。
+     */
+    private fun consumeDrainRequest(generation: Long): Boolean = synchronized(stateLock) {
+        when {
+            sessionGeneration != generation -> false
+            !drainRequested -> {
                 drainScheduled = false
-                if (sessionGeneration == generation) {
-                    if (success) retryDelayMs = RETRY_BACKOFF_BASE_MS
-                    else {
-                        retry = retryDelayMs
-                        retryDelayMs = (retryDelayMs * 2).coerceAtMost(RETRY_BACKOFF_CAP_MS)
+                false
+            }
+            else -> {
+                drainRequested = false
+                true
+            }
+        }
+    }
+
+    /**
+     * 轮末决策（持 [stateLock]，同一锁内原子完成等待者与状态转移）：
+     * - generation 已变：快照屏障已接管（其 drain/替换处理了被等待的数据），retire
+     *   且不触碰标志；等待者按成功完成。
+     * - 本轮失败：完成等待者（false），释放调度令牌并计算退避延迟，稍后重试。
+     * - 成功且有新请求（轮内到达）：完成等待者（true）后立即 rerun，绝不丢请求。
+     * - 成功且无请求：完成等待者（true），释放调度令牌并 retire。
+     */
+    private fun runDrain(context: Context, generation: Long) {
+        while (true) {
+            if (!consumeDrainRequest(generation)) return
+            var success = false
+            try {
+                success = runBlocking {
+                    lifecycleMutex.withLock {
+                        if (synchronized(stateLock) { sessionGeneration != generation }) return@withLock true
+                        drainCore(context, generation)
                     }
                 }
+            } catch (e: Throwable) {
+                logE("statistics spool drain failed", e)
             }
+            afterDrainRoundForTest?.invoke()
+            val retry: Long
+            val rerun: Boolean
+            synchronized(stateLock) {
+                if (sessionGeneration != generation) {
+                    completeInitialDrainWaitersLocked(true)
+                    return
+                }
+                completeInitialDrainWaitersLocked(success)
+                if (!success) {
+                    drainScheduled = false
+                    retry = retryDelayMs
+                    retryDelayMs = (retryDelayMs * 2).coerceAtMost(RETRY_BACKOFF_CAP_MS)
+                    rerun = false
+                } else if (drainRequested) {
+                    retryDelayMs = RETRY_BACKOFF_BASE_MS
+                    retry = 0L
+                    rerun = true
+                } else {
+                    retryDelayMs = RETRY_BACKOFF_BASE_MS
+                    drainScheduled = false
+                    retry = 0L
+                    rerun = false
+                }
+            }
+            if (rerun) continue
             if (retry > 0L) scheduleDrain(context, retry)
+            return
         }
+    }
+
+    /**
+     * 可等待的初始 drain（P1 关键链路，启动 readiness 使用）：请求一轮 drain（已有
+     * worker 在跑则请求被保留并由同一 worker 接管），并挂起直到该轮结束。返回 true =
+     * 本轮成功（排空到轮内最后检查点，pre-replay 数据已入 Room）；false = 本轮失败或
+     * 超时——**不缓存**：后续调用重新登记并触发新轮（drain 自身另有退避重试）。
+     * 并发调用 join 同一轮；不持 [stateLock] 挂起（等待者由 worker 轮末决策点完成）。
+     */
+    suspend fun awaitInitialDrain(context: Context, timeoutMs: Long): Boolean {
+        val appContext = context.applicationContext
+        val waiter = synchronized(stateLock) {
+            CompletableDeferred<Boolean>().also { initialDrainWaiters += it }
+        }
+        scheduleDrain(appContext)
+        return try {
+            withTimeoutOrNull(timeoutMs) { waiter.await() } ?: false
+        } finally {
+            synchronized(stateLock) {
+                initialDrainWaiters.removeAll { it === waiter }
+            }
+        }
+    }
+
+    private fun completeInitialDrainWaitersLocked(success: Boolean) {
+        if (initialDrainWaiters.isEmpty()) return
+        initialDrainWaiters.forEach { waiter ->
+            if (waiter.isActive) waiter.complete(success)
+        }
+        initialDrainWaiters.clear()
     }
 
     /** Called with lifecycleMutex held. */
@@ -3484,6 +3600,10 @@ internal object TokenStatSpool {
     internal fun clearPendingStateForTest() = synchronized(stateLock) {
         sessionGeneration += 1L
         drainScheduled = false
+        drainRequested = false
+        // 未完成的初始 drain 等待者按失败完成（进程重启语义；测试内不应依赖旧轮）
+        initialDrainWaiters.forEach { if (it.isActive) it.complete(false) }
+        initialDrainWaiters.clear()
         retryDelayMs = RETRY_BACKOFF_BASE_MS
         // P1 终审：逐测试复位 restore fencing 状态（进程内标记绝不跨测试泄漏）
         restoreEpoch = 0L
@@ -3496,6 +3616,9 @@ internal object TokenStatSpool {
     internal fun emergencyQueueSizeForTest(): Int = 0
     internal fun pendingLatchCountForTest(): Int = synchronized(stateLock) { insertionWaiters.size }
     internal fun activeInsertCountForTest(): Int = synchronized(stateLock) { activeInserts.size }
+    internal fun drainRequestPendingForTest(): Boolean = synchronized(stateLock) { drainRequested }
+    internal fun drainScheduledForTest(): Boolean = synchronized(stateLock) { drainScheduled }
+    internal fun initialDrainWaiterCountForTest(): Int = synchronized(stateLock) { initialDrainWaiters.size }
 
     private fun logE(message: String, error: Throwable? = null) {
         try {
