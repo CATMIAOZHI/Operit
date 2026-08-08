@@ -158,6 +158,7 @@ fun TokenUsageStatisticsScreen(
     if (showCustomRange) {
         CustomRangeDialog(
             zone = viewModel.zone,
+            maxRangeDays = TokenUsageStatisticsViewModel.MAX_CUSTOM_RANGE_DAYS,
             onConfirm = { start, end -> viewModel.setCustomRange(start, end) },
             onDismiss = { showCustomRange = false },
         )

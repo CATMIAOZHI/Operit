@@ -3556,6 +3556,10 @@
     <string name="token_stats_custom_range_confirm">确定</string>
     <string name="token_stats_custom_range_invalid">结束日期需晚于开始日期</string>
     <string name="token_stats_custom_range_too_long">自定义范围不能超过 3 年</string>
+    <string name="token_stats_custom_range_summary_start">开始日期：%1$s</string>
+    <string name="token_stats_custom_range_summary_end">结束日期：%1$s</string>
+    <string name="token_stats_custom_range_not_selected">未选择</string>
+    <string name="token_stats_custom_range_back">上一步</string>
     <string name="token_stats_filter_all_models">全部模型</string>
     <string name="token_stats_filter_models_count">%1$d 个模型</string>
     <string name="token_stats_filter_all_categories">全部分类</string>
