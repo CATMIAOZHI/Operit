@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.tokenstats
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -873,6 +874,7 @@ internal fun TokenStatsChartCard(
     title: String,
     summary: String,
     modifier: Modifier = Modifier,
+    onSummaryClick: (() -> Unit)? = null,
     headerExtra: @Composable () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
@@ -901,6 +903,11 @@ internal fun TokenStatsChartCard(
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = chartColors.chartAccent,
+                        modifier = if (onSummaryClick != null) {
+                            Modifier.clickable(onClick = onSummaryClick)
+                        } else {
+                            Modifier
+                        },
                     )
                 }
                 Spacer(Modifier.height(8.dp))

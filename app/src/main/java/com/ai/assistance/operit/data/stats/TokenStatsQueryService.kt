@@ -113,6 +113,12 @@ object TokenStatsQueryService {
             rangeHasEvents(daoOf(context), range)
         }
 
+    /** 全局 Token 活动使用的轻量事件投影；不应用统计页筛选，也不包含旧 baseline。 */
+    suspend fun activityRecords(context: Context): List<TokenActivityRecord> =
+        withContext(queryDispatcher) {
+            daoOf(context).getTokenActivityRows().map { it.toActivityRecord() }
+        }
+
     /**
      * 进入统计页时的自动回退建议：按 `5h -> 12h -> 24h -> 7d -> 30d` 顺序返回
      * 最近有实际事件的范围；全部为空时返回 5h。
