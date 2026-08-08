@@ -80,7 +80,7 @@ object TokenCostCalculator {
             return TokenCostResult(amount = null, currency = pricing.currency)
         }
         if (pricing.billingMode == BillingMode.COUNT) {
-            val price = pricing.pricePerRequest
+            val price = pricing.pricePerRequest?.takeIf { it.isFinite() }
             return TokenCostResult(
                 amount = price,
                 currency = pricing.currency,
@@ -94,7 +94,9 @@ object TokenCostCalculator {
         val inputPrice = pricing.inputPricePerMillion
         val cachedPrice = pricing.cachedInputPricePerMillion
         val outputPrice = pricing.outputPricePerMillion
-        if (inputPrice == null || cachedPrice == null || outputPrice == null) {
+        if (inputPrice == null || cachedPrice == null || outputPrice == null ||
+            !inputPrice.isFinite() || !cachedPrice.isFinite() || !outputPrice.isFinite()
+        ) {
             return TokenCostResult(amount = null, currency = pricing.currency)
         }
 
@@ -110,17 +112,23 @@ object TokenCostCalculator {
         if (cachedTokens != null && uncachedTokens != null) {
             billedInput = saturatedAdd(uncachedTokens, cachedTokens)
             inputAmount =
-                uncachedTokens / 1_000_000.0 * inputPrice +
-                    cachedTokens / 1_000_000.0 * cachedPrice
+                safeAdd(
+                    scaledTokenCost(uncachedTokens, inputPrice),
+                    scaledTokenCost(cachedTokens, cachedPrice),
+                ) ?: return TokenCostResult(amount = null, currency = pricing.currency)
         } else {
             val total = usage.totalInputTokens
             if (total == null || inputPrice != cachedPrice) {
                 return TokenCostResult(amount = null, currency = pricing.currency)
             }
             billedInput = total
-            inputAmount = total / 1_000_000.0 * inputPrice
+            inputAmount =
+                scaledTokenCost(total, inputPrice)
+                    ?: return TokenCostResult(amount = null, currency = pricing.currency)
         }
-        var amount = inputAmount + billedOutput / 1_000_000.0 * outputPrice
+        var amount =
+            safeAdd(inputAmount, scaledTokenCost(billedOutput, outputPrice))
+                ?: return TokenCostResult(amount = null, currency = pricing.currency)
 
         // 缓存写入：
         // - 独立计费概念下未知 → 成本未知（不静默当作 0）；
@@ -139,7 +147,7 @@ object TokenCostCalculator {
         }
         if (cacheWriteTokens != null && cacheWriteTokens > 0 && usage.cacheWriteSeparateBilling) {
             val cacheWritePrice = pricing.cacheWritePricePerMillion
-            if (cacheWritePrice == null) {
+            if (cacheWritePrice == null || !cacheWritePrice.isFinite()) {
                 return TokenCostResult(
                     amount = null,
                     currency = pricing.currency,
@@ -148,7 +156,15 @@ object TokenCostCalculator {
                     billedOutputTokens = billedOutput,
                 )
             }
-            amount += cacheWriteTokens / 1_000_000.0 * cacheWritePrice
+            amount =
+                safeAdd(amount, scaledTokenCost(cacheWriteTokens, cacheWritePrice))
+                    ?: return TokenCostResult(
+                        amount = null,
+                        currency = pricing.currency,
+                        billedInputTokens = billedInput,
+                        billedCacheWriteTokens = cacheWriteTokens,
+                        billedOutputTokens = billedOutput,
+                    )
         }
 
         return TokenCostResult(
@@ -166,6 +182,14 @@ object TokenCostCalculator {
      */
     internal fun saturatedAdd(left: Long, right: Long): Long =
         if (right > 0 && left > Long.MAX_VALUE - right) Long.MAX_VALUE else left + right
+
+    private fun scaledTokenCost(tokens: Long, pricePerMillion: Double): Double? =
+        (tokens / 1_000_000.0 * pricePerMillion).takeIf { it.isFinite() }
+
+    private fun safeAdd(left: Double?, right: Double?): Double? {
+        if (left == null || right == null) return null
+        return (left + right).takeIf { it.isFinite() }
+    }
 }
 
 /**
@@ -201,13 +225,16 @@ object TokenCostCurrency {
         from: PricingCurrency,
         to: PricingCurrency,
         manualRate: Double,
-    ): Double {
-        require(manualRate > 0.0) { "manual rate must be positive" }
-        if (from == to) return amount
-        return if (from == PricingCurrency.USD) {
+    ): Double? {
+        require(manualRate.isFinite() && manualRate > 0.0) { "manual rate must be finite and positive" }
+        if (!amount.isFinite()) return null
+        val converted = if (from == to) {
+            amount
+        } else if (from == PricingCurrency.USD) {
             amount * manualRate
         } else {
             amount / manualRate
         }
+        return converted.takeIf { it.isFinite() }
     }
 }

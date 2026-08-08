@@ -291,6 +291,59 @@ class ProviderUsageNormalizerTest {
         assertFalse(snapshot.cacheWriteSeparateBilling)
     }
 
+    @Test
+    fun `toolpkg cached greater than input keeps total but rejects split`() {
+        val snapshot = ProviderUsageNormalizer.toolPkg(100L, 250L, 20L, true)
+        assertEquals(100L, snapshot.totalInputTokens)
+        assertNull(snapshot.uncachedInputTokens)
+        assertNull(snapshot.cachedInputTokens)
+        val pricing =
+            ResolvedPricing(
+                billingMode = com.ai.assistance.operit.data.model.BillingMode.TOKEN,
+                currency = com.ai.assistance.operit.data.collects.PricingCurrency.USD,
+                inputPricePerMillion = 1.0,
+                cachedInputPricePerMillion = 0.5,
+                outputPricePerMillion = 1.0,
+                source = PricingSource.DEFAULT,
+                known = true,
+            )
+        assertNull(
+            TokenCostCalculator.computeCost(
+                snapshot.toTokenUsageInput(),
+                pricing,
+            ).amount
+        )
+        assertEquals(
+            120.0 / 1_000_000.0,
+            TokenCostCalculator.computeCost(
+                snapshot.toTokenUsageInput(),
+                pricing.copy(cachedInputPricePerMillion = 1.0),
+            ).amount!!,
+            1e-12,
+        )
+    }
+
+    @Test
+    fun `toolpkg negative input components become unknown independently`() {
+        val negativeInput = ProviderUsageNormalizer.toolPkg(-1L, 0L, 20L, true)
+        assertNull(negativeInput.totalInputTokens)
+        assertNull(negativeInput.uncachedInputTokens)
+        assertNull(negativeInput.cachedInputTokens)
+
+        val negativeCached = ProviderUsageNormalizer.toolPkg(100L, -1L, 20L, true)
+        assertEquals(100L, negativeCached.totalInputTokens)
+        assertNull(negativeCached.uncachedInputTokens)
+        assertNull(negativeCached.cachedInputTokens)
+    }
+
+    @Test
+    fun `toolpkg equal cached and input is a valid zero uncached boundary`() {
+        val snapshot = ProviderUsageNormalizer.toolPkg(100L, 100L, 20L, true)
+        assertEquals(0L, snapshot.uncachedInputTokens)
+        assertEquals(100L, snapshot.cachedInputTokens)
+        assertEquals(100L, snapshot.totalInputTokens)
+    }
+
     // ==== 快照语义 ====
 
     @Test

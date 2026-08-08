@@ -49,7 +49,9 @@ data class TokenStatsQueryParams(
     val statuses: Set<TokenStatStatus>? = null,
 ) {
     init {
-        require(manualRate > 0.0) { "manual rate must be positive" }
+        require(manualRate.isFinite() && manualRate > 0.0) {
+            "manual rate must be finite and positive"
+        }
     }
 }
 
