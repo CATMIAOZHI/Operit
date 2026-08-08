@@ -22,8 +22,10 @@ class RateLimitedAIService(
         availableTools: List<ToolPrompt>?,
         preserveThinkInHistory: Boolean,
         onTokensUpdated: suspend (input: Int, cachedInput: Int, output: Int) -> Unit,
+        onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, attempt: Int) -> Unit)?,
         onNonFatalError: suspend (error: String) -> Unit,
-        enableRetry: Boolean
+        enableRetry: Boolean,
+        statsCategory: com.ai.assistance.operit.data.stats.TokenStatCategory?
     ): Stream<String> = com.ai.assistance.operit.util.stream.stream {
         rateLimiter?.acquire()
         concurrencySemaphore?.acquire()
@@ -38,8 +40,10 @@ class RateLimitedAIService(
                 availableTools = availableTools,
                 preserveThinkInHistory = preserveThinkInHistory,
                 onTokensUpdated = onTokensUpdated,
+                onUsageReported = onUsageReported,
                 onNonFatalError = onNonFatalError,
-                enableRetry = enableRetry
+                enableRetry = enableRetry,
+                statsCategory = statsCategory
             ).collect { chunk ->
                 emit(chunk)
             }

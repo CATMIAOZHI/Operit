@@ -81,6 +81,7 @@ class DeepseekProvider(
         val jsonObject = JSONObject()
         jsonObject.put("model", modelName)
         jsonObject.put("stream", stream)
+        jsonObject.putStreamUsageOption(stream)
 
         // DeepSeek Thinking Mode 默认开启，关闭时也必须显式发送 thinking.type=disabled。
         applyThinkingParamsIfNeeded(jsonObject)
@@ -475,10 +476,12 @@ class DeepseekProvider(
         availableTools: List<ToolPrompt>?,
         preserveThinkInHistory: Boolean,
         onTokensUpdated: suspend (input: Int, cachedInput: Int, output: Int) -> Unit,
+        onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, attempt: Int) -> Unit)?,
         onNonFatalError: suspend (error: String) -> Unit,
-        enableRetry: Boolean
+        enableRetry: Boolean,
+        statsCategory: com.ai.assistance.operit.data.stats.TokenStatCategory?
     ): Stream<String> {
         // 直接调用父类的sendMessage实现
-        return super.sendMessage(context, chatHistory, modelParameters, enableThinking, stream, availableTools, preserveThinkInHistory, onTokensUpdated, onNonFatalError, enableRetry)
+        return super.sendMessage(context, chatHistory, modelParameters, enableThinking, stream, availableTools, preserveThinkInHistory, onTokensUpdated, onUsageReported, onNonFatalError, enableRetry, statsCategory)
     }
 }

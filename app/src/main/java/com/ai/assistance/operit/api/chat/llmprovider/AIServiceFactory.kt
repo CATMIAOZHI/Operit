@@ -255,7 +255,11 @@ object AIServiceFactory {
     }
 
     /**
-     * 创建AI服务实例
+     * 创建AI服务实例（统一统计记录边界）。
+     *
+     * 所有服务（包括连接测试器直接创建的探测服务）都在这里统一包装
+     * [TokenTrackingAIService]：任何 sendMessage/testConnection 调用都会落入
+     * 统计账本，业务分类由调用方通过 sendMessage 的 statsCategory 声明。
      *
      * @param config 模型配置数据
      * @param modelConfigManager 模型配置管理器，用于多API Key模式
@@ -263,6 +267,19 @@ object AIServiceFactory {
      * @return 对应的AIService实现
      */
     fun createService(
+        config: ModelConfigData,
+        modelConfigManager: ModelConfigManager,
+        context: Context
+    ): AIService {
+        val rawService = buildService(config, modelConfigManager, context)
+        return TokenTrackingAIService(
+            delegate = rawService,
+            context = context,
+            configId = config.id,
+        )
+    }
+
+    private fun buildService(
         config: ModelConfigData,
         modelConfigManager: ModelConfigManager,
         context: Context
