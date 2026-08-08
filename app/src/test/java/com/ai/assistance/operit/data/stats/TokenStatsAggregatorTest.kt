@@ -141,6 +141,23 @@ class TokenStatsAggregatorTest {
             params = params,
         ).summary
 
+    @Test
+    fun `reasoning aggregate counts only separately billed reasoning`() {
+        val id1 = identity("id-1")
+        val totals =
+            aggregated(
+                events =
+                    listOf(
+                        event("e1", "id-1", 1000L, reasoning = 30L, reasoningIncluded = true),
+                        event("e2", "id-1", 2000L, reasoning = 20L, reasoningIncluded = false),
+                    ),
+                identities = listOf(id1),
+            )
+        // 输出已含推理的事件不再独立计入，仅独立计费的推理入账
+        assertEquals(20L, totals.reasoning.knownSum)
+        assertEquals(1L, totals.reasoning.knownEventCount)
+    }
+
     // ==== 生命周期 ====
 
     @Test

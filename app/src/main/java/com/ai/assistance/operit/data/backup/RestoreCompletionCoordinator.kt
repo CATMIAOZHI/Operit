@@ -5,9 +5,11 @@ import com.ai.assistance.operit.util.AppLogger
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.channels.FileChannel
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 import java.util.UUID
 
 /**
@@ -104,8 +106,24 @@ object RestoreCompletionCoordinator {
     private fun markerStore(context: Context): RestoreMarkerStore =
         markerStoreProvider?.invoke(context)
             ?: AtomicRestoreMarkerStore(
-                File(context.noBackupFilesDir, MARKER_FILE)
+                File(context.noBackupFilesDir, MARKER_FILE),
+                strictDirectorySync = ::syncMarkerDir,
             )
+
+    /**
+     * 目录项 fsync（Android/Linux）：`FileChannel.open(dir, READ)` + `force(true)`
+     * 即 fsync(2) 目录 fd，持久化新建/删除的目录项；失败返回 false 由
+     * [AtomicRestoreMarkerStore] fail-closed——restore 信号丢失比登记失败更严重
+     * （登记失败时恢复状态保持 RESTORE_REPLACED，冷启动自动补登记）。
+     */
+    private fun syncMarkerDir(dir: File): Boolean =
+        try {
+            FileChannel.open(dir.toPath(), StandardOpenOption.READ).use { it.force(true) }
+            true
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "restore marker directory fsync failed: ${dir.absolutePath}", e)
+            false
+        }
 }
 
 /** 恢复 marker 的读写抽象（测试可注入 fake / 临时目录实现）。 */

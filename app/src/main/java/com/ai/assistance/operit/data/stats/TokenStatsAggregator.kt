@@ -104,7 +104,7 @@ object TokenStatsAggregator {
                 cacheWrite.accept(event.cacheWriteTokens)
                 totalInput.accept(event.totalInputTokens)
                 output.accept(event.outputTokens)
-                reasoning.accept(event.reasoningTokens)
+                reasoning.accept(independentlyBilledReasoning(event))
                 val (amount, currency) =
                     eventCost(event, identities[event.statIdentityId], pricing!!, params)
                 if (amount == null) {
@@ -252,7 +252,7 @@ object TokenStatsAggregator {
                 cachedInput = sumKnownTokens(modelEvents) { it.cachedInputTokens },
                 cacheWrite = sumKnownTokens(modelEvents) { it.cacheWriteTokens },
                 output = sumKnownTokens(modelEvents) { it.outputTokens },
-                reasoning = sumKnownTokens(modelEvents) { it.reasoningTokens },
+                reasoning = sumKnownTokens(modelEvents, ::independentlyBilledReasoning),
                 unknownTokenEventCount =
                     modelEvents.count {
                         it.uncachedInputTokens == null || it.cachedInputTokens == null || it.outputTokens == null
@@ -358,7 +358,7 @@ object TokenStatsAggregator {
             cacheWrite = tokenAggregateOf(events) { it.cacheWriteTokens },
             totalInput = tokenAggregateOf(events) { it.totalInputTokens },
             output = tokenAggregateOf(events) { it.outputTokens },
-            reasoning = tokenAggregateOf(events) { it.reasoningTokens },
+            reasoning = tokenAggregateOf(events, ::independentlyBilledReasoning),
             cost = costSummaryOf(events, identitiesById, pricing, params),
         )
 
@@ -389,6 +389,14 @@ object TokenStatsAggregator {
             val value = pick(event) ?: return@fold acc
             TokenCostCalculator.saturatedAdd(acc, value)
         }
+
+    /**
+     * 推理 token 只在该计费被输出计数排除（[TokenStatEventEntity.reasoningIncludedInOutput]
+     * == false）时才独立累计；provider 输出已含推理（OpenAI/Gemini/Anthropic）时再相加
+     * 会双重计数。与活动聚合（[TokenActivityModels]）口径一致。
+     */
+    private fun independentlyBilledReasoning(event: TokenStatEventEntity): Long? =
+        if (event.reasoningIncludedInOutput == false) event.reasoningTokens else null
 
     // ==== 费用 ====
 
