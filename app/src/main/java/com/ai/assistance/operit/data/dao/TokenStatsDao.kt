@@ -329,7 +329,7 @@ abstract class TokenStatsDao {
         displayModel: TokenStatDisplayModelEntity,
     ): Long {
         insertIdentityIfAbsent(identity)
-        upsertDisplayModel(displayModel)
+        insertDisplayModelIfAbsent(displayModel)
         return currentResetGeneration()
     }
 

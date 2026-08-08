@@ -57,6 +57,20 @@ class LegacyTokenStatsSnapshotTest {
     }
 
     @Test
+    fun `explicit token billing mode is preserved`() {
+        val raw =
+            legacyPreferences(
+                "token_input_OPENAI_gpt-4o-mini-tts" to 100L,
+                "billing_mode_OPENAI_gpt-4o-mini-tts" to "TOKEN",
+            )
+
+        val snapshot = LegacyTokenStatsSnapshot.parse(raw)
+
+        val stats = snapshot.providerModels.getValue("OPENAI:gpt-4o-mini-tts")
+        assertEquals(BillingMode.TOKEN, stats.priceSettings.billingMode)
+    }
+
+    @Test
     fun `missing counters are zero and all-zero models are dropped`() {
         val raw =
             legacyPreferences(
@@ -104,16 +118,15 @@ class LegacyTokenStatsSnapshotTest {
     }
 
     @Test
-    fun `underscore fallback decoding handles unknown providers`() {
+    fun `unknown provider decoding preserves model underscores`() {
         val raw =
             legacyPreferences(
-                "token_input_MY_CUSTOM_PROVIDER_my-model" to 10L,
+                "token_input_Custom_gpt_4" to 10L,
             )
 
         val snapshot = LegacyTokenStatsSnapshot.parse(raw)
 
-        // 未知 provider 前缀按旧约定整体替换 “_” 为 “:”
-        assertTrue(snapshot.providerModels.containsKey("MY:CUSTOM:PROVIDER:my-model"))
+        assertTrue(snapshot.providerModels.containsKey("Custom:gpt_4"))
     }
 
     @Test

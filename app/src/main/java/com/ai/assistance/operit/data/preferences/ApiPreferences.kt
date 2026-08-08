@@ -127,7 +127,7 @@ class ApiPreferences private constructor(private val context: Context) {
                                 "$matchedProvider:${encoded.substring(matchedProvider.length + 1)}"
                         }
                 } else {
-                        encoded.replace("_", ":")
+                        encoded.replaceFirst("_", ":")
                 }
         }
 

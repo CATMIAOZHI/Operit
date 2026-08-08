@@ -148,13 +148,11 @@ data class LegacyTokenStatsSnapshot(
                         decodeProviderModelFromKeySuffix(keyName.removePrefix(BILLING_MODE_PREFIX))
                     if (providerModel.isNotBlank()) {
                         val mode = BillingMode.fromString(value as? String)
-                        if (mode != BillingMode.TOKEN) {
-                            builders.getOrPut(providerModel) { StatsBuilder(providerModel) }
-                                .priceSettings =
-                                builders.getValue(providerModel).priceSettings.copy(
-                                    billingMode = mode
-                                )
-                        }
+                        builders.getOrPut(providerModel) { StatsBuilder(providerModel) }
+                            .priceSettings =
+                            builders.getValue(providerModel).priceSettings.copy(
+                                billingMode = mode
+                            )
                     }
                 }
             }
@@ -224,7 +222,7 @@ data class LegacyTokenStatsSnapshot(
                     "$matchedProvider:${encoded.substring(matchedProvider.length + 1)}"
                 }
             } else {
-                encoded.replace("_", ":")
+                encoded.replaceFirst("_", ":")
             }
         }
 
