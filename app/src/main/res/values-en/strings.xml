@@ -5517,10 +5517,10 @@
     <string name="stats_quarantine_export_failed_cleanup">Evidence export failed: %1$s (export directory cleanup also failed, please remove it manually: %2$s)</string>
     <string name="stats_quarantine_delete">Delete evidence</string>
     <string name="stats_quarantine_delete_confirm_title">Delete statistics quarantine evidence?</string>
-    <string name="stats_quarantine_delete_confirm_message">This permanently deletes %1$d quarantine evidence file(s) (%2$s total). This cannot be undone; exporting the evidence first is recommended.</string>
+    <string name="stats_quarantine_delete_confirm_message">This permanently deletes %1$d quarantine evidence file(s) (%2$s total) and %3$d quarantine summary record(s) (%4$s total). This cannot be undone; exporting the evidence first is recommended.</string>
     <string name="stats_quarantine_delete_confirm_action">Delete</string>
     <string name="stats_quarantine_delete_cancel_action">Cancel</string>
-    <string name="stats_quarantine_delete_success">Deleted %1$d quarantine evidence file(s)</string>
+    <string name="stats_quarantine_delete_success">Deleted %1$d quarantine evidence file(s) and %2$d quarantine summary record(s)</string>
     <string name="stats_quarantine_delete_failed">Deletion failed: %1$s</string>
     <string name="stats_quarantine_info_error">Quarantine evidence info unavailable: %1$s (keeping the last shown values)</string>
     <string name="backup_official_operit_migration_action">Migrate from official Operit</string>

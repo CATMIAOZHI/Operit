@@ -15,6 +15,7 @@ data class TokenActivityRecord(
 )
 
 data class TokenActivityEventRow(
+    val eventId: String = "",
     val startedAtMs: Long,
     val uncachedInputTokens: Long?,
     val cachedInputTokens: Long?,
@@ -26,6 +27,42 @@ data class TokenActivityEventRow(
     /** null = 旧行未声明，按保守默认 true（独立计费）处理。 */
     val cacheWriteSeparateBilling: Boolean? = null,
 )
+
+internal class TokenActivitySnapshot(
+    val zone: ZoneId,
+    val dayTotals: Map<LocalDate, Long>,
+    val earliestYear: Int?,
+    val hourCounts: LongArray,
+    val totalRequests: Long,
+)
+
+internal class TokenActivityAccumulator(private val zone: ZoneId) {
+    private val dayTotals = HashMap<LocalDate, Long>()
+    private val hourCounts = LongArray(24)
+    private var earliestYear: Int? = null
+    private var totalRequests = 0L
+
+    fun addPage(rows: List<TokenActivityEventRow>) {
+        rows.forEach { row ->
+            val dateTime = Instant.ofEpochMilli(row.startedAtMs).atZone(zone)
+            val date = dateTime.toLocalDate()
+            val tokens = row.toActivityRecord().tokens
+            dayTotals[date] = saturatedAdd(dayTotals[date] ?: 0L, tokens)
+            hourCounts[dateTime.hour] = saturatedAdd(hourCounts[dateTime.hour], 1L)
+            earliestYear = minOf(earliestYear ?: date.year, date.year)
+            totalRequests = saturatedAdd(totalRequests, 1L)
+        }
+    }
+
+    fun snapshot(): TokenActivitySnapshot =
+        TokenActivitySnapshot(
+            zone = zone,
+            dayTotals = dayTotals.toMap(),
+            earliestYear = earliestYear,
+            hourCounts = hourCounts.copyOf(),
+            totalRequests = totalRequests,
+        )
+}
 
 data class TokenActivityDay(
     val date: LocalDate,
@@ -144,24 +181,27 @@ object TokenActivityAggregator {
         records: List<TokenActivityRecord>,
         zone: ZoneId,
         nowMs: Long = System.currentTimeMillis(),
+    ): List<Int> = availableYears(snapshotOf(records, zone), nowMs)
+
+    internal fun availableYears(
+        snapshot: TokenActivitySnapshot,
+        nowMs: Long = System.currentTimeMillis(),
     ): List<Int> {
+        val zone = snapshot.zone
         val currentYear = Instant.ofEpochMilli(nowMs).atZone(zone).year
-        val firstYear = records.minOfOrNull { Instant.ofEpochMilli(it.startedAtMs).atZone(zone).year }
-            ?.coerceAtMost(currentYear) ?: currentYear
+        val firstYear = snapshot.earliestYear?.coerceAtMost(currentYear) ?: currentYear
         return (firstYear..currentYear).toList().reversed()
     }
 
-    fun insights(records: List<TokenActivityRecord>, zone: ZoneId): TokenActivityInsights {
-        val hourCounts = LongArray(24)
-        records.forEach { record ->
-            val hour = Instant.ofEpochMilli(record.startedAtMs).atZone(zone).hour
-            hourCounts[hour]++
-        }
+    fun insights(records: List<TokenActivityRecord>, zone: ZoneId): TokenActivityInsights =
+        insights(snapshotOf(records, zone))
+
+    internal fun insights(snapshot: TokenActivitySnapshot): TokenActivityInsights {
         return TokenActivityInsights(
-            totalRequests = records.size.toLong(),
-            topHours = hourCounts.indices
-                .filter { hourCounts[it] > 0L }
-                .sortedWith(compareByDescending<Int> { hourCounts[it] }.thenBy { it })
+            totalRequests = snapshot.totalRequests,
+            topHours = snapshot.hourCounts.indices
+                .filter { snapshot.hourCounts[it] > 0L }
+                .sortedWith(compareByDescending<Int> { snapshot.hourCounts[it] }.thenBy { it })
                 .take(3),
         )
     }
@@ -171,11 +211,18 @@ object TokenActivityAggregator {
         zone: ZoneId,
         year: Int,
         nowMs: Long = System.currentTimeMillis(),
+    ): TokenActivityYearData = yearData(snapshotOf(records, zone), year, nowMs)
+
+    internal fun yearData(
+        snapshot: TokenActivitySnapshot,
+        year: Int,
+        nowMs: Long = System.currentTimeMillis(),
     ): TokenActivityYearData {
+        val zone = snapshot.zone
         val nowDate = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
         val start = LocalDate.of(year, 1, 1)
         val end = if (year == nowDate.year) nowDate else LocalDate.of(year, 12, 31)
-        return rangeData(records, zone, start, end)
+        return rangeData(snapshot.dayTotals, start, end)
     }
 
     /** 默认活动窗口：包含今天在内的最近 365 个自然日。 */
@@ -183,25 +230,22 @@ object TokenActivityAggregator {
         records: List<TokenActivityRecord>,
         zone: ZoneId,
         nowMs: Long = System.currentTimeMillis(),
+    ): TokenActivityYearData = recentData(snapshotOf(records, zone), nowMs)
+
+    internal fun recentData(
+        snapshot: TokenActivitySnapshot,
+        nowMs: Long = System.currentTimeMillis(),
     ): TokenActivityYearData {
+        val zone = snapshot.zone
         val end = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
-        return rangeData(records, zone, end.minusDays(364), end)
+        return rangeData(snapshot.dayTotals, end.minusDays(364), end)
     }
 
     private fun rangeData(
-        records: List<TokenActivityRecord>,
-        zone: ZoneId,
+        dayTotals: Map<LocalDate, Long>,
         start: LocalDate,
         end: LocalDate,
     ): TokenActivityYearData {
-        val dayTotals = HashMap<LocalDate, Long>()
-        records.forEach { record ->
-            val date = Instant.ofEpochMilli(record.startedAtMs).atZone(zone).toLocalDate()
-            if (!date.isBefore(start) && !date.isAfter(end)) {
-                dayTotals[date] = saturatedAdd(dayTotals[date] ?: 0L, record.tokens)
-            }
-        }
-
         val days = ChronoUnit.DAYS.between(start, end).toInt() + 1
         val raw = List(days) { index ->
             val date = start.plusDays(index.toLong())
@@ -242,6 +286,26 @@ object TokenActivityAggregator {
             weekly = weekly,
             cumulative = cumulative,
             stats = stats(raw),
+        )
+    }
+
+    private fun snapshotOf(records: List<TokenActivityRecord>, zone: ZoneId): TokenActivitySnapshot {
+        val dayTotals = HashMap<LocalDate, Long>()
+        val hourCounts = LongArray(24)
+        var earliestYear: Int? = null
+        records.forEach { record ->
+            val dateTime = Instant.ofEpochMilli(record.startedAtMs).atZone(zone)
+            val date = dateTime.toLocalDate()
+            dayTotals[date] = saturatedAdd(dayTotals[date] ?: 0L, record.tokens)
+            hourCounts[dateTime.hour] = saturatedAdd(hourCounts[dateTime.hour], 1L)
+            earliestYear = minOf(earliestYear ?: date.year, date.year)
+        }
+        return TokenActivitySnapshot(
+            zone = zone,
+            dayTotals = dayTotals,
+            earliestYear = earliestYear,
+            hourCounts = hourCounts,
+            totalRequests = records.size.toLong(),
         )
     }
 

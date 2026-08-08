@@ -49,6 +49,9 @@ object TokenStatsQueryService {
     /** 生命周期事件分页大小（P2-1）：固定批次读取 + 增量聚合，避免整表实体化峰值。 */
     internal var lifetimeEventPageSize: Int = 1_000
 
+    /** 活动视图事件分页大小：每页读取轻量投影并立即压缩为按日/小时汇总。 */
+    internal var activityEventPageSize: Int = 1_000
+
     // ==== 核心查询（DAO 直连，生产与测试共用） ====
 
     /** 生命周期累计总览（事件 + baseline，独立于筛选；事件分页增量聚合，不整表实体化）。 */
@@ -113,10 +116,19 @@ object TokenStatsQueryService {
             rangeHasEvents(daoOf(context), range)
         }
 
-    /** 全局 Token 活动使用的轻量事件投影；不应用统计页筛选，也不包含旧 baseline。 */
-    suspend fun activityRecords(context: Context): List<TokenActivityRecord> =
+    /**
+     * 全局 Token 活动快照；不应用统计页筛选，也不包含旧 baseline。Room 在同一事务内
+     * keyset 分页，页面逐批压缩为按日 token 与按小时请求数，不保留完整历史事件列表。
+     */
+    internal suspend fun activitySnapshot(dao: TokenStatsDao, zone: ZoneId): TokenActivitySnapshot {
+        val accumulator = TokenActivityAccumulator(zone)
+        dao.loadActivitySnapshot(activityEventPageSize) { page -> accumulator.addPage(page) }
+        return accumulator.snapshot()
+    }
+
+    internal suspend fun activitySnapshot(context: Context, zone: ZoneId): TokenActivitySnapshot =
         withContext(queryDispatcher) {
-            daoOf(context).getTokenActivityRows().map { it.toActivityRecord() }
+            activitySnapshot(daoOf(context), zone)
         }
 
     /**

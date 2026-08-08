@@ -713,6 +713,11 @@ internal object TokenStatSpool {
         if (drainBefore && hasPendingSegments(appContext)) {
             throw IOException("statistics spool still contains pending events after drain")
         }
+        if (drainBefore && hasQuarantineEvidenceForSnapshotLocked(appContext)) {
+            throw IOException(
+                "statistics quarantine evidence must be exported and acknowledged before snapshot",
+            )
+        }
         // 排他状态必须在 drain 阶段之后设置：drainBefore 自己的 insert 需要登记。
         // 此后不再有任何新登记（登记与标志检查原子），registry 只减不增。
         synchronized(stateLock) { exclusiveBarrierActive = true }
@@ -1127,8 +1132,8 @@ internal object TokenStatSpool {
         }
 
     /**
-     * File I/O always runs on [ioDispatcher] (P2-2); the summary file is intentionally kept as
-     *  the bounded rolling record of already-discarded over-cap evidence. 受管失败段（P1-3）：
+     * File I/O always runs on [ioDispatcher] (P2-2); the bounded rolling summary is kept unless
+     *  the caller explicitly acknowledges it with [deleteSummary]. 受管失败段（P1-3）：
      *  按 identity 删除原损坏文件并移除对应 manifest 记录；文件已消失只移除记录；身份不匹配
      *  视为陈旧记录绝不删新身份文件。删除失败保留记录并抛错（UI 反馈失败，不声称全部成功）。
      *
@@ -1150,7 +1155,11 @@ internal object TokenStatSpool {
      *  目录（NOFOLLOW、拒绝符号链接）。全部名字都是 trash 目录时跳过 manifest 读取（其完整性
      *  与 trash 删除无关）。trash 删除放在文件事务完成后，文件侧失败时 trash 保持原样。
      */
-    suspend fun acknowledgeAndDeleteQuarantine(context: Context, names: Set<String>) =
+    suspend fun acknowledgeAndDeleteQuarantine(
+        context: Context,
+        names: Set<String>,
+        deleteSummary: Boolean = false,
+    ) =
         lifecycleMutex.withLock {
             withContext(ioDispatcher) {
                 val dir = spoolDir(context.applicationContext)
@@ -1179,6 +1188,7 @@ internal object TokenStatSpool {
                             )
                         }
                     }
+                    if (deleteSummary) deleteQuarantineSummaryLocked(context)
                     return@withContext
                 }
                 val manifestFile = File(dir, TOMBSTONE_MANIFEST_NAME)
@@ -1375,8 +1385,21 @@ internal object TokenStatSpool {
                         )
                     }
                 }
+                if (deleteSummary) deleteQuarantineSummaryLocked(context)
             }
         }
+
+    /** Explicit post-export acknowledgment for the bounded rolling summary and every sidecar. */
+    private suspend fun deleteQuarantineSummaryLocked(context: Context) {
+        val dir = spoolDir(context.applicationContext)
+        val summaryFile = File(dir, QUARANTINE_SUMMARY_NAME)
+        summaryStore(summaryFile).delete()
+        val remaining = listDir(dir)
+            ?: throw IOException("cannot verify quarantine summary deletion: ${dir.absolutePath}")
+        if (remaining.any { it.name == QUARANTINE_SUMMARY_NAME || it.name.startsWith("$QUARANTINE_SUMMARY_NAME.") }) {
+            throw IOException("statistics quarantine summary deletion failed: ${summaryFile.absolutePath}")
+        }
+    }
 
     /**
      * ack 的主 manifest 重写（P1-1，调用方持 lifecycleMutex）：发布前投影实际总量 + 最坏
@@ -1896,6 +1919,21 @@ internal object TokenStatSpool {
                         it.name.endsWith(SEALED_SUFFIX) &&
                         it.name in processableNames))
         }
+    }
+
+    /**
+     * Raw snapshots intentionally exclude the active spool queue. Quarantine files and their
+     * summary/tombstone/trash metadata are not queue data and must never be silently omitted from a
+     * successful snapshot. Until raw restore has a selective evidence-preservation protocol, fail
+     * before ZIP creation and leave every evidence byte in place for explicit export/acknowledgment.
+     */
+    private suspend fun hasQuarantineEvidenceForSnapshotLocked(context: Context): Boolean {
+        val dir = spoolDir(context.applicationContext)
+        if (quarantineAreaFiles(dir).isNotEmpty()) return true
+        if (stuckAckTrashEvidenceLocked(context).isNotEmpty()) return true
+        if (readTombstoneLines(context).isNotEmpty()) return true
+        val summaryFile = File(dir, QUARANTINE_SUMMARY_NAME)
+        return readMetadata(summaryStore(summaryFile), summaryFile)?.isNotBlank() == true
     }
 
     /**

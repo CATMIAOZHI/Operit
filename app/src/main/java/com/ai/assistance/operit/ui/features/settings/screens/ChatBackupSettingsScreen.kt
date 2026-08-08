@@ -1441,7 +1441,9 @@ fun ChatBackupSettingsScreen() {
                             onClick = { showQuarantineDeleteConfirmDialog = true },
                             modifier = Modifier.weight(1f, fill = false),
                             isDestructive = true,
-                            enabled = !quarantineBusy && quarantineEvidenceCount > 0
+                            enabled =
+                                !quarantineBusy &&
+                                    (quarantineEvidenceCount > 0 || quarantineSummaryCount > 0)
                         )
                     }
                 }
@@ -1458,7 +1460,9 @@ fun ChatBackupSettingsScreen() {
                     stringResource(
                         R.string.stats_quarantine_delete_confirm_message,
                         quarantineEvidenceCount,
-                        formatBytes(quarantineEvidenceBytes)
+                        formatBytes(quarantineEvidenceBytes),
+                        quarantineSummaryCount,
+                        formatBytes(quarantineSummaryBytes),
                     )
                 )
             },
@@ -1475,9 +1479,17 @@ fun ChatBackupSettingsScreen() {
                                     withContext(Dispatchers.IO) {
                                         TokenStatSpool.quarantineEvidence(context).map { it.name }.toSet()
                                     }
-                                TokenStatSpool.acknowledgeAndDeleteQuarantine(context, names)
+                                TokenStatSpool.acknowledgeAndDeleteQuarantine(
+                                    context = context,
+                                    names = names,
+                                    deleteSummary = quarantineSummaryCount > 0,
+                                )
                                 quarantineOperationMessage =
-                                    context.getString(R.string.stats_quarantine_delete_success, names.size)
+                                    context.getString(
+                                        R.string.stats_quarantine_delete_success,
+                                        names.size,
+                                        quarantineSummaryCount,
+                                    )
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
