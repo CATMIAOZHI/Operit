@@ -130,6 +130,25 @@ class LegacyTokenStatsSnapshotTest {
     }
 
     @Test
+    fun `registered provider decoding preserves provider and model underscores`() {
+        val raw =
+            legacyPreferences(
+                "token_input_My_Custom_gpt_4" to 10L,
+                "token_output_My_Custom_gpt_4" to 5L,
+            )
+
+        val snapshot =
+            LegacyTokenStatsSnapshot.parse(
+                rawPreferences = raw,
+                additionalProviderNames = listOf("My", "My_Custom"),
+            )
+
+        val stats = snapshot.providerModels.getValue("My_Custom:gpt_4")
+        assertEquals(10L, stats.inputTokens)
+        assertEquals(5L, stats.outputTokens)
+    }
+
+    @Test
     fun `zero prices are treated as unset`() {
         val raw =
             legacyPreferences(
