@@ -232,9 +232,9 @@ class TokenUsageStatisticsViewModel(
         }
         activityLoadJob = viewModelScope.launch(dispatcher) {
             try {
-                val records = TokenStatsQueryService.activityRecords(appContext)
+                val snapshot = TokenStatsQueryService.activitySnapshot(appContext, zone)
                 val result = withContext(Dispatchers.Default) {
-                    val years = TokenActivityAggregator.availableYears(records, zone, nowMs())
+                    val years = TokenActivityAggregator.availableYears(snapshot, nowMs())
                     val recent = requestedRecent || requestedYear !in years
                     val year = requestedYear?.takeIf { it in years } ?: years.first()
                     ActivityLoadResult(
@@ -242,11 +242,11 @@ class TokenUsageStatisticsViewModel(
                         year = year,
                         recent = recent,
                         data = if (recent) {
-                            TokenActivityAggregator.recentData(records, zone, nowMs())
+                            TokenActivityAggregator.recentData(snapshot, nowMs())
                         } else {
-                            TokenActivityAggregator.yearData(records, zone, year, nowMs())
+                            TokenActivityAggregator.yearData(snapshot, year, nowMs())
                         },
-                        insights = TokenActivityAggregator.insights(records, zone),
+                        insights = TokenActivityAggregator.insights(snapshot),
                     )
                 }
                 if (generation != activityLoadGeneration) return@launch

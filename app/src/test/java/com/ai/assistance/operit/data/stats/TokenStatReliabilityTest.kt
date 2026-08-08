@@ -662,6 +662,61 @@ class TokenStatReliabilityTest {
     }
 
     @Test
+    fun `snapshot fails before block while quarantine evidence would be excluded`() = runBlocking {
+        val spool = File(root, TokenStatSpool.SPOOL_DIR_NAME).apply { mkdirs() }
+        File(spool, "sealed_1.jsonl").writeText("{corrupt snapshot evidence\n")
+        var blockRan = false
+
+        Mockito.mockStatic(AppLogger::class.java).use {
+            try {
+                TokenStatSpool.withExclusiveSnapshotAccess(context, drainBefore = true) {
+                    blockRan = true
+                }
+                fail("snapshot must not silently omit quarantine evidence")
+            } catch (e: IOException) {
+                assertTrue(e.message!!.contains("quarantine evidence"))
+            }
+        }
+
+        assertFalse("snapshot block must not run", blockRan)
+        val evidence = TokenStatSpool.quarantineEvidence(context)
+        assertEquals(1, evidence.size)
+        assertTrue(evidence.single().readText().contains("corrupt snapshot evidence"))
+    }
+
+    @Test
+    fun `summary only evidence can be explicitly acknowledged before snapshot`() = runBlocking {
+        val spool = File(root, TokenStatSpool.SPOOL_DIR_NAME).apply { mkdirs() }
+        val summary = File(spool, "quarantine_summary.jsonl")
+        summary.writeText("{\"count\":1}\n")
+        var blockRan = false
+
+        try {
+            TokenStatSpool.withExclusiveSnapshotAccess(context, drainBefore = true) {
+                blockRan = true
+            }
+            fail("snapshot must not silently omit the quarantine summary")
+        } catch (e: IOException) {
+            assertTrue(e.message!!.contains("quarantine evidence"))
+        }
+        assertFalse(blockRan)
+        assertEquals(1, TokenStatSpool.quarantineSummaryInfo(context)!!.recordCount)
+
+        TokenStatSpool.acknowledgeAndDeleteQuarantine(
+            context = context,
+            names = emptySet(),
+            deleteSummary = true,
+        )
+
+        assertFalse(summary.exists())
+        assertEquals(null, TokenStatSpool.quarantineSummaryInfo(context))
+        TokenStatSpool.withExclusiveSnapshotAccess(context, drainBefore = true) {
+            blockRan = true
+        }
+        assertTrue(blockRan)
+    }
+
+    @Test
     fun `two corrupt segments quarantine uniquely and healthy segment drains`() = runBlocking {
         val spool = File(root, TokenStatSpool.SPOOL_DIR_NAME).apply { mkdirs() }
         File(spool, "sealed_1.jsonl").writeText("{bad-one\n")

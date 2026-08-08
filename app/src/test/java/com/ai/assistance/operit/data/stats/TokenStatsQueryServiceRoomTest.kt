@@ -75,6 +75,7 @@ class TokenStatsQueryServiceRoomTest {
         TokenStatsQueryService.legacyPricesProvider = null
         TokenStatsQueryService.queryDispatcher = Dispatchers.IO
         TokenStatsQueryService.lifetimeEventPageSize = 1_000
+        TokenStatsQueryService.activityEventPageSize = 1_000
         database.close()
     }
 
@@ -523,6 +524,35 @@ class TokenStatsQueryServiceRoomTest {
         val pageQueries = recordingDriver.executed.filter { it.sql.contains("ORDER BY startedAtMs ASC") }
         // 7 + 7 + 6
         assertEquals(3, pageQueries.size)
+        assertEquals(listOf(7, 7, 6), pageQueries.map { it.rows })
+        assertTrue(pageQueries.all { it.binds[4] == "7" })
+    }
+
+    @Test
+    fun `activity snapshot pages the ledger and incrementally preserves totals`() = runBlocking {
+        TokenStatsQueryService.activityEventPageSize = 7
+        val dao = database.tokenStatsDao()
+        seedIdentity(dao, "id-1")
+        dao.insertEvents(
+            (0 until 20).map { index ->
+                event(
+                    id = "activity-$index",
+                    identityId = "id-1",
+                    startedAtMs = localMs("2026-08-${(1 + index / 5).toString().padStart(2, '0')}T${(index % 5 + 8).toString().padStart(2, '0')}:00:00", shanghai),
+                )
+            }
+        )
+        recordingDriver.clear()
+
+        val snapshot = TokenStatsQueryService.activitySnapshot(dao, shanghai)
+
+        assertEquals(20L, snapshot.totalRequests)
+        assertEquals(4, snapshot.dayTotals.size)
+        assertEquals(3_000L, snapshot.dayTotals.values.sum())
+        assertEquals(20L, snapshot.hourCounts.sum())
+        val pageQueries = recordingDriver.executed.filter {
+            it.sql.contains("SELECT eventId, startedAtMs") && it.sql.contains("ORDER BY startedAtMs ASC")
+        }
         assertEquals(listOf(7, 7, 6), pageQueries.map { it.rows })
         assertTrue(pageQueries.all { it.binds[4] == "7" })
     }

@@ -53,14 +53,21 @@ abstract class TokenStatsDao {
     @Query("SELECT * FROM token_stat_events")
     abstract suspend fun getAllEvents(): List<TokenStatEventEntity>
 
-    /** 活动热力图只读取所需列，避免把价格、诊断等完整事件字段整表实体化。 */
+    /** 活动热力图按 `(startedAtMs, eventId)` 键集分页读取轻量投影。 */
     @Query(
-        "SELECT startedAtMs, uncachedInputTokens, cachedInputTokens, cacheWriteTokens, " +
+        "SELECT eventId, startedAtMs, uncachedInputTokens, cachedInputTokens, cacheWriteTokens, " +
             "totalInputTokens, outputTokens, reasoningTokens, reasoningIncludedInOutput, " +
             "cacheWriteSeparateBilling " +
-            "FROM token_stat_events"
+            "FROM token_stat_events " +
+            "WHERE (startedAtMs > :afterStartMs OR " +
+            "(startedAtMs = :afterStartMs AND eventId > :afterEventId)) " +
+            "ORDER BY startedAtMs ASC, eventId ASC LIMIT :limit"
     )
-    abstract suspend fun getTokenActivityRows(): List<TokenActivityEventRow>
+    abstract suspend fun getTokenActivityRowsPage(
+        afterStartMs: Long,
+        afterEventId: String,
+        limit: Int,
+    ): List<TokenActivityEventRow>
 
     @Query("SELECT COUNT(*) FROM token_stat_events")
     abstract suspend fun countEvents(): Int
@@ -201,6 +208,29 @@ abstract class TokenStatsDao {
             baselines = baselines,
             totalEvents = totalEvents,
         )
+    }
+
+    /**
+     * 活动视图的同事务分页快照。每页只保留计算 token、自然日与小时所需的列，调用方
+     * 增量压缩后立即释放页面，内存不再随账本事件总数线性增长。
+     */
+    @Transaction
+    open suspend fun loadActivitySnapshot(
+        pageSize: Int,
+        onRowsPage: (List<TokenActivityEventRow>) -> Unit,
+    ) {
+        require(pageSize > 0) { "activity page size must be positive" }
+        var afterStartMs = Long.MIN_VALUE
+        var afterEventId = ""
+        while (true) {
+            val page = getTokenActivityRowsPage(afterStartMs, afterEventId, pageSize)
+            if (page.isEmpty()) break
+            onRowsPage(page)
+            if (page.size < pageSize) break
+            val last = page.last()
+            afterStartMs = last.startedAtMs
+            afterEventId = last.eventId
+        }
     }
 
     /**

@@ -5959,10 +5959,10 @@
     <string name="stats_quarantine_export_failed_cleanup">证据导出失败：%1$s（导出目录清理也失败，请手动删除：%2$s）</string>
     <string name="stats_quarantine_delete">确认删除</string>
     <string name="stats_quarantine_delete_confirm_title">确认删除统计隔离证据</string>
-    <string name="stats_quarantine_delete_confirm_message">将永久删除 %1$d 个隔离证据文件（共 %2$s）。此操作不可撤销，建议先导出证据。</string>
+    <string name="stats_quarantine_delete_confirm_message">将永久删除 %1$d 个隔离证据文件（共 %2$s）及 %3$d 条隔离摘要（共 %4$s）。此操作不可撤销，建议先导出证据。</string>
     <string name="stats_quarantine_delete_confirm_action">确认删除</string>
     <string name="stats_quarantine_delete_cancel_action">取消</string>
-    <string name="stats_quarantine_delete_success">已删除 %1$d 个隔离证据文件</string>
+    <string name="stats_quarantine_delete_success">已删除 %1$d 个隔离证据文件及 %2$d 条隔离摘要</string>
     <string name="stats_quarantine_delete_failed">删除失败：%1$s</string>
     <string name="stats_quarantine_info_error">隔离证据信息读取失败：%1$s（保留上次显示，请稍后重试）</string>
     <string name="backup_official_operit_migration_action">从原版 Operit 迁移</string>
