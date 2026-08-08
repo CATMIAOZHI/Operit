@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +51,8 @@ import com.ai.assistance.operit.data.stats.TokenStatsGroupModelInfo
 import com.ai.assistance.operit.data.stats.TokenStatsPriceOverrideDraft
 import java.time.Instant
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.util.Locale
 
 // ==== 自定义时间范围（两步日期选择，设备时区自然日边界） ====
@@ -82,11 +85,13 @@ internal fun customRangeInclusiveEnd(
 @Composable
 internal fun CustomRangeDialog(
     zone: ZoneId,
+    maxRangeDays: Long,
     onConfirm: (startMs: Long, endMs: Long) -> Boolean,
     onDismiss: () -> Unit,
 ) {
     var step by remember { mutableIntStateOf(0) }
     var startDate by remember { mutableStateOf<java.time.LocalDate?>(null) }
+    var inlineError by remember { mutableStateOf<String?>(null) }
 
     // 步骤切换时重建 picker（rememberDatePickerState 只取首帧初始值）；
     // DatePicker 的毫秒语义是“UTC 当日 0 点”，初始值同样按 UTC 日历生成。
@@ -97,6 +102,30 @@ internal fun CustomRangeDialog(
                     ?.toInstant()?.toEpochMilli()
             )
         }
+
+    val dateFormatter =
+        remember {
+            DateTimeFormatter
+                .ofLocalizedDate(FormatStyle.MEDIUM)
+                .withLocale(Locale.getDefault())
+        }
+
+    // 已选日期回显：开始日跨步骤保留；结束日实时显示当前日历选中项。
+    // 每次选中变化即清除上次的错误提示（用户已尝试修正）。
+    androidx.compose.runtime.LaunchedEffect(pickerState.selectedDateMillis) {
+        inlineError = null
+    }
+
+    val notSelected = stringResource(R.string.token_stats_custom_range_not_selected)
+    val invalidRangeText = stringResource(R.string.token_stats_custom_range_invalid)
+    val rangeTooLongText = stringResource(R.string.token_stats_custom_range_too_long)
+    val startText = startDate?.format(dateFormatter) ?: notSelected
+    val endText =
+        if (step == 1) {
+            pickerState.selectedDateMillis?.let(::datePickerMillisToLocalDate)?.format(dateFormatter)
+        } else {
+            null
+        } ?: notSelected
 
     val title =
         if (step == 0) {
@@ -109,24 +138,31 @@ internal fun CustomRangeDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(
+                enabled = pickerState.selectedDateMillis != null,
                 onClick = {
-                    val selected = pickerState.selectedDateMillis
-                    if (selected != null) {
-                        val date = datePickerMillisToLocalDate(selected)
-                        if (step == 0) {
-                            startDate = date
-                            step = 1
-                        } else {
-                            val start = startDate ?: return@TextButton
-                            // 结束日包含当天：+1 天 0 点作为半开区间终点（P1-6），
-                            // 同日合法；结束早于开始产生的非法边界由 onConfirm
-                            // （VM 校验）拒绝并提示。
-                            val startMs = start.atStartOfDay(zone).toInstant().toEpochMilli()
-                            val endMs = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-                            if (onConfirm(startMs, endMs)) {
-                                onDismiss()
-                            }
+                    val selected = pickerState.selectedDateMillis ?: return@TextButton
+                    val date = datePickerMillisToLocalDate(selected)
+                    if (step == 0) {
+                        startDate = date
+                        inlineError = null
+                        step = 1
+                        return@TextButton
+                    }
+                    val start = startDate ?: return@TextButton
+                    // 结束日包含当天：+1 天 0 点作为半开区间终点（P1-6），同日合法；
+                    // 非法边界在对话框内就地提示（不静默停留）。
+                    val startMs = start.atStartOfDay(zone).toInstant().toEpochMilli()
+                    val endMs = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                    inlineError =
+                        when {
+                            endMs <= startMs -> invalidRangeText
+                            (endMs - startMs) > maxRangeDays *
+                                com.ai.assistance.operit.data.stats.TokenStatsTimeRanges.DAY_MS ->
+                                rangeTooLongText
+                            else -> null
                         }
+                    if (inlineError == null && onConfirm(startMs, endMs)) {
+                        onDismiss()
                     }
                 },
             ) {
@@ -135,11 +171,47 @@ internal fun CustomRangeDialog(
         },
         dismissButton = {
             TextButton(onClick = { if (step == 0) onDismiss() else step = 0 }) {
-                Text(stringResource(R.string.settings_cancel))
+                Text(
+                    stringResource(
+                        if (step == 0) R.string.settings_cancel
+                        else R.string.token_stats_custom_range_back
+                    )
+                )
             }
         },
     ) {
-        DatePicker(state = pickerState)
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = stringResource(R.string.token_stats_custom_range_summary_start, startText),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (startDate == null) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.onSurface,
+                    fontWeight = if (startDate != null) FontWeight.Medium else FontWeight.Normal,
+                )
+                Text(
+                    text = stringResource(R.string.token_stats_custom_range_summary_end, endText),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (step == 1 && pickerState.selectedDateMillis != null)
+                        MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (step == 1 && pickerState.selectedDateMillis != null)
+                        FontWeight.Medium
+                    else FontWeight.Normal,
+                )
+            }
+            DatePicker(state = pickerState)
+            inlineError?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
     }
 }
 

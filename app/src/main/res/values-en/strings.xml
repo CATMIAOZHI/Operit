@@ -3637,6 +3637,10 @@
     <string name="token_stats_custom_range_confirm">OK</string>
     <string name="token_stats_custom_range_invalid">End date must be after start date</string>
     <string name="token_stats_custom_range_too_long">Custom range must not exceed 3 years</string>
+    <string name="token_stats_custom_range_summary_start">Start date: %1$s</string>
+    <string name="token_stats_custom_range_summary_end">End date: %1$s</string>
+    <string name="token_stats_custom_range_not_selected">Not selected</string>
+    <string name="token_stats_custom_range_back">Back</string>
     <string name="token_stats_filter_all_models">All models</string>
     <string name="token_stats_filter_models_count">%1$d models</string>
     <string name="token_stats_filter_all_categories">All categories</string>
