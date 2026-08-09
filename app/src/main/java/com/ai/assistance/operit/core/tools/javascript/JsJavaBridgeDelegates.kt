@@ -93,6 +93,31 @@ internal object JsJavaBridgeDelegates {
     private val jsInterfaceReferenceCounts =
         IdentityHashMap<JsInterfaceCallbackInvoker, MutableMap<String, Int>>()
     private val jsInterfaceLifecycleWorkerStarted = AtomicBoolean(false)
+    private val allowedClassNames =
+        setOf(
+            "java.lang.Boolean",
+            "java.lang.Byte",
+            "java.lang.Character",
+            "java.lang.CharSequence",
+            "java.lang.Double",
+            "java.lang.Float",
+            "java.lang.Integer",
+            "java.lang.Long",
+            "java.lang.Number",
+            "java.lang.Short",
+            "java.lang.String",
+            "java.lang.StringBuilder",
+            "java.math.BigDecimal",
+            "java.math.BigInteger",
+            "java.util.ArrayList",
+            "java.util.Collections",
+            "java.util.HashMap",
+            "java.util.HashSet",
+            "java.util.LinkedHashMap",
+            "java.util.LinkedHashSet",
+            "java.util.Locale",
+            "java.util.UUID"
+        )
 
     internal fun parseJsonObject(raw: Any?): JSONObject? {
         return when (raw) {
@@ -887,6 +912,7 @@ internal object JsJavaBridgeDelegates {
     private fun loadClass(className: String, classLoader: ClassLoader? = null): Class<*> {
         val normalized = className.trim()
         require(normalized.isNotEmpty()) { "class name is required" }
+        requireJavaBridgeClassAllowed(normalized)
         return when (normalized) {
             "boolean" -> java.lang.Boolean.TYPE
             "byte" -> java.lang.Byte.TYPE
@@ -917,8 +943,28 @@ internal object JsJavaBridgeDelegates {
     ): Any {
         val handle = instanceHandle.trim()
         require(handle.isNotEmpty()) { "instance handle is required" }
-        return objectRegistry[handle]
+        val instance = objectRegistry[handle]
             ?: throw IllegalArgumentException("instance handle not found or expired: $handle")
+        requireJavaBridgeClassAllowed(instance.javaClass.name)
+        return instance
+    }
+
+    private fun requireJavaBridgeClassAllowed(className: String) {
+        val normalized = className.trim()
+        val allowed =
+            normalized in allowedClassNames ||
+                normalized == "boolean" ||
+                normalized == "byte" ||
+                normalized == "short" ||
+                normalized == "int" ||
+                normalized == "long" ||
+                normalized == "float" ||
+                normalized == "double" ||
+                normalized == "char" ||
+                normalized == "void"
+        require(allowed) {
+            "Java bridge access to class '$normalized' is not allowed"
+        }
     }
 
     private fun parseArgsJson(
@@ -1108,6 +1154,7 @@ internal object JsJavaBridgeDelegates {
                             "value is not JSON-serializable: ${value.javaClass.name}"
                         )
                     }
+                    requireJavaBridgeClassAllowed(value.javaClass.name)
                     val handle = UUID.randomUUID().toString()
                     objectRegistry[handle] = value
                     JSONObject()
@@ -1122,6 +1169,7 @@ internal object JsJavaBridgeDelegates {
         value: Any,
         objectRegistry: ConcurrentHashMap<String, Any>
     ): JSONObject {
+        requireJavaBridgeClassAllowed(value.javaClass.name)
         val handle = UUID.randomUUID().toString()
         objectRegistry[handle] = value
         return JSONObject()

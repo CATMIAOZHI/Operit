@@ -6,7 +6,6 @@ import android.os.Looper
 import android.webkit.JavascriptInterface
 import androidx.annotation.Keep
 import androidx.core.content.ContextCompat
-import com.ai.assistance.operit.core.application.ActivityLifecycleManager
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
 import com.ai.assistance.operit.core.tools.AIToolHandler
@@ -1957,20 +1956,18 @@ class JsEngine(private val context: Context) {
 
         @JavascriptInterface
         fun javaLoadDex(path: String, optionsJson: String): String {
-            return externalJavaCodeLoader.loadDex(
-                path = path,
-                optionsJson = optionsJson,
-                baseClassLoader = getJavaBridgeBaseClassLoader()
-            )
+            return JSONObject()
+                .put("success", false)
+                .put("message", "Java bridge external code loading is disabled")
+                .toString()
         }
 
         @JavascriptInterface
         fun javaLoadJar(path: String, optionsJson: String): String {
-            return externalJavaCodeLoader.loadJar(
-                path = path,
-                optionsJson = optionsJson,
-                baseClassLoader = getJavaBridgeBaseClassLoader()
-            )
+            return JSONObject()
+                .put("success", false)
+                .put("message", "Java bridge external code loading is disabled")
+                .toString()
         }
 
         @JavascriptInterface
@@ -1980,23 +1977,18 @@ class JsEngine(private val context: Context) {
 
         @JavascriptInterface
         fun javaGetApplicationContext(): String {
-            return exposeJavaObject(
-                target = context.applicationContext,
-                failureLabel = "Failed to expose application context"
-            )
+            return JSONObject()
+                .put("success", false)
+                .put("message", "Java bridge access to Android Context is disabled")
+                .toString()
         }
 
         @JavascriptInterface
         fun javaGetCurrentActivity(): String {
-            val activity = ActivityLifecycleManager.getCurrentActivity()
-                ?: return JSONObject()
-                    .put("success", false)
-                    .put("message", "current activity is null")
-                    .toString()
-            return exposeJavaObject(
-                target = activity,
-                failureLabel = "Failed to expose current activity"
-            )
+            return JSONObject()
+                .put("success", false)
+                .put("message", "Java bridge access to Activity is disabled")
+                .toString()
         }
 
         @JavascriptInterface

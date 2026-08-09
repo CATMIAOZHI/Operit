@@ -37,11 +37,6 @@ internal fun buildRuntimeBootstrapModules(
             globals = listOf("OperitComposeDslRuntime")
         ),
         module(
-            fileName = "quickjs/init/java-bridge.js",
-            source = buildJavaClassBridgeDefinition(),
-            globals = listOf("Java", "Kotlin")
-        ),
-        module(
             fileName = "quickjs/init/third-party-libs.js",
             source = getJsThirdPartyLibraries(),
             globals = listOf("_", "dataUtils", "Icons")
