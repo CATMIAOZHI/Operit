@@ -55,12 +55,12 @@ Windows side helper project for Operit.
 
 Public read endpoints:
 - `GET /api/health`
-- `GET /api/config`
+- `GET /api/config` (does not return `apiToken`)
 - `GET /api/presets`
 - `GET /api/startup/state`
 
 Config / command endpoint:
-- `POST /api/config`
+- `POST /api/config` (requires current `token` in JSON body)
 - `POST /api/command/execute` (requires `token`)
 - `POST /api/startup/apply_recommended_bind`
 
@@ -83,7 +83,7 @@ File endpoints (all require `token` in JSON body):
 ## Security Notes
 
 - Default bind address is `127.0.0.1`.
-- `apiToken` is always enabled. If missing, agent auto-generates one.
+- `apiToken` is always enabled. If missing, agent auto-generates one. `/api/config` only reports whether a token is configured and never returns the token value.
 - In wizard one-click fill, token is generated only when missing (existing token is reused).
 
 ## Troubleshooting

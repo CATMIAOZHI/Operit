@@ -10,7 +10,6 @@ function buildPublicConfig(config, versionInfo) {
     maxCommandMs: config.maxCommandMs,
     allowedPresets: config.allowedPresets,
     apiTokenConfigured: !!config.apiToken,
-    apiToken: config.apiToken || "",
     version: versionInfo.agentVersion
   };
 }
@@ -378,6 +377,12 @@ function createApiHandler({
     if (req.method === "POST" && url.pathname === "/api/config") {
       try {
         const body = await readJsonBody(req);
+
+        if (!isAuthorized(state.config, body.token)) {
+          unauthorized(res, "config.update", body.token);
+          return true;
+        }
+
         const nextConfig = { ...state.config };
 
         const bindAddressInput = pickConfigInput(body, "bindAddress", "bind_address");
@@ -406,7 +411,7 @@ function createApiHandler({
         }
 
         const apiTokenInput = pickConfigInput(body, "apiToken", "api_token");
-        if (apiTokenInput !== undefined) {
+        if (typeof apiTokenInput === "string" && apiTokenInput.trim()) {
           nextConfig.apiToken = configStore.ensureApiToken(apiTokenInput);
         }
 

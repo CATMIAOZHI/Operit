@@ -83,6 +83,7 @@ export function createSettingsController({ api, refs, t, W, render, helpers, cal
         port: Number(refs.settingsPortInput.value),
         maxCommandMs: Number(refs.settingsMaxCommandInput.value),
         apiToken: refs.settingsApiTokenInput.value,
+        token: refs.settingsApiTokenInput.value,
         allowedPresets: collectCheckedPresets()
       };
 
