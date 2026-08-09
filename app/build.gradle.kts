@@ -444,6 +444,7 @@ dependencies {
     // 模拟测试框架 - 保留现有的 mockito 并新增 mockk
     testImplementation(libs.mockito.core)
     testImplementation(libs.mockito.kotlin)
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.mockito.android)
     
     // // 新增的测试依赖 - mockk 和 kotlin-test

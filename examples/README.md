@@ -1,5 +1,7 @@
 # VSCode中运行JavaScript到Android设备的使用说明
 
+> Java Bridge 安全迁移：`apktool`、`deepsearching`、`message_insert`、`pdf_vision_parser.js`、`qqbot`、`subagent` 仍保留源码供迁移参考，但依赖已撤销的任意 Java/Android/应用内部类能力，已从发布白名单（若原先在其中）和 example build-check 中移除，不能作为当前可运行包。新的脚本必须使用受控 `Tools` API；当前 bridge 契约见 `docs/doc-src/dev-core/JAVA_BRIDGE_INTERFACE.md`。
+
 本项目配置了通过VSCode直接运行JavaScript文件到Android设备的功能。这让您可以快速开发和测试JavaScript脚本，无需手动执行命令行工具。
 
 ## 准备工作

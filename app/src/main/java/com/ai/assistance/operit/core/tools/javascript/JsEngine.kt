@@ -3,6 +3,7 @@ package com.ai.assistance.operit.core.tools.javascript
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Looper
+import android.util.Base64
 import android.webkit.JavascriptInterface
 import androidx.annotation.Keep
 import androidx.core.content.ContextCompat
@@ -1989,6 +1990,64 @@ class JsEngine(private val context: Context) {
                 .put("success", false)
                 .put("message", "Java bridge access to Activity is disabled")
                 .toString()
+        }
+
+        /** Lists the direct package example files bundled in this exact APK. */
+        @JavascriptInterface
+        fun listSandboxPackageDevPackageAssets(): String {
+            return try {
+                val files =
+                    context.assets.list("packages")
+                        ?.asSequence()
+                        ?.filter { name ->
+                            name.isNotBlank() && '/' !in name && '\\' !in name
+                        }
+                        ?.sorted()
+                        ?.toList()
+                        .orEmpty()
+                require(files.isNotEmpty()) { "Bundled package assets are missing" }
+                JSONObject()
+                    .put("success", true)
+                    .put("files", JSONArray(files))
+                    .toString()
+            } catch (e: Exception) {
+                JSONObject()
+                    .put("success", false)
+                    .put("message", e.message ?: e.javaClass.name)
+                    .toString()
+            }
+        }
+
+        /**
+         * Reads one direct package asset selected from the fixed APK asset list. The caller must
+         * use the permissioned Tools.Files API for any external-storage write.
+         */
+        @JavascriptInterface
+        fun readSandboxPackageDevPackageAssetBase64(fileName: String): String {
+            return try {
+                val normalized = fileName.trim()
+                require(normalized.isNotEmpty() && '/' !in normalized && '\\' !in normalized) {
+                    "Bundled package asset name is invalid"
+                }
+                val allowedFiles = context.assets.list("packages")?.toSet().orEmpty()
+                require(normalized in allowedFiles) {
+                    "Bundled package asset is not available: $normalized"
+                }
+                val encoded =
+                    context.assets.open("packages/$normalized").use { input ->
+                        Base64.encodeToString(input.readBytes(), Base64.NO_WRAP)
+                    }
+                JSONObject()
+                    .put("success", true)
+                    .put("file", normalized)
+                    .put("base64", encoded)
+                    .toString()
+            } catch (e: Exception) {
+                JSONObject()
+                    .put("success", false)
+                    .put("message", e.message ?: e.javaClass.name)
+                    .toString()
+            }
         }
 
         @JavascriptInterface

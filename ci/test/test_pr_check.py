@@ -98,6 +98,11 @@ class ScopeClassificationTest(unittest.TestCase):
         plan = classify_paths(["tools/example_packages/packages_whitelist.txt"])
 
         self.assertTrue(plan.toolpkg)
+
+    def test_legacy_incompatible_list_triggers_toolpkg(self) -> None:
+        plan = classify_paths(["tools/example_packages/legacy_incompatible_packages.txt"])
+
+        self.assertTrue(plan.toolpkg)
         self.assertFalse(plan.web)
         self.assertFalse(plan.android_full)
         self.assertFalse(plan.android_jvm)

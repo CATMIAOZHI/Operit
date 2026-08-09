@@ -36,6 +36,7 @@ TOOLPKG_PATTERNS = (
     "npm-shrinkwrap.json",
     "pnpm-workspace.yaml",
     "tools/example_packages/packages_whitelist.txt",
+    "tools/example_packages/legacy_incompatible_packages.txt",
     "tools/example_packages/sync_example_packages.py",
 )
 ANDROID_FULL_PATTERNS = (

@@ -16,6 +16,8 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -33,6 +35,13 @@ internal object JsJavaBridgeDelegates {
     private const val JS_INTERFACE_KEY = "__javaJsInterface"
     private const val JS_OBJECT_ID_KEY = "__javaJsObjectId"
     private const val JS_INTERFACES_KEY = "__javaInterfaces"
+    private const val MAX_BRIDGE_SERIALIZATION_DEPTH = 64
+    private const val MAX_BRIDGE_SERIALIZATION_ELEMENTS = 65_536
+    private const val MAX_BRIDGE_SERIALIZATION_SCALAR_CHARS = 1_048_576
+    private const val MAX_BRIDGE_INPUT_JSON_CHARS = 1_048_576
+    private const val MAX_BRIDGE_MUTABLE_CONTAINER_SIZE = 65_536
+    private const val MAX_BRIDGE_STRING_BUILDER_CHARS = 65_536
+    private const val MAX_BRIDGE_LIVE_OBJECT_HANDLES = 1_024
 
     private val primitiveWrapperMap: Map<Class<*>, Class<*>> =
         mapOf(
@@ -78,6 +87,11 @@ internal object JsJavaBridgeDelegates {
         val error: String?
     )
 
+    private class BridgeHandleRegistrationTransaction {
+        val handlesByIdentity = IdentityHashMap<Any, String>()
+        val insertedHandles = mutableListOf<Pair<String, Any>>()
+    }
+
     private class JsInterfaceProxyReference(
         referent: Any,
         val callbackInvoker: JsInterfaceCallbackInvoker,
@@ -93,12 +107,22 @@ internal object JsJavaBridgeDelegates {
     private val jsInterfaceReferenceCounts =
         IdentityHashMap<JsInterfaceCallbackInvoker, MutableMap<String, Int>>()
     private val jsInterfaceLifecycleWorkerStarted = AtomicBoolean(false)
+    private val primitiveWrapperClassNames =
+        setOf(
+            "java.lang.Boolean",
+            "java.lang.Byte",
+            "java.lang.Character",
+            "java.lang.Double",
+            "java.lang.Float",
+            "java.lang.Integer",
+            "java.lang.Long",
+            "java.lang.Short"
+        )
     private val allowedClassNames =
         setOf(
             "java.lang.Boolean",
             "java.lang.Byte",
             "java.lang.Character",
-            "java.lang.CharSequence",
             "java.lang.Double",
             "java.lang.Float",
             "java.lang.Integer",
@@ -107,16 +131,257 @@ internal object JsJavaBridgeDelegates {
             "java.lang.Short",
             "java.lang.String",
             "java.lang.StringBuilder",
-            "java.math.BigDecimal",
-            "java.math.BigInteger",
             "java.util.ArrayList",
             "java.util.Collections",
             "java.util.HashMap",
             "java.util.HashSet",
             "java.util.LinkedHashMap",
             "java.util.LinkedHashSet",
-            "java.util.Locale",
             "java.util.UUID"
+        )
+    private val classesWithAllDeclaredPublicMethods =
+        primitiveWrapperClassNames + "java.util.UUID"
+    private val allowedInterfaceProxyClassNames = emptySet<String>()
+    private val excludedPrimitiveWrapperMethodNames =
+        setOf("getBoolean", "getInteger", "getLong")
+    private val allowedMethodNamesByClass =
+        mapOf(
+            "java.lang.String" to
+                setOf(
+                    "charAt",
+                    "codePointAt",
+                    "codePointBefore",
+                    "codePointCount",
+                    "compareTo",
+                    "compareToIgnoreCase",
+                    "concat",
+                    "contains",
+                    "contentEquals",
+                    "copyValueOf",
+                    "describeConstable",
+                    "endsWith",
+                    "equals",
+                    "equalsIgnoreCase",
+                    "getBytes",
+                    "getChars",
+                    "hashCode",
+                    "indexOf",
+                    "isBlank",
+                    "isEmpty",
+                    "lastIndexOf",
+                    "length",
+                    "regionMatches",
+                    "startsWith",
+                    "strip",
+                    "stripLeading",
+                    "stripTrailing",
+                    "subSequence",
+                    "substring",
+                    "toCharArray",
+                    "toLowerCase",
+                    "toString",
+                    "toUpperCase",
+                    "trim",
+                    "valueOf"
+                ),
+            "java.lang.StringBuilder" to
+                setOf(
+                    "append",
+                    "appendCodePoint",
+                    "capacity",
+                    "charAt",
+                    "codePointAt",
+                    "codePointBefore",
+                    "codePointCount",
+                    "compareTo",
+                    "delete",
+                    "deleteCharAt",
+                    "equals",
+                    "getChars",
+                    "hashCode",
+                    "indexOf",
+                    "insert",
+                    "lastIndexOf",
+                    "length",
+                    "offsetByCodePoints",
+                    "replace",
+                    "reverse",
+                    "setCharAt",
+                    "subSequence",
+                    "substring",
+                    "toString",
+                    "trimToSize"
+                ),
+            "java.util.ArrayList" to
+                setOf(
+                    "add",
+                    "addAll",
+                    "clear",
+                    "clone",
+                    "contains",
+                    "equals",
+                    "get",
+                    "hashCode",
+                    "indexOf",
+                    "isEmpty",
+                    "lastIndexOf",
+                    "remove",
+                    "set",
+                    "size",
+                    "subList",
+                    "toArray",
+                    "toString",
+                    "trimToSize"
+                ),
+            "java.util.HashMap" to
+                setOf(
+                    "clear",
+                    "clone",
+                    "containsKey",
+                    "containsValue",
+                    "equals",
+                    "get",
+                    "getOrDefault",
+                    "hashCode",
+                    "isEmpty",
+                    "put",
+                    "putAll",
+                    "putIfAbsent",
+                    "remove",
+                    "replace",
+                    "size",
+                    "toString"
+                ),
+            "java.util.LinkedHashMap" to
+                setOf(
+                    "clear",
+                    "clone",
+                    "containsKey",
+                    "containsValue",
+                    "equals",
+                    "get",
+                    "getOrDefault",
+                    "hashCode",
+                    "isEmpty",
+                    "put",
+                    "putAll",
+                    "putIfAbsent",
+                    "remove",
+                    "replace",
+                    "size",
+                    "toString"
+                ),
+            "java.util.HashSet" to
+                setOf(
+                    "add",
+                    "addAll",
+                    "clear",
+                    "clone",
+                    "contains",
+                    "containsAll",
+                    "equals",
+                    "hashCode",
+                    "isEmpty",
+                    "remove",
+                    "size",
+                    "toArray",
+                    "toString"
+                ),
+            "java.util.LinkedHashSet" to
+                setOf(
+                    "add",
+                    "addAll",
+                    "clear",
+                    "clone",
+                    "contains",
+                    "containsAll",
+                    "equals",
+                    "hashCode",
+                    "isEmpty",
+                    "remove",
+                    "size",
+                    "toArray",
+                    "toString"
+                ),
+            "java.util.Collections" to
+                setOf(
+                    "addAll",
+                    "binarySearch",
+                    "copy",
+                    "emptyList",
+                    "emptyMap",
+                    "emptySet",
+                    "fill",
+                    "frequency",
+                    "max",
+                    "min",
+                    "nCopies",
+                    "replaceAll",
+                    "reverse",
+                    "rotate",
+                    "shuffle",
+                    "singleton",
+                    "singletonList",
+                    "singletonMap",
+                    "sort",
+                    "swap"
+                )
+        )
+    private val allowedStaticFieldNamesByClass =
+        mapOf(
+            "java.lang.Boolean" to setOf("FALSE", "TRUE", "TYPE"),
+            "java.lang.Byte" to setOf("BYTES", "MAX_VALUE", "MIN_VALUE", "SIZE", "TYPE"),
+            "java.lang.Character" to
+                setOf(
+                    "BYTES",
+                    "MAX_CODE_POINT",
+                    "MAX_HIGH_SURROGATE",
+                    "MAX_LOW_SURROGATE",
+                    "MAX_RADIX",
+                    "MAX_SURROGATE",
+                    "MAX_VALUE",
+                    "MIN_CODE_POINT",
+                    "MIN_HIGH_SURROGATE",
+                    "MIN_LOW_SURROGATE",
+                    "MIN_RADIX",
+                    "MIN_SUPPLEMENTARY_CODE_POINT",
+                    "MIN_SURROGATE",
+                    "MIN_VALUE",
+                    "SIZE",
+                    "TYPE"
+                ),
+            "java.lang.Double" to
+                setOf(
+                    "BYTES",
+                    "MAX_EXPONENT",
+                    "MAX_VALUE",
+                    "MIN_EXPONENT",
+                    "MIN_NORMAL",
+                    "MIN_VALUE",
+                    "NaN",
+                    "NEGATIVE_INFINITY",
+                    "POSITIVE_INFINITY",
+                    "SIZE",
+                    "TYPE"
+                ),
+            "java.lang.Float" to
+                setOf(
+                    "BYTES",
+                    "MAX_EXPONENT",
+                    "MAX_VALUE",
+                    "MIN_EXPONENT",
+                    "MIN_NORMAL",
+                    "MIN_VALUE",
+                    "NaN",
+                    "NEGATIVE_INFINITY",
+                    "POSITIVE_INFINITY",
+                    "SIZE",
+                    "TYPE"
+                ),
+            "java.lang.Integer" to
+                setOf("BYTES", "MAX_VALUE", "MIN_VALUE", "SIZE", "TYPE"),
+            "java.lang.Long" to setOf("BYTES", "MAX_VALUE", "MIN_VALUE", "SIZE", "TYPE"),
+            "java.lang.Short" to setOf("BYTES", "MAX_VALUE", "MIN_VALUE", "SIZE", "TYPE")
         )
 
     internal fun parseJsonObject(raw: Any?): JSONObject? {
@@ -279,6 +544,10 @@ internal object JsJavaBridgeDelegates {
                     jsCallbackInvoker = jsCallbackInvoker,
                     bridgeClassLoader = bridgeClassLoader
                 )
+            validateJavaBridgeConstructorInvocation(
+                constructorMatch.constructor,
+                constructorMatch.args
+            )
             ConstructedJavaObject(constructorMatch.constructor.newInstance(*constructorMatch.args))
         }
     }
@@ -312,6 +581,12 @@ internal object JsJavaBridgeDelegates {
                     null
                 }
             if (staticMethodMatch != null) {
+                validateJavaBridgeMethodInvocation(
+                    targetClass = clazz,
+                    instance = null,
+                    method = staticMethodMatch.method,
+                    args = staticMethodMatch.args
+                )
                 return@runBridgeCall staticMethodMatch.method.invoke(null, *staticMethodMatch.args)
             }
 
@@ -328,6 +603,12 @@ internal object JsJavaBridgeDelegates {
                     jsCallbackInvoker = jsCallbackInvoker,
                     bridgeClassLoader = bridgeClassLoader
                 )
+            validateJavaBridgeMethodInvocation(
+                targetClass = fallbackInstance.javaClass,
+                instance = fallbackInstance,
+                method = fallbackMethodMatch.method,
+                args = fallbackMethodMatch.args
+            )
             fallbackMethodMatch.method.invoke(fallbackInstance, *fallbackMethodMatch.args)
         }
     }
@@ -357,6 +638,12 @@ internal object JsJavaBridgeDelegates {
                     jsCallbackInvoker = jsCallbackInvoker,
                     bridgeClassLoader = bridgeClassLoader
                 )
+            validateJavaBridgeMethodInvocation(
+                targetClass = clazz,
+                instance = instance,
+                method = methodMatch.method,
+                args = methodMatch.args
+            )
             methodMatch.method.invoke(instance, *methodMatch.args)
         }
     }
@@ -370,18 +657,27 @@ internal object JsJavaBridgeDelegates {
         jsCallbackInvoker: JsInterfaceCallbackInvoker? = null,
         bridgeClassLoader: ClassLoader? = null
     ) {
-        val target = loadClass(className, bridgeClassLoader)
-        callSuspendInternal(
-            targetClass = target,
-            instance = null,
-            methodName = methodName,
-            argsJson = argsJson,
-            staticOnly = true,
-            objectRegistry = objectRegistry,
-            callback = callback,
-            jsCallbackInvoker = jsCallbackInvoker,
-            bridgeClassLoader = bridgeClassLoader
-        )
+        val callbackCompleted = AtomicBoolean(false)
+        val complete: (String) -> Unit = { result ->
+            if (callbackCompleted.compareAndSet(false, true)) {
+                callback(result)
+            }
+        }
+        try {
+            callSuspendInternal(
+                targetClass = loadClass(className, bridgeClassLoader),
+                instance = null,
+                methodName = methodName,
+                argsJson = argsJson,
+                staticOnly = true,
+                objectRegistry = objectRegistry,
+                callback = complete,
+                jsCallbackInvoker = jsCallbackInvoker,
+                bridgeClassLoader = bridgeClassLoader
+            )
+        } catch (e: Exception) {
+            complete(failure(describeThrowable(e)))
+        }
     }
 
     fun callInstanceSuspend(
@@ -393,18 +689,28 @@ internal object JsJavaBridgeDelegates {
         jsCallbackInvoker: JsInterfaceCallbackInvoker? = null,
         bridgeClassLoader: ClassLoader? = null
     ) {
-        val instance = requireInstance(instanceHandle, objectRegistry)
-        callSuspendInternal(
-            targetClass = instance.javaClass,
-            instance = instance,
-            methodName = methodName,
-            argsJson = argsJson,
-            staticOnly = false,
-            objectRegistry = objectRegistry,
-            callback = callback,
-            jsCallbackInvoker = jsCallbackInvoker,
-            bridgeClassLoader = bridgeClassLoader
-        )
+        val callbackCompleted = AtomicBoolean(false)
+        val complete: (String) -> Unit = { result ->
+            if (callbackCompleted.compareAndSet(false, true)) {
+                callback(result)
+            }
+        }
+        try {
+            val instance = requireInstance(instanceHandle, objectRegistry)
+            callSuspendInternal(
+                targetClass = instance.javaClass,
+                instance = instance,
+                methodName = methodName,
+                argsJson = argsJson,
+                staticOnly = false,
+                objectRegistry = objectRegistry,
+                callback = complete,
+                jsCallbackInvoker = jsCallbackInvoker,
+                bridgeClassLoader = bridgeClassLoader
+            )
+        } catch (e: Exception) {
+            complete(failure(describeThrowable(e)))
+        }
     }
 
     fun getStaticField(
@@ -417,6 +723,7 @@ internal object JsJavaBridgeDelegates {
             val clazz = loadClass(className, bridgeClassLoader)
             val normalizedFieldName = fieldName.trim()
             require(normalizedFieldName.isNotEmpty()) { "field name is required" }
+            requireJavaBridgeStaticFieldAllowed(clazz, normalizedFieldName)
 
             val field = findField(clazz, normalizedFieldName, staticOnly = true)
             if (field != null) {
@@ -449,86 +756,18 @@ internal object JsJavaBridgeDelegates {
     fun setStaticField(
         className: String,
         fieldName: String,
-        valueJson: String,
+        @Suppress("UNUSED_PARAMETER") valueJson: String,
         objectRegistry: ConcurrentHashMap<String, Any>,
-        jsCallbackInvoker: JsInterfaceCallbackInvoker? = null,
+        @Suppress("UNUSED_PARAMETER") jsCallbackInvoker: JsInterfaceCallbackInvoker? = null,
         bridgeClassLoader: ClassLoader? = null
     ): String {
         return runBridgeCall(objectRegistry) {
             val clazz = loadClass(className, bridgeClassLoader)
             val normalizedFieldName = fieldName.trim()
             require(normalizedFieldName.isNotEmpty()) { "field name is required" }
-
-            val rawValue = parseSingleValueJson(valueJson, objectRegistry)
-            val field = findField(clazz, normalizedFieldName, staticOnly = true)
-            if (field != null && !Modifier.isFinal(field.modifiers)) {
-                val converted =
-                    convertArg(
-                        rawValue = rawValue,
-                        targetType = field.type,
-                        objectRegistry = objectRegistry,
-                        jsCallbackInvoker = jsCallbackInvoker,
-                        bridgeClassLoader = bridgeClassLoader
-                    )
-                        ?: throw IllegalArgumentException(
-                            "cannot assign value of type ${describeValueType(rawValue)} to ${field.type.name}"
-                        )
-                field.set(null, converted.value)
-                return@runBridgeCall converted.value
-            }
-
-            val setter =
-                findSetter(
-                    clazz = clazz,
-                    fieldName = normalizedFieldName,
-                    rawValue = rawValue,
-                    staticOnly = true,
-                    objectRegistry = objectRegistry,
-                    jsCallbackInvoker = jsCallbackInvoker,
-                    bridgeClassLoader = bridgeClassLoader
-                )
-            if (setter != null) {
-                setter.first.invoke(null, setter.second)
-                return@runBridgeCall setter.second
-            }
-
-            val fallbackInstance = findStaticFallbackInstance(clazz)
-            if (fallbackInstance != null) {
-                val fallbackField =
-                    findField(fallbackInstance.javaClass, normalizedFieldName, staticOnly = false)
-                if (fallbackField != null && !Modifier.isFinal(fallbackField.modifiers)) {
-                    val converted =
-                        convertArg(
-                            rawValue = rawValue,
-                            targetType = fallbackField.type,
-                            objectRegistry = objectRegistry,
-                            jsCallbackInvoker = jsCallbackInvoker,
-                            bridgeClassLoader = bridgeClassLoader
-                        )
-                            ?: throw IllegalArgumentException(
-                                "cannot assign value of type ${describeValueType(rawValue)} to ${fallbackField.type.name}"
-                            )
-                    fallbackField.set(fallbackInstance, converted.value)
-                    return@runBridgeCall converted.value
-                }
-
-                val fallbackSetter =
-                    findSetter(
-                        clazz = fallbackInstance.javaClass,
-                        fieldName = normalizedFieldName,
-                        rawValue = rawValue,
-                        staticOnly = false,
-                        objectRegistry = objectRegistry,
-                        jsCallbackInvoker = jsCallbackInvoker,
-                        bridgeClassLoader = bridgeClassLoader
-                    )
-                if (fallbackSetter != null) {
-                    fallbackSetter.first.invoke(fallbackInstance, fallbackSetter.second)
-                    return@runBridgeCall fallbackSetter.second
-                }
-            }
-
-            throw NoSuchFieldException("writable static field/property '$normalizedFieldName' not found on ${clazz.name}")
+            throw IllegalArgumentException(
+                "Java bridge writes to static field '${clazz.name}.$normalizedFieldName' are not allowed"
+            )
         }
     }
 
@@ -542,18 +781,9 @@ internal object JsJavaBridgeDelegates {
             val clazz = instance.javaClass
             val normalizedFieldName = fieldName.trim()
             require(normalizedFieldName.isNotEmpty()) { "field name is required" }
-
-            val field = findField(clazz, normalizedFieldName, staticOnly = false)
-            if (field != null) {
-                field.get(instance)
-            } else {
-                val getter =
-                    findGetter(clazz, normalizedFieldName, staticOnly = false)
-                        ?: throw NoSuchFieldException(
-                            "field/property '$normalizedFieldName' not found on ${clazz.name}"
-                        )
-                getter.invoke(instance)
-            }
+            throw NoSuchFieldException(
+                "Java bridge instance field '${clazz.name}.$normalizedFieldName' is not allowed"
+            )
         }
     }
 
@@ -574,50 +804,19 @@ internal object JsJavaBridgeDelegates {
     fun setInstanceField(
         instanceHandle: String,
         fieldName: String,
-        valueJson: String,
+        @Suppress("UNUSED_PARAMETER") valueJson: String,
         objectRegistry: ConcurrentHashMap<String, Any>,
-        jsCallbackInvoker: JsInterfaceCallbackInvoker? = null,
-        bridgeClassLoader: ClassLoader? = null
+        @Suppress("UNUSED_PARAMETER") jsCallbackInvoker: JsInterfaceCallbackInvoker? = null,
+        @Suppress("UNUSED_PARAMETER") bridgeClassLoader: ClassLoader? = null
     ): String {
         return runBridgeCall(objectRegistry) {
             val instance = requireInstance(instanceHandle, objectRegistry)
             val clazz = instance.javaClass
             val normalizedFieldName = fieldName.trim()
             require(normalizedFieldName.isNotEmpty()) { "field name is required" }
-
-            val rawValue = parseSingleValueJson(valueJson, objectRegistry)
-            val field = findField(clazz, normalizedFieldName, staticOnly = false)
-            if (field != null && !Modifier.isFinal(field.modifiers)) {
-                val converted =
-                    convertArg(
-                        rawValue = rawValue,
-                        targetType = field.type,
-                        objectRegistry = objectRegistry,
-                        jsCallbackInvoker = jsCallbackInvoker,
-                        bridgeClassLoader = bridgeClassLoader
-                    )
-                        ?: throw IllegalArgumentException(
-                            "cannot assign value of type ${describeValueType(rawValue)} to ${field.type.name}"
-                        )
-                field.set(instance, converted.value)
-                converted.value
-            } else {
-                val setter =
-                    findSetter(
-                        clazz = clazz,
-                        fieldName = normalizedFieldName,
-                        rawValue = rawValue,
-                        staticOnly = false,
-                        objectRegistry = objectRegistry,
-                        jsCallbackInvoker = jsCallbackInvoker,
-                        bridgeClassLoader = bridgeClassLoader
-                    )
-                        ?: throw NoSuchFieldException(
-                            "writable field/property '$normalizedFieldName' not found on ${clazz.name}"
-                        )
-                setter.first.invoke(instance, setter.second)
-                setter.second
-            }
+            throw IllegalArgumentException(
+                "Java bridge writes to instance field '${clazz.name}.$normalizedFieldName' are not allowed"
+            )
         }
     }
 
@@ -799,6 +998,7 @@ internal object JsJavaBridgeDelegates {
             targetClass.methods.filter { method ->
                 method.name == normalizedMethodName &&
                     Modifier.isStatic(method.modifiers) == staticOnly &&
+                    isJavaBridgeMethodAllowed(targetClass, method) &&
                     method.parameterTypes.isNotEmpty() &&
                     Continuation::class.java.isAssignableFrom(method.parameterTypes.last())
             }
@@ -859,23 +1059,33 @@ internal object JsJavaBridgeDelegates {
             object : Continuation<Any?> {
                 override val context = EmptyCoroutineContext
                 override fun resumeWith(result: Result<Any?>) {
-                    if (!completed.compareAndSet(false, true)) {
-                        return
-                    }
-                    if (result.isSuccess) {
-                        callback(success(result.getOrNull(), objectRegistry))
-                    } else {
-                        val error = result.exceptionOrNull()
-                        callback(failure(error?.message ?: error?.javaClass?.name ?: "unknown error"))
+                    val payload =
+                        if (result.isSuccess) {
+                            successOrFailure(result.getOrNull(), objectRegistry)
+                        } else {
+                            val error = result.exceptionOrNull()
+                            failure(error?.let(::describeThrowable) ?: "unknown error")
+                        }
+                    if (completed.compareAndSet(false, true)) {
+                        callback(payload)
                     }
                 }
             }
 
         try {
+            validateJavaBridgeMethodInvocation(
+                targetClass = targetClass,
+                instance = instance,
+                method = selected.method,
+                args = selected.args
+            )
             val argsWithContinuation = selected.args + continuation
             val outcome = selected.method.invoke(instance, *argsWithContinuation)
-            if (outcome !== COROUTINE_SUSPENDED && completed.compareAndSet(false, true)) {
-                callback(success(outcome, objectRegistry))
+            if (outcome !== COROUTINE_SUSPENDED) {
+                val payload = successOrFailure(outcome, objectRegistry)
+                if (completed.compareAndSet(false, true)) {
+                    callback(payload)
+                }
             }
         } catch (e: InvocationTargetException) {
             val cause = e.targetException ?: e
@@ -889,24 +1099,45 @@ internal object JsJavaBridgeDelegates {
         }
     }
 
+    private fun successOrFailure(
+        value: Any?,
+        objectRegistry: ConcurrentHashMap<String, Any>
+    ): String {
+        return try {
+            success(value, objectRegistry)
+        } catch (e: Exception) {
+            failure(describeThrowable(e))
+        }
+    }
+
     private fun success(value: Any?, objectRegistry: ConcurrentHashMap<String, Any>): String {
-        val payloadValue =
-            when (value) {
-                is ConstructedJavaObject -> exposeConstructedJavaObject(value.value, objectRegistry)
-                else -> toJsonCompatibleValue(value, objectRegistry)
-            }
-        val payload =
+        return withBridgeHandleRegistrationTransaction(objectRegistry) { transaction ->
+            val payloadValue =
+                when (value) {
+                    is ConstructedJavaObject ->
+                        exposeConstructedJavaObject(value.value, objectRegistry, transaction)
+                    else -> {
+                        validateBridgeReturnValue(value)
+                        toJsonCompatibleValueUnchecked(
+                            value = value,
+                            objectRegistry = objectRegistry,
+                            bridgeAware = true,
+                            transaction = transaction
+                        )
+                    }
+                }
             JSONObject()
                 .put("success", true)
                 .put("data", payloadValue)
-        return payload.toString()
+                .toString()
+        }
     }
 
     private fun failure(message: String): String {
-        return JSONObject()
-            .put("success", false)
-            .put("message", message)
-            .toString()
+        return buildJsonObject {
+            put("success", JsonPrimitive(false))
+            put("message", JsonPrimitive(message))
+        }.toString()
     }
 
     private fun loadClass(className: String, classLoader: ClassLoader? = null): Class<*> {
@@ -967,10 +1198,322 @@ internal object JsJavaBridgeDelegates {
         }
     }
 
+    internal fun isJavaBridgeConstructorAllowed(constructor: Constructor<*>): Boolean {
+        val className = constructor.declaringClass.name
+        val parameterNames = constructor.parameterTypes.map(Class<*>::getName)
+        if (className in primitiveWrapperClassNames) {
+            return parameterNames.size == 1 &&
+                (constructor.parameterTypes.single().isPrimitive ||
+                    parameterNames.single() == "java.lang.String")
+        }
+        return when (className) {
+            "java.lang.String" ->
+                parameterNames in
+                    setOf(
+                        emptyList(),
+                        listOf("java.lang.String"),
+                        listOf(CharArray::class.java.name),
+                        listOf(ByteArray::class.java.name)
+                    )
+            "java.lang.StringBuilder" ->
+                parameterNames in
+                    setOf(
+                        emptyList(),
+                        listOf("java.lang.String")
+                    )
+            "java.util.ArrayList",
+            "java.util.HashSet",
+            "java.util.LinkedHashSet" ->
+                parameterNames in
+                    setOf(
+                        emptyList(),
+                        listOf("java.util.Collection")
+                    )
+            "java.util.HashMap",
+            "java.util.LinkedHashMap" ->
+                parameterNames in
+                    setOf(
+                        emptyList(),
+                        listOf("java.util.Map")
+                    )
+            "java.util.UUID" -> parameterNames == listOf("long", "long")
+            else -> false
+        }
+    }
+
+    internal fun isJavaBridgeMethodAllowed(targetClass: Class<*>, method: Method): Boolean {
+        val className = targetClass.name
+        if (method.parameterTypes.any { parameter -> parameter == CharSequence::class.java }) {
+            return false
+        }
+        if (className in classesWithAllDeclaredPublicMethods) {
+            return method.declaringClass != Any::class.java &&
+                method.name !in excludedPrimitiveWrapperMethodNames
+        }
+        return method.name in allowedMethodNamesByClass[className].orEmpty()
+    }
+
+    private fun requireJavaBridgeStaticFieldAllowed(clazz: Class<*>, fieldName: String) {
+        require(fieldName in allowedStaticFieldNamesByClass[clazz.name].orEmpty()) {
+            "Java bridge access to static field '${clazz.name}.$fieldName' is not allowed"
+        }
+    }
+
+    private fun requireJavaBridgeInterfaceProxyAllowed(targetType: Class<*>) {
+        require(targetType.isInterface && targetType.name in allowedInterfaceProxyClassNames) {
+            "Java bridge interface proxy '${targetType.name}' is not allowed"
+        }
+    }
+
+    internal fun validateBridgeInputJsonText(rawJson: String) {
+        require(rawJson.length <= MAX_BRIDGE_INPUT_JSON_CHARS) {
+            "Java bridge input exceeds the JSON text limit ($MAX_BRIDGE_INPUT_JSON_CHARS characters)"
+        }
+        var depth = 0
+        var quoteCharacter: Char? = null
+        var escaped = false
+        var scannedElements = 0
+        val containerTypes = mutableListOf<Char>()
+        val arrayExpectingValue = mutableListOf<Boolean>()
+
+        fun consumeElement() {
+            scannedElements += 1
+            require(scannedElements <= MAX_BRIDGE_SERIALIZATION_ELEMENTS) {
+                "Java bridge input exceeds the element limit " +
+                    "($MAX_BRIDGE_SERIALIZATION_ELEMENTS)"
+            }
+        }
+
+        rawJson.forEachIndexed { index, character ->
+            if (quoteCharacter != null) {
+                when {
+                    escaped -> escaped = false
+                    character == '\\' -> escaped = true
+                    character == quoteCharacter -> quoteCharacter = null
+                }
+            } else {
+                require(
+                    character != '\'' &&
+                        character != ';' &&
+                        character != '=' &&
+                        character != '#' &&
+                        !(
+                            character == '/' &&
+                                (rawJson.getOrNull(index + 1) == '/' || rawJson.getOrNull(index + 1) == '*')
+                        )
+                ) {
+                    "Java bridge input uses a non-canonical JSON extension"
+                }
+                val currentIndex = containerTypes.lastIndex
+                if (
+                    currentIndex >= 0 &&
+                        containerTypes[currentIndex] == '[' &&
+                        arrayExpectingValue[currentIndex] &&
+                        !character.isWhitespace() &&
+                        character != ']' &&
+                        character != ','
+                ) {
+                    consumeElement()
+                    arrayExpectingValue[currentIndex] = false
+                }
+                when (character) {
+                    '"' -> quoteCharacter = character
+                    '[', '{' -> {
+                        depth += 1
+                        require(depth <= MAX_BRIDGE_SERIALIZATION_DEPTH) {
+                            "Java bridge input exceeds the nesting depth limit " +
+                                "($MAX_BRIDGE_SERIALIZATION_DEPTH)"
+                        }
+                        containerTypes.add(character)
+                        arrayExpectingValue.add(character == '[')
+                    }
+                    ']', '}' -> if (depth > 0) {
+                        depth -= 1
+                        containerTypes.removeAt(containerTypes.lastIndex)
+                        arrayExpectingValue.removeAt(arrayExpectingValue.lastIndex)
+                    }
+                    ',' -> {
+                        val index = containerTypes.lastIndex
+                        if (index >= 0 && containerTypes[index] == '[') {
+                            if (arrayExpectingValue[index]) {
+                                consumeElement()
+                            }
+                            arrayExpectingValue[index] = true
+                        }
+                    }
+                    ':' -> {
+                        val index = containerTypes.lastIndex
+                        if (index >= 0 && containerTypes[index] == '{') {
+                            consumeElement()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    internal fun validateJavaBridgeConstructorInvocation(
+        constructor: Constructor<*>,
+        args: Array<Any?>
+    ) {
+        require(isJavaBridgeConstructorAllowed(constructor)) {
+            "Java bridge constructor '${constructor.declaringClass.name}${constructor.parameterTypes.joinToString(prefix = "(", postfix = ")") { it.simpleName }}' is not allowed"
+        }
+        validateBridgeReturnValue(args)
+        if (constructor.declaringClass == StringBuilder::class.java) {
+            val initialLength = (args.firstOrNull() as? CharSequence)?.length ?: 0
+            require(initialLength <= MAX_BRIDGE_STRING_BUILDER_CHARS) {
+                "Java bridge StringBuilder exceeds the character limit " +
+                    "($MAX_BRIDGE_STRING_BUILDER_CHARS)"
+            }
+        }
+    }
+
+    internal fun validateJavaBridgeMethodInvocation(
+        targetClass: Class<*>,
+        instance: Any?,
+        method: Method,
+        args: Array<Any?>
+    ) {
+        require(isJavaBridgeMethodAllowed(targetClass, method)) {
+            "Java bridge method '${targetClass.name}.${method.name}' is not allowed"
+        }
+        validateBridgeReturnValue(args)
+        when (instance) {
+            is StringBuilder -> validateStringBuilderInvocation(instance, method, args)
+            is Map<*, *> -> {
+                validateBridgeReturnValue(instance)
+                validateMapGrowth(instance, method, args)
+            }
+            is Collection<*> -> {
+                validateBridgeReturnValue(instance)
+                validateCollectionGrowth(instance, method, args)
+            }
+        }
+        if (targetClass == Collections::class.java && method.name == "addAll") {
+            val collection = args.firstOrNull() as? Collection<*>
+            val addedCount = args.getOrNull(1)?.let(::arrayLengthOrZero) ?: 0
+            if (collection != null) {
+                require(collection.size.toLong() + addedCount <= MAX_BRIDGE_MUTABLE_CONTAINER_SIZE) {
+                    "Java bridge collection exceeds the element limit " +
+                        "($MAX_BRIDGE_MUTABLE_CONTAINER_SIZE)"
+                }
+            }
+        }
+    }
+
+    private fun validateStringBuilderInvocation(
+        builder: StringBuilder,
+        method: Method,
+        args: Array<Any?>
+    ) {
+        require(builder.length <= MAX_BRIDGE_STRING_BUILDER_CHARS) {
+            "Java bridge StringBuilder exceeds the character limit " +
+                "($MAX_BRIDGE_STRING_BUILDER_CHARS)"
+        }
+        val addedLength =
+            when (method.name) {
+                "appendCodePoint" -> 2
+                "append" -> appendContribution(method, args)
+                "insert" -> insertContribution(method, args)
+                "replace" -> {
+                    val start = (args.getOrNull(0) as? Number)?.toInt() ?: 0
+                    val end = (args.getOrNull(1) as? Number)?.toInt() ?: start
+                    val removed =
+                        if (start in 0..builder.length && end >= start) {
+                            end.coerceAtMost(builder.length) - start
+                        } else {
+                            0
+                        }
+                    bridgeTextLength(args.getOrNull(2)) - removed
+                }
+                else -> 0
+            }
+        require(builder.length.toLong() + addedLength <= MAX_BRIDGE_STRING_BUILDER_CHARS) {
+            "Java bridge StringBuilder exceeds the character limit " +
+                "($MAX_BRIDGE_STRING_BUILDER_CHARS)"
+        }
+    }
+
+    private fun appendContribution(method: Method, args: Array<Any?>): Int {
+        if (args.size == 3 && method.parameterTypes.firstOrNull()?.isArray == true) {
+            return ((args[2] as? Number)?.toInt() ?: 0).coerceAtLeast(0)
+        }
+        if (args.size == 3) {
+            val start = (args[1] as? Number)?.toInt() ?: 0
+            val end = (args[2] as? Number)?.toInt() ?: start
+            return (end - start).coerceAtLeast(0)
+        }
+        return bridgeTextLength(args.firstOrNull())
+    }
+
+    private fun insertContribution(method: Method, args: Array<Any?>): Int {
+        if (args.size == 4 && method.parameterTypes.getOrNull(1)?.isArray == true) {
+            return ((args[3] as? Number)?.toInt() ?: 0).coerceAtLeast(0)
+        }
+        if (args.size == 4) {
+            val start = (args[2] as? Number)?.toInt() ?: 0
+            val end = (args[3] as? Number)?.toInt() ?: start
+            return (end - start).coerceAtLeast(0)
+        }
+        return bridgeTextLength(args.getOrNull(1))
+    }
+
+    private fun bridgeTextLength(value: Any?): Int {
+        return when (value) {
+            null -> 4
+            is CharSequence -> value.length
+            is CharArray -> value.size
+            is Char -> 1
+            is Boolean -> 5
+            is Number -> 32
+            is UUID -> 36
+            else -> MAX_BRIDGE_STRING_BUILDER_CHARS + 1
+        }
+    }
+
+    private fun validateCollectionGrowth(
+        collection: Collection<*>,
+        method: Method,
+        args: Array<Any?>
+    ) {
+        val addedCount =
+            when (method.name) {
+                "add" -> 1
+                "addAll" -> args.filterIsInstance<Collection<*>>().firstOrNull()?.size ?: 0
+                else -> 0
+            }
+        require(collection.size.toLong() + addedCount <= MAX_BRIDGE_MUTABLE_CONTAINER_SIZE) {
+            "Java bridge collection exceeds the element limit " +
+                "($MAX_BRIDGE_MUTABLE_CONTAINER_SIZE)"
+        }
+    }
+
+    private fun validateMapGrowth(
+        map: Map<*, *>,
+        method: Method,
+        args: Array<Any?>
+    ) {
+        val addedCount =
+            when (method.name) {
+                "put", "putIfAbsent" -> if (map.containsKey(args.firstOrNull())) 0 else 1
+                "putAll" -> (args.firstOrNull() as? Map<*, *>)?.keys?.count { it !in map } ?: 0
+                else -> 0
+            }
+        require(map.size.toLong() + addedCount <= MAX_BRIDGE_MUTABLE_CONTAINER_SIZE) {
+            "Java bridge map exceeds the entry limit ($MAX_BRIDGE_MUTABLE_CONTAINER_SIZE)"
+        }
+    }
+
+    private fun arrayLengthOrZero(value: Any): Int {
+        return if (value.javaClass.isArray) ReflectArray.getLength(value) else 0
+    }
+
     private fun parseArgsJson(
         argsJson: String,
         objectRegistry: ConcurrentHashMap<String, Any>
     ): List<Any?> {
+        validateBridgeInputJsonText(argsJson)
         val normalized = argsJson.trim()
         if (normalized.isEmpty() || normalized == "undefined" || normalized == "null") {
             return emptyList()
@@ -988,23 +1531,8 @@ internal object JsJavaBridgeDelegates {
                 )
             )
         }
+        validateBridgeReturnValue(args)
         return args
-    }
-
-    private fun parseSingleValueJson(
-        valueJson: String,
-        objectRegistry: ConcurrentHashMap<String, Any>
-    ): Any? {
-        val normalized = valueJson.trim()
-        if (normalized.isEmpty() || normalized == "undefined" || normalized == "null") {
-            return null
-        }
-        val raw = JSONTokener(normalized).nextValue()
-        return decodeJsonValue(
-            raw = raw,
-            objectRegistry = objectRegistry,
-            interpretBridgeMarkers = true
-        )
     }
 
     private fun decodeJsonValue(
@@ -1086,6 +1614,37 @@ internal object JsJavaBridgeDelegates {
         objectRegistry: ConcurrentHashMap<String, Any>,
         bridgeAware: Boolean = true
     ): Any {
+        validateBridgeReturnValueForMode(value, bridgeAware)
+        if (!bridgeAware) {
+            return toJsonCompatibleValueUnchecked(
+                value = value,
+                objectRegistry = objectRegistry,
+                bridgeAware = false,
+                transaction = null
+            )
+        }
+        return withBridgeHandleRegistrationTransaction(objectRegistry) { transaction ->
+            toJsonCompatibleValueUnchecked(
+                value = value,
+                objectRegistry = objectRegistry,
+                bridgeAware = true,
+                transaction = transaction
+            )
+        }
+    }
+
+    internal fun validateBridgeReturnValueForMode(value: Any?, bridgeAware: Boolean) {
+        if (bridgeAware) {
+            validateBridgeReturnValue(value)
+        }
+    }
+
+    private fun toJsonCompatibleValueUnchecked(
+        value: Any?,
+        objectRegistry: ConcurrentHashMap<String, Any>,
+        bridgeAware: Boolean,
+        transaction: BridgeHandleRegistrationTransaction?
+    ): Any {
         if (value == null) {
             return JSONObject.NULL
         }
@@ -1110,10 +1669,11 @@ internal object JsJavaBridgeDelegates {
                     val key = entry.key?.toString() ?: return@forEach
                     obj.put(
                         key,
-                        toJsonCompatibleValue(
+                        toJsonCompatibleValueUnchecked(
                             value = entry.value,
                             objectRegistry = objectRegistry,
-                            bridgeAware = bridgeAware
+                            bridgeAware = bridgeAware,
+                            transaction = transaction
                         )
                     )
                 }
@@ -1123,10 +1683,11 @@ internal object JsJavaBridgeDelegates {
                 val arr = JSONArray()
                 value.forEach { item ->
                     arr.put(
-                        toJsonCompatibleValue(
+                        toJsonCompatibleValueUnchecked(
                             value = item,
                             objectRegistry = objectRegistry,
-                            bridgeAware = bridgeAware
+                            bridgeAware = bridgeAware,
+                            transaction = transaction
                         )
                     )
                 }
@@ -1138,10 +1699,11 @@ internal object JsJavaBridgeDelegates {
                     val len = ReflectArray.getLength(value)
                     for (index in 0 until len) {
                         arr.put(
-                            toJsonCompatibleValue(
+                            toJsonCompatibleValueUnchecked(
                                 value = ReflectArray.get(value, index),
                                 objectRegistry = objectRegistry,
-                                bridgeAware = bridgeAware
+                                bridgeAware = bridgeAware,
+                                transaction = transaction
                             )
                         )
                     }
@@ -1155,8 +1717,8 @@ internal object JsJavaBridgeDelegates {
                         )
                     }
                     requireJavaBridgeClassAllowed(value.javaClass.name)
-                    val handle = UUID.randomUUID().toString()
-                    objectRegistry[handle] = value
+                    val handle =
+                        registerBridgeObjectHandle(value, objectRegistry, transaction)
                     JSONObject()
                         .put(HANDLE_KEY, handle)
                         .put(CLASS_KEY, value.javaClass.name)
@@ -1165,16 +1727,170 @@ internal object JsJavaBridgeDelegates {
         }
     }
 
+    internal fun validateBridgeReturnValue(value: Any?) {
+        val activeContainers = IdentityHashMap<Any, Boolean>()
+        var visitedElements = 0
+        var visitedScalarChars = 0L
+
+        fun consumeElement() {
+            visitedElements += 1
+            require(visitedElements <= MAX_BRIDGE_SERIALIZATION_ELEMENTS) {
+                "Java bridge result exceeds the serialization element limit " +
+                    "($MAX_BRIDGE_SERIALIZATION_ELEMENTS)"
+            }
+        }
+
+        fun consumeScalarChars(count: Int) {
+            visitedScalarChars += count.toLong()
+            require(visitedScalarChars <= MAX_BRIDGE_SERIALIZATION_SCALAR_CHARS) {
+                "Java bridge result exceeds the serialization scalar text limit " +
+                    "($MAX_BRIDGE_SERIALIZATION_SCALAR_CHARS characters)"
+            }
+        }
+
+        fun visit(current: Any?, depth: Int) {
+            require(depth <= MAX_BRIDGE_SERIALIZATION_DEPTH) {
+                "Java bridge result exceeds the serialization depth limit " +
+                    "($MAX_BRIDGE_SERIALIZATION_DEPTH)"
+            }
+
+            val container = current
+            when (container) {
+                null, JSONObject.NULL -> consumeScalarChars(4)
+                is String -> consumeScalarChars(container.length)
+                is CharSequence -> consumeScalarChars(container.length)
+                is Char -> consumeScalarChars(1)
+                is Boolean -> consumeScalarChars(5)
+                is Number -> consumeScalarChars(container.toString().length)
+                is Enum<*> -> consumeScalarChars(container.name.length)
+                is Class<*> -> consumeScalarChars(container.name.length)
+                is UUID -> consumeScalarChars(36)
+            }
+            if (container == null || container === JSONObject.NULL) {
+                return
+            }
+            val isContainer =
+                container is JSONObject ||
+                    container is JSONArray ||
+                    container is Map<*, *> ||
+                    container is Iterable<*> ||
+                    container.javaClass.isArray
+            if (!isContainer) {
+                return
+            }
+
+            require(activeContainers.put(container, true) == null) {
+                "Java bridge result contains a cyclic container reference"
+            }
+            try {
+                when (container) {
+                    is JSONObject -> {
+                        val keys = container.keys()
+                        while (keys.hasNext()) {
+                            consumeElement()
+                            val key = keys.next()
+                            consumeScalarChars(key.length)
+                            visit(container.opt(key), depth + 1)
+                        }
+                    }
+                    is JSONArray -> {
+                        for (index in 0 until container.length()) {
+                            consumeElement()
+                            visit(container.opt(index), depth + 1)
+                        }
+                    }
+                    is Map<*, *> -> {
+                        container.entries.forEach { entry ->
+                            consumeElement()
+                            visit(entry.key, depth + 1)
+                            consumeElement()
+                            visit(entry.value, depth + 1)
+                        }
+                    }
+                    is Iterable<*> -> {
+                        container.forEach { item ->
+                            consumeElement()
+                            visit(item, depth + 1)
+                        }
+                    }
+                    else -> {
+                        val length = ReflectArray.getLength(container)
+                        for (index in 0 until length) {
+                            consumeElement()
+                            visit(ReflectArray.get(container, index), depth + 1)
+                        }
+                    }
+                }
+            } finally {
+                activeContainers.remove(container)
+            }
+        }
+
+        visit(value, 0)
+    }
+
     private fun exposeConstructedJavaObject(
         value: Any,
-        objectRegistry: ConcurrentHashMap<String, Any>
+        objectRegistry: ConcurrentHashMap<String, Any>,
+        transaction: BridgeHandleRegistrationTransaction
     ): JSONObject {
         requireJavaBridgeClassAllowed(value.javaClass.name)
-        val handle = UUID.randomUUID().toString()
-        objectRegistry[handle] = value
+        val handle = registerBridgeObjectHandle(value, objectRegistry, transaction)
         return JSONObject()
             .put(HANDLE_KEY, handle)
             .put(CLASS_KEY, value.javaClass.name)
+    }
+
+    internal fun registerBridgeObjectHandle(
+        value: Any,
+        objectRegistry: ConcurrentHashMap<String, Any>
+    ): String = registerBridgeObjectHandle(value, objectRegistry, transaction = null)
+
+    private fun registerBridgeObjectHandle(
+        value: Any,
+        objectRegistry: ConcurrentHashMap<String, Any>,
+        transaction: BridgeHandleRegistrationTransaction?
+    ): String {
+        synchronized(objectRegistry) {
+            transaction?.handlesByIdentity?.get(value)?.let { return it }
+            objectRegistry.entries.firstOrNull { entry -> entry.value === value }?.key?.let { handle ->
+                transaction?.handlesByIdentity?.put(value, handle)
+                return handle
+            }
+            require(objectRegistry.size < MAX_BRIDGE_LIVE_OBJECT_HANDLES) {
+                "Java bridge exceeds the live object handle limit " +
+                    "($MAX_BRIDGE_LIVE_OBJECT_HANDLES)"
+            }
+            while (true) {
+                val handle = UUID.randomUUID().toString()
+                if (objectRegistry.putIfAbsent(handle, value) == null) {
+                    transaction?.handlesByIdentity?.put(value, handle)
+                    transaction?.insertedHandles?.add(handle to value)
+                    return handle
+                }
+            }
+        }
+    }
+
+    private fun <T> withBridgeHandleRegistrationTransaction(
+        objectRegistry: ConcurrentHashMap<String, Any>,
+        block: (BridgeHandleRegistrationTransaction) -> T
+    ): T {
+        val transaction = BridgeHandleRegistrationTransaction()
+        var completed = false
+        try {
+            val result = block(transaction)
+            completed = true
+            return result
+        } finally {
+            if (!completed) {
+                synchronized(objectRegistry) {
+                    transaction.insertedHandles.asReversed().forEach { (handle, value) ->
+                        objectRegistry.remove(handle, value)
+                    }
+                }
+            }
+        }
     }
 
     private fun toStructuredJsonValue(
@@ -1283,7 +1999,7 @@ internal object JsJavaBridgeDelegates {
         jsCallbackInvoker: JsInterfaceCallbackInvoker?,
         bridgeClassLoader: ClassLoader?
     ): ConstructorMatch {
-        val candidates = clazz.constructors
+        val candidates = clazz.constructors.filter(::isJavaBridgeConstructorAllowed)
         if (candidates.isEmpty()) {
             throw NoSuchMethodException(buildConstructorUnavailableMessage(clazz))
         }
@@ -1346,7 +2062,9 @@ internal object JsJavaBridgeDelegates {
     ): MethodMatch {
         val candidates =
             clazz.methods.filter { method ->
-                method.name == methodName && Modifier.isStatic(method.modifiers) == staticOnly
+                method.name == methodName &&
+                    Modifier.isStatic(method.modifiers) == staticOnly &&
+                    isJavaBridgeMethodAllowed(clazz, method)
             }
 
         if (candidates.isEmpty()) {
@@ -1655,19 +2373,12 @@ internal object JsJavaBridgeDelegates {
 
         val interfaceClasses = mutableListOf<Class<*>>()
 
-        if (targetType.isInterface) {
-            interfaceClasses.add(targetType)
-        } else {
-            binding.interfaceNames.forEach { name ->
-                try {
-                    val loaded = loadClass(name, bridgeClassLoader)
-                    if (loaded.isInterface) {
-                        interfaceClasses.add(loaded)
-                    }
-                } catch (_: Exception) {
-                }
-            }
+        if (!targetType.isInterface) {
+            return null
         }
+        requireJavaBridgeInterfaceProxyAllowed(targetType)
+        requireJavaBridgeClassAllowed(targetType.name)
+        interfaceClasses.add(targetType)
 
         if (interfaceClasses.isEmpty()) {
             return null
@@ -1721,6 +2432,9 @@ internal object JsJavaBridgeDelegates {
         if (!targetType.isInterface) {
             return null
         }
+        requireJavaBridgeInterfaceProxyAllowed(targetType)
+        requireJavaBridgeClassAllowed(targetType.name)
+        validateBridgeReturnValue(rawValue)
 
         val memberMap = LinkedHashMap<String, Any?>()
         rawValue.entries.forEach { entry ->
@@ -1886,11 +2600,21 @@ internal object JsJavaBridgeDelegates {
         args: Array<out Any?>,
         objectRegistry: ConcurrentHashMap<String, Any>
     ): String {
-        val arr = JSONArray()
-        args.forEach { arg ->
-            arr.put(toJsonCompatibleValue(arg, objectRegistry))
+        return withBridgeHandleRegistrationTransaction(objectRegistry) { transaction ->
+            val arr = JSONArray()
+            args.forEach { arg ->
+                validateBridgeReturnValue(arg)
+                arr.put(
+                    toJsonCompatibleValueUnchecked(
+                        value = arg,
+                        objectRegistry = objectRegistry,
+                        bridgeAware = true,
+                        transaction = transaction
+                    )
+                )
+            }
+            arr.toString()
         }
-        return arr.toString()
     }
 
     private fun parseBridgeResponse(raw: String): BridgeResponse {
@@ -1899,7 +2623,9 @@ internal object JsJavaBridgeDelegates {
         }
 
         return try {
+            validateBridgeInputJsonText(raw)
             val token = JSONTokener(raw).nextValue()
+            validateBridgeReturnValue(token)
             if (token is JSONObject) {
                 BridgeResponse(
                     success = token.optBoolean("success", false),
@@ -2063,7 +2789,9 @@ internal object JsJavaBridgeDelegates {
 
     private fun hasMethod(clazz: Class<*>, methodName: String, staticOnly: Boolean): Boolean {
         return clazz.methods.any { method ->
-            method.name == methodName && Modifier.isStatic(method.modifiers) == staticOnly
+            method.name == methodName &&
+                Modifier.isStatic(method.modifiers) == staticOnly &&
+                isJavaBridgeMethodAllowed(clazz, method)
         }
     }
 
@@ -2096,53 +2824,6 @@ internal object JsJavaBridgeDelegates {
                 method.name in candidates &&
                 Modifier.isStatic(method.modifiers) == staticOnly
         }
-    }
-
-    private fun findSetter(
-        clazz: Class<*>,
-        fieldName: String,
-        rawValue: Any?,
-        staticOnly: Boolean,
-        objectRegistry: ConcurrentHashMap<String, Any>,
-        jsCallbackInvoker: JsInterfaceCallbackInvoker?,
-        bridgeClassLoader: ClassLoader?
-    ): Pair<Method, Any?>? {
-        val normalized = fieldName.trim()
-        if (normalized.isEmpty()) {
-            return null
-        }
-
-        val capitalized =
-            normalized.replaceFirstChar { ch ->
-                if (ch.isLowerCase()) ch.titlecase(Locale.ROOT) else ch.toString()
-            }
-
-        val candidates =
-            clazz.methods.filter { method ->
-                method.name == "set$capitalized" &&
-                    method.parameterCount == 1 &&
-                    Modifier.isStatic(method.modifiers) == staticOnly
-            }
-
-        var best: Pair<Method, Any?>? = null
-        var bestScore = Int.MAX_VALUE
-
-        for (candidate in candidates) {
-            val converted =
-                convertArg(
-                    rawValue = rawValue,
-                    targetType = candidate.parameterTypes[0],
-                    objectRegistry = objectRegistry,
-                    jsCallbackInvoker = jsCallbackInvoker,
-                    bridgeClassLoader = bridgeClassLoader
-                ) ?: continue
-            if (converted.score < bestScore) {
-                best = Pair(candidate, converted.value)
-                bestScore = converted.score
-            }
-        }
-
-        return best
     }
 
     private fun describeValueType(value: Any?): String {

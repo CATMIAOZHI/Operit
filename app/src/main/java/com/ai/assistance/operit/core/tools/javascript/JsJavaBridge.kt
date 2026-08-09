@@ -259,17 +259,6 @@ internal fun buildJavaClassBridgeDefinition(): String {
                 return marker;
             }
 
-            function getJsInterfaceValue(marker) {
-                if (!marker || typeof marker !== 'object') {
-                    return undefined;
-                }
-                try {
-                    return marker.__javaJsValue;
-                } catch (_error) {
-                    return undefined;
-                }
-            }
-
             function hasUsableJavaInstanceMarker(value) {
                 if (!value || typeof value !== 'object') {
                     return false;
@@ -286,34 +275,6 @@ internal fun buildJavaClassBridgeDefinition(): String {
                 } catch (_error) {
                     return false;
                 }
-            }
-
-            function ensureJsInterfaceMarkerRegistered(marker) {
-                if (!marker || typeof marker !== 'object') {
-                    throw new Error('js interface marker is required');
-                }
-
-                var currentId = String(marker.__javaJsObjectId || '').trim();
-                if (
-                    currentId &&
-                    Object.prototype.hasOwnProperty.call(__javaBridgeJsObjectStore, currentId)
-                ) {
-                    marker.__javaJsObjectId = currentId;
-                    return marker;
-                }
-
-                var jsValue = getJsInterfaceValue(marker);
-                if (jsValue === undefined) {
-                    throw new Error(
-                        currentId
-                            ? ('js interface implementation is unavailable: ' + currentId)
-                            : 'js interface implementation is unavailable'
-                    );
-                }
-
-                var nextId = registerJsObject(jsValue);
-                marker.__javaJsObjectId = nextId;
-                return marker;
             }
 
             function buildJsInterfaceMarker(objectId, interfaceNames, jsValue) {
@@ -369,9 +330,7 @@ internal fun buildJavaClassBridgeDefinition(): String {
 
             function unwrapValue(value) {
                 if (typeof value === 'function') {
-                    return ensureJsInterfaceMarkerRegistered(
-                        buildJsInterfaceMarker('', [], value)
-                    );
+                    throw new Error('Java bridge interface proxy is not allowed');
                 }
                 if (!value || typeof value !== 'object') {
                     return value;
@@ -386,13 +345,7 @@ internal fun buildJavaClassBridgeDefinition(): String {
                     Object.prototype.hasOwnProperty.call(value, '__javaJsInterface') &&
                     Object.prototype.hasOwnProperty.call(value, '__javaJsObjectId')
                 ) {
-                    return ensureJsInterfaceMarkerRegistered(
-                        buildJsInterfaceMarker(
-                            String(value.__javaJsObjectId || ''),
-                            value.__javaInterfaces,
-                            getJsInterfaceValue(value)
-                        )
-                    );
+                    throw new Error('Java bridge interface proxy is not allowed');
                 }
                 if (Array.isArray(value)) {
                     return value.map(function(item) {
