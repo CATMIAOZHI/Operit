@@ -72,6 +72,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -336,6 +337,7 @@ private fun TokenActivityStat(label: String, value: String, modifier: Modifier =
 @Composable
 private fun TokenActivityProfileCard() {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val prefs = remember { context.getSharedPreferences(PROFILE_PREFS, Context.MODE_PRIVATE) }
     var nickname by remember { mutableStateOf(prefs.getString(KEY_NICKNAME, "").orEmpty()) }
     var email by remember { mutableStateOf(prefs.getString(KEY_EMAIL, "").orEmpty()) }
@@ -396,7 +398,7 @@ private fun TokenActivityProfileCard() {
         } else if (result.error != null) {
             Toast.makeText(
                 context,
-                context.getString(R.string.avatar_crop_failed, result.error?.message.orEmpty()),
+                resources.getString(R.string.avatar_crop_failed, result.error?.message.orEmpty()),
                 Toast.LENGTH_LONG,
             ).show()
         }
@@ -413,8 +415,8 @@ private fun TokenActivityProfileCard() {
                         fixAspectRatio = true
                         aspectRatioX = 1
                         aspectRatioY = 1
-                        cropMenuCropButtonTitle = context.getString(R.string.theme_crop_done)
-                        activityTitle = context.getString(R.string.crop_avatar)
+                        cropMenuCropButtonTitle = resources.getString(R.string.theme_crop_done)
+                        activityTitle = resources.getString(R.string.crop_avatar)
                         toolbarColor = Color.Gray.toArgb()
                         toolbarTitleColor = Color.White.toArgb()
                     },
@@ -541,7 +543,7 @@ private fun TokenActivityProfileCard() {
                             } else {
                                 Toast.makeText(
                                     context,
-                                    context.getString(R.string.token_activity_profile_avatar_import_failed),
+                                    resources.getString(R.string.token_activity_profile_avatar_import_failed),
                                     Toast.LENGTH_LONG,
                                 ).show()
                             }
