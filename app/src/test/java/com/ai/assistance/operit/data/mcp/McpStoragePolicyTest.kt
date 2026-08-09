@@ -34,6 +34,11 @@ class McpStoragePolicyTest {
                 "owner/.. ",
                 "owner/repository.",
                 "owner/repo:stream",
+                "evil;rm",
+                "evil value",
+                "evil\$HOME",
+                "evil`command`",
+                "evil\$(command)",
             ).forEach { unsafe ->
                 assertNull("must reject $unsafe", resolveMcpPackageDirectory(root, unsafe))
             }

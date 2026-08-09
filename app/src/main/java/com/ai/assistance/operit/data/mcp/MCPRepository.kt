@@ -1453,7 +1453,7 @@ private fun isSafeMcpPathSegment(segment: String): Boolean =
         segment != "." &&
         segment != ".." &&
         !segment.endsWith('.') &&
-        segment.none { it == '\u0000' || it in "<>:\"|?*" }
+        Regex("^[A-Za-z0-9@._+\\-]+$").matches(segment)
 
 internal fun resolveMcpPackageDirectory(root: File, pluginId: String): File? {
     if (!isSafeMcpPluginId(pluginId)) return null

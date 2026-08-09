@@ -3,9 +3,33 @@ package com.ai.assistance.operit.core.tools.skill
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SkillStoragePolicyTest {
+
+    @Test
+    fun `import metadata name stays one direct child below skills root`() {
+        val root = Files.createTempDirectory("internal-skills").toFile()
+        try {
+            assertEquals(
+                File(root, "safe skill").canonicalFile,
+                resolveSkillImportDestination(root, "safe skill"),
+            )
+            listOf(
+                "../mcp/packages/evil",
+                "nested/skill",
+                "nested\\skill",
+                ".",
+                "..",
+                "\u0000bad",
+            ).forEach { unsafe ->
+                assertNull("must reject $unsafe", resolveSkillImportDestination(root, unsafe))
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 
     @Test
     fun `shadowed legacy directories are found by effective metadata name`() {

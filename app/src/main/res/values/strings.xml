@@ -7219,6 +7219,7 @@
     <string name="mcp_deployment_saving_config">保存MCP配置...</string>
     <string name="mcp_deployment_save_config_failed">保存MCP配置失败</string>
     <string name="mcp_deployment_error">部署出错: %1$s</string>
+    <string name="mcp_deployment_invalid_plugin_id">插件 ID 包含不安全字符，已拒绝部署</string>
     <string name="mcp_deployment_cannot_determine">无法确定如何部署此插件: %1$s</string>
     <string name="mcp_deployment_copying_files">复制插件文件到目标目录...</string>
     <string name="mcp_deployment_copy_failed">复制文件到目标目录失败: %1$s</string>
@@ -7376,6 +7377,9 @@
     <string name="skill_error_cannot_access_dir">无法访问 skills 目录: %1$s</string>
     <string name="skill_error_create_tmp_dir_failed">创建临时目录失败: %1$s</string>
     <string name="skill_error_import_invalid_path">导入失败：路径异常</string>
+    <string name="legacy_storage_initialization_error_title">兼容设置初始化失败</string>
+    <string name="legacy_storage_initialization_error_message">为避免隐藏旧版 Skills、MCP 或工作流，应用尚未启动后台服务。请重试。\n\n错误：%1$s</string>
+    <string name="legacy_storage_initialization_retry">重试</string>
     <string name="skill_error_import_path_not_found">导入失败：未找到路径：%1$s</string>
     <string name="skill_error_import_no_skill_md">导入失败：zip 内未找到 SKILL.md</string>
     <string name="skill_error_import_no_skill_md_in_path">导入失败：指定路径下未找到 SKILL.md</string>

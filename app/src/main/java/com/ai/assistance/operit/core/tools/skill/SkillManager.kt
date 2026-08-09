@@ -439,7 +439,16 @@ class SkillManager private constructor(private val context: Context) {
                     selectedSkillDir.name.ifBlank { zipFile.nameWithoutExtension }
                 }
             }
-            val finalDir = File(skillsRoot, baseName.trim().ifBlank { "skill" })
+            val finalDir = resolveSkillImportDestination(
+                skillsRoot,
+                baseName.trim().ifBlank { "skill" },
+            ) ?: run {
+                cleanupTmp()
+                return SkillImportResult(
+                    context.getString(R.string.skill_error_import_invalid_path),
+                    null,
+                )
+            }
 
             if (finalDir.exists()) {
                 cleanupTmp()
@@ -499,6 +508,28 @@ class SkillManager private constructor(private val context: Context) {
             }
         }
     }
+}
+
+/**
+ * Resolves an imported skill to one direct child of [skillsRoot]. Skill metadata is untrusted:
+ * its display name must never become an absolute, nested or traversal filesystem path.
+ */
+internal fun resolveSkillImportDestination(skillsRoot: File, rawName: String): File? {
+    val name = rawName.trim()
+    if (
+        name.isEmpty() ||
+        name == "." ||
+        name == ".." ||
+        name.any { it == '/' || it == '\\' || it == '\u0000' }
+    ) {
+        return null
+    }
+    return runCatching {
+        val canonicalRoot = skillsRoot.canonicalFile
+        File(canonicalRoot, name).canonicalFile.takeIf { candidate ->
+            candidate.parentFile == canonicalRoot
+        }
+    }.getOrNull()
 }
 
 /**

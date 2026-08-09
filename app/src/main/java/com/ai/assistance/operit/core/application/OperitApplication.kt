@@ -164,11 +164,15 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
      *   / NEEDS_RECOVERY) and the data directory may be partially replaced or the state file is
      *   corrupt. The caller MUST NOT initialize normally. Activities should route to the
      *   recovery surface; services should stop themselves and exit the process.
+     * - [CompatibilityInitializationFailed]: legacy visibility could not be seeded. Its message
+     *   belongs to this immutable attempt result so a concurrent retry cannot invalidate it.
      */
-    enum class MainApplicationInitResult {
-        Initialized,
-        MigrationInProgress,
-        MigrationNeedsRecovery
+    sealed class MainApplicationInitResult {
+        data object Initialized : MainApplicationInitResult()
+        data object MigrationInProgress : MainApplicationInitResult()
+        data object MigrationNeedsRecovery : MainApplicationInitResult()
+        data class CompatibilityInitializationFailed(val message: String) :
+            MainApplicationInitResult()
     }
 
     fun initializeMainApplication(): MainApplicationInitResult {
@@ -195,15 +199,21 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                 MigrationStatePolicy.MainInitializationAction.SHOW_RECOVERY ->
                     MainApplicationInitResult.MigrationNeedsRecovery
                 MigrationStatePolicy.MainInitializationAction.INITIALIZE -> {
-                    initializeMainApplicationLocked()
-                    mainApplicationInitialized = true
-                    MainApplicationInitResult.Initialized
+                    val compatibilityFailure = initializeMainApplicationLocked()
+                    if (compatibilityFailure == null) {
+                        mainApplicationInitialized = true
+                        MainApplicationInitResult.Initialized
+                    } else {
+                        MainApplicationInitResult.CompatibilityInitializationFailed(
+                            compatibilityFailure
+                        )
+                    }
                 }
             }
         }
     }
 
-    private fun initializeMainApplicationLocked() {
+    private fun initializeMainApplicationLocked(): String? {
         val startTime = System.currentTimeMillis()
 
         configureOpenMpEnvironment()
@@ -218,12 +228,21 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         // or repositories can snapshot them. This runs only after the migration gate above has
         // allowed main-data access; the one-shot initializer moves its file work to Dispatchers.IO.
         val legacyStartTime = System.currentTimeMillis()
-        try {
-            runBlocking {
-                LegacyStorageInitializer.initializeIfNeeded(applicationContext)
-            }
-        } catch (e: Exception) {
-            AppLogger.e(TAG, "Legacy storage initializer failed", e)
+        var compatibilityError: Exception? = null
+        val compatibilityReady = runRequiredCompatibilityInitialization(
+            initialize = {
+                runBlocking {
+                    LegacyStorageInitializer.initializeIfNeeded(applicationContext)
+                }
+            },
+            onFailure = { error ->
+                compatibilityError = error
+                AppLogger.e(TAG, "Legacy storage initializer failed", error)
+            },
+        )
+        if (!compatibilityReady) {
+            return compatibilityError?.message ?: compatibilityError?.javaClass?.name
+                ?: "Unknown compatibility initialization failure"
         }
         AppLogger.d(
             TAG,
@@ -486,6 +505,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         
         val totalTime = System.currentTimeMillis() - startTime
         AppLogger.d(TAG, "【启动计时】应用启动全部完成 - 总耗时: ${totalTime}ms")
+        return null
     }
 
     /**
@@ -780,4 +800,16 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                 )
         )
     }
+}
+
+/** Runs the compatibility prerequisite without swallowing failure into normal initialization. */
+internal inline fun runRequiredCompatibilityInitialization(
+    initialize: () -> Unit,
+    onFailure: (Exception) -> Unit,
+): Boolean = try {
+    initialize()
+    true
+} catch (error: Exception) {
+    onFailure(error)
+    false
 }

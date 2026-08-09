@@ -4,6 +4,7 @@ import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.data.mcp.MCPLocalServer
+import com.ai.assistance.operit.data.mcp.isSafeMcpPluginId
 import com.ai.assistance.operit.core.tools.system.Terminal
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.data.model.AITool
@@ -100,6 +101,15 @@ class MCPDeployer(private val context: Context) {
     ): Boolean =
             withContext(Dispatchers.IO) {
                 try {
+                    if (!isSafeMcpPluginId(pluginId)) {
+                        AppLogger.e(TAG, "拒绝不安全的 MCP 插件 ID: $pluginId")
+                        statusCallback(
+                            DeploymentStatus.Error(
+                                context.getString(R.string.mcp_deployment_invalid_plugin_id)
+                            )
+                        )
+                        return@withContext false
+                    }
                     statusCallback(DeploymentStatus.InProgress(context.getString(R.string.mcp_deployment_start, pluginId)))
                     AppLogger.d(TAG, "开始部署插件(自定义命令): $pluginId, 路径: $pluginPath")
 
@@ -125,7 +135,10 @@ class MCPDeployer(private val context: Context) {
                             val pluginDir = mcpLocalServer.getPluginRuntimeDirectory(pluginId)
                             statusCallback(DeploymentStatus.InProgress(context.getString(R.string.mcp_deployment_creating_directory, pluginDir)))
 
-                            val mkdirExecuted = terminal.executeCommand(sessionId, "mkdir -p $pluginDir")
+                            val mkdirExecuted = terminal.executeCommand(
+                                sessionId,
+                                "mkdir -p ${quotePosixShellPath(pluginDir)}",
+                            )
                             if (mkdirExecuted == null) {
                                 statusCallback(DeploymentStatus.Error(context.getString(R.string.mcp_deployment_create_directory_failed)))
                                 return@withContext false
@@ -290,7 +303,10 @@ class MCPDeployer(private val context: Context) {
             // 首先创建插件目录
             statusCallback(DeploymentStatus.InProgress(context.getString(R.string.mcp_deployment_creating_directory, pluginDir)))
 
-            val mkdirExecuted = terminal.executeCommand(sessionId, "mkdir -p $pluginDir")
+            val mkdirExecuted = terminal.executeCommand(
+                sessionId,
+                "mkdir -p ${quotePosixShellPath(pluginDir)}",
+            )
             if (mkdirExecuted == null) {
                 statusCallback(DeploymentStatus.Error(context.getString(R.string.mcp_deployment_create_directory_failed)))
                 return@withContext false
@@ -334,7 +350,10 @@ class MCPDeployer(private val context: Context) {
             // 切换到插件目录
             statusCallback(DeploymentStatus.InProgress(context.getString(R.string.mcp_deployment_switching_directory)))
 
-            val cdExecuted = terminal.executeCommand(sessionId, "cd $pluginDir")
+            val cdExecuted = terminal.executeCommand(
+                sessionId,
+                "cd ${quotePosixShellPath(pluginDir)}",
+            )
             if (cdExecuted == null) {
                 statusCallback(DeploymentStatus.Error(context.getString(R.string.mcp_deployment_switch_failed)))
                 return@withContext false
@@ -489,3 +508,15 @@ class MCPDeployer(private val context: Context) {
         }
     }
 }
+
+/** Quotes one argument for the POSIX shell used by terminal deployment sessions. */
+internal fun quotePosixShellArgument(value: String): String =
+    "'${value.replace("'", "'\"'\"'")}'"
+
+/** Quotes a runtime path while preserving the controlled leading `~/` as `$HOME/`. */
+internal fun quotePosixShellPath(value: String): String =
+    if (value.startsWith("~/")) {
+        "\"\$HOME\"/${quotePosixShellArgument(value.removePrefix("~/"))}"
+    } else {
+        quotePosixShellArgument(value)
+    }

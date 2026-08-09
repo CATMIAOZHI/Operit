@@ -6740,6 +6740,7 @@
     <string name="mcp_deployment_saving_config">Saving MCP config...</string>
     <string name="mcp_deployment_save_config_failed">Failed to save MCP config</string>
     <string name="mcp_deployment_error">Deployment error: %1$s</string>
+    <string name="mcp_deployment_invalid_plugin_id">The plugin ID contains unsafe characters, so deployment was rejected.</string>
     <string name="mcp_deployment_cannot_determine">Cannot determine how to deploy this plugin: %1$s</string>
     <string name="mcp_deployment_copying_files">Copying plugin files to target directory...</string>
     <string name="mcp_deployment_copy_failed">Failed to copy files to target directory: %1$s</string>
@@ -6897,6 +6898,9 @@
     <string name="skill_error_cannot_access_dir">Cannot access skills directory: %1$s</string>
     <string name="skill_error_create_tmp_dir_failed">Failed to create temp directory: %1$s</string>
     <string name="skill_error_import_invalid_path">Import failed: invalid path</string>
+    <string name="legacy_storage_initialization_error_title">Compatibility settings unavailable</string>
+    <string name="legacy_storage_initialization_error_message">Background services were not started, preventing legacy Skills, MCP servers, or workflows from being hidden. Please retry.\n\nError: %1$s</string>
+    <string name="legacy_storage_initialization_retry">Retry</string>
     <string name="skill_error_import_path_not_found">Import failed: path not found: %1$s</string>
     <string name="skill_error_import_no_skill_md">Import failed: SKILL.md not found in zip</string>
     <string name="skill_error_import_no_skill_md_in_path">Import failed: SKILL.md not found in specified path</string>

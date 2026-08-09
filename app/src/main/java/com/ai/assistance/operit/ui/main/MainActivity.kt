@@ -271,14 +271,25 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        val initResult = (application as OperitApplication).initializeMainApplication()
-        if (initResult != OperitApplication.MainApplicationInitResult.Initialized) {
-            // Should not happen here because we already handled non-IDLE/COMPLETED states above,
-            // but guard against a race where the state changed between our read and the call.
-            showMigrationRecoverySurface(
-                RawSnapshotBackupManager.officialOperitMigrationState(applicationContext)
-            )
-            return
+        val operitApplication = application as OperitApplication
+        val initResult = operitApplication.initializeMainApplication()
+        when (initResult) {
+            OperitApplication.MainApplicationInitResult.Initialized -> Unit
+            is OperitApplication.MainApplicationInitResult.CompatibilityInitializationFailed -> {
+                showCompatibilityInitializationErrorSurface(
+                    initResult.message
+                )
+                return
+            }
+            OperitApplication.MainApplicationInitResult.MigrationInProgress,
+            OperitApplication.MainApplicationInitResult.MigrationNeedsRecovery -> {
+                // Should not happen here because non-IDLE/COMPLETED states were handled above,
+                // but guard against a race where the state changed between the read and call.
+                showMigrationRecoverySurface(
+                    RawSnapshotBackupManager.officialOperitMigrationState(applicationContext)
+                )
+                return
+            }
         }
 
         AppLogger.d(TAG, "MainActivity应用语言设置: ${LocaleUtils.getCurrentLanguage(this)}")
@@ -448,6 +459,17 @@ class MainActivity : ComponentActivity() {
         setContent {
             OperitTheme {
                 MigrationStartupErrorScreen(message, pendingResetRequired)
+            }
+        }
+    }
+
+    private fun showCompatibilityInitializationErrorSurface(message: String) {
+        setContent {
+            OperitTheme {
+                CompatibilityInitializationErrorScreen(
+                    message = message,
+                    onRetry = { recreate() },
+                )
             }
         }
     }
@@ -1196,6 +1218,37 @@ private fun MigrationStartupErrorScreen(message: String, pendingResetRequired: B
             }
             TextButton(onClick = { exitProcess(0) }) {
                 Text(stringResource(id = R.string.backup_official_operit_migration_recovery_exit))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompatibilityInitializationErrorScreen(message: String, onRetry: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.padding(24.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.legacy_storage_initialization_error_title),
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Text(
+                text = stringResource(R.string.legacy_storage_initialization_error_message, message),
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            TextButton(onClick = onRetry) {
+                Text(stringResource(R.string.legacy_storage_initialization_retry))
+            }
+            TextButton(onClick = { exitProcess(0) }) {
+                Text(stringResource(R.string.backup_official_operit_migration_recovery_exit))
             }
         }
     }
