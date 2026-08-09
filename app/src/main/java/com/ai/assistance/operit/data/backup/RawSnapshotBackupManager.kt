@@ -8,6 +8,7 @@ import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.db.ObjectBoxManager
 import com.ai.assistance.operit.data.stats.TokenBaselineImportRunner
 import com.ai.assistance.operit.data.stats.TokenStatSpool
+import com.ai.assistance.operit.data.stats.TokenStatsResetCoordinator
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.OperitPaths
 import java.io.BufferedInputStream
@@ -133,7 +134,7 @@ object RawSnapshotBackupManager {
         onProgress: ((ExportProgressInfo) -> Unit)?,
         performDatabaseCheckpoint: Boolean = true,
         requireDatabaseCheckpoint: Boolean = false
-    ): File {
+    ): File = TokenStatsResetCoordinator.withCleanupSnapshotAccess {
             AppLogger.i(TAG, "export start (includeTerminalData=${options.includeTerminalData})")
             withContext(Dispatchers.Main) { onProgress?.invoke(ExportProgressInfo(ExportProgress.PREPARING)) }
             val exportDir = OperitBackupDirs.rawSnapshotDir()
@@ -284,7 +285,7 @@ object RawSnapshotBackupManager {
             }
 
             AppLogger.i(TAG, "export done: ${outFile.absolutePath} (${outFile.length()} bytes)")
-            return outFile
+            outFile
     }
 
     fun isOfficialOperitMigrationCompleted(context: Context): Boolean =

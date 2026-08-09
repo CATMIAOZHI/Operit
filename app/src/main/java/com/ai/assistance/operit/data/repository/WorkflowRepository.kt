@@ -186,6 +186,14 @@ class WorkflowRepository(private val context: Context) {
         return dir
     }
 
+    /**
+     * Pre-migration execution logs under `Download/Operit/workflow/_execution_logs/<id>`.
+     * This accessor is strictly non-creating; the compatibility read is independent of the
+     * workflow-definition switch because these are historical user-visible run records.
+     */
+    private fun getLegacyExecutionLogDirectory(workflowId: String): File =
+        File(paths.legacyWorkflows, "_execution_logs/$workflowId")
+
     private fun saveExecutionRecord(record: WorkflowExecutionRecord) {
         try {
             val dir = getExecutionLogDirectory(record.workflowId)
@@ -356,13 +364,10 @@ class WorkflowRepository(private val context: Context) {
 
     suspend fun getLatestExecutionRecord(workflowId: String): Result<WorkflowExecutionRecord?> = withContext(Dispatchers.IO) {
         try {
-            val dir = getExecutionLogDirectory(workflowId, createIfMissing = false)
-            if (!dir.exists()) {
-                return@withContext Result.success(null)
-            }
-            val latestFile =
-                dir.listFiles { f -> f.isFile && f.extension == "json" }
-                    ?.maxByOrNull { it.lastModified() }
+            val latestFile = latestWorkflowExecutionRecordFile(
+                getExecutionLogDirectory(workflowId, createIfMissing = false),
+                getLegacyExecutionLogDirectory(workflowId),
+            )
                     ?: return@withContext Result.success(null)
 
             val content = latestFile.readText()
@@ -1002,3 +1007,14 @@ internal fun workflowDeletionSucceeded(
     internalRemoved: Boolean,
     legacyExisted: Boolean
 ): Boolean = if (internalExisted) internalRemoved else legacyExisted
+
+/** Selects the newest record across the private runtime root and the pre-migration legacy root. */
+internal fun latestWorkflowExecutionRecordFile(vararg directories: File): File? =
+    directories.asSequence()
+        .filter { it.isDirectory }
+        .flatMap { dir ->
+            dir.listFiles { file -> file.isFile && file.extension == "json" }
+                .orEmpty()
+                .asSequence()
+        }
+        .maxWithOrNull(compareBy<File>({ it.lastModified() }, { it.name }))

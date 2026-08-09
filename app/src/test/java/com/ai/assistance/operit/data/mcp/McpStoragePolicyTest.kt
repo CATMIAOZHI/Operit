@@ -1,14 +1,68 @@
 package com.ai.assistance.operit.data.mcp
 
+import java.io.File
+import java.nio.file.Files
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class McpStoragePolicyTest {
+
+    @Test
+    fun pluginPackagePathsStayBelowManagedRoot() {
+        val root = Files.createTempDirectory("mcp-packages").toFile()
+        try {
+            val nested = requireNotNull(resolveMcpPackageDirectory(root, "owner/repository"))
+            assertEquals(File(File(root, "owner"), "repository").canonicalFile, nested)
+
+            listOf(
+                "",
+                ".",
+                "..",
+                "../outside",
+                "owner/../../outside",
+                "/absolute",
+                "C:\\outside",
+                "owner//repository",
+                "owner\\..\\outside",
+                "owner/.. ",
+                "owner/repository.",
+                "owner/repo:stream",
+            ).forEach { unsafe ->
+                assertNull("must reject $unsafe", resolveMcpPackageDirectory(root, unsafe))
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun tempAndZipEntryPathsCannotEscapeTheirRoots() {
+        val cache = Files.createTempDirectory("mcp-cache").toFile()
+        val target = Files.createTempDirectory("mcp-extract").toFile()
+        try {
+            val temp = requireNotNull(safeMcpTempFile(cache, "owner/repository", "local"))
+            assertEquals(cache.canonicalFile, temp.parentFile.canonicalFile)
+            assertFalse(temp.name.contains("owner"))
+
+            assertEquals(
+                File(File(target, "nested"), "file.txt").canonicalFile,
+                resolveMcpZipEntryTarget(target, "nested/file.txt"),
+            )
+            assertNull(resolveMcpZipEntryTarget(target, "../outside.txt"))
+            assertNull(resolveMcpZipEntryTarget(target, "/absolute.txt"))
+            assertNull(resolveMcpZipEntryTarget(target, "nested\\..\\..\\outside.txt"))
+        } finally {
+            cache.deleteRecursively()
+            target.deleteRecursively()
+        }
+    }
 
     @Test
     fun hiddenLegacyServerId_suppressesServerAndMetadata() {

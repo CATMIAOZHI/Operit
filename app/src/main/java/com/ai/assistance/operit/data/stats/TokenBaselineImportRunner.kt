@@ -11,6 +11,8 @@ import com.ai.assistance.operit.data.model.TokenStatIdentityEntity
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 旧 DataStore 累计统计 → baseline 的导入执行器（启动时一次性、冻结价格语义）。
@@ -345,18 +347,31 @@ object TokenStatsResetCoordinator {
     internal var daoProvider: ((Context) -> TokenStatsDao)? = null
 
     private const val TAG = "TokenStatsReset"
+    private val cleanupSnapshotMutex = Mutex()
+
+    /**
+     * Cross-store snapshot barrier for the cleanup outbox. A reset/baseline deletion performs
+     * Room mutation -> DataStore marker apply -> Room APPLIED acknowledgement; raw snapshot export
+     * must not archive DataStore and Room from different points inside that sequence.
+     */
+    internal suspend fun <T> withCleanupSnapshotAccess(block: suspend () -> T): T =
+        cleanupSnapshotMutex.withLock { block() }
 
     suspend fun resetAllStatistics(context: Context) {
-        withDao(context) { dao -> dao.resetAllStatisticsTx() }
-        drainPendingCleanup(context.applicationContext)
+        withCleanupSnapshotAccess {
+            withDao(context) { dao -> dao.resetAllStatisticsTx() }
+            drainPendingCleanupUnlocked(context.applicationContext)
+        }
         TokenStatSpool.replay(context.applicationContext)
     }
 
     suspend fun resetStatisticsForProviderModel(context: Context, providerModel: String) {
         val (provider, model) = TokenStatIdentityResolver.splitProviderModel(providerModel)
         if (model.isBlank()) return
-        withDao(context) { dao -> dao.resetModelTx(provider, model) }
-        drainPendingCleanup(context.applicationContext)
+        withCleanupSnapshotAccess {
+            withDao(context) { dao -> dao.resetModelTx(provider, model) }
+            drainPendingCleanupUnlocked(context.applicationContext)
+        }
         TokenStatSpool.replay(context.applicationContext)
     }
 
@@ -376,15 +391,19 @@ object TokenStatsResetCoordinator {
         displayModelId: String,
         deleteBaselines: Boolean,
     ) {
-        withDao(context) { dao -> dao.deleteDisplayModelEventsTx(displayModelId, deleteBaselines) }
-        drainPendingCleanup(context.applicationContext)
+        withCleanupSnapshotAccess {
+            withDao(context) { dao -> dao.deleteDisplayModelEventsTx(displayModelId, deleteBaselines) }
+            drainPendingCleanupUnlocked(context.applicationContext)
+        }
         TokenStatSpool.replay(context.applicationContext)
     }
 
     /** 删除全部事件；[deleteBaselines] 为 true 时同时删除全部 baseline（阶段 5）。 */
     suspend fun deleteAllEvents(context: Context, deleteBaselines: Boolean) {
-        withDao(context) { dao -> dao.deleteAllStatisticsTx(deleteBaselines) }
-        drainPendingCleanup(context.applicationContext)
+        withCleanupSnapshotAccess {
+            withDao(context) { dao -> dao.deleteAllStatisticsTx(deleteBaselines) }
+            drainPendingCleanupUnlocked(context.applicationContext)
+        }
         TokenStatSpool.replay(context.applicationContext)
     }
 
@@ -398,11 +417,17 @@ object TokenStatsResetCoordinator {
      * - 不占用任何 Room 事务等待 DataStore（本函数在删除事务之外调用）。
      */
     suspend fun drainPendingCleanup(context: Context) {
+        withCleanupSnapshotAccess {
+            drainPendingCleanupUnlocked(context)
+        }
+    }
+
+    private suspend fun drainPendingCleanupUnlocked(context: Context) {
         val appContext = context.applicationContext
         val injected = daoProvider
         val dao =
             injected?.invoke(appContext) ?: AppDatabase.getDatabase(appContext).tokenStatsDao()
-        drainPendingCleanupWith(appContext, dao)
+        drainPendingCleanupWithLocked(appContext, dao)
     }
 
     /**
@@ -410,6 +435,12 @@ object TokenStatsResetCoordinator {
      * runner 用它复用自己解析的数据库实例（测试注入路径）。
      */
     internal suspend fun drainPendingCleanupWith(appContext: Context, dao: TokenStatsDao) {
+        withCleanupSnapshotAccess {
+            drainPendingCleanupWithLocked(appContext, dao)
+        }
+    }
+
+    private suspend fun drainPendingCleanupWithLocked(appContext: Context, dao: TokenStatsDao) {
         val pending = dao.getPendingCleanupOperations()
         if (pending.isEmpty()) return
         val prefs = ApiPreferences.getInstance(appContext)

@@ -32,14 +32,20 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.style.TextOverflow
 import java.text.DecimalFormat
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.tools.skill.SkillManager
+import com.ai.assistance.operit.data.mcp.MCPRepository
 import com.ai.assistance.operit.core.tools.defaultTool.standard.CookiePrivacyManager
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.preferences.GitHubAuthPreferences
+import com.ai.assistance.operit.data.preferences.LegacyStoragePreferences
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
+import com.ai.assistance.operit.data.repository.WorkflowRepository
 import com.ai.assistance.operit.ui.features.github.GitHubLoginWebViewDialog
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.graphics.Color
 
 // 保存滑动状态变量，使其跨重组保持
@@ -71,12 +77,24 @@ fun SettingsScreen(
         val context = LocalContext.current
         val userPreferences = remember { UserPreferencesManager.getInstance(context) }
         val githubAuth = remember { GitHubAuthPreferences.getInstance(context) }
+        val legacyStorage = remember { LegacyStoragePreferences.getInstance(context) }
+        val skillManager = remember { SkillManager.getInstance(context) }
+        val mcpRepository = remember { MCPRepository(context.applicationContext) }
+        val workflowRepository = remember { WorkflowRepository(context.applicationContext) }
         val scope = rememberCoroutineScope()
         var showGitHubLogin by remember { mutableStateOf(false) }
         var showClearCookieConfirm by remember { mutableStateOf(false) }
 
         val isGitHubLoggedIn = githubAuth.isLoggedInFlow.collectAsState(initial = false).value
         val gitHubUser = githubAuth.userInfoFlow.collectAsState(initial = null).value
+        val readLegacySkills = legacyStorage.readLegacySkillsFlow().collectAsState(initial = false).value
+        val readLegacyMcp = legacyStorage.readLegacyMcpFlow().collectAsState(initial = false).value
+        val readLegacyWorkflows = legacyStorage.readLegacyWorkflowsFlow().collectAsState(initial = false).value
+        val legacyStorageUpdateFailedMessage =
+                stringResource(R.string.settings_legacy_storage_update_failed)
+        val clearCookiesSuccessMessage = stringResource(R.string.clear_cookies_success)
+        val clearCookiesFailedMessage = stringResource(R.string.clear_cookies_failed)
+        var legacySwitchUpdate by remember { mutableStateOf<String?>(null) }
 
         // 创建和记住滚动状态，设置为上次保存的位置
         val scrollState = rememberScrollState(SettingsScreenScrollPosition.value)
@@ -300,6 +318,93 @@ fun SettingsScreen(
                         )
                 }
 
+                SettingsSection(
+                        title = stringResource(R.string.settings_legacy_storage_title),
+                        icon = Icons.Default.FolderOpen,
+                        containerColor = cardContainerColor
+                ) {
+                        Text(
+                                text = stringResource(R.string.settings_legacy_storage_description),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                        CompactToggleWithDescription(
+                                title = stringResource(R.string.settings_legacy_skills_title),
+                                description = stringResource(R.string.settings_legacy_skills_description),
+                                checked = readLegacySkills,
+                                enabled = legacySwitchUpdate == null,
+                                onCheckedChange = { enabled ->
+                                        scope.launch {
+                                                legacySwitchUpdate = "skills"
+                                                try {
+                                                        legacyStorage.setReadLegacySkills(enabled)
+                                                        withContext(Dispatchers.IO) {
+                                                                skillManager.refreshAvailableSkills()
+                                                        }
+                                                } catch (e: Exception) {
+                                                        AppLogger.e("SettingsScreen", "Failed to update legacy Skills switch", e)
+                                                        Toast.makeText(
+                                                                context,
+                                                                legacyStorageUpdateFailedMessage,
+                                                                Toast.LENGTH_SHORT
+                                                        ).show()
+                                                } finally {
+                                                        legacySwitchUpdate = null
+                                                }
+                                        }
+                                }
+                        )
+                        CompactToggleWithDescription(
+                                title = stringResource(R.string.settings_legacy_mcp_title),
+                                description = stringResource(R.string.settings_legacy_mcp_description),
+                                checked = readLegacyMcp,
+                                enabled = legacySwitchUpdate == null,
+                                onCheckedChange = { enabled ->
+                                        scope.launch {
+                                                legacySwitchUpdate = "mcp"
+                                                try {
+                                                        legacyStorage.setReadLegacyMcp(enabled)
+                                                        mcpRepository.onLegacyReadSwitchChanged(enabled)
+                                                } catch (e: Exception) {
+                                                        AppLogger.e("SettingsScreen", "Failed to update legacy MCP switch", e)
+                                                        Toast.makeText(
+                                                                context,
+                                                                legacyStorageUpdateFailedMessage,
+                                                                Toast.LENGTH_SHORT
+                                                        ).show()
+                                                } finally {
+                                                        legacySwitchUpdate = null
+                                                }
+                                        }
+                                }
+                        )
+                        CompactToggleWithDescription(
+                                title = stringResource(R.string.settings_legacy_workflows_title),
+                                description = stringResource(R.string.settings_legacy_workflows_description),
+                                checked = readLegacyWorkflows,
+                                enabled = legacySwitchUpdate == null,
+                                onCheckedChange = { enabled ->
+                                        scope.launch {
+                                                legacySwitchUpdate = "workflows"
+                                                try {
+                                                        legacyStorage.setReadLegacyWorkflows(enabled)
+                                                        workflowRepository.onLegacyReadSwitchChanged(enabled)
+                                                } catch (e: Exception) {
+                                                        AppLogger.e("SettingsScreen", "Failed to update legacy workflow switch", e)
+                                                        Toast.makeText(
+                                                                context,
+                                                                legacyStorageUpdateFailedMessage,
+                                                                Toast.LENGTH_SHORT
+                                                        ).show()
+                                                } finally {
+                                                        legacySwitchUpdate = null
+                                                }
+                                        }
+                                }
+                        )
+                }
+
                 // ======= 隐私与数据清理 =======
                 SettingsSection(
                         title = stringResource(id = R.string.settings_privacy_data_cleanup),
@@ -346,14 +451,14 @@ fun SettingsScreen(
                                                                 CookiePrivacyManager.clearAllCookies()
                                                                 Toast.makeText(
                                                                         context,
-                                                                        context.getString(R.string.clear_cookies_success),
+                                                                        clearCookiesSuccessMessage,
                                                                         Toast.LENGTH_SHORT
                                                                 ).show()
                                                         } catch (e: Exception) {
                                                                 AppLogger.e("SettingsScreen", "Failed to clear cookies", e)
                                                                 Toast.makeText(
                                                                         context,
-                                                                        context.getString(R.string.clear_cookies_failed),
+                                                                        clearCookiesFailedMessage,
                                                                         Toast.LENGTH_SHORT
                                                                 ).show()
                                                         }
@@ -470,6 +575,7 @@ private fun CompactToggleWithDescription(
         title: String,
         description: String,
         checked: Boolean,
+        enabled: Boolean = true,
         onCheckedChange: (Boolean) -> Unit
 ) {
         Row(
@@ -496,6 +602,7 @@ private fun CompactToggleWithDescription(
                 Switch(
                         checked = checked,
                         onCheckedChange = onCheckedChange,
+                        enabled = enabled,
                         modifier = Modifier.scale(0.8f)
                 )
         }

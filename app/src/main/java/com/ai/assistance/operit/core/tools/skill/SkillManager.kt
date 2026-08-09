@@ -238,6 +238,19 @@ class SkillManager private constructor(private val context: Context) {
                     runBlocking { legacyPrefs.hideLegacySkillPath(skill.directory.name) }
                     true
                 } else {
+                    // Internal entries shadow legacy entries by parsed metadata name. Probe the
+                    // persisted legacy source regardless of the current switch and tombstone all
+                    // matches before deleting the winner; otherwise a later refresh/re-enable
+                    // would make the shadowed Download copy immediately reappear.
+                    val shadowedLegacyPaths =
+                        legacySkillDirectoryNamesMatching(
+                            root = getLegacySkillsRootDir(),
+                            skillName = skillName,
+                            metadataName = { file -> parseSkillMetadata(file).first },
+                        )
+                    runBlocking {
+                        shadowedLegacyPaths.forEach { legacyPrefs.hideLegacySkillPath(it) }
+                    }
                     skill.directory.deleteRecursively()
                 }
             if (ok) {
@@ -486,4 +499,31 @@ class SkillManager private constructor(private val context: Context) {
             }
         }
     }
+}
+
+/**
+ * Finds stable legacy directory identities whose effective metadata name equals [skillName].
+ * Missing, unreadable, or invalid packages are ignored exactly as the normal legacy scan does.
+ */
+internal fun legacySkillDirectoryNamesMatching(
+    root: File,
+    skillName: String,
+    metadataName: (File) -> String?,
+): Set<String> {
+    if (!root.isDirectory) return emptySet()
+    return root.listFiles().orEmpty()
+        .asSequence()
+        .filter { it.isDirectory }
+        .mapNotNull { child ->
+            val skillFile = File(child, "SKILL.md").let { primary ->
+                if (primary.isFile) primary else File(child, "skill.md")
+            }
+            if (!skillFile.isFile) return@mapNotNull null
+            val parsed = runCatching { metadataName(skillFile) }.getOrElse {
+                return@mapNotNull null
+            }.orEmpty()
+            val effectiveName = parsed.ifBlank { child.name }
+            child.name.takeIf { effectiveName == skillName }
+        }
+        .toSet()
 }

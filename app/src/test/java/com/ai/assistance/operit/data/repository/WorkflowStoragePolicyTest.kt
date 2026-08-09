@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.data.repository
 
+import java.io.File
+import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -13,6 +15,30 @@ import org.junit.Test
  * repository must uphold, expressed through the [SourcedEntry]/[StorageSource] primitives.
  */
 class WorkflowStoragePolicyTest {
+
+    @Test
+    fun latestExecutionRecordFallsBackToLegacyAndThenPrefersNewerInternalLog() {
+        val root = Files.createTempDirectory("workflow-logs").toFile()
+        val internal = File(root, "internal").apply { mkdirs() }
+        val legacy = File(root, "legacy").apply { mkdirs() }
+        try {
+            val legacyRecord = File(legacy, "legacy.json").apply {
+                writeText("{}")
+                setLastModified(100L)
+            }
+            File(legacy, "ignored.txt").writeText("not a record")
+
+            assertEquals(legacyRecord, latestWorkflowExecutionRecordFile(internal, legacy))
+
+            val internalRecord = File(internal, "internal.json").apply {
+                writeText("{}")
+                setLastModified(200L)
+            }
+            assertEquals(internalRecord, latestWorkflowExecutionRecordFile(internal, legacy))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 
     @Test
     fun internalWinsOnIdConflict_documentedInvariant() {

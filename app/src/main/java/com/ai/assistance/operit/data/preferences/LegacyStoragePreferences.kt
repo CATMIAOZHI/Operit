@@ -37,13 +37,12 @@ private val Context.legacyStorageDataStore: DataStore<Preferences> by
  * - [hiddenLegacyMcpServerIds] keys MCP servers and metadata by stable server id.
  * - [hiddenLegacyWorkflowIds] keys by workflow id (the JSON filename stem).
  *
- * The one-shot initialization guard is deliberately NOT stored in the DataStore. The DataStore
- * lives under `filesDir`, which raw snapshots capture, so restoring a pre-feature snapshot
- * would wipe the flag and let [LegacyStorageInitializer] re-seed (and potentially re-enable
- * compatibility) on the next launch. The guard instead lives in an [AtomicFile] under
- * [Context.noBackupFilesDir] (excluded from raw snapshots), mirroring
- * [com.ai.assistance.operit.data.backup.MigrationStateStore]. A process-wide lock serializes
- * the check-and-seed so concurrent startup callers seed at most once.
+ * The one-shot initialization guard deliberately lives in an [AtomicFile] under
+ * [Context.noBackupFilesDir] (excluded from raw snapshots), while the switches themselves live
+ * in DataStore and are included in snapshots. Restoring a snapshot created before the switches
+ * existed can therefore leave the guard present but the keys absent; [LegacyStorageInitializer]
+ * repairs only those missing keys from the current legacy-directory defaults and never
+ * overwrites an explicit restored choice. A process-wide lock serializes both seed and repair.
  */
 class LegacyStoragePreferences private constructor(private val context: Context) {
 
@@ -113,6 +112,61 @@ class LegacyStoragePreferences private constructor(private val context: Context)
         context.legacyStorageDataStore.edit { it[KEY_READ_LEGACY_WORKFLOWS] = value }
     }
 
+    /**
+     * True only when all three switch keys exist in the current DataStore snapshot. A raw
+     * snapshot created before these keys existed can replace the DataStore while leaving the
+     * no-backup initialization marker intact, so the marker alone is not sufficient evidence
+     * that the switches are still present.
+     */
+    suspend fun hasCompleteReadSwitchState(): Boolean {
+        val prefs = context.legacyStorageDataStore.data.first()
+        return prefs[KEY_READ_LEGACY_SKILLS] != null &&
+            prefs[KEY_READ_LEGACY_MCP] != null &&
+            prefs[KEY_READ_LEGACY_WORKFLOWS] != null
+    }
+
+    /**
+     * Restores only missing switch keys after a pre-feature raw snapshot restore. Existing keys
+     * are never overwritten, preserving every explicit user choice (including `false`).
+     */
+    suspend fun restoreMissingReadSwitches(
+        readSkills: Boolean,
+        readMcp: Boolean,
+        readWorkflows: Boolean,
+    ): Boolean = initMutex.withLock {
+        var changed = false
+        context.legacyStorageDataStore.edit { prefs ->
+            val repaired = repairMissingLegacyReadSwitches(
+                current = LegacyReadSwitchValues(
+                    skills = prefs[KEY_READ_LEGACY_SKILLS],
+                    mcp = prefs[KEY_READ_LEGACY_MCP],
+                    workflows = prefs[KEY_READ_LEGACY_WORKFLOWS],
+                ),
+                defaults = LegacyReadSwitchValues(readSkills, readMcp, readWorkflows),
+            )
+            if (prefs[KEY_READ_LEGACY_SKILLS] == null) {
+                prefs[KEY_READ_LEGACY_SKILLS] = requireNotNull(repaired.skills)
+                changed = true
+            }
+            if (prefs[KEY_READ_LEGACY_MCP] == null) {
+                prefs[KEY_READ_LEGACY_MCP] = requireNotNull(repaired.mcp)
+                changed = true
+            }
+            if (prefs[KEY_READ_LEGACY_WORKFLOWS] == null) {
+                prefs[KEY_READ_LEGACY_WORKFLOWS] = requireNotNull(repaired.workflows)
+                changed = true
+            }
+        }
+        if (changed) {
+            AppLogger.i(
+                TAG,
+                "restored missing legacy storage flags: " +
+                    "skills=$readSkills mcp=$readMcp workflows=$readWorkflows",
+            )
+        }
+        changed
+    }
+
     // ------------------------------------------------------------------
     // One-shot initialization guard (AtomicFile in noBackupFilesDir).
     // ------------------------------------------------------------------
@@ -130,9 +184,9 @@ class LegacyStoragePreferences private constructor(private val context: Context)
     /**
      * Atomically seeds all three read switches and marks initialization complete. Returns true
      * if this call performed the seed, false if initialization had already completed (either on
-     * disk before this call, or concurrently by another caller that won the [initLock]).
+     * disk before this call, or concurrently by another caller that won the [initMutex]).
      *
-     * The check-and-seed is serialized by [initLock] so concurrent callers cannot both seed.
+     * The check-and-seed is serialized by [initMutex] so concurrent callers cannot both seed.
      * The durable guard is the [AtomicFile] written last: if the process dies between the
      * DataStore edit and the AtomicFile write, the next launch re-runs seed, which is safe
      * (seed overwrites the same defaults). The AtomicFile write itself is atomic, so a crash
@@ -260,3 +314,20 @@ class LegacyStoragePreferences private constructor(private val context: Context)
         }
     }
 }
+
+internal data class LegacyReadSwitchValues(
+    val skills: Boolean?,
+    val mcp: Boolean?,
+    val workflows: Boolean?,
+)
+
+/** Fills only missing restored keys; explicit true/false values always win over defaults. */
+internal fun repairMissingLegacyReadSwitches(
+    current: LegacyReadSwitchValues,
+    defaults: LegacyReadSwitchValues,
+): LegacyReadSwitchValues =
+    LegacyReadSwitchValues(
+        skills = current.skills ?: defaults.skills,
+        mcp = current.mcp ?: defaults.mcp,
+        workflows = current.workflows ?: defaults.workflows,
+    )

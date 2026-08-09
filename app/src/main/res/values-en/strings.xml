@@ -8484,4 +8484,14 @@
     <string name="token_stats_detail_tokens">Token breakdown</string>
     <string name="token_stats_detail_close">Close</string>
     <string name="token_stats_detail_open">Tap to view details</string>
+    <string name="settings_legacy_storage_title">Legacy storage compatibility</string>
+    <string name="settings_legacy_storage_description">Choose whether to read legacy content from Download/Operit. Turning this off does not delete the original files.</string>
+    <string name="settings_legacy_skills_title">Read legacy Skills</string>
+    <string name="settings_legacy_skills_description">Show non-hidden Skills from Download/Operit/skills</string>
+    <string name="settings_legacy_mcp_title">Read legacy MCP</string>
+    <string name="settings_legacy_mcp_description">Load legacy MCP configuration and packages from Download/Operit</string>
+    <string name="settings_legacy_workflows_title">Read legacy workflows</string>
+    <string name="settings_legacy_workflows_description">Show and schedule workflows from Download/Operit/workflow</string>
+    <string name="settings_legacy_storage_update_failed">Failed to update legacy storage compatibility</string>
+    <string name="mcp_repository_invalid_plugin_id">Invalid plugin ID; package-directory access was rejected</string>
 </resources>

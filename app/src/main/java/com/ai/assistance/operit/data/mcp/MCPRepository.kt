@@ -26,6 +26,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.CoroutineScope
@@ -93,10 +94,12 @@ class MCPRepository(private val context: Context) {
      * 只返回已存在的目录，绝不创建任何路径。新安装只写内部目录。
      */
     fun resolvePluginPackageDir(pluginId: String): File? {
-        val internal = File(paths.internalMcpPackages, pluginId)
+        val internal = resolveMcpPackageDirectory(paths.internalMcpPackages, pluginId)
+            ?: return null
         if (internal.exists() && internal.isDirectory) return internal
         if (runBlocking { legacyPrefs.isReadLegacyMcp() }) {
-            val legacy = File(paths.legacyMcp, pluginId)
+            val legacy = resolveMcpPackageDirectory(paths.legacyMcp, pluginId)
+                ?: return null
             if (legacy.exists() && legacy.isDirectory) return legacy
         }
         return null
@@ -430,6 +433,10 @@ class MCPRepository(private val context: Context) {
     suspend fun uninstallMCPServer(pluginId: String): Boolean {
         return withContext(Dispatchers.IO) {
             try {
+                if (!isSafeMcpPluginId(pluginId)) {
+                    AppLogger.e(TAG, "拒绝卸载非法插件 ID: $pluginId")
+                    return@withContext false
+                }
                 // 删除插件包目录：内部优先，旧版目录仅在开关开启时解析（用户显式卸载
                 // 是删除该插件自身文件的唯一合法入口；旧版配置 mcp_config.json 永不修改）。
                 val pluginDir = resolvePluginPackageDir(pluginId)
@@ -471,7 +478,10 @@ class MCPRepository(private val context: Context) {
         try {
             AppLogger.d(TAG, "安装插件 - 名称: ${server.name}, URL: ${server.repoUrl}")
 
-            val pluginDir = File(paths.internalMcpPackages, server.id)
+            val pluginDir = resolveMcpPackageDirectory(paths.internalMcpPackages, server.id)
+                ?: return InstallResult.Error(
+                    context.getString(R.string.mcp_repository_invalid_plugin_id)
+                )
             if (pluginDir.exists()) {
                 AppLogger.d(TAG, "删除已存在的插件目录: ${pluginDir.path}")
                 pluginDir.deleteRecursively()
@@ -533,14 +543,20 @@ class MCPRepository(private val context: Context) {
         try {
             AppLogger.d(TAG, "从本地ZIP安装插件 - 名称: ${server.name}, URI: $zipUri")
 
-            val pluginDir = File(paths.internalMcpPackages, server.id)
+            val pluginDir = resolveMcpPackageDirectory(paths.internalMcpPackages, server.id)
+                ?: return InstallResult.Error(
+                    context.getString(R.string.mcp_repository_invalid_plugin_id)
+                )
             if (pluginDir.exists()) {
                 AppLogger.d(TAG, "删除已存在的插件目录: ${pluginDir.path}")
                 pluginDir.deleteRecursively()
             }
             pluginDir.mkdirs()
 
-            val tempFile = File(context.cacheDir, "mcp_${server.id}_local.zip")
+            val tempFile = safeMcpTempFile(context.cacheDir, server.id, "local")
+                ?: return InstallResult.Error(
+                    context.getString(R.string.mcp_repository_invalid_plugin_id)
+                )
             if (tempFile.exists()) tempFile.delete()
 
             progressCallback(InstallProgress.Downloading(0))
@@ -656,7 +672,8 @@ class MCPRepository(private val context: Context) {
         serverId: String,
         progressCallback: (InstallProgress) -> Unit
     ): File? = withContext(Dispatchers.IO) {
-        val tempFile = File(context.cacheDir, "mcp_${serverId}_repo.zip")
+        val tempFile = safeMcpTempFile(context.cacheDir, serverId, "repo")
+            ?: return@withContext null
         
         try {
             val url = URL(zipUrl)
@@ -745,7 +762,8 @@ class MCPRepository(private val context: Context) {
                         continue
                     }
                     
-                    val outFile = File(targetDir, entryName)
+                    val outFile = resolveMcpZipEntryTarget(targetDir, entryName)
+                        ?: throw SecurityException("ZIP entry escapes MCP package root: $entryName")
                     
                     if (entry.isDirectory) {
                         outFile.mkdirs()
@@ -1330,7 +1348,7 @@ class MCPRepository(private val context: Context) {
     }
 
     /**
-     * Legacy MCP 读取开关变更入口（UI 切换时调用；Phase 4 不接 UI，仅提供方法）。
+     * Legacy MCP 读取开关变更入口（设置页切换后调用）。
      *
      * - 开启：重新加载旧版配置并合并进有效配置。
      * - 关闭：先停止/注销所有"仅存在于旧版"且当前启用或已注册的服务器，再清空旧版
@@ -1411,6 +1429,70 @@ class MCPRepository(private val context: Context) {
 }
 
 // ==================== 数据类定义 ====================
+
+/**
+ * Validates a marketplace/local-ZIP plugin ID as a relative package path. Nested IDs such as
+ * `owner/repository` remain supported, while absolute paths, empty segments and traversal are
+ * rejected before any recursive delete, extraction, read or cache write.
+ */
+internal fun isSafeMcpPluginId(pluginId: String): Boolean {
+    val normalized = pluginId.replace('\\', '/')
+    if (
+        normalized.isEmpty() ||
+        normalized.startsWith('/') ||
+        Regex("^[A-Za-z]:").containsMatchIn(normalized)
+    ) {
+        return false
+    }
+    return normalized.split('/').all(::isSafeMcpPathSegment)
+}
+
+private fun isSafeMcpPathSegment(segment: String): Boolean =
+    segment.isNotEmpty() &&
+        segment == segment.trim() &&
+        segment != "." &&
+        segment != ".." &&
+        !segment.endsWith('.') &&
+        segment.none { it == '\u0000' || it in "<>:\"|?*" }
+
+internal fun resolveMcpPackageDirectory(root: File, pluginId: String): File? {
+    if (!isSafeMcpPluginId(pluginId)) return null
+    return runCatching {
+        val canonicalRoot = root.canonicalFile
+        val candidate =
+            pluginId.replace('\\', '/').split('/')
+                .fold(canonicalRoot) { parent, segment -> File(parent, segment) }
+                .canonicalFile
+        candidate.takeIf { it.path.startsWith(canonicalRoot.path + File.separator) }
+    }.getOrNull()
+}
+
+internal fun safeMcpTempFile(cacheDir: File, pluginId: String, purpose: String): File? {
+    if (!isSafeMcpPluginId(pluginId)) return null
+    val digest =
+        MessageDigest.getInstance("SHA-256")
+            .digest(pluginId.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
+    return File(cacheDir, "mcp_${digest}_$purpose.zip")
+}
+
+/** Resolves an archive entry below [targetDir], rejecting absolute and traversal names. */
+internal fun resolveMcpZipEntryTarget(targetDir: File, entryName: String): File? {
+    val normalized = entryName.replace('\\', '/').trimEnd('/')
+    if (
+        normalized.isBlank() ||
+        normalized.startsWith('/') ||
+        Regex("^[A-Za-z]:").containsMatchIn(normalized) ||
+        normalized.split('/').any { !isSafeMcpPathSegment(it) }
+    ) {
+        return null
+    }
+    return runCatching {
+        val canonicalRoot = targetDir.canonicalFile
+        val candidate = File(canonicalRoot, normalized).canonicalFile
+        candidate.takeIf { it.path.startsWith(canonicalRoot.path + File.separator) }
+    }.getOrNull()
+}
 
 /** 统一的工具信息数据类 */
 private data class UnifiedToolInfo(

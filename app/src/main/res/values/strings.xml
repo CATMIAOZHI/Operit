@@ -8465,4 +8465,14 @@
     <string name="token_stats_detail_tokens">Token 明细</string>
     <string name="token_stats_detail_close">关闭</string>
     <string name="token_stats_detail_open">点击查看详细数据</string>
+    <string name="settings_legacy_storage_title">旧版存储兼容</string>
+    <string name="settings_legacy_storage_description">控制是否读取 Download/Operit 中的只读旧版内容。关闭不会删除原文件。</string>
+    <string name="settings_legacy_skills_title">读取旧版 Skills</string>
+    <string name="settings_legacy_skills_description">显示 Download/Operit/skills 中未隐藏的 Skills</string>
+    <string name="settings_legacy_mcp_title">读取旧版 MCP</string>
+    <string name="settings_legacy_mcp_description">加载 Download/Operit 中的旧版 MCP 配置和插件</string>
+    <string name="settings_legacy_workflows_title">读取旧版工作流</string>
+    <string name="settings_legacy_workflows_description">显示并调度 Download/Operit/workflow 中的工作流</string>
+    <string name="settings_legacy_storage_update_failed">更新旧版存储兼容设置失败</string>
+    <string name="mcp_repository_invalid_plugin_id">插件 ID 无效，已拒绝访问包目录</string>
 </resources>
