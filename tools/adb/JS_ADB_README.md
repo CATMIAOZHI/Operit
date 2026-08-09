@@ -82,7 +82,11 @@ If you just want the short answer for "which tool should I use":
 - Android SDK (ADB)
 - Android device with USB debugging enabled
 - ADB debugging permission granted on the device
-- Your application installed on the device
+- The Operit Ry debug application installed on the device
+
+The launchers target com.rainy.operitry by default. Set OPERIT_APP_PACKAGE when the debug build uses another application ID, for example com.rainy.operitry.dev.
+
+Only the debug variant exposes this development entry point, and it requires the system-level android.permission.DUMP permission held by ADB shell rather than ordinary third-party apps. The clone, release, and nightly receivers remain non-exported.
 
 ## Quick Start
 

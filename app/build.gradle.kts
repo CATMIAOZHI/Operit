@@ -488,3 +488,72 @@ dependencies {
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
 }
+
+val verifyScriptExecutionReceiverManifests =
+    tasks.register("verifyScriptExecutionReceiverManifests") {
+        group = "verification"
+        description =
+            "Verifies the merged ScriptExecutionReceiver exposure policy for every app build type."
+        dependsOn(
+            "processDebugMainManifest",
+            "processCloneMainManifest",
+            "processReleaseMainManifest",
+            "processNightlyMainManifest"
+        )
+
+        doLast {
+            val androidNamespace = "http://schemas.android.com/apk/res/android"
+            val receiverClass =
+                "com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver"
+            val expectations =
+                listOf(
+                    Triple("debug", "true", "android.permission.DUMP"),
+                    Triple("clone", "false", ""),
+                    Triple("release", "false", ""),
+                    Triple("nightly", "false", "")
+                )
+
+            expectations.forEach { (variant, expectedExported, expectedPermission) ->
+                val taskSuffix = variant.replaceFirstChar(Char::uppercase)
+                val manifestFile =
+                    layout.buildDirectory
+                        .file(
+                            "intermediates/merged_manifest/$variant/" +
+                                "process${taskSuffix}MainManifest/AndroidManifest.xml"
+                        )
+                        .get()
+                        .asFile
+                check(manifestFile.isFile) {
+                    "Merged manifest does not exist: ${manifestFile.absolutePath}"
+                }
+                val document =
+                    javax.xml.parsers.DocumentBuilderFactory.newInstance()
+                        .apply { isNamespaceAware = true }
+                        .newDocumentBuilder()
+                        .parse(manifestFile)
+                val receivers = document.getElementsByTagName("receiver")
+                val matchingReceivers =
+                    (0 until receivers.length)
+                        .map { receivers.item(it) as org.w3c.dom.Element }
+                        .filter {
+                            it.getAttributeNS(androidNamespace, "name") == receiverClass
+                        }
+                check(matchingReceivers.size == 1) {
+                    "$variant must contain exactly one $receiverClass receiver"
+                }
+                val receiver = matchingReceivers.single()
+                val actualExported = receiver.getAttributeNS(androidNamespace, "exported")
+                val actualPermission = receiver.getAttributeNS(androidNamespace, "permission")
+                check(actualExported == expectedExported) {
+                    "$variant exported=$actualExported, expected $expectedExported"
+                }
+                check(actualPermission == expectedPermission) {
+                    "$variant permission=$actualPermission, expected $expectedPermission"
+                }
+            }
+        }
+    }
+
+tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
+    dependsOn(verifyScriptExecutionReceiverManifests)
+}
