@@ -209,6 +209,16 @@ class TokenUsageStatisticsViewModelTest {
         }
     }
 
+    private fun awaitActivity(viewModel: TokenUsageStatisticsViewModel) {
+        val deadline = System.currentTimeMillis() + 15_000
+        while (viewModel.state.value.activity.loading) {
+            if (System.currentTimeMillis() > deadline) {
+                fail("timed out waiting for activity statistics")
+            }
+            Thread.sleep(10)
+        }
+    }
+
     private suspend fun seedIdentity(
         identityId: String,
         configId: String = "cfg-1",
@@ -629,7 +639,6 @@ class TokenUsageStatisticsViewModelTest {
     fun `first query waits for the readiness gate before loading data`() {
         kotlinx.coroutines.runBlocking {
             seedIdentity("id-1", configId = "cfg-a")
-            dao.insertEvent(event("e1", "id-1", nowMs - 3_600_000L))
         }
         val gate = CompletableDeferred<Unit>()
         val readiness = TokenStatsReadiness { _ ->
@@ -650,12 +659,19 @@ class TokenUsageStatisticsViewModelTest {
         vm.loadForEntry()
         // 门控挂起期间：首次查询不得完成（loading 保持、无结果、无版本推进）
         assertTrue(vm.state.value.loading)
+        Thread.sleep(100)
+        assertTrue("activity query must remain gated with the main statistics", vm.state.value.activity.loading)
         assertEquals(0L, vm.state.value.refreshVersion)
         assertNull(vm.state.value.range)
+        kotlinx.coroutines.runBlocking {
+            dao.insertEvent(event("e1", "id-1", nowMs - 3_600_000L))
+        }
         // 释放门控：查询执行并携带数据完成
         gate.complete(Unit)
         awaitRefresh(vm, 0)
+        awaitActivity(vm)
         assertEquals(1L, vm.state.value.range!!.eventCount)
+        assertEquals(1L, vm.state.value.activity.insights.totalRequests)
         assertFalse(vm.state.value.loading)
     }
 
@@ -1321,6 +1337,48 @@ class TokenUsageStatisticsViewModelTest {
             assertEquals(0L, lifetime.eventTotals.requests)
             assertEquals(0L, lifetime.baselineTotals.identityCount)
         }
+    }
+
+    @Test
+    fun `partial reset failure still refreshes committed Room deletion`() {
+        kotlinx.coroutines.runBlocking {
+            seedIdentity("id-1", configId = "cfg-a")
+            dao.insertEvent(event("e-1", "id-1", startedAtMs = nowMs - 3_600_000L))
+            seedBaseline("id-1")
+        }
+        val viewModel =
+            TokenUsageStatisticsViewModel(
+                context = context,
+                settings = settings,
+                zone = shanghai,
+                nowMs = { nowMs },
+                dao = dao,
+                stringResolver = { "msg-$it" },
+                dispatcher = Dispatchers.Unconfined,
+                readiness = TokenStatsReadiness { true },
+                resetAllWithBaselines = {
+                    dao.resetAllStatisticsTx()
+                    false // Simulate a legacy DataStore outbox drain failure after Room commits.
+                },
+            )
+        viewModel.loadForEntry()
+        awaitRefresh(viewModel, 0)
+        awaitActivity(viewModel)
+        assertEquals(1L, viewModel.state.value.activity.insights.totalRequests)
+
+        val from = viewModel.state.value.refreshVersion
+        viewModel.deleteAllStatistics(deleteBaselines = true)
+        awaitActionMessage(viewModel)
+        awaitRefresh(viewModel, from)
+        awaitActivity(viewModel)
+
+        assertTrue(viewModel.actionMessage.value!!.isError)
+        kotlinx.coroutines.runBlocking {
+            assertEquals(0, dao.countEvents())
+            assertEquals(0, dao.countBaselines())
+        }
+        assertEquals(0L, viewModel.state.value.lifetime!!.eventTotals.requests)
+        assertEquals(0L, viewModel.state.value.activity.insights.totalRequests)
     }
 
     @Test

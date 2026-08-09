@@ -171,6 +171,9 @@ export namespace SoftwareSettings {
      */
     function writeEnvironmentVariable(key: string, value?: string): Promise<EnvironmentVariableWriteResultData>;
 
+    /** Get the app-internal directory used for installed Skills. */
+    function getSkillsDirectory(): Promise<string>;
+
     /**
      * List sandbox packages (built-in and external) with enabled states and management paths.
      */
