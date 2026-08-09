@@ -1,8 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <application>
         <activity
             android:name=".debug.SubagentSliceDebugActivity"
             android:exported="false" />
+
+        <!-- ADB shell drives this development-only entry point. Release variants remain signature protected. -->
+        <receiver
+            android:name=".core.tools.javascript.ScriptExecutionReceiver"
+            tools:remove="android:permission" />
     </application>
 </manifest>

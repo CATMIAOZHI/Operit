@@ -82,7 +82,20 @@ If you just want the short answer for "which tool should I use":
 - Android SDK (ADB)
 - Android device with USB debugging enabled
 - ADB debugging permission granted on the device
-- Your application installed on the device
+- The Operit Ry debug application installed on the device
+
+The launchers target `com.rainy.operitry` by default. Set `OPERIT_APP_PACKAGE` when the debug build uses another application ID, for example `com.rainy.operitry.dev`:
+
+```bash
+OPERIT_APP_PACKAGE=com.rainy.operitry.dev ./execute_js.sh path/to/your/script.js functionName '{}'
+```
+
+```cmd
+set OPERIT_APP_PACKAGE=com.rainy.operitry.dev
+execute_js.bat path\to\your\script.js functionName @params.json
+```
+
+Only the `debug` variant exposes this ADB shell development entry point. `clone`, `release`, and `nightly` keep the receiver behind the app's signature permission and reject ordinary shell broadcasts.
 
 ## Quick Start
 
