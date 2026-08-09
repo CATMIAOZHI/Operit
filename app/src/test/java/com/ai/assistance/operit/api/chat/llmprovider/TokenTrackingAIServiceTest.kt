@@ -285,9 +285,13 @@ class TokenTrackingAIServiceTest {
                     }
                 }
                 val firstDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-                while (TokenStatSpool.pendingLatchCountForTest() == 0 && System.nanoTime() < firstDeadline) {
+                while (TokenStatSpool.activeInsertCountForTest() == 0 && System.nanoTime() < firstDeadline) {
                     delay(10)
                 }
+                assertTrue(
+                    "the first Room insert must be active before restore starts",
+                    TokenStatSpool.activeInsertCountForTest() > 0,
+                )
                 try {
                     TokenStatSpool.withExclusiveSnapshotAccess(context, drainBefore = false, clearAfter = true) { }
                     fail("restore must fail bounded while the caller's insert is still live")
@@ -312,9 +316,13 @@ class TokenTrackingAIServiceTest {
                     }
                 }
                 val secondDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-                while (TokenStatSpool.pendingLatchCountForTest() == 0 && System.nanoTime() < secondDeadline) {
+                while (TokenStatSpool.activeInsertCountForTest() == 0 && System.nanoTime() < secondDeadline) {
                     delay(10)
                 }
+                assertTrue(
+                    "the second Room insert must be active before restore starts",
+                    TokenStatSpool.activeInsertCountForTest() > 0,
+                )
                 try {
                     TokenStatSpool.withExclusiveSnapshotAccess(context, drainBefore = false, clearAfter = true) { }
                     fail("restore must fail bounded while the caller's insert is still live")
