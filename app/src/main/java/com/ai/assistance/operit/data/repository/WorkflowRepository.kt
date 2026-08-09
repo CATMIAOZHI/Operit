@@ -34,6 +34,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
+import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -141,14 +142,32 @@ class WorkflowRepository(private val context: Context) {
 
     /** Internal primary workflow definition file (always writable). */
     private fun getInternalWorkflowFile(workflowId: String): File =
-        File(paths.internalWorkflows, "$workflowId.json")
+        requireNotNull(
+            resolveWorkflowStorageChild(
+                root = paths.internalWorkflows,
+                workflowId = workflowId,
+                suffix = ".json",
+                trustedAnchor = paths.internalRoot,
+            )
+        ) {
+            "Invalid workflow id"
+        }
 
     /**
      * Legacy `Download/Operit/workflow/<id>.json`. Non-creating: never calls mkdirs. Only
      * consulted when the legacy read switch is on.
      */
     private fun getLegacyWorkflowFile(workflowId: String): File =
-        File(paths.legacyWorkflows, "$workflowId.json")
+        requireNotNull(
+            resolveWorkflowStorageChild(
+                root = paths.legacyWorkflows,
+                workflowId = workflowId,
+                suffix = ".json",
+                trustedAnchor = requireNotNull(paths.legacyRoot.parentFile),
+            )
+        ) {
+            "Invalid workflow id"
+        }
 
     /**
      * Resolves the effective file for [id]: internal first, then legacy (gated by the read
@@ -179,7 +198,15 @@ class WorkflowRepository(private val context: Context) {
 
     private fun getExecutionLogDirectory(workflowId: String, createIfMissing: Boolean = true): File {
         // Execution logs live under noBackupFilesDir (excluded from raw snapshots).
-        val dir = File(paths.internalWorkflowLogs, workflowId)
+        val dir = requireNotNull(
+            resolveWorkflowStorageChild(
+                root = paths.internalWorkflowLogs,
+                workflowId = workflowId,
+                trustedAnchor = context.noBackupFilesDir,
+            )
+        ) {
+            "Invalid workflow id"
+        }
         if (createIfMissing && !dir.exists()) {
             dir.mkdirs()
         }
@@ -192,7 +219,13 @@ class WorkflowRepository(private val context: Context) {
      * workflow-definition switch because these are historical user-visible run records.
      */
     private fun getLegacyExecutionLogDirectory(workflowId: String): File =
-        File(paths.legacyWorkflows, "_execution_logs/$workflowId")
+        requireNotNull(
+            resolveWorkflowStorageChild(
+                File(paths.legacyWorkflows, "_execution_logs"),
+                workflowId,
+                trustedAnchor = requireNotNull(paths.legacyRoot.parentFile),
+            )
+        ) { "Invalid workflow id" }
 
     private fun saveExecutionRecord(record: WorkflowExecutionRecord) {
         try {
@@ -308,14 +341,25 @@ class WorkflowRepository(private val context: Context) {
             val seenIds = mutableSetOf<String>()
 
             // 1. Scan internal primary store first (internal wins on id conflict).
-            scanWorkflowDir(paths.internalWorkflows, seenIds, workflows)
+            scanWorkflowDir(
+                paths.internalWorkflows,
+                seenIds,
+                workflows,
+                trustedAnchor = paths.internalRoot,
+            )
 
             // 2. Scan legacy Download store only if the read switch is on.
             if (legacyPrefs.isReadLegacyWorkflows()) {
                 val hidden = legacyPrefs.hiddenLegacyWorkflowIds()
                 val legacyDir = paths.legacyWorkflows
                 if (legacyDir.isDirectory) {
-                    scanWorkflowDir(legacyDir, seenIds, workflows, skipIds = hidden)
+                    scanWorkflowDir(
+                        legacyDir,
+                        seenIds,
+                        workflows,
+                        skipIds = hidden,
+                        trustedAnchor = requireNotNull(paths.legacyRoot.parentFile),
+                    )
                 }
             }
 
@@ -331,9 +375,10 @@ class WorkflowRepository(private val context: Context) {
         dir: File,
         seenIds: MutableSet<String>,
         out: MutableList<Workflow>,
-        skipIds: Set<String> = emptySet()
+        skipIds: Set<String> = emptySet(),
+        trustedAnchor: File = dir,
     ) {
-        val files = dir.listFiles { f -> f.isFile && f.extension == "json" } ?: return
+        val files = canonicalWorkflowJsonFiles(dir, trustedAnchor)
         for (file in files) {
             val id = file.nameWithoutExtension
             if (id in seenIds) continue   // internal already wins; skip the legacy copy
@@ -817,7 +862,10 @@ class WorkflowRepository(private val context: Context) {
             notifyWorkflowsChanged()
             return@withContext
         }
-        val files = legacyDir.listFiles { f -> f.isFile && f.extension == "json" } ?: emptyArray()
+        val files = canonicalWorkflowJsonFiles(
+            legacyDir,
+            requireNotNull(paths.legacyRoot.parentFile),
+        )
         for (file in files) {
             val id = file.nameWithoutExtension
             if (id in hidden) continue
@@ -1002,6 +1050,81 @@ class WorkflowRepository(private val context: Context) {
     }
 }
 
+/**
+ * Resolves one workflow-owned file or directory directly below [root]. Workflow IDs are file
+ * identities, not paths: separators, NULs and dot-directory aliases are rejected, while ordinary
+ * user-visible characters remain compatible. Canonical parent equality also protects callers if
+ * a managed root or child is replaced with a symlink.
+ */
+internal fun resolveWorkflowStorageChild(
+    root: File,
+    workflowId: String,
+    suffix: String = "",
+    trustedAnchor: File = root,
+): File? {
+    if (!isWorkflowManagedRootTrusted(root, trustedAnchor)) return null
+    if (
+        workflowId.isBlank() ||
+        workflowId == "." ||
+        workflowId == ".." ||
+        workflowId.indexOf('\u0000') >= 0 ||
+        workflowId.indexOf('/') >= 0 ||
+        workflowId.indexOf('\\') >= 0
+    ) {
+        return null
+    }
+    return runCatching {
+        val canonicalAnchor = trustedAnchor.canonicalFile
+        val canonicalRoot = root.canonicalFile
+        if (
+            canonicalRoot != canonicalAnchor &&
+            !canonicalRoot.path.startsWith(canonicalAnchor.path + File.separator)
+        ) {
+            return@runCatching null
+        }
+        File(canonicalRoot, workflowId + suffix)
+            .canonicalFile
+            .takeIf { candidate -> candidate.parentFile == canonicalRoot }
+    }.getOrNull()
+}
+
+/** Lists JSON files whose canonical target remains a direct child of [directory]. */
+internal fun canonicalWorkflowJsonFiles(
+    directory: File,
+    trustedAnchor: File = directory,
+): List<File> {
+    if (!isWorkflowManagedRootTrusted(directory, trustedAnchor)) return emptyList()
+    val canonicalAnchor = runCatching { trustedAnchor.canonicalFile }.getOrNull() ?: return emptyList()
+    val canonicalDirectory = runCatching { directory.canonicalFile }.getOrNull() ?: return emptyList()
+    if (
+        canonicalDirectory != canonicalAnchor &&
+        !canonicalDirectory.path.startsWith(canonicalAnchor.path + File.separator)
+    ) {
+        return emptyList()
+    }
+    if (!canonicalDirectory.isDirectory) return emptyList()
+    return canonicalDirectory.listFiles { file -> file.isFile && file.extension == "json" }
+        .orEmpty()
+        .filter { file ->
+            !Files.isSymbolicLink(file.toPath()) &&
+                runCatching { file.canonicalFile.parentFile == canonicalDirectory }.getOrDefault(false)
+        }
+}
+
+/** Rejects a managed root when it or any lexical component below [trustedAnchor] is a symlink. */
+private fun isWorkflowManagedRootTrusted(root: File, trustedAnchor: File): Boolean {
+    val anchorPath = trustedAnchor.toPath().toAbsolutePath().normalize()
+    val rootPath = root.toPath().toAbsolutePath().normalize()
+    if (!rootPath.startsWith(anchorPath) || Files.isSymbolicLink(anchorPath)) return false
+
+    var current = rootPath
+    while (current != anchorPath) {
+        if (Files.isSymbolicLink(current)) return false
+        current = current.parent ?: return false
+    }
+    return true
+}
+
 internal fun workflowDeletionSucceeded(
     internalExisted: Boolean,
     internalRemoved: Boolean,
@@ -1011,10 +1134,5 @@ internal fun workflowDeletionSucceeded(
 /** Selects the newest record across the private runtime root and the pre-migration legacy root. */
 internal fun latestWorkflowExecutionRecordFile(vararg directories: File): File? =
     directories.asSequence()
-        .filter { it.isDirectory }
-        .flatMap { dir ->
-            dir.listFiles { file -> file.isFile && file.extension == "json" }
-                .orEmpty()
-                .asSequence()
-        }
+        .flatMap { directory -> canonicalWorkflowJsonFiles(directory).asSequence() }
         .maxWithOrNull(compareBy<File>({ it.lastModified() }, { it.name }))

@@ -20,6 +20,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -904,6 +905,11 @@ class MCPLocalServer private constructor(private val context: Context) {
         return true
     }
 
+    /** True when the server still exists in the current internal + enabled-legacy view. */
+    fun hasEffectiveServer(serverId: String): Boolean =
+        serverId in _effectiveConfig.value.mcpServers ||
+            serverId in _effectiveConfig.value.pluginMetadata
+
     /**
      * 设置服务器启用状态
      * 本地插件写入 mcpServers.disabled；远程插件写入 pluginMetadata.disabled。
@@ -1192,8 +1198,8 @@ class MCPLocalServer private constructor(private val context: Context) {
      *
      * - 开启：重新读取旧版配置（文件存在时）并合并进有效配置。
      * - 关闭：清空旧版配置并重算有效配置。运行时停止/注销"旧版专属"服务器由
-     *   [MCPRepository.onLegacyReadSwitchChanged] 编排（必须先停止再调用本方法，
-     *   这样写时复制提升时旧版条目仍然可读）。
+     *   [MCPRepository.onLegacyReadSwitchChanged] 编排；该仓库会先捕获旧版运行时信息，
+     *   再调用本方法关闭自动激活入口，最后清理运行时，不写入内部 disabled 副本。
      */
     suspend fun onLegacyReadSwitchChanged(nowEnabled: Boolean) = withContext(Dispatchers.IO) {
         _legacyConfig.value = if (nowEnabled) loadLegacyConfigOrEmpty() else MCPConfig()
@@ -1222,6 +1228,60 @@ class MCPLocalServer private constructor(private val context: Context) {
         return legacyIds.filter {
             it !in internalIds && it !in _hiddenLegacyServerIds.value
         }.toSet()
+    }
+}
+
+/**
+ * Process-wide suppression for legacy MCP entries while their read source is disabled. The
+ * effective-config check also rejects deleted/unknown IDs, whose historical `isServerEnabled`
+ * fallback is intentionally permissive for older callers.
+ */
+internal object McpRuntimeActivationGate {
+    private val suppressedLegacyIds = ConcurrentHashMap.newKeySet<String>()
+
+    fun suppressLegacy(ids: Collection<String>): Set<String> =
+        ids.filterTo(mutableSetOf()) { id -> suppressedLegacyIds.add(id) }
+
+    fun rollbackSuppression(ids: Collection<String>) {
+        suppressedLegacyIds.removeAll(ids.toSet())
+    }
+
+    fun resumeLegacyReads() {
+        suppressedLegacyIds.clear()
+    }
+
+    fun isActivationAllowed(
+        serverId: String,
+        hasEffectiveServer: Boolean,
+        isEnabled: Boolean,
+    ): Boolean = serverId !in suppressedLegacyIds && hasEffectiveServer && isEnabled
+}
+
+internal fun MCPLocalServer.isRuntimeActivationAllowed(serverId: String): Boolean =
+    McpRuntimeActivationGate.isActivationAllowed(
+        serverId = serverId,
+        hasEffectiveServer = hasEffectiveServer(serverId),
+        isEnabled = isServerEnabled(serverId),
+    )
+
+/** Runs one runtime side effect only while activation remains allowed, cleaning up on revocation. */
+internal suspend fun <T> runWithMcpRuntimeActivationGuard(
+    isAllowed: () -> Boolean,
+    onRevoked: suspend () -> Unit = {},
+    action: suspend () -> T,
+): T? {
+    if (!isAllowed()) return null
+    return try {
+        val result = action()
+        if (isAllowed()) {
+            result
+        } else {
+            onRevoked()
+            null
+        }
+    } catch (e: Exception) {
+        if (!isAllowed()) onRevoked()
+        throw e
     }
 }
 

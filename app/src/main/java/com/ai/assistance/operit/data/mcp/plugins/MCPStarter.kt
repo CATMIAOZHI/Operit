@@ -7,6 +7,8 @@ import com.ai.assistance.operit.core.tools.mcp.MCPManager
 import com.ai.assistance.operit.core.tools.mcp.MCPServerConfig
 import com.ai.assistance.operit.data.mcp.MCPLocalServer
 import com.ai.assistance.operit.data.mcp.MCPRepository
+import com.ai.assistance.operit.data.mcp.isRuntimeActivationAllowed
+import com.ai.assistance.operit.data.mcp.runWithMcpRuntimeActivationGuard
 import com.ai.assistance.operit.core.tools.system.Terminal
 import com.google.gson.Gson
 import com.google.gson.JsonParser
@@ -183,6 +185,11 @@ class MCPStarter(private val context: Context) {
             AppLogger.d(TAG, "Refreshing MCP config before starting plugin: $pluginId")
             mcpRepository.refreshPluginList()
 
+            if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                statusCallback(StartStatus.Error("Plugin is disabled or unavailable: $pluginId"))
+                return false
+            }
+
             val pluginInfo = mcpRepository.getInstalledPluginInfo(pluginId)
             if (pluginInfo == null) {
                 statusCallback(StartStatus.Error("Plugin info not found: $pluginId"))
@@ -259,7 +266,7 @@ class MCPStarter(private val context: Context) {
             }
 
             // Check if plugin is enabled by the user
-            val isEnabled = mcpLocalServer.isServerEnabled(pluginId) // 从配置读取
+            val isEnabled = mcpLocalServer.isRuntimeActivationAllowed(pluginId)
             if (!isEnabled) {
                 statusCallback(StartStatus.Error("Plugin not enabled by user: $pluginId"))
                 return false
@@ -292,6 +299,11 @@ class MCPStarter(private val context: Context) {
 
                 val bridge = MCPBridge.getInstance(context)
 
+                if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                    statusCallback(StartStatus.Error("Plugin is disabled or unavailable: $pluginId"))
+                    return false
+                }
+
                 // Register remote service with the bridge
                 val registerResult =
                     bridge.registerMcpService(
@@ -309,9 +321,20 @@ class MCPStarter(private val context: Context) {
                     return false
                 }
 
+                if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                    bridge.unspawnMcpService(serverName)
+                    statusCallback(StartStatus.Error("Plugin was disabled while starting: $pluginId"))
+                    return false
+                }
+
                 // "Connect" the remote service to trigger a connection and verify
                 val client = MCPBridgeClient(context, serverName)
                 val connectSuccess = client.connect() // connect will try to spawn if not active
+                if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                    bridge.unspawnMcpService(serverName)
+                    statusCallback(StartStatus.Error("Plugin was disabled while starting: $pluginId"))
+                    return false
+                }
                 if (!connectSuccess) {
                     statusCallback(StartStatus.Error("Failed to connect to remote MCP service"))
                     return false
@@ -372,6 +395,11 @@ class MCPStarter(private val context: Context) {
             val bridge = MCPBridge.getInstance(context)
             val termuxPluginDir = mcpLocalServer.getPluginRuntimeDirectory(pluginId)
 
+            if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                statusCallback(StartStatus.Error("Plugin is disabled or unavailable: $pluginId"))
+                return false
+            }
+
             // Register MCP service
             val registerResult =
                 bridge.registerMcpService(
@@ -388,9 +416,21 @@ class MCPStarter(private val context: Context) {
                 return false
             }
 
+            if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                bridge.unspawnMcpService(extractedServerName)
+                statusCallback(StartStatus.Error("Plugin was disabled while starting: $pluginId"))
+                return false
+            }
+
             // Start and verify MCP service using the client
             val client = MCPBridgeClient(context, extractedServerName)
             val connectSuccess = client.connect()
+
+            if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                bridge.unspawnMcpService(extractedServerName)
+                statusCallback(StartStatus.Error("Plugin was disabled while starting: $pluginId"))
+                return false
+            }
 
             if (connectSuccess) {
                 statusCallback(StartStatus.Success("Service $pluginId started successfully"))
@@ -440,7 +480,7 @@ class MCPStarter(private val context: Context) {
                 // Get all installed plugins and partition into enabled and disabled
                 val allInstalledPlugins = mcpRepository.installedPluginIds.first()
                 val (pluginsToStart, disabledPlugins) = allInstalledPlugins.partition { pluginId ->
-                    mcpLocalServer.isServerEnabled(pluginId)
+                    mcpLocalServer.isRuntimeActivationAllowed(pluginId)
                 }
 
                 // Get the list of currently registered services from the bridge
@@ -593,6 +633,10 @@ class MCPStarter(private val context: Context) {
         val mcpRepository = MCPRepository(context)
         val pluginInfo = mcpRepository.getInstalledPluginInfo(pluginId)
 
+        if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+            return VerificationResult(pluginId, serviceName, false, 0, "Plugin disabled")
+        }
+
         val needsSpawning =
             !mcpLocalServer.hasValidToolCache(pluginId) || pluginInfo?.description.isNullOrBlank()
 
@@ -601,7 +645,11 @@ class MCPStarter(private val context: Context) {
             val client = MCPBridgeClient(context, serviceName)
 
             val startTime = System.currentTimeMillis()
-            val spawnResp = client.spawnBlocking()
+            val spawnResp = runWithMcpRuntimeActivationGuard(
+                isAllowed = { mcpLocalServer.isRuntimeActivationAllowed(pluginId) },
+                onRevoked = { client.unspawn() },
+            ) { client.spawnBlocking() }
+                ?: return VerificationResult(pluginId, serviceName, false, 0, "Plugin disabled")
             val responseTime = System.currentTimeMillis() - startTime
 
             val success = spawnResp?.optBoolean("success", false) == true
@@ -620,6 +668,10 @@ class MCPStarter(private val context: Context) {
             val result: VerificationResult
             if (success && ready) {
                 cacheToolsFromService(pluginId, serviceName)
+                if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                    client.unspawn()
+                    return VerificationResult(pluginId, serviceName, false, 0, "Plugin disabled")
+                }
                 result = VerificationResult(
                     pluginId,
                     serviceName,
@@ -653,7 +705,14 @@ class MCPStarter(private val context: Context) {
         } else {
             AppLogger.d(TAG, "Processing cached plugin: $pluginId")
             sendCachedToolsToBridge(pluginId, serviceName)
-            return VerificationResult(pluginId, serviceName, true, 0, "Using cached tools")
+            val stillAllowed = mcpLocalServer.isRuntimeActivationAllowed(pluginId)
+            return VerificationResult(
+                pluginId,
+                serviceName,
+                stillAllowed,
+                0,
+                if (stillAllowed) "Using cached tools" else "Plugin disabled",
+            )
         }
     }
 
@@ -664,9 +723,10 @@ class MCPStarter(private val context: Context) {
         try {
             val mcpRepository = MCPRepository(context)
             val pluginInfo = mcpRepository.getInstalledPluginInfo(pluginId) ?: return null
+            val mcpLocalServer = MCPLocalServer.getInstance(context)
+            if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) return null
 
             if (pluginInfo.type == "local") {
-                val mcpLocalServer = MCPLocalServer.getInstance(context)
                 if (!mcpLocalServer.isPluginRuntimeReady(pluginId)) {
                     val deployer = MCPDeployer(context)
                     val pluginPath = mcpRepository.getInstalledPluginPath(pluginId) ?: return null
@@ -714,6 +774,8 @@ class MCPStarter(private val context: Context) {
                     pluginId.split("/").last().lowercase()
                 }
             var actualServiceName = serverName
+
+            if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) return null
 
             val registerResult =
                 when (pluginInfo.type) {
@@ -765,6 +827,11 @@ class MCPStarter(private val context: Context) {
                     else -> null
                 }
 
+            if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                bridge.unspawnMcpService(actualServiceName)
+                return null
+            }
+
             return if (registerResult?.optBoolean("success", false) == true) actualServiceName else null
         } catch (e: Exception) {
             AppLogger.e(TAG, "Failed to register plugin $pluginId", e)
@@ -808,7 +875,10 @@ class MCPStarter(private val context: Context) {
 
             AppLogger.d(TAG, "开始为插件 $pluginId 缓存工具列表")
             val client = MCPBridgeClient(context, serviceName)
-            val tools = client.getTools()
+            val tools = runWithMcpRuntimeActivationGuard(
+                isAllowed = { mcpLocalServer.isRuntimeActivationAllowed(pluginId) },
+                onRevoked = { client.unspawn() },
+            ) { client.getTools() } ?: return
 
             if (tools.isNotEmpty()) {
                 val cachedTools = tools.map { toolJson ->
@@ -823,7 +893,11 @@ class MCPStarter(private val context: Context) {
                         cachedAt = System.currentTimeMillis()
                     )
                 }
-                
+
+                if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                    client.unspawn()
+                    return
+                }
                 mcpLocalServer.cacheServerTools(pluginId, cachedTools)
                 AppLogger.i(TAG, "成功缓存插件 $pluginId 的 ${cachedTools.size} 个工具")
             } else {
@@ -841,6 +915,7 @@ class MCPStarter(private val context: Context) {
     private suspend fun sendCachedToolsToBridge(pluginId: String, serviceName: String) {
         try {
             val mcpLocalServer = MCPLocalServer.getInstance(context)
+            if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) return
             val cachedTools = mcpLocalServer.getCachedTools(pluginId)
 
             if (cachedTools == null || cachedTools.isEmpty()) {
@@ -861,7 +936,9 @@ class MCPStarter(private val context: Context) {
 
             // 发送到bridge
             val bridge = MCPBridge.getInstance(context)
-            val result = bridge.cacheTools(serviceName, toolJsonList)
+            val result = runWithMcpRuntimeActivationGuard(
+                isAllowed = { mcpLocalServer.isRuntimeActivationAllowed(pluginId) },
+            ) { bridge.cacheTools(serviceName, toolJsonList) } ?: return
 
             if (result?.optBoolean("success", false) == true) {
                 AppLogger.i(TAG, "成功将插件 $pluginId 的工具缓存发送到bridge")
@@ -913,6 +990,7 @@ class MCPStarter(private val context: Context) {
 
             for (result in respondingPlugins) {
                 try {
+                    if (!mcpLocalServer.isRuntimeActivationAllowed(result.pluginId)) continue
                     // 获取插件信息
                     val pluginInfo = mcpRepository.getInstalledPluginInfo(result.pluginId)
 
@@ -922,7 +1000,12 @@ class MCPStarter(private val context: Context) {
 
                         // 获取工具描述
                         val client = MCPBridgeClient(context, result.serviceName)
-                        val toolDescriptions = client.getToolDescriptions()
+                        val toolDescriptions = runWithMcpRuntimeActivationGuard(
+                            isAllowed = {
+                                mcpLocalServer.isRuntimeActivationAllowed(result.pluginId)
+                            },
+                            onRevoked = { client.unspawn() },
+                        ) { client.getToolDescriptions() } ?: continue
 
                         if (toolDescriptions.isNotEmpty()) {
                             // 调用EnhancedAIService生成描述
@@ -935,6 +1018,7 @@ class MCPStarter(private val context: Context) {
 
                             // 只有在AI成功生成描述时才保存，失败时保持原有的空描述
                             if (generatedDescription.isNotBlank()) {
+                                if (!mcpLocalServer.isRuntimeActivationAllowed(result.pluginId)) continue
                                 val updatedMetadata =
                                     pluginInfo.copy(description = generatedDescription)
                                 mcpLocalServer.addOrUpdatePluginMetadata(updatedMetadata)
@@ -969,7 +1053,8 @@ class MCPStarter(private val context: Context) {
             // Get plugins whose runtime workspaces are ready
             val pluginList = mcpRepository.installedPluginIds.first()
             val runtimeReadyPlugins = pluginList.filter { pluginId ->
-                mcpLocalServer.isPluginRuntimeReady(pluginId)
+                mcpLocalServer.isRuntimeActivationAllowed(pluginId) &&
+                    mcpLocalServer.isPluginRuntimeReady(pluginId)
             }
 
             // Get registered services
@@ -991,6 +1076,7 @@ class MCPStarter(private val context: Context) {
 
             // Verify each plugin
             for (pluginId in runtimeReadyPlugins) {
+                if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) continue
                 val pluginConfig = mcpLocalServer.getPluginConfig(pluginId)
                 val serverName =
                     extractServerNameFromConfig(pluginConfig)
@@ -1012,7 +1098,10 @@ class MCPStarter(private val context: Context) {
                 // Verify service status
                 val client = MCPBridgeClient(context, serverName)
                 val startTime = System.currentTimeMillis()
-                val pingSuccess = client.pingSync()
+                val pingSuccess = runWithMcpRuntimeActivationGuard(
+                    isAllowed = { mcpLocalServer.isRuntimeActivationAllowed(pluginId) },
+                    onRevoked = { client.unspawn() },
+                ) { client.pingSync() } ?: false
                 val responseTime = System.currentTimeMillis() - startTime
 
                 if (pingSuccess) {

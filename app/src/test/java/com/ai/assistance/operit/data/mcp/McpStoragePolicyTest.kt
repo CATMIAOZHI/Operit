@@ -60,13 +60,89 @@ class McpStoragePolicyTest {
                 File(File(target, "nested"), "file.txt").canonicalFile,
                 resolveMcpZipEntryTarget(target, "nested/file.txt"),
             )
+            listOf(
+                "docs/Getting Started.md",
+                "文档/安装说明（本地）.md",
+                "assets/icon (dark).png",
+            ).forEach { ordinaryName ->
+                assertEquals(
+                    File(target, ordinaryName.replace('/', File.separatorChar)).canonicalFile,
+                    resolveMcpZipEntryTarget(target, ordinaryName),
+                )
+            }
             assertNull(resolveMcpZipEntryTarget(target, "../outside.txt"))
             assertNull(resolveMcpZipEntryTarget(target, "/absolute.txt"))
+            assertNull(resolveMcpZipEntryTarget(target, "C:/absolute.txt"))
+            assertNull(resolveMcpZipEntryTarget(target, "C:\\absolute.txt"))
+            assertNull(resolveMcpZipEntryTarget(target, "nested\\file.txt"))
             assertNull(resolveMcpZipEntryTarget(target, "nested\\..\\..\\outside.txt"))
+            assertNull(resolveMcpZipEntryTarget(target, "nul\u0000name.txt"))
         } finally {
             cache.deleteRecursively()
             target.deleteRecursively()
         }
+    }
+
+    @Test
+    fun legacyRuntimeRestoreSelectsOnlyEnabledInstalledLegacyServers() {
+        val restored = mcpLegacyRuntimeRestoreIds(
+            legacyOnlyIds = setOf("enabled", "disabled", "missing"),
+            installedIds = setOf("enabled", "disabled"),
+            isEnabled = { it != "disabled" },
+        )
+
+        assertEquals(listOf("enabled"), restored)
+    }
+
+    @Test
+    fun legacyRuntimeSuppressionRejectsMissingAndSuppressedServers() {
+        val legacyId = "legacy-only"
+        try {
+            assertFalse(
+                McpRuntimeActivationGate.isActivationAllowed(
+                    serverId = "missing",
+                    hasEffectiveServer = false,
+                    isEnabled = true,
+                )
+            )
+            McpRuntimeActivationGate.suppressLegacy(listOf(legacyId))
+            assertFalse(
+                McpRuntimeActivationGate.isActivationAllowed(
+                    serverId = legacyId,
+                    hasEffectiveServer = true,
+                    isEnabled = true,
+                )
+            )
+        } finally {
+            McpRuntimeActivationGate.resumeLegacyReads()
+        }
+        assertTrue(
+            McpRuntimeActivationGate.isActivationAllowed(
+                serverId = legacyId,
+                hasEffectiveServer = true,
+                isEnabled = true,
+            )
+        )
+    }
+
+    @Test
+    fun runtimeGuardCleansUpWhenSuppressedDuringAProductionSideEffect() = runBlocking {
+        var allowed = true
+        var actionRan = false
+        var cleanupRan = false
+
+        val result = runWithMcpRuntimeActivationGuard(
+            isAllowed = { allowed },
+            onRevoked = { cleanupRan = true },
+        ) {
+            actionRan = true
+            allowed = false
+            "spawned"
+        }
+
+        assertTrue(actionRan)
+        assertTrue(cleanupRan)
+        assertNull(result)
     }
 
     @Test
