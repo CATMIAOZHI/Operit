@@ -4884,7 +4884,7 @@ class TokenStatReliabilityTest {
                     if (calls <= 4) TokenStatSpool.DirSyncResult.OK else result
                 }
                 TokenStatSpool.replay(context)
-                delay(900)
+                awaitSummaryPublishedAndSegmentGone(spool, "sealed_2.jsonl")
                 // 摘要已发布（可见）、段已删除（可见）但目录项未确认：本轮不得声称完成——
                 // 无事件入 Room；恢复后摘要不重复。目录 sync 未恢复前严格读取不信任 canonical
                 // （P1-2），此处直接断言摘要文件可见。
@@ -5757,6 +5757,15 @@ class TokenStatReliabilityTest {
     private suspend fun awaitSegmentGone(spool: File, name: String) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
         while (System.nanoTime() < deadline && File(spool, name).exists()) delay(20)
+    }
+
+    private suspend fun awaitSummaryPublishedAndSegmentGone(spool: File, segmentName: String) {
+        val summary = File(spool, "quarantine_summary.jsonl")
+        val segment = File(spool, segmentName)
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (System.nanoTime() < deadline && (!summary.isFile || segment.exists())) {
+            delay(20)
+        }
     }
 
     private suspend fun awaitManifestWithout(spool: File, name: String) {

@@ -472,9 +472,6 @@ class WorkflowRepository(private val context: Context) {
      */
     suspend fun deleteWorkflow(id: String): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
-            // Cancel schedule first
-            unscheduleWorkflow(id)
-
             val internal = getInternalWorkflowFile(id)
             val legacy = getLegacyWorkflowFile(id)
             val internalExisted = internal.exists() && internal.isFile
@@ -483,21 +480,29 @@ class WorkflowRepository(private val context: Context) {
             // resurrect it after the internal copy is deleted — so hide it now regardless.
             val legacyExisted = legacy.exists() && legacy.isFile
 
-            var deleted = false
-            if (internalExisted) {
-                deleted = internal.delete()
-            }
+            val internalRemoved =
+                !internalExisted || internal.delete() || !internal.exists()
 
             // If a legacy copy still exists, hide it so it does not reappear on the next scan.
             if (legacyExisted) {
                 legacyPrefs.hideLegacyWorkflowId(id)
-                deleted = true
             }
 
-            runCatching {
-                val logDir = getExecutionLogDirectory(id, createIfMissing = false)
-                if (logDir.exists()) {
-                    logDir.deleteRecursively()
+            val deleted =
+                workflowDeletionSucceeded(
+                    internalExisted = internalExisted,
+                    internalRemoved = internalRemoved,
+                    legacyExisted = legacyExisted
+                )
+
+            if (deleted) {
+                // Keep an enabled workflow scheduled when its file could not be removed.
+                unscheduleWorkflow(id)
+                runCatching {
+                    val logDir = getExecutionLogDirectory(id, createIfMissing = false)
+                    if (logDir.exists()) {
+                        logDir.deleteRecursively()
+                    }
                 }
             }
 
@@ -991,3 +996,9 @@ class WorkflowRepository(private val context: Context) {
         }
     }
 }
+
+internal fun workflowDeletionSucceeded(
+    internalExisted: Boolean,
+    internalRemoved: Boolean,
+    legacyExisted: Boolean
+): Boolean = if (internalExisted) internalRemoved else legacyExisted

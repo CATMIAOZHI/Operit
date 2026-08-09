@@ -30,13 +30,12 @@ private val Context.legacyStorageDataStore: DataStore<Preferences> by
  * off otherwise (including fresh installs). After initialization the user's choice is final and
  * the app never re-flips the switches automatically.
  *
- * Two hidden-lists record legacy entries the user has deleted in-app so that they do not
+ * Three hidden-lists record legacy entries the user has deleted in-app so that they do not
  * reappear on the next scan:
  * - [hiddenLegacySkillPaths] keys by relative skill directory path (the YAML `name` can change,
  *   so the directory path is the stable identity).
+ * - [hiddenLegacyMcpServerIds] keys MCP servers and metadata by stable server id.
  * - [hiddenLegacyWorkflowIds] keys by workflow id (the JSON filename stem).
- * MCP has no hidden-list because legacy MCP removal goes through a server-id promotion /
- * stop-API path rather than a hide-on-delete flow.
  *
  * The one-shot initialization guard is deliberately NOT stored in the DataStore. The DataStore
  * lives under `filesDir`, which raw snapshots capture, so restoring a pre-feature snapshot
@@ -69,6 +68,8 @@ class LegacyStoragePreferences private constructor(private val context: Context)
 
         private val KEY_HIDDEN_LEGACY_SKILL_PATHS =
             stringSetPreferencesKey("hidden_legacy_skill_paths")
+        private val KEY_HIDDEN_LEGACY_MCP_SERVER_IDS =
+            stringSetPreferencesKey("hidden_legacy_mcp_server_ids")
         private val KEY_HIDDEN_LEGACY_WORKFLOW_IDS =
             stringSetPreferencesKey("hidden_legacy_workflow_ids")
 
@@ -191,10 +192,16 @@ class LegacyStoragePreferences private constructor(private val context: Context)
     fun hiddenLegacySkillPathsFlow(): Flow<Set<String>> =
         context.legacyStorageDataStore.data.map { it[KEY_HIDDEN_LEGACY_SKILL_PATHS] ?: emptySet() }
 
+    fun hiddenLegacyMcpServerIdsFlow(): Flow<Set<String>> =
+        context.legacyStorageDataStore.data.map {
+            it[KEY_HIDDEN_LEGACY_MCP_SERVER_IDS] ?: emptySet()
+        }
+
     fun hiddenLegacyWorkflowIdsFlow(): Flow<Set<String>> =
         context.legacyStorageDataStore.data.map { it[KEY_HIDDEN_LEGACY_WORKFLOW_IDS] ?: emptySet() }
 
     suspend fun hiddenLegacySkillPaths(): Set<String> = hiddenLegacySkillPathsFlow().first()
+    suspend fun hiddenLegacyMcpServerIds(): Set<String> = hiddenLegacyMcpServerIdsFlow().first()
     suspend fun hiddenLegacyWorkflowIds(): Set<String> = hiddenLegacyWorkflowIdsFlow().first()
 
     suspend fun hideLegacySkillPath(relativePath: String) {
@@ -210,6 +217,14 @@ class LegacyStoragePreferences private constructor(private val context: Context)
         context.legacyStorageDataStore.edit { prefs ->
             val current = prefs[KEY_HIDDEN_LEGACY_WORKFLOW_IDS] ?: emptySet()
             prefs[KEY_HIDDEN_LEGACY_WORKFLOW_IDS] = current + workflowId
+        }
+    }
+
+    suspend fun hideLegacyMcpServerId(serverId: String) {
+        if (serverId.isBlank()) return
+        context.legacyStorageDataStore.edit { prefs ->
+            val current = prefs[KEY_HIDDEN_LEGACY_MCP_SERVER_IDS] ?: emptySet()
+            prefs[KEY_HIDDEN_LEGACY_MCP_SERVER_IDS] = current + serverId
         }
     }
 

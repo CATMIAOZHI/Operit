@@ -83,4 +83,38 @@ class WorkflowStoragePolicyTest {
         }
         assertTrue(out.isEmpty())
     }
+
+    @Test
+    fun failedInternalDeletion_isNotReportedAsSuccessWhenLegacyCopyIsHidden() {
+        assertFalse(
+            workflowDeletionSucceeded(
+                internalExisted = true,
+                internalRemoved = false,
+                legacyExisted = true
+            )
+        )
+    }
+
+    @Test
+    fun legacyOnlyDeletion_isReportedAsSuccessAfterItIsHidden() {
+        assertTrue(
+            workflowDeletionSucceeded(
+                internalExisted = false,
+                internalRemoved = true,
+                legacyExisted = true
+            )
+        )
+    }
+
+    @Test
+    fun failedInternalDeletion_doesNotAuthorizeUnscheduling() {
+        val deleted =
+            workflowDeletionSucceeded(
+                internalExisted = true,
+                internalRemoved = false,
+                legacyExisted = true
+            )
+
+        assertFalse(deleted)
+    }
 }

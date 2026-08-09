@@ -189,7 +189,7 @@ class TokenTrackingAIService(
                 "Token statistics are not accepting new events until the app restarts after a restore",
             )
         }
-        val (provider, model) = TokenStatIdentityResolver.splitProviderModel(delegate.providerModel)
+        val (provider, model) = resolveTokenStatIdentity(delegate)
         // P1-1：请求接受边界在**同一事务**内原子确保身份存在并读取 generation——删除展示
         // 分组要么看见该身份（写 IDENTITY tombstone，删除前接受的事件被跳过），要么请求
         // 拿到 ≥ tombstone 的新 generation（删除后请求正常入账）。首次请求的身份绝不可能
@@ -461,3 +461,10 @@ class TokenTrackingAIService(
         private const val MAX_CAUSE_DEPTH = 8
     }
 }
+
+internal fun resolveTokenStatIdentity(service: AIService): Pair<String, String> =
+    if (service is TokenStatIdentitySource) {
+        service.tokenStatProvider to service.tokenStatModel
+    } else {
+        TokenStatIdentityResolver.splitProviderModel(service.providerModel)
+    }
