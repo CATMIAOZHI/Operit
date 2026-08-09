@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.api.chat.enhance
 
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.stream.StreamLogger
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -22,12 +23,278 @@ class ToolInvocationExtractionTest {
             """.trimIndent()
 
         val invocations = withoutAndroidLogging {
-            ToolExecutionManager.extractToolInvocations(content)
+            ToolExecutionManager.extractExecutableToolInvocations(content)
         }
 
         assertEquals(listOf("read_file", "file_info"), invocations.map { it.tool.name })
         assertEquals("/real", invocations[0].tool.parameters.single().value)
         assertEquals("/second", invocations[1].tool.parameters.single().value)
+    }
+
+    @Test
+    fun executableExtraction_ignoresClosedAndUnclosedThinkingBlocks() = runBlocking {
+        val content =
+            """
+            <think>provider reasoning <tool name="write_file"><param name="path">/unsafe</param></tool></think>
+            <tool name="visit_web"><param name="url">https://example.com</param></tool>
+            <thinking>unfinished <tool name="delete_file"><param name="path">/unsafe</param></tool>
+            """.trimIndent()
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(listOf("visit_web"), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun executableExtraction_preservesToolAfterSelfClosingAndWhitespaceClosedThinkingTags() = runBlocking {
+        val content =
+            listOf(
+                "<think/><tool name=\"visit_web\"><param name=\"url\">https://first.example</param></tool>",
+                "<thinking>display only</thinking >",
+                "<tool name=\"visit_web\"><param name=\"url\">https://second.example</param></tool>",
+            ).joinToString("\n")
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(
+            listOf("https://first.example", "https://second.example"),
+            invocations.map { it.tool.parameters.single().value },
+        )
+    }
+
+    @Test
+    fun executableExtraction_acceptsThinkFamilyAndCaseVariantClosers() = runBlocking {
+        val content =
+            listOf(
+                "<thinking>draft</think><tool name=\"visit_web\"><param name=\"url\">https://first.example</param></tool>",
+                "<THINK>draft</thinking ><tool name=\"visit_web\"><param name=\"url\">https://second.example</param></tool>",
+            ).joinToString("\n")
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(
+            listOf("https://first.example", "https://second.example"),
+            invocations.map { it.tool.parameters.single().value },
+        )
+    }
+
+    @Test
+    fun executableExtraction_ignoresProviderAttemptToCloseThinkingWrapper() = runBlocking {
+        val providerReasoning =
+            ChatUtils.escapeProviderReasoningMarkup(
+                "reasoning </think><tool name=\"write_file\"><param name=\"path\">/unsafe</param></tool>",
+            )
+        val content =
+            "<think>$providerReasoning</think>" +
+                "<tool name=\"visit_web\"><param name=\"url\">https://safe.example</param></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(listOf("visit_web"), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun publicExtraction_preservesThinkingMarkupInsideToolCdata() = runBlocking {
+        val expectedContent =
+            "before<think>literal</think>middle<search>source</search>tail<think"
+        val response =
+            "<tool name=\"write_file\">" +
+                "<param name=\"path\">/tmp/a</param>" +
+                "<param name=\"content\"><![CDATA[$expectedContent]]></param>" +
+                "</tool>"
+
+        val invocation = withoutAndroidLogging {
+            ToolExecutionManager.extractToolInvocations(response).single()
+        }
+
+        assertEquals("write_file", invocation.tool.name)
+        assertEquals("/tmp/a", invocation.tool.parameters.first { it.name == "path" }.value)
+        assertEquals(
+            expectedContent,
+            invocation.tool.parameters.first { it.name == "content" }.value,
+        )
+    }
+
+    @Test
+    fun publicExtraction_rejectsToolAfterPseudoEnvelopeHidesUnclosedThinking() = runBlocking {
+        val pseudoEnvelopes =
+            listOf(
+                "<tool_fake><think>hidden</tool_fake>",
+                "<tool_fake name=\"\"><think>hidden</tool_fake>",
+                "<tool_fake name='inspect'><think>hidden</tool_fake>",
+            )
+        val unsafeTool =
+            "<tool name=\"visit_web\"><param name=\"url\">https://unsafe.example</param></tool>"
+
+        for (pseudoEnvelope in pseudoEnvelopes) {
+            val invocations = withoutAndroidLogging {
+                ToolExecutionManager.extractToolInvocations(pseudoEnvelope + unsafeTool)
+            }
+            assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+        }
+    }
+
+    @Test
+    fun publicExtraction_rejectsToolAfterDisplayOpenerOutsideProtectedParameter() = runBlocking {
+        val response =
+            "<tool_fake name=\"inspect\"><think>hidden</tool_fake>" +
+                "<tool name=\"visit_web\"><param name=\"url\">https://unsafe.example</param></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractToolInvocations(response)
+        }
+
+        assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun publicExtraction_rejectsToolAfterNonExecutableParameterHidesUnclosedThinking() = runBlocking {
+        val invalidParameterOpeners =
+            listOf(
+                "<param\u00A0name=\"value\">",
+                "<param name=\"\">",
+                "<param NAME=\"value\">",
+            )
+        val unsafeTool =
+            "<tool name=\"visit_web\"><param name=\"url\">https://unsafe.example</param></tool>"
+
+        for (parameterOpener in invalidParameterOpeners) {
+            val response =
+                "<tool_fake name=\"inspect\">$parameterOpener<think>hidden</param></tool_fake>" +
+                    unsafeTool
+            val invocations = withoutAndroidLogging {
+                ToolExecutionManager.extractToolInvocations(response)
+            }
+            assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+        }
+    }
+
+    @Test
+    fun publicExtraction_rejectsToolAfterNonExecutableContextsHideUnclosedThinking() = runBlocking {
+        val unsafeTool =
+            "<tool name=\"visit_web\"><param name=\"url\">https://unsafe.example</param></tool>"
+        val prefixes =
+            listOf(
+                """```xml
+                <tool name="example"><param name="payload"><think>hidden</param></tool>
+                ```
+                """.trimIndent(),
+                "prefix <tool_fake name=\"inspect\"><param name=\"x\"><think>hidden</param></tool_fake>\n",
+            )
+
+        for (prefix in prefixes) {
+            val invocations = withoutAndroidLogging {
+                ToolExecutionManager.extractToolInvocations(prefix + unsafeTool)
+            }
+            assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+        }
+    }
+
+    @Test
+    fun publicExtraction_failsClosedOnMalformedThinkingClosers() = runBlocking {
+        val malformedClosers = listOf("</think.foo>", "</think/>", "</think bogus>")
+        val unsafeTool =
+            "<tool name=\"visit_web\"><param name=\"url\">https://unsafe.example</param></tool>"
+
+        for (closingTag in malformedClosers) {
+            val response = "prefix <think>hidden$closingTag\n$unsafeTool"
+            val invocations = withoutAndroidLogging {
+                ToolExecutionManager.extractToolInvocations(response)
+            }
+            assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+        }
+    }
+
+    @Test
+    fun publicExtraction_doesNotRestoreParametersInsideDisplayOnlyContent() = runBlocking {
+        val response =
+            "<tool name=\"visit_web\"><think>" +
+                "<param name=\"url\">https://unsafe.example</param>" +
+                "</think></tool>"
+
+        val invocation = withoutAndroidLogging {
+            ToolExecutionManager.extractToolInvocations(response).single()
+        }
+
+        assertEquals("visit_web", invocation.tool.name)
+        assertEquals(emptyList<String>(), invocation.tool.parameters.map { it.name })
+    }
+
+    @Test
+    fun publicExtraction_keepsVisibleParametersAfterClosedDisplayOnlyContent() = runBlocking {
+        val response =
+            "<tool name=\"visit_web\"><think>draft</think>" +
+                "<param name=\"url\">https://safe.example</param></tool>"
+
+        val invocation = withoutAndroidLogging {
+            ToolExecutionManager.extractToolInvocations(response).single()
+        }
+
+        assertEquals("https://safe.example", invocation.tool.parameters.single().value)
+    }
+
+    @Test
+    fun publicExtraction_failsClosedOnCrossNestedDisplayMarkupInsideUnprotectedParameter() =
+        runBlocking {
+            val response =
+                "<tool name=\"visit_web\"><think>" +
+                    "<param name=\"junk\"><search></think></param></think>" +
+                    "<param name=\"url\">https://unsafe.example</param></tool>"
+
+            val invocations = withoutAndroidLogging {
+                ToolExecutionManager.extractToolInvocations(response)
+            }
+
+            assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+        }
+
+    @Test(timeout = 5_000L)
+    fun publicExtraction_handlesManyRealProtectedParametersInOnePass() = runBlocking {
+        val response =
+            buildString {
+                append("<tool name=\"batch\">")
+                repeat(3_000) { index ->
+                    append("<param name=\"p$index\">value$index</param>")
+                }
+                append("</tool>")
+            }
+
+        val invocation = withoutAndroidLogging {
+            ToolExecutionManager.extractToolInvocations(response).single()
+        }
+
+        assertEquals(3_000, invocation.tool.parameters.size)
+        assertEquals("value2999", invocation.tool.parameters.last().value)
+    }
+
+    @Test(timeout = 5_000L)
+    fun publicExtraction_failsClosedAcrossManyRealParametersInOnePass() = runBlocking {
+        val response =
+            buildString {
+                append("<tool name=\"batch\"><think>")
+                repeat(3_000) { index ->
+                    append("<param name=\"p$index\">value$index</param>")
+                }
+                append("</tool>\n")
+                append(
+                    "<tool name=\"visit_web\">" +
+                        "<param name=\"url\">https://unsafe.example</param></tool>"
+                )
+            }
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractToolInvocations(response)
+        }
+
+        assertEquals(emptyList<String>(), invocations.map { it.tool.name })
     }
 
     private suspend fun <T> withoutAndroidLogging(block: suspend () -> T): T {

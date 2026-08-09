@@ -1452,9 +1452,31 @@ open class OpenAIProvider(
 
         suspend fun emitThinkContent(thinkContent: String, tag: String = "think") {
             if (thinkContent.isNotNullOrEmpty()) {
-                val wrapped = "<$tag>$thinkContent</$tag>"
+                val protectedContent =
+                    if (tag.equals("think", ignoreCase = true) ||
+                        tag.equals("thinking", ignoreCase = true)
+                    ) {
+                        ChatUtils.escapeProviderReasoningMarkup(thinkContent)
+                    } else {
+                        thinkContent
+                    }
+                val wrapped = "<$tag>$protectedContent</$tag>"
                 emit(wrapped)
                 receivedContent.append(wrapped)
+                tokenCacheManager.addOutputTokens(ChatUtils.estimateTokenCount(thinkContent))
+                onTokensUpdated(
+                    tokenCacheManager.totalInputTokenCount,
+                    tokenCacheManager.cachedInputTokenCount,
+                    tokenCacheManager.outputTokenCount
+                )
+            }
+        }
+
+        suspend fun emitReasoningContent(thinkContent: String) {
+            if (thinkContent.isNotNullOrEmpty()) {
+                val protectedContent = ChatUtils.escapeProviderReasoningMarkup(thinkContent)
+                emit(protectedContent)
+                receivedContent.append(protectedContent)
                 tokenCacheManager.addOutputTokens(ChatUtils.estimateTokenCount(thinkContent))
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
@@ -1764,6 +1786,17 @@ open class OpenAIProvider(
         val imageBuffers: MutableMap<Int, ImageBufferState> = mutableMapOf()
     )
 
+    private suspend fun closeReasoningBlockIfOpen(
+        state: StreamingState,
+        emitter: StreamEmitter,
+    ): Boolean {
+        if (!state.isInReasoningMode) return false
+        state.isInReasoningMode = false
+        emitter.emitTag("</think>")
+        state.hasEmittedThinkStart = false
+        return true
+    }
+
     /**
      * 处理工具切换：关闭前一个工具
      */
@@ -1897,12 +1930,8 @@ open class OpenAIProvider(
         state: StreamingState,
         emitter: StreamEmitter
     ) {
-        // 如果正在思考模式，收到工具调用时应先关闭思考标签
-        if (state.isInReasoningMode) {
-            state.isInReasoningMode = false
-            emitter.emitTag("</think>")
-            state.hasEmittedThinkStart = false
-        }
+        // Structured tool markup must never be emitted inside provider-controlled reasoning.
+        closeReasoningBlockIfOpen(state, emitter)
 
         for (i in 0 until toolCallsDeltas.length()) {
             val deltaCall = toolCallsDeltas.getJSONObject(i)
@@ -2113,12 +2142,8 @@ open class OpenAIProvider(
                         emitCompletedResponsesReasoningText(itemReasoningText, state, emitter)
                     }
                     if (eventType == "response.output_item.done") {
+                        closeReasoningBlockIfOpen(state, emitter)
                         OpenAIResponsesPayloadAdapter.createReasoningMetadataTag(item)?.let { metadataTag ->
-                            if (state.isInReasoningMode) {
-                                state.isInReasoningMode = false
-                                emitter.emitTag("</think>")
-                                state.hasEmittedThinkStart = false
-                            }
                             emitter.emitTag(metadataTag)
                         }
                     }
@@ -2128,6 +2153,8 @@ open class OpenAIProvider(
                 if (!enableToolCall || item.optString("type", "") != "function_call") {
                     return
                 }
+
+                closeReasoningBlockIfOpen(state, emitter)
 
                 val functionObj = JSONObject().apply {
                     val name = item.optString("name", "")
@@ -2159,6 +2186,8 @@ open class OpenAIProvider(
                 if (!enableToolCall) return
                 val outputIndex = jsonResponse.optInt("output_index", -1)
                 if (outputIndex < 0) return
+
+                closeReasoningBlockIfOpen(state, emitter)
 
                 val deltaCall = JSONObject().apply {
                     put("index", outputIndex)
@@ -2203,18 +2232,15 @@ open class OpenAIProvider(
                     state.reasoningObserved = true
                 }
 
-                if (state.isInReasoningMode) {
-                    state.isInReasoningMode = false
-                    emitter.emitTag("</think>")
-                    state.hasEmittedThinkStart = false
-                } else {
+                val reasoningWasOpen = closeReasoningBlockIfOpen(state, emitter)
+                closeAllOpenToolCalls(state, emitter)
+                if (!reasoningWasOpen) {
                     val lateReasoningText = extractResponsesReasoningText(responseObj)
                     if (lateReasoningText.isNotEmpty() && state.streamedReasoningContentLength == 0) {
                         emitCompletedResponsesReasoningText(lateReasoningText, state, emitter)
                     }
                 }
-
-                closeAllOpenToolCalls(state, emitter)
+                closeReasoningBlockIfOpen(state, emitter)
                 applyUsageToCounters(usage, onTokensUpdated, onUsageReported, attemptNumber)
             }
 
@@ -2283,6 +2309,14 @@ open class OpenAIProvider(
         val hasReasoning = reasoningContent.isNotNullOrEmpty()
         val hasRegular = regularContent.isNotNullOrEmpty()
 
+        // Once structured tool markup has started, provider text cannot be inserted without
+        // corrupting the still-open XML envelope. Keep the structured call authoritative and
+        // discard text that arrives late or out of protocol order.
+        if (hasOpenToolCalls(state) && (hasReasoning || hasRegular)) {
+            AppLogger.d("AIService", "Ignoring provider text received during an open tool call")
+            return
+        }
+
         // 处理思考内容
         if (hasReasoning && !state.hasEmittedRegularContent) {
             state.streamedReasoningContentLength += reasoningContent.length
@@ -2293,16 +2327,12 @@ open class OpenAIProvider(
                     state.hasEmittedThinkStart = true
                 }
             }
-            emitter.emitContent(reasoningContent)
+            emitter.emitReasoningContent(reasoningContent)
         }
         // 处理常规内容
         if (hasRegular) {
             // 如果之前在思考模式，现在切换到了常规内容，需要关闭思考标签
-            if (state.isInReasoningMode) {
-                state.isInReasoningMode = false
-                emitter.emitTag("</think>")
-                state.hasEmittedThinkStart = false
-            }
+            closeReasoningBlockIfOpen(state, emitter)
 
             // 硬切策略：正文一旦开始输出，后续到达的推理内容全部忽略
             state.hasEmittedRegularContent = true
@@ -2322,6 +2352,10 @@ open class OpenAIProvider(
         state: StreamingState,
         emitter: StreamEmitter
     ) {
+        if (hasOpenToolCalls(state)) {
+            AppLogger.d("AIService", "Ignoring completed reasoning received during an open tool call")
+            return
+        }
         if (state.hasEmittedRegularContent) {
             emitter.emitThinkContent(reasoningText)
             state.streamedReasoningContentLength += reasoningText.length
@@ -2360,6 +2394,14 @@ open class OpenAIProvider(
                     ""
                 }
 
+            // Resolve reasoning/content boundaries before emitting structured tool markup. Some
+            // compatible endpoints include reasoning_content and tool_calls in the same delta.
+            val reasoningContent = delta.optString("reasoning_content", "").ifBlank {
+                delta.optString("reasoning", "")
+            }
+            val regularContent = delta.optString("content", "")
+            processContentDelta(reasoningContent, regularContent, state, emitter)
+
             // 处理工具调用
             val toolCallsDeltas = delta.optJSONArray("tool_calls")
             if (toolCallsDeltas != null && toolCallsDeltas.length() > 0 && enableToolCall) {
@@ -2370,13 +2412,6 @@ open class OpenAIProvider(
             if (finishReason.isNotEmpty()) {
                 handleFinishReason(finishReason, state, emitter, onTokensUpdated)
             }
-
-            // 处理内容
-            val reasoningContent = delta.optString("reasoning_content", "").ifBlank {
-                delta.optString("reasoning", "")
-            }
-            val regularContent = delta.optString("content", "")
-            processContentDelta(reasoningContent, regularContent, state, emitter)
         }
         // 处理message格式（非流式响应）
         else {
@@ -2386,16 +2421,7 @@ open class OpenAIProvider(
                     message.optString("reasoning", "")
                 }
                 val regularContent = message.optString("content", "")
-
-                // 先处理思考内容（如果有）
-                if (reasoningContent.isNotNullOrEmpty() && !state.hasEmittedRegularContent) {
-                    emitter.emitThinkContent(reasoningContent)
-                }
-                // 然后处理常规内容
-                if (regularContent.isNotNullOrEmpty()) {
-                    state.hasEmittedRegularContent = true
-                    emitter.emitContent(regularContent)
-                }
+                processContentDelta(reasoningContent, regularContent, state, emitter)
             }
         }
 
@@ -2427,12 +2453,8 @@ open class OpenAIProvider(
                 val data = line.substring(5).trim()
                 if (data == "[DONE]") {
                     flushImageBuffers(state, emitter)
+                    closeReasoningBlockIfOpen(state, emitter)
                     closeAllOpenToolCalls(state, emitter)
-                    if (state.isInReasoningMode) {
-                        state.isInReasoningMode = false
-                        emitter.emitTag("</think>")
-                        state.hasEmittedThinkStart = false
-                    }
                     AppLogger.d("AIService", "【发送消息】收到流结束标记[DONE]")
                     break
                 }

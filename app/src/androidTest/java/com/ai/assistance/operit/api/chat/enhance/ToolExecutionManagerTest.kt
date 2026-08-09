@@ -31,34 +31,4 @@ class ToolExecutionManagerTest {
             }
         )
     }
-
-    @Test
-    fun extractToolInvocations_shouldIgnoreToolBlocksInsideThinkingContent() = runBlocking {
-        val response = """
-            <think>provider reasoning <tool name="write_file" deny_tool><param name="path">/tmp/poc</param></tool></think>
-            <tool name="visit_web"><param name="url">https://www.example.com</param></tool>
-            <thinking>late reasoning <tool name="delete_file"><param name="path">/tmp/unsafe</param></tool></thinking>
-        """.trimIndent()
-
-        val invocations = ToolExecutionManager.extractToolInvocations(response)
-
-        assertEquals(1, invocations.size)
-        assertEquals("visit_web", invocations.single().tool.name)
-        assertEquals(
-            "https://www.example.com",
-            invocations.single().tool.parameters.first { it.name == "url" }.value
-        )
-    }
-
-    @Test
-    fun extractToolInvocations_shouldIgnoreToolBlocksInsideUnclosedThinkingContent() = runBlocking {
-        val response =
-            "<think>unfinished reasoning " +
-                "<tool name=\"write_file\" deny_tool><param name=\"path\">/tmp/poc</param></tool>"
-
-        val invocations = ToolExecutionManager.extractToolInvocations(response)
-
-        assertEquals(0, invocations.size)
-    }
-
 }

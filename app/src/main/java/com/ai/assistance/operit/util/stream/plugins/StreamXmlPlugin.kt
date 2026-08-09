@@ -5,6 +5,81 @@ import com.ai.assistance.operit.util.stream.*
 private const val GROUP_TAG_NAME = 1
 private const val GROUP_CONTENT = 2
 
+private enum class DisplayEndMatchResult {
+    MATCH,
+    IN_PROGRESS,
+    NO_MATCH,
+}
+
+private class DisplayEndTagMatcher(private val validNames: Set<String>) {
+    private var phase = 0
+    private val matchedName = StringBuilder()
+
+    fun processChar(char: Char): DisplayEndMatchResult {
+        return when (phase) {
+            0 -> if (char == '<') {
+                phase = 1
+                DisplayEndMatchResult.IN_PROGRESS
+            } else {
+                DisplayEndMatchResult.NO_MATCH
+            }
+            1 -> if (char == '/') {
+                phase = 2
+                matchedName.clear()
+                DisplayEndMatchResult.IN_PROGRESS
+            } else {
+                restartFrom(char)
+            }
+            2 -> {
+                when {
+                    char.isLetter() -> {
+                        matchedName.append(char.lowercaseChar())
+                        if (validNames.any { it.startsWith(matchedName.toString()) }) {
+                            DisplayEndMatchResult.IN_PROGRESS
+                        } else {
+                            restartFrom(char)
+                        }
+                    }
+                    char.isWhitespace() && matchedName.toString() in validNames -> {
+                        phase = 3
+                        DisplayEndMatchResult.IN_PROGRESS
+                    }
+                    char == '>' && matchedName.toString() in validNames -> {
+                        reset()
+                        DisplayEndMatchResult.MATCH
+                    }
+                    else -> restartFrom(char)
+                }
+            }
+            else -> {
+                when {
+                    char.isWhitespace() -> DisplayEndMatchResult.IN_PROGRESS
+                    char == '>' -> {
+                        reset()
+                        DisplayEndMatchResult.MATCH
+                    }
+                    else -> restartFrom(char)
+                }
+            }
+        }
+    }
+
+    fun reset() {
+        phase = 0
+        matchedName.clear()
+    }
+
+    private fun restartFrom(char: Char): DisplayEndMatchResult {
+        reset()
+        return if (char == '<') {
+            phase = 1
+            DisplayEndMatchResult.IN_PROGRESS
+        } else {
+            DisplayEndMatchResult.NO_MATCH
+        }
+    }
+}
+
 /**
  * A stream processing plugin to identify and process XML-formatted data streams. This
  * implementation uses the group capturing mechanism of the StreamKmpGraph. This version has a known
@@ -21,6 +96,7 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
 
     private var startTagMatcher: StreamKmpGraph
     private var endTagMatcher: StreamKmpGraph? = null
+    private var displayEndTagMatcher: DisplayEndTagMatcher? = null
     // Allow matching a new start tag immediately after we just closed an end tag, even if not at start of line
     private var allowStartAfterEndTag: Boolean = false
     private var allowStartAfterPunctuation: Boolean = false
@@ -69,6 +145,20 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
         }
 
         if (state == PluginState.PROCESSING) {
+            displayEndTagMatcher?.let { matcher ->
+                return when (matcher.processChar(c)) {
+                    DisplayEndMatchResult.MATCH -> {
+                        StreamLogger.i("StreamXmlPlugin", "Found display end tag. Switching to IDLE.")
+                        allowStartAfterEndTag = true
+                        allowStartAfterPunctuation = false
+                        reset()
+                        finish(includeTagsInOutput)
+                    }
+                    DisplayEndMatchResult.IN_PROGRESS -> finish(includeTagsInOutput)
+                    DisplayEndMatchResult.NO_MATCH -> finish(true)
+                }
+            }
+
             // We are inside a tag, looking for the end tag.
             val matcher = endTagMatcher!!
             val result = matcher.processChar(c)
@@ -114,6 +204,9 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
                         if (lastChar == '/') {
                             // Treat self-closing tags like <br/> as plain text to avoid entering XML mode.
                             reset()
+                            // A complete self-closing XML tag is also a valid boundary for an
+                            // immediately adjacent block, just like a normal closing tag.
+                            allowStartAfterEndTag = true
                             return finish(true)
                         }
                         StreamLogger.i(
@@ -125,15 +218,26 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
                         allowStartAfterEndTag = false
                         allowStartAfterPunctuation = false
                         // We have a full start tag. Configure the end tag matcher.
+                        displayEndTagMatcher =
+                                when (tagName.lowercase()) {
+                                    "think", "thinking" ->
+                                            DisplayEndTagMatcher(setOf("think", "thinking"))
+                                    "search" -> DisplayEndTagMatcher(setOf("search"))
+                                    else -> null
+                                }
                         endTagMatcher =
-                                StreamKmpGraphBuilder()
-                                        .build(
+                                if (displayEndTagMatcher == null) {
+                                    StreamKmpGraphBuilder()
+                                            .build(
                                                 kmpPattern {
                                                     literal("</")
                                                     literal(tagName)
                                                     char('>')
                                                 }
-                                        )
+                                            )
+                                } else {
+                                    null
+                                }
                         startTagMatcher.reset()
                     } else {
                         // Should not happen, but as a safeguard:
@@ -177,6 +281,8 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
     /** Resets the plugin state. */
     override fun reset() {
         endTagMatcher = null
+        displayEndTagMatcher?.reset()
+        displayEndTagMatcher = null
         startTagMatcher.reset()
         state = PluginState.IDLE
         lastChar = '\u0000'
