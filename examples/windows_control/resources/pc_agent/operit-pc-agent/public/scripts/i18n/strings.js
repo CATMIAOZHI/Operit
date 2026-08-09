@@ -93,8 +93,8 @@ const RESOURCES = {
       stepNav1: "1. Base Config",
       stepNav2: "2. Mobile Fill",
       step1Title: "Step 1: Make PC reachable from phone",
-      step1Desc: "Use LAN IPv4 for bind address (for example 192.168.x.x). Keep port default unless needed. API token is required.",
-      step1Hint: "Do not use 127.0.0.1 for phone access. Restart service after changing bind address or port.",
+      step1Desc: "Use LAN IPv4 for bind address (for example 192.168.x.x). Authenticate with the current API token; enter a new token only to rotate it.",
+      step1Hint: "The current token is stored in data/config.json. Do not use 127.0.0.1 for phone access. Restart service after changing bind address or port.",
       step2Title: "Step 2: Mobile Paste Config",
       step2Desc: "Use one-click fill, then copy the config text to mobile app.",
       oneClickTitle: "Config Text",
@@ -122,6 +122,8 @@ const RESOURCES = {
       port: "Port",
       maxCommandTimeoutMs: "Max Command Timeout (ms)",
       apiToken: "API Token",
+      currentApiToken: "Current API Token",
+      newApiToken: "New API Token (optional)",
       windowsAgentBaseUrl: "WINDOWS_AGENT_BASE_URL",
       windowsAgentToken: "WINDOWS_AGENT_TOKEN",
       windowsAgentDefaultShell: "WINDOWS_AGENT_DEFAULT_SHELL",
@@ -130,7 +132,9 @@ const RESOURCES = {
     placeholder: {
       tokenRequiredWhenApiTokenEnabled: "Required",
       rawCommandExample: "Example: Get-Process | Select-Object -First 5 Name,Id",
-      apiTokenEmptyDisable: "Leave empty to auto-generate a new token",
+      apiTokenEmptyDisable: "Leave empty to keep the current token",
+      currentApiToken: "Required; copy from data/config.json",
+      newApiTokenOptional: "Leave empty to keep the current token",
       noPresetsAvailable: "(no presets available)",
       loadingPresets: "(loading...)",
       mobileHost: "LAN IP or reachable host, not 127.0.0.1 for phone",
@@ -184,10 +188,12 @@ const RESOURCES = {
       copyEnvSuccess: "Copied",
       copyFailed: "Copy failed: {error}",
       startupApplyRestarting: "Applied bind address {bindAddress}. Restarting service...",
+      startupApplyManualRestart: "Applied bind address {bindAddress}, but automatic restart could not be scheduled. Restart PC Agent manually.",
       startupApplyFailed: "Failed to apply recommended IPv4: {error}"
     },
     error: {
-      unknown: "Unknown error"
+      unknown: "Unknown error",
+      currentApiTokenRequired: "Enter the current API token from data/config.json first"
     }
   },
   zh: {
@@ -282,8 +288,8 @@ const RESOURCES = {
       stepNav1: "1. 基础配置",
       stepNav2: "2. 移动端填写",
       step1Title: "步骤 1：让手机能访问这台电脑",
-      step1Desc: "绑定地址用局域网 IPv4（如 192.168.x.x）。端口默认即可。API 令牌必填。",
-      step1Hint: "给手机访问时不要用 127.0.0.1。改了绑定地址或端口后要重启服务。",
+      step1Desc: "绑定地址使用局域网 IPv4（如 192.168.x.x）。用当前 API 令牌认证；只有轮换令牌时才填写新令牌。",
+      step1Hint: "当前令牌保存在 data/config.json。给手机访问时不要用 127.0.0.1；改了绑定地址或端口后要重启服务。",
       step2Title: "步骤 2：移动端粘贴配置",
       step2Desc: "先一键填写，再复制配置文本到移动端粘贴。",
       oneClickTitle: "配置文本",
@@ -311,6 +317,8 @@ const RESOURCES = {
       port: "端口",
       maxCommandTimeoutMs: "最大命令超时 (ms)",
       apiToken: "API 令牌",
+      currentApiToken: "当前 API 令牌",
+      newApiToken: "新 API 令牌（可选）",
       windowsAgentBaseUrl: "WINDOWS_AGENT_BASE_URL",
       windowsAgentToken: "WINDOWS_AGENT_TOKEN",
       windowsAgentDefaultShell: "WINDOWS_AGENT_DEFAULT_SHELL",
@@ -319,7 +327,9 @@ const RESOURCES = {
     placeholder: {
       tokenRequiredWhenApiTokenEnabled: "必填",
       rawCommandExample: "示例: Get-Process | Select-Object -First 5 Name,Id",
-      apiTokenEmptyDisable: "留空会自动生成新令牌",
+      apiTokenEmptyDisable: "留空则保留当前令牌",
+      currentApiToken: "必填；从 data/config.json 复制",
+      newApiTokenOptional: "留空则保留当前令牌",
       noPresetsAvailable: "（暂无可用预设）",
       loadingPresets: "（加载中...）",
       mobileHost: "填写局域网 IP 或可达主机，不要给手机端写 127.0.0.1",
@@ -373,10 +383,12 @@ const RESOURCES = {
       copyEnvSuccess: "已复制",
       copyFailed: "复制失败: {error}",
       startupApplyRestarting: "已应用绑定地址 {bindAddress}，正在重启服务...",
+      startupApplyManualRestart: "已应用绑定地址 {bindAddress}，但无法安排自动重启。请手动重启 PC Agent。",
       startupApplyFailed: "应用推荐 IPv4 失败: {error}"
     },
     error: {
-      unknown: "未知错误"
+      unknown: "未知错误",
+      currentApiTokenRequired: "请先填写 data/config.json 中的当前 API 令牌"
     }
   }
 };

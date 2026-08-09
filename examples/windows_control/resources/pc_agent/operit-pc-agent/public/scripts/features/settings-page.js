@@ -15,7 +15,14 @@ export function createSettingsPage({ t, W, on = {} }) {
           W.Field({ label: t("field.bindAddress") }, W.Input({ ref: "settingsBindAddressInput", placeholder: "127.0.0.1" })),
           W.Field({ label: t("field.port") }, W.Input({ ref: "settingsPortInput", type: "number", min: 1, max: 65535 })),
           W.Field({ label: t("field.maxCommandTimeoutMs") }, W.Input({ ref: "settingsMaxCommandInput", type: "number", min: 1000, max: 600000 })),
-          W.Field({ label: t("field.apiToken") }, W.Input({ ref: "settingsApiTokenInput", type: "password", placeholder: t("placeholder.apiTokenEmptyDisable") }))
+          W.Field(
+            { label: t("field.currentApiToken") },
+            W.Input({ ref: "settingsCurrentApiTokenInput", type: "password", autocomplete: "off", placeholder: t("placeholder.currentApiToken") })
+          ),
+          W.Field(
+            { label: t("field.newApiToken") },
+            W.Input({ ref: "settingsNewApiTokenInput", type: "password", autocomplete: "off", placeholder: t("placeholder.newApiTokenOptional") })
+          )
         ),
         W.Panel({}, W.PanelTitle(t("panel.allowedPresets")), W.CheckList({ ref: "settingsPresetChecksWrap" })),
         W.ButtonGroup({}, W.Button({ text: t("action.saveConfig"), type: "submit", ref: "saveConfigButton" }))
@@ -25,15 +32,18 @@ export function createSettingsPage({ t, W, on = {} }) {
   );
 }
 
-export function createSettingsController({ api, refs, t, W, render, helpers, callbacks = {} }) {
+export function createSettingsController({ api, refs, state, t, W, render, helpers, callbacks = {} }) {
   const { setBusy, setNotice, setJsonOutput, asErrorMessage } = helpers;
-  const { onConfigSaved } = callbacks;
+  const { onApiTokenAccepted, onConfigSaved } = callbacks;
 
   function fillSettingsForm(config) {
     refs.settingsBindAddressInput.value = config.bindAddress || "";
     refs.settingsPortInput.value = config.port || 58321;
     refs.settingsMaxCommandInput.value = config.maxCommandMs || 30000;
-    refs.settingsApiTokenInput.value = config.apiToken || "";
+    if (state.configAuthToken) {
+      refs.settingsCurrentApiTokenInput.value = state.configAuthToken;
+    }
+    refs.settingsNewApiTokenInput.value = "";
   }
 
   function collectCheckedPresets() {
@@ -78,16 +88,26 @@ export function createSettingsController({ api, refs, t, W, render, helpers, cal
     setBusy("saveConfigButton", true, t("action.saveConfig"), t("action.working"));
 
     try {
+      const currentToken = refs.settingsCurrentApiTokenInput.value.trim();
+      const replacementToken = refs.settingsNewApiTokenInput.value.trim();
+      if (!currentToken) {
+        throw new Error(t("error.currentApiTokenRequired"));
+      }
       const payload = {
         bindAddress: refs.settingsBindAddressInput.value.trim(),
         port: Number(refs.settingsPortInput.value),
         maxCommandMs: Number(refs.settingsMaxCommandInput.value),
-        apiToken: refs.settingsApiTokenInput.value,
-        token: refs.settingsApiTokenInput.value,
+        token: currentToken,
+        ...(replacementToken ? { apiToken: replacementToken } : {}),
         allowedPresets: collectCheckedPresets()
       };
 
       const result = await api.updateConfig(payload);
+      const acceptedToken = replacementToken || currentToken;
+      if (typeof onApiTokenAccepted === "function") {
+        onApiTokenAccepted(acceptedToken);
+      }
+      refs.settingsNewApiTokenInput.value = "";
       setJsonOutput("configOutput", result);
 
       if (result.restartRequired) {

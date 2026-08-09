@@ -305,7 +305,12 @@ function createApiHandler({
 
     if (req.method === "POST" && url.pathname === "/api/startup/apply_recommended_bind") {
       try {
-        await readJsonBody(req);
+        const body = await readJsonBody(req);
+        if (!isAuthorized(state.config, body.token)) {
+          unauthorized(res, "startup.bind_recovery.apply", body.token);
+          return true;
+        }
+
         const issue = getStartupIssueState();
         if (!issue || issue.issueType !== "bindAddressUnavailable") {
           sendJson(res, 400, { ok: false, error: "No bindAddressUnavailable startup issue" });
@@ -320,20 +325,29 @@ function createApiHandler({
         }
 
         const previousBindAddress = state.config.bindAddress;
-        state.config = {
+        const nextConfig = {
           ...state.config,
           bindAddress: recommendedHost
         };
-        configStore.saveConfig(state.config);
+        configStore.saveConfig(nextConfig);
+        state.config = nextConfig;
 
-        startupStateStore.saveState({
-          ...issue,
-          status: "applied_restarting",
-          previousBindAddress,
-          appliedBindAddress: recommendedHost,
-          appliedAt: new Date().toISOString(),
-          network
-        });
+        let startupStateUpdated = true;
+        try {
+          startupStateStore.saveState({
+            ...issue,
+            status: "applied_restarting",
+            previousBindAddress,
+            appliedBindAddress: recommendedHost,
+            appliedAt: new Date().toISOString(),
+            network
+          });
+        } catch (error) {
+          startupStateUpdated = false;
+          logger.warn("startup.bind_recovery.state_update_failed", {
+            error: error && error.message ? error.message : String(error)
+          });
+        }
 
         logger.info("startup.bind_recovery.applied", {
           previousBindAddress,
@@ -341,17 +355,30 @@ function createApiHandler({
           port: state.config.port
         });
 
+        let restartScheduled = false;
+        let restartAlreadyScheduled = false;
+        let restartError = null;
         if (typeof restartAgent === "function") {
-          const scheduled = restartAgent("api.startup.apply_recommended_bind");
-          if (!scheduled) {
-            sendJson(res, 409, { ok: false, error: "Restart already scheduled" });
-            return true;
+          try {
+            restartScheduled = !!restartAgent("api.startup.apply_recommended_bind");
+            restartAlreadyScheduled = !restartScheduled;
+          } catch (error) {
+            restartError = error && error.message ? error.message : String(error);
+            logger.error("startup.bind_recovery.restart_schedule_failed", {
+              error: restartError
+            });
           }
         }
 
+        const manualRestartRequired = !restartScheduled && !restartAlreadyScheduled;
         sendJson(res, 200, {
           ok: true,
-          restartScheduled: true,
+          configApplied: true,
+          restartScheduled,
+          restartAlreadyScheduled,
+          manualRestartRequired,
+          startupStateUpdated,
+          ...(restartError ? { restartError } : {}),
           bindAddress: recommendedHost,
           config: buildPublicConfig(state.config, versionInfo)
         });
@@ -425,8 +452,8 @@ function createApiHandler({
         const restartRequired =
           nextConfig.port !== state.config.port || nextConfig.bindAddress !== state.config.bindAddress;
 
+        configStore.saveConfig(nextConfig);
         state.config = nextConfig;
-        configStore.saveConfig(state.config);
 
         logger.info("config.update.success", {
           bindAddress: state.config.bindAddress,

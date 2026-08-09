@@ -62,7 +62,7 @@ Public read endpoints:
 Config / command endpoint:
 - `POST /api/config` (requires current `token` in JSON body)
 - `POST /api/command/execute` (requires `token`)
-- `POST /api/startup/apply_recommended_bind`
+- `POST /api/startup/apply_recommended_bind` (requires current `token`)
 
 File endpoints (all require `token` in JSON body):
 - `POST /api/file/list`
@@ -84,7 +84,9 @@ File endpoints (all require `token` in JSON body):
 
 - Default bind address is `127.0.0.1`.
 - `apiToken` is always enabled. If missing, agent auto-generates one. `/api/config` only reports whether a token is configured and never returns the token value.
-- In wizard one-click fill, token is generated only when missing (existing token is reused).
+- The current token is stored in `data/config.json`. The web console keeps a token entered by the user only in the current page's memory; reloading the page requires entering it again.
+- Configuration forms separate the current token used for authorization from an optional replacement token. Leave the replacement blank to preserve the current token.
+- Wizard one-click fill uses the current token entered and successfully accepted in step 1; it never fetches the token from a public endpoint.
 
 ## Troubleshooting
 
