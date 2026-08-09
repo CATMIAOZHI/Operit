@@ -29,7 +29,10 @@ import java.io.FileOutputStream
  * Raw-snapshot restore adds one state to the same file so that a crash between "directories
  * replaced" and "generation registered" never forces the user to redo the restore:
  *
- * (IDLE | COMPLETED | REPLACING | FAILED) -> REPLACING -> RESTORE_REPLACED -> (IDLE | COMPLETED)
+ * Live settings first stage a URI without touching live stores:
+ *
+ * (IDLE | COMPLETED) -> PENDING(finalState set) -> REPLACING -> RESTORE_REPLACED
+ *                                                        -> (IDLE | COMPLETED)
  *
  * - REPLACING is persisted BEFORE any destructive directory replacement starts; a cold start
  *   observing it shows the recovery surface (data may be partially replaced).
@@ -59,12 +62,14 @@ import java.io.FileOutputStream
  *     STATE
  *     URI
  *     SAFETY_BACKUP_PATH
- *     FINAL_STATE (only meaningful for RESTORE_REPLACED)
+ *     FINAL_STATE (meaningful for a pending raw restore and RESTORE_REPLACED)
  *
  * where URI is only meaningful in PENDING and SAFETY_BACKUP_PATH is only meaningful in
  * REPLACING / FAILED (the absolute path to the safety snapshot created right before directory
- * replacement). Writes use Android [AtomicFile], so a crash mid-write leaves either the previous
- * or the new state, never a truncated hybrid.
+ * replacement). A PENDING record with FINAL_STATE is a same-package raw restore staged by the
+ * live Settings UI; a PENDING record without it is the legacy official-Operit migration request.
+ * Writes use Android [AtomicFile], so a crash mid-write leaves either the previous or the new
+ * state, never a truncated hybrid.
  */
 object MigrationStateStore {
     private const val TAG = "MigrationStateStore"
@@ -99,8 +104,8 @@ object MigrationStateStore {
         val uri: Uri?,
         val safetyBackupPath: String?,
         /**
-         * 仅 RESTORE_REPLACED 有意义：登记完成后应落回的目标状态
-         * （恢复前为 COMPLETED 则保持 COMPLETED，否则 IDLE）。
+         * PENDING 原始快照恢复与 RESTORE_REPLACED 有意义：目录替换/登记完成后
+         * 应落回的目标状态（恢复前为 COMPLETED 则保持 COMPLETED，否则 IDLE）。
          */
         val finalState: State? = null,
     ) {
@@ -114,6 +119,7 @@ object MigrationStateStore {
      * 实现后，[read]/[write] 的状态机逻辑可在纯 JVM 上做真实状态转换测试。
      */
     internal var fileIoProvider: ((Context) -> MigrationStateFileIo)? = null
+    internal var uriParserForTest: ((String) -> Uri?)? = null
 
     /**
      * Read the current migration state. A missing file is the normal [State.IDLE] state. Any
@@ -139,7 +145,11 @@ object MigrationStateStore {
             return Snapshot(State.NEEDS_RECOVERY, null, null)
         }
         val uriString = lines.getOrNull(1)?.trim().orEmpty()
-        val uri = if (uriString.isNotEmpty()) runCatching { Uri.parse(uriString) }.getOrNull() else null
+        val uri = if (uriString.isNotEmpty()) {
+            uriParserForTest?.invoke(uriString) ?: runCatching { Uri.parse(uriString) }.getOrNull()
+        } else {
+            null
+        }
         val safetyPath = lines.getOrNull(2)?.trim().orEmpty()
         val safetyBackupPath = if (safetyPath.isNotEmpty()) safetyPath else null
         val finalStateName = lines.getOrNull(3)?.trim().orEmpty()
@@ -161,10 +171,11 @@ object MigrationStateStore {
         synchronized(processStateLock, block)
 
     /**
-     * Atomically write [state] (and [uri] / [safetyBackupPath] / [finalState] when non-null,
-     * only meaningful for PENDING / REPLACING / FAILED / RESTORE_REPLACED respectively) to the
-     * state file. Returns true on success, false on failure. Callers MUST check the return
-     * value and surface an error to the user instead of proceeding.
+     * Atomically write [state] (and [uri] / [safetyBackupPath] / [finalState] when non-null) to
+     * the state file. [finalState] distinguishes a staged same-package raw restore from the
+     * official migration while PENDING, and is retained by RESTORE_REPLACED for crash-safe
+     * completion. Returns true on success, false on failure. Callers MUST check the return value
+     * and surface an error to the user instead of proceeding.
      */
     fun write(
         context: Context,
@@ -176,8 +187,8 @@ object MigrationStateStore {
         check(state != State.NEEDS_RECOVERY) {
             "NEEDS_RECOVERY is a virtual state and must not be written to disk"
         }
-        check(finalState == null || state == State.RESTORE_REPLACED) {
-            "finalState is only meaningful for RESTORE_REPLACED"
+        check(finalState == null || state == State.PENDING || state == State.RESTORE_REPLACED) {
+            "finalState is only meaningful for PENDING or RESTORE_REPLACED"
         }
         check(finalState == null || finalState == State.IDLE || finalState == State.COMPLETED) {
             "finalState must be IDLE or COMPLETED"

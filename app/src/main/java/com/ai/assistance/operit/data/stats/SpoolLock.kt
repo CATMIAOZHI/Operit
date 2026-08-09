@@ -149,7 +149,7 @@ internal suspend fun <T> TokenStatSpool.withExclusiveSnapshotAccessInternal(
                 }
             } else {
                 // P1 终审：替换开始（block 即将执行）——本进程不再接受任何统计事件，直到
-                // 进程重启（UI 允许稍后重启；替换后失败同样保持拒绝，绝不写入已部分替换的
+                // 进程重启（替换后失败同样保持拒绝，绝不写入已部分替换的
                 // 数据库）。此前任何失败（bootstrap/drain/quiesce）都不触碰该标志，新请求
                 // 可继续（替换前失败可恢复）。
                 synchronized(stateLock) { acceptingEventsThisProcess = false }

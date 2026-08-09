@@ -268,8 +268,8 @@ internal object TokenStatSpool {
 
     /**
      * 本进程是否仍接受统计事件（P1 终审）：恢复屏障的替换开始（[block] 即将执行）时置 false，
-     * 直到进程重启（UI 允许稍后重启——此后所有 [append] 与新的跟踪请求被明确拒绝，绝不污染
-     * 恢复后的新 DB）。替换前失败（drain/quiesce 阶段抛错）保持 true，新请求可继续。
+     * 直到进程重启——此后所有 [append] 与新的跟踪请求被明确拒绝，绝不污染
+     * 恢复后的新 DB。替换前失败（drain/quiesce 阶段抛错）保持 true，新请求可继续。
      * 进程重启（含测试模拟）经 [resetExecutorsForTest]/[clearPendingStateForTest] 复位。
      */
     @Volatile
@@ -623,6 +623,22 @@ internal object TokenStatSpool {
         },
         block = block,
     )
+
+    /**
+     * Serialize request admission with the restore lifecycle lock. The acceptance decision,
+     * restore epoch capture and caller-supplied Room identity transaction form one critical
+     * section, so restore cannot close/replace stores after a check but before that transaction
+     * registers the request identity.
+     */
+    internal suspend fun <T> withRequestAdmission(block: suspend () -> T): Pair<T, Long> =
+        lifecycleMutex.withLock {
+            val epoch = synchronized(stateLock) {
+                if (acceptingEventsThisProcess) restoreEpoch else null
+            } ?: throw TokenStatsPersistenceException(
+                "Token statistics are not accepting new events until the app restarts after a restore",
+            )
+            block() to epoch
+        }
 
 
 

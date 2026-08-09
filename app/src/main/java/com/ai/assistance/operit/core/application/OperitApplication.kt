@@ -187,7 +187,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                     state = migrationState.state,
                     processRestartRequired = RawSnapshotBackupManager.isProcessRestartRequired(),
                     migrationRunningInProcess =
-                        RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()
+                        RawSnapshotBackupManager.isPendingRestoreOperationRunningInProcess()
                 )
             ) {
                 MigrationStatePolicy.MainInitializationAction.MIGRATION_IN_PROGRESS ->

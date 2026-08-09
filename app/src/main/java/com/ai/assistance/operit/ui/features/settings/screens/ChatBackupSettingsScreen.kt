@@ -144,8 +144,6 @@ enum class RawSnapshotOperation {
     IDLE,
     BACKING_UP,
     BACKUP_SUCCESS,
-    RESTORING,
-    RESTORE_SUCCESS,
     FAILED
 }
 
@@ -242,7 +240,6 @@ fun ChatBackupSettingsScreen() {
     var rawSnapshotOperationMessage by remember { mutableStateOf("") }
     var pendingRawSnapshotRestoreUri by remember { mutableStateOf<Uri?>(null) }
     var showRawSnapshotRestoreConfirmDialog by remember { mutableStateOf(false) }
-    var showRawSnapshotRestoreRestartDialog by remember { mutableStateOf(false) }
     var quarantineEvidenceCount by remember { mutableIntStateOf(0) }
     var quarantineEvidenceBytes by remember { mutableLongStateOf(0L) }
     var quarantineSummaryCount by remember { mutableIntStateOf(0) }
@@ -1159,8 +1156,7 @@ fun ChatBackupSettingsScreen() {
                                 }
                             },
                             modifier = Modifier.weight(1f, fill = false),
-                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP &&
-                                rawSnapshotOperationState != RawSnapshotOperation.RESTORING
+                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP
                         )
 
                         ManagementButton(
@@ -1177,8 +1173,7 @@ fun ChatBackupSettingsScreen() {
                             },
                             modifier = Modifier.weight(1f, fill = false),
                             isWarning = true,
-                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP &&
-                                rawSnapshotOperationState != RawSnapshotOperation.RESTORING
+                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP
                         )
                     }
 
@@ -1203,8 +1198,7 @@ fun ChatBackupSettingsScreen() {
                                 officialOperitMigrationFilePickerLauncher.launch(intent)
                             },
                             isWarning = true,
-                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP &&
-                                rawSnapshotOperationState != RawSnapshotOperation.RESTORING
+                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP
                         )
                     }
 
@@ -1217,23 +1211,11 @@ fun ChatBackupSettingsScreen() {
                                             stringResource(R.string.backup_raw_snapshot_backing_up)
                                         }
                                     )
-                                RawSnapshotOperation.RESTORING ->
-                                    OperationProgressView(
-                                        message = rawSnapshotOperationMessage.ifBlank {
-                                            stringResource(R.string.backup_raw_snapshot_restoring)
-                                        }
-                                    )
                                 RawSnapshotOperation.BACKUP_SUCCESS ->
                                     OperationResultCard(
                                         title = stringResource(R.string.backup_export_success),
                                         message = rawSnapshotOperationMessage,
                                         icon = Icons.Default.CloudDownload
-                                    )
-                                RawSnapshotOperation.RESTORE_SUCCESS ->
-                                    OperationResultCard(
-                                        title = stringResource(R.string.backup_import_success),
-                                        message = rawSnapshotOperationMessage,
-                                        icon = Icons.Default.Restore
                                     )
                                 RawSnapshotOperation.FAILED ->
                                     OperationResultCard(
@@ -1882,24 +1864,10 @@ fun ChatBackupSettingsScreen() {
 
     if (showRawSnapshotRestoreConfirmDialog) {
         val targetName = pendingRawSnapshotRestoreUri?.lastPathSegment ?: "-"
-        val replacingDatabasesProgressText =
-            stringResource(R.string.backup_raw_snapshot_progress_replacing_databases)
-        val finalizingProgressText =
-            stringResource(R.string.backup_raw_snapshot_progress_finalizing)
-        val preparingProgressText =
-            stringResource(R.string.backup_raw_snapshot_progress_preparing)
-        val readingZipProgressText =
-            stringResource(R.string.backup_raw_snapshot_progress_reading_zip)
-        val extractingProgressText =
-            stringResource(R.string.backup_raw_snapshot_progress_extracting)
-        val replacingFilesProgressText =
-            stringResource(R.string.backup_raw_snapshot_progress_replacing_files)
-        val replacingExternalFilesProgressText =
-            stringResource(R.string.backup_raw_snapshot_progress_replacing_external_files)
-        val replacingSharedPrefsProgressText =
-            stringResource(R.string.backup_raw_snapshot_progress_replacing_shared_prefs)
-        val replacingDatastoreProgressText =
-            stringResource(R.string.backup_raw_snapshot_progress_replacing_datastore)
+        val uriPermissionFailureMessage =
+            stringResource(R.string.backup_raw_snapshot_restore_uri_permission_failed)
+        val scheduleFailureMessage =
+            stringResource(R.string.backup_raw_snapshot_restore_schedule_failed)
 
         AlertDialog(
             onDismissRequest = {
@@ -1916,56 +1884,33 @@ fun ChatBackupSettingsScreen() {
                         pendingRawSnapshotRestoreUri = null
                         if (uri != null) {
                             scope.launch {
-                                rawSnapshotOperationState = RawSnapshotOperation.RESTORING
-                                rawSnapshotOperationMessage = preparingProgressText
                                 try {
                                     try {
                                         context.contentResolver.takePersistableUriPermission(
                                             uri,
                                             Intent.FLAG_GRANT_READ_URI_PERMISSION
                                         )
-                                    } catch (_: Exception) {
+                                    } catch (e: Exception) {
+                                        AppLogger.e("ChatBackupSettings", "raw snapshot URI permission failed", e)
+                                        rawSnapshotOperationState = RawSnapshotOperation.FAILED
+                                        rawSnapshotOperationMessage = uriPermissionFailureMessage
+                                        return@launch
                                     }
-                                    RawSnapshotBackupManager.restoreFromBackupUri(
-                                        context = context,
-                                        uri = uri,
-                                        onProgress = { progress ->
-                                            rawSnapshotOperationMessage = when (progress) {
-                                                RawSnapshotBackupManager.RestoreProgress.PREPARING ->
-                                                    preparingProgressText
-
-                                                RawSnapshotBackupManager.RestoreProgress.READING_ZIP ->
-                                                    readingZipProgressText
-
-                                                RawSnapshotBackupManager.RestoreProgress.EXTRACTING ->
-                                                    extractingProgressText
-
-                                                RawSnapshotBackupManager.RestoreProgress.REPLACING_FILES ->
-                                                    replacingFilesProgressText
-
-                                                RawSnapshotBackupManager.RestoreProgress.REPLACING_EXTERNAL_FILES ->
-                                                    replacingExternalFilesProgressText
-
-                                                RawSnapshotBackupManager.RestoreProgress.REPLACING_SHARED_PREFS ->
-                                                    replacingSharedPrefsProgressText
-
-                                                RawSnapshotBackupManager.RestoreProgress.REPLACING_DATASTORE ->
-                                                    replacingDatastoreProgressText
-
-                                                RawSnapshotBackupManager.RestoreProgress.REPLACING_DATABASES ->
-                                                    replacingDatabasesProgressText
-
-                                                RawSnapshotBackupManager.RestoreProgress.FINALIZING ->
-                                                    finalizingProgressText
-                                            }
-                                        }
-                                    )
-                                    rawSnapshotOperationState = RawSnapshotOperation.RESTORE_SUCCESS
-                                    rawSnapshotOperationMessage = targetName
-                                    showRawSnapshotRestoreRestartDialog = true
+                                    val persisted = RawSnapshotBackupManager
+                                        .setPendingRawSnapshotRestore(context, uri)
+                                    if (!persisted) {
+                                        rawSnapshotOperationState = RawSnapshotOperation.FAILED
+                                        rawSnapshotOperationMessage = scheduleFailureMessage
+                                        return@launch
+                                    }
+                                    // No live preference/database file has been replaced. Exit
+                                    // immediately; the next cold start applies the archive before
+                                    // Application initialization creates any cached writer.
+                                    restartApplication(context)
                                 } catch (e: Exception) {
+                                    AppLogger.e("ChatBackupSettings", "raw snapshot staging failed", e)
                                     rawSnapshotOperationState = RawSnapshotOperation.FAILED
-                                    rawSnapshotOperationMessage = e.localizedMessage ?: e.toString()
+                                    rawSnapshotOperationMessage = scheduleFailureMessage
                                 }
                             }
                         }
@@ -2096,32 +2041,6 @@ fun ChatBackupSettingsScreen() {
         )
     }
 
-    if (showRawSnapshotRestoreRestartDialog) {
-        AlertDialog(
-            onDismissRequest = { showRawSnapshotRestoreRestartDialog = false },
-            title = { Text(stringResource(R.string.backup_raw_snapshot_restart_title)) },
-            text = { Text(stringResource(R.string.backup_raw_snapshot_restart_message)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showRawSnapshotRestoreRestartDialog = false
-                        val intent = Intent(context, MainActivity::class.java).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                        }
-                        context.startActivity(intent)
-                        exitProcess(0)
-                    }
-                ) {
-                    Text(stringResource(R.string.backup_raw_snapshot_restart_now))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRawSnapshotRestoreRestartDialog = false }) {
-                    Text(stringResource(R.string.backup_raw_snapshot_restart_later))
-                }
-            }
-        )
-    }
 }
 
 private fun restartApplication(context: Context) {

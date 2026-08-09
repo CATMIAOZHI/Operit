@@ -5496,7 +5496,9 @@
     <string name="backup_raw_snapshot_progress_replacing_datastore">Writing datastore...</string>
     <string name="backup_raw_snapshot_progress_replacing_databases">Writing databases...</string>
     <string name="backup_raw_snapshot_restore_confirm_title">Confirm file snapshot restore</string>
-    <string name="backup_raw_snapshot_restore_confirm_message">This will overwrite current app data with the following backup:\n%1$s\n\nThis action cannot be undone. It is recommended to perform a backup before restoring.</string>
+    <string name="backup_raw_snapshot_restore_confirm_message">This will overwrite current app data with the following backup:\n%1$s\n\nThis action cannot be undone. After confirmation, the app will restart immediately and apply the restore during cold start. It is recommended to perform a backup first.</string>
+    <string name="backup_raw_snapshot_restore_uri_permission_failed">The app could not retain read access to this backup, so the restore did not start. Please select the file again.</string>
+    <string name="backup_raw_snapshot_restore_schedule_failed">The cold-start restore request could not be saved. The restore did not start and the app will not restart.</string>
     <string name="backup_raw_snapshot_restore_confirm_action">Confirm restore</string>
     <string name="backup_raw_snapshot_restore_cancel_action">Cancel</string>
     <string name="backup_raw_snapshot_restart_title">App restart required</string>

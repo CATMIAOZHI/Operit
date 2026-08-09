@@ -211,7 +211,7 @@ class MainActivity : ComponentActivity() {
             // PREPARING/REPLACING), do NOT exit: the migration coroutine owns the process and
             // the progress surface must stay alive. Only exit when no in-process migration is
             // active, meaning a previous process required restart and this is a fresh entry.
-            if (RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()) {
+            if (RawSnapshotBackupManager.isPendingRestoreOperationRunningInProcess()) {
                 showMigrationInProgressSurface()
                 return
             }
@@ -230,11 +230,11 @@ class MainActivity : ComponentActivity() {
         when (
             MigrationStatePolicy.startupAction(
                 migrationSnapshot.state,
-                RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()
+                RawSnapshotBackupManager.isPendingRestoreOperationRunningInProcess()
             )
         ) {
             MigrationStatePolicy.StartupAction.RUN_PENDING -> {
-                runPendingOfficialOperitMigration()
+                runPendingRestoreOperation()
                 return
             }
             MigrationStatePolicy.StartupAction.SHOW_IN_PROGRESS -> {
@@ -335,15 +335,15 @@ class MainActivity : ComponentActivity() {
      * guides the user to restore from the safety snapshot instead of initializing normally with
      * partially-replaced data.
      */
-    private fun runPendingOfficialOperitMigration() {
+    private fun runPendingRestoreOperation() {
         // Claim process ownership before Activity recreation can observe PREPARING and mistake
         // the active run for an interrupted migration.
         GlobalScope.launch(Dispatchers.IO + NonCancellable, start = CoroutineStart.UNDISPATCHED) {
             try {
-                RawSnapshotBackupManager.runPendingOfficialOperitMigration(applicationContext)
-                AppLogger.i(TAG, "Official Operit migration completed successfully")
+                RawSnapshotBackupManager.runPendingRestoreOperation(applicationContext)
+                AppLogger.i(TAG, "Pending restore operation completed successfully")
             } catch (e: Exception) {
-                AppLogger.e(TAG, "Official Operit migration failed: ${e.message}", e)
+                AppLogger.e(TAG, "Pending restore operation failed: ${e.message}", e)
             }
         }
         showMigrationInProgressSurface()
@@ -396,7 +396,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         lifecycleScope.launch {
-            while (RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()) {
+            while (RawSnapshotBackupManager.isPendingRestoreOperationRunningInProcess()) {
                 delay(100)
             }
 
@@ -406,17 +406,27 @@ class MainActivity : ComponentActivity() {
             if (RawSnapshotBackupManager.isProcessRestartRequired()) {
                 exitProcess(0)
             }
+            val pendingFailure = RawSnapshotBackupManager.pendingRestoreOperationFailureMessage()
+            if (pendingFailure != null &&
+                (state == MigrationStateStore.State.IDLE || state == MigrationStateStore.State.COMPLETED)
+            ) {
+                showMigrationStartupErrorSurface(
+                    message = pendingFailure,
+                    pendingResetRequired = false,
+                )
+                return@launch
+            }
             when (state) {
                 MigrationStateStore.State.IDLE ->
                     showMigrationStartupErrorSurface(
-                        message = RawSnapshotBackupManager.officialOperitMigrationFailureMessage()
+                        message = RawSnapshotBackupManager.pendingRestoreOperationFailureMessage()
                             ?: state.name,
                         pendingResetRequired = false
                     )
                 MigrationStateStore.State.PENDING,
                 MigrationStateStore.State.PREPARING ->
                     showMigrationStartupErrorSurface(
-                        message = RawSnapshotBackupManager.officialOperitMigrationFailureMessage()
+                        message = RawSnapshotBackupManager.pendingRestoreOperationFailureMessage()
                             ?: state.name,
                         pendingResetRequired = true
                     )
