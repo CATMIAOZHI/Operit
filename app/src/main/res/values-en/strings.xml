@@ -3194,6 +3194,8 @@
     <string name="thinking_settings_active_count">%1$d enabled</string>
     <string name="thinking_type_off">off</string>
     <string name="thinking_type_mode">mode</string>
+    <string name="thinking_budget_tokens">%1$d tokens</string>
+    <string name="thinking_strength_not_sent">Not sent</string>
     <string name="thinking_quality">Thinking intensity</string>
     <string name="thinking_quality_desc">Only effective in thinking mode. Thinking intensity has five levels; higher levels use deeper reasoning.</string>
     <string name="model_config">Model Configuration</string>

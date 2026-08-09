@@ -633,7 +633,7 @@ open class OpenAIProvider(
             return null
         }
 
-        return ApiPreferences.thinkingQualityEffort(qualityLevel)
+        return ThinkingRequestSemantics.defaultReasoningEffort(providerType, qualityLevel)
     }
 
     private fun supportsOpenAiChatReasoningEffort(): Boolean =

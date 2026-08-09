@@ -455,7 +455,10 @@ class DeepseekProvider(
 
         // DeepSeek 官方文档枚举为 low/high/max，medium/xhigh 为兼容值（服务端会把 medium 映射为 high、
         // xhigh 映射为 high/max）。medium 显式归一化为 high，与官方映射一致，避免发送未收录值。
-        return normalizeDeepseekEffort(ApiPreferences.thinkingQualityEffort(qualityLevel))
+        return ThinkingRequestSemantics.defaultReasoningEffort(
+            com.ai.assistance.operit.data.model.ApiProviderType.DEEPSEEK,
+            qualityLevel,
+        )
     }
 
     companion object {
@@ -464,7 +467,7 @@ class DeepseekProvider(
          * medium 映射为 high（官方服务端对 medium 的处理一致），其余值透传。
          */
         fun normalizeDeepseekEffort(effort: String): String =
-            if (effort == "medium") "high" else effort
+            ThinkingRequestSemantics.normalizeDeepseekEffort(effort)
     }
 
     override suspend fun sendMessage(

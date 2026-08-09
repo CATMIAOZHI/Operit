@@ -1,14 +1,19 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
 import com.ai.assistance.operit.api.chat.llmprovider.DeepseekProvider
+import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSemantics
+import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSummary
+import com.ai.assistance.operit.data.model.ApiProviderType
+import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.ParameterCategory
+import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabel
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 思考程度档位 → reasoning_effort → 显示标签 映射测试。
- * 保证 UI 显示的档位与实际发送给 provider 的思考程度永远一致。
+ * 思考程度档位、provider 最终请求语义与显示标签的映射测试。
  */
 class ThinkingQualityTest {
 
@@ -46,4 +51,191 @@ class ThinkingQualityTest {
         assertEquals("xhigh", DeepseekProvider.normalizeDeepseekEffort("xhigh"))
         assertEquals("max", DeepseekProvider.normalizeDeepseekEffort("max"))
     }
+
+    @Test fun requestSummary_usesDeepseekEffectiveEffort() {
+        assertEquals(
+            ThinkingRequestSummary.Effort("high"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.DEEPSEEK,
+                modelName = "deepseek-chat",
+                qualityLevel = 2,
+                modelParameters = emptyList(),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_reportsEnabledForProviderWithoutIntensity() {
+        assertEquals(
+            ThinkingRequestSummary.Enabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-2.5-pro",
+                qualityLevel = 5,
+                modelParameters = emptyList(),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_preservesCustomReasoningEffort() {
+        assertEquals(
+            ThinkingRequestSummary.Effort("max"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI,
+                modelName = "gpt-5.6",
+                qualityLevel = 1,
+                modelParameters = listOf(stringParameter("reasoning_effort", "max")),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_capsOpenRouterBudgetByMaxTokens() {
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(4_095),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENROUTER,
+                modelName = "openrouter/auto",
+                qualityLevel = 3,
+                modelParameters = listOf(intParameter("max_tokens", 4_096)),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_usesOpenRouterBudgetForNousPortal() {
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(1_024),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.NOUS_PORTAL,
+                modelName = "Hermes-4",
+                qualityLevel = 2,
+                modelParameters = emptyList(),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_reportsEnabledForToolPkgProvider() {
+        assertEquals(
+            ThinkingRequestSummary.Enabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OTHER,
+                providerTypeId = "sample_toolpkg_provider",
+                isToolPkgProvider = true,
+                modelName = "plugin-model",
+                qualityLevel = 5,
+                modelParameters = emptyList(),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_reportsNotSentForUnknownProviderId() {
+        assertEquals(
+            ThinkingRequestSummary.NotSent,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OTHER,
+                providerTypeId = "missing_provider",
+                isToolPkgProvider = false,
+                modelName = "missing-model",
+                qualityLevel = 5,
+                modelParameters = emptyList(),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_reportsNotSentForBlankProviderId() {
+        assertEquals(
+            ThinkingRequestSummary.NotSent,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OTHER,
+                providerTypeId = "",
+                isToolPkgProvider = false,
+                modelName = "missing-model",
+                qualityLevel = 5,
+                modelParameters = emptyList(),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_respectsSiliconFlowDisabledOverride() {
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.SILICONFLOW,
+                modelName = "deepseek-ai/DeepSeek-R1",
+                qualityLevel = 5,
+                modelParameters = listOf(booleanParameter("enable_thinking", false)),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_respectsDeepseekThinkingObjectOverride() {
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.DEEPSEEK,
+                modelName = "deepseek-chat",
+                qualityLevel = 5,
+                modelParameters = listOf(objectParameter("thinking", "{\"type\":\"disabled\"}")),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_handlesNonPrimitiveReasoningField() {
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("{\"custom\":true}"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI_RESPONSES,
+                modelName = "gpt-5.6",
+                qualityLevel = 3,
+                modelParameters =
+                    listOf(objectParameter("reasoning", "{\"effort\":{\"custom\":true}}")),
+            ),
+        )
+    }
+
+    private fun stringParameter(apiName: String, value: String) =
+        ModelParameter(
+            id = apiName,
+            name = apiName,
+            apiName = apiName,
+            defaultValue = value,
+            currentValue = value,
+            isEnabled = true,
+            valueType = ParameterValueType.STRING,
+            category = ParameterCategory.OTHER,
+        )
+
+    private fun intParameter(apiName: String, value: Int) =
+        ModelParameter(
+            id = apiName,
+            name = apiName,
+            apiName = apiName,
+            defaultValue = value,
+            currentValue = value,
+            isEnabled = true,
+            valueType = ParameterValueType.INT,
+            category = ParameterCategory.OTHER,
+        )
+
+    private fun booleanParameter(apiName: String, value: Boolean) =
+        ModelParameter(
+            id = apiName,
+            name = apiName,
+            apiName = apiName,
+            defaultValue = value,
+            currentValue = value,
+            isEnabled = true,
+            valueType = ParameterValueType.BOOLEAN,
+            category = ParameterCategory.OTHER,
+        )
+
+    private fun objectParameter(apiName: String, value: String) =
+        ModelParameter(
+            id = apiName,
+            name = apiName,
+            apiName = apiName,
+            defaultValue = value,
+            currentValue = value,
+            isEnabled = true,
+            valueType = ParameterValueType.OBJECT,
+            category = ParameterCategory.OTHER,
+        )
 }

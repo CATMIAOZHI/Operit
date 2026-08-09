@@ -58,10 +58,13 @@ import androidx.compose.ui.window.PopupProperties
 import android.widget.Toast
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.library.MemoryAutoSaveScheduler
+import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSemantics
+import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSummary
 import com.ai.assistance.operit.data.model.CharacterCardChatModelBindingMode
 import com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelConfigSummary
+import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.FavoriteModelRef
 import com.ai.assistance.operit.data.model.MemorySpace
 import com.ai.assistance.operit.data.model.getModelByIndex
@@ -84,12 +87,14 @@ import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.getValidModelIndex
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.MemoryAutoSaveCandidateRepository
+import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import com.ai.assistance.operit.ui.common.icons.MaterialIconNameResolver
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuToggleHookParams
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuToggleDefinition
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuTogglePluginRegistry
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuToggleSlots
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabel
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingRequestSummaryLabel
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardMemoryBindingSwitchConfirmDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardModelBindingSwitchConfirmDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ToolPromptManagerDialog
@@ -246,6 +251,43 @@ fun ClassicChatSettingsBar(
             val validIndex = getValidModelIndex(config.modelName, effectiveCurrentConfigMapping.modelIndex)
             getModelByIndex(config.modelName, validIndex).ifEmpty { stringResource(R.string.not_selected) }
         } ?: stringResource(R.string.not_selected)
+    var currentModelParameters by remember {
+        mutableStateOf<List<ModelParameter<*>>>(emptyList())
+    }
+    var currentIsToolPkgProvider by remember { mutableStateOf(false) }
+    LaunchedEffect(
+        showMenu,
+        effectiveCurrentConfigMapping.configId,
+        currentConfig?.apiProviderTypeId,
+    ) {
+        if (showMenu) {
+            currentModelParameters =
+                modelConfigManager.getModelParametersForConfig(
+                    effectiveCurrentConfigMapping.configId,
+                )
+            currentIsToolPkgProvider =
+                currentConfig?.apiProviderTypeId?.let(ToolPkgAiProviderRegistry::get) != null
+        }
+    }
+    val thinkingRequestSummary =
+        remember(
+            currentConfig,
+            currentModelName,
+            thinkingQualityLevel,
+            currentModelParameters,
+            currentIsToolPkgProvider,
+        ) {
+            currentConfig?.let { config ->
+                ThinkingRequestSemantics.resolve(
+                    providerType = config.apiProviderType,
+                    providerTypeId = config.apiProviderTypeId,
+                    isToolPkgProvider = currentIsToolPkgProvider,
+                    modelName = currentModelName,
+                    qualityLevel = thinkingQualityLevel,
+                    modelParameters = currentModelParameters,
+                )
+            } ?: ThinkingRequestSummary.NotSent
+        }
     val maxThinkingQualityLevel = ApiPreferences.MAX_THINKING_QUALITY_LEVEL
     val toolPermissionText =
         when (if (enableTools) permissionLevel else PermissionLevel.FORBID) {
@@ -600,6 +642,7 @@ fun ClassicChatSettingsBar(
                                 enableThinkingMode = enableThinkingMode,
                                 onToggleThinkingMode = onToggleThinkingMode,
                                 thinkingQualityLevel = thinkingQualityLevel,
+                                thinkingRequestSummary = thinkingRequestSummary,
                                 maxThinkingQualityLevel = maxThinkingQualityLevel,
                                 onThinkingQualityLevelChange = { level ->
                                     onThinkingQualityLevelChange(
@@ -1269,6 +1312,7 @@ private fun ThinkingSettingsItem(
     enableThinkingMode: Boolean,
     onToggleThinkingMode: () -> Unit,
     thinkingQualityLevel: Int,
+    thinkingRequestSummary: ThinkingRequestSummary,
     maxThinkingQualityLevel: Int,
     onThinkingQualityLevelChange: (Int) -> Unit,
     thinkingSlotToggles: List<InputMenuToggleDefinition>,
@@ -1357,7 +1401,7 @@ private fun ThinkingSettingsItem(
 
     val thinkingTypeText =
             when {
-                enableThinkingMode -> stringResource(R.string.thinking_type_mode)
+                enableThinkingMode -> thinkingRequestSummaryLabel(thinkingRequestSummary)
                 else -> stringResource(R.string.thinking_type_off)
             }
 
