@@ -97,6 +97,7 @@ fun PackageDetailsDialog(
 
     val metaPackage = toolPackage ?: resolvedPackage
     val isToolPkgContainer = toolPkgDetails != null
+    val isBuiltIn = metaPackage?.isBuiltIn == true
     val packageDisplayName =
         toolPkgDetails?.displayName?.takeIf { it.isNotBlank() }
             ?: metaPackage
@@ -124,15 +125,37 @@ fun PackageDetailsDialog(
     if (showDeleteConfirmDialog) {
         AlertDialog(
                 onDismissRequest = { showDeleteConfirmDialog = false },
-                title = { Text(stringResource(R.string.pkg_confirm_delete)) },
-                text = { Text(stringResource(R.string.pkg_delete_warning, packageName)) },
+                title = {
+                    Text(
+                        stringResource(
+                            if (isBuiltIn) {
+                                R.string.builtin_archive_confirm_title
+                            } else {
+                                R.string.pkg_confirm_delete
+                            }
+                        )
+                    )
+                },
+                text = {
+                    Text(
+                        if (isBuiltIn) {
+                            stringResource(R.string.builtin_archive_warning, packageDisplayName)
+                        } else {
+                            stringResource(R.string.pkg_delete_warning, packageName)
+                        }
+                    )
+                },
                 confirmButton = {
                     Button(
                             onClick = {
                                 scope.launch {
                                     val deleted =
                                         withContext(Dispatchers.IO) {
-                                            packageManager.deletePackage(packageName)
+                                            if (isBuiltIn) {
+                                                packageManager.archiveBuiltInPackage(packageName)
+                                            } else {
+                                                packageManager.deletePackage(packageName)
+                                            }
                                         }
                                     if (deleted) {
                                         showDeleteConfirmDialog = false
@@ -144,7 +167,15 @@ fun PackageDetailsDialog(
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                     ) {
-                        Text(stringResource(R.string.pkg_delete))
+                        Text(
+                            stringResource(
+                                if (isBuiltIn) {
+                                    R.string.builtin_archive_action
+                                } else {
+                                    R.string.pkg_delete
+                                }
+                            )
+                        )
                     }
                 },
                 dismissButton = {
@@ -581,7 +612,7 @@ fun PackageDetailsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
                 ) {
-                    if (metaPackage != null && !metaPackage.isBuiltIn) {
+                    if (metaPackage != null) {
                         OutlinedButton(
                             onClick = { showDeleteConfirmDialog = true },
                             colors = ButtonDefaults.outlinedButtonColors(
@@ -589,12 +620,21 @@ fun PackageDetailsDialog(
                             )
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Delete,
+                                imageVector =
+                                    if (isBuiltIn) Icons.Default.Archive else Icons.Default.Delete,
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(stringResource(R.string.pkg_delete))
+                            Text(
+                                stringResource(
+                                    if (isBuiltIn) {
+                                        R.string.builtin_archive_action
+                                    } else {
+                                        R.string.pkg_delete
+                                    }
+                                )
+                            )
                         }
                     }
                     
