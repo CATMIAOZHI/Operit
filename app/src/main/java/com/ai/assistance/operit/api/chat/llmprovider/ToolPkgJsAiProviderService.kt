@@ -27,7 +27,7 @@ import org.json.JSONObject
 internal class ToolPkgJsAiProviderService(
     private val config: ModelConfigData,
     private val provider: ToolPkgAiProviderRegistration
-) : AIService {
+) : AIService, TokenStatIdentitySource {
     internal sealed interface ProviderHookValue {
         data object NullValue : ProviderHookValue
 
@@ -78,6 +78,12 @@ internal class ToolPkgJsAiProviderService(
 
     override val providerModel: String
         get() = "${provider.displayName}:${config.modelName}"
+
+    override val tokenStatProvider: String
+        get() = provider.providerId
+
+    override val tokenStatModel: String
+        get() = config.modelName
 
     override fun resetTokenCounts() {
         currentInputTokenCount = 0

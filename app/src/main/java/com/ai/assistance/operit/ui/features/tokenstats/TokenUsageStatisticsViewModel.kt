@@ -161,6 +161,10 @@ class TokenUsageStatisticsViewModel(
     private val readiness: TokenStatsReadiness = TokenStatsStartupCoordinator.readiness(context),
     private val readinessInitialWaitMs: Long = READINESS_WAIT_MS,
     private val readinessRefreshWaitMs: Long = READINESS_REFRESH_WAIT_MS,
+    /** Test seam for the cross-store reset result; production uses the real coordinator facade. */
+    private val resetAllWithBaselines: suspend () -> Boolean = {
+        ApiPreferences.getInstance(context.applicationContext).resetAllProviderModelTokenCounts()
+    },
 ) : ViewModel() {
 
     // 只保存 applicationContext（进程级单例，无泄漏风险；与 CustomEmojiViewModel 同模式）
@@ -209,13 +213,12 @@ class TokenUsageStatisticsViewModel(
     // ==== 查询 ====
 
     fun load() {
-        loadInternal(reconsiderAutomaticTime = false)
+        loadInternal(reconsiderAutomaticTime = false, loadActivityAfterReadiness = false)
     }
 
     /** 进入/返回统计页时重新探测自动时间范围；用户手选范围始终保持不变。 */
     fun loadForEntry() {
-        loadActivity()
-        loadInternal(reconsiderAutomaticTime = true)
+        loadInternal(reconsiderAutomaticTime = true, loadActivityAfterReadiness = true)
     }
 
     private fun loadActivity(requestedRecent: Boolean = true, requestedYear: Int? = null) {
@@ -288,7 +291,10 @@ class TokenUsageStatisticsViewModel(
         loadActivity(requestedRecent = true)
     }
 
-    private fun loadInternal(reconsiderAutomaticTime: Boolean) {
+    private fun loadInternal(
+        reconsiderAutomaticTime: Boolean,
+        loadActivityAfterReadiness: Boolean,
+    ) {
         loadJob?.cancel()
         val generation = ++loadGeneration
         // 筛选状态同步快照：偏好读取挂起期间用户可能已改筛选并触发新 load，
@@ -313,6 +319,9 @@ class TokenUsageStatisticsViewModel(
                     if (!ready) scheduleRefreshAfterReadiness()
                 } else if (!readinessReady) {
                     scheduleRefreshAfterReadiness()
+                }
+                if (loadActivityAfterReadiness) {
+                    loadActivity()
                 }
                 // 偏好全部读取为不可变本地快照：任何 _state.update 之前先核对
                 // generation，旧 load 即使恢复也不污染共享 state（P1-4）。
@@ -477,6 +486,11 @@ class TokenUsageStatisticsViewModel(
                 val ready = readiness.awaitReady(readinessRefreshWaitMs)
                 if (ready) {
                     readinessReady = true
+                    val activity = _state.value.activity
+                    loadActivity(
+                        requestedRecent = activity.recentSelected,
+                        requestedYear = activity.selectedYear,
+                    )
                     load()
                 }
             } catch (e: CancellationException) {
@@ -813,21 +827,23 @@ class TokenUsageStatisticsViewModel(
             try {
                 val ok =
                     if (deleteBaselines) {
-                        ApiPreferences.getInstance(appContext).resetAllProviderModelTokenCounts()
+                        resetAllWithBaselines()
                     } else {
                         TokenStatsResetCoordinator.deleteAllEvents(appContext, deleteBaselines = false)
                         true
                     }
-                if (ok) {
-                    loadActivity()
-                    load()
-                } else {
+                if (!ok) {
                     _actionMessage.value =
                         TokenStatsActionMessage(
                             text = stringResolver(R.string.settings_token_stats_reset_failed),
                             isError = true,
                         )
                 }
+                // Room deletion commits before the legacy DataStore outbox drain. Even when the
+                // drain reports failure, refresh the authoritative ledger instead of leaving the
+                // pre-reset totals cached on screen; the error still tells the user cleanup is pending.
+                loadActivity()
+                load()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -837,6 +853,10 @@ class TokenUsageStatisticsViewModel(
                         isError = true,
                     )
                 runCatching { AppLogger.e(tag, "删除全部统计失败", e) }
+                // The exception may follow an already committed Room transaction. A refresh is
+                // harmless for pre-commit failures and required for partial success.
+                loadActivity()
+                load()
             }
         }
     }

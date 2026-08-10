@@ -4,7 +4,6 @@ import com.ai.assistance.operit.data.collects.PricingCurrency
 import com.ai.assistance.operit.data.model.BillingMode
 import com.ai.assistance.operit.data.model.TokenStatBaselineEntity
 import com.ai.assistance.operit.data.model.TokenStatDisplayModelEntity
-import com.ai.assistance.operit.data.model.TokenStatEventEntity
 import com.ai.assistance.operit.data.model.TokenStatIdentityEntity
 import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
 
@@ -279,18 +278,14 @@ data class TokenStatsRangeData(
 )
 
 /**
- * 范围查询的同事务只读快照（P1-2）：identity/display model/价格覆盖/事件由
- * [com.ai.assistance.operit.data.dao.TokenStatsDao.loadRangeSnapshot] 在**同一个
- * Room 事务**内固定读取（SQLite 事务内快照一致），事务外由聚合器纯函数消费。
- * 并发写入要么整体可见要么整体不可见，杜绝“summary 有事件但模型桶缺失”的
- * 拆分状态；查询期间不重复取 DAO。
+ * Fixed small-table portion of a range snapshot. Events are delivered page-by-page by
+ * [com.ai.assistance.operit.data.dao.TokenStatsDao.loadRangeSnapshotPaged] in the same Room
+ * transaction, so the caller never retains the full range event list.
  */
-data class TokenStatsQuerySnapshot(
-    val events: List<TokenStatEventEntity>,
+data class TokenStatsRangeRead(
     val identitiesById: Map<String, TokenStatIdentityEntity>,
     val displayModelsById: Map<String, TokenStatDisplayModelEntity>,
     val overrides: List<TokenStatPriceOverrideEntity>,
-    val baselines: List<TokenStatBaselineEntity>,
 )
 
 /**
@@ -312,8 +307,7 @@ data class TokenStatsLifetimeRead(
  * 分组元数据快照（阶段 4 P1 修复）：全量身份 + 展示模型行在**同一个 Room 事务**内
  * 固定读取（[com.ai.assistance.operit.data.dao.TokenStatsDao.loadGroupMetadataSnapshot]），
  * 与统计筛选无关；事务外由设置管理器构建 [TokenStatsGroupModelInfo]。
- * 快照一致性原则同 [TokenStatsQuerySnapshot]（并发分组变更要么整体可见要么
- * 整体不可见）。
+ * 并发分组变更要么整体可见要么整体不可见。
  */
 data class TokenStatsGroupMetadataSnapshot(
     val identities: List<TokenStatIdentityEntity>,

@@ -20,10 +20,10 @@ import java.io.File
  * - Upgrading user whose legacy directory is missing or empty: **off** (nothing to be
  *   compatible with).
  *
- * Idempotent and concurrency-safe: [LegacyStoragePreferences.seedOnce] serializes the
- * check-and-seed with a process-wide lock and persists the initialized guard in an
- * [AtomicFile] under [Context.noBackupFilesDir] (excluded from raw snapshots), so a snapshot
- * restore cannot re-trigger auto-seeding and two concurrent startup callers seed at most once.
+ * Idempotent and concurrency-safe: the initialized guard lives in an [AtomicFile] under
+ * [Context.noBackupFilesDir] (excluded from raw snapshots). If a pre-feature snapshot replaces
+ * DataStore but leaves that guard intact, missing switch keys are reconstructed without
+ * overwriting any explicit restored value. A process-wide lock serializes seed and repair.
  *
  * The initializer is a no-op while the official→Operit Ry migration is gating main-data access
  * ([OperitApplication.isMainDataAccessAllowed]), because probing legacy paths during that
@@ -37,9 +37,8 @@ object LegacyStorageInitializer {
     private const val TAG = "LegacyStorageInitializer"
 
     /**
-     * Seeds defaults if not already done. Safe to call on every startup. Returns true when the
-     * flags were actually seeded this call, false when they were already initialized (or when the
-     * main-data gate blocked the call).
+     * Seeds defaults or repairs missing restored keys. Safe to call on every startup. Returns
+     * true only when persistent switch state changed this call.
      */
     suspend fun initializeIfNeeded(context: Context): Boolean = withContext(Dispatchers.IO) {
         if (!OperitApplication.isMainDataAccessAllowed(context)) {
@@ -47,7 +46,8 @@ object LegacyStorageInitializer {
             return@withContext false
         }
         val prefs = LegacyStoragePreferences.getInstance(context)
-        if (prefs.isInitialized()) {
+        val initialized = prefs.isInitialized()
+        if (initialized && prefs.hasCompleteReadSwitchState()) {
             return@withContext false
         }
 
@@ -55,7 +55,14 @@ object LegacyStorageInitializer {
         val readSkills = hasLegacyContent(paths.legacySkills)
         val readMcp = hasLegacyContent(paths.legacyMcp)
         val readWorkflows = hasLegacyContent(paths.legacyWorkflows)
-        prefs.seedOnce(readSkills, readMcp, readWorkflows)
+        if (initialized) {
+            // A raw snapshot from before the compatibility feature can replace DataStore while
+            // the no-backup marker survives. Reconstruct missing keys without overwriting any
+            // switch that the restored snapshot already contains.
+            prefs.restoreMissingReadSwitches(readSkills, readMcp, readWorkflows)
+        } else {
+            prefs.seedOnce(readSkills, readMcp, readWorkflows)
+        }
     }
 
     private fun hasLegacyContent(dir: File): Boolean {

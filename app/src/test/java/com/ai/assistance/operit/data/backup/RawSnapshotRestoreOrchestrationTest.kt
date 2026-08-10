@@ -13,6 +13,7 @@ import com.ai.assistance.operit.data.stats.TokenStatRequestContext
 import com.ai.assistance.operit.data.stats.TokenStatStatus
 import com.ai.assistance.operit.data.stats.TokenStatsLedger
 import com.ai.assistance.operit.data.stats.TokenStatSpool
+import com.ai.assistance.operit.data.stats.TokenStatsResetCoordinator
 import java.io.File
 import java.io.FileInputStream
 import java.util.UUID
@@ -21,10 +22,14 @@ import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -32,6 +37,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -44,8 +50,8 @@ import org.mockito.kotlin.whenever
 /**
  * RawSnapshot 恢复编排的入口级测试（纯 JVM，真实状态持久化）。
  *
- * 两个公开入口（restoreFromBackupUri / restoreFromBackupFile）只委托
- * [RawSnapshotBackupManager.runRestoreEntry] 这一条编排；本测试对编排的真实
+ * Settings URI 入口只持久化 PENDING 并由冷启动运行；恢复面的 File 入口与
+ * 冷启动 runner 共用 [RawSnapshotBackupManager.runRestoreEntry] 编排。本测试对编排的真实
  * 状态转换做验证（MigrationStateStore + AtomicRestoreMarkerStore + 协调器默认
  * recovery 完成路径全部真实执行，仅替换文件 IO 后端为 JVM 实现），覆盖：
  * - 初始 IDLE 成功：REPLACING → RESTORE_REPLACED → IDLE，marker 为完整 UUID，
@@ -57,7 +63,8 @@ import org.mockito.kotlin.whenever
  * - 目录替换成功但 marker 登记失败：状态停在 RESTORE_REPLACED 且记录 finalState，
  *   要求重启——冷启动自动补登记，无需重新替换目录；
  * - 冷启动自动补登记：RESTORE_REPLACED → 登记新 generation → 完成状态；
- * - URI/File 两个公开入口端到端接线一致（真实 zip 替换目录）。
+ * - URI 先落 PENDING、不在 live process 替换，冷启动 runner 与 File 入口均真实
+ *   替换 zip 目录。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RawSnapshotRestoreOrchestrationTest {
@@ -71,6 +78,7 @@ class RawSnapshotRestoreOrchestrationTest {
         listOf("cache", "data", "files", "external", "no_backup").forEach { File(tempDir, it).mkdirs() }
         context = mockContext(tempDir)
         MigrationStateStore.fileIoProvider = { PlainFileStateIo(File(it.noBackupFilesDir, "official_operit_migration_state.txt")) }
+        MigrationStateStore.uriParserForTest = { mock<Uri>() }
         RestoreCompletionCoordinator.markerStoreProvider = { ctx ->
             AtomicRestoreMarkerStore(File(ctx.noBackupFilesDir, "token_stats_restore_pending.txt"))
         }
@@ -88,6 +96,7 @@ class RawSnapshotRestoreOrchestrationTest {
     @After
     fun clearSeams() {
         MigrationStateStore.fileIoProvider = null
+        MigrationStateStore.uriParserForTest = null
         RestoreCompletionCoordinator.markerStoreProvider = null
         RestoreCompletionCoordinator.recoveryStateCompleter = null
         TokenStatSpool.spoolDeleteForTest = null
@@ -445,19 +454,26 @@ class RawSnapshotRestoreOrchestrationTest {
     }
 
     @Test
-    fun `restoreFromBackupUri runs the shared orchestration end to end`() =
+    fun `URI restore is staged without replacement then applied by cold start runner`() =
         runBlocking {
             val zip = File(tempDir, "snapshot.zip")
             createSnapshotZip(zip)
             zipForOpen = zip
-            // android.net.Uri 在 JVM 上不可构造（stub）：mock 一个 Uri 实例，
-            // 入口只把它传给 contentResolver（同样为 mock），不解析内容。
             val uri = mock<Uri>()
-            // mockito-inline 的 mockStatic 是线程绑定的：必须在与恢复相同
-            // （Dispatchers.IO）的线程上创建，AppLogger 调用才会被拦截。
+            whenever(uri.toString()).thenReturn("content://snapshot/raw")
+            Mockito.mockStatic(AppLogger::class.java).use {
+                assertTrue(RawSnapshotBackupManager.setPendingRawSnapshotRestore(context, uri))
+            }
+            assertEquals(MigrationStateStore.State.PENDING, state().state)
+            assertEquals(MigrationStateStore.State.IDLE, state().finalState)
+            assertFalse(
+                "live Settings staging must not replace DataStore",
+                File(tempDir, "data/datastore/api_settings.preferences_pb").exists(),
+            )
+
             withContext(Dispatchers.IO) {
                 Mockito.mockStatic(AppLogger::class.java).use {
-                    RawSnapshotBackupManager.restoreFromBackupUri(context, uri)
+                    RawSnapshotBackupManager.runPendingRestoreOperation(context)
                 }
             }
             assertRealRestoreOutcome()
@@ -510,15 +526,20 @@ class RawSnapshotRestoreOrchestrationTest {
     }
 
     @Test
-    fun `uri entry with corrupt zip fails before replacement and leaves state untouched`() =
+    fun `cold start URI validation failure clears pending state before replacement`() =
         runBlocking {
             val zip = File(tempDir, "corrupt.zip")
             zip.writeText("not a zip")
             zipForOpen = zip
+            val uri = mock<Uri>()
+            whenever(uri.toString()).thenReturn("content://snapshot/corrupt")
+            Mockito.mockStatic(AppLogger::class.java).use {
+                assertTrue(RawSnapshotBackupManager.setPendingRawSnapshotRestore(context, uri))
+            }
             withContext(Dispatchers.IO) {
                 Mockito.mockStatic(AppLogger::class.java).use {
                     try {
-                        RawSnapshotBackupManager.restoreFromBackupUri(context, mock<Uri>())
+                        RawSnapshotBackupManager.runPendingRestoreOperation(context)
                         fail("corrupt zip must fail")
                     } catch (e: Exception) {
                         // 预期：解压/清单校验失败
@@ -533,6 +554,43 @@ class RawSnapshotRestoreOrchestrationTest {
         }
 
     // ==== P1-2：恢复门闩与存活 insert 的隔离 ====
+
+    @Test
+    fun `raw replacement waits for the cross store cleanup sequence`() = runBlocking {
+        val cleanupHeld = CompletableDeferred<Unit>()
+        val releaseCleanup = CompletableDeferred<Unit>()
+        val replacementEntered = CompletableDeferred<Unit>()
+        val cleanupJob = launch(Dispatchers.Default) {
+            TokenStatsResetCoordinator.withCleanupSnapshotAccess {
+                cleanupHeld.complete(Unit)
+                releaseCleanup.await()
+            }
+        }
+        cleanupHeld.await()
+        val restoreJob = launch(Dispatchers.Default) {
+            RawSnapshotBackupManager.withTokenStatsRestoreIsolation(
+                context = context,
+                prepareBeforeCommit = {},
+                commitReplacement = {},
+            ) {
+                replacementEntered.complete(Unit)
+            }
+        }
+        try {
+            assertNull(
+                "replacement must not overlap Room -> DataStore -> Room cleanup",
+                withTimeoutOrNull(250) { replacementEntered.await() },
+            )
+            releaseCleanup.complete(Unit)
+            withTimeout(5_000) { replacementEntered.await() }
+            restoreJob.join()
+            cleanupJob.join()
+        } finally {
+            releaseCleanup.complete(Unit)
+            restoreJob.cancel()
+            cleanupJob.cancel()
+        }
+    }
 
     private fun request(id: String): TokenStatRequestContext =
         TokenStatRequestContext(

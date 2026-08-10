@@ -2020,13 +2020,22 @@ const operitEditorPackage = (function () {
         try {
             const locale = (getLang() ?? "").toLowerCase();
             const lang = locale.startsWith("zh") ? "zh" : locale.startsWith("en") ? "en" : "both";
-            let skillsDir = "";
+            let skillsDir;
             try {
-                skillsDir = await Tools.SoftwareSettings.getSkillsDirectory();
-            } catch (_) { }
-            const dirPath = typeof skillsDir === "string" && skillsDir.trim() !== "" ? skillsDir : "/sdcard/Download/Operit/skills";
+                const resolved = await Tools.SoftwareSettings.getSkillsDirectory();
+                if (typeof resolved !== "string" || resolved.trim() === "") {
+                    throw new Error("empty internal skills directory");
+                }
+                skillsDir = resolved.trim();
+            }
+            catch (error) {
+                const zhError = "无法获取应用内部 Skill 目录。请改用应用内的 Skill 导入或安装功能。";
+                const enError = "The app-internal Skills directory is unavailable. Use the in-app Skill import or install flow instead.";
+                const guidance = lang === "zh" ? zhError : lang === "en" ? enError : `${zhError}\n${enError}`;
+                throw new Error(`${guidance} (${get_error_message(error)})`);
+            }
             const zh = `如何制作 skill（简版）
-1. 先创建目录：${dirPath}/<skill_name>/
+1. 先创建目录：${skillsDir}/<skill_name>/
 2. 必备文件：SKILL.md
 3. 在 SKILL.md 顶部用 Markdown 元数据（frontmatter）写 name、description，例如：
 ---
@@ -2037,7 +2046,7 @@ description: 用一句话说明这个 skill 做什么
 5. 可选内容：scripts/、templates/、examples/、assets/；在 SKILL.md 里用相对路径引用
 6. 实践建议：优先下载现成 skill，直接解压过来，并确保目录下有 SKILL.md。`;
             const en = `How to make a skill (quick guide)
-1. Create a directory: ${dirPath}/<skill_name>/
+1. Create a directory: ${skillsDir}/<skill_name>/
 2. Required file: SKILL.md
 3. At the top of SKILL.md, use Markdown metadata (frontmatter) for name and description, for example:
 ---

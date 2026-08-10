@@ -14,11 +14,11 @@ import kotlinx.coroutines.withContext
  *
  * 查询策略（防 N+1 / 一致快照）：
  * - 组成响应的**全部 Room 读取**（identity/display model/价格覆盖/事件/baseline）
- *   在**同一个 Room 事务**内固定读取（[TokenStatsDao.loadRangeSnapshot] /
+ *   在**同一个 Room 事务**内固定读取（[TokenStatsDao.loadRangeSnapshotPaged] /
  *   [TokenStatsDao.loadLifetimeSnapshot]），事务外纯聚合：并发写入要么整体可见
  *   要么整体不可见，杜绝“summary 有事件但模型桶缺失”的拆分状态（P1-2）；
- * - 展示模型筛选在快照事务内走 JOIN 单条 IN 查询，模型数超过 900（SQLite 变量
- *   上限留余量）时在**同一事务**内分块合并（P2-2）；null = 全部、空 = 无事件；
+ * - 范围事件按稳定键集分页并在快照事务内增量聚合；展示模型筛选逐页使用同事务
+ *   identity 快照，不受 SQLite `IN` 参数上限影响；null = 全部、空 = 无事件；
  * - 生命周期总览不整表实体化：事件按 `(startedAtMs, eventId)` 键集分页
  *   （每页 [lifetimeEventPageSize] 条）在同事务内喂给增量累加器（P2-1）；
  * - 重估口径的旧系统价格（DataStore）**先读一次快照**（
@@ -49,6 +49,9 @@ object TokenStatsQueryService {
     /** 生命周期事件分页大小（P2-1）：固定批次读取 + 增量聚合，避免整表实体化峰值。 */
     internal var lifetimeEventPageSize: Int = 1_000
 
+    /** 范围统计事件分页大小：页面消费后只保留分桶/分组累加状态。 */
+    internal var rangeEventPageSize: Int = 1_000
+
     /** 活动视图事件分页大小：每页读取轻量投影并立即压缩为按日/小时汇总。 */
     internal var activityEventPageSize: Int = 1_000
 
@@ -78,7 +81,7 @@ object TokenStatsQueryService {
 
     /**
      * 指定时间范围的完整查询（汇总 + 趋势桶 + 模型/分类/状态明细）。
-     * 全部 Room 读取在 [TokenStatsDao.loadRangeSnapshot] 同一事务快照内；
+     * 全部 Room 读取在 [TokenStatsDao.loadRangeSnapshotPaged] 同一事务快照内；
      * 粒度按范围时长由 [TokenStatsTimeRanges.granularityFor] 选择。
      */
     suspend fun rangeData(
@@ -88,23 +91,41 @@ object TokenStatsQueryService {
         zone: ZoneId,
         legacyPrices: Map<String, LegacyPriceSettings?> = emptyMap(),
     ): TokenStatsRangeData {
-        val snapshot = dao.loadRangeSnapshot(
+        val granularity = TokenStatsTimeRanges.granularityFor(range)
+        var accumulator: TokenStatsAggregator.TokenStatsRangeAccumulator? = null
+        val read = dao.loadRangeSnapshotPaged(
             startMs = range.startMs,
             endMs = range.endMs,
             displayModelIds = params.displayModelIds?.toList(),
             includeOverrides = params.mode == TokenStatsCostMode.REVALUED,
+            pageSize = rangeEventPageSize,
+            onEventsPage = { page, identities, displayModels, overrides ->
+                val current = accumulator
+                    ?: TokenStatsAggregator.TokenStatsRangeAccumulator(
+                        identitiesById = identities,
+                        displayModelsById = displayModels,
+                        overrides = overrides,
+                        legacyPrices = legacyPrices,
+                        range = range,
+                        granularity = granularity,
+                        zone = zone,
+                        params = params,
+                    ).also { accumulator = it }
+                current.addPage(page)
+            },
         )
-        return TokenStatsAggregator.rangeData(
-            events = snapshot.events,
-            identitiesById = snapshot.identitiesById,
-            displayModelsById = snapshot.displayModelsById,
-            overrides = snapshot.overrides,
-            legacyPrices = legacyPrices,
-            range = range,
-            granularity = TokenStatsTimeRanges.granularityFor(range),
-            zone = zone,
-            params = params,
-        )
+        val completed = accumulator
+            ?: TokenStatsAggregator.TokenStatsRangeAccumulator(
+                identitiesById = read.identitiesById,
+                displayModelsById = read.displayModelsById,
+                overrides = read.overrides,
+                legacyPrices = legacyPrices,
+                range = range,
+                granularity = granularity,
+                zone = zone,
+                params = params,
+            )
+        return completed.result()
     }
 
     /** 时间范围内是否存在事件（初始回退探测，每条都是索引 EXISTS 短路查询）。 */

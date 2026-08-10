@@ -3195,7 +3195,7 @@
     <string name="thinking_type_off">off</string>
     <string name="thinking_type_mode">mode</string>
     <string name="thinking_quality">Thinking intensity</string>
-    <string name="thinking_quality_desc">Only effective in thinking mode. Thinking intensity has five levels; higher levels use deeper reasoning.</string>
+    <string name="thinking_quality_desc">Only effective in thinking mode. GPT-5.6 models use five levels; other models retain the original four levels. Higher values use deeper reasoning.</string>
     <string name="model_config">Model Configuration</string>
     <string name="model_config_desc">Select a configured model here, or click Manage Configuration below to create or modify models</string>
     <string name="prompt">Prompt</string>
@@ -5496,7 +5496,9 @@
     <string name="backup_raw_snapshot_progress_replacing_datastore">Writing datastore...</string>
     <string name="backup_raw_snapshot_progress_replacing_databases">Writing databases...</string>
     <string name="backup_raw_snapshot_restore_confirm_title">Confirm file snapshot restore</string>
-    <string name="backup_raw_snapshot_restore_confirm_message">This will overwrite current app data with the following backup:\n%1$s\n\nThis action cannot be undone. It is recommended to perform a backup before restoring.</string>
+    <string name="backup_raw_snapshot_restore_confirm_message">This will overwrite current app data with the following backup:\n%1$s\n\nThis action cannot be undone. After confirmation, the app will restart immediately and apply the restore during cold start. It is recommended to perform a backup first.</string>
+    <string name="backup_raw_snapshot_restore_uri_permission_failed">The app could not retain read access to this backup, so the restore did not start. Please select the file again.</string>
+    <string name="backup_raw_snapshot_restore_schedule_failed">The cold-start restore request could not be saved. The restore did not start and the app will not restart.</string>
     <string name="backup_raw_snapshot_restore_confirm_action">Confirm restore</string>
     <string name="backup_raw_snapshot_restore_cancel_action">Cancel</string>
     <string name="backup_raw_snapshot_restart_title">App restart required</string>
@@ -6738,6 +6740,7 @@
     <string name="mcp_deployment_saving_config">Saving MCP config...</string>
     <string name="mcp_deployment_save_config_failed">Failed to save MCP config</string>
     <string name="mcp_deployment_error">Deployment error: %1$s</string>
+    <string name="mcp_deployment_invalid_plugin_id">The plugin ID contains unsafe characters, so deployment was rejected.</string>
     <string name="mcp_deployment_cannot_determine">Cannot determine how to deploy this plugin: %1$s</string>
     <string name="mcp_deployment_copying_files">Copying plugin files to target directory...</string>
     <string name="mcp_deployment_copy_failed">Failed to copy files to target directory: %1$s</string>
@@ -6895,6 +6898,9 @@
     <string name="skill_error_cannot_access_dir">Cannot access skills directory: %1$s</string>
     <string name="skill_error_create_tmp_dir_failed">Failed to create temp directory: %1$s</string>
     <string name="skill_error_import_invalid_path">Import failed: invalid path</string>
+    <string name="legacy_storage_initialization_error_title">Compatibility settings unavailable</string>
+    <string name="legacy_storage_initialization_error_message">Background services were not started, preventing legacy Skills, MCP servers, or workflows from being hidden. Please retry.\n\nError: %1$s</string>
+    <string name="legacy_storage_initialization_retry">Retry</string>
     <string name="skill_error_import_path_not_found">Import failed: path not found: %1$s</string>
     <string name="skill_error_import_no_skill_md">Import failed: SKILL.md not found in zip</string>
     <string name="skill_error_import_no_skill_md_in_path">Import failed: SKILL.md not found in specified path</string>
@@ -8484,4 +8490,14 @@
     <string name="token_stats_detail_tokens">Token breakdown</string>
     <string name="token_stats_detail_close">Close</string>
     <string name="token_stats_detail_open">Tap to view details</string>
+    <string name="settings_legacy_storage_title">Legacy storage compatibility</string>
+    <string name="settings_legacy_storage_description">Choose whether to read legacy content from Download/Operit. Turning this off does not delete the original files.</string>
+    <string name="settings_legacy_skills_title">Read legacy Skills</string>
+    <string name="settings_legacy_skills_description">Show non-hidden Skills from Download/Operit/skills</string>
+    <string name="settings_legacy_mcp_title">Read legacy MCP</string>
+    <string name="settings_legacy_mcp_description">Load legacy MCP configuration and packages from Download/Operit</string>
+    <string name="settings_legacy_workflows_title">Read legacy workflows</string>
+    <string name="settings_legacy_workflows_description">Show and schedule workflows from Download/Operit/workflow</string>
+    <string name="settings_legacy_storage_update_failed">Failed to update legacy storage compatibility</string>
+    <string name="mcp_repository_invalid_plugin_id">Invalid plugin ID; package-directory access was rejected</string>
 </resources>

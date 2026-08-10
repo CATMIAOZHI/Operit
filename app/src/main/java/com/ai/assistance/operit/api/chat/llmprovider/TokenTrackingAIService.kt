@@ -181,26 +181,18 @@ class TokenTrackingAIService(
     }
 
     private suspend fun newRequest(category: TokenStatCategory?): TokenStatRequestContext {
-        // P1 终审：restore 替换开始后本进程不再接受新的统计请求（直到进程重启，UI 允许
-        // 稍后重启）——在此明确拒绝开始新跟踪请求，绝不等到收尾才失败，也绝不写入已恢复
-        // 替换的数据库。替换前失败的 restore 不置位该标志，新请求照常继续。
-        if (!TokenStatSpool.isAcceptingEvents()) {
-            throw TokenStatsPersistenceException(
-                "Token statistics are not accepting new events until the app restarts after a restore",
-            )
-        }
-        val (provider, model) = TokenStatIdentityResolver.splitProviderModel(delegate.providerModel)
-        // P1-1：请求接受边界在**同一事务**内原子确保身份存在并读取 generation——删除展示
-        // 分组要么看见该身份（写 IDENTITY tombstone，删除前接受的事件被跳过），要么请求
-        // 拿到 ≥ tombstone 的新 generation（删除后请求正常入账）。首次请求的身份绝不可能
-        // 绕过分组删除 tombstone 复活旧事件。
-        val acceptedGeneration =
+        val (provider, model) = resolveTokenStatIdentity(delegate)
+        // 请求接受边界同时与两个线性化点串行：Room 事务中建身份+取
+        // generation，且整个事务持有 spool restore lifecycle 锁。因此 raw restore
+        // 不可能在“已判定接受”之后、身份事务进入 Room 之前关闭/替换数据库。
+        val (acceptedGeneration, sessionEpoch) = TokenStatSpool.withRequestAdmission {
             TokenStatsLedger.ensureIdentityAndCaptureGeneration(
                 appContext,
                 configId,
                 provider,
                 model,
             )
+        }
         return TokenStatRequestContext(
             eventId = "evt_${UUID.randomUUID().toString().replace("-", "")}",
             category = category ?: TokenStatCategory.OTHER,
@@ -209,9 +201,8 @@ class TokenTrackingAIService(
             model = model,
             startedAtMs = System.currentTimeMillis(),
             acceptedGeneration = acceptedGeneration,
-            // P1 终审：请求开始时同步捕获 restore epoch（纯内存、无 Room），收尾 append
-            // 时验证——restore 屏障开始即递增 epoch，旧请求被明确拒绝，不写新 DB。
-            sessionEpoch = TokenStatSpool.captureRestoreEpoch(),
+            // epoch 与上述 Room 身份事务在同一 restore lifecycle 临界区内捕获。
+            sessionEpoch = sessionEpoch,
         )
     }
 
@@ -461,3 +452,10 @@ class TokenTrackingAIService(
         private const val MAX_CAUSE_DEPTH = 8
     }
 }
+
+internal fun resolveTokenStatIdentity(service: AIService): Pair<String, String> =
+    if (service is TokenStatIdentitySource) {
+        service.tokenStatProvider to service.tokenStatModel
+    } else {
+        TokenStatIdentityResolver.splitProviderModel(service.providerModel)
+    }

@@ -1,8 +1,12 @@
 package com.ai.assistance.operit.data.repository
 
+import java.io.File
+import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeNoException
 import org.junit.Test
 
 /**
@@ -13,6 +17,114 @@ import org.junit.Test
  * repository must uphold, expressed through the [SourcedEntry]/[StorageSource] primitives.
  */
 class WorkflowStoragePolicyTest {
+
+    @Test
+    fun workflowIdsResolveOnlyAsDirectChildrenOfManagedRoots() {
+        val root = Files.createTempDirectory("workflow-paths").toFile()
+        try {
+            assertEquals(
+                File(root, "日常 planning.json").canonicalFile,
+                resolveWorkflowStorageChild(root, "日常 planning", ".json"),
+            )
+            listOf(
+                "",
+                " ",
+                ".",
+                "..",
+                "../mcp/mcp_config",
+                "..\\mcp\\mcp_config",
+                "nested/workflow",
+                "nested\\workflow",
+                "nul\u0000id",
+            ).forEach { unsafeId ->
+                assertNull("must reject $unsafeId", resolveWorkflowStorageChild(root, unsafeId, ".json"))
+                assertNull("log path must reject $unsafeId", resolveWorkflowStorageChild(root, unsafeId))
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun workflowJsonScansRejectCanonicalTargetsOutsideTheScannedDirectory() {
+        val root = Files.createTempDirectory("workflow-scan").toFile()
+        val scanned = File(root, "scanned").apply { mkdirs() }
+        val outside = File(root, "outside.json").apply { writeText("{}") }
+        val inside = File(scanned, "inside.json").apply { writeText("{}") }
+        try {
+            assertEquals(listOf(inside), canonicalWorkflowJsonFiles(scanned))
+
+            val link = File(scanned, "escaped.json").toPath()
+            try {
+                Files.createSymbolicLink(link, outside.toPath())
+            } catch (e: Exception) {
+                assumeNoException(e)
+            }
+
+            assertEquals(listOf(inside), canonicalWorkflowJsonFiles(scanned))
+            assertEquals(inside, latestWorkflowExecutionRecordFile(scanned))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun workflowResolversAndScansRejectASymlinkManagedRoot() {
+        val root = Files.createTempDirectory("workflow-root-link").toFile()
+        val outside = Files.createTempDirectory("workflow-outside-root").toFile()
+        File(outside, "outside.json").writeText("{}")
+        val linkedRoot = File(root, "managed-link").toPath()
+        try {
+            try {
+                Files.createSymbolicLink(linkedRoot, outside.toPath())
+            } catch (e: Exception) {
+                assumeNoException(e)
+            }
+
+            assertNull(resolveWorkflowStorageChild(linkedRoot.toFile(), "outside", ".json"))
+            assertTrue(canonicalWorkflowJsonFiles(linkedRoot.toFile()).isEmpty())
+            assertNull(latestWorkflowExecutionRecordFile(linkedRoot.toFile()))
+
+            val nestedRoot = File(linkedRoot.toFile(), "nested")
+            File(outside, "nested").mkdirs()
+            assertNull(
+                resolveWorkflowStorageChild(
+                    root = nestedRoot,
+                    workflowId = "outside",
+                    suffix = ".json",
+                    trustedAnchor = root,
+                )
+            )
+            assertTrue(canonicalWorkflowJsonFiles(nestedRoot, trustedAnchor = root).isEmpty())
+        } finally {
+            root.deleteRecursively()
+            outside.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun latestExecutionRecordFallsBackToLegacyAndThenPrefersNewerInternalLog() {
+        val root = Files.createTempDirectory("workflow-logs").toFile()
+        val internal = File(root, "internal").apply { mkdirs() }
+        val legacy = File(root, "legacy").apply { mkdirs() }
+        try {
+            val legacyRecord = File(legacy, "legacy.json").apply {
+                writeText("{}")
+                setLastModified(100L)
+            }
+            File(legacy, "ignored.txt").writeText("not a record")
+
+            assertEquals(legacyRecord, latestWorkflowExecutionRecordFile(internal, legacy))
+
+            val internalRecord = File(internal, "internal.json").apply {
+                writeText("{}")
+                setLastModified(200L)
+            }
+            assertEquals(internalRecord, latestWorkflowExecutionRecordFile(internal, legacy))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 
     @Test
     fun internalWinsOnIdConflict_documentedInvariant() {
@@ -82,5 +194,39 @@ class WorkflowStoragePolicyTest {
             out += id; seenIds += id
         }
         assertTrue(out.isEmpty())
+    }
+
+    @Test
+    fun failedInternalDeletion_isNotReportedAsSuccessWhenLegacyCopyIsHidden() {
+        assertFalse(
+            workflowDeletionSucceeded(
+                internalExisted = true,
+                internalRemoved = false,
+                legacyExisted = true
+            )
+        )
+    }
+
+    @Test
+    fun legacyOnlyDeletion_isReportedAsSuccessAfterItIsHidden() {
+        assertTrue(
+            workflowDeletionSucceeded(
+                internalExisted = false,
+                internalRemoved = true,
+                legacyExisted = true
+            )
+        )
+    }
+
+    @Test
+    fun failedInternalDeletion_doesNotAuthorizeUnscheduling() {
+        val deleted =
+            workflowDeletionSucceeded(
+                internalExisted = true,
+                internalRemoved = false,
+                legacyExisted = true
+            )
+
+        assertFalse(deleted)
     }
 }

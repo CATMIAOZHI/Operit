@@ -20,6 +20,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +35,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 
@@ -77,6 +80,7 @@ class MCPLocalServer private constructor(private val context: Context) {
     }
 
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val configMutations = McpConfigMutationCoordinator()
 
     // 持久化配置
     private val prefs: SharedPreferences =
@@ -104,6 +108,9 @@ class MCPLocalServer private constructor(private val context: Context) {
 
     // 旧版只读配置：仅当 legacy MCP 读取开关开启时加载，永不写入
     private val _legacyConfig = MutableStateFlow(MCPConfig())
+
+    // 用户在应用内删除的旧版 serverId；同时遮蔽 server 与 metadata，避免只读源回填。
+    private val _hiddenLegacyServerIds = MutableStateFlow<Set<String>>(emptySet())
 
     // 有效配置：内部优先，旧版补齐缺失 serverId；所有读接口都基于它
     private val _effectiveConfig = MutableStateFlow(MCPConfig())
@@ -246,7 +253,7 @@ class MCPLocalServer private constructor(private val context: Context) {
      */
     suspend fun reloadConfigurations() {
         withContext(Dispatchers.IO) {
-            loadAllConfigurations()
+            configMutations.withLock { loadAllConfigurations() }
             AppLogger.d(TAG, "配置已重新加载")
         }
     }
@@ -272,22 +279,29 @@ class MCPLocalServer private constructor(private val context: Context) {
 
                 if (updatedConfig != rawConfig) {
                     coroutineScope.launch {
-                        saveMCPConfig()
-                        val createdMetadataCount =
-                            (updatedConfig.pluginMetadata.size - sanitizedConfig.config.pluginMetadata.size)
-                                .coerceAtLeast(0)
-                        if (createdMetadataCount > 0) {
-                            AppLogger.d(TAG, "自动创建了 $createdMetadataCount 个缺失的插件元数据")
-                        }
-                        if (sanitizedConfig.removedServerIds.isNotEmpty() || sanitizedConfig.removedMetadataIds.isNotEmpty()) {
-                            AppLogger.d(TAG, "已持久化清理后的MCP配置")
+                        try {
+                            saveMCPConfig()
+                            val createdMetadataCount =
+                                (updatedConfig.pluginMetadata.size - sanitizedConfig.config.pluginMetadata.size)
+                                    .coerceAtLeast(0)
+                            if (createdMetadataCount > 0) {
+                                AppLogger.d(TAG, "自动创建了 $createdMetadataCount 个缺失的插件元数据")
+                            }
+                            if (sanitizedConfig.removedServerIds.isNotEmpty() || sanitizedConfig.removedMetadataIds.isNotEmpty()) {
+                                AppLogger.d(TAG, "已持久化清理后的MCP配置")
+                            }
+                        } catch (e: Exception) {
+                            AppLogger.e(TAG, "后台持久化自愈后的MCP配置失败", e)
                         }
                     }
                 }
             }
 
-            // 2. 加载旧版只读配置（仅当开关开启且文件已存在；探测不创建目录）
-            _legacyConfig.value = runBlocking { loadLegacyConfigOrEmpty() }
+            // 2. 加载旧版 tombstone 与只读配置（仅当开关开启且文件已存在；探测不创建目录）
+            runBlocking {
+                _hiddenLegacyServerIds.value = legacyPrefs.hiddenLegacyMcpServerIds()
+                _legacyConfig.value = loadLegacyConfigOrEmpty()
+            }
 
             // 3. 合并为有效配置
             recomputeEffectiveConfig()
@@ -328,6 +342,11 @@ class MCPLocalServer private constructor(private val context: Context) {
      */
     private suspend fun loadLegacyConfigOrEmpty(): MCPConfig {
         if (!legacyPrefs.isReadLegacyMcp()) return MCPConfig()
+        return readLegacyConfigFileOrEmpty()
+    }
+
+    /** Read the legacy source independently of the visibility switch, without creating paths. */
+    private fun readLegacyConfigFileOrEmpty(): MCPConfig {
         val legacyFile = legacyConfigFile()
         if (!legacyFile.exists() || !legacyFile.isFile) return MCPConfig()
         return try {
@@ -338,33 +357,14 @@ class MCPLocalServer private constructor(private val context: Context) {
         }
     }
 
-    /**
-     * 合并内部与旧版配置：mcpServers 与 pluginMetadata 均按 serverId 合并，
-     * 内部条目优先（覆盖冲突），旧版只补齐内部缺失的条目。旧版中有 id 与内部
-     * 重复的条目被丢弃。
-     */
-    private fun mergeConfigs(internal: MCPConfig, legacy: MCPConfig): MCPConfig {
-        if (legacy.mcpServers.isEmpty() && legacy.pluginMetadata.isEmpty()) {
-            return internal
-        }
-        val mergedServers = internal.mcpServers.toMutableMap()
-        legacy.mcpServers.forEach { (serverId, serverConfig) ->
-            if (!mergedServers.containsKey(serverId)) {
-                mergedServers[serverId] = serverConfig
-            }
-        }
-        val mergedMetadata = internal.pluginMetadata.toMutableMap()
-        legacy.pluginMetadata.forEach { (id, metadata) ->
-            if (!mergedMetadata.containsKey(id)) {
-                mergedMetadata[id] = metadata
-            }
-        }
-        return internal.copy(mcpServers = mergedServers, pluginMetadata = mergedMetadata)
-    }
-
     /** 基于内部 + 旧版配置重算有效配置。所有写路径在修改内部配置后调用。 */
     private fun recomputeEffectiveConfig() {
-        _effectiveConfig.value = mergeConfigs(_internalConfig.value, _legacyConfig.value)
+        _effectiveConfig.value =
+            mergeMcpConfigs(
+                internal = _internalConfig.value,
+                legacy = _legacyConfig.value,
+                hiddenLegacyServerIds = _hiddenLegacyServerIds.value
+            )
     }
 
     /**
@@ -372,20 +372,23 @@ class MCPLocalServer private constructor(private val context: Context) {
      * ServerConfig 与 PluginMetadata 复制进内部配置，使后续修改/禁用落在内部。
      * 持久化由调用方在完成具体变更后统一 saveMCPConfig()。
      */
-    private suspend fun promoteServerToInternalIfNeeded(serverId: String) {
-        val internal = _internalConfig.value
-        if (internal.mcpServers.containsKey(serverId) || internal.pluginMetadata.containsKey(serverId)) {
+    private fun promotedInternalConfig(serverId: String): MCPConfig =
+        promoteLegacyMcpEntry(
+            internal = _internalConfig.value,
+            legacy = _legacyConfig.value,
+            hiddenLegacyServerIds = _hiddenLegacyServerIds.value,
+            serverId = serverId
+        )
+
+    /** Persist a deletion shadow before removing an internal override of a legacy entry. */
+    private suspend fun hideLegacyEntryIfPresent(serverId: String) {
+        if (serverId in _hiddenLegacyServerIds.value) return
+        val persistedLegacy = withContext(Dispatchers.IO) { readLegacyConfigFileOrEmpty() }
+        if (!legacyMcpEntryExists(_legacyConfig.value, persistedLegacy, serverId)) {
             return
         }
-        val legacy = _legacyConfig.value
-        val legacyServer = legacy.mcpServers[serverId] ?: return
-        val newServers = internal.mcpServers.toMutableMap()
-        newServers[serverId] = legacyServer
-        val newMetadata = internal.pluginMetadata.toMutableMap()
-        legacy.pluginMetadata[serverId]?.let { newMetadata[serverId] = it }
-        _internalConfig.value = internal.copy(mcpServers = newServers, pluginMetadata = newMetadata)
-        recomputeEffectiveConfig()
-        AppLogger.d(TAG, "写时复制: 旧版MCP服务器 $serverId 已复制到内部配置")
+        legacyPrefs.hideLegacyMcpServerId(serverId)
+        _hiddenLegacyServerIds.update { it + serverId }
     }
     
     /**
@@ -545,13 +548,28 @@ class MCPLocalServer private constructor(private val context: Context) {
      * 写入中途崩溃留下截断文件。
      */
     suspend fun saveMCPConfig() {
+        configMutations.withLock { saveMCPConfigLocked() }
+    }
+
+    private fun saveMCPConfigLocked() {
         try {
             val configJson = gson.toJson(_internalConfig.value)
             atomicWrite(internalConfigFile, configJson)
             AppLogger.d(TAG, "MCP配置已保存")
         } catch (e: Exception) {
             AppLogger.e(TAG, "保存MCP配置时出错", e)
+            throw e
         }
+    }
+
+    /** Persist first and publish the new in-memory state only after the atomic write succeeds. */
+    private suspend fun applyPersistedInternalConfig(updated: MCPConfig) {
+        _internalConfig.value =
+            persistMcpConfigBeforePublish(updated) { config ->
+                val configJson = gson.toJson(config)
+                atomicWrite(internalConfigFile, configJson)
+            }
+        recomputeEffectiveConfig()
     }
 
     /**
@@ -609,9 +627,8 @@ class MCPLocalServer private constructor(private val context: Context) {
         val normalizedCommand = command?.trim()
         require(!normalizedCommand.isNullOrEmpty()) { "MCP服务器 $serverId 的 command 不能为空" }
 
-        promoteServerToInternalIfNeeded(serverId)
-
-        _internalConfig.update { currentConfig ->
+        configMutations.withLock {
+            val currentConfig = promotedInternalConfig(serverId)
             val newServers = currentConfig.mcpServers.toMutableMap()
             newServers[serverId] = MCPConfig.ServerConfig(
                 command = normalizedCommand,
@@ -624,30 +641,25 @@ class MCPLocalServer private constructor(private val context: Context) {
                     if (key == null || value == null) null else key to value
                 }?.toMap() ?: emptyMap()
             )
-            currentConfig.copy(mcpServers = newServers)
+            applyPersistedInternalConfig(currentConfig.copy(mcpServers = newServers))
         }
-        saveMCPConfig()
-        recomputeEffectiveConfig()
         AppLogger.d(TAG, "MCP服务器配置已更新: $serverId")
     }
 
-    /**
-     * 删除MCP服务器配置（只删除内部配置中的条目；旧版只读文件不受影响。
-     * 注意：若该条目仅存在于旧版配置，删除内部条目后旧版条目仍会通过合并
-     * 出现在有效配置中 —— 旧版是只读源，彻底移除需关闭 legacy MCP 读取开关）
-     */
+    /** 删除 MCP 服务器配置；旧版只读条目通过持久化 tombstone 遮蔽。 */
     suspend fun removeMCPServer(serverId: String) {
-        promoteServerToInternalIfNeeded(serverId)
-        _internalConfig.update { currentConfig ->
-            val newServers = currentConfig.mcpServers.toMutableMap()
-            newServers.remove(serverId)
-            currentConfig.copy(mcpServers = newServers)
+        configMutations.withLock {
+            val currentConfig = _internalConfig.value
+            val newServers = currentConfig.mcpServers.toMutableMap().apply { remove(serverId) }
+            val newMetadata = currentConfig.pluginMetadata.toMutableMap().apply { remove(serverId) }
+            applyPersistedInternalConfig(
+                currentConfig.copy(mcpServers = newServers, pluginMetadata = newMetadata)
+            )
+            hideLegacyEntryIfPresent(serverId)
+            recomputeEffectiveConfig()
         }
-        saveMCPConfig()
-        recomputeEffectiveConfig()
 
-        // 同时清理相关的元数据和状态
-        removePluginMetadata(serverId)
+        // 配置与元数据已通过同一次原子写删除，再清理可再生成的运行状态。
         removeServerStatus(serverId)
         
         AppLogger.d(TAG, "MCP服务器配置已删除: $serverId")
@@ -691,23 +703,20 @@ class MCPLocalServer private constructor(private val context: Context) {
                 }
                 
                 var addedCount = 0
-                _internalConfig.update { currentConfig ->
+                configMutations.withLock {
+                    val currentConfig = _internalConfig.value
                     val newServers = currentConfig.mcpServers.toMutableMap()
                     sanitizedConfig.config.mcpServers.forEach { (serverId, serverConfig) ->
                         newServers[serverId] = serverConfig
                         addedCount++
                         AppLogger.d(TAG, "添加服务器配置: $serverId")
                     }
-                    currentConfig.copy(mcpServers = newServers)
+                    AppLogger.d(TAG, "自动填充缺失的元数据")
+                    val updatedConfig =
+                        autoFillMissingMetadata(currentConfig.copy(mcpServers = newServers))
+                    AppLogger.d(TAG, "保存配置文件")
+                    applyPersistedInternalConfig(updatedConfig)
                 }
-                
-                AppLogger.d(TAG, "自动填充缺失的元数据")
-                val updatedConfig = autoFillMissingMetadata(_internalConfig.value)
-                _internalConfig.value = updatedConfig
-                
-                AppLogger.d(TAG, "保存配置文件")
-                saveMCPConfig()
-                recomputeEffectiveConfig()
                 
                 AppLogger.d(TAG, "初始化服务器状态")
                 initializeMissingServerStatus()
@@ -747,29 +756,24 @@ class MCPLocalServer private constructor(private val context: Context) {
      * 添加或更新插件元数据（写入内部主配置；若条目来自旧版先写时复制提升）
      */
     suspend fun addOrUpdatePluginMetadata(metadata: PluginMetadata) {
-        promoteServerToInternalIfNeeded(metadata.id)
-        _internalConfig.update { currentConfig ->
+        configMutations.withLock {
+            val currentConfig = promotedInternalConfig(metadata.id)
             val newMetadata = currentConfig.pluginMetadata.toMutableMap()
             newMetadata[metadata.id] = metadata
-            currentConfig.copy(pluginMetadata = newMetadata)
+            applyPersistedInternalConfig(currentConfig.copy(pluginMetadata = newMetadata))
         }
-        saveMCPConfig()
-        recomputeEffectiveConfig()
         AppLogger.d(TAG, "插件元数据已更新: ${metadata.id} - ${metadata.name}")
     }
 
-    /**
-     * 删除插件元数据（只删除内部配置中的条目，旧版只读文件不受影响）
-     */
+    /** 删除插件元数据；旧版只读条目通过持久化 tombstone 遮蔽。 */
     suspend fun removePluginMetadata(pluginId: String) {
-        promoteServerToInternalIfNeeded(pluginId)
-        _internalConfig.update { currentConfig ->
-            val newMetadata = currentConfig.pluginMetadata.toMutableMap()
-            newMetadata.remove(pluginId)
-            currentConfig.copy(pluginMetadata = newMetadata)
+        configMutations.withLock {
+            val currentConfig = _internalConfig.value
+            val newMetadata = currentConfig.pluginMetadata.toMutableMap().apply { remove(pluginId) }
+            applyPersistedInternalConfig(currentConfig.copy(pluginMetadata = newMetadata))
+            hideLegacyEntryIfPresent(pluginId)
+            recomputeEffectiveConfig()
         }
-        saveMCPConfig()
-        recomputeEffectiveConfig()
         AppLogger.d(TAG, "插件元数据已删除: $pluginId")
     }
 
@@ -901,58 +905,60 @@ class MCPLocalServer private constructor(private val context: Context) {
         return true
     }
 
+    /** True when the server still exists in the current internal + enabled-legacy view. */
+    fun hasEffectiveServer(serverId: String): Boolean =
+        serverId in _effectiveConfig.value.mcpServers ||
+            serverId in _effectiveConfig.value.pluginMetadata
+
     /**
      * 设置服务器启用状态
      * 本地插件写入 mcpServers.disabled；远程插件写入 pluginMetadata.disabled。
      * 若条目来自旧版先写时复制提升到内部，确保禁用标记落在内部配置。
      */
     suspend fun setServerEnabled(serverId: String, enabled: Boolean) {
-        promoteServerToInternalIfNeeded(serverId)
-        val serverConfig = getMCPServer(serverId)
-        if (serverConfig != null) {
-            val command = serverConfig.command?.trim()
-            if (command.isNullOrEmpty()) {
-                AppLogger.w(TAG, "服务器配置无效，已移除本地 server 记录: $serverId")
-                val shouldRemoveMetadata = getPluginMetadata(serverId)?.type != "remote"
-                _internalConfig.update { currentConfig ->
-                    val newServers = currentConfig.mcpServers.toMutableMap()
-                    val newMetadata = currentConfig.pluginMetadata.toMutableMap()
+        var removeStatus = false
+        val outcome = configMutations.withLock {
+            val serverConfig = _effectiveConfig.value.mcpServers[serverId]
+            if (serverConfig != null) {
+                val currentConfig = promotedInternalConfig(serverId)
+                val command = serverConfig.command?.trim()
+                val newServers = currentConfig.mcpServers.toMutableMap()
+                val newMetadata = currentConfig.pluginMetadata.toMutableMap()
+                if (command.isNullOrEmpty()) {
+                    val shouldRemoveMetadata =
+                        _effectiveConfig.value.pluginMetadata[serverId]?.type != "remote"
                     newServers.remove(serverId)
-                    if (shouldRemoveMetadata) {
-                        newMetadata.remove(serverId)
-                    }
-                    currentConfig.copy(
-                        mcpServers = newServers,
-                        pluginMetadata = newMetadata
+                    if (shouldRemoveMetadata) newMetadata.remove(serverId)
+                    removeStatus = shouldRemoveMetadata
+                    applyPersistedInternalConfig(
+                        currentConfig.copy(mcpServers = newServers, pluginMetadata = newMetadata)
                     )
-                }
-                saveMCPConfig()
-                recomputeEffectiveConfig()
-                if (shouldRemoveMetadata) {
-                    removeServerStatus(serverId)
+                    "invalid"
+                } else {
+                    newServers[serverId] = serverConfig.copy(disabled = !enabled)
+                    applyPersistedInternalConfig(currentConfig.copy(mcpServers = newServers))
+                    "local"
                 }
             } else {
-                addOrUpdateMCPServer(
-                    serverId = serverId,
-                    command = command,
-                    args = serverConfig.args ?: emptyList(),
-                    env = serverConfig.env ?: emptyMap(),
-                    disabled = !enabled,
-                    autoApprove = serverConfig.autoApprove ?: emptyList()
-                )
-                AppLogger.d(TAG, "服务器启用状态已更新(本地): $serverId, enabled=$enabled")
-                return
+                val metadata = _effectiveConfig.value.pluginMetadata[serverId]
+                if (metadata?.type == "remote") {
+                    val currentConfig = promotedInternalConfig(serverId)
+                    val newMetadata = currentConfig.pluginMetadata.toMutableMap()
+                    newMetadata[serverId] = metadata.copy(disabled = !enabled)
+                    applyPersistedInternalConfig(currentConfig.copy(pluginMetadata = newMetadata))
+                    "remote"
+                } else {
+                    "missing"
+                }
             }
         }
-
-        val metadata = getPluginMetadata(serverId)
-        if (metadata?.type == "remote") {
-            addOrUpdatePluginMetadata(metadata.copy(disabled = !enabled))
-            AppLogger.d(TAG, "服务器启用状态已更新(远程): $serverId, enabled=$enabled")
-            return
+        if (removeStatus) removeServerStatus(serverId)
+        when (outcome) {
+            "invalid" -> AppLogger.w(TAG, "服务器配置无效，已移除本地 server 记录: $serverId")
+            "local" -> AppLogger.d(TAG, "服务器启用状态已更新(本地): $serverId, enabled=$enabled")
+            "remote" -> AppLogger.d(TAG, "服务器启用状态已更新(远程): $serverId, enabled=$enabled")
+            else -> AppLogger.w(TAG, "设置启用状态失败，未找到服务器配置或远程元数据: $serverId")
         }
-
-        AppLogger.w(TAG, "设置启用状态失败，未找到服务器配置或远程元数据: $serverId")
     }
 
     fun getPluginRuntimeDirectory(pluginId: String): String {
@@ -1078,15 +1084,12 @@ class MCPLocalServer private constructor(private val context: Context) {
             val serverConfig = sanitizeServerConfig(pluginId, parsedServerConfig, "savePluginConfig")
                 ?: return false
 
-            promoteServerToInternalIfNeeded(pluginId)
-
-            _internalConfig.update { currentConfig ->
+            configMutations.withLock {
+                val currentConfig = promotedInternalConfig(pluginId)
                 val newServers = currentConfig.mcpServers.toMutableMap()
                 newServers[pluginId] = serverConfig
-                currentConfig.copy(mcpServers = newServers)
+                applyPersistedInternalConfig(currentConfig.copy(mcpServers = newServers))
             }
-            saveMCPConfig()
-            recomputeEffectiveConfig()
             true
         } catch (e: Exception) {
             AppLogger.e(TAG, "保存插件配置失败: $pluginId", e)
@@ -1121,9 +1124,9 @@ class MCPLocalServer private constructor(private val context: Context) {
                 val configJson = gson.toJson(config)
                 val rawMcpConfig = gson.fromJson(configJson, MCPConfig::class.java) ?: MCPConfig()
                 val sanitizedConfig = sanitizeMCPConfig(rawMcpConfig, "importConfigFromJson")
-                _internalConfig.value = autoFillMissingMetadata(sanitizedConfig.config)
-                saveMCPConfig()
-                recomputeEffectiveConfig()
+                configMutations.withLock {
+                    applyPersistedInternalConfig(autoFillMissingMetadata(sanitizedConfig.config))
+                }
             }
             
             importData["serverStatus"]?.let { status ->
@@ -1153,19 +1156,21 @@ class MCPLocalServer private constructor(private val context: Context) {
     suspend fun cleanupInvalidConfigurations() {
         try {
             // 清理内部配置中缺失元数据的孤立服务器
-            val internalConfig = _internalConfig.value
-            val validPluginIds = internalConfig.pluginMetadata.keys
-            val serversToRemove = internalConfig.mcpServers.keys.filter { it !in validPluginIds }
-
-            if (serversToRemove.isNotEmpty()) {
-                val cleanedServers = internalConfig.mcpServers.toMutableMap()
-                serversToRemove.forEach { serverId ->
-                    cleanedServers.remove(serverId)
+            val removedCount = configMutations.withLock {
+                val internalConfig = _internalConfig.value
+                val validPluginIds = internalConfig.pluginMetadata.keys
+                val serversToRemove = internalConfig.mcpServers.keys.filter { it !in validPluginIds }
+                if (serversToRemove.isNotEmpty()) {
+                    val cleanedServers = internalConfig.mcpServers.toMutableMap()
+                    serversToRemove.forEach { serverId -> cleanedServers.remove(serverId) }
+                    applyPersistedInternalConfig(
+                        internalConfig.copy(mcpServers = cleanedServers)
+                    )
                 }
-                _internalConfig.value = internalConfig.copy(mcpServers = cleanedServers)
-                saveMCPConfig()
-                recomputeEffectiveConfig()
-                AppLogger.d(TAG, "清理了 ${serversToRemove.size} 个无效的MCP服务器配置")
+                serversToRemove.size
+            }
+            if (removedCount > 0) {
+                AppLogger.d(TAG, "清理了 $removedCount 个无效的MCP服务器配置")
             }
 
             // 清理无效的服务器状态（基于有效配置，旧版只读条目同样保留其状态）
@@ -1193,8 +1198,8 @@ class MCPLocalServer private constructor(private val context: Context) {
      *
      * - 开启：重新读取旧版配置（文件存在时）并合并进有效配置。
      * - 关闭：清空旧版配置并重算有效配置。运行时停止/注销"旧版专属"服务器由
-     *   [MCPRepository.onLegacyReadSwitchChanged] 编排（必须先停止再调用本方法，
-     *   这样写时复制提升时旧版条目仍然可读）。
+     *   [MCPRepository.onLegacyReadSwitchChanged] 编排；该仓库会先捕获旧版运行时信息，
+     *   再调用本方法关闭自动激活入口，最后清理运行时，不写入内部 disabled 副本。
      */
     suspend fun onLegacyReadSwitchChanged(nowEnabled: Boolean) = withContext(Dispatchers.IO) {
         _legacyConfig.value = if (nowEnabled) loadLegacyConfigOrEmpty() else MCPConfig()
@@ -1220,6 +1225,133 @@ class MCPLocalServer private constructor(private val context: Context) {
             _internalConfig.value.pluginMetadata.keys
         val legacyIds = _legacyConfig.value.mcpServers.keys +
             _legacyConfig.value.pluginMetadata.keys
-        return legacyIds.filter { it !in internalIds }.toSet()
+        return legacyIds.filter {
+            it !in internalIds && it !in _hiddenLegacyServerIds.value
+        }.toSet()
     }
+}
+
+/**
+ * Process-wide suppression for legacy MCP entries while their read source is disabled. The
+ * effective-config check also rejects deleted/unknown IDs, whose historical `isServerEnabled`
+ * fallback is intentionally permissive for older callers.
+ */
+internal object McpRuntimeActivationGate {
+    private val suppressedLegacyIds = ConcurrentHashMap.newKeySet<String>()
+
+    fun suppressLegacy(ids: Collection<String>): Set<String> =
+        ids.filterTo(mutableSetOf()) { id -> suppressedLegacyIds.add(id) }
+
+    fun rollbackSuppression(ids: Collection<String>) {
+        suppressedLegacyIds.removeAll(ids.toSet())
+    }
+
+    fun resumeLegacyReads() {
+        suppressedLegacyIds.clear()
+    }
+
+    fun isActivationAllowed(
+        serverId: String,
+        hasEffectiveServer: Boolean,
+        isEnabled: Boolean,
+    ): Boolean = serverId !in suppressedLegacyIds && hasEffectiveServer && isEnabled
+}
+
+internal fun MCPLocalServer.isRuntimeActivationAllowed(serverId: String): Boolean =
+    McpRuntimeActivationGate.isActivationAllowed(
+        serverId = serverId,
+        hasEffectiveServer = hasEffectiveServer(serverId),
+        isEnabled = isServerEnabled(serverId),
+    )
+
+/** Runs one runtime side effect only while activation remains allowed, cleaning up on revocation. */
+internal suspend fun <T> runWithMcpRuntimeActivationGuard(
+    isAllowed: () -> Boolean,
+    onRevoked: suspend () -> Unit = {},
+    action: suspend () -> T,
+): T? {
+    if (!isAllowed()) return null
+    return try {
+        val result = action()
+        if (isAllowed()) {
+            result
+        } else {
+            onRevoked()
+            null
+        }
+    } catch (e: Exception) {
+        if (!isAllowed()) onRevoked()
+        throw e
+    }
+}
+
+internal fun mergeMcpConfigs(
+    internal: MCPLocalServer.MCPConfig,
+    legacy: MCPLocalServer.MCPConfig,
+    hiddenLegacyServerIds: Set<String>
+): MCPLocalServer.MCPConfig {
+    // Internal entries win; legacy entries only fill missing IDs, except persistent deletion
+    // shadows suppress both the server config and metadata halves of a legacy entry.
+    if (legacy.mcpServers.isEmpty() && legacy.pluginMetadata.isEmpty()) {
+        return internal
+    }
+    val mergedServers = internal.mcpServers.toMutableMap()
+    legacy.mcpServers.forEach { (serverId, serverConfig) ->
+        if (serverId !in hiddenLegacyServerIds && !mergedServers.containsKey(serverId)) {
+            mergedServers[serverId] = serverConfig
+        }
+    }
+    val mergedMetadata = internal.pluginMetadata.toMutableMap()
+    legacy.pluginMetadata.forEach { (id, metadata) ->
+        if (id !in hiddenLegacyServerIds && !mergedMetadata.containsKey(id)) {
+            mergedMetadata[id] = metadata
+        }
+    }
+    return internal.copy(mcpServers = mergedServers, pluginMetadata = mergedMetadata)
+}
+
+internal fun legacyMcpEntryExists(
+    activeLegacy: MCPLocalServer.MCPConfig,
+    persistedLegacy: MCPLocalServer.MCPConfig,
+    serverId: String
+): Boolean =
+    activeLegacy.mcpServers.containsKey(serverId) ||
+        activeLegacy.pluginMetadata.containsKey(serverId) ||
+        persistedLegacy.mcpServers.containsKey(serverId) ||
+        persistedLegacy.pluginMetadata.containsKey(serverId)
+
+internal fun promoteLegacyMcpEntry(
+    internal: MCPLocalServer.MCPConfig,
+    legacy: MCPLocalServer.MCPConfig,
+    hiddenLegacyServerIds: Set<String>,
+    serverId: String
+): MCPLocalServer.MCPConfig {
+    if (serverId in hiddenLegacyServerIds ||
+        internal.mcpServers.containsKey(serverId) ||
+        internal.pluginMetadata.containsKey(serverId)
+    ) {
+        return internal
+    }
+    val legacyServer = legacy.mcpServers[serverId]
+    val legacyMetadata = legacy.pluginMetadata[serverId]
+    if (legacyServer == null && legacyMetadata == null) return internal
+    val newServers = internal.mcpServers.toMutableMap()
+    val newMetadata = internal.pluginMetadata.toMutableMap()
+    if (legacyServer != null) newServers[serverId] = legacyServer
+    if (legacyMetadata != null) newMetadata[serverId] = legacyMetadata
+    return internal.copy(mcpServers = newServers, pluginMetadata = newMetadata)
+}
+
+internal suspend fun persistMcpConfigBeforePublish(
+    updated: MCPLocalServer.MCPConfig,
+    persist: suspend (MCPLocalServer.MCPConfig) -> Unit
+): MCPLocalServer.MCPConfig {
+    persist(updated)
+    return updated
+}
+
+internal class McpConfigMutationCoordinator {
+    private val mutex = Mutex()
+
+    suspend fun <T> withLock(block: suspend () -> T): T = mutex.withLock { block() }
 }
