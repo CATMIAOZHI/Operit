@@ -294,22 +294,32 @@ object OpenAIResponsesPayloadAdapter {
     fun parseUsageCounts(usage: JSONObject?): UsageCounts? {
         usage ?: return null
 
-        val totalInputTokens = usage.optInt("prompt_tokens", usage.optInt("input_tokens", 0))
-        val outputTokens = usage.optInt("completion_tokens", usage.optInt("output_tokens", 0))
+        // 评审 P1-5：显式全零 payload 也是“已观察到的 usage”——按字段存在判断，
+        // 不能按 “>0” 过滤；P2-1：数值全程 Long 解析，只在旧 UI 计数边界饱和 Int。
+        val hasInput = usage.has("prompt_tokens") || usage.has("input_tokens")
+        val hasOutput = usage.has("completion_tokens") || usage.has("output_tokens")
         val cachedDetails =
             usage.optJSONObject("prompt_tokens_details")
                 ?: usage.optJSONObject("input_tokens_details")
+        val hasCached = usage.has("cached_tokens") || cachedDetails?.has("cached_tokens") == true
+        if (!hasInput && !hasOutput && !hasCached) return null
+
+        val totalInputTokens = usage.optLong("prompt_tokens", usage.optLong("input_tokens", -1))
+            .saturateToInt()
+        val outputTokens = usage.optLong("completion_tokens", usage.optLong("output_tokens", -1))
+            .saturateToInt()
         val cachedInputTokens =
-            cachedDetails?.optInt("cached_tokens", usage.optInt("cached_tokens", 0))
-                ?: usage.optInt("cached_tokens", 0)
+            (cachedDetails?.optLong("cached_tokens", -1)?.takeIf { it >= 0 }
+                ?: usage.optLong("cached_tokens", -1))
+                .coerceAtLeast(0)
+                .saturateToInt()
         val actualInputTokens = (totalInputTokens - cachedInputTokens).coerceAtLeast(0)
 
-        return if (totalInputTokens > 0 || outputTokens > 0 || cachedInputTokens > 0) {
-            UsageCounts(totalInputTokens, actualInputTokens, cachedInputTokens, outputTokens)
-        } else {
-            null
-        }
+        return UsageCounts(totalInputTokens, actualInputTokens, cachedInputTokens, outputTokens)
     }
+
+    /** 旧 UI 计数边界（P2-1）：Long 饱和为 Int，绝不回绕为负。 */
+    private fun Long.saturateToInt(): Int = coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
 
     fun toResponsesRequest(chatStyleRequest: JSONObject): JSONObject {
         val converted = JSONObject(chatStyleRequest.toString())

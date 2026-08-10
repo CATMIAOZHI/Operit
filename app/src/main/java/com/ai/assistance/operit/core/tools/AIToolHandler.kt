@@ -5,6 +5,10 @@ import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.mcp.MCPManager
 import com.ai.assistance.operit.core.tools.mcp.MCPToolExecutor
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
+import com.ai.assistance.operit.data.mcp.MCPLocalServer
+import com.ai.assistance.operit.data.mcp.isRuntimeActivationAllowed
+import com.ai.assistance.operit.data.mcp.runWithMcpRuntimeActivationGuard
+import com.ai.assistance.operit.data.mcp.plugins.MCPBridgeClient
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolInvocation
 import com.ai.assistance.operit.data.model.ToolParameter
@@ -290,9 +294,22 @@ class AIToolHandler private constructor(private val context: Context) {
     }
 
     private fun isMcpServiceActive(packageName: String): Boolean {
-        val client = MCPManager.getInstance(context).getOrCreateClient(packageName) ?: return false
-        val serviceInfo = runBlocking { client.getServiceInfo() } ?: return false
-        return serviceInfo.active && serviceInfo.ready
+        val localServer = MCPLocalServer.getInstance(context)
+        var acquiredClient: MCPBridgeClient? = null
+        return runBlocking {
+            runWithMcpRuntimeActivationGuard(
+                    isAllowed = { localServer.isRuntimeActivationAllowed(packageName) },
+                    onRevoked = { acquiredClient?.unspawn() },
+            ) {
+                val client =
+                        MCPManager.getInstance(context).getOrCreateClient(packageName)
+                                ?: return@runWithMcpRuntimeActivationGuard false
+                acquiredClient = client
+                val serviceInfo = client.getServiceInfo()
+                        ?: return@runWithMcpRuntimeActivationGuard false
+                serviceInfo.active && serviceInfo.ready
+            } ?: false
+        }
     }
 
 
@@ -336,10 +353,22 @@ class AIToolHandler private constructor(private val context: Context) {
             val packageName = toolName.substringBefore(':', missingDelimiterValue = "")
             if (packageName.isNotBlank()) {
                 try {
+                    val localServer = MCPLocalServer.getInstance(context)
+                    if (!localServer.isRuntimeActivationAllowed(packageName)) {
+                        AppLogger.d(
+                            TAG,
+                            "MCP server '$packageName' is unavailable or disabled; refusing executor for $toolName"
+                        )
+                        return null
+                    }
                     val packageManager = getOrCreatePackageManager()
                     val isMcpAvailable =
                             packageManager.getAvailableServerPackages().containsKey(packageName)
                     if (isMcpAvailable && !isMcpServiceActive(packageName)) {
+                        // Phase 4 guard: never auto-reactivate an MCP server that is disabled or
+                        // no longer present in the effective MCP config (for example while legacy
+                        // MCP reading is off).
+                        // runCatching keeps the previous behavior if the lookup fails.
                         AppLogger.d(
                                 TAG,
                                 "MCP service '$packageName' is inactive while resolving $toolName, auto-reactivating package"

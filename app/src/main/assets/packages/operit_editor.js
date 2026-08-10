@@ -88,12 +88,12 @@
 - 检查终端依赖（node/pnpm/python/uv）与 MCP 服务状态；其中 Node 类 `npx` MCP 实际依赖 `pnpm`，若缺少 `pnpm` 将无法启动
 
 【Skill：安装与排查】
-1) 目录：/sdcard/Download/Operit/skills/
+1) 目录：默认写入应用内部技能目录（路径由 Tools.SoftwareSettings.getSkillsDirectory() 返回）。Download/Operit/skills 仅作为可选的旧版只读兼容来源，需在“设置 → 旧版存储兼容”中开启对应开关才会读取，且不用于新建。
 2) 识别规则：每个 Skill 必须是一个文件夹，且包含 SKILL.md（skill.md 也可）。
 3) 添加方式（按这个做）：
 - 先从可信来源下载 Skill（zip 或仓库源码均可）
-- 把下载内容解压后，直接放到 /sdcard/Download/Operit/skills/
-- 最终目录结构必须是 /sdcard/Download/Operit/skills/<skill_name>/，且该目录内有 SKILL.md
+- 推荐通过应用内的导入或安装功能添加；若手动放置，放到 Tools.SoftwareSettings.getSkillsDirectory() 返回的目录
+- 最终目录结构必须是 <skills_dir>/<skill_name>/，且该目录内有 SKILL.md
 4) 元数据解析：
 - 优先读取 frontmatter 中的 name/description
 - 若缺失，回退读取文件前40行里的 name:/description:
@@ -326,12 +326,12 @@
 - Check terminal dependencies (node/pnpm/python/uv) and MCP service status; Node-style `npx` MCPs actually depend on `pnpm`, so missing `pnpm` will prevent startup
 
 [Skill: install and troubleshooting]
-1) Directory: /sdcard/Download/Operit/skills/
+1) Directory: new skills are written to the app-internal skills directory (returned by Tools.SoftwareSettings.getSkillsDirectory()). Download/Operit/skills is only an optional, read-only legacy compatibility source, read only when the corresponding switch under Settings → Legacy storage compatibility is on, and never used for new installs.
 2) Recognition rule: each Skill must be a folder containing SKILL.md (skill.md is also accepted).
 3) How to add a skill (use this workflow):
 - Download the skill from a trusted source (zip or repository source code).
-- Extract it, then place the folder directly under /sdcard/Download/Operit/skills/
-- Final structure must be /sdcard/Download/Operit/skills/<skill_name>/ and that folder must contain SKILL.md
+- Prefer the in-app import/install; if placing manually, put it under the directory returned by Tools.SoftwareSettings.getSkillsDirectory()
+- Final structure must be <skills_dir>/<skill_name>/ and that folder must contain SKILL.md
 4) Metadata parsing:
 - Prefer frontmatter name/description
 - Fallback to name:/description: in the first 40 lines
@@ -2020,8 +2020,22 @@ const operitEditorPackage = (function () {
         try {
             const locale = (getLang() ?? "").toLowerCase();
             const lang = locale.startsWith("zh") ? "zh" : locale.startsWith("en") ? "en" : "both";
+            let skillsDir;
+            try {
+                const resolved = await Tools.SoftwareSettings.getSkillsDirectory();
+                if (typeof resolved !== "string" || resolved.trim() === "") {
+                    throw new Error("empty internal skills directory");
+                }
+                skillsDir = resolved.trim();
+            }
+            catch (error) {
+                const zhError = "无法获取应用内部 Skill 目录。请改用应用内的 Skill 导入或安装功能。";
+                const enError = "The app-internal Skills directory is unavailable. Use the in-app Skill import or install flow instead.";
+                const guidance = lang === "zh" ? zhError : lang === "en" ? enError : `${zhError}\n${enError}`;
+                throw new Error(`${guidance} (${get_error_message(error)})`);
+            }
             const zh = `如何制作 skill（简版）
-1. 先创建目录：/sdcard/Download/Operit/skills/<skill_name>/
+1. 先创建目录：${skillsDir}/<skill_name>/
 2. 必备文件：SKILL.md
 3. 在 SKILL.md 顶部用 Markdown 元数据（frontmatter）写 name、description，例如：
 ---
@@ -2032,7 +2046,7 @@ description: 用一句话说明这个 skill 做什么
 5. 可选内容：scripts/、templates/、examples/、assets/；在 SKILL.md 里用相对路径引用
 6. 实践建议：优先下载现成 skill，直接解压过来，并确保目录下有 SKILL.md。`;
             const en = `How to make a skill (quick guide)
-1. Create a directory: /sdcard/Download/Operit/skills/<skill_name>/
+1. Create a directory: ${skillsDir}/<skill_name>/
 2. Required file: SKILL.md
 3. At the top of SKILL.md, use Markdown metadata (frontmatter) for name and description, for example:
 ---

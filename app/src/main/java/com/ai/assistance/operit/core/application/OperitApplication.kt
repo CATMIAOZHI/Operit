@@ -45,11 +45,13 @@ import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.ExternalHttpApiPreferences
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.preferences.WakeWordPreferences
+import com.ai.assistance.operit.data.preferences.LegacyStorageInitializer
 import com.ai.assistance.operit.data.preferences.initAndroidPermissionPreferences
 import com.ai.assistance.operit.data.preferences.initUserPreferencesManager
 import com.ai.assistance.operit.data.preferences.preferencesManager
 import com.ai.assistance.operit.data.repository.CustomEmojiRepository
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
+import com.ai.assistance.operit.data.stats.TokenStatsStartupCoordinator
 import com.ai.assistance.operit.ui.features.chat.webview.LocalWebServer
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.editor.language.LanguageFactory
 import com.ai.assistance.operit.util.GlobalExceptionHandler
@@ -162,11 +164,15 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
      *   / NEEDS_RECOVERY) and the data directory may be partially replaced or the state file is
      *   corrupt. The caller MUST NOT initialize normally. Activities should route to the
      *   recovery surface; services should stop themselves and exit the process.
+     * - [CompatibilityInitializationFailed]: legacy visibility could not be seeded. Its message
+     *   belongs to this immutable attempt result so a concurrent retry cannot invalidate it.
      */
-    enum class MainApplicationInitResult {
-        Initialized,
-        MigrationInProgress,
-        MigrationNeedsRecovery
+    sealed class MainApplicationInitResult {
+        data object Initialized : MainApplicationInitResult()
+        data object MigrationInProgress : MainApplicationInitResult()
+        data object MigrationNeedsRecovery : MainApplicationInitResult()
+        data class CompatibilityInitializationFailed(val message: String) :
+            MainApplicationInitResult()
     }
 
     fun initializeMainApplication(): MainApplicationInitResult {
@@ -185,7 +191,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                     state = migrationState.state,
                     processRestartRequired = RawSnapshotBackupManager.isProcessRestartRequired(),
                     migrationRunningInProcess =
-                        RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()
+                        RawSnapshotBackupManager.isPendingRestoreOperationRunningInProcess()
                 )
             ) {
                 MigrationStatePolicy.MainInitializationAction.MIGRATION_IN_PROGRESS ->
@@ -193,15 +199,21 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                 MigrationStatePolicy.MainInitializationAction.SHOW_RECOVERY ->
                     MainApplicationInitResult.MigrationNeedsRecovery
                 MigrationStatePolicy.MainInitializationAction.INITIALIZE -> {
-                    initializeMainApplicationLocked()
-                    mainApplicationInitialized = true
-                    MainApplicationInitResult.Initialized
+                    val compatibilityFailure = initializeMainApplicationLocked()
+                    if (compatibilityFailure == null) {
+                        mainApplicationInitialized = true
+                        MainApplicationInitResult.Initialized
+                    } else {
+                        MainApplicationInitResult.CompatibilityInitializationFailed(
+                            compatibilityFailure
+                        )
+                    }
                 }
             }
         }
     }
 
-    private fun initializeMainApplicationLocked() {
+    private fun initializeMainApplicationLocked(): String? {
         val startTime = System.currentTimeMillis()
 
         configureOpenMpEnvironment()
@@ -211,6 +223,31 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         if (!isCrashReportRecoveryStartup) {
             AppLogger.resetLogFile()
         }
+
+        // Legacy compatibility flags must be seeded before WorkManager, plugin hooks, services,
+        // or repositories can snapshot them. This runs only after the migration gate above has
+        // allowed main-data access; the one-shot initializer moves its file work to Dispatchers.IO.
+        val legacyStartTime = System.currentTimeMillis()
+        var compatibilityError: Exception? = null
+        val compatibilityReady = runRequiredCompatibilityInitialization(
+            initialize = {
+                runBlocking {
+                    LegacyStorageInitializer.initializeIfNeeded(applicationContext)
+                }
+            },
+            onFailure = { error ->
+                compatibilityError = error
+                AppLogger.e(TAG, "Legacy storage initializer failed", error)
+            },
+        )
+        if (!compatibilityReady) {
+            return compatibilityError?.message ?: compatibilityError?.javaClass?.name
+                ?: "Unknown compatibility initialization failure"
+        }
+        AppLogger.d(
+            TAG,
+            "【启动计时】旧版存储兼容开关初始化完成 - ${System.currentTimeMillis() - legacyStartTime}ms"
+        )
 
         ensureWorkManagerInitialized()
 
@@ -355,6 +392,20 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             AppLogger.d(TAG, "【启动计时】数据库预加载完成（异步） - ${System.currentTimeMillis() - dbStartTime}ms")
         }
 
+        // 启动统计 single-flight 初始化（P1 关键链路）：旧 DataStore 累计统计 → baseline
+        // 幂等导入 → 消费备份恢复 pending 标记 → 等待 spool 初始 drain 完成，保证统计页
+        // 首次查询看到重放完成后的数据。失败不缓存：统计页首次查询的 readiness 门控会
+        // 自动重试（spool drain 另有退避重试）。
+        applicationScope.launch {
+            val statsStartTime = System.currentTimeMillis()
+            val ready = TokenStatsStartupCoordinator.awaitInitialized(applicationContext)
+            AppLogger.d(
+                TAG,
+                "【启动计时】旧累计统计 baseline 导入完成（异步，ready=$ready） - " +
+                    "${System.currentTimeMillis() - statsStartTime}ms"
+            )
+        }
+
         // 初始化全局图片加载器，设置强大的缓存策略
         // 创建自定义 OkHttp 客户端，增加超时时间以支持慢速图片服务器
         val imageOkHttpClient = OkHttpClient.Builder()
@@ -454,6 +505,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         
         val totalTime = System.currentTimeMillis() - startTime
         AppLogger.d(TAG, "【启动计时】应用启动全部完成 - 总耗时: ${totalTime}ms")
+        return null
     }
 
     /**
@@ -748,4 +800,16 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                 )
         )
     }
+}
+
+/** Runs the compatibility prerequisite without swallowing failure into normal initialization. */
+internal inline fun runRequiredCompatibilityInitialization(
+    initialize: () -> Unit,
+    onFailure: (Exception) -> Unit,
+): Boolean = try {
+    initialize()
+    true
+} catch (error: Exception) {
+    onFailure(error)
+    false
 }

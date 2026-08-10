@@ -55,6 +55,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -75,6 +77,7 @@ import com.ai.assistance.operit.data.backup.RoomDatabaseBackupManager
 import com.ai.assistance.operit.data.backup.RoomDatabaseBackupPreferences
 import com.ai.assistance.operit.data.backup.RoomDatabaseBackupScheduler
 import com.ai.assistance.operit.data.backup.RoomDatabaseRestoreManager
+import com.ai.assistance.operit.data.stats.TokenStatSpool
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
@@ -107,11 +110,18 @@ import com.ai.assistance.operit.ui.features.settings.components.SectionHeader
 import com.ai.assistance.operit.ui.features.settings.components.CharacterCardOperation
 import com.ai.assistance.operit.ui.main.MainActivity
 import java.io.File
+import java.io.IOException
+import java.nio.file.FileAlreadyExistsException
+import java.nio.file.Files
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import kotlin.system.exitProcess
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -134,9 +144,66 @@ enum class RawSnapshotOperation {
     IDLE,
     BACKING_UP,
     BACKUP_SUCCESS,
-    RESTORING,
-    RESTORE_SUCCESS,
     FAILED
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024L * 1024L ->
+        String.format(Locale.getDefault(), "%.1f MB", bytes / 1024.0 / 1024.0)
+    bytes >= 1024L ->
+        String.format(Locale.getDefault(), "%.1f KB", bytes / 1024.0)
+    else -> "$bytes B"
+}
+
+/** 隔离证据区信息快照（P1-3：含未完成删除事务的计数与字节）。 */
+private data class QuarantineInfoSnapshot(
+    val evidenceCount: Int,
+    val evidenceBytes: Long,
+    val stuckTrashCount: Int,
+    val stuckTrashBytes: Long,
+    val summaryRecordCount: Int,
+    val summaryBytes: Long,
+)
+
+/**
+ * P2：导出失败/取消时目录清理的调度缝。生产路径在 [ioDispatcher]（默认 [Dispatchers.IO]）
+ * 执行真实递归删除，绝不运行在 Main；测试注入 dispatcher 与删除动作以覆盖失败/取消分支并
+ * 断言删除不在 Main。取消分支额外使用 NonCancellable 完成本轮独占目录的有界清理，之后由
+ * 调用方重抛取消。
+ */
+internal object QuarantineExportCleanup {
+    internal var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    internal var deleteRecursivelyForTest: ((File) -> Boolean?)? = null
+
+    internal suspend fun deleteRecursively(destination: File, nonCancellable: Boolean = false): Boolean =
+        if (nonCancellable) {
+            // The outer context prevents prompt cancellation while returning from a different
+            // dispatcher, so the caller can reliably log the cleanup result before rethrowing.
+            withContext(NonCancellable) {
+                withContext(NonCancellable + ioDispatcher) {
+                    deleteRecursivelyForTest?.invoke(destination) ?: destination.deleteRecursively()
+                }
+            }
+        } else {
+            withContext(ioDispatcher) {
+                deleteRecursivelyForTest?.invoke(destination) ?: destination.deleteRecursively()
+            }
+        }
+}
+
+/**
+ * P2：导出失败/取消时的目录清理。只删除**本轮成功独占创建**的目录（本应用刚创建、
+ * 不含用户文件），绝不触碰他人目录或上一轮残留；返回清理是否成功，调用方据此向用户
+ * 反馈清理失败（而非静默假装已清理）。删除在 [QuarantineExportCleanup] 指定的 IO 线程
+ * 执行；调用方协程已取消时仍完成有界清理（NonCancellable），随后调用方重抛取消。
+ */
+private suspend fun cleanupQuarantineExportDirectory(
+    destination: File,
+    createdByThisRun: Boolean,
+    nonCancellable: Boolean = false,
+): Boolean {
+    if (!createdByThisRun) return true
+    return QuarantineExportCleanup.deleteRecursively(destination, nonCancellable)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -173,7 +240,63 @@ fun ChatBackupSettingsScreen() {
     var rawSnapshotOperationMessage by remember { mutableStateOf("") }
     var pendingRawSnapshotRestoreUri by remember { mutableStateOf<Uri?>(null) }
     var showRawSnapshotRestoreConfirmDialog by remember { mutableStateOf(false) }
-    var showRawSnapshotRestoreRestartDialog by remember { mutableStateOf(false) }
+    var quarantineEvidenceCount by remember { mutableIntStateOf(0) }
+    var quarantineEvidenceBytes by remember { mutableLongStateOf(0L) }
+    var quarantineSummaryCount by remember { mutableIntStateOf(0) }
+    var quarantineSummaryBytes by remember { mutableLongStateOf(0L) }
+    // P1-3：未完成删除事务（非空 ack trash）计数与字节，单独显示并计入总量
+    var quarantineStuckTrashCount by remember { mutableIntStateOf(0) }
+    var quarantineStuckTrashBytes by remember { mutableLongStateOf(0L) }
+    var quarantineOperationMessage by remember { mutableStateOf("") }
+    var quarantineOperationFailed by remember { mutableStateOf(false) }
+    var quarantineBusy by remember { mutableStateOf(false) }
+    var showQuarantineDeleteConfirmDialog by remember { mutableStateOf(false) }
+    // 文件扫描/统计全部在 IO 线程执行（P2-2）：Main 只更新 state，避免大证据卡死 UI。
+    // P1-6：证据枚举失败（如 ack trash 目录不可枚举）→ fail-closed：保留上次显示值并提示
+    // 信息不可用，绝不回传“0 证据”误导用户（也不会因此关闭确认删除入口的计数）。
+    val refreshQuarantineInfo: suspend () -> Unit = remember {
+        {
+            try {
+                val snapshot = withContext(Dispatchers.IO) {
+                    // P1-3：quarantineEvidence 已含非空 ack trash 目录（目录 length 恒为 0，
+                    // 字节需用 stuckAckTrashBytes 补足）
+                    val evidence = TokenStatSpool.quarantineEvidence(context)
+                    val stuck = TokenStatSpool.stuckAckTrashEvidence(context)
+                    val stuckBytes = TokenStatSpool.stuckAckTrashBytes(context)
+                    val summary = TokenStatSpool.quarantineSummaryInfo(context)
+                    QuarantineInfoSnapshot(
+                        evidenceCount = evidence.size,
+                        evidenceBytes = evidence.sumOf { it.length() } + stuckBytes,
+                        stuckTrashCount = stuck.size,
+                        stuckTrashBytes = stuckBytes,
+                        summaryRecordCount = summary?.recordCount ?: 0,
+                        summaryBytes = summary?.summaryBytes ?: 0L,
+                    )
+                }
+                quarantineEvidenceCount = snapshot.evidenceCount
+                quarantineEvidenceBytes = snapshot.evidenceBytes
+                quarantineStuckTrashCount = snapshot.stuckTrashCount
+                quarantineStuckTrashBytes = snapshot.stuckTrashBytes
+                quarantineSummaryCount = snapshot.summaryRecordCount
+                quarantineSummaryBytes = snapshot.summaryBytes
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.e(
+                    "ChatBackupSettings",
+                    "quarantine evidence info refresh failed; keeping previous values",
+                    e,
+                )
+                quarantineOperationFailed = true
+                quarantineOperationMessage =
+                    context.getString(
+                        R.string.stats_quarantine_info_error,
+                        e.localizedMessage ?: e.toString()
+                    )
+            }
+        }
+    }
+    LaunchedEffect(Unit) { refreshQuarantineInfo() }
     var officialOperitMigrationAvailable by remember {
         mutableStateOf(RawSnapshotBackupManager.isOfficialOperitMigrationAvailable(context))
     }
@@ -1033,8 +1156,7 @@ fun ChatBackupSettingsScreen() {
                                 }
                             },
                             modifier = Modifier.weight(1f, fill = false),
-                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP &&
-                                rawSnapshotOperationState != RawSnapshotOperation.RESTORING
+                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP
                         )
 
                         ManagementButton(
@@ -1051,8 +1173,7 @@ fun ChatBackupSettingsScreen() {
                             },
                             modifier = Modifier.weight(1f, fill = false),
                             isWarning = true,
-                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP &&
-                                rawSnapshotOperationState != RawSnapshotOperation.RESTORING
+                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP
                         )
                     }
 
@@ -1077,8 +1198,7 @@ fun ChatBackupSettingsScreen() {
                                 officialOperitMigrationFilePickerLauncher.launch(intent)
                             },
                             isWarning = true,
-                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP &&
-                                rawSnapshotOperationState != RawSnapshotOperation.RESTORING
+                            enabled = rawSnapshotOperationState != RawSnapshotOperation.BACKING_UP
                         )
                     }
 
@@ -1091,23 +1211,11 @@ fun ChatBackupSettingsScreen() {
                                             stringResource(R.string.backup_raw_snapshot_backing_up)
                                         }
                                     )
-                                RawSnapshotOperation.RESTORING ->
-                                    OperationProgressView(
-                                        message = rawSnapshotOperationMessage.ifBlank {
-                                            stringResource(R.string.backup_raw_snapshot_restoring)
-                                        }
-                                    )
                                 RawSnapshotOperation.BACKUP_SUCCESS ->
                                     OperationResultCard(
                                         title = stringResource(R.string.backup_export_success),
                                         message = rawSnapshotOperationMessage,
                                         icon = Icons.Default.CloudDownload
-                                    )
-                                RawSnapshotOperation.RESTORE_SUCCESS ->
-                                    OperationResultCard(
-                                        title = stringResource(R.string.backup_import_success),
-                                        message = rawSnapshotOperationMessage,
-                                        icon = Icons.Default.Restore
                                     )
                                 RawSnapshotOperation.FAILED ->
                                     OperationResultCard(
@@ -1123,6 +1231,272 @@ fun ChatBackupSettingsScreen() {
                 }
             }
         }
+
+        item {
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    SectionHeader(
+                        title = stringResource(R.string.stats_quarantine_title),
+                        subtitle = stringResource(R.string.stats_quarantine_subtitle),
+                        icon = Icons.Default.Info
+                    )
+                    Text(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = stringResource(
+                            R.string.stats_quarantine_desc,
+                            formatBytes(TokenStatSpool.MAX_QUARANTINE_BYTES)
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    val quarantineInfoText = buildString {
+                        if (quarantineEvidenceCount > 0) {
+                            append(
+                                stringResource(
+                                    R.string.stats_quarantine_info,
+                                    quarantineEvidenceCount,
+                                    formatBytes(quarantineEvidenceBytes)
+                                )
+                            )
+                        }
+                        // P1-3：未完成删除事务（stuck ack trash）单独显示，计数已计入总量；
+                        // 确认删除全部证据时会一并清除
+                        if (quarantineStuckTrashCount > 0) {
+                            if (isNotEmpty()) append("\n")
+                            append(
+                                stringResource(
+                                    R.string.stats_quarantine_stuck_trash_info,
+                                    quarantineStuckTrashCount,
+                                    formatBytes(quarantineStuckTrashBytes)
+                                )
+                            )
+                        }
+                        if (quarantineSummaryCount > 0) {
+                            if (isNotEmpty()) append("\n")
+                            append(
+                                stringResource(
+                                    R.string.stats_quarantine_summary_info,
+                                    quarantineSummaryCount,
+                                    formatBytes(quarantineSummaryBytes)
+                                )
+                            )
+                        }
+                        if (isEmpty()) {
+                            append(stringResource(R.string.stats_quarantine_info_empty))
+                        }
+                    }
+                    Text(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = quarantineInfoText,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    if (quarantineOperationMessage.isNotBlank()) {
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = quarantineOperationMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color =
+                                if (quarantineOperationFailed) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                }
+                        )
+                    }
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        ManagementButton(
+                            text = stringResource(R.string.stats_quarantine_export),
+                            icon = Icons.Default.CloudDownload,
+                            onClick = {
+                                // P2：主线程立即置 busy（防双击，状态写先于协程启动）；
+                                // 目录名 = 可读时间戳前缀 + UUID（并发导出各自唯一，毫秒级
+                                // 碰撞不可能撞目录）；目录用 Files.createDirectory 独占创建
+                                // （已存在即失败，绝不复用旧导出目录）；失败/取消只清理本轮
+                                // 成功创建的独占目录。
+                                if (quarantineBusy) return@ManagementButton
+                                quarantineBusy = true
+                                quarantineOperationFailed = false
+                                val baseDir = OperitBackupDirs.rawSnapshotDir()
+                                val destination =
+                                    File(
+                                        baseDir,
+                                        "token_stats_quarantine_" +
+                                            SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+                                                .format(Date()) +
+                                            "_" + UUID.randomUUID().toString().replace("-", "")
+                                    )
+                                var directoryCreatedByThisRun = false
+                                scope.launch {
+                                    try {
+                                        try {
+                                            Files.createDirectory(destination.toPath())
+                                        } catch (e: FileAlreadyExistsException) {
+                                            throw IOException(
+                                                "quarantine export directory already exists: " +
+                                                    destination.absolutePath,
+                                                e,
+                                            )
+                                        }
+                                        directoryCreatedByThisRun = true
+                                        // 文件复制/fsync 在 spool 内部切到 IO 线程（P2-2）
+                                        TokenStatSpool.exportQuarantineEvidence(context, destination)
+                                        quarantineOperationMessage =
+                                            context.getString(
+                                                R.string.stats_quarantine_export_success,
+                                                destination.absolutePath
+                                            )
+                                    } catch (e: CancellationException) {
+                                        // P2：已取消也要完成有界清理（NonCancellable+IO），
+                                        // 清理失败/异常记录日志，随后重抛取消
+                                        val cleaned = try {
+                                            cleanupQuarantineExportDirectory(
+                                                destination,
+                                                directoryCreatedByThisRun,
+                                                nonCancellable = true,
+                                            )
+                                        } catch (cleanupError: Exception) {
+                                            AppLogger.e(
+                                                "ChatBackupSettings",
+                                                "quarantine export cancelled; cleanup failed: " +
+                                                    destination.absolutePath,
+                                                cleanupError,
+                                            )
+                                            false
+                                        }
+                                        if (!cleaned) {
+                                            AppLogger.e(
+                                                "ChatBackupSettings",
+                                                "quarantine export cancelled; cleanup failed: " +
+                                                    destination.absolutePath,
+                                            )
+                                        }
+                                        throw e
+                                    } catch (e: Exception) {
+                                        quarantineOperationFailed = true
+                                        val cleaned = try {
+                                            cleanupQuarantineExportDirectory(
+                                                destination,
+                                                directoryCreatedByThisRun,
+                                            )
+                                        } catch (cleanupError: Exception) {
+                                            AppLogger.e(
+                                                "ChatBackupSettings",
+                                                "quarantine export cleanup failed: " +
+                                                    destination.absolutePath,
+                                                cleanupError,
+                                            )
+                                            false
+                                        }
+                                        val reason = e.localizedMessage ?: e.toString()
+                                        quarantineOperationMessage =
+                                            if (cleaned) {
+                                                context.getString(
+                                                    R.string.stats_quarantine_export_failed,
+                                                    reason,
+                                                )
+                                            } else {
+                                                context.getString(
+                                                    R.string.stats_quarantine_export_failed_cleanup,
+                                                    reason,
+                                                    destination.absolutePath,
+                                                )
+                                            }
+                                    } finally {
+                                        quarantineBusy = false
+                                        refreshQuarantineInfo()
+                                    }
+                                }
+                            },
+                            modifier = Modifier.weight(1f, fill = false),
+                            enabled = !quarantineBusy
+                        )
+                        ManagementButton(
+                            text = stringResource(R.string.stats_quarantine_delete),
+                            icon = Icons.Default.Delete,
+                            onClick = { showQuarantineDeleteConfirmDialog = true },
+                            modifier = Modifier.weight(1f, fill = false),
+                            isDestructive = true,
+                            enabled =
+                                !quarantineBusy &&
+                                    (quarantineEvidenceCount > 0 || quarantineSummaryCount > 0)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showQuarantineDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showQuarantineDeleteConfirmDialog = false },
+            title = { Text(stringResource(R.string.stats_quarantine_delete_confirm_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.stats_quarantine_delete_confirm_message,
+                        quarantineEvidenceCount,
+                        formatBytes(quarantineEvidenceBytes),
+                        quarantineSummaryCount,
+                        formatBytes(quarantineSummaryBytes),
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showQuarantineDeleteConfirmDialog = false
+                        scope.launch {
+                            quarantineBusy = true
+                            quarantineOperationFailed = false
+                            try {
+                                // 扫描/删除在 spool 内部切到 IO 线程（P2-2）
+                                val names =
+                                    withContext(Dispatchers.IO) {
+                                        TokenStatSpool.quarantineEvidence(context).map { it.name }.toSet()
+                                    }
+                                TokenStatSpool.acknowledgeAndDeleteQuarantine(
+                                    context = context,
+                                    names = names,
+                                    deleteSummary = quarantineSummaryCount > 0,
+                                )
+                                quarantineOperationMessage =
+                                    context.getString(
+                                        R.string.stats_quarantine_delete_success,
+                                        names.size,
+                                        quarantineSummaryCount,
+                                    )
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                quarantineOperationFailed = true
+                                quarantineOperationMessage =
+                                    context.getString(
+                                        R.string.stats_quarantine_delete_failed,
+                                        e.localizedMessage ?: e.toString()
+                                    )
+                            } finally {
+                                quarantineBusy = false
+                                refreshQuarantineInfo()
+                            }
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.stats_quarantine_delete_confirm_action))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showQuarantineDeleteConfirmDialog = false }) {
+                    Text(stringResource(R.string.stats_quarantine_delete_cancel_action))
+                }
+            }
+        )
     }
 
     if (showDeleteConfirmDialog) {
@@ -1490,10 +1864,10 @@ fun ChatBackupSettingsScreen() {
 
     if (showRawSnapshotRestoreConfirmDialog) {
         val targetName = pendingRawSnapshotRestoreUri?.lastPathSegment ?: "-"
-        val replacingDatabasesProgressText =
-            stringResource(R.string.backup_raw_snapshot_progress_replacing_databases)
-        val finalizingProgressText =
-            stringResource(R.string.backup_raw_snapshot_progress_finalizing)
+        val uriPermissionFailureMessage =
+            stringResource(R.string.backup_raw_snapshot_restore_uri_permission_failed)
+        val scheduleFailureMessage =
+            stringResource(R.string.backup_raw_snapshot_restore_schedule_failed)
 
         AlertDialog(
             onDismissRequest = {
@@ -1510,56 +1884,33 @@ fun ChatBackupSettingsScreen() {
                         pendingRawSnapshotRestoreUri = null
                         if (uri != null) {
                             scope.launch {
-                                rawSnapshotOperationState = RawSnapshotOperation.RESTORING
-                                rawSnapshotOperationMessage = context.getString(R.string.backup_raw_snapshot_progress_preparing)
                                 try {
                                     try {
                                         context.contentResolver.takePersistableUriPermission(
                                             uri,
                                             Intent.FLAG_GRANT_READ_URI_PERMISSION
                                         )
-                                    } catch (_: Exception) {
+                                    } catch (e: Exception) {
+                                        AppLogger.e("ChatBackupSettings", "raw snapshot URI permission failed", e)
+                                        rawSnapshotOperationState = RawSnapshotOperation.FAILED
+                                        rawSnapshotOperationMessage = uriPermissionFailureMessage
+                                        return@launch
                                     }
-                                    RawSnapshotBackupManager.restoreFromBackupUri(
-                                        context = context,
-                                        uri = uri,
-                                        onProgress = { progress ->
-                                            rawSnapshotOperationMessage = when (progress) {
-                                                RawSnapshotBackupManager.RestoreProgress.PREPARING ->
-                                                    context.getString(R.string.backup_raw_snapshot_progress_preparing)
-
-                                                RawSnapshotBackupManager.RestoreProgress.READING_ZIP ->
-                                                    context.getString(R.string.backup_raw_snapshot_progress_reading_zip)
-
-                                                RawSnapshotBackupManager.RestoreProgress.EXTRACTING ->
-                                                    context.getString(R.string.backup_raw_snapshot_progress_extracting)
-
-                                                RawSnapshotBackupManager.RestoreProgress.REPLACING_FILES ->
-                                                    context.getString(R.string.backup_raw_snapshot_progress_replacing_files)
-
-                                                RawSnapshotBackupManager.RestoreProgress.REPLACING_EXTERNAL_FILES ->
-                                                    context.getString(R.string.backup_raw_snapshot_progress_replacing_external_files)
-
-                                                RawSnapshotBackupManager.RestoreProgress.REPLACING_SHARED_PREFS ->
-                                                    context.getString(R.string.backup_raw_snapshot_progress_replacing_shared_prefs)
-
-                                                RawSnapshotBackupManager.RestoreProgress.REPLACING_DATASTORE ->
-                                                    context.getString(R.string.backup_raw_snapshot_progress_replacing_datastore)
-
-                                                RawSnapshotBackupManager.RestoreProgress.REPLACING_DATABASES ->
-                                                    replacingDatabasesProgressText
-
-                                                RawSnapshotBackupManager.RestoreProgress.FINALIZING ->
-                                                    finalizingProgressText
-                                            }
-                                        }
-                                    )
-                                    rawSnapshotOperationState = RawSnapshotOperation.RESTORE_SUCCESS
-                                    rawSnapshotOperationMessage = targetName
-                                    showRawSnapshotRestoreRestartDialog = true
+                                    val persisted = RawSnapshotBackupManager
+                                        .setPendingRawSnapshotRestore(context, uri)
+                                    if (!persisted) {
+                                        rawSnapshotOperationState = RawSnapshotOperation.FAILED
+                                        rawSnapshotOperationMessage = scheduleFailureMessage
+                                        return@launch
+                                    }
+                                    // No live preference/database file has been replaced. Exit
+                                    // immediately; the next cold start applies the archive before
+                                    // Application initialization creates any cached writer.
+                                    restartApplication(context)
                                 } catch (e: Exception) {
+                                    AppLogger.e("ChatBackupSettings", "raw snapshot staging failed", e)
                                     rawSnapshotOperationState = RawSnapshotOperation.FAILED
-                                    rawSnapshotOperationMessage = e.localizedMessage ?: e.toString()
+                                    rawSnapshotOperationMessage = scheduleFailureMessage
                                 }
                             }
                         }
@@ -1690,32 +2041,6 @@ fun ChatBackupSettingsScreen() {
         )
     }
 
-    if (showRawSnapshotRestoreRestartDialog) {
-        AlertDialog(
-            onDismissRequest = { showRawSnapshotRestoreRestartDialog = false },
-            title = { Text(stringResource(R.string.backup_raw_snapshot_restart_title)) },
-            text = { Text(stringResource(R.string.backup_raw_snapshot_restart_message)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showRawSnapshotRestoreRestartDialog = false
-                        val intent = Intent(context, MainActivity::class.java).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                        }
-                        context.startActivity(intent)
-                        exitProcess(0)
-                    }
-                ) {
-                    Text(stringResource(R.string.backup_raw_snapshot_restart_now))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRawSnapshotRestoreRestartDialog = false }) {
-                    Text(stringResource(R.string.backup_raw_snapshot_restart_later))
-                }
-            }
-        )
-    }
 }
 
 private fun restartApplication(context: Context) {

@@ -103,8 +103,11 @@ private fun readInstalledMarketMarkerRoots(
     packageManager: PackageManager
 ): List<MarketInstallMarkerRoot> {
     val roots = buildList {
-        val skillRoot = File(SkillRepository.getInstance(context).getSkillsDirectoryPath())
-        addAll(skillRoot.listFiles()?.filter { it.isDirectory }.orEmpty())
+        // Skills now live in the app-internal store (plus an optional legacy Download source);
+        // use the loaded skill packages' actual directories so both sources are covered.
+        SkillRepository.getInstance(context).getAvailableSkillPackages().values.forEach { skill ->
+            add(skill.directory)
+        }
 
         val localServer = MCPLocalServer.getInstance(context)
         localServer.getAllPluginMetadata().values.forEach { metadata ->

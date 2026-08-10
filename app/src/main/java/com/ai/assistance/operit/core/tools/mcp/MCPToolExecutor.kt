@@ -6,6 +6,9 @@ import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.ToolExecutionLimits
 import com.ai.assistance.operit.core.tools.ToolExecutor
 import com.ai.assistance.operit.data.mcp.plugins.MCPBridgeClient
+import com.ai.assistance.operit.data.mcp.MCPLocalServer
+import com.ai.assistance.operit.data.mcp.isRuntimeActivationAllowed
+import com.ai.assistance.operit.data.mcp.runWithMcpRuntimeActivationGuard
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.model.ToolValidationResult
@@ -251,9 +254,30 @@ class MCPToolExecutor(private val context: Context, private val mcpManager: MCPM
         val serverName = toolNameParts[0]
         val actualToolName = toolNameParts.subList(1, toolNameParts.size).joinToString(":")
 
+        val localServer = MCPLocalServer.getInstance(context)
+        if (!localServer.isRuntimeActivationAllowed(serverName)) {
+            return ToolResult(
+                    toolName = tool.name,
+                    success = false,
+                    result = StringResultData(""),
+                    error = "MCP server '$serverName' is disabled or unavailable."
+            )
+        }
+
         // 获取MCP桥接客户端
-        val mcpClient = mcpManager.getOrCreateClient(serverName)
+        var acquiredClient: MCPBridgeClient? = null
+        val mcpClient = kotlinx.coroutines.runBlocking {
+            runWithMcpRuntimeActivationGuard(
+                    isAllowed = { localServer.isRuntimeActivationAllowed(serverName) },
+                    onRevoked = { acquiredClient?.unspawn() },
+            ) {
+                mcpManager.getOrCreateClient(serverName).also { acquiredClient = it }
+            }
+        }
         if (mcpClient == null) {
+            if (!localServer.isRuntimeActivationAllowed(serverName)) {
+                return disabledOrUnavailableResult(tool.name, serverName)
+            }
             val detailedReason = mcpManager.getLastConnectionFailureReason(serverName)
             return ToolResult(
                     toolName = tool.name,
@@ -268,7 +292,12 @@ class MCPToolExecutor(private val context: Context, private val mcpManager: MCPM
         }
 
         // 在调用工具前，检查服务是否处于激活状态
-        val isActive = kotlinx.coroutines.runBlocking { mcpClient.isActive() }
+        val isActive = kotlinx.coroutines.runBlocking {
+            runWithMcpRuntimeActivationGuard(
+                    isAllowed = { localServer.isRuntimeActivationAllowed(serverName) },
+                    onRevoked = { mcpClient.unspawn() },
+            ) { mcpClient.isActive() }
+        } ?: return disabledOrUnavailableResult(tool.name, serverName)
         if (!isActive) {
             return ToolResult(
                     toolName = tool.name,
@@ -285,7 +314,16 @@ class MCPToolExecutor(private val context: Context, private val mcpManager: MCPM
         val parameters = tool.parameters.associate { it.name to it.value }
 
         // 获取工具参数类型信息 (如果可用)
-        val toolInfo = getToolInfo(serverName, actualToolName)
+        val toolInfo = kotlinx.coroutines.runBlocking {
+            runWithMcpRuntimeActivationGuard(
+                    isAllowed = { localServer.isRuntimeActivationAllowed(serverName) },
+                    onRevoked = { mcpClient.unspawn() },
+            ) { listOfNotNull(getToolInfo(mcpClient, actualToolName)) }
+        }?.firstOrNull() ?: if (!localServer.isRuntimeActivationAllowed(serverName)) {
+            return disabledOrUnavailableResult(tool.name, serverName)
+        } else {
+            null
+        }
 
         // 自动类型转换处理
         val convertedParameters = convertParameterTypes(parameters, toolInfo)
@@ -294,7 +332,19 @@ class MCPToolExecutor(private val context: Context, private val mcpManager: MCPM
         val result =
                 try {
                     // 直接调用工具，返回完整的响应（包括 success, result, error）
-                    val response = mcpClient.callToolSync(actualToolName, convertedParameters)
+                    val guardedResponses = kotlinx.coroutines.runBlocking {
+                        runWithMcpRuntimeActivationGuard(
+                                isAllowed = {
+                                    localServer.isRuntimeActivationAllowed(serverName)
+                                },
+                                onRevoked = { mcpClient.unspawn() },
+                        ) {
+                            listOfNotNull(
+                                    mcpClient.callToolSync(actualToolName, convertedParameters)
+                            )
+                        }
+                    } ?: return disabledOrUnavailableResult(tool.name, serverName)
+                    val response = guardedResponses.firstOrNull()
 
                     if (response == null) {
                         // 如果响应为空（不应该发生，但做个保护）
@@ -360,10 +410,9 @@ class MCPToolExecutor(private val context: Context, private val mcpManager: MCPM
     }
 
     /** 尝试获取工具的参数类型信息 */
-    private fun getToolInfo(serverName: String, toolName: String): JSONObject? {
+    private suspend fun getToolInfo(client: MCPBridgeClient, toolName: String): JSONObject? {
         try {
-            val client = mcpManager.getOrCreateClient(serverName) ?: return null
-            val tools = kotlinx.coroutines.runBlocking { client.getTools() }
+            val tools = client.getTools()
 
             return tools.find { it.optString("name") == toolName }
         } catch (e: Exception) {
@@ -371,6 +420,14 @@ class MCPToolExecutor(private val context: Context, private val mcpManager: MCPM
             return null
         }
     }
+
+    private fun disabledOrUnavailableResult(toolName: String, serverName: String): ToolResult =
+            ToolResult(
+                    toolName = toolName,
+                    success = false,
+                    result = StringResultData(""),
+                    error = "MCP server '$serverName' is disabled or unavailable."
+            )
 
     /**
      * 自动转换参数类型

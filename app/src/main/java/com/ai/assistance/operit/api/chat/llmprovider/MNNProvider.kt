@@ -22,6 +22,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -601,8 +603,10 @@ class MNNProvider(
         availableTools: List<ToolPrompt>?,
         preserveThinkInHistory: Boolean,
         onTokensUpdated: suspend (input: Int, cachedInput: Int, output: Int) -> Unit,
+        onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, attempt: Int) -> Unit)?,
         onNonFatalError: suspend (error: String) -> Unit,
-        enableRetry: Boolean
+        enableRetry: Boolean,
+        statsCategory: com.ai.assistance.operit.data.stats.TokenStatCategory?
     ): Stream<String> = stream {
         isCancelled = false
 
@@ -612,14 +616,12 @@ class MNNProvider(
             // 初始化模型
             val initResult = initModel()
             if (initResult.isFailure) {
-                emit(context.getString(R.string.mnn_generic_error, initResult.exceptionOrNull()?.message ?: ""))
-                return@stream
+                // 致命错误：抛出让统计边界记为 FAILED；用户可见错误文本由下方
+                // catch 统一 emit（含具体原因），避免重复格式化
+                throw IOException(initResult.exceptionOrNull()?.message ?: "")
             }
 
-            val session = llmSession ?: run {
-                emit(context.getString(R.string.mnn_session_not_initialized))
-                return@stream
-            }
+            val session = llmSession ?: throw IOException(context.getString(R.string.mnn_session_not_initialized))
 
             // 应用模型参数（采样参数）
             applyModelParameters(session, modelParameters)
@@ -676,48 +678,71 @@ class MNNProvider(
             val toolCallOutputBuffer = StringBuilder()
             val finalOutputBuffer = StringBuilder()
             val emitDirectly = !useInternalToolCall
-            val success = session.generateStream(safeHistory, requestedMaxNewTokens) { token ->
-                if (isCancelled) {
-                    false
-                } else {
-                    outputTokenCount += 1
-                    _outputTokenCount = outputTokenCount
-
-                    if (emitDirectly) {
-                        finalOutputBuffer.append(token)
-                        runBlocking { emit(token) }
+            val usageReporter = LocalUsageReporter(
+                com.ai.assistance.operit.data.stats.ProviderUsageNormalizer.SOURCE_MNN,
+                onUsageReported,
+            )
+            usageReporter.runReportingFinally({ _inputTokenCount }, { _outputTokenCount }) {
+                val success = session.generateStream(safeHistory, requestedMaxNewTokens) { token ->
+                    if (isCancelled) {
+                        false
                     } else {
-                        toolCallOutputBuffer.append(token)
-                    }
+                        outputTokenCount += 1
+                        _outputTokenCount = outputTokenCount
 
-                    kotlin.runCatching {
-                        kotlinx.coroutines.runBlocking {
-                            onTokensUpdated(_inputTokenCount, 0, _outputTokenCount)
+                        if (emitDirectly) {
+                            finalOutputBuffer.append(token)
+                            runBlocking { emit(token) }
+                        } else {
+                            toolCallOutputBuffer.append(token)
                         }
+
+                        kotlin.runCatching {
+                            kotlinx.coroutines.runBlocking {
+                                onTokensUpdated(_inputTokenCount, 0, _outputTokenCount)
+                            }
+                        }
+
+                        true
                     }
-
-                    true
                 }
-            }
 
-            if (useInternalToolCall && toolCallOutputBuffer.isNotEmpty()) {
-                val converted = StructuredToolCallBridge.convertToolCallPayloadToXml(toolCallOutputBuffer.toString())
-                if (converted.isNotBlank()) {
-                    finalOutputBuffer.append(converted)
-                    emit(converted)
-                }
-            }
-
-            if (!success && !isCancelled) {
-                emit(context.getString(R.string.mnn_reasoning_error))
+                LocalGenerationEnd.end(
+                    cancelled = isCancelled,
+                    success = success,
+                    usageReporter = usageReporter,
+                    inputTokens = _inputTokenCount,
+                    outputTokens = _outputTokenCount,
+                    cancelMessage = context.getString(R.string.mnn_error_request_cancelled),
+                    emitToolResult = {
+                        if (useInternalToolCall && toolCallOutputBuffer.isNotEmpty()) {
+                            val converted =
+                                StructuredToolCallBridge.convertToolCallPayloadToXml(
+                                    toolCallOutputBuffer.toString()
+                                )
+                            if (converted.isNotBlank()) {
+                                finalOutputBuffer.append(converted)
+                                emit(converted)
+                            }
+                        }
+                    },
+                    failWith = {
+                        throw IOException(context.getString(R.string.mnn_reasoning_error))
+                    },
+                )
             }
 
             AppLogger.i(TAG, "MNN LLM推理完成，输出token数: $_outputTokenCount")
             logFinalOutput(finalOutputBuffer, "Final MNN output summary: ")
 
+        } catch (e: CancellationException) {
+            // 取消原样传播，不 emit 错误文本
+            throw e
         } catch (e: Exception) {
             AppLogger.e(TAG, "发送消息时出错", e)
+            // 致命错误：保留用户可见错误文本后继续上抛（统计边界记为 FAILED）
             emit(context.getString(R.string.mnn_generic_error, e.message ?: ""))
+            throw e
         } finally {
             requestTempFiles.forEach { file ->
                 runCatching { file.delete() }
@@ -725,7 +750,10 @@ class MNNProvider(
         }
     }
 
-    override suspend fun testConnection(context: Context): Result<String> = withContext(Dispatchers.IO) {
+    override suspend fun testConnection(
+        context: Context,
+        onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, attempt: Int) -> Unit)?
+    ): Result<String> = withContext(Dispatchers.IO) {
         try {
             // 检查模型名称
             if (modelName.isEmpty()) {

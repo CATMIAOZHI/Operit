@@ -211,7 +211,7 @@ class MainActivity : ComponentActivity() {
             // PREPARING/REPLACING), do NOT exit: the migration coroutine owns the process and
             // the progress surface must stay alive. Only exit when no in-process migration is
             // active, meaning a previous process required restart and this is a fresh entry.
-            if (RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()) {
+            if (RawSnapshotBackupManager.isPendingRestoreOperationRunningInProcess()) {
                 showMigrationInProgressSurface()
                 return
             }
@@ -230,11 +230,11 @@ class MainActivity : ComponentActivity() {
         when (
             MigrationStatePolicy.startupAction(
                 migrationSnapshot.state,
-                RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()
+                RawSnapshotBackupManager.isPendingRestoreOperationRunningInProcess()
             )
         ) {
             MigrationStatePolicy.StartupAction.RUN_PENDING -> {
-                runPendingOfficialOperitMigration()
+                runPendingRestoreOperation()
                 return
             }
             MigrationStatePolicy.StartupAction.SHOW_IN_PROGRESS -> {
@@ -247,6 +247,13 @@ class MainActivity : ComponentActivity() {
                     message = getString(R.string.backup_official_operit_migration_preparing_interrupted),
                     pendingResetRequired = !reset
                 )
+                return
+            }
+            MigrationStatePolicy.StartupAction.COMPLETE_RESTORE_REGISTRATION -> {
+                // 原始快照恢复的目录替换已成功完成、受控补导 generation 尚未登记：
+                // 自动补登记（不重新替换目录）后退出进程，下一个冷启动正常初始化
+                // 并消费 marker 完成补导。
+                completePendingRestoreRegistration()
                 return
             }
             MigrationStatePolicy.StartupAction.SHOW_RECOVERY -> {
@@ -264,14 +271,25 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        val initResult = (application as OperitApplication).initializeMainApplication()
-        if (initResult != OperitApplication.MainApplicationInitResult.Initialized) {
-            // Should not happen here because we already handled non-IDLE/COMPLETED states above,
-            // but guard against a race where the state changed between our read and the call.
-            showMigrationRecoverySurface(
-                RawSnapshotBackupManager.officialOperitMigrationState(applicationContext)
-            )
-            return
+        val operitApplication = application as OperitApplication
+        val initResult = operitApplication.initializeMainApplication()
+        when (initResult) {
+            OperitApplication.MainApplicationInitResult.Initialized -> Unit
+            is OperitApplication.MainApplicationInitResult.CompatibilityInitializationFailed -> {
+                showCompatibilityInitializationErrorSurface(
+                    initResult.message
+                )
+                return
+            }
+            OperitApplication.MainApplicationInitResult.MigrationInProgress,
+            OperitApplication.MainApplicationInitResult.MigrationNeedsRecovery -> {
+                // Should not happen here because non-IDLE/COMPLETED states were handled above,
+                // but guard against a race where the state changed between the read and call.
+                showMigrationRecoverySurface(
+                    RawSnapshotBackupManager.officialOperitMigrationState(applicationContext)
+                )
+                return
+            }
         }
 
         AppLogger.d(TAG, "MainActivity应用语言设置: ${LocaleUtils.getCurrentLanguage(this)}")
@@ -328,18 +346,56 @@ class MainActivity : ComponentActivity() {
      * guides the user to restore from the safety snapshot instead of initializing normally with
      * partially-replaced data.
      */
-    private fun runPendingOfficialOperitMigration() {
+    private fun runPendingRestoreOperation() {
         // Claim process ownership before Activity recreation can observe PREPARING and mistake
         // the active run for an interrupted migration.
         GlobalScope.launch(Dispatchers.IO + NonCancellable, start = CoroutineStart.UNDISPATCHED) {
             try {
-                RawSnapshotBackupManager.runPendingOfficialOperitMigration(applicationContext)
-                AppLogger.i(TAG, "Official Operit migration completed successfully")
+                RawSnapshotBackupManager.runPendingRestoreOperation(applicationContext)
+                AppLogger.i(TAG, "Pending restore operation completed successfully")
             } catch (e: Exception) {
-                AppLogger.e(TAG, "Official Operit migration failed: ${e.message}", e)
+                AppLogger.e(TAG, "Pending restore operation failed: ${e.message}", e)
             }
         }
         showMigrationInProgressSurface()
+    }
+
+    /**
+     * Complete a pending raw-snapshot restore registration on cold start.
+     *
+     * Runs BEFORE [OperitApplication.initializeMainApplication], so no background writer can
+     * race with the registration. The directories were already replaced by the previous
+     * process; this only registers a fresh generation and completes the state machine
+     * (RESTORE_REPLACED -> IDLE/COMPLETED), then exits the process so the next cold start
+     * initializes normally and consumes the marker.
+     *
+     * On failure the process is NOT exited (that would create a cold-start retry loop); the
+     * user sees an error surface and can relaunch to retry, or exit manually.
+     */
+    private fun completePendingRestoreRegistration() {
+        setContent {
+            OperitTheme {
+                MigrationInProgressScreen()
+            }
+        }
+        GlobalScope.launch(Dispatchers.IO + NonCancellable, start = CoroutineStart.UNDISPATCHED) {
+            try {
+                RawSnapshotBackupManager.completePendingRestoreRegistration(applicationContext)
+                AppLogger.i(TAG, "Restore registration completed on cold start")
+                exitProcess(0)
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Restore registration completion failed: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    showMigrationStartupErrorSurface(
+                        message = getString(
+                            R.string.backup_raw_snapshot_restore_registration_failed,
+                            e.message ?: e.javaClass.name
+                        ),
+                        pendingResetRequired = false
+                    )
+                }
+            }
+        }
     }
 
     private fun showMigrationInProgressSurface() {
@@ -351,7 +407,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         lifecycleScope.launch {
-            while (RawSnapshotBackupManager.isOfficialOperitMigrationRunningInProcess()) {
+            while (RawSnapshotBackupManager.isPendingRestoreOperationRunningInProcess()) {
                 delay(100)
             }
 
@@ -361,24 +417,37 @@ class MainActivity : ComponentActivity() {
             if (RawSnapshotBackupManager.isProcessRestartRequired()) {
                 exitProcess(0)
             }
+            val pendingFailure = RawSnapshotBackupManager.pendingRestoreOperationFailureMessage()
+            if (pendingFailure != null &&
+                (state == MigrationStateStore.State.IDLE || state == MigrationStateStore.State.COMPLETED)
+            ) {
+                showMigrationStartupErrorSurface(
+                    message = pendingFailure,
+                    pendingResetRequired = false,
+                )
+                return@launch
+            }
             when (state) {
                 MigrationStateStore.State.IDLE ->
                     showMigrationStartupErrorSurface(
-                        message = RawSnapshotBackupManager.officialOperitMigrationFailureMessage()
+                        message = RawSnapshotBackupManager.pendingRestoreOperationFailureMessage()
                             ?: state.name,
                         pendingResetRequired = false
                     )
                 MigrationStateStore.State.PENDING,
                 MigrationStateStore.State.PREPARING ->
                     showMigrationStartupErrorSurface(
-                        message = RawSnapshotBackupManager.officialOperitMigrationFailureMessage()
+                        message = RawSnapshotBackupManager.pendingRestoreOperationFailureMessage()
                             ?: state.name,
                         pendingResetRequired = true
                     )
                 MigrationStateStore.State.REPLACING,
                 MigrationStateStore.State.COMPLETED,
                 MigrationStateStore.State.FAILED,
-                MigrationStateStore.State.NEEDS_RECOVERY -> exitProcess(0)
+                MigrationStateStore.State.NEEDS_RECOVERY,
+                // 官方迁移流程不会写入该状态；防御性退出，让下一个冷启动
+                // 走自动补登记路径。
+                MigrationStateStore.State.RESTORE_REPLACED -> exitProcess(0)
             }
         }
     }
@@ -390,6 +459,17 @@ class MainActivity : ComponentActivity() {
         setContent {
             OperitTheme {
                 MigrationStartupErrorScreen(message, pendingResetRequired)
+            }
+        }
+    }
+
+    private fun showCompatibilityInitializationErrorSurface(message: String) {
+        setContent {
+            OperitTheme {
+                CompatibilityInitializationErrorScreen(
+                    message = message,
+                    onRetry = { recreate() },
+                )
             }
         }
     }
@@ -1138,6 +1218,37 @@ private fun MigrationStartupErrorScreen(message: String, pendingResetRequired: B
             }
             TextButton(onClick = { exitProcess(0) }) {
                 Text(stringResource(id = R.string.backup_official_operit_migration_recovery_exit))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompatibilityInitializationErrorScreen(message: String, onRetry: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.padding(24.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.legacy_storage_initialization_error_title),
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Text(
+                text = stringResource(R.string.legacy_storage_initialization_error_message, message),
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            TextButton(onClick = onRetry) {
+                Text(stringResource(R.string.legacy_storage_initialization_retry))
+            }
+            TextButton(onClick = { exitProcess(0) }) {
+                Text(stringResource(R.string.backup_official_operit_migration_recovery_exit))
             }
         }
     }

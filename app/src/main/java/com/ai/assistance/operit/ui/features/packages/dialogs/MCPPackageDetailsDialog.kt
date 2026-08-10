@@ -63,6 +63,8 @@ import com.ai.assistance.operit.core.tools.PackageTool
 import com.ai.assistance.operit.core.tools.PackageToolParameter
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.data.mcp.MCPLocalServer
+import com.ai.assistance.operit.data.mcp.isRuntimeActivationAllowed
+import com.ai.assistance.operit.data.mcp.runWithMcpRuntimeActivationGuard
 import com.ai.assistance.operit.data.mcp.plugins.MCPBridgeClient
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
@@ -691,8 +693,14 @@ private suspend fun loadMcpPackageTools(
     context: Context,
     serverId: String
 ): List<PackageTool> {
+    val localServer = MCPLocalServer.getInstance(context)
+    if (!localServer.isRuntimeActivationAllowed(serverId)) return emptyList()
     val client = MCPBridgeClient(context, serverId)
-    return client.getTools()
+    return runWithMcpRuntimeActivationGuard(
+        isAllowed = { localServer.isRuntimeActivationAllowed(serverId) },
+        onRevoked = { client.unspawn() },
+    ) { client.getTools() }
+        .orEmpty()
         .mapNotNull { jsonTool ->
             runCatching { jsonTool.toPackageTool() }
                 .onFailure { throwable ->

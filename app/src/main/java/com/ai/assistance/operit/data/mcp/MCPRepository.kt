@@ -3,7 +3,6 @@ package com.ai.assistance.operit.data.mcp
 import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
-import android.os.Environment
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.util.AppLogger
@@ -12,10 +11,13 @@ import com.ai.assistance.operit.core.tools.mcp.MCPManager
 import com.ai.assistance.operit.core.tools.mcp.MCPPackage
 import com.ai.assistance.operit.core.tools.mcp.MCPServerConfig
 import com.ai.assistance.operit.core.tools.mcp.MCPToolExecutor
+import com.ai.assistance.operit.data.mcp.plugins.MCPBridge
 import com.ai.assistance.operit.data.mcp.plugins.MCPBridgeClient
 import com.ai.assistance.operit.data.mcp.plugins.MCPConfigGenerator
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
+import com.ai.assistance.operit.data.preferences.LegacyStoragePreferences
+import com.ai.assistance.operit.util.OperitManagedPaths
 
 import com.google.gson.Gson
 import com.google.gson.JsonParser
@@ -24,6 +26,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +41,8 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 统一的MCP仓库管理类
@@ -49,17 +54,25 @@ import kotlinx.coroutines.runBlocking
  * - 处理远程服务器的添加和管理
  * 
  * 配置管理由MCPLocalServer单独处理
+ *
+ * 插件包存储（Phase 4 迁移）：
+ * - 新安装只写入 [OperitManagedPaths.internalMcpPackages]
+ *   （`filesDir/operit/mcp/packages/<pluginId>`）。
+ * - 读取时内部优先，旧版 `Download/Operit/mcp_plugins/<pluginId>` 仅在 legacy MCP
+ *   读取开关开启时作为只读兼容源（见 [resolvePluginPackageDir]）。
  */
 class MCPRepository(private val context: Context) {
     private val mcpLocalServer = MCPLocalServer.getInstance(context)
+
+    private val paths = OperitManagedPaths(context)
+    private val legacyPrefs = LegacyStoragePreferences.getInstance(context)
 
     companion object {
         private const val TAG = "MCPRepository"
         private const val BUFFER_SIZE = 8192
         private const val CONNECT_TIMEOUT = 10000
         private const val READ_TIMEOUT = 15000
-        private const val PLUGINS_DIR_NAME = "mcp_plugins"
-        private const val OPERIT_DIR_NAME = "Operit"
+        private val legacyReadSwitchMutex = Mutex()
     }
 
     // UI状态管理
@@ -76,25 +89,23 @@ class MCPRepository(private val context: Context) {
     private val _installedPluginIds = MutableStateFlow<Set<String>>(emptySet())
     val installedPluginIds: StateFlow<Set<String>> = _installedPluginIds.asStateFlow()
 
-    // 插件安装目录
-    private val pluginsBaseDir by lazy {
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val operitDir = File(downloadsDir, OPERIT_DIR_NAME)
-        val pluginsDir = File(operitDir, PLUGINS_DIR_NAME)
+    // ==================== 插件包目录解析 ====================
 
-        if (!operitDir.exists()) operitDir.mkdirs()
-        if (!pluginsDir.exists()) pluginsDir.mkdirs()
-
-        if (pluginsDir.exists() && pluginsDir.canWrite()) {
-            pluginsDir
-        } else {
-            val fallbackDir = context.getExternalFilesDir(PLUGINS_DIR_NAME)
-                ?: File(context.filesDir, PLUGINS_DIR_NAME).also {
-                    if (!it.exists()) it.mkdirs()
-                }
-            AppLogger.w(TAG, "使用应用私有目录: ${fallbackDir.path}")
-            fallbackDir
+    /**
+     * 解析插件包目录：先查内部主目录 `filesDir/operit/mcp/packages/<pluginId>`，
+     * 再（仅当 legacy MCP 读取开关开启时）查旧版 `Download/Operit/mcp_plugins/<pluginId>`。
+     * 只返回已存在的目录，绝不创建任何路径。新安装只写内部目录。
+     */
+    fun resolvePluginPackageDir(pluginId: String): File? {
+        val internal = resolveMcpPackageDirectory(paths.internalMcpPackages, pluginId)
+            ?: return null
+        if (internal.exists() && internal.isDirectory) return internal
+        if (runBlocking { legacyPrefs.isReadLegacyMcp() }) {
+            val legacy = resolveMcpPackageDirectory(paths.legacyMcp, pluginId)
+                ?: return null
+            if (legacy.exists() && legacy.isDirectory) return legacy
         }
+        return null
     }
 
     init {
@@ -179,15 +190,26 @@ class MCPRepository(private val context: Context) {
     }
 
     /**
-     * 扫描文件系统中实际安装的插件（辅助验证）
+     * 扫描文件系统中实际安装的插件（辅助验证）：内部 packages 目录 + 旧版目录（开关开启时）
      */
     private fun scanPhysicallyInstalledPlugins(): Set<String> {
         val installedIds = mutableSetOf<String>()
         try {
-            if (pluginsBaseDir.exists() && pluginsBaseDir.isDirectory) {
-                pluginsBaseDir.listFiles()?.forEach { pluginDir ->
+            val internalDir = paths.internalMcpPackages
+            if (internalDir.exists() && internalDir.isDirectory) {
+                internalDir.listFiles()?.forEach { pluginDir ->
                     if (pluginDir.isDirectory && isPluginPhysicallyInstalled(pluginDir.name)) {
                         installedIds.add(pluginDir.name)
+                    }
+                }
+            }
+            if (runBlocking { legacyPrefs.isReadLegacyMcp() }) {
+                val legacyDir = paths.legacyMcp
+                if (legacyDir.exists() && legacyDir.isDirectory) {
+                    legacyDir.listFiles()?.forEach { pluginDir ->
+                        if (pluginDir.isDirectory && isPluginPhysicallyInstalled(pluginDir.name)) {
+                            installedIds.add(pluginDir.name)
+                        }
                     }
                 }
             }
@@ -259,7 +281,7 @@ class MCPRepository(private val context: Context) {
     }
 
     /**
-     * 检查插件是否在文件系统中物理存在
+     * 检查插件是否在文件系统中物理存在（内部优先，旧版仅开关开启时视为存在）
      */
     private fun isPluginPhysicallyInstalled(serverId: String): Boolean {
         // 如果不需要物理安装，直接返回 true
@@ -267,11 +289,9 @@ class MCPRepository(private val context: Context) {
             return true
         }
         
-        val pluginDir = File(pluginsBaseDir, serverId)
-        return if (pluginDir.exists() && pluginDir.isDirectory) {
-            val hasContent = pluginDir.listFiles()?.isNotEmpty() ?: false
-            if (hasContent) checkForRequiredFiles(pluginDir) else false
-        } else false
+        val pluginDir = resolvePluginPackageDir(serverId) ?: return false
+        val hasContent = pluginDir.listFiles()?.isNotEmpty() ?: false
+        return if (hasContent) checkForRequiredFiles(pluginDir) else false
     }
 
     /**
@@ -289,7 +309,7 @@ class MCPRepository(private val context: Context) {
     }
 
     /**
-     * 获取已安装插件的路径
+     * 获取已安装插件的路径（内部优先，旧版仅开关开启时）
      */
     fun getInstalledPluginPath(serverId: String): String? {
         // 对于 npx/uvx/uv 类型的插件，返回一个虚拟路径标记
@@ -297,8 +317,7 @@ class MCPRepository(private val context: Context) {
             return "virtual://$serverId"
         }
         
-        val pluginDir = File(pluginsBaseDir, serverId)
-        if (!pluginDir.exists() || !pluginDir.isDirectory) return null
+        val pluginDir = resolvePluginPackageDir(serverId) ?: return null
 
         val subdirs = pluginDir.listFiles()?.filter { it.isDirectory } ?: emptyList()
         return if (subdirs.isNotEmpty()) {
@@ -417,8 +436,14 @@ class MCPRepository(private val context: Context) {
     suspend fun uninstallMCPServer(pluginId: String): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                val pluginDir = File(pluginsBaseDir, pluginId)
-                val result = if (pluginDir.exists()) {
+                if (!isSafeMcpPluginId(pluginId)) {
+                    AppLogger.e(TAG, "拒绝卸载非法插件 ID: $pluginId")
+                    return@withContext false
+                }
+                // 删除插件包目录：内部优先，旧版目录仅在开关开启时解析（用户显式卸载
+                // 是删除该插件自身文件的唯一合法入口；旧版配置 mcp_config.json 永不修改）。
+                val pluginDir = resolvePluginPackageDir(pluginId)
+                val result = if (pluginDir != null) {
                     pluginDir.deleteRecursively()
                 } else {
                     true // 目录不存在，认为卸载成功
@@ -456,7 +481,10 @@ class MCPRepository(private val context: Context) {
         try {
             AppLogger.d(TAG, "安装插件 - 名称: ${server.name}, URL: ${server.repoUrl}")
 
-            val pluginDir = File(pluginsBaseDir, server.id)
+            val pluginDir = resolveMcpPackageDirectory(paths.internalMcpPackages, server.id)
+                ?: return InstallResult.Error(
+                    context.getString(R.string.mcp_repository_invalid_plugin_id)
+                )
             if (pluginDir.exists()) {
                 AppLogger.d(TAG, "删除已存在的插件目录: ${pluginDir.path}")
                 pluginDir.deleteRecursively()
@@ -518,14 +546,20 @@ class MCPRepository(private val context: Context) {
         try {
             AppLogger.d(TAG, "从本地ZIP安装插件 - 名称: ${server.name}, URI: $zipUri")
 
-            val pluginDir = File(pluginsBaseDir, server.id)
+            val pluginDir = resolveMcpPackageDirectory(paths.internalMcpPackages, server.id)
+                ?: return InstallResult.Error(
+                    context.getString(R.string.mcp_repository_invalid_plugin_id)
+                )
             if (pluginDir.exists()) {
                 AppLogger.d(TAG, "删除已存在的插件目录: ${pluginDir.path}")
                 pluginDir.deleteRecursively()
             }
             pluginDir.mkdirs()
 
-            val tempFile = File(context.cacheDir, "mcp_${server.id}_local.zip")
+            val tempFile = safeMcpTempFile(context.cacheDir, server.id, "local")
+                ?: return InstallResult.Error(
+                    context.getString(R.string.mcp_repository_invalid_plugin_id)
+                )
             if (tempFile.exists()) tempFile.delete()
 
             progressCallback(InstallProgress.Downloading(0))
@@ -641,7 +675,8 @@ class MCPRepository(private val context: Context) {
         serverId: String,
         progressCallback: (InstallProgress) -> Unit
     ): File? = withContext(Dispatchers.IO) {
-        val tempFile = File(context.cacheDir, "mcp_${serverId}_repo.zip")
+        val tempFile = safeMcpTempFile(context.cacheDir, serverId, "repo")
+            ?: return@withContext null
         
         try {
             val url = URL(zipUrl)
@@ -730,7 +765,8 @@ class MCPRepository(private val context: Context) {
                         continue
                     }
                     
-                    val outFile = File(targetDir, entryName)
+                    val outFile = resolveMcpZipEntryTarget(targetDir, entryName)
+                        ?: throw SecurityException("ZIP entry escapes MCP package root: $entryName")
                     
                     if (entry.isDirectory) {
                         outFile.mkdirs()
@@ -890,7 +926,7 @@ class MCPRepository(private val context: Context) {
                 installedTime = System.currentTimeMillis()
             )
             
-            AppLogger.d(TAG, "添加远程服务器: ${server.id}, bearerToken: ${server.bearerToken?.take(10)}..., headers: ${server.headers?.keys}")
+            AppLogger.d(TAG, "添加远程服务器: ${server.id}, bearerToken: ${if (server.bearerToken.isNullOrEmpty()) "absent" else "present (redacted)"}, headers: ${server.headers?.keys}")
             
             mcpLocalServer.addOrUpdatePluginMetadata(metadata)
 
@@ -1106,6 +1142,8 @@ class MCPRepository(private val context: Context) {
             return cachedToolDescriptions
         }
 
+        if (!mcpLocalServer.isRuntimeActivationAllowed(metadata.id)) return emptyList()
+
         val serviceName =
             when (metadata.type) {
                 "remote" -> metadata.name.toServiceName(metadata.id)
@@ -1116,7 +1154,11 @@ class MCPRepository(private val context: Context) {
                 }
             }
 
-        return MCPBridgeClient(context, serviceName).getToolDescriptions()
+        val client = MCPBridgeClient(context, serviceName)
+        return runWithMcpRuntimeActivationGuard(
+            isAllowed = { mcpLocalServer.isRuntimeActivationAllowed(metadata.id) },
+            onRevoked = { client.unspawn() },
+        ) { client.getToolDescriptions() }.orEmpty()
     }
 
     private fun String.toServiceName(pluginId: String): String {
@@ -1160,6 +1202,10 @@ class MCPRepository(private val context: Context) {
 
         successfulPluginIds.forEach { pluginId ->
             try {
+                if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                    AppLogger.d(TAG, "跳过不可用或已禁用的MCP插件注册: $pluginId")
+                    return@forEach
+                }
                 AppLogger.d(TAG, "正在为插件 $pluginId 注册工具...")
 
                 val pluginMetadata = mcpLocalServer.getPluginMetadata(pluginId)
@@ -1177,10 +1223,19 @@ class MCPRepository(private val context: Context) {
                     extraData = emptyMap()
                 )
                 mcpManager.registerServer(pluginId, serverConfig)
+                if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                    unregisterMcpRuntimeEntries(buildMcpRuntimeShutdownPlan(pluginId))
+                    return@forEach
+                }
                 AppLogger.d(TAG, "已在MCPManager中注册服务器: $pluginId (类型: ${pluginMetadata.type})")
 
                 // 获取工具信息
                 val toolsToRegister = getToolsForPlugin(pluginId)
+
+                if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                    runBlocking { stopAndUnregisterMcpRuntime(buildMcpRuntimeShutdownPlan(pluginId)) }
+                    return@forEach
+                }
 
                 if (toolsToRegister.isEmpty()) {
                     AppLogger.w(TAG, "插件 $pluginId 没有可注册的工具")
@@ -1188,12 +1243,13 @@ class MCPRepository(private val context: Context) {
                 }
 
                 // 统一注册工具
-                toolsToRegister.forEach { toolInfo ->
+                for (toolInfo in toolsToRegister) {
+                    if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) break
                     val prefixedToolName = "$pluginId:${toolInfo.name}"
 
                     if (toolHandler.getToolExecutor(prefixedToolName) != null) {
                         AppLogger.d(TAG, "工具 $prefixedToolName 已注册，跳过")
-                        return@forEach
+                        continue
                     }
 
                     runBlocking {
@@ -1211,6 +1267,10 @@ class MCPRepository(private val context: Context) {
                     }
                     AppLogger.i(TAG, "成功注册工具: $prefixedToolName")
                 }
+                if (!mcpLocalServer.isRuntimeActivationAllowed(pluginId)) {
+                    runBlocking { stopAndUnregisterMcpRuntime(buildMcpRuntimeShutdownPlan(pluginId)) }
+                    return@forEach
+                }
                 AppLogger.d(TAG, "插件 $pluginId 的工具注册完成，共 ${toolsToRegister.size} 个")
 
             } catch (e: Exception) {
@@ -1223,43 +1283,169 @@ class MCPRepository(private val context: Context) {
     /**
      * 反注册插件对应的运行时服务器与工具，避免禁用后仍出现在系统提示词。
      */
+    private data class McpRuntimeShutdownPlan(
+        val pluginId: String,
+        val serviceName: String?,
+        val serverNames: Set<String>,
+    )
+
+    private fun buildMcpRuntimeShutdownPlan(pluginId: String): McpRuntimeShutdownPlan {
+        val pluginMetadata = mcpLocalServer.getPluginMetadata(pluginId)
+        val pluginConfig = mcpLocalServer.getPluginConfig(pluginId)
+        val nestedServerNames = mutableSetOf<String>()
+        if (pluginConfig.isNotBlank()) {
+            runCatching {
+                val root = JsonParser.parseString(pluginConfig).asJsonObject
+                root.getAsJsonObject("mcpServers")?.keySet()?.let(nestedServerNames::addAll)
+            }.onFailure { e ->
+                AppLogger.w(TAG, "Failed to parse plugin config for $pluginId: ${e.message}")
+            }
+        }
+        val serviceName = pluginMetadata?.let { metadata ->
+            val baseServerName = metadata.name.replace(" ", "_").lowercase()
+                .ifEmpty { pluginId.substringAfterLast('/').lowercase() }
+            if (metadata.type == "local") {
+                MCPConfigGenerator().extractServerNameFromConfig(pluginConfig) ?: baseServerName
+            } else {
+                baseServerName
+            }
+        }
+        return McpRuntimeShutdownPlan(
+            pluginId = pluginId,
+            serviceName = serviceName,
+            serverNames = nestedServerNames + pluginId,
+        )
+    }
+
+    private fun unregisterMcpRuntimeEntries(plan: McpRuntimeShutdownPlan) {
+        val toolHandler = AIToolHandler.getInstance(context)
+        val toolPrefix = "${plan.pluginId}:"
+        val toolNamesToRemove = toolHandler.getAllToolNames().filter { it.startsWith(toolPrefix) }
+        toolNamesToRemove.forEach(toolHandler::unregisterTool)
+        val mcpManager = MCPManager.getInstance(context)
+        plan.serverNames.forEach(mcpManager::unregisterServer)
+        AppLogger.d(
+            TAG,
+            "Runtime MCP entries removed for ${plan.pluginId}, tools=${toolNamesToRemove.size}, servers=${plan.serverNames.size}"
+        )
+    }
+
     fun unregisterToolsForPlugins(pluginIds: List<String>) {
         if (pluginIds.isEmpty()) return
 
-        val mcpManager = MCPManager.getInstance(context)
-        val toolHandler = AIToolHandler.getInstance(context)
-
         pluginIds.forEach { pluginId ->
             try {
-                val toolPrefix = "$pluginId:"
-                val toolNamesToRemove = toolHandler.getAllToolNames().filter { it.startsWith(toolPrefix) }
-                toolNamesToRemove.forEach { toolName ->
-                    toolHandler.unregisterTool(toolName)
-                }
-
-                val serverNamesToRemove = mutableSetOf(pluginId)
-                val pluginConfig = mcpLocalServer.getPluginConfig(pluginId)
-                if (pluginConfig.isNotBlank()) {
-                    runCatching {
-                        val root = JsonParser.parseString(pluginConfig).asJsonObject
-                        root.getAsJsonObject("mcpServers")?.keySet()?.forEach { serverName ->
-                            serverNamesToRemove.add(serverName)
-                        }
-                    }.onFailure { e ->
-                        AppLogger.w(TAG, "Failed to parse plugin config for $pluginId: ${e.message}")
-                    }
-                }
-
-                serverNamesToRemove.forEach { serverName ->
-                    mcpManager.unregisterServer(serverName)
-                }
-
-                AppLogger.d(
-                    TAG,
-                    "Runtime MCP entries removed for $pluginId, tools=${toolNamesToRemove.size}, servers=${serverNamesToRemove.size}"
-                )
+                unregisterMcpRuntimeEntries(buildMcpRuntimeShutdownPlan(pluginId))
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Failed to unregister runtime MCP entries for $pluginId", e)
+            }
+        }
+    }
+
+    /** Stops bridge, manager and tool registrations without changing persisted MCP settings. */
+    private suspend fun stopAndUnregisterMcpRuntime(plan: McpRuntimeShutdownPlan) {
+        // a. 停止桥接进程（若存在）；失败不阻塞后续步骤
+        try {
+            if (plan.serviceName != null) {
+                MCPBridge.getInstance(context).unspawnMcpService(plan.serviceName)
+            }
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "停止桥接MCP服务失败: ${plan.pluginId}", e)
+        }
+
+        // b/c. 注销 MCPManager 服务器与 AIToolHandler 工具
+        try {
+            unregisterMcpRuntimeEntries(plan)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "注销 ${plan.pluginId} 的运行时MCP条目失败", e)
+        }
+
+        AppLogger.d(TAG, "MCP服务器运行时已停止并注销: ${plan.pluginId}")
+    }
+
+    /**
+     * Stops a server and persists the user's explicit disabled state. Legacy compatibility
+     * shutdowns use [stopAndUnregisterMcpRuntime] instead so toggling the read source off does not
+     * create an internal write-on-copy override that shadows the legacy server when re-enabled.
+     */
+    suspend fun stopAndUnregisterMcpServer(pluginId: String) {
+        stopAndUnregisterMcpRuntime(buildMcpRuntimeShutdownPlan(pluginId))
+
+        // Persist explicit user shutdowns so automatic activation cannot restart the server.
+        try {
+            mcpLocalServer.setServerEnabled(pluginId, false)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "标记禁用失败: $pluginId", e)
+        }
+
+        AppLogger.d(TAG, "MCP服务器已停止并注销: $pluginId")
+    }
+
+    /**
+     * Legacy MCP 读取开关变更入口（设置页切换后调用）。
+     *
+     * - 开启：重新加载旧版配置并合并进有效配置。
+     * - 关闭：先抑制"仅存在于旧版"的运行时激活并捕获清理信息，再清空有效配置，最后
+     *   停止/注销运行时。这里不持久化 disabled，避免生成遮蔽旧版配置的内部副本。
+     */
+    suspend fun onLegacyReadSwitchChanged(nowEnabled: Boolean) = withContext(Dispatchers.IO) {
+        legacyReadSwitchMutex.withLock {
+            val legacyOnlyIdsBeforeSwitch =
+                if (nowEnabled) emptySet() else mcpLocalServer.getLegacyOnlyServerIds()
+            val newlySuppressedIds =
+                if (nowEnabled) {
+                    emptySet()
+                } else {
+                    McpRuntimeActivationGate.suppressLegacy(legacyOnlyIdsBeforeSwitch)
+                }
+            val shutdownPlans =
+                if (nowEnabled) {
+                    emptyList()
+                } else {
+                    val mcpManager = MCPManager.getInstance(context)
+                    legacyOnlyIdsBeforeSwitch
+                        .map(::buildMcpRuntimeShutdownPlan)
+                        .filter { plan ->
+                            mcpLocalServer.isServerEnabled(plan.pluginId) ||
+                                plan.serverNames.any(mcpManager::isServerRegistered)
+                        }
+                }
+
+            // Publish the new effective config first. On disable this closes the automatic
+            // activation guard before runtime entries are removed; the captured plans retain the
+            // legacy metadata and nested server names needed for cleanup.
+            try {
+                mcpLocalServer.onLegacyReadSwitchChanged(nowEnabled)
+            } catch (e: Exception) {
+                if (!nowEnabled) {
+                    McpRuntimeActivationGate.rollbackSuppression(newlySuppressedIds)
+                }
+                throw e
+            }
+            if (nowEnabled) {
+                McpRuntimeActivationGate.resumeLegacyReads()
+            }
+
+            if (!nowEnabled) {
+                shutdownPlans.forEach { plan ->
+                    try {
+                        stopAndUnregisterMcpRuntime(plan)
+                    } catch (e: Exception) {
+                        AppLogger.e(TAG, "停止旧版专属MCP服务器失败: ${plan.pluginId}", e)
+                    }
+                }
+                AppLogger.d(TAG, "旧版MCP读取已关闭，停止 ${shutdownPlans.size} 个旧版专属服务器")
+            }
+
+            loadPluginsFromMCPLocalServer()
+            if (nowEnabled) {
+                val idsToRestore = mcpLegacyRuntimeRestoreIds(
+                    legacyOnlyIds = mcpLocalServer.getLegacyOnlyServerIds(),
+                    installedIds = _installedPluginIds.value,
+                    isEnabled = mcpLocalServer::isServerEnabled,
+                )
+                registerToolsForLoadedPlugins(idsToRestore)
+                AppLogger.d(TAG, "旧版MCP读取已开启，恢复 ${idsToRestore.size} 个旧版专属服务器")
             }
         }
     }
@@ -1313,6 +1499,82 @@ class MCPRepository(private val context: Context) {
 }
 
 // ==================== 数据类定义 ====================
+
+/**
+ * Validates a marketplace/local-ZIP plugin ID as a relative package path. Nested IDs such as
+ * `owner/repository` remain supported, while absolute paths, empty segments and traversal are
+ * rejected before any recursive delete, extraction, read or cache write.
+ */
+internal fun isSafeMcpPluginId(pluginId: String): Boolean {
+    val normalized = pluginId.replace('\\', '/')
+    if (
+        normalized.isEmpty() ||
+        normalized.startsWith('/') ||
+        Regex("^[A-Za-z]:").containsMatchIn(normalized)
+    ) {
+        return false
+    }
+    return normalized.split('/').all(::isSafeMcpPathSegment)
+}
+
+private fun isSafeMcpPathSegment(segment: String): Boolean =
+    segment.isNotEmpty() &&
+        segment == segment.trim() &&
+        segment != "." &&
+        segment != ".." &&
+        !segment.endsWith('.') &&
+        Regex("^[A-Za-z0-9@._+\\-]+$").matches(segment)
+
+internal fun resolveMcpPackageDirectory(root: File, pluginId: String): File? {
+    if (!isSafeMcpPluginId(pluginId)) return null
+    return runCatching {
+        val canonicalRoot = root.canonicalFile
+        val candidate =
+            pluginId.replace('\\', '/').split('/')
+                .fold(canonicalRoot) { parent, segment -> File(parent, segment) }
+                .canonicalFile
+        candidate.takeIf { it.path.startsWith(canonicalRoot.path + File.separator) }
+    }.getOrNull()
+}
+
+internal fun safeMcpTempFile(cacheDir: File, pluginId: String, purpose: String): File? {
+    if (!isSafeMcpPluginId(pluginId)) return null
+    val digest =
+        MessageDigest.getInstance("SHA-256")
+            .digest(pluginId.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
+    return File(cacheDir, "mcp_${digest}_$purpose.zip")
+}
+
+/** Resolves an archive entry below [targetDir], rejecting absolute and traversal names. */
+internal fun resolveMcpZipEntryTarget(targetDir: File, entryName: String): File? {
+    if (entryName.indexOf('\\') >= 0) return null
+    val normalized = entryName.trimEnd('/')
+    if (
+        normalized.isBlank() ||
+        normalized.indexOf('\u0000') >= 0 ||
+        normalized.startsWith('/') ||
+        Regex("^[A-Za-z]:").containsMatchIn(normalized) ||
+        normalized.split('/').any { it == ".." }
+    ) {
+        return null
+    }
+    return runCatching {
+        val canonicalRoot = targetDir.canonicalFile
+        val candidate = File(canonicalRoot, normalized).canonicalFile
+        candidate.takeIf { it.path.startsWith(canonicalRoot.path + File.separator) }
+    }.getOrNull()
+}
+
+internal fun mcpLegacyRuntimeRestoreIds(
+    legacyOnlyIds: Set<String>,
+    installedIds: Set<String>,
+    isEnabled: (String) -> Boolean,
+): List<String> = legacyOnlyIds
+    .asSequence()
+    .filter { it in installedIds && isEnabled(it) }
+    .sorted()
+    .toList()
 
 /** 统一的工具信息数据类 */
 private data class UnifiedToolInfo(

@@ -1,13 +1,16 @@
 package com.ai.assistance.operit.core.tools.skill
 
 import android.content.Context
-import android.os.Environment
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.preferences.LegacyStoragePreferences
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.OperitManagedPaths
+import com.ai.assistance.operit.util.StorageSource
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.zip.ZipInputStream
+import kotlinx.coroutines.runBlocking
 
 class SkillManager private constructor(private val context: Context) {
 
@@ -27,26 +30,36 @@ class SkillManager private constructor(private val context: Context) {
     private val availableSkills = mutableMapOf<String, SkillPackage>()
     private val skillLoadErrors = mutableMapOf<String, String>()
 
-    private fun getSkillsRootDir(): File {
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val operitDir = File(downloadsDir, "Operit")
-        val skillsDir = File(operitDir, "skills")
-        if (!skillsDir.exists()) {
-            skillsDir.mkdirs()
-        }
-        return skillsDir
+    private val paths = OperitManagedPaths(context)
+    private val legacyPrefs = LegacyStoragePreferences.getInstance(context)
+
+    /**
+     * App-internal primary skills root (`filesDir/operit/skills`). The only write target;
+     * creating it on access is fine.
+     */
+    private fun getInternalSkillsRootDir(): File {
+        return paths.internalSkills
+    }
+
+    /**
+     * Legacy `Download/Operit/skills` compatibility source. NON-creating: must never call
+     * mkdirs, so probing a missing Download tree cannot resurrect it. Only consulted while the
+     * legacy read switch is on.
+     */
+    private fun getLegacySkillsRootDir(): File {
+        return paths.legacySkills
     }
 
     fun getSkillsDirectoryPath(): String {
-        return getSkillsRootDir().absolutePath
+        return getInternalSkillsRootDir().absolutePath
     }
 
     fun refreshAvailableSkills() {
         availableSkills.clear()
         skillLoadErrors.clear()
 
-        val skillsDir = try {
-            getSkillsRootDir()
+        val internalSkillsDir = try {
+            getInternalSkillsRootDir()
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error getting skills directory", e)
             skillLoadErrors[context.getString(R.string.skills)] =
@@ -54,13 +67,41 @@ class SkillManager private constructor(private val context: Context) {
             return
         }
 
-        if (!skillsDir.exists() || !skillsDir.isDirectory) {
+        if (!internalSkillsDir.exists() || !internalSkillsDir.isDirectory) {
             return
         }
 
-        val children = skillsDir.listFiles() ?: emptyArray()
+        val seenNames = mutableSetOf<String>()
+
+        // 1. Scan the internal primary store first (internal wins on name conflict).
+        scanSkillDirectory(internalSkillsDir, seenNames, StorageSource.INTERNAL)
+
+        // 2. Scan the legacy Download store only if the read switch is on; probing must never
+        // create the legacy tree, so require it to already be a directory.
+        val legacySkillsDir = getLegacySkillsRootDir()
+        if (runBlocking { legacyPrefs.isReadLegacySkills() } && legacySkillsDir.isDirectory) {
+            val hiddenPaths = runBlocking { legacyPrefs.hiddenLegacySkillPaths() }
+            scanSkillDirectory(
+                legacySkillsDir,
+                seenNames,
+                StorageSource.LEGACY_DOWNLOAD,
+                skipPaths = hiddenPaths
+            )
+        }
+    }
+
+    private fun scanSkillDirectory(
+        dir: File,
+        seenNames: MutableSet<String>,
+        source: StorageSource,
+        skipPaths: Set<String> = emptySet()
+    ) {
+        val children = dir.listFiles() ?: emptyArray()
         for (child in children) {
             if (!child.isDirectory) continue
+
+            // Hidden legacy skill (deleted in-app): skip without aborting the scan.
+            if (child.name in skipPaths) continue
 
             val skillFile = File(child, "SKILL.md").let { primary ->
                 if (primary.exists()) primary else File(child, "skill.md")
@@ -79,13 +120,17 @@ class SkillManager private constructor(private val context: Context) {
                 val skillName = name.ifBlank { child.name }
                 val skillDesc = description.ifBlank { "" }
 
-                if (availableSkills.containsKey(skillName)) {
-                    val existingDirName = availableSkills[skillName]?.directory?.name ?: skillName
-                    skillLoadErrors[child.name] = context.getString(
-                        R.string.skill_error_duplicate_scanned_name,
-                        skillName,
-                        existingDirName
-                    )
+                if (skillName in seenNames) {
+                    // Legacy duplicates of an already-loaded name are shadowed silently;
+                    // duplicates within the internal store keep the conflict error.
+                    if (!source.isLegacy()) {
+                        val existingDirName = availableSkills[skillName]?.directory?.name ?: skillName
+                        skillLoadErrors[child.name] = context.getString(
+                            R.string.skill_error_duplicate_scanned_name,
+                            skillName,
+                            existingDirName
+                        )
+                    }
                     continue
                 }
 
@@ -93,8 +138,10 @@ class SkillManager private constructor(private val context: Context) {
                     name = skillName,
                     description = skillDesc,
                     directory = child,
-                    skillFile = skillFile
+                    skillFile = skillFile,
+                    storageSource = source
                 )
+                seenNames += skillName
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Error loading skill from ${skillFile.absolutePath}", e)
                 skillLoadErrors[child.name] = context.getString(
@@ -184,7 +231,28 @@ class SkillManager private constructor(private val context: Context) {
         refreshAvailableSkills()
         val skill = availableSkills[skillName] ?: return false
         return try {
-            val ok = skill.directory.deleteRecursively()
+            val ok =
+                if (skill.storageSource.isLegacy()) {
+                    // Never delete the Download original; hide it by relative path so it does
+                    // not reappear on the next scan.
+                    runBlocking { legacyPrefs.hideLegacySkillPath(skill.directory.name) }
+                    true
+                } else {
+                    // Internal entries shadow legacy entries by parsed metadata name. Probe the
+                    // persisted legacy source regardless of the current switch and tombstone all
+                    // matches before deleting the winner; otherwise a later refresh/re-enable
+                    // would make the shadowed Download copy immediately reappear.
+                    val shadowedLegacyPaths =
+                        legacySkillDirectoryNamesMatching(
+                            root = getLegacySkillsRootDir(),
+                            skillName = skillName,
+                            metadataName = { file -> parseSkillMetadata(file).first },
+                        )
+                    runBlocking {
+                        shadowedLegacyPaths.forEach { legacyPrefs.hideLegacySkillPath(it) }
+                    }
+                    skill.directory.deleteRecursively()
+                }
             if (ok) {
                 availableSkills.remove(skillName)
             }
@@ -215,6 +283,9 @@ class SkillManager private constructor(private val context: Context) {
         }
         sb.appendLine("SKILL.md path: ${skill.skillFile.absolutePath}")
         sb.appendLine("Skill directory: ${skill.directory.absolutePath}")
+        if (skill.storageSource.isLegacy()) {
+            sb.appendLine("Note: Skills under the Download compatibility directory are read-only; do not modify them.")
+        }
         sb.appendLine("Directory structure:")
         sb.appendLine(buildDirectoryTreeText(skill.directory))
         sb.appendLine()
@@ -273,7 +344,7 @@ class SkillManager private constructor(private val context: Context) {
         }
 
         val skillsRoot = try {
-            getSkillsRootDir()
+            getInternalSkillsRootDir()
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error getting skills directory", e)
             return SkillImportResult(context.getString(R.string.skill_error_cannot_access_dir, e.message ?: ""), null)
@@ -368,7 +439,16 @@ class SkillManager private constructor(private val context: Context) {
                     selectedSkillDir.name.ifBlank { zipFile.nameWithoutExtension }
                 }
             }
-            val finalDir = File(skillsRoot, baseName.trim().ifBlank { "skill" })
+            val finalDir = resolveSkillImportDestination(
+                skillsRoot,
+                baseName.trim().ifBlank { "skill" },
+            ) ?: run {
+                cleanupTmp()
+                return SkillImportResult(
+                    context.getString(R.string.skill_error_import_invalid_path),
+                    null,
+                )
+            }
 
             if (finalDir.exists()) {
                 cleanupTmp()
@@ -428,4 +508,53 @@ class SkillManager private constructor(private val context: Context) {
             }
         }
     }
+}
+
+/**
+ * Resolves an imported skill to one direct child of [skillsRoot]. Skill metadata is untrusted:
+ * its display name must never become an absolute, nested or traversal filesystem path.
+ */
+internal fun resolveSkillImportDestination(skillsRoot: File, rawName: String): File? {
+    val name = rawName.trim()
+    if (
+        name.isEmpty() ||
+        name == "." ||
+        name == ".." ||
+        name.any { it == '/' || it == '\\' || it == '\u0000' }
+    ) {
+        return null
+    }
+    return runCatching {
+        val canonicalRoot = skillsRoot.canonicalFile
+        File(canonicalRoot, name).canonicalFile.takeIf { candidate ->
+            candidate.parentFile == canonicalRoot
+        }
+    }.getOrNull()
+}
+
+/**
+ * Finds stable legacy directory identities whose effective metadata name equals [skillName].
+ * Missing, unreadable, or invalid packages are ignored exactly as the normal legacy scan does.
+ */
+internal fun legacySkillDirectoryNamesMatching(
+    root: File,
+    skillName: String,
+    metadataName: (File) -> String?,
+): Set<String> {
+    if (!root.isDirectory) return emptySet()
+    return root.listFiles().orEmpty()
+        .asSequence()
+        .filter { it.isDirectory }
+        .mapNotNull { child ->
+            val skillFile = File(child, "SKILL.md").let { primary ->
+                if (primary.isFile) primary else File(child, "skill.md")
+            }
+            if (!skillFile.isFile) return@mapNotNull null
+            val parsed = runCatching { metadataName(skillFile) }.getOrElse {
+                return@mapNotNull null
+            }.orEmpty()
+            val effectiveName = parsed.ifBlank { child.name }
+            child.name.takeIf { effectiveName == skillName }
+        }
+        .toSet()
 }

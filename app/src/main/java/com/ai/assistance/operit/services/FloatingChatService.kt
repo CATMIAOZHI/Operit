@@ -225,6 +225,11 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                 exitProcess(0)
                 return
             }
+            is OperitApplication.MainApplicationInitResult.CompatibilityInitializationFailed -> {
+                AppLogger.e(TAG, "Legacy compatibility initialization failed; stopping service")
+                stopSelf()
+                return
+            }
         }
         AppLogger.d(TAG, "onCreate")
 
