@@ -42,6 +42,7 @@ fun BubbleStyleChatMessage(
     onDeleteMessage: ((Int) -> Unit)? = null,
     index: Int = -1,
     enableDialogs: Boolean = true,  // 新增参数：是否启用弹窗功能，默认启用
+    enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
     onRoleAvatarLongPress: ((String) -> Unit)? = null,
     onEditSummary: ((ChatMessage) -> Unit)? = null,
 ) {
@@ -78,6 +79,7 @@ fun BubbleStyleChatMessage(
                 isHidden = isHidden,
                 heightMemory = heightMemory,
                 enableDialogs = enableDialogs,
+                enableToolDetailDialogs = enableToolDetailDialogs,
                 onAvatarLongPressMention = onRoleAvatarLongPress,
             )
         }

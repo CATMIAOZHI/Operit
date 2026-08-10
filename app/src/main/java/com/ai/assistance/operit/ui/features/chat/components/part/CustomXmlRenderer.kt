@@ -105,10 +105,14 @@ class CustomXmlRenderer(
     private val initialThinkingExpanded: Boolean = false,
     private val allowExpandedThinkingFullHeight: Boolean = false,
     private val enableDialogs: Boolean = true,  // 新增参数：是否启用弹窗功能，默认启用
+    private val enableToolDetailDialogs: Boolean? = null,
     private val toolTimingScopeId: String? = null,
     private val persistedToolExecutions: Map<Int, PersistedToolExecution> = emptyMap(),
     private val fallback: XmlContentRenderer = DefaultXmlRenderer()
 ) : XmlContentRenderer {
+    // 只读转写（如 subagent 对话）仍允许查看工具详情，其余弹窗保持禁用；未显式指定时跟随 enableDialogs
+    private val toolDetailDialogsEnabled: Boolean
+        get() = enableToolDetailDialogs ?: enableDialogs
     // 定义渲染器能够处理的内置标签集合
     private val builtInTags =
             setOf("think", "thinking", "search", "tool", "status", "tool_result", "html", "mood", "font", "details", "detail", "meta")
@@ -802,7 +806,7 @@ class CustomXmlRenderer(
                     summaryOverride = renderState.summaryOverride,
                     textColor = textColor,
                     modifier = modifier,
-                    enableDialog = enableDialogs,
+                    enableDialog = toolDetailDialogsEnabled,
                 )
             // 特殊处理文件编辑类工具
             } else if (renderState.displayToolName == "apply_file" ||
@@ -815,7 +819,7 @@ class CustomXmlRenderer(
                         params = renderState.paramText,
                         textColor = textColor,
                         modifier = modifier,
-                        enableDialog = enableDialogs
+                        enableDialog = toolDetailDialogsEnabled
                     )
                 } else {
                     DetailedToolDisplay(
@@ -823,7 +827,7 @@ class CustomXmlRenderer(
                         params = renderState.paramText,
                         textColor = textColor,
                         modifier = modifier,
-                        enableDialog = enableDialogs
+                        enableDialog = toolDetailDialogsEnabled
                     )
                 }
             } else {
@@ -834,7 +838,7 @@ class CustomXmlRenderer(
                         params = renderState.paramText,
                         textColor = textColor,
                         modifier = modifier,
-                        enableDialog = enableDialogs  // 传递弹窗启用状态
+                        enableDialog = toolDetailDialogsEnabled  // 传递弹窗启用状态
                     )
                 } else {
                     CompactToolDisplay(
@@ -842,7 +846,7 @@ class CustomXmlRenderer(
                         params = renderState.paramText,
                         textColor = textColor,
                         modifier = modifier,
-                        enableDialog = enableDialogs  // 传递弹窗启用状态
+                        enableDialog = toolDetailDialogsEnabled  // 传递弹窗启用状态
                     )
                 }
             }
@@ -853,7 +857,7 @@ class CustomXmlRenderer(
                     invocationIndex = index,
                     persistedExecution = persistedToolExecutions[index],
                     allowUnmatchedLiveExecution = xmlStream != null,
-                    enableDialogs = enableDialogs,
+                    enableDialogs = toolDetailDialogsEnabled,
                     requestedToolName = renderState.displayToolName,
                     requestedSubagentName = renderState.subagentName,
                     requestedSubagentTaskId = renderState.subagentTaskId,
@@ -994,7 +998,7 @@ class CustomXmlRenderer(
             result = displayResult,
             isSuccess = renderState.isSuccess,
             modifier = modifier,
-            enableDialog = enableDialogs,
+            enableDialog = toolDetailDialogsEnabled,
         )
     }
 

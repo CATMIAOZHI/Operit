@@ -43,8 +43,8 @@ class ToolExecutionTimingRepositoryTest {
     fun finishedPayloads_areBoundedAndScopeCanBeCleared() {
         val scopeId = "bounded-${System.nanoTime()}"
         val invocation = invocation(callId = "bounded", invocationIndex = 0)
-        val oversizedText = "r".repeat(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH + 100)
-        val oversizedError = "e".repeat(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH + 100)
+        val oversizedText = "r".repeat(ToolExecutionLimits.MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS + 100)
+        val oversizedError = "e".repeat(ToolExecutionLimits.MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS + 100)
 
         ToolExecutionTimingRepository.register(scopeId, invocation)
         ToolExecutionTimingRepository.markFinished(
@@ -62,8 +62,15 @@ class ToolExecutionTimingRepositoryTest {
         )
 
         val snapshot = ToolExecutionTimingRepository.get(scopeId, 0)
-        assertEquals(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH, snapshot?.resultText?.length)
-        assertEquals(ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH, snapshot?.errorText?.length)
+        // live 快照与持久化工具结果消息共享同一上限，保证流式窗口内展示与最终一致。
+        assertEquals(
+            ToolExecutionLimits.MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS,
+            snapshot?.resultText?.length,
+        )
+        assertEquals(
+            ToolExecutionLimits.MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS,
+            snapshot?.errorText?.length,
+        )
 
         ToolExecutionTimingRepository.clearScope(scopeId)
 

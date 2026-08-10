@@ -1260,14 +1260,6 @@ class ClaudeProvider(
         )
     }
 
-    private fun mapThinkingQualityToEffort(qualityLevel: Int): String =
-        listOf("low", "medium", "high", "max", "max")[
-            qualityLevel.coerceIn(
-                ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
-                ApiPreferences.MAX_THINKING_QUALITY_LEVEL
-            ) - 1
-        ]
-
     // 添加模型参数
     private fun addParameters(jsonObject: JSONObject, modelParameters: List<ModelParameter<*>>) {
         for (param in modelParameters) {

@@ -1,9 +1,15 @@
 package com.ai.assistance.operit.ui.features.chat.components.part
 
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.core.tools.StringResultData
+import com.ai.assistance.operit.core.tools.ToolExecutionLimits
+import com.ai.assistance.operit.core.tools.ToolExecutionTimingRepository
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingSnapshot
+import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.ToolExecutionState
+import com.ai.assistance.operit.data.model.ToolInvocation
+import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.ui.common.markdown.toolInvocationIndexAt
 import com.ai.assistance.operit.util.markdown.MarkdownNodeStable
 import com.ai.assistance.operit.util.markdown.MarkdownProcessorType
@@ -85,6 +91,59 @@ class ToolExecutionPresentationTest {
                 changeSummary = "3 insertions(+), 1 deletions(-)",
             ),
         )
+    }
+
+    @Test
+    fun longFinishedFileResult_keepsFullTextForStreamingDiffDisplay() {
+        val scopeId = "test-scope-${System.nanoTime()}"
+        try {
+            val bigDiff =
+                buildString {
+                    append("""<file-diff details="Updated file" path="/workspace/src/Main.kt"><![CDATA[""")
+                    repeat(2_000) { append("+line $it\n") }
+                    append("]]></file-diff>")
+                }
+            assertTrue(bigDiff.length > ToolExecutionLimits.MAX_TEXT_RESULT_LENGTH)
+            val invocation =
+                ToolInvocation(
+                    tool = AITool(name = "edit_file"),
+                    rawText = """<tool name="edit_file"></tool>""",
+                    responseLocation = 0..0,
+                    callId = "call-1",
+                    invocationIndex = 0,
+                )
+            ToolExecutionTimingRepository.register(scopeId, invocation)
+            ToolExecutionTimingRepository.markFinished(
+                scopeId,
+                invocation,
+                ToolResult(
+                    toolName = "edit_file",
+                    success = true,
+                    result = StringResultData(bigDiff),
+                ),
+                durationMs = 2_000L,
+                state = ToolExecutionState.COMPLETED,
+            )
+
+            // 流式窗口内 persisted 结果不可用，UI 依赖 live 快照展示结果文本；
+            // 若 live 快照仍按 MAX_TEXT_RESULT_LENGTH 截断，<file-diff> 块会被切断，
+            // 导致 diff 展示回退为普通工具结果。
+            val snapshot = ToolExecutionTimingRepository.get(scopeId, 0)
+            assertNotNull(snapshot)
+            assertEquals(bigDiff, snapshot?.resultText)
+            val diff =
+                parseFileDiffResult(
+                    toolName = "edit_file",
+                    result = snapshot!!.resultText,
+                    isSuccess = true,
+                )
+            assertNotNull(diff)
+            assertEquals("/workspace/src/Main.kt", diff?.path)
+            assertEquals("Updated file", diff?.details)
+            assertEquals(true, diff?.diffContent?.endsWith("+line 1999"))
+        } finally {
+            ToolExecutionTimingRepository.clearScope(scopeId)
+        }
     }
 
     @Test
@@ -314,6 +373,59 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
+    fun reloadedInFlightCall_keepsLiveTimingWithoutPersistedResult() {
+        val running =
+            ToolExecutionTimingSnapshot(
+                callId = "terminal-call",
+                toolName = "super_admin:terminal",
+                state = ToolExecutionState.RUNNING,
+                startedAtElapsedMs = 1_000L,
+            )
+
+        // 静态重载（聊天切换后无流、无最终结果）时，运行中的调用仍应展示审核横幅与耗时。
+        assertSame(
+            running,
+            resolveLiveToolExecution(
+                liveExecution = running,
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = false,
+            ),
+        )
+        assertEquals(
+            running.copy(state = ToolExecutionState.WAITING_EXECUTION),
+            resolveLiveToolExecution(
+                liveExecution = running.copy(state = ToolExecutionState.WAITING_EXECUTION),
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = false,
+            ),
+        )
+        assertEquals(
+            running.copy(state = ToolExecutionState.WAITING_AUTHORIZATION),
+            resolveLiveToolExecution(
+                liveExecution = running.copy(state = ToolExecutionState.WAITING_AUTHORIZATION),
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = false,
+            ),
+        )
+
+        // 终止状态仍不允许无匹配快照，防止误配其他变体。
+        assertNull(
+            resolveLiveToolExecution(
+                liveExecution = running.copy(state = ToolExecutionState.COMPLETED),
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = false,
+            )
+        )
+        assertNull(
+            resolveLiveToolExecution(
+                liveExecution = running.copy(state = ToolExecutionState.NOT_EXECUTED),
+                persistedExecution = null,
+                allowUnmatchedLiveExecution = false,
+            )
+        )
+    }
+
+    @Test
     fun invalidatedToolReservation_keepsLaterExecutionAlignedWithRenderedOrdinal() = runBlocking {
         val nextInvocationIndex = AtomicInteger(0)
         val invalidatedContent =
@@ -386,20 +498,23 @@ class ToolExecutionPresentationTest {
                 isSuccess = false,
             )
         )
-        assertNull(
+        // 尾部截断（截断点落在 CDATA 或 </file-diff> 内）时仍渲染可用的部分 diff。
+        val truncatedMidCdata =
             parseFileDiffResult(
                 toolName = "apply_file",
                 result = """<file-diff path="src/Test.kt"><![CDATA[+truncated""",
                 isSuccess = true,
             )
-        )
-        assertNull(
+        assertNotNull(truncatedMidCdata)
+        assertEquals("+truncated", truncatedMidCdata?.diffContent)
+        val truncatedClosingTag =
             parseFileDiffResult(
                 toolName = "apply_file",
                 result = """<file-diff path="src/Test.kt"><![CDATA[+changed]]>""",
                 isSuccess = true,
             )
-        )
+        assertNotNull(truncatedClosingTag)
+        assertEquals("+changed", truncatedClosingTag?.diffContent)
         assertNull(
             parseFileDiffResult(
                 toolName = "apply_file",

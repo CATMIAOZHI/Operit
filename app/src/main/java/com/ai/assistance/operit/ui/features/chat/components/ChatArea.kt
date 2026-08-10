@@ -161,6 +161,7 @@ fun ChatArea(
     isLoading: Boolean,
     enableDialogs: Boolean = true,
     allowTranscriptMutation: Boolean = true,
+    enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
     userMessageColor: Color,
     aiMessageColor: Color,
     userTextColor: Color,
@@ -233,6 +234,11 @@ fun ChatArea(
     var viewportHeightPx by remember { mutableStateOf(0) }
     val messageAnchors = remember(currentChatId) { mutableStateMapOf<Long, ChatScrollMessageAnchor>() }
     var pendingJumpToMessageTimestamp by remember(currentChatId) { mutableStateOf<Long?>(null) }
+    // 标记待跳转是否来自显式定位（消息定位器/导航器跳转）。自动贴底请求只在
+    // autoScrollToBottom 激活期间有效；用户上滑后残留的自动请求必须失效，
+    // 否则之后任意布局变化（如展开折叠的工具调用组导致 scrollState.maxValue
+    // 变化）都会把它复活并强制滚动到底部。显式定位请求不受此限制。
+    var pendingJumpIsExplicit by remember(currentChatId) { mutableStateOf(false) }
     val lastMessage = chatHistory.lastOrNull()
     val pendingTargetAnchor =
         pendingJumpToMessageTimestamp?.let { targetTimestamp -> messageAnchors[targetTimestamp] }
@@ -243,6 +249,7 @@ fun ChatArea(
     val messagesCount = chatHistory.size
     LaunchedEffect(currentChatId, chatHistory.isEmpty()) {
         if (chatHistory.isEmpty()) {
+            pendingJumpIsExplicit = false
             pendingJumpToMessageTimestamp = null
         }
     }
@@ -263,6 +270,7 @@ fun ChatArea(
         ) {
             onShowLatestDisplayWindow.invoke()
         } else if (autoScrollToBottom && messagesCount > 0) {
+            pendingJumpIsExplicit = false
             pendingJumpToMessageTimestamp = lastMessage?.timestamp
         }
     }
@@ -276,6 +284,12 @@ fun ChatArea(
         scrollState.maxValue,
     ) {
         val targetTimestamp = pendingJumpToMessageTimestamp ?: return@LaunchedEffect
+        // 自动贴底请求在用户上滑离开底部后失效（见 pendingJumpIsExplicit 注释）。
+        if (!pendingJumpIsExplicit && !autoScrollToBottom) {
+            pendingJumpIsExplicit = false
+            pendingJumpToMessageTimestamp = null
+            return@LaunchedEffect
+        }
         val targetIndex = chatHistory.indexOfFirst { it.timestamp == targetTimestamp }
         if (targetIndex < 0) {
             return@LaunchedEffect
@@ -292,6 +306,7 @@ fun ChatArea(
                 targetAnchor.absoluteTopPx.roundToInt().coerceIn(0, scrollState.maxValue)
             scrollState.animateScrollTo(targetOffset)
         }
+        pendingJumpIsExplicit = false
         pendingJumpToMessageTimestamp = null
     }
 
@@ -404,6 +419,7 @@ fun ChatArea(
                             message = message,
                             enableDialogs = enableDialogs,
                             allowTranscriptMutation = allowTranscriptMutation,
+                            enableToolDetailDialogs = enableToolDetailDialogs,
                             userMessageColor = userMessageColor,
                             aiMessageColor = aiMessageColor,
                             userTextColor = userTextColor,
@@ -527,6 +543,7 @@ fun ChatArea(
             onAutoScrollToBottomChange = onAutoScrollToBottomChange,
             onToggleFavoriteMessage = onToggleFavoriteMessage,
             onJumpToMessageTimestamp = { targetTimestamp ->
+                pendingJumpIsExplicit = true
                 pendingJumpToMessageTimestamp = targetTimestamp
                 val targetIndex = chatHistory.indexOfFirst { it.timestamp == targetTimestamp }
                 if (targetIndex >= 0) {
@@ -542,10 +559,12 @@ fun ChatArea(
                             pendingJumpToMessageTimestamp == targetTimestamp &&
                             chatHistory.none { it.timestamp == targetTimestamp }
                         ) {
+                            pendingJumpIsExplicit = false
                             pendingJumpToMessageTimestamp = null
                         }
                     }
                 } else {
+                    pendingJumpIsExplicit = false
                     pendingJumpToMessageTimestamp = null
                 }
             },
@@ -554,6 +573,7 @@ fun ChatArea(
                     val isActualLatestMessage =
                         targetIndex == messagesCount - 1 && !hasNewerDisplayHistory
                     onAutoScrollToBottomChange?.invoke(isActualLatestMessage)
+                    pendingJumpIsExplicit = true
                     pendingJumpToMessageTimestamp = targetMessage.timestamp
                 }
             },
@@ -574,6 +594,7 @@ private fun MessageItem(
     message: ChatMessage,
     enableDialogs: Boolean,
     allowTranscriptMutation: Boolean,
+    enableToolDetailDialogs: Boolean? = null,
     userMessageColor: Color,
     aiMessageColor: Color,
     userTextColor: Color,
@@ -682,6 +703,7 @@ private fun MessageItem(
                         onDeleteMessage = onDeleteMessage,
                         index = index,
                         enableDialogs = enableDialogs,
+                        enableToolDetailDialogs = enableToolDetailDialogs,
                         onEditSummary = { summaryMessage ->
                             onSelectMessageToEdit?.invoke(index, summaryMessage, "summary")
                         }
@@ -713,6 +735,7 @@ private fun MessageItem(
                         onDeleteMessage = onDeleteMessage,
                         index = index,
                         enableDialogs = enableDialogs,
+                        enableToolDetailDialogs = enableToolDetailDialogs,
                         onRoleAvatarLongPress = onMentionRoleFromAvatar,
                         onEditSummary = { summaryMessage ->
                             onSelectMessageToEdit?.invoke(index, summaryMessage, "summary")

@@ -187,6 +187,17 @@ class ApiPreferences private constructor(private val context: Context) {
         const val MAX_THINKING_QUALITY_LEVEL = 5
         const val DEFAULT_THINKING_QUALITY_LEVEL = 2
 
+        // 思考程度档位对应的实际 reasoning_effort 值（唯一事实来源）。
+        // UI 显示标签由此派生（见 ThinkingQualityLabels.kt），provider 发送值也统一使用
+        // thinkingQualityEffort()，保证"UI 显示的档位 = 实际发送给 provider 的思考程度"。
+        val THINKING_QUALITY_EFFORTS = listOf("low", "medium", "high", "xhigh", "max")
+
+        fun thinkingQualityEffort(level: Int): String {
+            val index = level.coerceIn(MIN_THINKING_QUALITY_LEVEL, MAX_THINKING_QUALITY_LEVEL) -
+                MIN_THINKING_QUALITY_LEVEL
+            return THINKING_QUALITY_EFFORTS[index]
+        }
+
         // Default value for Memory Auto Update
         const val DEFAULT_ENABLE_MEMORY_AUTO_UPDATE = true
 

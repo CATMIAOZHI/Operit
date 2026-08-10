@@ -92,6 +92,7 @@ fun BubbleAiMessageComposable(
     isHidden: Boolean = false,
     heightMemory: ChatMessageHeightMemory? = null,
     enableDialogs: Boolean = true,
+    enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
     onAvatarLongPressMention: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
@@ -181,6 +182,7 @@ fun BubbleAiMessageComposable(
         initialThinkingExpanded,
         allowExpandedThinkingFullHeight,
         enableDialogs,
+        enableToolDetailDialogs,
         message.timestamp,
         persistedToolExecutions,
     ) {
@@ -190,6 +192,7 @@ fun BubbleAiMessageComposable(
             initialThinkingExpanded = initialThinkingExpanded,
             allowExpandedThinkingFullHeight = allowExpandedThinkingFullHeight,
             enableDialogs = enableDialogs,
+            enableToolDetailDialogs = enableToolDetailDialogs,
             toolTimingScopeId = message.timestamp.toString(),
             persistedToolExecutions = persistedToolExecutions,
         )

@@ -186,10 +186,20 @@ internal fun resolveLiveToolExecution(
     val live = liveExecution ?: return null
     val persistedCallId = persistedExecution?.callId?.takeIf { it.isNotBlank() }
     if (persistedCallId == null) {
-        return live.takeIf { allowUnmatchedLiveExecution }
+        return live.takeIf { allowUnmatchedLiveExecution || it.state.isStillInFlight() }
     }
     return live.takeIf { it.callId == persistedCallId }
 }
+
+/**
+ * 非终止状态只存在于该调用正在当前轮次中真实处理的过程。聊天切换后消息按静态内容重载
+ * （无流、最终结果未写入内容），此时仍需继续展示审核横幅与执行耗时，因此运行中的调用
+ * 允许与持久化结果无关地直接匹配；终止状态仍要求 callId 一致，避免误配其他变体的快照。
+ */
+private fun ToolExecutionState.isStillInFlight(): Boolean =
+    this == ToolExecutionState.WAITING_AUTHORIZATION ||
+        this == ToolExecutionState.WAITING_EXECUTION ||
+        this == ToolExecutionState.RUNNING
 
 internal fun shouldAllowUnmatchedTaskExecution(
     requestedToolName: String?,
@@ -647,10 +657,14 @@ internal fun parseFileDiffResult(
     if (!isSuccess || toolName !in FILE_EDIT_TOOL_NAMES) return null
     if (!result.contains("<file-diff")) return null
 
-    val fileDiffBlock = Regex("""<file-diff\b[^>]*>[\s\S]*?</file-diff\s*>""")
-        .find(result)
-        ?.value
-        ?: return null
+    // 容忍尾部截断：结果文本超过持久化上限（MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS）
+    // 被截断时，截断点可能落在 </file-diff> 或 CDATA 闭合符内。此时仍渲染可用的
+    // 部分 diff，而不是回退为普通工具结果展示。
+    val fileDiffBlock =
+        Regex("""<file-diff\b[^>]*>[\s\S]*?(?:</file-diff\s*>|$)""")
+            .find(result)
+            ?.value
+            ?: return null
     val path = Regex("""<file-diff\s+[^>]*path="([^"]+)"""")
         .find(fileDiffBlock)
         ?.groupValues
@@ -662,11 +676,12 @@ internal fun parseFileDiffResult(
         ?.groupValues
         ?.getOrNull(1)
         .orEmpty()
-    val diffContent = Regex("""<!\[CDATA\[([\s\S]*?)]]>""")
-        .find(fileDiffBlock)
-        ?.groupValues
-        ?.getOrNull(1)
-        ?.trim()
+    val diffContent =
+        Regex("""<!\[CDATA\[([\s\S]*?)(?:]]>|$)""")
+            .find(fileDiffBlock)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
         ?: return null
     return FileDiff(path = path, diffContent = diffContent, details = details)
 }
