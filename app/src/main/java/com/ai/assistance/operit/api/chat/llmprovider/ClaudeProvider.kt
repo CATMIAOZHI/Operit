@@ -1452,7 +1452,7 @@ class ClaudeProvider(
                     "thinking" -> {
                         val thinking = block.optString("thinking", "")
                         if (thinking.isNotEmpty()) {
-                            fullText.append("\n<think>")
+                            fullText.append('\n').append(ChatUtils.PROVIDER_REASONING_OPEN_TAG)
                             fullText.append(ChatUtils.escapeProviderReasoningMarkup(thinking))
                             fullText.append("</think>\n")
                         }
@@ -1741,7 +1741,8 @@ class ClaudeProvider(
                                                 }
                                             }
                                             "thinking" -> {
-                                                val thinkingStartTag = "\n<think>"
+                                                val thinkingStartTag =
+                                                    "\n${ChatUtils.PROVIDER_REASONING_OPEN_TAG}"
                                                 emittedAny = true
                                                 emit(thinkingStartTag)
                                                 receivedContent.append(thinkingStartTag)

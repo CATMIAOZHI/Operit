@@ -54,6 +54,63 @@ class ChatUtilsThinkingEdgeTest {
         )
     }
 
+    @Test fun extractThinkingContent_restoresProviderReasoningWithoutCorruptingLiteralEntities() {
+        val original = "a < b and literal &lt;tag&gt; & value"
+        val stored = ChatUtils.escapeProviderReasoningMarkup(original)
+
+        assertEquals(
+            original,
+            ChatUtils.extractThinkingContent(
+                "${ChatUtils.PROVIDER_REASONING_OPEN_TAG}$stored</think>"
+            ).second,
+        )
+    }
+
+    @Test fun extractThinkingContent_preservesUnmarkedLegacyEntities() {
+        val legacy = "literal &lt;tag&gt; &amp; value"
+
+        assertEquals(legacy, ChatUtils.extractThinkingContent("<think>$legacy</think>").second)
+    }
+
+    @Test fun extractThinkingContent_preservesLegacyBodyThatStartsWithRetiredPrefix() {
+        val legacy = "&#8291;&#8203;&#8291;literal &lt;tag&gt; &amp; value"
+
+        assertEquals(legacy, ChatUtils.extractThinkingContent("<think>$legacy</think>").second)
+    }
+
+    @Test fun extractThinkingContent_decodesEveryIndependentlyEscapedStreamingChunk() {
+        val stored =
+            ChatUtils.escapeProviderReasoningMarkup("a < b") +
+                ChatUtils.escapeProviderReasoningMarkup(" & literal &lt;")
+
+        assertEquals(
+            "a < b & literal &lt;",
+            ChatUtils.extractThinkingContent(
+                "${ChatUtils.PROVIDER_REASONING_OPEN_TAG}$stored</think>"
+            ).second,
+        )
+    }
+
+    @Test fun providerReasoningDisplayDecode_requiresVersionedEnvelope() {
+        val body = "literal &lt;tag&gt; &amp; value"
+
+        assertEquals(
+            "literal <tag&gt; & value",
+            ChatUtils.decodeProviderReasoningForDisplay(
+                "${ChatUtils.PROVIDER_REASONING_OPEN_TAG}$body</think>",
+                body,
+            ),
+        )
+        assertEquals(body, ChatUtils.decodeProviderReasoningForDisplay("<think>$body</think>", body))
+    }
+
+    @Test fun removeThinkingContent_preservesStrayMalformedClosingSyntax() {
+        listOf("</think.foo>", "</think/>", "</think bogus>", "</think").forEach { closingTag ->
+            val content = "prefix$closingTag visible"
+            assertEquals(content, ChatUtils.removeThinkingContent(content))
+        }
+    }
+
     @Test fun removeThinkingContent_failsClosedOnMalformedClosingSyntax() {
         listOf("</think.foo>", "</think/>", "</think bogus>").forEach { closingTag ->
             assertEquals(

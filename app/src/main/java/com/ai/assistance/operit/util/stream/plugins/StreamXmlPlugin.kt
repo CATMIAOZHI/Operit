@@ -204,9 +204,13 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
                         if (lastChar == '/') {
                             // Treat self-closing tags like <br/> as plain text to avoid entering XML mode.
                             reset()
-                            // A complete self-closing XML tag is also a valid boundary for an
-                            // immediately adjacent block, just like a normal closing tag.
-                            allowStartAfterEndTag = true
+                            // Only app-owned display tags may expose an immediately adjacent tool.
+                            // Treating arbitrary HTML/XML tags as boundaries expands executable
+                            // contexts such as <br/><tool ...>.
+                            allowStartAfterEndTag =
+                                tagName.equals("think", ignoreCase = true) ||
+                                    tagName.equals("thinking", ignoreCase = true) ||
+                                    tagName.equals("search", ignoreCase = true)
                             return finish(true)
                         }
                         StreamLogger.i(

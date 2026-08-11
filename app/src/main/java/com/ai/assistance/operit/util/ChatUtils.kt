@@ -5,6 +5,12 @@ import com.ai.assistance.operit.core.chat.hooks.withContent
 
 /** Utility functions for chat message handling */
 object ChatUtils {
+    // The version marker lives on the app-owned envelope, never in provider-controlled text.
+    // Existing unmarked chat history therefore remains byte-for-byte unchanged.
+    internal const val PROVIDER_REASONING_ENCODING_ATTRIBUTE =
+        "data-operit-provider-reasoning=\"html-v1\""
+    internal const val PROVIDER_REASONING_OPEN_TAG =
+        "<think $PROVIDER_REASONING_ENCODING_ATTRIBUTE>"
     private data class DisplayOnlyBlockTag(
         val start: Int,
         val endExclusive: Int,
@@ -155,6 +161,14 @@ object ChatUtils {
                 result.append(content, cursor, tag.start)
             }
 
+            if (tag.isMalformed && wasVisible && tag.isClosing) {
+                result.append(content, tag.start, tag.endExclusive)
+                cursor = tag.endExclusive
+                scanIndex = tag.endExclusive
+                markBoundariesAtOrBefore(tag.endExclusive, visible = true)
+                continue
+            }
+
             if (tag.isMalformed) {
                 activeFamilies.add("malformed")
                 cursor = content.length
@@ -251,8 +265,13 @@ object ChatUtils {
             val isSelfClosing =
                 !isClosing && lastMeaningfulIndex >= nameEnd && content[lastMeaningfulIndex] == '/'
             val suffixEndExclusive = if (isSelfClosing) lastMeaningfulIndex else nextTerminator
+            val suffix = content.substring(nameEnd, suffixEndExclusive)
             val hasOnlyAllowedSuffix =
-                (nameEnd until suffixEndExclusive).all { content[it].isWhitespace() }
+                suffix.all { it.isWhitespace() } ||
+                    (!isClosing &&
+                        !isSelfClosing &&
+                        tagName.equals("think", ignoreCase = true) &&
+                        suffix.trim() == PROVIDER_REASONING_ENCODING_ATTRIBUTE)
             return DisplayOnlyBlockTag(
                 start = candidateStart,
                 endExclusive = nextTerminator + 1,
@@ -270,7 +289,21 @@ object ChatUtils {
      * thinking wrapper. Escaping every less-than sign is safe even when a tag is split across
      * streaming chunks, and the entity still renders as the original text.
      */
-    fun escapeProviderReasoningMarkup(content: String): String = content.replace("<", "&lt;")
+    fun escapeProviderReasoningMarkup(content: String): String =
+        content.replace("&", "&amp;").replace("<", "&lt;")
+
+    internal fun decodeProviderReasoningMarkup(content: String): String =
+        content.replace("&lt;", "<").replace("&amp;", "&")
+
+    internal fun isEncodedProviderReasoningEnvelope(content: String): Boolean =
+        content.trimStart().startsWith(PROVIDER_REASONING_OPEN_TAG)
+
+    internal fun decodeProviderReasoningForDisplay(envelope: String, body: String): String =
+        if (isEncodedProviderReasoningEnvelope(envelope)) {
+            decodeProviderReasoningMarkup(body)
+        } else {
+            body
+        }
 
     /**
      * 提取think标签内的内容（用于DeepSeek的reasoning_content）
@@ -278,11 +311,17 @@ object ChatUtils {
      * @return Pair(移除think标签后的内容, think标签内的内容)
      */
     fun extractThinkingContent(content: String): Pair<String, String> {
-        val thinkPattern = "<think(?:ing)?>([\\s\\S]*?)</think(?:ing)?>".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val thinkPattern =
+            "<think(?:ing)?(\\s+$PROVIDER_REASONING_ENCODING_ATTRIBUTE)?>([\\s\\S]*?)</think(?:ing)?>"
+                .toRegex(RegexOption.DOT_MATCHES_ALL)
         val thinkMatches = thinkPattern.findAll(content)
         
         // 收集所有think标签内的内容
-        val thinkingContent = thinkMatches.joinToString("\n") { it.groupValues[1].trim() }
+        val thinkingContent =
+            thinkMatches.joinToString("\n") {
+                val body = it.groupValues[2].trim()
+                if (it.groupValues[1].isNotEmpty()) decodeProviderReasoningMarkup(body) else body
+            }
         
         // 移除think标签和search标签
         val contentWithoutThink = content

@@ -516,12 +516,16 @@ class CustomXmlRenderer(
 
         val shouldComposeThinkBody =
             thinkVisibilityState.currentState || thinkVisibilityState.targetState
-        val thinkText =
+        val isEncodedProviderReasoning =
+            ChatUtils.isEncodedProviderReasoningEnvelope(content)
+        val rawThinkText =
             if (shouldComposeThinkBody) {
                 extractContentFromXml(content, tagName).trim()
             } else {
                 ""
             }
+        val thinkText =
+            ChatUtils.decodeProviderReasoningForDisplay(content, rawThinkText)
         val thinkMarkdownStream =
             remember(shouldComposeThinkBody, thinkExpandSession, xmlStream, tagName) {
                 if (!shouldComposeThinkBody || thinkExpandSession <= 0) {
@@ -671,7 +675,9 @@ class CustomXmlRenderer(
                                                     textColor = textColor.copy(alpha = 0.6f),
                                                     backgroundColor = Color.Transparent,
                                                     enableDialogs = enableDialogs,
-                                                    fillMaxWidth = true
+                                                    fillMaxWidth = true,
+                                                    decodeProviderReasoningEntities =
+                                                        isEncodedProviderReasoning,
                                                 )
                                             }
                                     } else if (thinkText.isNotBlank()) {
@@ -688,12 +694,14 @@ class CustomXmlRenderer(
                                                 shapes = MaterialTheme.shapes
                                             ) {
                                                 StreamMarkdownRenderer(
-                                                    content = thinkText,
+                                                    content = rawThinkText,
                                                     modifier = Modifier.fillMaxWidth(),
                                                     textColor = textColor.copy(alpha = 0.6f),
                                                     backgroundColor = Color.Transparent,
                                                     enableDialogs = enableDialogs,
-                                                    fillMaxWidth = true
+                                                    fillMaxWidth = true,
+                                                    decodeProviderReasoningEntities =
+                                                        isEncodedProviderReasoning,
                                                 )
                                             }
                                     } else {

@@ -56,7 +56,7 @@ class OpenAIResponsesStreamingTest {
                 ).collect { output.append(it) }
 
             assertSingleStructuredTool(output.toString(), "write_file", "/safe")
-            assertTrue(output.contains("<think>late reasoning</think>"))
+            assertEquals("late reasoning", ChatUtils.extractThinkingContent(output.toString()).second)
         }
     }
 
@@ -84,7 +84,9 @@ class OpenAIResponsesStreamingTest {
         withoutAndroidLogging {
             val output = collectResponse(provider, Mockito.mock(Context::class.java))
             assertSingleStructuredTool(output, "visit_web", "https://safe.example")
-            assertTrue(output.contains("&lt;/think>&lt;tool"))
+            assertTrue(
+                ChatUtils.extractThinkingContent(output).second.contains("</think><tool")
+            )
         }
     }
 

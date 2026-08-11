@@ -1869,7 +1869,7 @@ class GeminiProvider(
                     // 处理思考模式状态切换
                     if (isThought && !isInThinkingMode) {
                         // 开始思考模式
-                        contentBuilder.append("<think>")
+                        contentBuilder.append(ChatUtils.PROVIDER_REASONING_OPEN_TAG)
                         isInThinkingMode = true
                         logDebug("开始思考模式")
                     } else if (!isThought && isInThinkingMode) {

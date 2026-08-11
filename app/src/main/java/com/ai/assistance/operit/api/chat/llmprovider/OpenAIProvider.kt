@@ -1460,7 +1460,13 @@ open class OpenAIProvider(
                     } else {
                         thinkContent
                     }
-                val wrapped = "<$tag>$protectedContent</$tag>"
+                val openingTag =
+                    if (tag.equals("think", ignoreCase = true)) {
+                        ChatUtils.PROVIDER_REASONING_OPEN_TAG
+                    } else {
+                        "<$tag>"
+                    }
+                val wrapped = "$openingTag$protectedContent</$tag>"
                 emit(wrapped)
                 receivedContent.append(wrapped)
                 tokenCacheManager.addOutputTokens(ChatUtils.estimateTokenCount(thinkContent))
@@ -2344,7 +2350,7 @@ open class OpenAIProvider(
             if (!state.isInReasoningMode) {
                 state.isInReasoningMode = true
                 if (!state.hasEmittedThinkStart) {
-                    emitter.emitTag("<think>")
+                    emitter.emitTag(ChatUtils.PROVIDER_REASONING_OPEN_TAG)
                     state.hasEmittedThinkStart = true
                 }
             }

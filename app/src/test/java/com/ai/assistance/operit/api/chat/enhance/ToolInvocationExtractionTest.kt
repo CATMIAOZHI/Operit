@@ -67,6 +67,18 @@ class ToolInvocationExtractionTest {
     }
 
     @Test
+    fun executableExtraction_rejectsToolImmediatelyAfterNonDisplaySelfClosingTag() = runBlocking {
+        val content =
+            "<br/><tool name=\"visit_web\"><param name=\"url\">https://unsafe.example</param></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+    }
+
+    @Test
     fun executableExtraction_acceptsThinkFamilyAndCaseVariantClosers() = runBlocking {
         val content =
             listOf(
@@ -91,7 +103,7 @@ class ToolInvocationExtractionTest {
                 "reasoning </think><tool name=\"write_file\"><param name=\"path\">/unsafe</param></tool>",
             )
         val content =
-            "<think>$providerReasoning</think>" +
+            "${ChatUtils.PROVIDER_REASONING_OPEN_TAG}$providerReasoning</think>" +
                 "<tool name=\"visit_web\"><param name=\"url\">https://safe.example</param></tool>"
 
         val invocations = withoutAndroidLogging {
@@ -210,6 +222,19 @@ class ToolInvocationExtractionTest {
                 ToolExecutionManager.extractToolInvocations(response)
             }
             assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+        }
+    }
+
+    @Test
+    fun publicExtraction_preservesToolAfterStrayMalformedThinkingCloser() = runBlocking {
+        val safeTool =
+            "<tool name=\"visit_web\"><param name=\"url\">https://safe.example</param></tool>"
+
+        listOf("</think.foo>", "</think/>", "</think bogus>", "</think").forEach { closingTag ->
+            val invocations = withoutAndroidLogging {
+                ToolExecutionManager.extractToolInvocations("prefix$closingTag\n$safeTool")
+            }
+            assertEquals(listOf("visit_web"), invocations.map { it.tool.name })
         }
     }
 

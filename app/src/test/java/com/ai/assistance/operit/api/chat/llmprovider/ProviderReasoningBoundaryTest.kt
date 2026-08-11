@@ -6,6 +6,7 @@ import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.stream.StreamLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -72,7 +73,7 @@ class ProviderReasoningBoundaryTest {
 
         assertEquals(listOf("visit_web"), invocations.map { it.tool.name })
         assertEquals("https://safe.example", invocations.single().tool.parameters.single().value)
-        assertTrue(output.contains("&lt;/think>&lt;tool"))
+        assertTrue(ChatUtils.extractThinkingContent(output).second.contains("</think><tool"))
     }
 
     @Test
@@ -120,7 +121,7 @@ class ProviderReasoningBoundaryTest {
 
         assertEquals(listOf("visit_web"), invocations.map { it.tool.name })
         assertEquals("https://safe.example", invocations.single().tool.parameters.single().value)
-        assertTrue(output.contains("&lt;/think>&lt;tool"))
+        assertTrue(ChatUtils.extractThinkingContent(output).second.contains("</think><tool"))
     }
 
     @Test
@@ -176,7 +177,7 @@ class ProviderReasoningBoundaryTest {
 
         assertEquals(listOf("visit_web"), invocations.map { it.tool.name })
         assertEquals("https://safe.example", invocations.single().tool.parameters.single().value)
-        assertTrue(output.contains("&lt;/think>&lt;tool"))
+        assertTrue(ChatUtils.extractThinkingContent(output).second.contains("</think><tool"))
     }
 
     private fun clientForSse(sseBody: String): OkHttpClient =
