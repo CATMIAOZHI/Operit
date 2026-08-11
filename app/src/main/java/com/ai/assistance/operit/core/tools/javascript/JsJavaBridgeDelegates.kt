@@ -1985,9 +1985,11 @@ internal object JsJavaBridgeDelegates {
                     }
                     is Map<*, *> -> {
                         container.entries.forEach { entry ->
+                            // A Map serializes to one JSONObject property per entry. Count the
+                            // entry once, while still traversing both key and value for cycles,
+                            // depth and scalar-text budgets (the key is stringified later).
                             consumeElement()
                             visit(entry.key, depth + 1)
-                            consumeElement()
                             visit(entry.value, depth + 1)
                         }
                     }

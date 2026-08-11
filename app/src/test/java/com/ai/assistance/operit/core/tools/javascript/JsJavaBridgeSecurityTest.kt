@@ -499,6 +499,33 @@ class JsJavaBridgeSecurityTest {
     }
 
     @Test
+    fun mapRemainsUsableAtTheDocumentedEntryLimit() {
+        val registry = ConcurrentHashMap<String, Any>()
+        val fullMap = HashMap<Int, Int>(65_536)
+        repeat(65_536) { value -> fullMap[value] = value }
+        registry["full-map"] = fullMap
+
+        val clearResult =
+            JsJavaBridgeDelegates.callInstance(
+                instanceHandle = "full-map",
+                methodName = "clear",
+                argsJson = "[]",
+                objectRegistry = registry
+            )
+
+        assertTrue(clearResult, clearResult.contains("\"success\":true"))
+        assertTrue(fullMap.isEmpty())
+
+        val oversizedMap = HashMap<Int, Int>(65_537)
+        repeat(65_537) { value -> oversizedMap[value] = value }
+        val sizeError =
+            assertThrows(IllegalArgumentException::class.java) {
+                JsJavaBridgeDelegates.validateBridgeReturnValue(oversizedMap)
+            }
+        assertTrue(sizeError.message.orEmpty().contains("element limit"))
+    }
+
+    @Test
     fun mutableBridgeObjectsCannotGrowPastTheMemberBudget() {
         val append = StringBuilder::class.java.getMethod("append", String::class.java)
         val fullBuilder = StringBuilder("x".repeat(65_536))

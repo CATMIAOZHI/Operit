@@ -170,7 +170,7 @@ Java / Kotlin 返回到 JS 时，保证按下表转换：
 
 - 这里说的“返回到 JS 时按字符串/数组/对象使用”，指的是**Java/Kotlin 方法返回值**的归一化语义。
 - 如果你显式构造的是普通 Java 对象，例如 `new Java.java.lang.StringBuilder()`、`new Java.java.util.ArrayList()`，得到的仍然是 Java 实例代理，而不是直接拍平成 JS primitive / array / object。
-- 为防止循环容器、无限惰性集合、重复大字符串或异常深度数据拖垮运行时，单次 Java bridge 返回值最多遍历 64 层、65,536 个容器元素（`Map` 的 key 和 value 分别计数）和 1,048,576 个标量字符（重复引用按每次输出计数）。检测到循环或超限时，本次调用会 reject/返回失败，bridge 仍可继续使用。
+- 为防止循环容器、无限惰性集合、重复大字符串或异常深度数据拖垮运行时，单次 Java bridge 返回值最多遍历 64 层、65,536 个容器元素（`Map` 每个 entry 计一个元素，但 key 和 value 仍分别递归检查循环、深度与标量字符）和 1,048,576 个标量字符（重复引用按每次输出计数）。检测到循环或超限时，本次调用会 reject/返回失败，bridge 仍可继续使用。
 - QuickJS 调用 `java*` bridge 方法以及 SandboxPackage_DEV 的两个固定只读 asset API 时，外层参数 envelope 在第一处 `JSONTokener` 前限制为 2,113,536 个字符、64 层和 65,536 个 array element/object entry；该长度为最坏双重转义的 1 MiB 内层参数保留额外 envelope 空间。图片、ToolPkg 注册与其他大 payload NativeInterface API 保持各自既有契约，不套用此限制。envelope 内的 Java bridge 入参 JSON 最多 1,048,576 个原始字符（包含首尾空白），同样在解析前限制 64 层，解析后再应用 65,536 元素/entry 预算。Java handle 指向的容器也在反射调用前执行同一 identity/cycle 预算。
 - bridge 创建或扩张的 `StringBuilder` 与 mutable collection/map 上限为 65,536 个字符/元素/entry；触及上限的调用会在 `Constructor.newInstance` / `Method.invoke` 之前被拒绝。
 - 单个引擎最多保留 1,024 个 live Java object handles；JS 代理释放或 GC 后槽位可复用，达到上限时新的构造或对象返回会在注册前失败。
