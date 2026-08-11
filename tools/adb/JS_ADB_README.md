@@ -95,7 +95,7 @@ set OPERIT_APP_PACKAGE=com.rainy.operitry.dev
 execute_js.bat path\to\your\script.js functionName @params.json
 ```
 
-Only the `debug` variant exposes this ADB shell development entry point. `clone`, `release`, and `nightly` keep the receiver behind the app's signature permission and reject ordinary shell broadcasts.
+Only the `debug` variant exposes this development entry point to ADB shell, guarded by the shell-held platform `android.permission.DUMP`; ordinary third-party apps cannot call it. `clone`, `release`, and `nightly` keep the receiver behind the app's signature permission and reject ordinary shell broadcasts.
 
 ## Quick Start
 

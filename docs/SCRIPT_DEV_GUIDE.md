@@ -864,7 +864,7 @@ set OPERIT_APP_PACKAGE=com.rainy.operitry.dev
 export OPERIT_APP_PACKAGE=com.rainy.operitry.dev
 ```
 
-该外部脚本执行入口只为 `debug` 变体开放。`clone`、`release` 和 `nightly` 的接收器保留应用签名权限，普通 ADB shell 调用会被拒绝。
+该外部脚本执行入口只为 `debug` 变体向 ADB shell 开放：接收器要求 shell 持有的系统级 `android.permission.DUMP`，普通第三方应用不能调用。`clone`、`release` 和 `nightly` 的接收器保留应用签名权限，普通 ADB shell 调用会被拒绝。
 
 ### 9.2. 执行脚本函数
 

@@ -31,12 +31,12 @@ class ScriptExecutionReceiverManifestTest {
     }
 
     @Test
-    fun debugManifestRemovesOnlyTheReceiverPermission() {
+    fun debugManifestRequiresTheShellDumpPermission() {
         val manifest = parseManifest(appDirectory.resolve("src/debug/AndroidManifest.xml"))
         val receiver = manifest.receiver(receiverClass)
 
-        assertEquals("android:permission", receiver.getAttributeNS(toolsNamespace, "remove"))
-        assertFalse(receiver.hasAttributeNS(androidNamespace, "permission"))
+        assertEquals("android:permission", receiver.getAttributeNS(toolsNamespace, "replace"))
+        assertEquals("android.permission.DUMP", receiver.androidAttribute("permission"))
     }
 
     @Test
@@ -54,8 +54,6 @@ class ScriptExecutionReceiverManifestTest {
         scripts.forEach { relativePath ->
             val script = repositoryDirectory.resolve(relativePath)
             val content = script.readText()
-            val packageReference =
-                if (relativePath.endsWith(".bat")) "%APP_PACKAGE%" else "${'$'}{APP_PACKAGE}"
             val receiverReference =
                 if (relativePath.endsWith(".bat")) "%RECEIVER_COMPONENT%" else "${'$'}RECEIVER_COMPONENT"
             val receiverAssignment =
@@ -66,38 +64,78 @@ class ScriptExecutionReceiverManifestTest {
                 }
             val activeLines =
                 content.lineSequence()
-                    .map(String::trimStart)
-                    .filterNot { it.startsWith("#") || it.startsWith("REM", ignoreCase = true) }
+                    .map(String::trim)
+                    .filterNot {
+                        it.startsWith("#") ||
+                            it.startsWith("::") ||
+                            it.equals("REM", ignoreCase = true) ||
+                            it.startsWith("REM ", ignoreCase = true)
+                    }
+                    .filter(String::isNotEmpty)
                     .toList()
-
-            if (relativePath.endsWith(".bat")) {
-                assertTrue(
-                    "$relativePath must default to the personal debug app",
-                    activeLines.contains("set \"APP_PACKAGE=com.rainy.operitry\"")
-                )
-                assertTrue(
-                    "$relativePath must honor the package override",
-                    activeLines.contains("set \"APP_PACKAGE=%OPERIT_APP_PACKAGE%\"")
-                )
-            } else {
-                assertTrue(
-                    "$relativePath must default to the personal debug app and honor the override",
-                    activeLines.contains(
+            val packageAssignments =
+                if (relativePath.endsWith(".bat")) {
+                    listOf(
+                        "set \"APP_PACKAGE=com.rainy.operitry\"",
+                        "set \"APP_PACKAGE=%OPERIT_APP_PACKAGE%\""
+                    )
+                } else {
+                    listOf(
                         "APP_PACKAGE=\"${'$'}{OPERIT_APP_PACKAGE:-com.rainy.operitry}\""
                     )
+                }
+            val storageVariable =
+                if (relativePath.contains("execute_js_dir")) "TARGET_BASE" else "TARGET_DIR"
+            val storageAssignment =
+                if (relativePath.endsWith(".bat")) {
+                    "set \"$storageVariable=/sdcard/Android/data/%APP_PACKAGE%/js_temp\""
+                } else {
+                    "$storageVariable=\"/sdcard/Android/data/${'$'}{APP_PACKAGE}/js_temp\""
+                }
+            val broadcastPrefix =
+                "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n $receiverReference"
+            val broadcastLines = activeLines.filter { it.contains("am broadcast") }
+
+            packageAssignments.forEach { assignment ->
+                assertEquals(
+                    "$relativePath must contain exactly one active package assignment: $assignment",
+                    1,
+                    activeLines.count { it == assignment }
+                )
+            }
+            assertEquals(
+                "$relativePath must contain exactly one active receiver assignment",
+                1,
+                activeLines.count { it == receiverAssignment }
+            )
+            assertEquals(
+                "$relativePath must contain exactly one dynamic storage assignment",
+                1,
+                activeLines.count { it == storageAssignment }
+            )
+            assertEquals(
+                "$relativePath must contain exactly two execution broadcasts",
+                2,
+                broadcastLines.size
+            )
+            assertTrue(
+                "$relativePath must route every execution broadcast through the configured receiver",
+                broadcastLines.all { it.contains(broadcastPrefix) }
+            )
+            val firstBroadcastIndex = activeLines.indexOfFirst { it.contains("am broadcast") }
+            packageAssignments.forEach { assignment ->
+                assertTrue(
+                    "$relativePath must assign the app package before broadcasting",
+                    activeLines.indexOf(assignment) in 0 until firstBroadcastIndex
                 )
             }
             assertTrue(
-                "$relativePath must build the receiver from the app package and full class name",
-                activeLines.contains(receiverAssignment)
+                "$relativePath must assign the receiver before broadcasting",
+                activeLines.indexOf(receiverAssignment) in 0 until firstBroadcastIndex
             )
             assertTrue(
-                "$relativePath must target the configured receiver component",
-                activeLines.any { it.contains("-n $receiverReference") }
-            )
-            assertTrue(
-                "$relativePath must derive its storage path from the app package",
-                activeLines.any { it.contains("Android/data/$packageReference/js_temp") }
+                "$relativePath must assign the storage path before broadcasting",
+                activeLines.indexOf(storageAssignment) in 0 until firstBroadcastIndex
             )
             assertFalse(
                 "$relativePath must not retain the legacy relative component",

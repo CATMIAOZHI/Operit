@@ -148,6 +148,23 @@ class ScopeClassificationTest(unittest.TestCase):
         self.assertTrue(plan.android_jvm)
         self.assertFalse(plan.android_resources)
 
+    def test_adb_script_launchers_trigger_jvm_lane(self) -> None:
+        launchers = (
+            "execute_js.bat",
+            "execute_js.sh",
+            "execute_js_dir.bat",
+            "execute_js_dir.sh",
+            "run_sandbox_script.bat",
+            "run_sandbox_script.sh",
+        )
+
+        for launcher in launchers:
+            with self.subTest(launcher=launcher):
+                plan = classify_paths([f"tools/adb/{launcher}"])
+
+                self.assertTrue(plan.android_jvm)
+                self.assertFalse(plan.android_full)
+
 
 class CandidateContractTest(unittest.TestCase):
     def test_stale_branch_uses_candidate_first_parent_diff(self) -> None:
