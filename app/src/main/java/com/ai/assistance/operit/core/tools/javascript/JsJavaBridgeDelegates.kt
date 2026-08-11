@@ -150,34 +150,13 @@ internal object JsJavaBridgeDelegates {
         parameterTypeNames: List<String>
     ): String = "$className#$methodName(${parameterTypeNames.joinToString(",")})"
 
-    private val methodsUnavailableOnMinSdk =
-        setOf(
-            methodSignature(
-                "java.lang.Character",
-                "toString",
-                listOf("int")
-            ),
-            methodSignature(
-                "java.lang.Integer",
-                "parseInt",
-                listOf("java.lang.CharSequence", "int", "int", "int")
-            ),
-            methodSignature(
-                "java.lang.Integer",
-                "parseUnsignedInt",
-                listOf("java.lang.CharSequence", "int", "int", "int")
-            ),
-            methodSignature(
-                "java.lang.Long",
-                "parseLong",
-                listOf("java.lang.CharSequence", "int", "int", "int")
-            ),
-            methodSignature(
-                "java.lang.Long",
-                "parseUnsignedLong",
-                listOf("java.lang.CharSequence", "int", "int", "int")
-            )
-        )
+    private fun methodSignatures(signatures: String): Set<String> =
+        signatures
+            .lineSequence()
+            .flatMap { it.trim().splitToSequence(' ') }
+            .filter(String::isNotBlank)
+            .toSet()
+
     private val safeStringCharSequenceMethodSignatures =
         setOf(
             methodSignature(
@@ -435,6 +414,248 @@ internal object JsJavaBridgeDelegates {
                     "swap"
                 )
         )
+    // Exact public signatures available on Android API 26. Method names remain a readability
+    // profile above, but this frozen set is the authority so platform-added overloads never gain
+    // bridge access implicitly. StringBuilder entries include public methods inherited from the
+    // hidden AbstractStringBuilder superclass, which api-versions.xml does not list as a public API.
+    private val allowedMethodSignaturesByClass =
+        mapOf(
+            "java.lang.Boolean" to
+                methodSignatures(
+                    """
+                    booleanValue() compare(boolean,boolean) compareTo(java.lang.Boolean) compareTo(java.lang.Object)
+                    equals(java.lang.Object) hashCode() hashCode(boolean) logicalAnd(boolean,boolean)
+                    logicalOr(boolean,boolean) logicalXor(boolean,boolean) parseBoolean(java.lang.String) toString()
+                    toString(boolean) valueOf(boolean) valueOf(java.lang.String)
+                    """
+                ),
+            "java.lang.Byte" to
+                methodSignatures(
+                    """
+                    byteValue() compare(byte,byte) compareTo(java.lang.Byte) compareTo(java.lang.Object)
+                    decode(java.lang.String) doubleValue() equals(java.lang.Object) floatValue()
+                    hashCode() hashCode(byte) intValue() longValue()
+                    parseByte(java.lang.String,int) parseByte(java.lang.String) shortValue() toString()
+                    toString(byte) toUnsignedInt(byte) toUnsignedLong(byte) valueOf(byte)
+                    valueOf(java.lang.String,int) valueOf(java.lang.String)
+                    """
+                ),
+            "java.lang.Character" to
+                methodSignatures(
+                    """
+                    charCount(int) charValue() codePointAt([C,int,int) codePointAt([C,int)
+                    codePointAt(java.lang.CharSequence,int) codePointBefore([C,int,int) codePointBefore([C,int) codePointBefore(java.lang.CharSequence,int)
+                    codePointCount([C,int,int) codePointCount(java.lang.CharSequence,int,int) compare(char,char) compareTo(java.lang.Character)
+                    compareTo(java.lang.Object) digit(char,int) digit(int,int) equals(java.lang.Object)
+                    forDigit(int,int) getDirectionality(char) getDirectionality(int) getName(int)
+                    getNumericValue(char) getNumericValue(int) getType(char) getType(int)
+                    hashCode() hashCode(char) highSurrogate(int) isAlphabetic(int)
+                    isBmpCodePoint(int) isDefined(char) isDefined(int) isDigit(char)
+                    isDigit(int) isHighSurrogate(char) isIdentifierIgnorable(char) isIdentifierIgnorable(int)
+                    isIdeographic(int) isISOControl(char) isISOControl(int) isJavaIdentifierPart(char)
+                    isJavaIdentifierPart(int) isJavaIdentifierStart(char) isJavaIdentifierStart(int) isJavaLetter(char)
+                    isJavaLetterOrDigit(char) isLetter(char) isLetter(int) isLetterOrDigit(char)
+                    isLetterOrDigit(int) isLowerCase(char) isLowerCase(int) isLowSurrogate(char)
+                    isMirrored(char) isMirrored(int) isSpace(char) isSpaceChar(char)
+                    isSpaceChar(int) isSupplementaryCodePoint(int) isSurrogate(char) isSurrogatePair(char,char)
+                    isTitleCase(char) isTitleCase(int) isUnicodeIdentifierPart(char) isUnicodeIdentifierPart(int)
+                    isUnicodeIdentifierStart(char) isUnicodeIdentifierStart(int) isUpperCase(char) isUpperCase(int)
+                    isValidCodePoint(int) isWhitespace(char) isWhitespace(int) lowSurrogate(int)
+                    offsetByCodePoints([C,int,int,int,int) offsetByCodePoints(java.lang.CharSequence,int,int) reverseBytes(char) toChars(int,[C,int)
+                    toChars(int) toCodePoint(char,char) toLowerCase(char) toLowerCase(int)
+                    toString() toString(char) toTitleCase(char) toTitleCase(int)
+                    toUpperCase(char) toUpperCase(int) valueOf(char)
+                    """
+                ),
+            "java.lang.Double" to
+                methodSignatures(
+                    """
+                    byteValue() compare(double,double) compareTo(java.lang.Double) compareTo(java.lang.Object)
+                    doubleToLongBits(double) doubleToRawLongBits(double) doubleValue() equals(java.lang.Object)
+                    floatValue() hashCode() hashCode(double) intValue()
+                    isFinite(double) isInfinite() isInfinite(double) isNaN()
+                    isNaN(double) longBitsToDouble(long) longValue() max(double,double)
+                    min(double,double) parseDouble(java.lang.String) shortValue() sum(double,double)
+                    toHexString(double) toString() toString(double) valueOf(double)
+                    valueOf(java.lang.String)
+                    """
+                ),
+            "java.lang.Float" to
+                methodSignatures(
+                    """
+                    byteValue() compare(float,float) compareTo(java.lang.Float) compareTo(java.lang.Object)
+                    doubleValue() equals(java.lang.Object) floatToIntBits(float) floatToRawIntBits(float)
+                    floatValue() hashCode() hashCode(float) intBitsToFloat(int)
+                    intValue() isFinite(float) isInfinite() isInfinite(float)
+                    isNaN() isNaN(float) longValue() max(float,float)
+                    min(float,float) parseFloat(java.lang.String) shortValue() sum(float,float)
+                    toHexString(float) toString() toString(float) valueOf(float)
+                    valueOf(java.lang.String)
+                    """
+                ),
+            "java.lang.Integer" to
+                methodSignatures(
+                    """
+                    bitCount(int) byteValue() compare(int,int) compareTo(java.lang.Integer)
+                    compareTo(java.lang.Object) compareUnsigned(int,int) decode(java.lang.String) divideUnsigned(int,int)
+                    doubleValue() equals(java.lang.Object) floatValue() hashCode()
+                    hashCode(int) highestOneBit(int) intValue() longValue()
+                    lowestOneBit(int) max(int,int) min(int,int) numberOfLeadingZeros(int)
+                    numberOfTrailingZeros(int) parseInt(java.lang.String,int) parseInt(java.lang.String) parseUnsignedInt(java.lang.String,int)
+                    parseUnsignedInt(java.lang.String) remainderUnsigned(int,int) reverse(int) reverseBytes(int)
+                    rotateLeft(int,int) rotateRight(int,int) shortValue() signum(int)
+                    sum(int,int) toBinaryString(int) toHexString(int) toOctalString(int)
+                    toString() toString(int,int) toString(int) toUnsignedLong(int)
+                    toUnsignedString(int,int) toUnsignedString(int) valueOf(int) valueOf(java.lang.String,int)
+                    valueOf(java.lang.String)
+                    """
+                ),
+            "java.lang.Long" to
+                methodSignatures(
+                    """
+                    bitCount(long) byteValue() compare(long,long) compareTo(java.lang.Long)
+                    compareTo(java.lang.Object) compareUnsigned(long,long) decode(java.lang.String) divideUnsigned(long,long)
+                    doubleValue() equals(java.lang.Object) floatValue() hashCode()
+                    hashCode(long) highestOneBit(long) intValue() longValue()
+                    lowestOneBit(long) max(long,long) min(long,long) numberOfLeadingZeros(long)
+                    numberOfTrailingZeros(long) parseLong(java.lang.String,int) parseLong(java.lang.String) parseUnsignedLong(java.lang.String,int)
+                    parseUnsignedLong(java.lang.String) remainderUnsigned(long,long) reverse(long) reverseBytes(long)
+                    rotateLeft(long,int) rotateRight(long,int) shortValue() signum(long)
+                    sum(long,long) toBinaryString(long) toHexString(long) toOctalString(long)
+                    toString() toString(long,int) toString(long) toUnsignedString(long,int)
+                    toUnsignedString(long) valueOf(java.lang.String,int) valueOf(java.lang.String) valueOf(long)
+                    """
+                ),
+            "java.lang.Short" to
+                methodSignatures(
+                    """
+                    byteValue() compare(short,short) compareTo(java.lang.Object) compareTo(java.lang.Short)
+                    decode(java.lang.String) doubleValue() equals(java.lang.Object) floatValue()
+                    hashCode() hashCode(short) intValue() longValue()
+                    parseShort(java.lang.String,int) parseShort(java.lang.String) reverseBytes(short) shortValue()
+                    toString() toString(short) toUnsignedInt(short) toUnsignedLong(short)
+                    valueOf(java.lang.String,int) valueOf(java.lang.String) valueOf(short)
+                    """
+                ),
+            "java.lang.String" to
+                methodSignatures(
+                    """
+                    charAt(int) codePointAt(int) codePointBefore(int) codePointCount(int,int)
+                    compareTo(java.lang.Object) compareTo(java.lang.String) compareToIgnoreCase(java.lang.String) concat(java.lang.String)
+                    contains(java.lang.CharSequence) contentEquals(java.lang.CharSequence) contentEquals(java.lang.StringBuffer) copyValueOf([C,int,int)
+                    copyValueOf([C) endsWith(java.lang.String) equals(java.lang.Object) equalsIgnoreCase(java.lang.String)
+                    getBytes() getBytes(int,int,[B,int) getBytes(java.lang.String) getBytes(java.nio.charset.Charset)
+                    getChars(int,int,[C,int) hashCode() indexOf(int,int) indexOf(int)
+                    indexOf(java.lang.String,int) indexOf(java.lang.String) isEmpty() lastIndexOf(int,int)
+                    lastIndexOf(int) lastIndexOf(java.lang.String,int) lastIndexOf(java.lang.String) length()
+                    regionMatches(boolean,int,java.lang.String,int,int) regionMatches(int,java.lang.String,int,int) startsWith(java.lang.String,int) startsWith(java.lang.String)
+                    subSequence(int,int) substring(int,int) substring(int) toCharArray()
+                    toLowerCase() toLowerCase(java.util.Locale) toString() toUpperCase()
+                    toUpperCase(java.util.Locale) trim() valueOf([C,int,int) valueOf([C)
+                    valueOf(boolean) valueOf(char) valueOf(double) valueOf(float)
+                    valueOf(int) valueOf(java.lang.Object) valueOf(long)
+                    """
+                ),
+            "java.lang.StringBuilder" to
+                methodSignatures(
+                    """
+                    append([C,int,int) append([C) append(boolean) append(char)
+                    append(double) append(float) append(int) append(java.lang.CharSequence,int,int)
+                    append(java.lang.CharSequence) append(java.lang.Object) append(java.lang.String) append(java.lang.StringBuffer)
+                    append(long) appendCodePoint(int) capacity() charAt(int)
+                    codePointAt(int) codePointBefore(int) codePointCount(int,int) delete(int,int)
+                    deleteCharAt(int) equals(java.lang.Object) getChars(int,int,[C,int) hashCode()
+                    indexOf(java.lang.String,int) indexOf(java.lang.String) insert(int,[C,int,int) insert(int,[C)
+                    insert(int,boolean) insert(int,char) insert(int,double) insert(int,float)
+                    insert(int,int) insert(int,java.lang.CharSequence,int,int) insert(int,java.lang.CharSequence) insert(int,java.lang.Object)
+                    insert(int,java.lang.String) insert(int,long) lastIndexOf(java.lang.String,int) lastIndexOf(java.lang.String)
+                    length() offsetByCodePoints(int,int) replace(int,int,java.lang.String) reverse()
+                    setCharAt(int,char) subSequence(int,int) substring(int,int) substring(int)
+                    toString() trimToSize()
+                    """
+                ),
+            "java.util.ArrayList" to
+                methodSignatures(
+                    """
+                    add(int,java.lang.Object) add(java.lang.Object) addAll(int,java.util.Collection) addAll(java.util.Collection)
+                    clear() clone() contains(java.lang.Object) equals(java.lang.Object)
+                    get(int) hashCode() indexOf(java.lang.Object) isEmpty()
+                    lastIndexOf(java.lang.Object) remove(int) remove(java.lang.Object) set(int,java.lang.Object)
+                    size() subList(int,int) toArray() toArray([Ljava.lang.Object;)
+                    toString() trimToSize()
+                    """
+                ),
+            "java.util.Collections" to
+                methodSignatures(
+                    """
+                    addAll(java.util.Collection,[Ljava.lang.Object;) binarySearch(java.util.List,java.lang.Object,java.util.Comparator) binarySearch(java.util.List,java.lang.Object) copy(java.util.List,java.util.List)
+                    emptyList() emptyMap() emptySet() fill(java.util.List,java.lang.Object)
+                    frequency(java.util.Collection,java.lang.Object) max(java.util.Collection,java.util.Comparator) max(java.util.Collection) min(java.util.Collection,java.util.Comparator)
+                    min(java.util.Collection) nCopies(int,java.lang.Object) replaceAll(java.util.List,java.lang.Object,java.lang.Object) reverse(java.util.List)
+                    rotate(java.util.List,int) shuffle(java.util.List,java.util.Random) shuffle(java.util.List) singleton(java.lang.Object)
+                    singletonList(java.lang.Object) singletonMap(java.lang.Object,java.lang.Object) sort(java.util.List,java.util.Comparator) sort(java.util.List)
+                    swap(java.util.List,int,int)
+                    """
+                ),
+            "java.util.HashMap" to
+                methodSignatures(
+                    """
+                    clear() clone() containsKey(java.lang.Object) containsValue(java.lang.Object)
+                    equals(java.lang.Object) get(java.lang.Object) getOrDefault(java.lang.Object,java.lang.Object) hashCode()
+                    isEmpty() put(java.lang.Object,java.lang.Object) putAll(java.util.Map) putIfAbsent(java.lang.Object,java.lang.Object)
+                    remove(java.lang.Object,java.lang.Object) remove(java.lang.Object) replace(java.lang.Object,java.lang.Object,java.lang.Object) replace(java.lang.Object,java.lang.Object)
+                    size() toString()
+                    """
+                ),
+            "java.util.HashSet" to
+                methodSignatures(
+                    """
+                    add(java.lang.Object) addAll(java.util.Collection) clear() clone()
+                    contains(java.lang.Object) containsAll(java.util.Collection) equals(java.lang.Object) hashCode()
+                    isEmpty() remove(java.lang.Object) size() toArray()
+                    toArray([Ljava.lang.Object;) toString()
+                    """
+                ),
+            "java.util.LinkedHashMap" to
+                methodSignatures(
+                    """
+                    clear() clone() containsKey(java.lang.Object) containsValue(java.lang.Object)
+                    equals(java.lang.Object) get(java.lang.Object) getOrDefault(java.lang.Object,java.lang.Object) hashCode()
+                    isEmpty() put(java.lang.Object,java.lang.Object) putAll(java.util.Map) putIfAbsent(java.lang.Object,java.lang.Object)
+                    remove(java.lang.Object,java.lang.Object) remove(java.lang.Object) replace(java.lang.Object,java.lang.Object,java.lang.Object) replace(java.lang.Object,java.lang.Object)
+                    size() toString()
+                    """
+                ),
+            "java.util.LinkedHashSet" to
+                methodSignatures(
+                    """
+                    add(java.lang.Object) addAll(java.util.Collection) clear() clone()
+                    contains(java.lang.Object) containsAll(java.util.Collection) equals(java.lang.Object) hashCode()
+                    isEmpty() remove(java.lang.Object) size() toArray()
+                    toArray([Ljava.lang.Object;) toString()
+                    """
+                ),
+            "java.util.UUID" to
+                methodSignatures(
+                    """
+                    clockSequence() compareTo(java.lang.Object) compareTo(java.util.UUID) equals(java.lang.Object)
+                    fromString(java.lang.String) getLeastSignificantBits() getMostSignificantBits() hashCode()
+                    nameUUIDFromBytes([B) node() randomUUID() timestamp()
+                    toString() variant() version()
+                    """
+                )
+        ).also { signaturesByClass ->
+            check(signaturesByClass.keys == allowedMethodNamesByClass.keys) {
+                "Java bridge method-name and signature profiles must cover the same classes"
+            }
+            signaturesByClass.forEach { (className, signatures) ->
+                val signatureMethodNames = signatures.mapTo(mutableSetOf()) { it.substringBefore('(') }
+                check(signatureMethodNames == allowedMethodNamesByClass.getValue(className)) {
+                    "Java bridge signatures for $className must match its method-name profile"
+                }
+            }
+        }
+
     private val allowedStaticFieldNamesByClass =
         mapOf(
             "java.lang.Boolean" to setOf("FALSE", "TRUE", "TYPE"),
@@ -1381,8 +1602,8 @@ internal object JsJavaBridgeDelegates {
         parameterTypeNames: List<String>
     ): Boolean {
         if (methodName !in allowedMethodNamesByClass[className].orEmpty()) return false
-        return methodSignature(className, methodName, parameterTypeNames) !in
-            methodsUnavailableOnMinSdk
+        val signature = "$methodName(${parameterTypeNames.joinToString(",")})"
+        return signature in allowedMethodSignaturesByClass[className].orEmpty()
     }
 
     private fun requireJavaBridgeStaticFieldAllowed(clazz: Class<*>, fieldName: String) {

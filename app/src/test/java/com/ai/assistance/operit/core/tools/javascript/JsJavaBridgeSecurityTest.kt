@@ -58,7 +58,7 @@ class JsJavaBridgeSecurityTest {
     }
 
     @Test
-    fun primitiveMemberProfileIsStableFromMinSdk26() {
+    fun memberProfileIsStableFromMinSdk26() {
         val postMinSdkSignatures =
             listOf(
                 Triple("java.lang.Byte", "compareUnsigned", listOf("byte", "byte")),
@@ -81,6 +81,11 @@ class JsJavaBridgeSecurityTest {
                     "java.lang.Long",
                     "parseLong",
                     listOf("java.lang.CharSequence", "int", "int", "int")
+                ),
+                Triple(
+                    "java.util.Collections",
+                    "shuffle",
+                    listOf("java.util.List", "java.util.random.RandomGenerator")
                 )
             )
         postMinSdkSignatures.forEach { (className, methodName, parameterTypes) ->
@@ -98,6 +103,12 @@ class JsJavaBridgeSecurityTest {
             Triple("java.lang.Byte", "compare", listOf("byte", "byte")),
             Triple("java.lang.Character", "toString", listOf("char")),
             Triple("java.lang.Integer", "parseInt", listOf("java.lang.String")),
+            Triple("java.util.Collections", "shuffle", listOf("java.util.List")),
+            Triple(
+                "java.util.Collections",
+                "shuffle",
+                listOf("java.util.List", "java.util.Random")
+            ),
             Triple("java.util.UUID", "fromString", listOf("java.lang.String"))
         ).forEach { (className, methodName, parameterTypes) ->
             assertTrue(
