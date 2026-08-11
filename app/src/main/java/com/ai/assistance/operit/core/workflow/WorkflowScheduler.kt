@@ -12,6 +12,24 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
 
+internal fun specificTimeInitialDelay(
+    targetTime: Long,
+    currentTime: Long,
+    allowPastTarget: Boolean,
+): Long? {
+    val delay = targetTime - currentTime
+    return when {
+        delay >= 0L -> delay
+        allowPastTarget -> 0L
+        else -> null
+    }
+}
+
+internal fun isActiveWorkflowScheduleState(state: WorkInfo.State): Boolean =
+    state == WorkInfo.State.ENQUEUED ||
+        state == WorkInfo.State.RUNNING ||
+        state == WorkInfo.State.BLOCKED
+
 /**
  * WorkflowScheduler manages scheduling workflows using WorkManager
  * 
@@ -46,6 +64,7 @@ class WorkflowScheduler(private val context: Context) {
         const val PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION = -1
         const val CLAIMED_SCHEDULE_FINGERPRINT_GENERATION = 0
         const val CURRENT_SCHEDULE_FINGERPRINT_GENERATION = 1
+        const val REJECTED_SCHEDULE_FINGERPRINT_GENERATION = 2
 
         internal fun scheduleFingerprint(workflowId: String, triggerNode: TriggerNode): String {
             val canonicalConfig = triggerNode.triggerConfig.toSortedMap().entries.joinToString("\u0000") {
@@ -65,7 +84,10 @@ class WorkflowScheduler(private val context: Context) {
     /**
      * Schedule a workflow based on its trigger configuration
      */
-    fun scheduleWorkflow(workflow: Workflow): Boolean {
+    fun scheduleWorkflow(
+        workflow: Workflow,
+        allowDuePreFingerprintOneTime: Boolean = false,
+    ): Boolean {
         // Find the trigger node
         val triggerNode = workflow.nodes.filterIsInstance<TriggerNode>()
             .firstOrNull { it.triggerType == "schedule" }
@@ -91,7 +113,11 @@ class WorkflowScheduler(private val context: Context) {
                 workflow.id, triggerNode.id, config, scheduleFingerprint
             )
             SCHEDULE_TYPE_SPECIFIC_TIME -> scheduleOneTimeWorkflow(
-                workflow.id, triggerNode.id, config, scheduleFingerprint
+                workflow.id,
+                triggerNode.id,
+                config,
+                scheduleFingerprint,
+                allowDuePreFingerprintOneTime,
             )
             SCHEDULE_TYPE_CRON -> scheduleCronWorkflow(
                 workflow.id, triggerNode.id, config, scheduleFingerprint
@@ -159,6 +185,7 @@ class WorkflowScheduler(private val context: Context) {
         triggerNodeId: String,
         config: Map<String, String>,
         scheduleFingerprint: String,
+        allowPastTarget: Boolean = false,
     ): Boolean {
         val specificTimeStr = config[CONFIG_SPECIFIC_TIME] ?: return false
         val repeat = config[CONFIG_REPEAT]?.toBoolean() ?: false
@@ -171,9 +198,12 @@ class WorkflowScheduler(private val context: Context) {
         }
 
         val currentTime = System.currentTimeMillis()
-        val delay = targetTime - currentTime
-
-        if (delay < 0) {
+        val initialDelay = specificTimeInitialDelay(
+            targetTime = targetTime,
+            currentTime = currentTime,
+            allowPastTarget = allowPastTarget,
+        )
+        if (initialDelay == null) {
             AppLogger.w(TAG, "Specific time is in the past: $specificTimeStr")
             return false
         }
@@ -191,7 +221,7 @@ class WorkflowScheduler(private val context: Context) {
                     KEY_SCHEDULE_FINGERPRINT to scheduleFingerprint,
                 )
             )
-            .setInitialDelay(delay, TimeUnit.MILLISECONDS)
+            .setInitialDelay(initialDelay, TimeUnit.MILLISECONDS)
             .addTag(workflowId)
             .build()
 
@@ -201,7 +231,7 @@ class WorkflowScheduler(private val context: Context) {
             workRequest
         ).result.get()
 
-        AppLogger.d(TAG, "Scheduled one-time workflow: $workflowId, trigger: $triggerNodeId, time: $specificTimeStr, delay: ${delay}ms")
+        AppLogger.d(TAG, "Scheduled one-time workflow: $workflowId, trigger: $triggerNodeId, time: $specificTimeStr, delay: ${initialDelay}ms")
         return true
     }
 
@@ -367,6 +397,87 @@ class WorkflowScheduler(private val context: Context) {
             else -> false
         }
     }
+
+    /** Classifies definitions that can be recovered into a fingerprinted WorkManager request. */
+    internal fun isMigratablePreFingerprintScheduleRequest(workflow: Workflow): Boolean {
+        if (
+            workflow.scheduleFingerprintGeneration != null &&
+                workflow.scheduleFingerprintGeneration !=
+                    PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION
+        ) return false
+        return isSchedulableWorkflowDefinition(workflow)
+    }
+
+    internal fun isSchedulableWorkflowDefinition(workflow: Workflow): Boolean {
+        if (!workflow.enabled) return false
+        val triggerNode = workflow.nodes.filterIsInstance<TriggerNode>()
+            .firstOrNull { it.triggerType == "schedule" }
+            ?: return false
+        val config = triggerNode.triggerConfig
+        if (!(config[CONFIG_ENABLED]?.toBoolean() ?: true)) return false
+        return when (config[CONFIG_SCHEDULE_TYPE]) {
+            SCHEDULE_TYPE_INTERVAL ->
+                config[CONFIG_INTERVAL_MS]?.toLongOrNull() != null &&
+                    (config[CONFIG_REPEAT]?.toBoolean() ?: true)
+            SCHEDULE_TYPE_SPECIFIC_TIME -> runCatching {
+                config[CONFIG_SPECIFIC_TIME]?.let(::parseDateTime) != null
+            }.getOrDefault(false)
+            SCHEDULE_TYPE_CRON ->
+                config[CONFIG_CRON_EXPRESSION]?.let(::calculateNextCronTime) != null
+            else -> false
+        }
+    }
+
+    internal fun shouldPreserveActivePreFingerprintScheduleRequest(workflow: Workflow): Boolean {
+        if (workflow.scheduleFingerprintGeneration != null) return false
+        val triggerNode = workflow.nodes.filterIsInstance<TriggerNode>()
+            .firstOrNull { it.triggerType == "schedule" }
+            ?: return false
+        return canClaimPreFingerprintSchedule(workflow, triggerNode.id)
+    }
+
+    internal fun isSpecificTimeSchedule(workflow: Workflow): Boolean =
+        workflow.nodes.filterIsInstance<TriggerNode>()
+            .firstOrNull { it.triggerType == "schedule" }
+            ?.triggerConfig
+            ?.get(CONFIG_SCHEDULE_TYPE) == SCHEDULE_TYPE_SPECIFIC_TIME
+
+    internal fun isFutureSpecificTimeSchedule(
+        workflow: Workflow,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean {
+        val triggerNode = workflow.nodes.filterIsInstance<TriggerNode>()
+            .firstOrNull { it.triggerType == "schedule" }
+            ?: return false
+        if (triggerNode.triggerConfig[CONFIG_SCHEDULE_TYPE] != SCHEDULE_TYPE_SPECIFIC_TIME) {
+            return false
+        }
+        return runCatching {
+            triggerNode.triggerConfig[CONFIG_SPECIFIC_TIME]?.let(::parseDateTime)?.let { it > now }
+                ?: false
+        }.getOrDefault(false)
+    }
+
+    internal fun shouldPrepareFingerprintScheduleReconciliation(
+        workflow: Workflow,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean {
+        if (!isSchedulableWorkflowDefinition(workflow)) return false
+        return !isSpecificTimeSchedule(workflow) || isFutureSpecificTimeSchedule(workflow, now)
+    }
+
+    internal fun isRejectedPastSpecificTimeDefinition(
+        workflow: Workflow,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean =
+        isSchedulableWorkflowDefinition(workflow) &&
+            isSpecificTimeSchedule(workflow) &&
+            !isFutureSpecificTimeSchedule(workflow, now)
+
+    internal fun hasActiveWorkflowScheduleAndWait(workflowId: String): Boolean =
+        workManager.getWorkInfosForUniqueWork(getWorkName(workflowId)).get().any { info ->
+            isActiveWorkflowScheduleState(info.state)
+        }
 
     /** Used by security-sensitive legacy cleanup before a trusted replacement is scheduled. */
     internal fun cancelWorkflowAndWait(workflowId: String) {

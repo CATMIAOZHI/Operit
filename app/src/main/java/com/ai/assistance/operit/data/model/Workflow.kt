@@ -18,9 +18,9 @@ data class Workflow(
     var updatedAt: Long = System.currentTimeMillis(),
     var enabled: Boolean = true,
     // Absent only on definitions saved before WorkManager schedule fingerprints existed. The
-    // repository persists CLAIMED while legacy execution owns the request, PENDING after the
-    // execution has finished but its recurring replacement still needs retrying, and CURRENT
-    // after a trusted replacement (or consumed one-time request), so a process death can resume.
+    // repository persists CLAIMED while legacy execution owns the request, PENDING while a
+    // trusted replacement/reconciliation still needs retrying, CURRENT after that WorkManager
+    // commit, and REJECTED for an explicitly unschedulable past one-time definition.
     var scheduleFingerprintGeneration: Int? = null,
     // 执行统计信息
     var lastExecutionTime: Long? = null,  // 上次执行时间

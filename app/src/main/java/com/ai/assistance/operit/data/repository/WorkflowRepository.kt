@@ -126,6 +126,133 @@ internal fun isTrustedScheduleExecutionAuthorized(
     scheduleFingerprint: String,
 ): Boolean = trustedCurrentScheduleFingerprint(workflow, triggerNodeId) == scheduleFingerprint
 
+internal fun prepareFingerprintGenerationForScheduledDefinition(
+    workflow: Workflow,
+    scheduleReconciliationPending: Boolean,
+    rejectedPastSpecificTime: Boolean = false,
+): Workflow {
+    return workflow.copy(
+        scheduleFingerprintGeneration = when {
+            scheduleReconciliationPending ->
+                WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION
+            rejectedPastSpecificTime -> WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION
+            else -> WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION
+        }
+    )
+}
+
+internal fun hasSameScheduleDefinition(first: Workflow, second: Workflow): Boolean {
+    if (first.enabled != second.enabled) return false
+    val firstNode = first.nodes.filterIsInstance<TriggerNode>()
+        .firstOrNull { it.triggerType == "schedule" }
+    val secondNode = second.nodes.filterIsInstance<TriggerNode>()
+        .firstOrNull { it.triggerType == "schedule" }
+    return when {
+        firstNode == null || secondNode == null -> firstNode == null && secondNode == null
+        else -> WorkflowScheduler.scheduleFingerprint(first.id, firstNode) ==
+            WorkflowScheduler.scheduleFingerprint(second.id, secondNode)
+    }
+}
+
+internal fun prepareFingerprintGenerationForDefinitionUpdate(
+    requestedWorkflow: Workflow,
+    latestWorkflow: Workflow,
+    promotingLegacy: Boolean,
+    scheduleReconciliationPending: Boolean,
+    rejectedPastSpecificTime: Boolean,
+): Workflow {
+    if (!promotingLegacy && hasSameScheduleDefinition(requestedWorkflow, latestWorkflow)) {
+        return requestedWorkflow.copy(
+            scheduleFingerprintGeneration = latestWorkflow.scheduleFingerprintGeneration,
+        )
+    }
+    return prepareFingerprintGenerationForScheduledDefinition(
+        requestedWorkflow,
+        scheduleReconciliationPending,
+        rejectedPastSpecificTime,
+    )
+}
+
+internal fun shouldReconcileScheduleAfterDefinitionUpdate(
+    scheduleDefinitionChanged: Boolean,
+    workflow: Workflow,
+): Boolean = scheduleDefinitionChanged ||
+    workflow.scheduleFingerprintGeneration !=
+        WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION
+
+internal fun normalizeFingerprintGenerationForExecution(
+    workflow: Workflow,
+    triggerNodeId: String,
+    scheduleFingerprint: String,
+): Workflow? {
+    if (!isTrustedScheduleExecutionAuthorized(workflow, triggerNodeId, scheduleFingerprint)) {
+        return null
+    }
+    return when (workflow.scheduleFingerprintGeneration) {
+        null,
+        WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION ->
+            workflow.copy(
+                scheduleFingerprintGeneration =
+                    WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+            )
+        WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION -> workflow
+        else -> null
+    }
+}
+
+internal fun coordinateFingerprintScheduleRequest(
+    workflow: Workflow,
+    persist: (Workflow) -> Unit,
+    enqueue: (Workflow) -> Boolean,
+    cancel: () -> Unit,
+): Boolean {
+    if (
+        workflow.scheduleFingerprintGeneration ==
+            WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION
+    ) {
+        cancel()
+        return false
+    }
+    val workflowToSchedule = if (
+        workflow.scheduleFingerprintGeneration ==
+            WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION
+    ) {
+        workflow
+    } else {
+        workflow.copy(
+            scheduleFingerprintGeneration =
+                WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION,
+        ).also(persist)
+    }
+    if (!enqueue(workflowToSchedule)) {
+        if (
+            workflowToSchedule.scheduleFingerprintGeneration !=
+                WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION
+        ) {
+            persist(
+                workflowToSchedule.copy(
+                    scheduleFingerprintGeneration =
+                        WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION,
+                )
+            )
+        }
+        cancel()
+        return false
+    }
+    if (
+        workflowToSchedule.scheduleFingerprintGeneration !=
+            WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION
+    ) {
+        persist(
+            workflowToSchedule.copy(
+                scheduleFingerprintGeneration =
+                    WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+            )
+        )
+    }
+    return true
+}
+
 internal fun trustedCurrentScheduleFingerprint(
     workflow: Workflow,
     triggerNodeId: String,
@@ -432,8 +559,14 @@ internal fun mergeWorkflowDefinitionWithLatestRuntime(
     failedExecutions = latestWorkflow.failedExecutions
 )
 
-internal fun markExplicitLegacyPromotionAsCurrent(workflow: Workflow): Workflow = workflow.copy(
-    scheduleFingerprintGeneration = WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+internal fun prepareExplicitLegacyPromotionScheduleGeneration(
+    workflow: Workflow,
+    scheduleReconciliationPending: Boolean,
+    rejectedPastSpecificTime: Boolean,
+): Workflow = prepareFingerprintGenerationForScheduledDefinition(
+    workflow,
+    scheduleReconciliationPending,
+    rejectedPastSpecificTime,
 )
 
 internal fun updateWorkflowFileAtomically(
@@ -814,12 +947,15 @@ class WorkflowRepository(private val context: Context) {
             // The first private snapshot must already reject old no-fingerprint work. Publishing
             // null and fixing it in a later scheduling lock lets an already-due legacy Worker
             // claim and execute attacker-writable legacy state.
-            val promotedWorkflow = markExplicitLegacyPromotionAsCurrent(
-                WorkflowIntentSecurity.normalizeExternalTriggerTokens(
-                    workflow = legacyWorkflow,
-                    replaceExistingTokens = true,
-                    tokenFactory = authTokenManager::newAuthToken,
-                )
+            val normalizedLegacyWorkflow = WorkflowIntentSecurity.normalizeExternalTriggerTokens(
+                workflow = legacyWorkflow,
+                replaceExistingTokens = true,
+                tokenFactory = authTokenManager::newAuthToken,
+            )
+            val promotedWorkflow = prepareExplicitLegacyPromotionScheduleGeneration(
+                normalizedLegacyWorkflow,
+                scheduler.shouldPrepareFingerprintScheduleReconciliation(normalizedLegacyWorkflow),
+                scheduler.isRejectedPastSpecificTimeDefinition(normalizedLegacyWorkflow),
             )
             atomicWrite(internal, json.encodeToString(promotedWorkflow))
             AppLogger.d(TAG, "Write-on-copy: legacy workflow $id normalized into internal storage")
@@ -969,13 +1105,15 @@ class WorkflowRepository(private val context: Context) {
     suspend fun createWorkflow(workflow: Workflow): Result<Workflow> = withContext(Dispatchers.IO) {
         try {
             require(workflow.id.isNotBlank()) { "Workflow id cannot be empty" }
-            val normalizedWorkflow = WorkflowIntentSecurity.normalizeExternalTriggerTokens(
+            val normalizedTokens = WorkflowIntentSecurity.normalizeExternalTriggerTokens(
                 workflow = workflow,
                 tokenValidator = authTokenManager::isAuthenticAuthToken,
                 tokenFactory = authTokenManager::newAuthToken
-            ).copy(
-                scheduleFingerprintGeneration =
-                    WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+            )
+            val normalizedWorkflow = prepareFingerprintGenerationForScheduledDefinition(
+                normalizedTokens,
+                scheduler.shouldPrepareFingerprintScheduleReconciliation(normalizedTokens),
+                scheduler.isRejectedPastSpecificTimeDefinition(normalizedTokens),
             )
             val file = getInternalWorkflowFile(normalizedWorkflow.id)
             val content = json.encodeToString(normalizedWorkflow)
@@ -1013,11 +1151,10 @@ class WorkflowRepository(private val context: Context) {
     ): Result<Workflow> = withContext(Dispatchers.IO) {
         try {
             require(workflow.id.isNotBlank()) { "Workflow id cannot be empty" }
-            val requestedWorkflow = workflow.copy(
+            val requestedDefinition = workflow.copy(
                 updatedAt = System.currentTimeMillis(),
-                scheduleFingerprintGeneration =
-                    WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
             )
+            val requestedWorkflow = requestedDefinition
             val internal = getInternalWorkflowFile(requestedWorkflow.id)
             val effective = if (allowLegacyPromotion) {
                 findEffectiveWorkflowFile(requestedWorkflow.id)
@@ -1031,6 +1168,7 @@ class WorkflowRepository(private val context: Context) {
             }
             val file = internal
             invalidateExternalTriggerCache()
+            var scheduleDefinitionChanged = true
             val updatedWorkflow = updateEffectiveWorkflowFileAtomically(
                 internalFile = file,
                 workflowId = requestedWorkflow.id,
@@ -1052,12 +1190,30 @@ class WorkflowRepository(private val context: Context) {
                         tokenFactory = authTokenManager::newAuthToken,
                     )
                 }
-                    mergeWorkflowDefinitionWithLatestRuntime(normalized, latest)
+                val merged = mergeWorkflowDefinitionWithLatestRuntime(normalized, latest)
+                scheduleDefinitionChanged =
+                    promotingLegacy || !hasSameScheduleDefinition(merged, latest)
+                prepareFingerprintGenerationForDefinitionUpdate(
+                    requestedWorkflow = merged,
+                    latestWorkflow = latest,
+                    promotingLegacy = promotingLegacy,
+                    scheduleReconciliationPending =
+                        scheduler.shouldPrepareFingerprintScheduleReconciliation(merged),
+                    rejectedPastSpecificTime =
+                        scheduler.isRejectedPastSpecificTimeDefinition(merged),
+                )
             }
 
             AppLogger.d(TAG, "Workflow updated: ${updatedWorkflow.id}")
 
-            reconcileInternalWorkflowSchedule(updatedWorkflow.id)
+            if (
+                shouldReconcileScheduleAfterDefinitionUpdate(
+                    scheduleDefinitionChanged,
+                    updatedWorkflow,
+                )
+            ) {
+                reconcileInternalWorkflowSchedule(updatedWorkflow.id)
+            }
 
             notifyWorkflowsChanged()
 
@@ -1096,6 +1252,7 @@ class WorkflowRepository(private val context: Context) {
             }
             val file = internal
             invalidateExternalTriggerCache()
+            var scheduleDefinitionChanged = true
             val updatedWorkflow = updateEffectiveWorkflowFileAtomically(
                 internalFile = file,
                 workflowId = id,
@@ -1103,22 +1260,39 @@ class WorkflowRepository(private val context: Context) {
                 json = json,
                 lock = promotionLocks.computeIfAbsent(id) { Any() }
             ) { latest, promotingLegacy ->
-                WorkflowIntentSecurity.normalizeExternalTriggerTokens(
-                    workflow = latest.copy(
-                        enabled = enabled,
-                        updatedAt = System.currentTimeMillis(),
-                        scheduleFingerprintGeneration =
-                            WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
-                    ),
+                val updatedDefinition = latest.copy(
+                    enabled = enabled,
+                    updatedAt = System.currentTimeMillis(),
+                )
+                val normalized = WorkflowIntentSecurity.normalizeExternalTriggerTokens(
+                    workflow = updatedDefinition,
                     replaceExistingTokens = promotingLegacy,
                     tokenValidator = authTokenManager::isAuthenticAuthToken,
                     tokenFactory = authTokenManager::newAuthToken
+                )
+                scheduleDefinitionChanged =
+                    promotingLegacy || !hasSameScheduleDefinition(normalized, latest)
+                prepareFingerprintGenerationForDefinitionUpdate(
+                    requestedWorkflow = normalized,
+                    latestWorkflow = latest,
+                    promotingLegacy = promotingLegacy,
+                    scheduleReconciliationPending =
+                        scheduler.shouldPrepareFingerprintScheduleReconciliation(normalized),
+                    rejectedPastSpecificTime =
+                        scheduler.isRejectedPastSpecificTimeDefinition(normalized),
                 )
             }
 
             AppLogger.d(TAG, "Workflow enabled state updated: ${updatedWorkflow.id} -> $enabled")
 
-            reconcileInternalWorkflowSchedule(updatedWorkflow.id)
+            if (
+                shouldReconcileScheduleAfterDefinitionUpdate(
+                    scheduleDefinitionChanged,
+                    updatedWorkflow,
+                )
+            ) {
+                reconcileInternalWorkflowSchedule(updatedWorkflow.id)
+            }
 
             notifyWorkflowsChanged()
 
@@ -1249,15 +1423,53 @@ class WorkflowRepository(private val context: Context) {
         id: String,
         triggerNodeId: String,
         scheduleFingerprint: String,
-    ): Result<String> = triggerWorkflowInternal(
-        id = id,
-        triggerNodeId = triggerNodeId,
-        executionOrigin = WorkflowExecutionOrigin.AUTOMATIC,
-        authorizationCheck = { latest ->
-            isTrustedScheduleExecutionAuthorized(latest, triggerNodeId, scheduleFingerprint)
-        },
-    ) { nodeId, state ->
-        AppLogger.d(TAG, "Node $nodeId state: $state")
+    ): Result<String> {
+        val generationReady = withContext(Dispatchers.IO) {
+            val file = getInternalWorkflowFile(id)
+            synchronized(promotionLocks.computeIfAbsent(id) { Any() }) {
+                if (!file.isFile) {
+                    return@synchronized Result.failure<Unit>(
+                        Exception("Trusted workflow schedule no longer exists")
+                    )
+                }
+                val latest = decodeWorkflowContentSafely(
+                    json,
+                    readWorkflowContentAtomically(file),
+                    id,
+                )
+                val normalized = normalizeFingerprintGenerationForExecution(
+                    latest,
+                    triggerNodeId,
+                    scheduleFingerprint,
+                ) ?: return@synchronized Result.failure<Unit>(
+                    Exception("Trusted workflow schedule authorization is no longer valid")
+                )
+                if (normalized != latest) {
+                    try {
+                        writeWorkflowContentAtomically(file, json.encodeToString(normalized))
+                    } catch (error: Exception) {
+                        val retry = PreFingerprintScheduleReplacementPendingException(id)
+                        retry.initCause(error)
+                        return@synchronized Result.failure<Unit>(retry)
+                    }
+                }
+                Result.success(Unit)
+            }
+        }
+        generationReady.exceptionOrNull()?.let { error -> return Result.failure(error) }
+
+        return triggerWorkflowInternal(
+            id = id,
+            triggerNodeId = triggerNodeId,
+            executionOrigin = WorkflowExecutionOrigin.AUTOMATIC,
+            authorizationCheck = { latest ->
+                latest.scheduleFingerprintGeneration ==
+                    WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION &&
+                    isTrustedScheduleExecutionAuthorized(latest, triggerNodeId, scheduleFingerprint)
+            },
+        ) { nodeId, state ->
+            AppLogger.d(TAG, "Node $nodeId state: $state")
+        }
     }
 
     /** Compatibility for a private WorkManager request created before fingerprints existed. */
@@ -1582,6 +1794,7 @@ class WorkflowRepository(private val context: Context) {
         internal: File,
         workflow: Workflow,
         allowClaimedMigration: Boolean,
+        allowDuePreFingerprintOneTime: Boolean = false,
     ): Boolean {
         if (shouldDeferClaimedScheduleRebuild(workflow, allowClaimedMigration)) {
             AppLogger.d(TAG, "Schedule migration already owned by a running Worker: ${workflow.id}")
@@ -1593,23 +1806,24 @@ class WorkflowRepository(private val context: Context) {
         }
         if (!hasScheduleTrigger(workflow)) return false
 
-        val enqueued = scheduler.scheduleWorkflow(workflow)
-        if (
-            enqueued &&
-                workflow.scheduleFingerprintGeneration !=
-                    WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION
-        ) {
-            writeWorkflowContentAtomically(
-                internal,
-                json.encodeToString(
-                    workflow.copy(
-                        scheduleFingerprintGeneration =
-                            WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+        return coordinateFingerprintScheduleRequest(
+            workflow = workflow,
+            persist = { updated ->
+                writeWorkflowContentAtomically(internal, json.encodeToString(updated))
+            },
+            enqueue = { prepared ->
+                val allowPastTarget = allowDuePreFingerprintOneTime || (
+                    prepared.scheduleFingerprintGeneration ==
+                        WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION &&
+                        scheduler.isSpecificTimeSchedule(prepared)
                     )
-                ),
-            )
-        }
-        return enqueued
+                scheduler.scheduleWorkflow(
+                    prepared,
+                    allowDuePreFingerprintOneTime = allowPastTarget,
+                )
+            },
+            cancel = { scheduler.cancelWorkflowAndWait(workflow.id) },
+        )
     }
 
     private fun reconcileInternalWorkflowSchedule(id: String): Boolean = try {
@@ -1749,16 +1963,40 @@ class WorkflowRepository(private val context: Context) {
             if (shouldDeferClaimedScheduleRebuild(latest, allowClaimedMigration = false)) {
                 return@synchronized false
             }
-            scheduler.cancelWorkflowAndWait(id)
-            if (!latest.enabled || !hasScheduleTrigger(latest)) {
-                false
-            } else {
-                scheduleWorkflowLocked(
-                    internal,
-                    latest,
-                    allowClaimedMigration = false,
-                )
+            if (
+                latest.scheduleFingerprintGeneration ==
+                    WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION ||
+                    !scheduler.isSchedulableWorkflowDefinition(latest)
+            ) {
+                scheduler.cancelWorkflowAndWait(id)
+                return@synchronized false
             }
+            val activeSchedule = scheduler.hasActiveWorkflowScheduleAndWait(id)
+            val preserveActiveSchedule = activeSchedule && (
+                latest.scheduleFingerprintGeneration ==
+                    WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION ||
+                    scheduler.shouldPreserveActivePreFingerprintScheduleRequest(latest)
+                )
+            if (preserveActiveSchedule) {
+                AppLogger.d(TAG, "Preserving active trusted schedule request: $id")
+                return@synchronized false
+            }
+            val migratableSchedule =
+                scheduler.isMigratablePreFingerprintScheduleRequest(latest)
+            val allowPastSpecificTime = migratableSchedule || (
+                scheduler.isSpecificTimeSchedule(latest) &&
+                    scheduler.isFutureSpecificTimeSchedule(latest)
+                )
+            if (migratableSchedule) {
+                AppLogger.w(TAG, "Recreating missing or stale schedule request: $id")
+            }
+            val scheduled = scheduleWorkflowLocked(
+                internal,
+                latest,
+                allowClaimedMigration = false,
+                allowDuePreFingerprintOneTime = allowPastSpecificTime,
+            )
+            scheduled
         }
     }
 
@@ -1788,20 +2026,12 @@ class WorkflowRepository(private val context: Context) {
             }
         }
 
-    private fun cancelLegacyScheduleUnlessClaimed(id: String) {
+    private fun cancelLegacyOnlySchedule(id: String) {
         val internal = getInternalWorkflowFile(id)
         synchronized(promotionLocks.computeIfAbsent(id) { Any() }) {
-            val latest = internal.takeIf { it.isFile }?.let { file ->
-                decodeWorkflowContentSafely(
-                    json,
-                    readWorkflowContentAtomically(file),
-                    id,
-                )
-            }
-            if (
-                latest != null &&
-                    shouldDeferClaimedScheduleRebuild(latest, allowClaimedMigration = false)
-            ) return@synchronized
+            // A private definition owns the unique WorkManager slot. Its trusted rebuild performs
+            // the only reconciliation; legacy cleanup must not cancel an active same-id request.
+            if (internal.isFile) return@synchronized
             scheduler.cancelWorkflowAndWait(id)
         }
     }
@@ -1858,7 +2088,7 @@ class WorkflowRepository(private val context: Context) {
         )
         cancelLegacyWorkflowScheduleIds(
             workflowIds = files.map { file -> file.nameWithoutExtension },
-            cancelAndWait = ::cancelLegacyScheduleUnlessClaimed,
+            cancelAndWait = ::cancelLegacyOnlySchedule,
             onCancellationFailure = { id, error ->
                 AppLogger.e(TAG, "Failed to synchronously clear legacy workflow schedule: $id", error)
             },

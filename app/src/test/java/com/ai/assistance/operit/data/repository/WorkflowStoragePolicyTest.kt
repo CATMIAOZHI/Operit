@@ -4,6 +4,8 @@ import android.content.Context
 import java.io.File
 import java.nio.file.Files
 import com.ai.assistance.operit.core.workflow.WorkflowScheduler
+import com.ai.assistance.operit.core.workflow.isActiveWorkflowScheduleState
+import com.ai.assistance.operit.core.workflow.specificTimeInitialDelay
 import com.ai.assistance.operit.core.workflow.shouldRetryWorkflowWorkerFailure
 import com.ai.assistance.operit.data.model.TriggerNode
 import com.ai.assistance.operit.data.model.Workflow
@@ -275,31 +277,35 @@ class WorkflowStoragePolicyTest {
     }
 
     @Test
-    fun explicitLegacyPromotionPublishesCurrentGenerationImmediately() {
+    fun explicitLegacyPromotionPublishesPendingGenerationBeforeScheduling() {
         val node = TriggerNode(
             id = "schedule-node",
             triggerType = "schedule",
             triggerConfig = mapOf("interval_ms" to "900000", "enabled" to "true"),
         )
-        val promoted = markExplicitLegacyPromotionAsCurrent(
+        val promoted = prepareExplicitLegacyPromotionScheduleGeneration(
             Workflow(
                 id = "legacy",
                 enabled = true,
                 nodes = listOf(node),
                 scheduleFingerprintGeneration = null,
-            )
+            ),
+            scheduleReconciliationPending = true,
+            rejectedPastSpecificTime = false,
         )
 
         assertEquals(
-            WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+            WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION,
             promoted.scheduleFingerprintGeneration,
         )
-        assertEquals(null, claimPreFingerprintSchedule(
+        val claim = claimPreFingerprintSchedule(
             promoted,
             "schedule-node",
             isEligible = { _, _ -> true },
             shouldInstallReplacement = { _, _ -> true },
-        ))
+        )
+        assertEquals(false, claim?.executeWorkflow)
+        assertEquals(true, claim?.installReplacement)
     }
 
     @Test
@@ -325,6 +331,18 @@ class WorkflowStoragePolicyTest {
         ))
         assertTrue(scheduler.canClaimPreFingerprintSchedule(dueOneTime, "schedule-node"))
         assertFalse(scheduler.shouldReplacePreFingerprintSchedule(dueOneTime, "schedule-node"))
+        assertTrue(scheduler.isMigratablePreFingerprintScheduleRequest(dueOneTime))
+        assertTrue(scheduler.shouldPreserveActivePreFingerprintScheduleRequest(dueOneTime))
+        assertFalse(scheduler.shouldPrepareFingerprintScheduleReconciliation(dueOneTime))
+        assertTrue(scheduler.isRejectedPastSpecificTimeDefinition(dueOneTime))
+        assertEquals(
+            WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION,
+            prepareFingerprintGenerationForScheduledDefinition(
+                dueOneTime,
+                scheduleReconciliationPending = false,
+                rejectedPastSpecificTime = true,
+            ).scheduleFingerprintGeneration,
+        )
 
         val futureOneTime = dueOneTime.copy(nodes = listOf(
             (dueOneTime.nodes.single() as TriggerNode).copy(
@@ -333,6 +351,76 @@ class WorkflowStoragePolicyTest {
             )
         ))
         assertFalse(scheduler.canClaimPreFingerprintSchedule(futureOneTime, "schedule-node"))
+        assertTrue(scheduler.isMigratablePreFingerprintScheduleRequest(futureOneTime))
+        assertFalse(scheduler.shouldPreserveActivePreFingerprintScheduleRequest(futureOneTime))
+        assertTrue(scheduler.isFutureSpecificTimeSchedule(futureOneTime, now = 0L))
+        assertTrue(
+            scheduler.shouldPrepareFingerprintScheduleReconciliation(futureOneTime, now = 0L)
+        )
+        assertFalse(scheduler.isRejectedPastSpecificTimeDefinition(futureOneTime, now = 0L))
+
+        val existingDue = dueOneTime.copy(
+            name = "before",
+            scheduleFingerprintGeneration =
+                WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+        )
+        val contentOnlyUpdate = existingDue.copy(name = "after")
+        assertEquals(
+            WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+            prepareFingerprintGenerationForDefinitionUpdate(
+                requestedWorkflow = contentOnlyUpdate,
+                latestWorkflow = existingDue,
+                promotingLegacy = false,
+                scheduleReconciliationPending = false,
+                rejectedPastSpecificTime = true,
+            ).scheduleFingerprintGeneration,
+        )
+        assertFalse(
+            shouldReconcileScheduleAfterDefinitionUpdate(
+                scheduleDefinitionChanged = false,
+                workflow = contentOnlyUpdate.copy(
+                    scheduleFingerprintGeneration =
+                        WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+                ),
+            )
+        )
+        assertTrue(
+            shouldReconcileScheduleAfterDefinitionUpdate(
+                scheduleDefinitionChanged = true,
+                workflow = contentOnlyUpdate.copy(
+                    scheduleFingerprintGeneration =
+                        WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+                ),
+            )
+        )
+        assertTrue(
+            shouldReconcileScheduleAfterDefinitionUpdate(
+                scheduleDefinitionChanged = false,
+                workflow = contentOnlyUpdate.copy(
+                    scheduleFingerprintGeneration =
+                        WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION,
+                ),
+            )
+        )
+        val changedPastSchedule = contentOnlyUpdate.copy(
+            nodes = listOf(
+                (contentOnlyUpdate.nodes.single() as TriggerNode).copy(
+                    triggerConfig =
+                        (contentOnlyUpdate.nodes.single() as TriggerNode).triggerConfig +
+                            (WorkflowScheduler.CONFIG_SPECIFIC_TIME to "1999-01-01 00:00"),
+                )
+            )
+        )
+        assertEquals(
+            WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION,
+            prepareFingerprintGenerationForDefinitionUpdate(
+                requestedWorkflow = changedPastSchedule,
+                latestWorkflow = existingDue,
+                promotingLegacy = false,
+                scheduleReconciliationPending = false,
+                rejectedPastSpecificTime = true,
+            ).scheduleFingerprintGeneration,
+        )
 
         val interval = workflow(mapOf(
             WorkflowScheduler.CONFIG_SCHEDULE_TYPE to WorkflowScheduler.SCHEDULE_TYPE_INTERVAL,
@@ -341,6 +429,25 @@ class WorkflowStoragePolicyTest {
         ))
         assertTrue(scheduler.canClaimPreFingerprintSchedule(interval, "schedule-node"))
         assertTrue(scheduler.shouldReplacePreFingerprintSchedule(interval, "schedule-node"))
+        assertTrue(scheduler.isMigratablePreFingerprintScheduleRequest(interval))
+        assertTrue(scheduler.shouldPreserveActivePreFingerprintScheduleRequest(interval))
+        assertTrue(scheduler.isSchedulableWorkflowDefinition(interval))
+        assertTrue(scheduler.shouldPrepareFingerprintScheduleReconciliation(interval))
+        assertFalse(scheduler.isSchedulableWorkflowDefinition(interval.copy(enabled = false)))
+        assertFalse(scheduler.isSchedulableWorkflowDefinition(interval.copy(nodes = emptyList())))
+        assertFalse(
+            scheduler.isSchedulableWorkflowDefinition(
+                interval.copy(
+                    nodes = listOf(
+                        (interval.nodes.single() as TriggerNode).copy(
+                            triggerConfig =
+                                (interval.nodes.single() as TriggerNode).triggerConfig +
+                                    (WorkflowScheduler.CONFIG_ENABLED to "false"),
+                        )
+                    )
+                )
+            )
+        )
 
         val oneShotCron = workflow(mapOf(
             WorkflowScheduler.CONFIG_SCHEDULE_TYPE to WorkflowScheduler.SCHEDULE_TYPE_CRON,
@@ -349,6 +456,154 @@ class WorkflowStoragePolicyTest {
         ))
         assertTrue(scheduler.canClaimPreFingerprintSchedule(oneShotCron, "schedule-node"))
         assertFalse(scheduler.shouldReplacePreFingerprintSchedule(oneShotCron, "schedule-node"))
+        assertTrue(scheduler.isMigratablePreFingerprintScheduleRequest(oneShotCron))
+        val repeatingCron = oneShotCron.copy(nodes = listOf(
+            (oneShotCron.nodes.single() as TriggerNode).copy(
+                triggerConfig = (oneShotCron.nodes.single() as TriggerNode).triggerConfig +
+                    (WorkflowScheduler.CONFIG_REPEAT to "true"),
+            )
+        ))
+        assertTrue(scheduler.isMigratablePreFingerprintScheduleRequest(repeatingCron))
+        assertTrue(scheduler.shouldPreserveActivePreFingerprintScheduleRequest(repeatingCron))
+        assertFalse(
+            scheduler.isMigratablePreFingerprintScheduleRequest(
+                dueOneTime.copy(
+                    scheduleFingerprintGeneration =
+                        WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+                )
+            )
+        )
+    }
+
+    @Test
+    fun fingerprintedWorkerRepairsInterruptedGenerationCommitBeforeExecution() {
+        val node = TriggerNode(
+            id = "schedule-node",
+            triggerType = "schedule",
+            triggerConfig = mapOf(
+                WorkflowScheduler.CONFIG_SCHEDULE_TYPE to WorkflowScheduler.SCHEDULE_TYPE_INTERVAL,
+                WorkflowScheduler.CONFIG_INTERVAL_MS to "900000",
+            ),
+        )
+        val pending = Workflow(
+            id = "workflow",
+            enabled = true,
+            nodes = listOf(node),
+            scheduleFingerprintGeneration =
+                WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION,
+        )
+        val fingerprint = WorkflowScheduler.scheduleFingerprint(pending.id, node)
+
+        assertEquals(
+            WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+            normalizeFingerprintGenerationForExecution(
+                pending,
+                node.id,
+                fingerprint,
+            )?.scheduleFingerprintGeneration,
+        )
+        assertEquals(
+            WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+            normalizeFingerprintGenerationForExecution(
+                pending.copy(scheduleFingerprintGeneration = null),
+                node.id,
+                fingerprint,
+            )?.scheduleFingerprintGeneration,
+        )
+        assertEquals(
+            null,
+            normalizeFingerprintGenerationForExecution(pending, node.id, "stale"),
+        )
+        assertEquals(
+            null,
+            normalizeFingerprintGenerationForExecution(
+                pending.copy(
+                    scheduleFingerprintGeneration =
+                        WorkflowScheduler.CLAIMED_SCHEDULE_FINGERPRINT_GENERATION,
+                ),
+                node.id,
+                fingerprint,
+            ),
+        )
+    }
+
+    @Test
+    fun fingerprintScheduleCoordinationIsTransactionalAndRejectedNeverEnqueues() {
+        val base = Workflow(id = "workflow")
+        val rejected = base.copy(
+            scheduleFingerprintGeneration =
+                WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION,
+        )
+        val rejectedEvents = mutableListOf<String>()
+        assertFalse(
+            coordinateFingerprintScheduleRequest(
+                workflow = rejected,
+                persist = { rejectedEvents += "persist:${it.scheduleFingerprintGeneration}" },
+                enqueue = {
+                    rejectedEvents += "enqueue"
+                    true
+                },
+                cancel = { rejectedEvents += "cancel" },
+            )
+        )
+        assertEquals(listOf("cancel"), rejectedEvents)
+
+        val successEvents = mutableListOf<String>()
+        assertTrue(
+            coordinateFingerprintScheduleRequest(
+                workflow = base.copy(scheduleFingerprintGeneration = null),
+                persist = { successEvents += "persist:${it.scheduleFingerprintGeneration}" },
+                enqueue = {
+                    successEvents += "enqueue:${it.scheduleFingerprintGeneration}"
+                    true
+                },
+                cancel = { successEvents += "cancel" },
+            )
+        )
+        assertEquals(
+            listOf(
+                "persist:${WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION}",
+                "enqueue:${WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION}",
+                "persist:${WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION}",
+            ),
+            successEvents,
+        )
+
+        val failureEvents = mutableListOf<String>()
+        assertFalse(
+            coordinateFingerprintScheduleRequest(
+                workflow = base.copy(scheduleFingerprintGeneration = null),
+                persist = { failureEvents += "persist:${it.scheduleFingerprintGeneration}" },
+                enqueue = {
+                    failureEvents += "enqueue:${it.scheduleFingerprintGeneration}"
+                    false
+                },
+                cancel = { failureEvents += "cancel" },
+            )
+        )
+        assertEquals(
+            listOf(
+                "persist:${WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION}",
+                "enqueue:${WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION}",
+                "persist:${WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION}",
+                "cancel",
+            ),
+            failureEvents,
+        )
+    }
+
+    @Test
+    fun missingDueOneTimeIsRecreatedImmediatelyAndOnlyActiveWorkIsPreserved() {
+        assertEquals(null, specificTimeInitialDelay(99L, 100L, allowPastTarget = false))
+        assertEquals(0L, specificTimeInitialDelay(99L, 100L, allowPastTarget = true))
+        assertEquals(25L, specificTimeInitialDelay(125L, 100L, allowPastTarget = false))
+
+        assertTrue(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.ENQUEUED))
+        assertTrue(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.RUNNING))
+        assertTrue(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.BLOCKED))
+        assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.SUCCEEDED))
+        assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.FAILED))
+        assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.CANCELLED))
     }
 
     @Test

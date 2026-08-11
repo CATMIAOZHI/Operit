@@ -50,17 +50,22 @@ class WorkflowTaskerReceiver : BroadcastReceiver() {
         }
         if (!OperitApplication.isMainDataAccessAllowed(context)) return
         val authToken = WorkflowIntentSecurity.readAuthTokenSafely(intent)
-        if (!WorkflowAuthTokenManager(context).isAuthenticAuthToken(authToken)) {
-            AppLogger.w(TAG, "Rejected workflow trigger broadcast without a valid authentication token")
+        if (!WorkflowIntentSecurity.isValidAuthToken(authToken)) {
             return
         }
-        AppLogger.d(TAG, "Received workflow trigger broadcast for action: $action. Checking for matching workflows.")
 
-        // Use goAsync to allow async work
+        // Authentication may initialize the no-backup signing key. Keep that disk I/O, as well as
+        // workflow lookup, off BroadcastReceiver.onReceive's main-thread deadline.
         val pendingResult = goAsync()
-        
+
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                if (!WorkflowAuthTokenManager(context.applicationContext)
+                        .isAuthenticAuthToken(authToken)
+                ) {
+                    return@launch
+                }
+                AppLogger.d(TAG, "Received workflow trigger broadcast for action: $action. Checking for matching workflows.")
                 val repository = WorkflowRepository(context.applicationContext)
                 // New method to find and trigger workflows based on the intent's content (action, extras, etc.)
                 repository.triggerWorkflowsByIntentEvent(intent)

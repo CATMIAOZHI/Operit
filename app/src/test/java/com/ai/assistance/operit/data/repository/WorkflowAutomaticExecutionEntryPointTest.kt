@@ -38,10 +38,48 @@ class WorkflowAutomaticExecutionEntryPointTest {
         assertTrue(repository.contains("executionOrigin = WorkflowExecutionOrigin.AUTOMATIC"))
         assertTrue(repository.contains("val workflows = getAllInternalWorkflows().getOrNull()"))
         assertTrue(repository.contains("rebuildOneInternalWorkflowSchedule(workflow.id)"))
-        assertTrue(repository.contains("cancelAndWait = ::cancelLegacyScheduleUnlessClaimed"))
+        assertTrue(repository.contains("cancelAndWait = ::cancelLegacyOnlySchedule"))
         assertTrue(repository.contains("shouldDeferClaimedScheduleRebuild("))
+        val rebuildOne = repository.substring(
+            repository.indexOf("private fun rebuildOneInternalWorkflowSchedule"),
+            repository.indexOf("internal suspend fun rebuildInternalWorkflowSchedules"),
+        )
+        val rebuildActiveCheckIndex =
+            rebuildOne.indexOf("scheduler.hasActiveWorkflowScheduleAndWait(id)")
+        val rebuildSchedulableCheckIndex =
+            rebuildOne.indexOf("scheduler.isSchedulableWorkflowDefinition(latest)")
+        val rebuildRejectedCheckIndex =
+            rebuildOne.indexOf("WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION")
+        val rebuildPreserveIndex =
+            rebuildOne.indexOf("scheduler.shouldPreserveActivePreFingerprintScheduleRequest(latest)")
+        val rebuildScheduleIndex = rebuildOne.indexOf("scheduleWorkflowLocked(")
+        assertTrue(rebuildRejectedCheckIndex in 0 until rebuildSchedulableCheckIndex)
+        assertTrue(rebuildSchedulableCheckIndex in 0 until rebuildActiveCheckIndex)
+        assertTrue(rebuildActiveCheckIndex in 0 until rebuildPreserveIndex)
+        assertTrue(rebuildPreserveIndex in 0 until rebuildScheduleIndex)
+        assertTrue(rebuildOne.contains("allowDuePreFingerprintOneTime = allowPastSpecificTime"))
+        val legacyCancel = repository.substring(
+            repository.indexOf("private fun cancelLegacyOnlySchedule"),
+            repository.indexOf("private fun loadInternalWorkflowsForAutomaticTriggers"),
+        )
+        val legacyPrivateGuard = legacyCancel.indexOf("if (internal.isFile) return@synchronized")
+        val legacyCancelIndex = legacyCancel.indexOf("scheduler.cancelWorkflowAndWait(id)")
+        assertTrue(legacyPrivateGuard in 0 until legacyCancelIndex)
         assertTrue(repository.contains("markPreFingerprintReplacementPending("))
         assertTrue(repository.contains("isTrustedScheduleExecutionAuthorized("))
+        val scheduleLocked = repository.substring(
+            repository.indexOf("private fun scheduleWorkflowLocked"),
+            repository.indexOf("private fun reconcileInternalWorkflowSchedule"),
+        )
+        assertTrue(scheduleLocked.contains("coordinateFingerprintScheduleRequest("))
+        assertTrue(scheduleLocked.contains("scheduler.scheduleWorkflow("))
+        assertTrue(scheduleLocked.contains("scheduler.cancelWorkflowAndWait(workflow.id)"))
+        val fingerprintedTrigger = repository.substring(
+            repository.indexOf("internal suspend fun triggerScheduledWorkflow"),
+            repository.indexOf("internal suspend fun triggerPreFingerprintScheduledWorkflow"),
+        )
+        assertTrue(fingerprintedTrigger.contains("normalizeFingerprintGenerationForExecution("))
+        assertTrue(fingerprintedTrigger.contains("PreFingerprintScheduleReplacementPendingException"))
 
         val aiTools = source("core/tools/defaultTool/standard/StandardWorkflowTools.kt")
         assertTrue(aiTools.contains("workflowRepository.triggerWorkflowFromPrivateStorage(workflowId)"))

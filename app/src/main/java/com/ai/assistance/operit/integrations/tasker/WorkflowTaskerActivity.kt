@@ -28,7 +28,13 @@ import com.joaomgcd.taskerpluginlibrary.input.TaskerInputRoot
 import com.joaomgcd.taskerpluginlibrary.runner.TaskerPluginResult
 import com.joaomgcd.taskerpluginlibrary.runner.TaskerPluginResultError
 import com.joaomgcd.taskerpluginlibrary.runner.TaskerPluginResultSucess
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.util.ArrayList
 
 internal fun taskerWorkflowDataAccessAllowed(mainDataAccessAllowed: Boolean): Boolean =
@@ -47,6 +53,7 @@ class WorkflowTaskerActivityConfig : Activity(), TaskerPluginConfig<WorkflowTask
         WorkflowTaskerConfigHelper(this)
     }
     private val authTokenManager by lazy { WorkflowAuthTokenManager(this) }
+    private val configScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var restoredCommand: String = ""
     private var restoredAuthToken: String = ""
     private var commandInput: EditText? = null
@@ -65,6 +72,11 @@ class WorkflowTaskerActivityConfig : Activity(), TaskerPluginConfig<WorkflowTask
         super.onCreate(savedInstanceState)
         taskerHelper.onCreate()
         setContentView(createConfigView())
+    }
+
+    override fun onDestroy() {
+        configScope.cancel()
+        super.onDestroy()
     }
 
     override fun assignFromInput(input: TaskerInput<WorkflowTaskerInput>) {
@@ -144,12 +156,21 @@ class WorkflowTaskerActivityConfig : Activity(), TaskerPluginConfig<WorkflowTask
             commandInput?.error = getString(R.string.workflow_tasker_config_command_required)
             valid = false
         }
-        if (!authTokenManager.isAuthenticAuthToken(authToken)) {
+        if (!WorkflowIntentSecurity.isValidAuthToken(authToken)) {
             authTokenInput?.error = getString(R.string.workflow_tasker_config_auth_token_invalid)
             valid = false
         }
-        if (valid) {
-            taskerHelper.finishForTasker()
+        if (!valid) return
+
+        configScope.launch {
+            val authentic = withContext(Dispatchers.IO) {
+                authTokenManager.isAuthenticAuthToken(authToken)
+            }
+            if (authentic) {
+                taskerHelper.finishForTasker()
+            } else {
+                authTokenInput?.error = getString(R.string.workflow_tasker_config_auth_token_invalid)
+            }
         }
     }
 }

@@ -121,11 +121,13 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
             error = null
 
             val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-            val workflow = buildIntentChatBroadcastTemplateWorkflow(
-                context = context,
-                name = context.getString(R.string.workflow_template_intent, time),
-                description = ""
-            )
+            val workflow = withContext(Dispatchers.IO) {
+                buildIntentChatBroadcastTemplateWorkflow(
+                    context = context,
+                    name = context.getString(R.string.workflow_template_intent, time),
+                    description = ""
+                )
+            }
 
             repository.createWorkflow(workflow).fold(
                 onSuccess = {

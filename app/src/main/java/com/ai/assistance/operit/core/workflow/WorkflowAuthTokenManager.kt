@@ -38,9 +38,15 @@ class WorkflowAuthTokenManager(context: Context) {
 
     fun newAuthToken(): String = codec.newToken()
 
-    fun isAuthenticAuthToken(token: String?): Boolean = codec.isAuthentic(token)
+    fun isAuthenticAuthToken(token: String?): Boolean {
+        // Keep malformed external input on the allocation-free shape-check path. In particular,
+        // do not initialize [codec], which may have to read/create the no-backup signing key.
+        if (!WorkflowIntentSecurity.isValidAuthToken(token)) return false
+        return codec.isAuthentic(token)
+    }
 
     private fun loadOrCreateSigningSecret(): ByteArray = synchronized(secretLock) {
+        cachedSigningSecret?.let { return@synchronized it.copyOf() }
         val secret = loadOrCreateWorkflowSigningSecret(
             readExisting = { runCatching { secretFile.readFully() }.getOrNull() },
             writeNew = { value ->
@@ -67,12 +73,15 @@ class WorkflowAuthTokenManager(context: Context) {
         ) {
             "Unable to remove legacy workflow trigger signing secret"
         }
+        cachedSigningSecret = secret.copyOf()
         secret
     }
 
     private companion object {
         const val LEGACY_PREFERENCES_NAME = "workflow_auth_tokens"
         val secretLock = Any()
+        @Volatile
+        var cachedSigningSecret: ByteArray? = null
     }
 }
 

@@ -38,10 +38,19 @@ class WorkflowTaskerSecurityTest {
         ).readText()
         val gateIndex = receiverSource.indexOf("OperitApplication.isMainDataAccessAllowed(context)")
         val tokenReadIndex = receiverSource.indexOf("WorkflowIntentSecurity.readAuthTokenSafely(intent)")
-        val managerIndex = receiverSource.indexOf("WorkflowAuthTokenManager(context)")
+        val shapeCheckIndex = receiverSource.indexOf(
+            "WorkflowIntentSecurity.isValidAuthToken(authToken)",
+            startIndex = tokenReadIndex,
+        )
+        val goAsyncIndex = receiverSource.indexOf("val pendingResult = goAsync()")
+        val ioScopeIndex = receiverSource.indexOf("CoroutineScope(Dispatchers.IO).launch")
+        val managerIndex = receiverSource.indexOf("WorkflowAuthTokenManager(context.applicationContext)")
         assertTrue(gateIndex >= 0)
         assertTrue(gateIndex < tokenReadIndex)
-        assertTrue(gateIndex < managerIndex)
+        assertTrue(tokenReadIndex < shapeCheckIndex)
+        assertTrue(shapeCheckIndex < goAsyncIndex)
+        assertTrue(goAsyncIndex < ioScopeIndex)
+        assertTrue(ioScopeIndex < managerIndex)
     }
 
     @Test
