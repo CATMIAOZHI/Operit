@@ -38,6 +38,14 @@ TOOLPKG_PATTERNS = (
     "tools/example_packages/packages_whitelist.txt",
     "tools/example_packages/sync_example_packages.py",
 )
+ANDROID_JVM_PATTERNS = (
+    "tools/adb/execute_js.bat",
+    "tools/adb/execute_js.sh",
+    "tools/adb/execute_js_dir.bat",
+    "tools/adb/execute_js_dir.sh",
+    "tools/adb/run_sandbox_script.bat",
+    "tools/adb/run_sandbox_script.sh",
+)
 ANDROID_FULL_PATTERNS = (
     ".github/actions/android-checks/**",
     ".gitmodules",
@@ -141,7 +149,9 @@ def classify_paths(paths: list[str] | tuple[str, ...]) -> ScopePlan:
     )
 
     resource_change = False
-    android_jvm_change = False
+    android_jvm_change = any(
+        path_matches(path, ANDROID_JVM_PATTERNS) for path in normalized_paths
+    )
     for path in normalized_paths:
         if not path.startswith("app/"):
             continue
