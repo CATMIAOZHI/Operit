@@ -96,6 +96,10 @@
 
 ## 快速开始
 
+脚本默认连接 application ID 为 `com.rainy.operitry` 的 Operit Ry debug 应用。如果 debug 构建使用其他 application ID（例如 `com.rainy.operitry.dev`），先设置环境变量 `OPERIT_APP_PACKAGE`。
+
+只有 debug 变体开放该开发入口，并要求系统级 `android.permission.DUMP` 权限；ADB shell 具备该权限，普通第三方应用不具备。clone、release 和 nightly 的接收器保持不可导出。
+
 ### Windows：执行单文件导出函数
 
 ```cmd
