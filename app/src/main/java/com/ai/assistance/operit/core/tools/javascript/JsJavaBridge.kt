@@ -43,6 +43,31 @@ internal fun buildJavaClassBridgeDefinition(): String {
                 }
             }
 
+            function blockedClassLookupError(className) {
+                return new Error(
+                    "Java bridge class '" + String(className || '') + "' is not allowed"
+                );
+            }
+
+            function requireClassExistsRaw(className) {
+                var normalized = String(className || '').trim();
+                if (!normalized || !classExistsRaw(normalized)) {
+                    throw blockedClassLookupError(normalized);
+                }
+                return normalized;
+            }
+
+            function looksLikeClassSegment(value) {
+                if (typeof value !== 'string' || value.length === 0) {
+                    return false;
+                }
+                var segmentStart = Math.max(
+                    value.lastIndexOf('.'),
+                    value.lastIndexOf(String.fromCharCode(36))
+                ) + 1;
+                return /^[A-Z]/.test(value.slice(segmentStart));
+            }
+
             function isPropertyKeyName(value) {
                 return typeof value === 'string' && value.length > 0;
             }
@@ -938,6 +963,7 @@ internal fun buildJavaClassBridgeDefinition(): String {
             }
 
             function createClassProxy(className) {
+                className = requireClassExistsRaw(className);
                 var target = function() {
                     return target.newInstance.apply(target, arguments);
                 };
@@ -1098,6 +1124,9 @@ internal fun buildJavaClassBridgeDefinition(): String {
                         if (classExistsRaw(candidate)) {
                             return createClassProxy(candidate);
                         }
+                        if (looksLikeClassSegment(prop)) {
+                            throw blockedClassLookupError(candidate);
+                        }
                         return createPackageProxy(nextParts);
                     },
                     apply: function(_obj, _thisArg, args) {
@@ -1143,6 +1172,12 @@ internal fun buildJavaClassBridgeDefinition(): String {
                     var normalized = String(packageName || '').trim();
                     if (!normalized) {
                         throw new Error('package name is required');
+                    }
+                    if (looksLikeClassSegment(normalized)) {
+                        if (classExistsRaw(normalized)) {
+                            return createClassProxy(normalized);
+                        }
+                        throw blockedClassLookupError(normalized);
                     }
                     return createPackageProxy(normalized.split('.').filter(Boolean));
                 },
@@ -1257,6 +1292,9 @@ internal fun buildJavaClassBridgeDefinition(): String {
 
                     if (classExistsRaw(prop)) {
                         return createClassProxy(prop);
+                    }
+                    if (looksLikeClassSegment(prop)) {
+                        throw blockedClassLookupError(prop);
                     }
                     return createPackageProxy([prop]);
                 }

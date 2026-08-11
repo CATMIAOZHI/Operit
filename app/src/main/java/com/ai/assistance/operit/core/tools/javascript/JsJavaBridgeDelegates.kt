@@ -139,13 +139,113 @@ internal object JsJavaBridgeDelegates {
             "java.util.LinkedHashSet",
             "java.util.UUID"
         )
-    private val classesWithAllDeclaredPublicMethods =
-        primitiveWrapperClassNames + "java.util.UUID"
     private val allowedInterfaceProxyClassNames = emptySet<String>()
-    private val excludedPrimitiveWrapperMethodNames =
-        setOf("getBoolean", "getInteger", "getLong")
+    private fun methodNames(names: String): Set<String> =
+        names.split(' ').filter(String::isNotBlank).toSet()
+
+    private fun methodSignature(
+        className: String,
+        methodName: String,
+        parameterTypeNames: List<String>
+    ): String = "$className#$methodName(${parameterTypeNames.joinToString(",")})"
+
+    private val methodsUnavailableOnMinSdk =
+        setOf(
+            methodSignature(
+                "java.lang.Character",
+                "toString",
+                listOf("int")
+            ),
+            methodSignature(
+                "java.lang.Integer",
+                "parseInt",
+                listOf("java.lang.CharSequence", "int", "int", "int")
+            ),
+            methodSignature(
+                "java.lang.Integer",
+                "parseUnsignedInt",
+                listOf("java.lang.CharSequence", "int", "int", "int")
+            ),
+            methodSignature(
+                "java.lang.Long",
+                "parseLong",
+                listOf("java.lang.CharSequence", "int", "int", "int")
+            ),
+            methodSignature(
+                "java.lang.Long",
+                "parseUnsignedLong",
+                listOf("java.lang.CharSequence", "int", "int", "int")
+            )
+        )
     private val allowedMethodNamesByClass =
         mapOf(
+            "java.lang.Boolean" to
+                methodNames(
+                    "booleanValue compare compareTo equals hashCode logicalAnd logicalOr " +
+                        "logicalXor parseBoolean toString valueOf"
+                ),
+            "java.lang.Byte" to
+                methodNames(
+                    "byteValue compare compareTo decode doubleValue equals floatValue hashCode " +
+                        "intValue longValue parseByte shortValue toString toUnsignedInt " +
+                        "toUnsignedLong valueOf"
+                ),
+            "java.lang.Character" to
+                methodNames(
+                    "charCount charValue codePointAt codePointBefore codePointCount compare " +
+                        "compareTo digit equals forDigit getDirectionality getName getNumericValue " +
+                        "getType hashCode highSurrogate isAlphabetic isBmpCodePoint isDefined " +
+                        "isDigit isHighSurrogate isIdentifierIgnorable isIdeographic isISOControl " +
+                        "isJavaIdentifierPart isJavaIdentifierStart isJavaLetter " +
+                        "isJavaLetterOrDigit isLetter isLetterOrDigit isLowerCase isLowSurrogate " +
+                        "isMirrored isSpace isSpaceChar isSupplementaryCodePoint isSurrogate " +
+                        "isSurrogatePair isTitleCase isUnicodeIdentifierPart " +
+                        "isUnicodeIdentifierStart isUpperCase isValidCodePoint isWhitespace " +
+                        "lowSurrogate offsetByCodePoints reverseBytes toChars toCodePoint " +
+                        "toLowerCase toString toTitleCase toUpperCase valueOf"
+                ),
+            "java.lang.Double" to
+                methodNames(
+                    "byteValue compare compareTo doubleToLongBits doubleToRawLongBits doubleValue " +
+                        "equals floatValue hashCode intValue isFinite isInfinite isNaN longBitsToDouble " +
+                        "longValue max min parseDouble shortValue sum toHexString toString valueOf"
+                ),
+            "java.lang.Float" to
+                methodNames(
+                    "byteValue compare compareTo doubleValue equals floatToIntBits floatToRawIntBits " +
+                        "floatValue hashCode intBitsToFloat intValue isFinite isInfinite isNaN " +
+                        "longValue max min parseFloat shortValue sum toHexString toString valueOf"
+                ),
+            "java.lang.Integer" to
+                methodNames(
+                    "bitCount byteValue compare compareTo compareUnsigned decode divideUnsigned " +
+                        "doubleValue equals floatValue hashCode highestOneBit intValue longValue " +
+                        "lowestOneBit max min numberOfLeadingZeros numberOfTrailingZeros parseInt " +
+                        "parseUnsignedInt remainderUnsigned reverse reverseBytes rotateLeft rotateRight " +
+                        "shortValue signum sum toBinaryString toHexString toOctalString toString " +
+                        "toUnsignedLong toUnsignedString valueOf"
+                ),
+            "java.lang.Long" to
+                methodNames(
+                    "bitCount byteValue compare compareTo compareUnsigned decode divideUnsigned " +
+                        "doubleValue equals floatValue hashCode highestOneBit intValue longValue " +
+                        "lowestOneBit max min numberOfLeadingZeros numberOfTrailingZeros parseLong " +
+                        "parseUnsignedLong remainderUnsigned reverse reverseBytes rotateLeft rotateRight " +
+                        "shortValue signum sum toBinaryString toHexString toOctalString toString " +
+                        "toUnsignedString valueOf"
+                ),
+            "java.lang.Short" to
+                methodNames(
+                    "byteValue compare compareTo decode doubleValue equals floatValue hashCode " +
+                        "intValue longValue parseShort reverseBytes shortValue toString toUnsignedInt " +
+                        "toUnsignedLong valueOf"
+                ),
+            "java.util.UUID" to
+                methodNames(
+                    "clockSequence compareTo equals fromString getLeastSignificantBits " +
+                        "getMostSignificantBits hashCode nameUUIDFromBytes node randomUUID timestamp " +
+                        "toString variant version"
+                ),
             "java.lang.String" to
                 setOf(
                     "charAt",
@@ -158,7 +258,6 @@ internal object JsJavaBridgeDelegates {
                     "contains",
                     "contentEquals",
                     "copyValueOf",
-                    "describeConstable",
                     "endsWith",
                     "equals",
                     "equalsIgnoreCase",
@@ -166,15 +265,11 @@ internal object JsJavaBridgeDelegates {
                     "getChars",
                     "hashCode",
                     "indexOf",
-                    "isBlank",
                     "isEmpty",
                     "lastIndexOf",
                     "length",
                     "regionMatches",
                     "startsWith",
-                    "strip",
-                    "stripLeading",
-                    "stripTrailing",
                     "subSequence",
                     "substring",
                     "toCharArray",
@@ -193,7 +288,6 @@ internal object JsJavaBridgeDelegates {
                     "codePointAt",
                     "codePointBefore",
                     "codePointCount",
-                    "compareTo",
                     "delete",
                     "deleteCharAt",
                     "equals",
@@ -1242,15 +1336,24 @@ internal object JsJavaBridgeDelegates {
     }
 
     internal fun isJavaBridgeMethodAllowed(targetClass: Class<*>, method: Method): Boolean {
-        val className = targetClass.name
         if (method.parameterTypes.any { parameter -> parameter == CharSequence::class.java }) {
             return false
         }
-        if (className in classesWithAllDeclaredPublicMethods) {
-            return method.declaringClass != Any::class.java &&
-                method.name !in excludedPrimitiveWrapperMethodNames
-        }
-        return method.name in allowedMethodNamesByClass[className].orEmpty()
+        return isJavaBridgeMethodSignatureAllowed(
+            className = targetClass.name,
+            methodName = method.name,
+            parameterTypeNames = method.parameterTypes.map { it.name }
+        )
+    }
+
+    internal fun isJavaBridgeMethodSignatureAllowed(
+        className: String,
+        methodName: String,
+        parameterTypeNames: List<String>
+    ): Boolean {
+        if (methodName !in allowedMethodNamesByClass[className].orEmpty()) return false
+        return methodSignature(className, methodName, parameterTypeNames) !in
+            methodsUnavailableOnMinSdk
     }
 
     private fun requireJavaBridgeStaticFieldAllowed(clazz: Class<*>, fieldName: String) {
@@ -1413,7 +1516,8 @@ internal object JsJavaBridgeDelegates {
         }
         val addedLength =
             when (method.name) {
-                "appendCodePoint" -> 2
+                "appendCodePoint" ->
+                    Character.charCount((args.firstOrNull() as? Number)?.toInt() ?: 0)
                 "append" -> appendContribution(method, args)
                 "insert" -> insertContribution(method, args)
                 "replace" -> {
@@ -1465,9 +1569,7 @@ internal object JsJavaBridgeDelegates {
             is CharSequence -> value.length
             is CharArray -> value.size
             is Char -> 1
-            is Boolean -> 5
-            is Number -> 32
-            is UUID -> 36
+            is Boolean, is Number, is UUID -> value.toString().length
             else -> MAX_BRIDGE_STRING_BUILDER_CHARS + 1
         }
     }
@@ -1479,14 +1581,32 @@ internal object JsJavaBridgeDelegates {
     ) {
         val addedCount =
             when (method.name) {
-                "add" -> 1
-                "addAll" -> args.filterIsInstance<Collection<*>>().firstOrNull()?.size ?: 0
+                "add" ->
+                    if (collection is Set<*> && collection.contains(args.firstOrNull())) 0 else 1
+                "addAll" -> {
+                    val values = args.filterIsInstance<Collection<*>>().firstOrNull().orEmpty()
+                    if (collection is Set<*>) {
+                        countNewSetElements(collection, values)
+                    } else {
+                        values.size
+                    }
+                }
                 else -> 0
             }
         require(collection.size.toLong() + addedCount <= MAX_BRIDGE_MUTABLE_CONTAINER_SIZE) {
             "Java bridge collection exceeds the element limit " +
                 "($MAX_BRIDGE_MUTABLE_CONTAINER_SIZE)"
         }
+    }
+
+    private fun countNewSetElements(existing: Set<*>, values: Iterable<*>): Int {
+        val pending = HashSet<Any?>()
+        values.forEach { value ->
+            if (!existing.contains(value)) {
+                pending.add(value)
+            }
+        }
+        return pending.size
     }
 
     private fun validateMapGrowth(

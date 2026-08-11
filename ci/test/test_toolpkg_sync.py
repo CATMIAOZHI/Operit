@@ -20,6 +20,18 @@ from sync_example_packages import (  # noqa: E402
 
 
 class ToolPkgRuntimeFilesTest(unittest.TestCase):
+    def test_sandboxpackage_installer_is_valid_javascript(self) -> None:
+        subprocess.run(
+            [
+                "node",
+                "--check",
+                str(REPO_ROOT / "tools" / "sandboxpackage_dev_install_or_update.js"),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     def test_expected_incompatible_packages_are_excluded_from_build_check(self) -> None:
         items = ["github.js", "deepsearching", "pdf_vision_parser.js", "subagent"]
 

@@ -47,6 +47,16 @@ exports.run = async function run() {
   const StringBuilder = Java.type('java.lang.StringBuilder');
   const text = new StringBuilder().append('restricted').append('-bridge').toString();
   assert(text === 'restricted-bridge', `safe StringBuilder failed: ${text}`);
+  const DottedStringBuilder = Java['java.lang.StringBuilder'];
+  assert(
+    new DottedStringBuilder().append('dotted').toString() === 'dotted',
+    'safe dotted StringBuilder lookup failed'
+  );
+  const PackagedStringBuilder = Java.package('java.lang.StringBuilder');
+  assert(
+    new PackagedStringBuilder().append('package').toString() === 'package',
+    'safe package StringBuilder lookup failed'
+  );
   assert(Java.java.lang.Integer.parseInt('42') === 42, 'safe Integer call failed');
 
   const blockedClasses = [
@@ -66,6 +76,24 @@ exports.run = async function run() {
   });
 
   const rejectionMessages = [];
+  rejectionMessages.push(
+    expectRejected('Runtime type lookup', () => Java.type('java.lang.Runtime'))
+  );
+  rejectionMessages.push(
+    expectRejected('Runtime use lookup', () => Java.use('java.lang.Runtime'))
+  );
+  rejectionMessages.push(
+    expectRejected('Runtime import lookup', () => Java.importClass('java.lang.Runtime'))
+  );
+  rejectionMessages.push(
+    expectRejected('Runtime package-chain lookup', () => Java.java.lang.Runtime)
+  );
+  rejectionMessages.push(
+    expectRejected('Runtime dotted-property lookup', () => Java['java.lang.Runtime'])
+  );
+  rejectionMessages.push(
+    expectRejected('Runtime explicit-package lookup', () => Java.package('java.lang.Runtime'))
+  );
   rejectionMessages.push(
     expectRejected('Runtime.getRuntime', () => Java.java.lang.Runtime.getRuntime())
   );

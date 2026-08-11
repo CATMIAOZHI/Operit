@@ -7,6 +7,7 @@ import java.lang.reflect.Proxy
 import java.util.ArrayList
 import java.util.Collections
 import java.util.HashMap
+import java.util.HashSet
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
@@ -25,6 +26,8 @@ class JsJavaBridgeSecurityTest {
         assertEquals(listOf("Java", "Kotlin"), module.globals)
         assertTrue(module.source.contains("javaCallStatic"))
         assertTrue(module.source.contains("javaCallStaticSuspend"))
+        assertTrue(module.source.contains("requireClassExistsRaw"))
+        assertTrue(module.source.contains("looksLikeClassSegment"))
         assertTrue(module.source.contains("Java bridge interface proxy is not allowed"))
         assertFalse(module.source.contains("ensureJsInterfaceMarkerRegistered"))
     }
@@ -46,6 +49,60 @@ class JsJavaBridgeSecurityTest {
     }
 
     @Test
+    fun primitiveMemberProfileIsStableFromMinSdk26() {
+        val postMinSdkSignatures =
+            listOf(
+                Triple("java.lang.Byte", "compareUnsigned", listOf("byte", "byte")),
+                Triple("java.lang.Short", "compareUnsigned", listOf("short", "short")),
+                Triple("java.lang.Character", "codePointOf", listOf("java.lang.String")),
+                Triple("java.lang.Character", "toString", listOf("int")),
+                Triple("java.lang.Character", "isEmoji", listOf("int")),
+                Triple("java.lang.Float", "float16ToFloat", listOf("short")),
+                Triple("java.lang.Float", "floatToFloat16", listOf("float")),
+                Triple("java.lang.Integer", "compress", listOf("int", "int")),
+                Triple("java.lang.Integer", "expand", listOf("int", "int")),
+                Triple(
+                    "java.lang.Integer",
+                    "parseInt",
+                    listOf("java.lang.CharSequence", "int", "int", "int")
+                ),
+                Triple("java.lang.Long", "compress", listOf("long", "long")),
+                Triple("java.lang.Long", "expand", listOf("long", "long")),
+                Triple(
+                    "java.lang.Long",
+                    "parseLong",
+                    listOf("java.lang.CharSequence", "int", "int", "int")
+                )
+            )
+        postMinSdkSignatures.forEach { (className, methodName, parameterTypes) ->
+            assertFalse(
+                "$className.$methodName must not depend on an API newer than minSdk 26",
+                JsJavaBridgeDelegates.isJavaBridgeMethodSignatureAllowed(
+                    className,
+                    methodName,
+                    parameterTypes
+                )
+            )
+        }
+
+        listOf(
+            Triple("java.lang.Byte", "compare", listOf("byte", "byte")),
+            Triple("java.lang.Character", "toString", listOf("char")),
+            Triple("java.lang.Integer", "parseInt", listOf("java.lang.String")),
+            Triple("java.util.UUID", "fromString", listOf("java.lang.String"))
+        ).forEach { (className, methodName, parameterTypes) ->
+            assertTrue(
+                "$className.$methodName is part of the minSdk 26 profile",
+                JsJavaBridgeDelegates.isJavaBridgeMethodSignatureAllowed(
+                    className,
+                    methodName,
+                    parameterTypes
+                )
+            )
+        }
+    }
+
+    @Test
     fun memberContractRejectsAmplifyingCallsBeforeReflection() {
         val emptyBuilderConstructor = StringBuilder::class.java.getConstructor()
         val capacityBuilderConstructor =
@@ -64,6 +121,13 @@ class JsJavaBridgeSecurityTest {
                 Int::class.javaPrimitiveType
             )
         val repeat = String::class.java.getMethod("repeat", Int::class.javaPrimitiveType)
+        val isBlank = String::class.java.getMethod("isBlank")
+        val strip = String::class.java.getMethod("strip")
+        val stripLeading = String::class.java.getMethod("stripLeading")
+        val stripTrailing = String::class.java.getMethod("stripTrailing")
+        val describeConstable = String::class.java.getMethod("describeConstable")
+        val compareBuilders =
+            StringBuilder::class.java.getMethod("compareTo", StringBuilder::class.java)
         val parseInt =
             Integer::class.java.getMethod("parseInt", String::class.java)
         val getInteger =
@@ -92,6 +156,18 @@ class JsJavaBridgeSecurityTest {
             )
         )
         assertFalse(JsJavaBridgeDelegates.isJavaBridgeMethodAllowed(String::class.java, repeat))
+        listOf(isBlank, strip, stripLeading, stripTrailing, describeConstable).forEach { method ->
+            assertFalse(
+                "${method.name} is unavailable on the minSdk 26 runtime",
+                JsJavaBridgeDelegates.isJavaBridgeMethodAllowed(String::class.java, method)
+            )
+        }
+        assertFalse(
+            JsJavaBridgeDelegates.isJavaBridgeMethodAllowed(
+                StringBuilder::class.java,
+                compareBuilders
+            )
+        )
 
         val constructorError =
             assertThrows(IllegalArgumentException::class.java) {
@@ -260,6 +336,51 @@ class JsJavaBridgeSecurityTest {
             }
         assertTrue(builderError.message.orEmpty().contains("character limit"))
 
+        val appendCodePoint =
+            StringBuilder::class.java.getMethod(
+                "appendCodePoint",
+                Int::class.javaPrimitiveType
+            )
+        val bmpBoundaryBuilder = StringBuilder("x".repeat(65_535))
+        JsJavaBridgeDelegates.validateJavaBridgeMethodInvocation(
+            targetClass = StringBuilder::class.java,
+            instance = bmpBoundaryBuilder,
+            method = appendCodePoint,
+            args = arrayOf(65)
+        )
+        appendCodePoint.invoke(bmpBoundaryBuilder, 65)
+        assertEquals(65_536, bmpBoundaryBuilder.length)
+
+        val appendBoolean =
+            StringBuilder::class.java.getMethod(
+                "append",
+                Boolean::class.javaPrimitiveType
+            )
+        val booleanBoundaryBuilder = StringBuilder("x".repeat(65_532))
+        JsJavaBridgeDelegates.validateJavaBridgeMethodInvocation(
+            targetClass = StringBuilder::class.java,
+            instance = booleanBoundaryBuilder,
+            method = appendBoolean,
+            args = arrayOf(true)
+        )
+        appendBoolean.invoke(booleanBoundaryBuilder, true)
+        assertEquals(65_536, booleanBoundaryBuilder.length)
+
+        val appendInt =
+            StringBuilder::class.java.getMethod(
+                "append",
+                Int::class.javaPrimitiveType
+            )
+        val numberBoundaryBuilder = StringBuilder("x".repeat(65_531))
+        JsJavaBridgeDelegates.validateJavaBridgeMethodInvocation(
+            targetClass = StringBuilder::class.java,
+            instance = numberBoundaryBuilder,
+            method = appendInt,
+            args = arrayOf(12_345)
+        )
+        appendInt.invoke(numberBoundaryBuilder, 12_345)
+        assertEquals(65_536, numberBoundaryBuilder.length)
+
         val addMethod = ArrayList::class.java.getMethod("add", Any::class.java)
         val fullList = ArrayList<Any>(65_536).apply { repeat(65_536) { add("x") } }
         val collectionError =
@@ -272,6 +393,33 @@ class JsJavaBridgeSecurityTest {
                 )
             }
         assertTrue(collectionError.message.orEmpty().contains("element limit"))
+
+        val setAdd = HashSet::class.java.getMethod("add", Any::class.java)
+        val setAddAll = HashSet::class.java.getMethod("addAll", Collection::class.java)
+        val fullSet = HashSet<Int>((0 until 65_536).toList())
+
+        JsJavaBridgeDelegates.validateJavaBridgeMethodInvocation(
+            targetClass = HashSet::class.java,
+            instance = fullSet,
+            method = setAdd,
+            args = arrayOf(0)
+        )
+        JsJavaBridgeDelegates.validateJavaBridgeMethodInvocation(
+            targetClass = HashSet::class.java,
+            instance = fullSet,
+            method = setAddAll,
+            args = arrayOf(listOf(0, 1, 1))
+        )
+        val setGrowthError =
+            assertThrows(IllegalArgumentException::class.java) {
+                JsJavaBridgeDelegates.validateJavaBridgeMethodInvocation(
+                    targetClass = HashSet::class.java,
+                    instance = fullSet,
+                    method = setAddAll,
+                    args = arrayOf(listOf(65_536, 65_536))
+                )
+            }
+        assertTrue(setGrowthError.message.orEmpty().contains("element limit"))
     }
 
     @Test
@@ -595,6 +743,14 @@ class JsJavaBridgeSecurityTest {
         assertFalse(distributedExample.contains("Java.proxy"))
 
         assertTrue(runtimeSuite.contains("Java.type('java.lang.StringBuilder')"))
+        assertTrue(runtimeSuite.contains("Java['java.lang.StringBuilder']"))
+        assertTrue(runtimeSuite.contains("Java.package('java.lang.StringBuilder')"))
+        assertTrue(runtimeSuite.contains("Runtime type lookup"))
+        assertTrue(runtimeSuite.contains("Runtime use lookup"))
+        assertTrue(runtimeSuite.contains("Runtime import lookup"))
+        assertTrue(runtimeSuite.contains("Runtime package-chain lookup"))
+        assertTrue(runtimeSuite.contains("Runtime dotted-property lookup"))
+        assertTrue(runtimeSuite.contains("Runtime explicit-package lookup"))
         assertTrue(runtimeSuite.contains("Java.java.lang.Runtime.getRuntime()"))
         assertTrue(runtimeSuite.contains("Java.getApplicationContext()"))
         assertTrue(runtimeSuite.contains("Java.loadJar("))

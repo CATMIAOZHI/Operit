@@ -40,13 +40,14 @@ Java.java.lang.StringBuilder
 - `java.lang.Boolean`, `Byte`, `Character`, `Double`, `Float`, `Integer`, `Long`, `Number`, `Short`, `String`, `StringBuilder`
 - `java.util.ArrayList`, `Collections`, `HashMap`, `HashSet`, `LinkedHashMap`, `LinkedHashSet`, `UUID`
 
-`classExists(...)` 对 allowlist 外的类返回 `false`；其他类访问入口抛出“not allowed”错误。包链语法不会扩大 allowlist。
+`classExists(...)` 对 allowlist 外的类返回 `false`；`type` / `use` / `importClass` 会在创建 class proxy 时立即抛出“not allowed”错误，包链遇到类名段时也会立即拒绝，而不是返回一个延迟失败的伪 package proxy。包链语法不会扩大 allowlist。
 
 类名 allowlist 只是第一层。当前 profile 还使用正向成员契约：
 
-- boxed primitive 与 `UUID`：开放这些类自身声明的 public 数据转换、比较和格式化方法；继承自 `Object` 的 `wait` / `notify` / `getClass` 以及读取 JVM system property 的 `getBoolean` / `getInteger` / `getLong` 不开放。
+- boxed primitive 与 `UUID`：使用固定的正向方法名/签名集合，开放 API 26 已存在的数据转换、比较和格式化方法；继承自 `Object` 的 `wait` / `notify` / `getClass`、读取 JVM system property 的 `getBoolean` / `getInteger` / `getLong`，以及设备升级后新增但不在固定集合中的方法都不开放。
 - `String`：开放字符/码点读取、比较、查找、大小写/空白转换、切片、`concat`、`getBytes` / `getChars`、`valueOf` / `copyValueOf`；不开放 `repeat`、`intern`、格式化、正则和可产生高放大结果的替换接口。
 - `StringBuilder`：只开放无参、`String` 构造器，以及不接收动态 `CharSequence` 的 append/insert/replace/delete/reverse/切片/读取/`toString` 等受长度预算约束的成员；容量构造器、`CharSequence` 构造器/重载、`ensureCapacity`、`setLength` 不开放。
+- 成员契约以应用的 `minSdk 26` 为兼容下限；只在更高 Android API 才出现的 `String.isBlank` / `strip*`、`StringBuilder.compareTo`、boxed primitive 新方法或同名新 overload 都不开放。
 - `ArrayList` / Map / Set：只开放无参或同类容器复制构造器，以及线性/受界的增删改查、比较、clone/toArray/toString；容量构造器、`ensureCapacity`、`ArrayList.containsAll` 以及 collection `removeAll` / `retainAll` 等可能退化为集合大小乘积的成员不开放。
 - `Collections`：只开放 bounded list/set/map helpers，例如 sort/reverse/rotate/swap/copy/fill/search/min/max/frequency、empty/singleton、`nCopies` 和 `addAll`；回调型以及 `disjoint` / `indexOfSubList` / `lastIndexOfSubList` 等可能二次退化的 helper 不开放。
 - 静态字段只允许读取 boxed primitive 的已列常量；当前 profile 不允许任何静态或实例字段写入。

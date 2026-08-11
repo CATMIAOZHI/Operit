@@ -582,7 +582,7 @@ await Tools.UI.swipe(540, 1800, 540, 900);
 
 类进入 allowlist 后仍只开放 [Java Bridge Interface](doc-src/dev-core/JAVA_BRIDGE_INTERFACE.md) 列出的构造器、方法和只读常量；这不是“整类全部 public 成员”授权。容量型构造器、`ensureCapacity` / `setLength`、`String.repeat`、正则替换以及任意字段写入均不开放。`BigInteger` / `BigDecimal` 也不属于当前受限 profile；大数或宿主数据处理应走有参数边界的 `Tools`。
 
-`bigint` 不能被 `JSON.stringify` 直接传入 bridge；需要时先显式转换为十进制字符串。`Java.getApplicationContext()` / `getCurrentActivity()` / `loadDex()` / `loadJar()` 仅保留兼容入口并始终失败；`Java.classExists()` 对 allowlist 外类返回 `false`。
+`bigint` 不能被 `JSON.stringify` 直接传入 bridge；需要时先显式转换为十进制字符串。`Java.getApplicationContext()` / `getCurrentActivity()` / `loadDex()` / `loadJar()` 仅保留兼容入口并始终失败；`Java.classExists()` 对 allowlist 外类返回 `false`，`Java.type()` / `use()` / `importClass()` 与包链类名查找会在查找阶段立即拒绝，不会返回延迟到成员调用才失败的 class/package proxy。
 
 #### 3.4.3. 句柄与生命周期建议
 
