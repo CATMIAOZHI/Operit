@@ -78,7 +78,7 @@
 
 典型目录：
 
-- [restricted_bridge](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/restricted_bridge)
+- [restricted_bridge](../../app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/restricted_bridge)
 - 仅供迁移参考：[bridge_contract](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_contract) 与 [bridge_edges](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_edges)
 - [script_mode_contract](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/script_mode_contract)
 - [browser main.js](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/defaultTool/standard/browser/main.js)

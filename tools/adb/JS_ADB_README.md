@@ -61,7 +61,7 @@ The directory [app/src/androidTest/js](/d:/Code/prog/assistance/app/src/androidT
 
 Representative locations:
 
-- [app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/restricted_bridge](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/restricted_bridge)
+- [app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/restricted_bridge](../../app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/restricted_bridge)
 - Legacy only: [bridge_contract](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_contract) and [bridge_edges](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_edges)
 - [app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/script_mode_contract](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/script_mode_contract)
 - [app/src/androidTest/js/com/ai/assistance/operit/core/tools/defaultTool/standard/browser/main.js](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/defaultTool/standard/browser/main.js)
