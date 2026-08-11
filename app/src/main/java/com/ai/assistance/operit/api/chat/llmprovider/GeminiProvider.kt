@@ -1879,8 +1879,11 @@ class GeminiProvider(
                         logDebug("结束思考模式")
                     }
                     
-                    // 添加文本内容
-                    contentBuilder.append(text)
+                    // Provider-owned thought text is data inside our <think> envelope. Escape
+                    // markup at this boundary so it cannot close the envelope and inject a tool.
+                    contentBuilder.append(
+                        if (isThought) ChatUtils.escapeProviderReasoningMarkup(text) else text
+                    )
                     
                     if (isThought) {
                         logDebug("提取思考内容，长度=${text.length}")

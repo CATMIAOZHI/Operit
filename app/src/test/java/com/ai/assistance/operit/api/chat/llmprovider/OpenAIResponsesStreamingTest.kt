@@ -138,6 +138,32 @@ class OpenAIResponsesStreamingTest {
     }
 
     @Test
+    fun chatCompletionsRegularContentWhileToolOpen_isBufferedUntilToolCloses() = runBlocking {
+        val sseBody =
+            listOf(
+                """data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"visit_web","arguments":"{\"url\":\"https://safe.example\"}"}}]},"finish_reason":null}]}""",
+                """data: {"choices":[{"delta":{"content":"after tool"},"finish_reason":"tool_calls"}]}""",
+                "data: [DONE]",
+            ).joinToString(separator = "\n\n", postfix = "\n\n")
+        val provider =
+            OpenAIProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "test-model",
+                client = clientForSse(sseBody),
+                enableToolCall = true,
+            )
+
+        withoutAndroidLogging {
+            val output = collectResponse(provider, Mockito.mock(Context::class.java))
+            assertSingleStructuredTool(output, "visit_web", "https://safe.example")
+            val visibleOutput = ChatUtils.removeThinkingContent(output)
+            assertTrue(visibleOutput.contains("after tool"))
+            assertTrue(visibleOutput.indexOf("after tool") > visibleOutput.indexOf("https://safe.example"))
+        }
+    }
+
+    @Test
     fun responsesLateReasoningWhileToolOpen_isIgnored() = runBlocking {
         val sseBody =
             listOf(
@@ -160,6 +186,68 @@ class OpenAIResponsesStreamingTest {
             val output = collectResponse(provider, Mockito.mock(Context::class.java))
             assertSingleStructuredTool(output, "write_file", "/safe")
             assertFalse(output.contains("late reasoning"))
+        }
+    }
+
+    @Test
+    fun responsesRegularContentWhileToolOpen_isFlushedAfterArgumentsDone() = runBlocking {
+        val sseBody =
+            listOf(
+                """data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","name":"visit_web","call_id":"call_1"}}""",
+                """data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"url\":\"https://safe.example\"}"}""",
+                """data: {"type":"response.output_text.delta","delta":"after tool"}""",
+                """data: {"type":"response.function_call_arguments.done","output_index":0}""",
+                """data: {"type":"response.completed","response":{"output":[],"usage":{}}}""",
+            ).joinToString(separator = "\n\n", postfix = "\n\n")
+        val provider =
+            OpenAIResponsesProvider(
+                responsesApiEndpoint = "https://example.test/v1/responses",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "test-model",
+                client = clientForSse(sseBody),
+                enableToolCall = true,
+            )
+
+        withoutAndroidLogging {
+            val output = collectResponse(provider, Mockito.mock(Context::class.java))
+            assertSingleStructuredTool(output, "visit_web", "https://safe.example")
+            val visibleOutput = ChatUtils.removeThinkingContent(output)
+            assertTrue(visibleOutput.contains("after tool"))
+            assertTrue(visibleOutput.indexOf("after tool") > visibleOutput.indexOf("https://safe.example"))
+        }
+    }
+
+    @Test
+    fun chatCompletionsRegularContentWaitsForEveryOpenTool() = runBlocking {
+        val sseBody =
+            listOf(
+                """data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"/safe\"}"}},{"index":1,"id":"call_2","type":"function","function":{"name":"visit_web","arguments":"{\"url\":\"https://safe.example\"}"}}]},"finish_reason":null}]}""",
+                """data: {"choices":[{"delta":{"content":"after both tools"},"finish_reason":"tool_calls"}]}""",
+                "data: [DONE]",
+            ).joinToString(separator = "\n\n", postfix = "\n\n")
+        val provider =
+            OpenAIProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "test-model",
+                client = clientForSse(sseBody),
+                enableToolCall = true,
+            )
+
+        withoutAndroidLogging {
+            val output = collectResponse(provider, Mockito.mock(Context::class.java))
+            val visibleOutput = ChatUtils.removeThinkingContent(output)
+            val toolPattern =
+                Regex(
+                    """<(tool(?:_[A-Za-z0-9]+)?)\s+name="([^"]+)"[^>]*>.*?</\1>""",
+                    RegexOption.DOT_MATCHES_ALL,
+                )
+            assertEquals(
+                listOf("write_file", "visit_web"),
+                toolPattern.findAll(visibleOutput).map { it.groupValues[2] }.toList(),
+            )
+            assertTrue(visibleOutput.contains("after both tools"))
+            assertTrue(visibleOutput.indexOf("after both tools") > visibleOutput.indexOf("https://safe.example"))
         }
     }
 

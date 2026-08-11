@@ -1453,7 +1453,7 @@ class ClaudeProvider(
                         val thinking = block.optString("thinking", "")
                         if (thinking.isNotEmpty()) {
                             fullText.append("\n<think>")
-                            fullText.append(thinking)
+                            fullText.append(ChatUtils.escapeProviderReasoningMarkup(thinking))
                             fullText.append("</think>\n")
                         }
                     }
@@ -1755,8 +1755,10 @@ class ClaudeProvider(
                                                         tokenCacheManager.cachedInputTokenCount,
                                                         tokenCacheManager.outputTokenCount
                                                     )
-                                                    emit(initialThinking)
-                                                    receivedContent.append(initialThinking)
+                                                    val protectedThinking =
+                                                        ChatUtils.escapeProviderReasoningMarkup(initialThinking)
+                                                    emit(protectedThinking)
+                                                    receivedContent.append(protectedThinking)
                                                 }
                                             }
                                             "redacted_thinking" -> {
@@ -1791,8 +1793,10 @@ class ClaudeProvider(
                                                     tokenCacheManager.cachedInputTokenCount,
                                                     tokenCacheManager.outputTokenCount
                                                 )
-                                                emit(thinking)
-                                                receivedContent.append(thinking)
+                                                val protectedThinking =
+                                                    ChatUtils.escapeProviderReasoningMarkup(thinking)
+                                                emit(protectedThinking)
+                                                receivedContent.append(protectedThinking)
                                             }
                                         } else if (enableToolCall && isInToolCall && currentToolParser != null && deltaType == "input_json_delta") {
                                             val partialJson = delta.optString("partial_json", "")

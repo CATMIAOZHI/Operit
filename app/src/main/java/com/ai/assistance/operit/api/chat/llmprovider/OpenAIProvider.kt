@@ -1783,7 +1783,8 @@ open class OpenAIProvider(
         val accumulatedToolCalls: MutableMap<Int, JSONObject> = mutableMapOf(),
         val toolCallState: ToolCallState = ToolCallState(),
         var lastProcessedToolIndex: Int? = null,
-        val imageBuffers: MutableMap<Int, ImageBufferState> = mutableMapOf()
+        val imageBuffers: MutableMap<Int, ImageBufferState> = mutableMapOf(),
+        val pendingRegularContent: StringBuilder = StringBuilder(),
     )
 
     private suspend fun closeReasoningBlockIfOpen(
@@ -2010,6 +2011,17 @@ open class OpenAIProvider(
         }
     }
 
+    private suspend fun flushPendingRegularContent(
+        state: StreamingState,
+        emitter: StreamEmitter,
+    ) {
+        if (state.pendingRegularContent.isEmpty() || hasOpenToolCalls(state)) return
+
+        val pendingContent = state.pendingRegularContent.toString()
+        state.pendingRegularContent.setLength(0)
+        processContentDelta("", pendingContent, state, emitter)
+    }
+
     private fun hasResponsesReasoningItem(responseObj: JSONObject?): Boolean {
         val output = responseObj?.optJSONArray("output") ?: return false
         for (i in 0 until output.length()) {
@@ -2216,6 +2228,7 @@ open class OpenAIProvider(
                 val outputIndex = jsonResponse.optInt("output_index", -1)
                 if (outputIndex >= 0) {
                     closeToolCallIfOpen(outputIndex, state, emitter)
+                    flushPendingRegularContent(state, emitter)
                     state.lastProcessedToolIndex = outputIndex
                 }
             }
@@ -2234,6 +2247,7 @@ open class OpenAIProvider(
 
                 val reasoningWasOpen = closeReasoningBlockIfOpen(state, emitter)
                 closeAllOpenToolCalls(state, emitter)
+                flushPendingRegularContent(state, emitter)
                 if (!reasoningWasOpen) {
                     val lateReasoningText = extractResponsesReasoningText(responseObj)
                     if (lateReasoningText.isNotEmpty() && state.streamedReasoningContentLength == 0) {
@@ -2295,6 +2309,7 @@ open class OpenAIProvider(
             state.accumulatedToolCalls.clear()
             state.lastProcessedToolIndex = null
         }
+        flushPendingRegularContent(state, emitter)
     }
 
     /**
@@ -2310,10 +2325,16 @@ open class OpenAIProvider(
         val hasRegular = regularContent.isNotNullOrEmpty()
 
         // Once structured tool markup has started, provider text cannot be inserted without
-        // corrupting the still-open XML envelope. Keep the structured call authoritative and
-        // discard text that arrives late or out of protocol order.
+        // corrupting the still-open XML envelope. Reasoning that arrives out of protocol order
+        // remains untrusted and is discarded; visible content is buffered until the tool closes.
         if (hasOpenToolCalls(state) && (hasReasoning || hasRegular)) {
-            AppLogger.d("AIService", "Ignoring provider text received during an open tool call")
+            if (hasReasoning) {
+                AppLogger.d("AIService", "Ignoring provider reasoning received during an open tool call")
+            }
+            if (hasRegular) {
+                state.pendingRegularContent.append(regularContent)
+                AppLogger.d("AIService", "Buffering regular content received during an open tool call")
+            }
             return
         }
 
@@ -2455,6 +2476,7 @@ open class OpenAIProvider(
                     flushImageBuffers(state, emitter)
                     closeReasoningBlockIfOpen(state, emitter)
                     closeAllOpenToolCalls(state, emitter)
+                    flushPendingRegularContent(state, emitter)
                     AppLogger.d("AIService", "【发送消息】收到流结束标记[DONE]")
                     break
                 }
@@ -2491,6 +2513,7 @@ open class OpenAIProvider(
             }
             
             closeAllOpenToolCalls(state, emitter)
+            flushPendingRegularContent(state, emitter)
 
             AppLogger.d(
                 "AIService",
