@@ -18,6 +18,13 @@ object ChatUtils {
         val isClosing: Boolean,
         val isSelfClosing: Boolean,
         val isMalformed: Boolean,
+        val isProviderReasoningEncoded: Boolean = false,
+    )
+
+    private data class DisplayOnlyBlockFrame(
+        val family: String,
+        val bodyStart: Int,
+        val isProviderReasoningEncoded: Boolean,
     )
 
     private data class DisplayOnlyScanResult(
@@ -245,9 +252,26 @@ object ChatUtils {
                 continue
             }
 
-            val nextTerminator = content.indexOf('>', nameEnd)
-            val nestedStart = content.indexOf('<', nameEnd)
-            if (nextTerminator < 0 || (nestedStart >= 0 && nestedStart < nextTerminator)) {
+            var nextTerminator = -1
+            var quote: Char? = null
+            var suffixIndex = nameEnd
+            while (suffixIndex < content.length) {
+                val char = content[suffixIndex]
+                if (quote != null) {
+                    if (char == quote) quote = null
+                } else {
+                    when (char) {
+                        '\'', '"' -> quote = char
+                        '>' -> {
+                            nextTerminator = suffixIndex
+                            break
+                        }
+                        '<' -> break
+                    }
+                }
+                suffixIndex++
+            }
+            if (nextTerminator < 0) {
                 return DisplayOnlyBlockTag(
                     start = candidateStart,
                     endExclusive = content.length,
@@ -266,19 +290,25 @@ object ChatUtils {
                 !isClosing && lastMeaningfulIndex >= nameEnd && content[lastMeaningfulIndex] == '/'
             val suffixEndExclusive = if (isSelfClosing) lastMeaningfulIndex else nextTerminator
             val suffix = content.substring(nameEnd, suffixEndExclusive)
-            val hasOnlyAllowedSuffix =
-                suffix.all { it.isWhitespace() } ||
-                    (!isClosing &&
-                        !isSelfClosing &&
-                        tagName.equals("think", ignoreCase = true) &&
-                        suffix.trim() == PROVIDER_REASONING_ENCODING_ATTRIBUTE)
+            // Opening display tags follow the same permissive attribute grammar as the XML
+            // splitter and the legacy ChatMarkupRegex patterns. The scanner has already proved
+            // the suffix is bounded by this tag's `>` and contains no nested `<`, so attributes
+            // cannot escape the hidden block. Closing tags remain strict: only whitespace may
+            // appear between the family name and `>`.
+            val hasOnlyAllowedSuffix = !isClosing || suffix.all { it.isWhitespace() }
+            val family = if (tagName.startsWith("think")) "think" else "search"
             return DisplayOnlyBlockTag(
                 start = candidateStart,
                 endExclusive = nextTerminator + 1,
-                family = if (tagName.startsWith("think")) "think" else "search",
+                family = family,
                 isClosing = isClosing,
                 isSelfClosing = isSelfClosing,
                 isMalformed = !hasOnlyAllowedSuffix,
+                isProviderReasoningEncoded =
+                    !isClosing &&
+                        !isSelfClosing &&
+                        family == "think" &&
+                        suffix.trim() == PROVIDER_REASONING_ENCODING_ATTRIBUTE,
             )
         }
         return null
@@ -311,25 +341,60 @@ object ChatUtils {
      * @return Pair(移除think标签后的内容, think标签内的内容)
      */
     fun extractThinkingContent(content: String): Pair<String, String> {
-        val thinkPattern =
-            "<think(?:ing)?(\\s+$PROVIDER_REASONING_ENCODING_ATTRIBUTE)?>([\\s\\S]*?)</think(?:ing)?>"
-                .toRegex(RegexOption.DOT_MATCHES_ALL)
-        val thinkMatches = thinkPattern.findAll(content)
-        
-        // 收集所有think标签内的内容
-        val thinkingContent =
-            thinkMatches.joinToString("\n") {
-                val body = it.groupValues[2].trim()
-                if (it.groupValues[1].isNotEmpty()) decodeProviderReasoningMarkup(body) else body
+        val frames = mutableListOf<DisplayOnlyBlockFrame>()
+        val thinkingBodies = mutableListOf<String>()
+        var scanIndex = 0
+        var activeThinkDepth = 0
+
+        while (scanIndex < content.length) {
+            val tag =
+                findNextDisplayOnlyToken(
+                    content = content,
+                    fromIndex = scanIndex,
+                    beforeExclusive = content.length,
+                ) ?: break
+            val wasVisible = frames.isEmpty()
+
+            if (tag.isMalformed) {
+                if (wasVisible && tag.isClosing) {
+                    scanIndex = tag.endExclusive
+                    continue
+                }
+                break
             }
-        
-        // 移除think标签和search标签
-        val contentWithoutThink = content
-            .replace(thinkPattern, "")
-            .replace("<search>.*?(</search>|\\z)".toRegex(RegexOption.DOT_MATCHES_ALL), "")
-            .trim()
-        
-        return Pair(contentWithoutThink, thinkingContent)
+
+            when {
+                tag.isSelfClosing -> Unit
+                tag.isClosing && wasVisible -> Unit
+                tag.isClosing -> {
+                    val frame = frames.last()
+                    if (frame.family != tag.family) break
+                    frames.removeAt(frames.lastIndex)
+                    if (frame.family == "think") activeThinkDepth--
+                    if (frame.family == "think" && activeThinkDepth == 0) {
+                        val body = content.substring(frame.bodyStart, tag.start).trim()
+                        thinkingBodies +=
+                            if (frame.isProviderReasoningEncoded) {
+                                decodeProviderReasoningMarkup(body)
+                            } else {
+                                body
+                            }
+                    }
+                }
+                else -> {
+                    if (tag.family == "think") activeThinkDepth++
+                    frames +=
+                        DisplayOnlyBlockFrame(
+                            family = tag.family,
+                            bodyStart = tag.endExclusive,
+                            isProviderReasoningEncoded = tag.isProviderReasoningEncoded,
+                        )
+                }
+            }
+            scanIndex = tag.endExclusive
+        }
+
+        return Pair(removeThinkingContent(content), thinkingBodies.joinToString("\n"))
     }
 
     /**

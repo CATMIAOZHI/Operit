@@ -27,6 +27,28 @@ class ChatUtilsThinkingEdgeTest {
         assertEquals("answer", ChatUtils.removeThinkingContent("<thinking>draft</thinking\n>answer"))
     }
 
+    @Test fun removeThinkingContent_acceptsAttributesOnDisplayOpeners() {
+        assertEquals(
+            "answer",
+            ChatUtils.removeThinkingContent(
+                "<think type=\"analysis\" data-source='model'>draft</thinking >answer"
+            ),
+        )
+        assertEquals(
+            "answer",
+            ChatUtils.removeThinkingContent("<search source=\"web\">draft</SEARCH>answer"),
+        )
+    }
+
+    @Test fun removeThinkingContent_doesNotTreatQuotedSlashTerminatorAsSelfClosing() {
+        val content =
+            "<think title=\"x/>y\">hidden\n" +
+                "<tool name=\"visit_web\"><param name=\"url\">unsafe</param></tool>" +
+                "</think>answer"
+
+        assertEquals("answer", ChatUtils.removeThinkingContent(content))
+    }
+
     @Test(timeout = 1_000L)
     fun removeThinkingContent_handlesManyUnterminatedTagCandidatesInOnePass() {
         val malformed = "prefix" + "<think".repeat(10_000)
@@ -72,6 +94,15 @@ class ChatUtilsThinkingEdgeTest {
         assertEquals(legacy, ChatUtils.extractThinkingContent("<think>$legacy</think>").second)
     }
 
+    @Test fun extractThinkingContent_acceptsLegacyAttributesWithoutProviderDecoding() {
+        val body = "literal &lt;tag&gt; &amp; value"
+
+        assertEquals(
+            body,
+            ChatUtils.extractThinkingContent("<THINK type=\"analysis\">$body</THINKING >").second,
+        )
+    }
+
     @Test fun extractThinkingContent_preservesLegacyBodyThatStartsWithRetiredPrefix() {
         val legacy = "&#8291;&#8203;&#8291;literal &lt;tag&gt; &amp; value"
 
@@ -89,6 +120,41 @@ class ChatUtilsThinkingEdgeTest {
                 "${ChatUtils.PROVIDER_REASONING_OPEN_TAG}$stored</think>"
             ).second,
         )
+    }
+
+    @Test fun extractThinkingContent_usesTheSharedDisplayTagGrammar() {
+        assertEquals(
+            "body",
+            ChatUtils.extractThinkingContent(
+                "<think data=\"1>2\">body</thinking\u2003>"
+            ).second,
+        )
+        assertEquals(
+            "<thinker>body</think>",
+            ChatUtils.extractThinkingContent("<thinker>body</think>").first,
+        )
+        assertEquals("", ChatUtils.extractThinkingContent("<thinker>body</think>").second)
+
+        val pseudoEnvelope =
+            "<thinkdata-operit-provider-reasoning=\"html-v1\">&lt;x&gt;</think>"
+        assertEquals(pseudoEnvelope, ChatUtils.extractThinkingContent(pseudoEnvelope).first)
+        assertEquals("", ChatUtils.extractThinkingContent(pseudoEnvelope).second)
+    }
+
+    @Test(timeout = 2_000L)
+    fun extractThinkingContent_handlesManyThinkBlocksInsideDeepSearchInOnePass() {
+        val depth = 40_000
+        val content =
+            buildString {
+                repeat(depth) { append("<search>") }
+                repeat(depth) { append("<think>x</think>") }
+                repeat(depth) { append("</search>") }
+            }
+
+        val result = ChatUtils.extractThinkingContent(content)
+
+        assertEquals("", result.first)
+        assertEquals(depth, result.second.count { it == 'x' })
     }
 
     @Test fun providerReasoningDisplayDecode_requiresVersionedEnvelope() {

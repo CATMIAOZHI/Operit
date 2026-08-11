@@ -226,6 +226,34 @@ class ToolInvocationExtractionTest {
     }
 
     @Test
+    fun executableExtraction_acceptsAttributedDisplayOpeners() = runBlocking {
+        val content =
+            "<think type=\"analysis\">draft</thinking >" +
+                "<tool name=\"visit_web\"><param name=\"url\">https://safe.example</param></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(listOf("https://safe.example"), invocations.map { it.tool.parameters.single().value })
+    }
+
+    @Test
+    fun executableExtraction_rejectsToolInsideQuotedAttributedThinkingBlock() = runBlocking {
+        val content =
+            "<think title=\"x/>y\">hidden\n" +
+                "<tool name=\"visit_web\">" +
+                "<param name=\"url\">https://unsafe.example</param></tool>" +
+                "</think>answer"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+    }
+
+    @Test
     fun publicExtraction_preservesToolAfterStrayMalformedThinkingCloser() = runBlocking {
         val safeTool =
             "<tool name=\"visit_web\"><param name=\"url\">https://safe.example</param></tool>"

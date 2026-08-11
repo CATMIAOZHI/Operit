@@ -89,4 +89,54 @@ class StreamXmlPluginDisplayClosingTest {
             StreamLogger.setEnabled(true)
         }
     }
+
+    @Test
+    fun splitByDoesNotExposeToolInsideQuotedAttributedThinkingBlock() = runBlocking {
+        try {
+            StreamLogger.setEnabled(false)
+            val input =
+                "<think title=\"x/>y\">hidden\n" +
+                    "<tool name=\"visit_web\"><param name=\"url\">unsafe</param></tool>" +
+                    "</think>answer"
+            val groups = mutableListOf<Pair<Boolean, String>>()
+            input.stream().splitBy(NestedMarkdownProcessor.getBlockPlugins()).collect { group ->
+                val text = StringBuilder()
+                group.stream.collect { text.append(it) }
+                groups.add((group.tag is StreamXmlPlugin) to text.toString())
+            }
+
+            assertEquals(
+                "$input -> $groups",
+                0,
+                groups.count { (isXml, text) ->
+                    isXml && ChatMarkupRegex.matchToolCall(text) != null
+                },
+            )
+        } finally {
+            StreamLogger.setEnabled(true)
+        }
+    }
+
+    @Test
+    fun splitByKeepsMultilineQuotedMarkdownInsideXmlBlock() = runBlocking {
+        try {
+            StreamLogger.setEnabled(false)
+            val input = "<think title=\"x>\n# heading\n\">secret</think>answer"
+            val groups = mutableListOf<Pair<StreamPlugin?, String>>()
+            input.stream().splitBy(NestedMarkdownProcessor.getBlockPlugins()).collect { group ->
+                val text = StringBuilder()
+                group.stream.collect { text.append(it) }
+                groups.add(group.tag to text.toString())
+            }
+
+            val headingGroup = groups.single { (_, text) -> "# heading" in text }
+            assertEquals("$input -> $groups", true, headingGroup.first is StreamXmlPlugin)
+            assertEquals(
+                "<think title=\"x>\n# heading\n\">secret</think>",
+                headingGroup.second,
+            )
+        } finally {
+            StreamLogger.setEnabled(true)
+        }
+    }
 }
