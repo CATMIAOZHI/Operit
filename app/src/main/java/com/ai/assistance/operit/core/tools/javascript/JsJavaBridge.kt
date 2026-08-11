@@ -776,11 +776,12 @@ internal fun buildJavaClassBridgeDefinition(): String {
                         );
                     },
                     get: function(fieldName) {
-                        if (arguments.length === 0) {
+                        var args = Array.prototype.slice.call(arguments);
+                        if (invokeBridgeBoolean('javaHasInstanceMethod', [handle, 'get'])) {
                             return invokeBridge('javaCallInstance', [
                                 handle,
                                 'get',
-                                '[]'
+                                JSON.stringify(normalizeArgs(args))
                             ]);
                         }
                         return invokeBridge('javaGetInstanceField', [
@@ -789,11 +790,12 @@ internal fun buildJavaClassBridgeDefinition(): String {
                         ]);
                     },
                     set: function(fieldName, value) {
-                        if (arguments.length === 1) {
+                        var args = Array.prototype.slice.call(arguments);
+                        if (invokeBridgeBoolean('javaHasInstanceMethod', [handle, 'set'])) {
                             return invokeBridge('javaCallInstance', [
                                 handle,
                                 'set',
-                                JSON.stringify(normalizeArgs([fieldName]))
+                                JSON.stringify(normalizeArgs(args))
                             ]);
                         }
                         return invokeBridge('javaSetInstanceField', [

@@ -30,6 +30,15 @@ class JsJavaBridgeSecurityTest {
         assertTrue(module.source.contains("looksLikeClassSegment"))
         assertTrue(module.source.contains("Java bridge interface proxy is not allowed"))
         assertFalse(module.source.contains("ensureJsInterfaceMarkerRegistered"))
+
+        val getHelper =
+            module.source.substringAfter("get: function(fieldName)").substringBefore("set: function")
+        assertTrue(getHelper.indexOf("javaHasInstanceMethod") < getHelper.indexOf("javaGetInstanceField"))
+        assertTrue(getHelper.contains("JSON.stringify(normalizeArgs(args))"))
+        val setHelper =
+            module.source.substringAfter("set: function(fieldName, value)").substringBefore("toJSON: function")
+        assertTrue(setHelper.indexOf("javaHasInstanceMethod") < setHelper.indexOf("javaSetInstanceField"))
+        assertTrue(setHelper.contains("JSON.stringify(normalizeArgs(args))"))
     }
 
     @Test
@@ -318,6 +327,175 @@ class JsJavaBridgeSecurityTest {
             JsJavaBridgeDelegates.isJavaBridgeMethodAllowed(ArrayList::class.java, removeAll)
         )
         assertTrue(JsJavaBridgeDelegates.isJavaBridgeMethodAllowed(ArrayList::class.java, addAll))
+    }
+
+    @Test
+    fun advertisedStringCollectionAndNumericCallsUseProductionDispatch() {
+        val registry = ConcurrentHashMap<String, Any>()
+        registry["string-handle"] = "abc"
+        registry["list-handle"] = ArrayList(listOf("first", "second"))
+        registry["builder-handle"] = StringBuilder()
+
+        val containsResult =
+            JsJavaBridgeDelegates.callInstance(
+                instanceHandle = "string-handle",
+                methodName = "contains",
+                argsJson = "[\"b\"]",
+                objectRegistry = registry
+            )
+        assertTrue(containsResult, containsResult.contains("\"success\":true"))
+        assertTrue(containsResult, containsResult.contains("\"data\":true"))
+
+        val contentEqualsResult =
+            JsJavaBridgeDelegates.callInstance(
+                instanceHandle = "string-handle",
+                methodName = "contentEquals",
+                argsJson = "[\"abc\"]",
+                objectRegistry = registry
+            )
+        assertTrue(contentEqualsResult, contentEqualsResult.contains("\"data\":true"))
+
+        val getResult =
+            JsJavaBridgeDelegates.callInstance(
+                instanceHandle = "list-handle",
+                methodName = "get",
+                argsJson = "[1]",
+                objectRegistry = registry
+            )
+        assertTrue(getResult, getResult.contains("\"data\":\"second\""))
+
+        val setResult =
+            JsJavaBridgeDelegates.callInstance(
+                instanceHandle = "list-handle",
+                methodName = "set",
+                argsJson = "[1,\"updated\"]",
+                objectRegistry = registry
+            )
+        assertTrue(setResult, setResult.contains("\"data\":\"second\""))
+        assertEquals("updated", (registry["list-handle"] as ArrayList<*>)[1])
+
+        val appendResult =
+            JsJavaBridgeDelegates.callInstance(
+                instanceHandle = "builder-handle",
+                methodName = "append",
+                argsJson = "[1.5]",
+                objectRegistry = registry
+            )
+        assertTrue(appendResult, appendResult.contains("\"success\":true"))
+        assertEquals("1.5", registry["builder-handle"].toString())
+
+        val valueOfResult =
+            JsJavaBridgeDelegates.callStatic(
+                className = "java.lang.String",
+                methodName = "valueOf",
+                argsJson = "[1.5]",
+                objectRegistry = registry
+            )
+        assertTrue(valueOfResult, valueOfResult.contains("\"data\":\"1.5\""))
+
+        val numericTextResult =
+            JsJavaBridgeDelegates.callStatic(
+                className = "java.lang.String",
+                methodName = "valueOf",
+                argsJson = "[\" 1 \"]",
+                objectRegistry = registry
+            )
+        assertTrue(numericTextResult, numericTextResult.contains("\"data\":\" 1 \""))
+
+        val booleanLikeTextResult =
+            JsJavaBridgeDelegates.callStatic(
+                className = "java.lang.String",
+                methodName = "valueOf",
+                argsJson = "[\" true \"]",
+                objectRegistry = registry
+            )
+        assertTrue(
+            booleanLikeTextResult,
+            booleanLikeTextResult.contains("\"data\":\" true \"")
+        )
+
+        val preciseDecimalResult =
+            JsJavaBridgeDelegates.callStatic(
+                className = "java.lang.String",
+                methodName = "valueOf",
+                argsJson = "[1234567890.123456789]",
+                objectRegistry = registry
+            )
+        assertTrue(
+            preciseDecimalResult,
+            preciseDecimalResult.contains("\"data\":\"1234567890.123456789\"")
+        )
+
+        val positiveOverflowResult =
+            JsJavaBridgeDelegates.callStatic(
+                className = "java.lang.String",
+                methodName = "valueOf",
+                argsJson = "[1e309]",
+                objectRegistry = registry
+            )
+        assertTrue(
+            positiveOverflowResult,
+            positiveOverflowResult.contains("\"data\":\"1E+309\"")
+        )
+
+        val negativeOverflowResult =
+            JsJavaBridgeDelegates.callStatic(
+                className = "java.lang.String",
+                methodName = "valueOf",
+                argsJson = "[-1e309]",
+                objectRegistry = registry
+            )
+        assertTrue(
+            negativeOverflowResult,
+            negativeOverflowResult.contains("\"data\":\"-1E+309\"")
+        )
+    }
+
+    @Test
+    fun collectionsAddAllCountsOnlyActualSetGrowthThroughProductionCall() {
+        val registry = ConcurrentHashMap<String, Any>()
+        val fullSet = HashSet<Int>((0 until 65_536).toList())
+        registry["full-set"] = fullSet
+        val fullSetMarker =
+            "{\"__javaHandle\":\"full-set\",\"__javaClass\":\"java.util.HashSet\"}"
+
+        val existingResult =
+            JsJavaBridgeDelegates.callStatic(
+                className = "java.util.Collections",
+                methodName = "addAll",
+                argsJson = "[$fullSetMarker,0]",
+                objectRegistry = registry
+            )
+        assertTrue(existingResult, existingResult.contains("\"success\":true"))
+        assertTrue(existingResult, existingResult.contains("\"data\":false"))
+        assertEquals(65_536, fullSet.size)
+
+        val growthResult =
+            Mockito.mockStatic(AppLogger::class.java).use {
+                JsJavaBridgeDelegates.callStatic(
+                    className = "java.util.Collections",
+                    methodName = "addAll",
+                    argsJson = "[$fullSetMarker,65536]",
+                    objectRegistry = registry
+                )
+            }
+        assertTrue(growthResult, growthResult.contains("\"success\":false"))
+        assertTrue(growthResult, growthResult.contains("element limit"))
+        assertEquals(65_536, fullSet.size)
+
+        val boundarySet = HashSet<Int>((0 until 65_535).toList())
+        registry["boundary-set"] = boundarySet
+        val boundaryMarker =
+            "{\"__javaHandle\":\"boundary-set\",\"__javaClass\":\"java.util.HashSet\"}"
+        val duplicateNewResult =
+            JsJavaBridgeDelegates.callStatic(
+                className = "java.util.Collections",
+                methodName = "addAll",
+                argsJson = "[$boundaryMarker,65535,65535]",
+                objectRegistry = registry
+            )
+        assertTrue(duplicateNewResult, duplicateNewResult.contains("\"success\":true"))
+        assertEquals(65_536, boundarySet.size)
     }
 
     @Test

@@ -58,6 +58,16 @@ exports.run = async function run() {
     'safe package StringBuilder lookup failed'
   );
   assert(Java.java.lang.Integer.parseInt('42') === 42, 'safe Integer call failed');
+  const safeString = new Java.java.lang.String('abc');
+  assert(safeString.contains('b') === true, 'safe String.contains call failed');
+  assert(
+    new StringBuilder().append(1.5).toString() === '1.5',
+    'fractional numeric overload selection was lossy'
+  );
+  assert(
+    Java.java.lang.String.valueOf(' a ') === ' a ',
+    'Object overload should win over String-to-Char coercion'
+  );
 
   const blockedClasses = [
     'java.lang.Runtime',
@@ -130,6 +140,9 @@ exports.run = async function run() {
   const list = new Java.java.util.ArrayList();
   list.add('b');
   list.add('a');
+  assert(list.get(0) === 'b', 'direct ArrayList.get dispatch failed');
+  assert(list.set(0, 'updated') === 'b', 'direct ArrayList.set dispatch failed');
+  assert(list.get(0) === 'updated', 'ArrayList.set did not update the element');
   rejectionMessages.push(
     expectRejected('quadratic collection helper', () =>
       Java.java.util.Collections.indexOfSubList(list, list)

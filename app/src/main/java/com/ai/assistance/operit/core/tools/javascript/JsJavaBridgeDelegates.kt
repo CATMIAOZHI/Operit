@@ -10,6 +10,7 @@ import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.lang.reflect.Proxy
+import java.math.BigDecimal
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.Locale
@@ -175,6 +176,19 @@ internal object JsJavaBridgeDelegates {
                 "java.lang.Long",
                 "parseUnsignedLong",
                 listOf("java.lang.CharSequence", "int", "int", "int")
+            )
+        )
+    private val safeStringCharSequenceMethodSignatures =
+        setOf(
+            methodSignature(
+                "java.lang.String",
+                "contains",
+                listOf("java.lang.CharSequence")
+            ),
+            methodSignature(
+                "java.lang.String",
+                "contentEquals",
+                listOf("java.lang.CharSequence")
             )
         )
     private val allowedMethodNamesByClass =
@@ -659,7 +673,13 @@ internal object JsJavaBridgeDelegates {
             val normalizedMethodName = methodName.trim()
             require(normalizedMethodName.isNotEmpty()) { "method name is required" }
 
-            val rawArgs = parseArgsJson(argsJson, objectRegistry)
+            val rawArgs =
+                parseArgsJsonInternal(
+                    argsJson = argsJson,
+                    objectRegistry = objectRegistry,
+                    validateDecodedGraph =
+                        !(clazz == Collections::class.java && normalizedMethodName == "addAll")
+                )
             val staticMethodMatch =
                 try {
                     selectMethod(
@@ -1336,7 +1356,16 @@ internal object JsJavaBridgeDelegates {
     }
 
     internal fun isJavaBridgeMethodAllowed(targetClass: Class<*>, method: Method): Boolean {
-        if (method.parameterTypes.any { parameter -> parameter == CharSequence::class.java }) {
+        val signature =
+            methodSignature(
+                targetClass.name,
+                method.name,
+                method.parameterTypes.map { it.name }
+            )
+        if (
+            method.parameterTypes.any { parameter -> parameter == CharSequence::class.java } &&
+                signature !in safeStringCharSequenceMethodSignatures
+        ) {
             return false
         }
         return isJavaBridgeMethodSignatureAllowed(
@@ -1481,7 +1510,15 @@ internal object JsJavaBridgeDelegates {
         require(isJavaBridgeMethodAllowed(targetClass, method)) {
             "Java bridge method '${targetClass.name}.${method.name}' is not allowed"
         }
-        validateBridgeReturnValue(args)
+        val isCollectionsAddAll =
+            targetClass == Collections::class.java && method.name == "addAll"
+        if (isCollectionsAddAll) {
+            // These are two already-bounded bridge inputs. Validating each graph separately avoids
+            // rejecting a full Set merely because the wrapper array adds bookkeeping elements.
+            args.forEach(::validateBridgeReturnValue)
+        } else {
+            validateBridgeReturnValue(args)
+        }
         when (instance) {
             is StringBuilder -> validateStringBuilderInvocation(instance, method, args)
             is Map<*, *> -> {
@@ -1493,9 +1530,18 @@ internal object JsJavaBridgeDelegates {
                 validateCollectionGrowth(instance, method, args)
             }
         }
-        if (targetClass == Collections::class.java && method.name == "addAll") {
+        if (isCollectionsAddAll) {
             val collection = args.firstOrNull() as? Collection<*>
-            val addedCount = args.getOrNull(1)?.let(::arrayLengthOrZero) ?: 0
+            val addedValues = args.getOrNull(1)?.let(::arrayElements).orEmpty()
+            val addedCount =
+                if (collection is Set<*>) {
+                    val distinctNewValues = HashSet<Any?>()
+                    addedValues.count { value ->
+                        !collection.contains(value) && distinctNewValues.add(value)
+                    }
+                } else {
+                    addedValues.size
+                }
             if (collection != null) {
                 require(collection.size.toLong() + addedCount <= MAX_BRIDGE_MUTABLE_CONTAINER_SIZE) {
                     "Java bridge collection exceeds the element limit " +
@@ -1629,9 +1675,25 @@ internal object JsJavaBridgeDelegates {
         return if (value.javaClass.isArray) ReflectArray.getLength(value) else 0
     }
 
+    private fun arrayElements(value: Any): List<Any?> {
+        if (!value.javaClass.isArray) return emptyList()
+        return List(ReflectArray.getLength(value)) { index -> ReflectArray.get(value, index) }
+    }
+
     private fun parseArgsJson(
         argsJson: String,
         objectRegistry: ConcurrentHashMap<String, Any>
+    ): List<Any?> =
+        parseArgsJsonInternal(
+            argsJson = argsJson,
+            objectRegistry = objectRegistry,
+            validateDecodedGraph = true
+        )
+
+    private fun parseArgsJsonInternal(
+        argsJson: String,
+        objectRegistry: ConcurrentHashMap<String, Any>,
+        validateDecodedGraph: Boolean
     ): List<Any?> {
         validateBridgeInputJsonText(argsJson)
         val normalized = argsJson.trim()
@@ -1651,7 +1713,9 @@ internal object JsJavaBridgeDelegates {
                 )
             )
         }
-        validateBridgeReturnValue(args)
+        if (validateDecodedGraph) {
+            validateBridgeReturnValue(args)
+        }
         return args
     }
 
@@ -2343,7 +2407,7 @@ internal object JsJavaBridgeDelegates {
                     return ConvertedArg(proxy, 3)
                 }
             }
-            return ConvertedArg(rawValue, 10)
+            return ConvertedArg(rawValue, 4)
         }
 
         if (
@@ -2366,7 +2430,13 @@ internal object JsJavaBridgeDelegates {
         }
 
         if (wrapper.isInstance(rawValue)) {
-            return ConvertedArg(rawValue, 0)
+            val score =
+                when (wrapper) {
+                    Any::class.java -> 4
+                    Number::class.java -> 1
+                    else -> 0
+                }
+            return ConvertedArg(rawValue, score)
         }
 
         if (wrapper == String::class.java) {
@@ -2825,7 +2895,7 @@ internal object JsJavaBridgeDelegates {
     private fun convertToBoolean(rawValue: Any): ConvertedArg? {
         return when (rawValue) {
             is Boolean -> ConvertedArg(rawValue, 0)
-            is Number -> ConvertedArg(rawValue.toInt() != 0, 4)
+            is Number -> ConvertedArg(rawValue.toInt() != 0, 60)
             is String -> {
                 when (rawValue.trim().lowercase(Locale.ROOT)) {
                     "true", "1", "yes", "y" -> ConvertedArg(true, 5)
@@ -2840,11 +2910,11 @@ internal object JsJavaBridgeDelegates {
     private fun convertToChar(rawValue: Any): ConvertedArg? {
         return when (rawValue) {
             is Char -> ConvertedArg(rawValue, 0)
-            is Number -> ConvertedArg(rawValue.toInt().toChar(), 5)
+            is Number -> ConvertedArg(rawValue.toInt().toChar(), 60)
             is String -> {
                 val normalized = rawValue.trim()
                 if (normalized.length == 1) {
-                    ConvertedArg(normalized[0], 4)
+                    ConvertedArg(normalized[0], 5)
                 } else {
                     null
                 }
@@ -2894,12 +2964,128 @@ internal object JsJavaBridgeDelegates {
                     java.lang.Double::class.java -> parsed.toDouble()
                     else -> return null
                 }
-            val score = if (rawValue is Number) 2 else 5
+            if (!isLosslessNumericConversion(parsed, numberType, converted)) {
+                return null
+            }
+            val score =
+                numericConversionScore(parsed, numberType) +
+                    if (rawValue is Number) 0 else 20
             ConvertedArg(converted, score)
         } catch (_: Exception) {
             null
         }
     }
+
+    private fun numericConversionScore(source: Number, targetType: Class<*>): Int {
+        val sourceRank = numericTypeRank(source)
+        val targetRank = numericTypeRank(targetType)
+        if (sourceRank == targetRank) return 0
+
+        val sourceIsIntegral = sourceRank in 0..3
+        val targetIsIntegral = targetRank in 0..3
+        return when {
+            sourceIsIntegral && targetIsIntegral && targetRank > sourceRank ->
+                1 + targetRank - sourceRank
+            sourceIsIntegral && targetIsIntegral -> 10 + sourceRank - targetRank
+            sourceIsIntegral -> 20 + targetRank - 4
+            targetIsIntegral -> 30 + targetRank
+            targetRank > sourceRank -> 1 + targetRank - sourceRank
+            else -> 10 + sourceRank - targetRank
+        }
+    }
+
+    private fun numericTypeRank(type: Class<*>): Int =
+        when (type) {
+            java.lang.Byte::class.java -> 0
+            java.lang.Short::class.java -> 1
+            java.lang.Integer::class.java -> 2
+            java.lang.Long::class.java -> 3
+            java.lang.Float::class.java -> 4
+            java.lang.Double::class.java -> 5
+            else -> Int.MAX_VALUE / 2
+        }
+
+    private fun numericTypeRank(value: Number): Int =
+        when (value) {
+            is Byte -> 0
+            is Short -> 1
+            is Int -> 2
+            is Long -> 3
+            is Float -> 4
+            is Double -> 5
+            else -> {
+                val decimal = value.toExactBigDecimal()
+                if (decimal != null && decimal.stripTrailingZeros().scale() <= 0) {
+                    when {
+                        decimal >= BigDecimal.valueOf(Int.MIN_VALUE.toLong()) &&
+                            decimal <= BigDecimal.valueOf(Int.MAX_VALUE.toLong()) -> 2
+                        decimal >= BigDecimal.valueOf(Long.MIN_VALUE) &&
+                            decimal <= BigDecimal.valueOf(Long.MAX_VALUE) -> 3
+                        else -> 5
+                    }
+                } else {
+                    5
+                }
+            }
+        }
+
+    private fun isLosslessNumericConversion(
+        source: Number,
+        targetType: Class<*>,
+        converted: Any
+    ): Boolean {
+        return when (targetType) {
+            java.lang.Byte::class.java ->
+                isExactIntegralValue(source, Byte.MIN_VALUE.toLong(), Byte.MAX_VALUE.toLong())
+            java.lang.Short::class.java ->
+                isExactIntegralValue(source, Short.MIN_VALUE.toLong(), Short.MAX_VALUE.toLong())
+            java.lang.Integer::class.java ->
+                isExactIntegralValue(source, Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong())
+            java.lang.Long::class.java ->
+                isExactIntegralValue(source, Long.MIN_VALUE, Long.MAX_VALUE)
+            java.lang.Float::class.java ->
+                numericValuesEqual(source, converted as Float)
+            java.lang.Double::class.java ->
+                numericValuesEqual(source, converted as Double)
+            else -> false
+        }
+    }
+
+    private fun isExactIntegralValue(source: Number, minimum: Long, maximum: Long): Boolean {
+        val decimal = source.toExactBigDecimal() ?: return false
+        if (decimal.stripTrailingZeros().scale() > 0) return false
+        return decimal >= BigDecimal.valueOf(minimum) && decimal <= BigDecimal.valueOf(maximum)
+    }
+
+    private fun numericValuesEqual(source: Number, converted: Float): Boolean {
+        if (source is Float) return source.toRawBits() == converted.toRawBits()
+        val sourceDouble = source.toDouble()
+        if (sourceDouble.isNaN()) return source is Double && converted.isNaN()
+        if (sourceDouble.isInfinite()) {
+            return source is Double && converted.toDouble() == sourceDouble
+        }
+        if (!converted.isFinite()) return false
+        return source.toExactBigDecimal()?.compareTo(BigDecimal.valueOf(converted.toDouble())) == 0
+    }
+
+    private fun numericValuesEqual(source: Number, converted: Double): Boolean {
+        if (source is Double) return source.toRawBits() == converted.toRawBits()
+        val sourceDouble = source.toDouble()
+        if (sourceDouble.isNaN()) return source is Float && converted.isNaN()
+        if (sourceDouble.isInfinite()) {
+            return source is Float && converted == sourceDouble
+        }
+        if (!converted.isFinite()) return false
+        return source.toExactBigDecimal()?.compareTo(BigDecimal.valueOf(converted)) == 0
+    }
+
+    private fun Number.toExactBigDecimal(): BigDecimal? =
+        when (this) {
+            is Byte, is Short, is Int, is Long -> BigDecimal.valueOf(toLong())
+            is Float -> if (isFinite()) BigDecimal.valueOf(toDouble()) else null
+            is Double -> if (isFinite()) BigDecimal.valueOf(this) else null
+            else -> toString().toBigDecimalOrNull()
+        }
 
     private fun findField(clazz: Class<*>, fieldName: String, staticOnly: Boolean): Field? {
         return clazz.fields.firstOrNull { field ->
