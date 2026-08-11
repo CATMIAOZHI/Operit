@@ -36,7 +36,6 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.config.SystemToolPrompts
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.workflow.WorkflowIntentSecurity
-import com.ai.assistance.operit.core.workflow.WorkflowAuthTokenManager
 import com.ai.assistance.operit.data.model.Workflow
 import com.ai.assistance.operit.data.model.WorkflowNode
 import com.ai.assistance.operit.data.model.TriggerNode
@@ -61,6 +60,19 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+internal fun defaultWorkflowTriggerConfigJson(triggerType: String): String =
+    when (triggerType) {
+        "schedule" ->
+            """{"schedule_type":"interval","interval_ms":"900000","repeat":"true","enabled":"true"}"""
+        "tasker", "intent" ->
+            org.json.JSONObject(
+                WorkflowIntentSecurity.defaultConfigForNewExternalTrigger(triggerType)
+            ).toString(2)
+        "speech" ->
+            """{"pattern": "(?i)\\bhello\\b", "ignore_case": "true", "require_final": "true", "cooldown_ms": "3000"}"""
+        else -> "{}"
+    }
 
 @Composable
 private fun ConditionOperator.toDisplayText(): String {
@@ -709,7 +721,6 @@ fun NodeDialog(
     var actionTypeExpanded by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
-    val workflowAuthTokenManager = remember(context) { WorkflowAuthTokenManager(context) }
     val toolHandler = remember(context) { AIToolHandler.getInstance(context) }
     val packageManager = remember(context) { toolHandler.getOrCreatePackageManager() }
     val allToolNames = remember(context) {
@@ -1900,13 +1911,7 @@ fun NodeDialog(
                                             triggerType = key
                                             triggerTypeExpanded = false
                                             // 设置默认配置示例
-                                            triggerConfig = when (key) {
-                                                "schedule" -> """{"schedule_type":"interval","interval_ms":"900000","repeat":"true","enabled":"true"}"""
-                                                "tasker" -> """{"${WorkflowIntentSecurity.CONFIG_TASKER_COMMAND}": "start_meeting", "${WorkflowIntentSecurity.CONFIG_AUTH_TOKEN}": "${workflowAuthTokenManager.newAuthToken()}"}"""
-                                                "intent" -> """{"${WorkflowIntentSecurity.CONFIG_ACTION}": "${WorkflowIntentSecurity.ACTION_TRIGGER_WORKFLOW}", "${WorkflowIntentSecurity.CONFIG_AUTH_TOKEN}": "${workflowAuthTokenManager.newAuthToken()}"}"""
-                                                "speech" -> """{"pattern": "(?i)\\bhello\\b", "ignore_case": "true", "require_final": "true", "cooldown_ms": "3000"}"""
-                                                else -> "{}"
-                                            }
+                                            triggerConfig = defaultWorkflowTriggerConfigJson(key)
                                         }
                                     )
                                 }

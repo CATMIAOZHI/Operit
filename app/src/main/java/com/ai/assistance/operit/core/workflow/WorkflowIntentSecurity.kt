@@ -33,6 +33,18 @@ object WorkflowIntentSecurity {
             null
         }
 
+    /**
+     * Initial editor config for a trigger that has not been persisted yet. Capability tokens are
+     * deliberately absent here: the repository creates the durable token during save, after which
+     * the user can reopen the saved node and copy the value that will actually authenticate.
+     */
+    fun defaultConfigForNewExternalTrigger(triggerType: String): Map<String, String> =
+        when (triggerType) {
+            "intent" -> mapOf(CONFIG_ACTION to ACTION_TRIGGER_WORKFLOW)
+            "tasker" -> mapOf(CONFIG_TASKER_COMMAND to "start_meeting")
+            else -> emptyMap()
+        }
+
     fun normalizeExternalTriggerTokens(
         workflow: Workflow,
         replaceExistingTokens: Boolean = false,

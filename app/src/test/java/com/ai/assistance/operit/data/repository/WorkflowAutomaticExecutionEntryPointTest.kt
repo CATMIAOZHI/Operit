@@ -15,6 +15,9 @@ class WorkflowAutomaticExecutionEntryPointTest {
                 worker.indexOf("inputData.getString(KEY_WORKFLOW_ID)")
         )
         assertTrue(worker.contains("repository.triggerScheduledWorkflow("))
+        assertTrue(worker.contains("repository.triggerPreFingerprintScheduledWorkflow("))
+        assertTrue(worker.contains("PreFingerprintScheduleReplacementPendingException"))
+        assertTrue(worker.contains("Result.retry()"))
         assertTrue(worker.contains("scheduleFingerprint"))
         assertFalse(worker.contains("repository.triggerWorkflow(workflowId, triggerNodeId)"))
 
@@ -34,7 +37,10 @@ class WorkflowAutomaticExecutionEntryPointTest {
         val repository = source("data/repository/WorkflowRepository.kt")
         assertTrue(repository.contains("executionOrigin = WorkflowExecutionOrigin.AUTOMATIC"))
         assertTrue(repository.contains("val workflows = getAllInternalWorkflows().getOrNull()"))
-        assertTrue(repository.contains("cancelAndWait = scheduler::cancelWorkflowAndWait"))
+        assertTrue(repository.contains("rebuildOneInternalWorkflowSchedule(workflow.id)"))
+        assertTrue(repository.contains("cancelAndWait = ::cancelLegacyScheduleUnlessClaimed"))
+        assertTrue(repository.contains("shouldDeferClaimedScheduleRebuild("))
+        assertTrue(repository.contains("markPreFingerprintReplacementPending("))
         assertTrue(repository.contains("isTrustedScheduleExecutionAuthorized("))
 
         val aiTools = source("core/tools/defaultTool/standard/StandardWorkflowTools.kt")

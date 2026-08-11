@@ -158,6 +158,17 @@ class WorkflowIntentSecurityTest {
     }
 
     @Test
+    fun newExternalTriggerDefaultsDoNotExposeAThrowawayTokenBeforeSave() {
+        val intentConfig = WorkflowIntentSecurity.defaultConfigForNewExternalTrigger("intent")
+        val taskerConfig = WorkflowIntentSecurity.defaultConfigForNewExternalTrigger("tasker")
+
+        assertEquals(WorkflowIntentSecurity.ACTION_TRIGGER_WORKFLOW, intentConfig[WorkflowIntentSecurity.CONFIG_ACTION])
+        assertEquals("start_meeting", taskerConfig[WorkflowIntentSecurity.CONFIG_TASKER_COMMAND])
+        assertFalse(intentConfig.containsKey(WorkflowIntentSecurity.CONFIG_AUTH_TOKEN))
+        assertFalse(taskerConfig.containsKey(WorkflowIntentSecurity.CONFIG_AUTH_TOKEN))
+    }
+
+    @Test
     fun matchesTasker_requiresCommandAndStrongPerWorkflowToken() {
         val node = TriggerNode(
             triggerType = "tasker",

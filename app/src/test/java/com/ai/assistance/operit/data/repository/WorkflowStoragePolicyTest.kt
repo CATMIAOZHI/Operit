@@ -1,8 +1,10 @@
 package com.ai.assistance.operit.data.repository
 
+import android.content.Context
 import java.io.File
 import java.nio.file.Files
 import com.ai.assistance.operit.core.workflow.WorkflowScheduler
+import com.ai.assistance.operit.core.workflow.shouldRetryWorkflowWorkerFailure
 import com.ai.assistance.operit.data.model.TriggerNode
 import com.ai.assistance.operit.data.model.Workflow
 import com.ai.assistance.operit.data.model.WorkflowExecutionRecord
@@ -14,6 +16,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeNoException
 import org.junit.Test
+import org.mockito.Mockito.mock
 
 /**
  * Pure-JVM tests for the Phase 2 workflow storage-migration invariants that do not require an
@@ -52,7 +55,7 @@ class WorkflowStoragePolicyTest {
     }
 
     @Test
-    fun privateScheduleRebuildCancelsEveryTrustedIdBeforeScheduling() {
+    fun privateScheduleRebuildDelegatesEachIdToOneAtomicResetAction() {
         val workflows = listOf(
             Workflow(id = "enabled", enabled = true),
             Workflow(id = "disabled", enabled = false),
@@ -61,22 +64,18 @@ class WorkflowStoragePolicyTest {
         val events = mutableListOf<String>()
         val result = rebuildPrivateWorkflowSchedules(
             workflows = workflows,
-            cancelAndWait = { id ->
-                events += "cancel:$id"
-                if (id == "cancel-fails") error("cancel failed")
-            },
-            schedulePrivate = { id ->
-                events += "schedule:$id"
-                true
+            rebuildPrivate = { workflow ->
+                events += "rebuild:${workflow.id}"
+                if (workflow.id == "cancel-fails") error("cancel failed")
+                workflow.enabled
             },
         )
 
         assertEquals(
             listOf(
-                "cancel:enabled",
-                "schedule:enabled",
-                "cancel:disabled",
-                "cancel:cancel-fails",
+                "rebuild:enabled",
+                "rebuild:disabled",
+                "rebuild:cancel-fails",
             ),
             events,
         )
@@ -151,6 +150,205 @@ class WorkflowStoragePolicyTest {
                 fingerprint,
             )
         )
+    }
+
+    @Test
+    fun preFingerprintCompatibilityIsRecoverableUntilCompleted() {
+        val node = TriggerNode(
+            id = "schedule-node",
+            triggerType = "schedule",
+            triggerConfig = mapOf("interval_ms" to "900000", "enabled" to "true"),
+        )
+        val workflow = Workflow(id = "workflow", enabled = true, nodes = listOf(node))
+
+        val claim = claimPreFingerprintSchedule(
+            workflow,
+            node.id,
+            isEligible = { _, _ -> true },
+            shouldInstallReplacement = { _, _ -> true },
+        )
+        requireNotNull(claim)
+        assertEquals(WorkflowScheduler.scheduleFingerprint(workflow.id, node), claim.scheduleFingerprint)
+        assertEquals(
+            WorkflowScheduler.CLAIMED_SCHEDULE_FINGERPRINT_GENERATION,
+            claim.workflow.scheduleFingerprintGeneration,
+        )
+        assertTrue(claim.installReplacement)
+        assertTrue(claim.executeWorkflow)
+        assertTrue(isClaimedPreFingerprintExecutionAuthorized(
+            claim.workflow,
+            node.id,
+            claim.scheduleFingerprint,
+        ))
+        assertTrue(shouldDeferClaimedScheduleRebuild(claim.workflow, allowClaimedMigration = false))
+        assertFalse(shouldDeferClaimedScheduleRebuild(claim.workflow, allowClaimedMigration = true))
+
+        val resumed = claimPreFingerprintSchedule(
+            claim.workflow,
+            node.id,
+            isEligible = { _, _ -> true },
+            shouldInstallReplacement = { _, _ -> true },
+        )
+        requireNotNull(resumed)
+        assertTrue(resumed.executeWorkflow)
+
+        val pending = markPreFingerprintReplacementPending(
+            resumed.workflow,
+            node.id,
+            resumed.scheduleFingerprint,
+        )
+        requireNotNull(pending)
+        assertEquals(
+            WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION,
+            pending.scheduleFingerprintGeneration,
+        )
+        assertFalse(shouldDeferClaimedScheduleRebuild(
+            pending,
+            allowClaimedMigration = false,
+        ))
+        val replacementOnly = claimPreFingerprintSchedule(
+            pending,
+            node.id,
+            isEligible = { _, _ -> true },
+            shouldInstallReplacement = { _, _ -> true },
+        )
+        requireNotNull(replacementOnly)
+        assertFalse(replacementOnly.executeWorkflow)
+        assertTrue(replacementOnly.installReplacement)
+        assertEquals(null, markPreFingerprintReplacementPending(
+            pending,
+            node.id,
+            replacementOnly.scheduleFingerprint,
+        ))
+
+        val completed = completePreFingerprintScheduleClaim(
+            resumed.workflow,
+            node.id,
+            resumed.scheduleFingerprint,
+        )
+        requireNotNull(completed)
+        assertEquals(
+            WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+            completed.scheduleFingerprintGeneration,
+        )
+        assertFalse(isClaimedPreFingerprintExecutionAuthorized(
+            completed,
+            node.id,
+            claim.scheduleFingerprint,
+        ))
+        assertEquals(null, claimPreFingerprintSchedule(
+            completed,
+            node.id,
+            isEligible = { _, _ -> true },
+            shouldInstallReplacement = { _, _ -> true },
+        ))
+        assertEquals(null, claimPreFingerprintSchedule(
+            workflow,
+            node.id,
+            isEligible = { _, _ -> false },
+            shouldInstallReplacement = { _, _ -> true },
+        ))
+        assertEquals(null, claimPreFingerprintSchedule(
+            workflow.copy(enabled = false),
+            node.id,
+            isEligible = { _, _ -> true },
+            shouldInstallReplacement = { _, _ -> true },
+        ))
+        assertEquals(null, claimPreFingerprintSchedule(
+            workflow,
+            "missing",
+            isEligible = { _, _ -> true },
+            shouldInstallReplacement = { _, _ -> true },
+        ))
+        assertEquals(null, claimPreFingerprintSchedule(
+            workflow.copy(nodes = listOf(node.copy(triggerConfig = node.triggerConfig + ("enabled" to "false")))),
+            node.id,
+            isEligible = { _, _ -> true },
+            shouldInstallReplacement = { _, _ -> true },
+        ))
+        assertEquals(null, claimPreFingerprintSchedule(
+            workflow.copy(nodes = listOf(node.copy(triggerType = "intent"))),
+            node.id,
+            isEligible = { _, _ -> true },
+            shouldInstallReplacement = { _, _ -> true },
+        ))
+    }
+
+    @Test
+    fun explicitLegacyPromotionPublishesCurrentGenerationImmediately() {
+        val node = TriggerNode(
+            id = "schedule-node",
+            triggerType = "schedule",
+            triggerConfig = mapOf("interval_ms" to "900000", "enabled" to "true"),
+        )
+        val promoted = markExplicitLegacyPromotionAsCurrent(
+            Workflow(
+                id = "legacy",
+                enabled = true,
+                nodes = listOf(node),
+                scheduleFingerprintGeneration = null,
+            )
+        )
+
+        assertEquals(
+            WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+            promoted.scheduleFingerprintGeneration,
+        )
+        assertEquals(null, claimPreFingerprintSchedule(
+            promoted,
+            "schedule-node",
+            isEligible = { _, _ -> true },
+            shouldInstallReplacement = { _, _ -> true },
+        ))
+    }
+
+    @Test
+    fun workerRetriesOnlyPendingTrustedScheduleReplacement() {
+        assertTrue(shouldRetryWorkflowWorkerFailure(
+            PreFingerprintScheduleReplacementPendingException("workflow")
+        ))
+        assertFalse(shouldRetryWorkflowWorkerFailure(IllegalStateException("execution failed")))
+        assertFalse(shouldRetryWorkflowWorkerFailure(null))
+    }
+
+    @Test
+    fun preFingerprintSchedulerAcceptsDueOneTimeAndOnlyReplacesRecurringWork() {
+        val scheduler = WorkflowScheduler(mock(Context::class.java))
+        fun workflow(config: Map<String, String>) = Workflow(
+            id = "workflow",
+            nodes = listOf(TriggerNode(id = "schedule-node", triggerType = "schedule", triggerConfig = config)),
+        )
+
+        val dueOneTime = workflow(mapOf(
+            WorkflowScheduler.CONFIG_SCHEDULE_TYPE to WorkflowScheduler.SCHEDULE_TYPE_SPECIFIC_TIME,
+            WorkflowScheduler.CONFIG_SPECIFIC_TIME to "2000-01-01 00:00",
+        ))
+        assertTrue(scheduler.canClaimPreFingerprintSchedule(dueOneTime, "schedule-node"))
+        assertFalse(scheduler.shouldReplacePreFingerprintSchedule(dueOneTime, "schedule-node"))
+
+        val futureOneTime = dueOneTime.copy(nodes = listOf(
+            (dueOneTime.nodes.single() as TriggerNode).copy(
+                triggerConfig = (dueOneTime.nodes.single() as TriggerNode).triggerConfig +
+                    (WorkflowScheduler.CONFIG_SPECIFIC_TIME to "2999-01-01 00:00"),
+            )
+        ))
+        assertFalse(scheduler.canClaimPreFingerprintSchedule(futureOneTime, "schedule-node"))
+
+        val interval = workflow(mapOf(
+            WorkflowScheduler.CONFIG_SCHEDULE_TYPE to WorkflowScheduler.SCHEDULE_TYPE_INTERVAL,
+            WorkflowScheduler.CONFIG_INTERVAL_MS to "900000",
+            WorkflowScheduler.CONFIG_REPEAT to "true",
+        ))
+        assertTrue(scheduler.canClaimPreFingerprintSchedule(interval, "schedule-node"))
+        assertTrue(scheduler.shouldReplacePreFingerprintSchedule(interval, "schedule-node"))
+
+        val oneShotCron = workflow(mapOf(
+            WorkflowScheduler.CONFIG_SCHEDULE_TYPE to WorkflowScheduler.SCHEDULE_TYPE_CRON,
+            WorkflowScheduler.CONFIG_CRON_EXPRESSION to "*/15 * * * *",
+            WorkflowScheduler.CONFIG_REPEAT to "false",
+        ))
+        assertTrue(scheduler.canClaimPreFingerprintSchedule(oneShotCron, "schedule-node"))
+        assertFalse(scheduler.shouldReplacePreFingerprintSchedule(oneShotCron, "schedule-node"))
     }
 
     @Test
