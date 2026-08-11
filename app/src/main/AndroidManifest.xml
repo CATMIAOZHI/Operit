@@ -464,11 +464,7 @@
         <receiver
             android:name=".integrations.tasker.WorkflowTaskerReceiver"
             android:exported="true"
-            android:enabled="true">
-            <intent-filter>
-                <action android:name="com.ai.assistance.operit.TRIGGER_WORKFLOW" />
-            </intent-filter>
-        </receiver>
+            android:enabled="true" />
         
         <!-- Boot Completed Receiver for rescheduling workflows -->
         <receiver

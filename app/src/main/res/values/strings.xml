@@ -7017,7 +7017,7 @@
     <string name="workflow_template_logic_or">逻辑OR模板 %1$s</string>
     <string name="workflow_template_calculate">运算模板 %1$s</string>
     <string name="workflow_trigger_intent">Intent触发</string>
-    <string name="workflow_intent_trigger_auth_help">外部自动化必须发送固定 action，并在 extra “com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN” 中携带此工作流的 auth_token。令牌属于敏感凭据，请勿共享。</string>
+    <string name="workflow_intent_trigger_auth_help">外部自动化必须向当前 Operit 构建的 WorkflowTaskerReceiver 发送显式广播，携带固定 action，并在 extra “com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN” 中提供此工作流的 auth_token。只设置 action 会泄露令牌；仅 setPackage 而不设置 component 也不会投递。令牌属于敏感凭据，请勿共享。</string>
     <string name="workflow_tasker_trigger_auth_help">在 Tasker 的 Operit Workflow 动作中填写相同的 command 和 auth_token。Tasker 配置中的旧 params 格式需要更新；令牌属于敏感凭据，请勿共享。</string>
     <string name="workflow_tasker_config_title">配置 Operit 工作流</string>
     <string name="workflow_tasker_config_help">从目标工作流的 Tasker 触发器节点复制 command 和 auth_token。旧版 params 配置必须在这里更新后才能继续使用。</string>

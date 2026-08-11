@@ -11,31 +11,53 @@ class WorkflowReceiverManifestTest {
     private val androidNamespace = "http://schemas.android.com/apk/res/android"
 
     @Test
-    fun workflowReceiver_isExportedOnlyForAuthenticatedWorkflowAction() {
-        val manifest = File("src/main/AndroidManifest.xml")
-        assertTrue("Missing source manifest: ${manifest.absolutePath}", manifest.isFile)
-        val document = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
-            .newDocumentBuilder()
-            .parse(manifest)
-        val receivers = document.getElementsByTagName("receiver")
-        val receiver = (0 until receivers.length)
-            .map { receivers.item(it) }
-            .single {
-                it.attributes.getNamedItemNS(androidNamespace, "name")?.nodeValue ==
-                    ".integrations.tasker.WorkflowTaskerReceiver"
-            }
+    fun workflowReceiver_requiresExplicitDelivery() {
+        val manifests =
+            listOf(
+                File("src/main/AndroidManifest.xml"),
+                File("build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml")
+            )
+        manifests.forEach { manifest ->
+            assertTrue("Missing manifest: ${manifest.absolutePath}", manifest.isFile)
+            val document = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+                .newDocumentBuilder()
+                .parse(manifest)
+            val receivers = document.getElementsByTagName("receiver")
+            val receiver = (0 until receivers.length)
+                .map { receivers.item(it) }
+                .single {
+                    it.attributes.getNamedItemNS(androidNamespace, "name")?.nodeValue
+                        ?.endsWith(".integrations.tasker.WorkflowTaskerReceiver") == true
+                }
 
-        assertEquals("true", receiver.attributes.getNamedItemNS(androidNamespace, "exported").nodeValue)
-        val actions = (receiver.childNodes.let { nodes -> 0 until nodes.length }.map { receiver.childNodes.item(it) })
-            .flatMap { child ->
-                val descendants = (child as? org.w3c.dom.Element)?.getElementsByTagName("action")
-                    ?: return@flatMap emptyList()
-                (0 until descendants.length).map { descendants.item(it) }
-            }
-            .mapNotNull { it.attributes?.getNamedItemNS(androidNamespace, "name")?.nodeValue }
+            assertEquals(
+                "true",
+                receiver.attributes.getNamedItemNS(androidNamespace, "exported").nodeValue
+            )
+            val actions =
+                (receiver.childNodes.let { nodes -> 0 until nodes.length }
+                        .map { receiver.childNodes.item(it) })
+                    .flatMap { child ->
+                        val descendants =
+                            (child as? org.w3c.dom.Element)?.getElementsByTagName("action")
+                                ?: return@flatMap emptyList()
+                        (0 until descendants.length).map { descendants.item(it) }
+                    }
+                    .mapNotNull {
+                        it.attributes?.getNamedItemNS(androidNamespace, "name")?.nodeValue
+                    }
 
-        assertEquals(listOf(WorkflowTaskerReceiver.ACTION_TRIGGER_WORKFLOW), actions)
-        assertFalse(actions.contains("com.twofortyfouram.locale.intent.action.FIRE_SETTING"))
+            assertTrue("Authenticated receiver must not accept implicit broadcasts", actions.isEmpty())
+            assertFalse(actions.contains("com.twofortyfouram.locale.intent.action.FIRE_SETTING"))
+        }
+
+        val receiverSource = File(
+            "src/main/java/com/ai/assistance/operit/integrations/tasker/WorkflowTaskerReceiver.kt"
+        ).readText()
+        assertTrue(
+            receiverSource.contains("Intent(context, WorkflowTaskerReceiver::class.java)")
+        )
+        assertFalse(receiverSource.contains("setPackage(context.packageName)"))
     }
 
     @Test

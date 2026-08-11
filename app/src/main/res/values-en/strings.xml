@@ -6538,7 +6538,7 @@
     <string name="workflow_template_logic_or">Logic OR Template %1$s</string>
     <string name="workflow_template_calculate">Calculation Template %1$s</string>
     <string name="workflow_trigger_intent">Intent Trigger</string>
-    <string name="workflow_intent_trigger_auth_help">External automation must send the fixed action and include this workflow\'s auth_token in the “com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN” extra. Treat the token as a sensitive credential.</string>
+    <string name="workflow_intent_trigger_auth_help">External automation must send an explicit broadcast to the current Operit build\'s WorkflowTaskerReceiver, include the fixed action, and provide this workflow\'s auth_token in the “com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN” extra. Sending only the action leaks the token; setPackage without an explicit component will not deliver. Treat the token as a sensitive credential.</string>
     <string name="workflow_tasker_trigger_auth_help">Enter the same command and auth_token in Tasker\'s Operit Workflow action. Existing Tasker configurations using the old params format must be updated. Treat the token as a sensitive credential.</string>
     <string name="workflow_tasker_config_title">Configure Operit workflow</string>
     <string name="workflow_tasker_config_help">Copy command and auth_token from the target workflow\'s Tasker trigger node. Legacy params configurations must be updated here before they can run again.</string>

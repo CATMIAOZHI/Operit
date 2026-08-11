@@ -5,7 +5,7 @@
 当前实现支持：
 
 - **每个工作流的 Intent Trigger 可以配置自己的 `action` 和独立、由当前安装签名的 `auth_token`**
-- 外部 App 发送广播时必须同时提供正确 action 与令牌；推荐使用显式广播
+- 外部 App 发送广播时必须同时提供正确 action 与令牌，并显式指定 Operit 的 Receiver component
 
 对应代码：
 
@@ -27,11 +27,11 @@
 
 则该工作流会被触发执行。
 
-### 1.2 为什么推荐“显式广播”
+### 1.2 为什么必须使用“显式广播”
 
 Android 对隐式广播有各种限制（尤其是后台、Android 8+ 等）。
 
-为了确保广播能稳定投递给 Operit，推荐使用：
+为了避免认证令牌被其他 App 的隐式 Receiver 接收，必须使用：
 
 - **显式广播**：指定 `component`（包名 + Receiver 类名）
 
@@ -66,7 +66,7 @@ Android 对隐式广播有各种限制（尤其是后台、Android 8+ 等）。
 
 ## 4. adb 触发示例
 
-### 4.1 方式 A：显式广播（推荐，支持任意自定义 action）
+### 4.1 显式广播（必需，支持任意自定义 action）
 
 ```bash
 adb shell am broadcast \
@@ -81,20 +81,7 @@ adb shell am broadcast \
 - `-a` 为你在工作流 Trigger 里配置的 action。
 - `--es/--ez/--ei/...` 为 extras，会被工作流 TriggerNode 收集并输出。
 
-### 4.2 方式 B：隐式广播（仅当系统允许投递时）
-
-如果你不想指定 component，可以试：
-
-```bash
-adb shell am broadcast \
-  -a com.ai.assistance.operit.TRIGGER_WORKFLOW \
-  --es com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN "<工作流中的 auth_token>" \
-  --es message "hello"
-```
-
-Manifest 只为内置默认 action 注册隐式过滤器；自定义 action 必须使用显式 component。投递还取决于系统版本和 ROM 的后台限制。
-
-### 4.3 方式 C：使用内置默认 action（兼容用法）
+### 4.2 使用内置默认 action（仍需显式 component）
 
 如果你的工作流 Trigger 里 `action` 配置的是默认值：
 
@@ -104,11 +91,14 @@ Manifest 只为内置默认 action 注册隐式过滤器；自定义 action 必�
 
 ```bash
 adb shell am broadcast \
+  -n com.rainy.operitry/com.ai.assistance.operit.integrations.tasker.WorkflowTaskerReceiver \
   -a com.ai.assistance.operit.TRIGGER_WORKFLOW \
   --es com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN "<工作流中的 auth_token>" \
   --es message "hello" \
   --es request_id "req-1002"
 ```
+
+Receiver 不注册隐式 action filter。即使使用内置默认 action，也必须通过 `-n` 或 Android API 的显式 `ComponentName` 指定当前 Operit 构建变体与 Receiver。只设置 action 会把令牌暴露给其他匹配 Receiver；仅调用 `setPackage` 而不设置 component 也无法解析到该 Receiver。
 
 ---
 

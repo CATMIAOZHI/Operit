@@ -35,8 +35,8 @@ class WorkflowTaskerReceiver : BroadcastReceiver() {
             extras: Bundle? = null
         ): Intent {
             require(WorkflowIntentSecurity.isValidAuthToken(authToken)) { "Invalid workflow auth token" }
-            return Intent(ACTION_TRIGGER_WORKFLOW).apply {
-                setPackage(context.packageName)
+            return Intent(context, WorkflowTaskerReceiver::class.java).apply {
+                action = ACTION_TRIGGER_WORKFLOW
                 extras?.let { putExtras(it) }
                 putExtra(EXTRA_AUTH_TOKEN, authToken)
             }
