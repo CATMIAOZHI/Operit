@@ -96,15 +96,15 @@
 
 ## 快速开始
 
-脚本默认连接 application ID 为 `com.rainy.operitry` 的 Operit Ry debug 应用。如果 debug 构建使用其他 application ID（例如 `com.rainy.operitry.dev`），先设置 `OPERIT_APP_PACKAGE`：
+脚本默认连接 `personal/dev` 的 Operit Ry debug 应用 `com.rainy.operitry.dev`。仅当目标 debug 构建使用其他 application ID 时，才需要设置 `OPERIT_APP_PACKAGE`：
 
 ```cmd
-set OPERIT_APP_PACKAGE=com.rainy.operitry.dev
+set OPERIT_APP_PACKAGE=com.example.operit.debug
 tools\adb\execute_js.bat path\to\your\script.js functionName @params.json
 ```
 
 ```bash
-OPERIT_APP_PACKAGE=com.rainy.operitry.dev ./tools/adb/execute_js.sh path/to/your/script.js functionName '{}'
+OPERIT_APP_PACKAGE=com.example.operit.debug ./tools/adb/execute_js.sh path/to/your/script.js functionName '{}'
 ```
 
 普通 ADB shell 只允许调用 `debug` 变体的开发入口；该入口要求 shell 持有的系统级 `android.permission.DUMP`，普通第三方应用不能调用。`clone`、`release` 和 `nightly` 的接收器仍受应用签名权限保护，会拒绝普通 shell 广播。

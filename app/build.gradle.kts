@@ -32,13 +32,34 @@ val verifyScriptExecutionReceiverManifests =
                 "com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver"
             val expectations =
                 listOf(
-                    Triple("debug", "true", "android.permission.DUMP"),
-                    Triple("clone", "true", "com.rainy.operitry.clone.permission.EXECUTE_JS"),
-                    Triple("release", "true", "com.rainy.operitry.permission.EXECUTE_JS"),
-                    Triple("nightly", "true", "com.rainy.operitry.permission.EXECUTE_JS")
+                    arrayOf(
+                        "debug",
+                        "true",
+                        "android.permission.DUMP",
+                        "com.rainy.operitry.dev"
+                    ),
+                    arrayOf(
+                        "clone",
+                        "true",
+                        "com.rainy.operitry.clone.permission.EXECUTE_JS",
+                        "com.rainy.operitry.clone"
+                    ),
+                    arrayOf(
+                        "release",
+                        "true",
+                        "com.rainy.operitry.permission.EXECUTE_JS",
+                        "com.rainy.operitry"
+                    ),
+                    arrayOf(
+                        "nightly",
+                        "true",
+                        "com.rainy.operitry.permission.EXECUTE_JS",
+                        "com.rainy.operitry"
+                    )
                 )
 
-            expectations.forEach { (variant, expectedExported, expectedPermission) ->
+            expectations.forEach {
+                    (variant, expectedExported, expectedPermission, expectedPackage) ->
                 val taskSuffix = variant.replaceFirstChar(Char::uppercase)
                 val manifestFile =
                     layout.buildDirectory
@@ -56,6 +77,10 @@ val verifyScriptExecutionReceiverManifests =
                         .apply { isNamespaceAware = true }
                         .newDocumentBuilder()
                         .parse(manifestFile)
+                val actualPackage = document.documentElement.getAttribute("package")
+                check(actualPackage == expectedPackage) {
+                    "$variant package=$actualPackage, expected $expectedPackage"
+                }
                 val receivers = document.getElementsByTagName("receiver")
                 val matchingReceivers =
                     (0 until receivers.length)

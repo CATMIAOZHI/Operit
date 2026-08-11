@@ -84,14 +84,14 @@ If you just want the short answer for "which tool should I use":
 - ADB debugging permission granted on the device
 - The Operit Ry debug application installed on the device
 
-The launchers target `com.rainy.operitry` by default. Set `OPERIT_APP_PACKAGE` when the debug build uses another application ID, for example `com.rainy.operitry.dev`:
+The launchers target the `personal/dev` debug application ID `com.rainy.operitry.dev` by default. Set `OPERIT_APP_PACKAGE` only when targeting another debug application ID:
 
 ```bash
-OPERIT_APP_PACKAGE=com.rainy.operitry.dev ./execute_js.sh path/to/your/script.js functionName '{}'
+OPERIT_APP_PACKAGE=com.example.operit.debug ./execute_js.sh path/to/your/script.js functionName '{}'
 ```
 
 ```cmd
-set OPERIT_APP_PACKAGE=com.rainy.operitry.dev
+set OPERIT_APP_PACKAGE=com.example.operit.debug
 execute_js.bat path\to\your\script.js functionName @params.json
 ```
 
