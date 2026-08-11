@@ -1,84 +1,12 @@
 package com.ai.assistance.operit.util.stream.plugins
 
+import com.ai.assistance.operit.util.DisplayEndMatchResult
+import com.ai.assistance.operit.util.DisplayEndTagMatcher
+import com.ai.assistance.operit.util.displayEndTagNames
 import com.ai.assistance.operit.util.stream.*
 
 private const val GROUP_TAG_NAME = 1
 private const val GROUP_CONTENT = 2
-
-private enum class DisplayEndMatchResult {
-    MATCH,
-    IN_PROGRESS,
-    NO_MATCH,
-}
-
-private class DisplayEndTagMatcher(private val validNames: Set<String>) {
-    private var phase = 0
-    private val matchedName = StringBuilder()
-
-    fun processChar(char: Char): DisplayEndMatchResult {
-        return when (phase) {
-            0 -> if (char == '<') {
-                phase = 1
-                DisplayEndMatchResult.IN_PROGRESS
-            } else {
-                DisplayEndMatchResult.NO_MATCH
-            }
-            1 -> if (char == '/') {
-                phase = 2
-                matchedName.clear()
-                DisplayEndMatchResult.IN_PROGRESS
-            } else {
-                restartFrom(char)
-            }
-            2 -> {
-                when {
-                    char.isLetter() -> {
-                        matchedName.append(char.lowercaseChar())
-                        if (validNames.any { it.startsWith(matchedName.toString()) }) {
-                            DisplayEndMatchResult.IN_PROGRESS
-                        } else {
-                            restartFrom(char)
-                        }
-                    }
-                    char.isWhitespace() && matchedName.toString() in validNames -> {
-                        phase = 3
-                        DisplayEndMatchResult.IN_PROGRESS
-                    }
-                    char == '>' && matchedName.toString() in validNames -> {
-                        reset()
-                        DisplayEndMatchResult.MATCH
-                    }
-                    else -> restartFrom(char)
-                }
-            }
-            else -> {
-                when {
-                    char.isWhitespace() -> DisplayEndMatchResult.IN_PROGRESS
-                    char == '>' -> {
-                        reset()
-                        DisplayEndMatchResult.MATCH
-                    }
-                    else -> restartFrom(char)
-                }
-            }
-        }
-    }
-
-    fun reset() {
-        phase = 0
-        matchedName.clear()
-    }
-
-    private fun restartFrom(char: Char): DisplayEndMatchResult {
-        reset()
-        return if (char == '<') {
-            phase = 1
-            DisplayEndMatchResult.IN_PROGRESS
-        } else {
-            DisplayEndMatchResult.NO_MATCH
-        }
-    }
-}
 
 /**
  * A stream processing plugin to identify and process XML-formatted data streams. This
@@ -223,12 +151,7 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
                         allowStartAfterPunctuation = false
                         // We have a full start tag. Configure the end tag matcher.
                         displayEndTagMatcher =
-                                when (tagName.lowercase()) {
-                                    "think", "thinking" ->
-                                            DisplayEndTagMatcher(setOf("think", "thinking"))
-                                    "search" -> DisplayEndTagMatcher(setOf("search"))
-                                    else -> null
-                                }
+                                displayEndTagNames(tagName)?.let(::DisplayEndTagMatcher)
                         endTagMatcher =
                                 if (displayEndTagMatcher == null) {
                                     StreamKmpGraphBuilder()
