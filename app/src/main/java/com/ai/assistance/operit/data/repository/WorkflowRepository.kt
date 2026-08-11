@@ -41,7 +41,11 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.ByteBuffer
 import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -51,6 +55,179 @@ internal data class ExternalWorkflowTriggerMatch(
     val triggerNodeId: String,
     val triggerNodeName: String
 )
+
+internal enum class WorkflowExecutionOrigin {
+    USER_INITIATED,
+    AUTOMATIC,
+    AUTHENTICATED_EXTERNAL,
+}
+
+internal enum class WorkflowExecutionStorageAction {
+    USE_PRIVATE,
+    PROMOTE_LEGACY,
+    REJECT,
+}
+
+internal fun workflowExecutionStorageAction(
+    privateDefinitionExists: Boolean,
+    origin: WorkflowExecutionOrigin,
+): WorkflowExecutionStorageAction = when {
+    privateDefinitionExists -> WorkflowExecutionStorageAction.USE_PRIVATE
+    origin == WorkflowExecutionOrigin.USER_INITIATED -> WorkflowExecutionStorageAction.PROMOTE_LEGACY
+    else -> WorkflowExecutionStorageAction.REJECT
+}
+
+internal fun projectLegacyWorkflowForDisplay(workflow: Workflow): Workflow =
+    if (workflow.enabled) workflow.copy(enabled = false) else workflow
+
+internal data class WorkflowScheduleRebuildResult(
+    val scheduledCount: Int,
+    val cancellationFailures: Int,
+)
+
+internal fun rebuildPrivateWorkflowSchedules(
+    workflows: List<Workflow>,
+    cancelAndWait: (String) -> Unit,
+    schedulePrivate: (String) -> Boolean,
+    onCancellationFailure: (String, Throwable) -> Unit = { _, _ -> },
+): WorkflowScheduleRebuildResult {
+    var scheduledCount = 0
+    var cancellationFailures = 0
+    workflows.forEach { workflow ->
+        val cancellationSucceeded = runCatching { cancelAndWait(workflow.id) }
+            .onFailure { error ->
+                cancellationFailures++
+                onCancellationFailure(workflow.id, error)
+            }
+            .isSuccess
+        if (cancellationSucceeded && workflow.enabled && schedulePrivate(workflow.id)) {
+            scheduledCount++
+        }
+    }
+    return WorkflowScheduleRebuildResult(scheduledCount, cancellationFailures)
+}
+
+internal fun cancelLegacyWorkflowScheduleIds(
+    workflowIds: List<String>,
+    cancelAndWait: (String) -> Unit,
+    onCancellationFailure: (String, Throwable) -> Unit = { _, _ -> },
+): Int {
+    var failures = 0
+    workflowIds.forEach { id ->
+        runCatching { cancelAndWait(id) }
+            .onFailure { error ->
+                failures++
+                onCancellationFailure(id, error)
+            }
+    }
+    return failures
+}
+
+internal fun isTrustedScheduleExecutionAuthorized(
+    workflow: Workflow,
+    triggerNodeId: String,
+    scheduleFingerprint: String,
+): Boolean {
+    if (!workflow.enabled) return false
+    val node = workflow.nodes.filterIsInstance<TriggerNode>().firstOrNull { candidate ->
+        candidate.id == triggerNodeId && candidate.triggerType == "schedule"
+    } ?: return false
+    if (!(node.triggerConfig[WorkflowScheduler.CONFIG_ENABLED]?.toBoolean() ?: true)) return false
+    return WorkflowScheduler.scheduleFingerprint(workflow.id, node) == scheduleFingerprint
+}
+
+internal data class WorkflowFileScanLimits(
+    val maxFiles: Int = Int.MAX_VALUE,
+    val maxEntriesVisited: Int = Int.MAX_VALUE,
+    val maxTotalBytes: Long = Long.MAX_VALUE,
+    val maxFileBytes: Long = Long.MAX_VALUE,
+)
+
+internal data class WorkflowFileScanResult(
+    val files: List<File>,
+    val truncated: Boolean,
+    val skippedEntries: Int,
+)
+
+internal class WorkflowByteBudget(initialBytes: Long) {
+    var remainingBytes: Long = initialBytes
+        private set
+
+    fun tryConsume(bytes: Long): Boolean {
+        require(bytes >= 0L)
+        val consumed = minOf(bytes, remainingBytes)
+        remainingBytes -= consumed
+        return consumed == bytes
+    }
+}
+
+internal fun readWorkflowTextBoundedNoFollow(
+    file: File,
+    maxBytes: Long,
+    errorMessage: String,
+    budget: WorkflowByteBudget? = null,
+): String {
+    require(maxBytes >= 0L)
+    require(budget?.remainingBytes != 0L) { errorMessage }
+    return Files.newByteChannel(
+        file.toPath(),
+        setOf(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS),
+    ).use { channel ->
+        val output = ByteArrayOutputStream()
+        val buffer = ByteBuffer.allocate(8192)
+        var total = 0L
+        while (true) {
+            buffer.clear()
+            val read = channel.read(buffer)
+            if (read < 0) break
+            if (read == 0) continue
+            val withinAggregateBudget = budget?.tryConsume(read.toLong()) ?: true
+            total += read
+            require(withinAggregateBudget && total <= maxBytes) { errorMessage }
+            output.write(buffer.array(), 0, read)
+        }
+        output.toString(Charsets.UTF_8.name())
+    }
+}
+
+internal fun validateUntrustedWorkflowJson(
+    content: String,
+    maxDepth: Int = 64,
+    maxStructuralTokens: Int = 65_536,
+) {
+    var depth = 0
+    var structuralTokens = 0
+    var inString = false
+    var escaped = false
+    content.forEach { character ->
+        if (inString) {
+            when {
+                escaped -> escaped = false
+                character == '\\' -> escaped = true
+                character == '"' -> inString = false
+            }
+            return@forEach
+        }
+        when (character) {
+            '"' -> inString = true
+            '{', '[' -> {
+                depth++
+                structuralTokens++
+                require(depth <= maxDepth) { "Untrusted workflow JSON is too deeply nested" }
+            }
+            '}', ']' -> {
+                depth--
+                structuralTokens++
+                require(depth >= 0) { "Untrusted workflow JSON is malformed" }
+            }
+            ',', ':' -> structuralTokens++
+        }
+        require(structuralTokens <= maxStructuralTokens) {
+            "Untrusted workflow JSON has too many structural elements"
+        }
+    }
+    require(!inString && depth == 0) { "Untrusted workflow JSON is malformed" }
+}
 
 internal fun selectExternalWorkflowTriggerMatches(
     workflows: List<Workflow>,
@@ -99,6 +276,23 @@ internal fun decodeWorkflowContentSafely(
     // kotlinx.serialization parse messages may echo the surrounding JSON, including auth_token.
     // Do not retain the original exception as a cause or expose its message to logs/callers.
     throw IllegalArgumentException("Invalid workflow JSON (${error::class.java.simpleName})")
+}
+
+internal fun decodeWorkflowExecutionRecordSafely(
+    json: Json,
+    content: String,
+    expectedWorkflowId: String,
+): WorkflowExecutionRecord = try {
+    requireWorkflowExecutionRecordOwnership(
+        json.decodeFromString(WorkflowExecutionRecord.serializer(), content),
+        expectedWorkflowId,
+    )
+} catch (error: Exception) {
+    // Execution logs can contain tool results and exception text. Serialization failures may
+    // echo the nearby JSON input, so never preserve the original message or cause.
+    throw IllegalArgumentException(
+        "Invalid workflow execution record (${error::class.java.simpleName})"
+    )
 }
 
 internal fun writeWorkflowContentAtomically(file: File, content: String) {
@@ -163,6 +357,27 @@ internal fun updateWorkflowFileAtomically(
     workflowToWrite
 }
 
+internal fun updateEffectiveWorkflowFileAtomically(
+    internalFile: File,
+    workflowId: String,
+    fallbackWorkflow: Workflow?,
+    json: Json,
+    lock: Any,
+    reader: (File) -> String = ::readWorkflowContentAtomically,
+    writer: (File, String) -> Unit = ::writeWorkflowContentAtomically,
+    transform: (latest: Workflow, promotingLegacy: Boolean) -> Workflow,
+): Workflow = synchronized(lock) {
+    val promotingLegacy = !internalFile.isFile
+    val latest = if (promotingLegacy) {
+        requireNotNull(fallbackWorkflow) { "Workflow not found for atomic promotion" }
+    } else {
+        decodeWorkflowContentSafely(json, reader(internalFile), workflowId)
+    }
+    val updated = transform(latest, promotingLegacy)
+    writer(internalFile, json.encodeToString(updated))
+    updated
+}
+
 internal fun applyWorkflowExecutionStatus(
     workflow: Workflow,
     status: ExecutionStatus,
@@ -193,8 +408,9 @@ internal fun applyWorkflowExecutionStatistics(
  *   是主存储和唯一默认写入位置。所有新建、修改、执行状态/统计写入都落在这里。
  * - **旧版 Download 目录** [OperitManagedPaths.legacyWorkflows]（`Download/Operit/workflow`，单数）
  *   仅当 [LegacyStoragePreferences.isReadLegacyWorkflows] 为 true 时作为只读读取源。旧目录
- *   访问不创建目录；同名工作流以内部版本优先；旧工作流第一次被修改/执行时通过写时复制
- *   进入内部目录，原文件不动。
+ *   访问不创建目录；同名工作流以内部版本优先；旧工作流仅在明确的用户编辑、启用、
+ *   手动执行或手动调度操作中通过写时复制进入内部目录，原文件不动。自动入口与 AI
+ *   工具只读取内部定义。
  * - **运行日志** 移到 [OperitManagedPaths.internalWorkflowLogs]
  *   （`noBackupFilesDir/operit/workflows/execution_logs`），不纳入 raw snapshot 备份。
  */
@@ -217,6 +433,25 @@ class WorkflowRepository(private val context: Context) {
         private const val TAG = "WorkflowRepository"
         private const val MAX_EXECUTION_LOG_FILES_PER_WORKFLOW = 30
         private const val MAX_LEGACY_WORKFLOW_FILE_BYTES = 1024 * 1024
+        private const val MAX_LEGACY_WORKFLOW_FILES = 1000
+        private const val MAX_LEGACY_WORKFLOW_DIRECTORY_ENTRIES = 4000
+        private const val MAX_LEGACY_WORKFLOW_TOTAL_BYTES = 64L * 1024L * 1024L
+        private const val MAX_LEGACY_EXECUTION_LOG_FILE_BYTES = 1024 * 1024
+        private const val MAX_LEGACY_EXECUTION_LOG_FILES = 64
+        private const val MAX_LEGACY_EXECUTION_LOG_DIRECTORY_ENTRIES = 256
+
+        private val LEGACY_WORKFLOW_SCAN_LIMITS = WorkflowFileScanLimits(
+            maxFiles = MAX_LEGACY_WORKFLOW_FILES,
+            maxEntriesVisited = MAX_LEGACY_WORKFLOW_DIRECTORY_ENTRIES,
+            maxTotalBytes = MAX_LEGACY_WORKFLOW_TOTAL_BYTES,
+            maxFileBytes = MAX_LEGACY_WORKFLOW_FILE_BYTES.toLong(),
+        )
+        private val LEGACY_EXECUTION_LOG_SCAN_LIMITS = WorkflowFileScanLimits(
+            maxFiles = MAX_LEGACY_EXECUTION_LOG_FILES,
+            maxEntriesVisited = MAX_LEGACY_EXECUTION_LOG_DIRECTORY_ENTRIES,
+            maxTotalBytes = MAX_LEGACY_EXECUTION_LOG_FILES.toLong() * MAX_LEGACY_EXECUTION_LOG_FILE_BYTES,
+            maxFileBytes = MAX_LEGACY_EXECUTION_LOG_FILE_BYTES.toLong(),
+        )
 
         // Per-workflow-id lock serializing promotion and every workflow definition mutation.
         private val promotionLocks = ConcurrentHashMap<String, Any>()
@@ -352,33 +587,47 @@ class WorkflowRepository(private val context: Context) {
     private fun readWorkflowFile(
         file: File,
         workflowId: String = file.nameWithoutExtension,
-        isLegacy: Boolean = false
+        isLegacy: Boolean = false,
+        legacyReadBudget: WorkflowByteBudget? = null,
     ): Workflow {
-        val content = if (isLegacy) {
-            readLegacyWorkflowContentBounded(file)
-        } else {
-            synchronized(promotionLocks.computeIfAbsent(workflowId) { Any() }) {
-                readWorkflowContentAtomically(file)
-            }
+        if (isLegacy) {
+            val content = readLegacyWorkflowContentBounded(file, legacyReadBudget)
+            validateUntrustedWorkflowJson(content)
+            return decodeWorkflowContentSafely(json, content, workflowId)
         }
-        return decodeWorkflowContentSafely(json, content, workflowId)
+
+        return synchronized(promotionLocks.computeIfAbsent(workflowId) { Any() }) {
+            val workflow = decodeWorkflowContentSafely(
+                json,
+                readWorkflowContentAtomically(file),
+                workflowId,
+            )
+            val normalized = WorkflowIntentSecurity.normalizeExternalTriggerTokens(
+                workflow = workflow,
+                tokenValidator = authTokenManager::isAuthenticAuthToken,
+                tokenFactory = authTokenManager::newAuthToken,
+            )
+            if (normalized != workflow) {
+                // Definitions may be restored without the installation-bound no-backup secret.
+                // Persist fresh credentials before returning them to UI or trigger caches.
+                atomicWrite(file, json.encodeToString(normalized))
+                invalidateExternalTriggerCache()
+                AppLogger.w(TAG, "Rotated restored external-trigger credentials for workflow $workflowId")
+            }
+            normalized
+        }
     }
 
-    private fun readLegacyWorkflowContentBounded(file: File): String {
-        require(file.length() <= MAX_LEGACY_WORKFLOW_FILE_BYTES) { "Legacy workflow file is too large" }
-        return file.inputStream().buffered().use { input ->
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(8192)
-            var total = 0
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                total += read
-                require(total <= MAX_LEGACY_WORKFLOW_FILE_BYTES) { "Legacy workflow file is too large" }
-                output.write(buffer, 0, read)
-            }
-            output.toString(Charsets.UTF_8.name())
-        }
+    private fun readLegacyWorkflowContentBounded(
+        file: File,
+        budget: WorkflowByteBudget? = null,
+    ): String {
+        return readWorkflowTextBoundedNoFollow(
+            file,
+            MAX_LEGACY_WORKFLOW_FILE_BYTES.toLong(),
+            "Legacy workflow file is too large",
+            budget,
+        )
     }
 
     private fun getExecutionLogDirectory(workflowId: String, createIfMissing: Boolean = true): File {
@@ -417,7 +666,7 @@ class WorkflowRepository(private val context: Context) {
             val dir = getExecutionLogDirectory(record.workflowId)
             val safeRunId = record.runId.replace(Regex("[^a-zA-Z0-9_-]"), "_")
             val file = File(dir, "${record.startedAt}_$safeRunId.json")
-            file.writeText(json.encodeToString(record))
+            writeWorkflowContentAtomically(file, json.encodeToString(record))
 
             val allFiles = dir.listFiles { f -> f.isFile && f.extension == "json" }?.toList().orEmpty()
             if (allFiles.size > MAX_EXECUTION_LOG_FILES_PER_WORKFLOW) {
@@ -506,6 +755,7 @@ class WorkflowRepository(private val context: Context) {
                         workflows,
                         skipIds = hidden,
                         isLegacy = true,
+                        scanLimits = LEGACY_WORKFLOW_SCAN_LIMITS,
                         trustedAnchor = requireNotNull(paths.legacyRoot.parentFile),
                     )
                 }
@@ -525,15 +775,29 @@ class WorkflowRepository(private val context: Context) {
         out: MutableList<Workflow>,
         skipIds: Set<String> = emptySet(),
         isLegacy: Boolean,
+        scanLimits: WorkflowFileScanLimits = WorkflowFileScanLimits(),
         trustedAnchor: File = dir,
     ) {
-        val files = canonicalWorkflowJsonFiles(dir, trustedAnchor)
-        for (file in files) {
+        val scan = scanCanonicalWorkflowJsonFiles(dir, trustedAnchor, scanLimits)
+        if (isLegacy && (scan.truncated || scan.skippedEntries > 0)) {
+            AppLogger.w(
+                TAG,
+                "Legacy workflow scan was limited; some public definitions were not shown " +
+                    "(truncated=${scan.truncated}, skipped=${scan.skippedEntries})"
+            )
+        }
+        val legacyReadBudget = if (isLegacy) {
+            WorkflowByteBudget(scanLimits.maxTotalBytes)
+        } else {
+            null
+        }
+        for (file in scan.files) {
             val id = file.nameWithoutExtension
             if (id in seenIds) continue   // internal already wins; skip the legacy copy
             if (id in skipIds) continue   // hidden legacy; skip without aborting the scan
             try {
-                out += readWorkflowFile(file, id, isLegacy)
+                val workflow = readWorkflowFile(file, id, isLegacy, legacyReadBudget)
+                out += if (isLegacy) projectLegacyWorkflowForDisplay(workflow) else workflow
                 seenIds += id
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Failed to parse workflow file: ${file.name}", e)
@@ -549,7 +813,7 @@ class WorkflowRepository(private val context: Context) {
             val entry = findEffectiveWorkflowFile(id)
                 ?: return@withContext Result.success(null)
             val workflow = readWorkflowFile(entry.sourceFile, id, entry.isLegacy)
-            Result.success(workflow)
+            Result.success(if (entry.isLegacy) projectLegacyWorkflowForDisplay(workflow) else workflow)
         } catch (e: Exception) {
             AppLogger.e(TAG, "Failed to get workflow by id: $id", e)
             Result.failure(e)
@@ -558,14 +822,40 @@ class WorkflowRepository(private val context: Context) {
 
     suspend fun getLatestExecutionRecord(workflowId: String): Result<WorkflowExecutionRecord?> = withContext(Dispatchers.IO) {
         try {
-            val latestFile = latestWorkflowExecutionRecordFile(
-                getExecutionLogDirectory(workflowId, createIfMissing = false),
-                getLegacyExecutionLogDirectory(workflowId),
-            )
-                    ?: return@withContext Result.success(null)
+            val internalDirectory = getExecutionLogDirectory(workflowId, createIfMissing = false)
+            val legacyDirectory = getLegacyExecutionLogDirectory(workflowId)
+            val internalFiles = canonicalWorkflowJsonFiles(internalDirectory)
+            val legacyScan = if (internalFiles.isEmpty()) {
+                scanCanonicalWorkflowJsonFiles(
+                    directory = legacyDirectory,
+                    trustedAnchor = requireNotNull(paths.legacyRoot.parentFile),
+                    limits = LEGACY_EXECUTION_LOG_SCAN_LIMITS,
+                )
+            } else {
+                WorkflowFileScanResult(emptyList(), truncated = false, skippedEntries = 0)
+            }
+            if (legacyScan.truncated || legacyScan.skippedEntries > 0) {
+                AppLogger.w(
+                    TAG,
+                    "Legacy workflow log scan was limited for workflow $workflowId; " +
+                        "some public records were ignored"
+                )
+            }
+            val latest = latestWorkflowExecutionRecordFile(internalFiles, legacyScan.files)
+                ?: return@withContext Result.success(null)
+            val isLegacy = internalFiles.isEmpty()
 
-            val content = latestFile.readText()
-            val record = json.decodeFromString<WorkflowExecutionRecord>(content)
+            val content = if (isLegacy) {
+                readWorkflowTextBoundedNoFollow(
+                    latest,
+                    MAX_LEGACY_EXECUTION_LOG_FILE_BYTES.toLong(),
+                    "Legacy workflow execution record is too large",
+                )
+            } else {
+                latest.readText()
+            }
+            if (isLegacy) validateUntrustedWorkflowJson(content)
+            val record = decodeWorkflowExecutionRecordSafely(json, content, workflowId)
             Result.success(record)
         } catch (e: Exception) {
             AppLogger.e(TAG, "Failed to get latest execution record for workflow: $workflowId", e)
@@ -611,28 +901,55 @@ class WorkflowRepository(private val context: Context) {
     /**
      * 更新工作流
      */
-    suspend fun updateWorkflow(workflow: Workflow): Result<Workflow> = withContext(Dispatchers.IO) {
+    suspend fun updateWorkflow(workflow: Workflow): Result<Workflow> =
+        updateWorkflowInternal(workflow, allowLegacyPromotion = true)
+
+    internal suspend fun updateWorkflowFromPrivateStorage(workflow: Workflow): Result<Workflow> =
+        updateWorkflowInternal(workflow, allowLegacyPromotion = false)
+
+    private suspend fun updateWorkflowInternal(
+        workflow: Workflow,
+        allowLegacyPromotion: Boolean,
+    ): Result<Workflow> = withContext(Dispatchers.IO) {
         try {
             require(workflow.id.isNotBlank()) { "Workflow id cannot be empty" }
             val requestedWorkflow = workflow.copy(updatedAt = System.currentTimeMillis())
-            val file = ensureWorkflowInInternalStorage(requestedWorkflow.id)
+            val internal = getInternalWorkflowFile(requestedWorkflow.id)
+            val effective = if (allowLegacyPromotion) {
+                findEffectiveWorkflowFile(requestedWorkflow.id)
+            } else {
+                internal.takeIf { file -> file.isFile }
+                    ?.let { file -> SourcedEntry(file, StorageSource.INTERNAL, file) }
+            }
+                ?: return@withContext Result.failure(Exception(context.getString(R.string.workflow_not_found)))
+            val fallbackWorkflow = effective.takeIf { entry -> entry.isLegacy }?.let { entry ->
+                readWorkflowFile(entry.sourceFile, requestedWorkflow.id, isLegacy = true)
+            }
+            val file = internal
             invalidateExternalTriggerCache()
-            val updatedWorkflow = updateWorkflowFileAtomically(
-                file = file,
+            val updatedWorkflow = updateEffectiveWorkflowFileAtomically(
+                internalFile = file,
                 workflowId = requestedWorkflow.id,
-                requestedWorkflow = requestedWorkflow,
+                fallbackWorkflow = fallbackWorkflow,
                 json = json,
                 lock = promotionLocks.computeIfAbsent(requestedWorkflow.id) { Any() },
-                prepareRequested = { requested, latest ->
-                    val normalized = WorkflowIntentSecurity.normalizeExternalTriggerTokensForUpdate(
-                        requestedWorkflow = requested,
+            ) { latest, promotingLegacy ->
+                val normalized = if (promotingLegacy) {
+                    WorkflowIntentSecurity.normalizeExternalTriggerTokens(
+                        workflow = requestedWorkflow,
+                        replaceExistingTokens = true,
+                        tokenFactory = authTokenManager::newAuthToken,
+                    )
+                } else {
+                    WorkflowIntentSecurity.normalizeExternalTriggerTokensForUpdate(
+                        requestedWorkflow = requestedWorkflow,
                         latestWorkflow = latest,
                         tokenValidator = authTokenManager::isAuthenticAuthToken,
-                        tokenFactory = authTokenManager::newAuthToken
+                        tokenFactory = authTokenManager::newAuthToken,
                     )
-                    mergeWorkflowDefinitionWithLatestRuntime(normalized, latest)
                 }
-            )
+                    mergeWorkflowDefinitionWithLatestRuntime(normalized, latest)
+            }
 
             AppLogger.d(TAG, "Workflow updated: ${updatedWorkflow.id}")
 
@@ -652,26 +969,48 @@ class WorkflowRepository(private val context: Context) {
         }
     }
 
-    suspend fun setWorkflowEnabled(id: String, enabled: Boolean): Result<Workflow> = withContext(Dispatchers.IO) {
+    suspend fun setWorkflowEnabled(id: String, enabled: Boolean): Result<Workflow> =
+        setWorkflowEnabledInternal(id, enabled, allowLegacyPromotion = true)
+
+    internal suspend fun setWorkflowEnabledFromPrivateStorage(
+        id: String,
+        enabled: Boolean,
+    ): Result<Workflow> = setWorkflowEnabledInternal(id, enabled, allowLegacyPromotion = false)
+
+    private suspend fun setWorkflowEnabledInternal(
+        id: String,
+        enabled: Boolean,
+        allowLegacyPromotion: Boolean,
+    ): Result<Workflow> = withContext(Dispatchers.IO) {
         try {
             require(id.isNotBlank()) { "Workflow id cannot be empty" }
-            if (findEffectiveWorkflowFile(id) == null) {
-                return@withContext Result.failure(Exception(context.getString(R.string.workflow_not_found)))
+            val internal = getInternalWorkflowFile(id)
+            val effective = if (allowLegacyPromotion) {
+                findEffectiveWorkflowFile(id)
+            } else {
+                internal.takeIf { file -> file.isFile }
+                    ?.let { file -> SourcedEntry(file, StorageSource.INTERNAL, file) }
             }
-            val file = ensureWorkflowInInternalStorage(id)
+                ?: return@withContext Result.failure(Exception(context.getString(R.string.workflow_not_found)))
+            val fallbackWorkflow = effective.takeIf { entry -> entry.isLegacy }?.let { entry ->
+                readWorkflowFile(entry.sourceFile, id, isLegacy = true)
+            }
+            val file = internal
             invalidateExternalTriggerCache()
-            val updatedWorkflow = mutateWorkflowFileAtomically(
-                file = file,
+            val updatedWorkflow = updateEffectiveWorkflowFileAtomically(
+                internalFile = file,
                 workflowId = id,
+                fallbackWorkflow = fallbackWorkflow,
                 json = json,
                 lock = promotionLocks.computeIfAbsent(id) { Any() }
-            ) { latest ->
+            ) { latest, promotingLegacy ->
                 WorkflowIntentSecurity.normalizeExternalTriggerTokens(
                     workflow = latest.copy(enabled = enabled),
+                    replaceExistingTokens = promotingLegacy,
                     tokenValidator = authTokenManager::isAuthenticAuthToken,
                     tokenFactory = authTokenManager::newAuthToken
                 )
-            } ?: return@withContext Result.failure(Exception(context.getString(R.string.workflow_not_found)))
+            }
 
             AppLogger.d(TAG, "Workflow enabled state updated: ${updatedWorkflow.id} -> $enabled")
 
@@ -758,15 +1097,7 @@ class WorkflowRepository(private val context: Context) {
             legacyPrefs.clearHiddenLegacyWorkflowIds()
             if (count > 0) {
                 notifyWorkflowsChanged()
-                // Re-schedule enabled legacy workflows that just became visible again.
-                if (legacyPrefs.isReadLegacyWorkflows()) {
-                    val workflows = getAllWorkflows().getOrNull().orEmpty()
-                    workflows.forEach { w ->
-                        if (w.enabled && hasScheduleTrigger(w)) {
-                            scheduleWorkflow(w.id)
-                        }
-                    }
-                }
+                // Restored public definitions remain display-only until an explicit import action.
             }
             AppLogger.d(TAG, "Restored $count hidden legacy workflows")
             Result.success(count)
@@ -788,7 +1119,8 @@ class WorkflowRepository(private val context: Context) {
     ): Result<String> = triggerWorkflowInternal(
         id = id,
         triggerNodeId = triggerNodeId,
-        triggerExtras = triggerExtras
+        triggerExtras = triggerExtras,
+        executionOrigin = WorkflowExecutionOrigin.USER_INITIATED,
     ) { nodeId, state ->
         AppLogger.d(TAG, "Node $nodeId state: $state")
     }
@@ -808,8 +1140,37 @@ class WorkflowRepository(private val context: Context) {
         id = id,
         triggerNodeId = triggerNodeId,
         triggerExtras = triggerExtras,
+        executionOrigin = WorkflowExecutionOrigin.USER_INITIATED,
         onNodeStateChange = onNodeStateChange
     )
+
+    /** WorkManager and other unattended entry points must never execute a public legacy file. */
+    internal suspend fun triggerScheduledWorkflow(
+        id: String,
+        triggerNodeId: String,
+        scheduleFingerprint: String,
+    ): Result<String> = triggerWorkflowInternal(
+        id = id,
+        triggerNodeId = triggerNodeId,
+        executionOrigin = WorkflowExecutionOrigin.AUTOMATIC,
+        authorizationCheck = { latest ->
+            isTrustedScheduleExecutionAuthorized(latest, triggerNodeId, scheduleFingerprint)
+        },
+    ) { nodeId, state ->
+        AppLogger.d(TAG, "Node $nodeId state: $state")
+    }
+
+    /** AI tools are not an explicit user import action and may execute private definitions only. */
+    internal suspend fun triggerWorkflowFromPrivateStorage(
+        id: String,
+        triggerNodeId: String? = null,
+    ): Result<String> = triggerWorkflowInternal(
+        id = id,
+        triggerNodeId = triggerNodeId,
+        executionOrigin = WorkflowExecutionOrigin.AUTOMATIC,
+    ) { nodeId, state ->
+        AppLogger.d(TAG, "Node $nodeId state: $state")
+    }
 
     suspend fun cancelWorkflow(
         id: String,
@@ -836,22 +1197,32 @@ class WorkflowRepository(private val context: Context) {
         id: String,
         triggerNodeId: String? = null,
         triggerExtras: Map<String, String> = emptyMap(),
+        executionOrigin: WorkflowExecutionOrigin,
         authorizationCheck: ((Workflow) -> Boolean)? = null,
         onNodeStateChange: (nodeId: String, state: NodeExecutionState) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
-        val workflow = if (authorizationCheck == null) {
-            getWorkflowById(id).getOrNull()
-        } else {
-            val internal = getInternalWorkflowFile(id)
-            synchronized(promotionLocks.computeIfAbsent(id) { Any() }) {
-                runCatching {
-                    if (!internal.isFile) null else decodeWorkflowContentSafely(
-                        json,
-                        readWorkflowContentAtomically(internal),
-                        id
-                    )
-                }.getOrNull()?.takeIf(authorizationCheck)
+        val internal = getInternalWorkflowFile(id)
+        val wasLegacyOnly = !internal.isFile
+        when (workflowExecutionStorageAction(internal.isFile, executionOrigin)) {
+            WorkflowExecutionStorageAction.USE_PRIVATE -> Unit
+            WorkflowExecutionStorageAction.PROMOTE_LEGACY -> {
+                runCatching { ensureWorkflowInInternalStorage(id) }
+                    .getOrElse { return@withContext Result.failure(it) }
             }
+            WorkflowExecutionStorageAction.REJECT -> {
+                return@withContext Result.failure(
+                    Exception(context.getString(R.string.workflow_not_exist, id))
+                )
+            }
+        }
+        val workflow = synchronized(promotionLocks.computeIfAbsent(id) { Any() }) {
+            runCatching {
+                if (!internal.isFile) null else decodeWorkflowContentSafely(
+                    json,
+                    readWorkflowContentAtomically(internal),
+                    id
+                )
+            }.getOrNull()?.takeIf { latest -> authorizationCheck?.invoke(latest) != false }
         }
 
         if (workflow == null) {
@@ -861,6 +1232,15 @@ class WorkflowRepository(private val context: Context) {
                 "External workflow trigger authorization is no longer valid"
             }
             return@withContext Result.failure(Exception(message))
+        }
+
+        if (wasLegacyOnly && executionOrigin == WorkflowExecutionOrigin.USER_INITIATED) {
+            // A deliberate manual run is also an explicit import action. Restore the workflow's
+            // existing schedule only after the normalized private copy is durable.
+            if (workflow.enabled && hasScheduleTrigger(workflow)) {
+                scheduler.scheduleWorkflow(workflow)
+            }
+            notifyWorkflowsChanged()
         }
 
         if (!workflow.enabled) {
@@ -910,7 +1290,8 @@ class WorkflowRepository(private val context: Context) {
     }
 
     /**
-     * 更新工作流执行状态（仅状态和时间）。写入内部存储；若仅有旧版副本，先写时复制。
+     * 更新工作流执行状态（仅状态和时间）。执行开始前定义已经位于内部存储；若用户在
+     * 执行期间删除了它，状态写回必须 no-op，绝不能从同 ID 公共 legacy 文件复活定义。
      */
     private suspend fun updateExecutionStatus(
         id: String,
@@ -918,7 +1299,7 @@ class WorkflowRepository(private val context: Context) {
         executionTime: Long
     ) = withContext(Dispatchers.IO) {
         try {
-            val file = ensureWorkflowInInternalStorage(id)
+            val file = getInternalWorkflowFile(id)
             invalidateExternalTriggerCache()
             val updatedWorkflow = mutateWorkflowFileAtomically(
                 file = file,
@@ -941,16 +1322,14 @@ class WorkflowRepository(private val context: Context) {
         }
     }
 
-    /**
-     * 更新工作流执行统计信息。写入内部存储；若仅有旧版副本，先写时复制。
-     */
+    /** 执行统计仅 patch 仍存在的内部定义；删除竞态下不得从公共 legacy 存储导入。 */
     private suspend fun updateExecutionStatistics(
         id: String,
         status: ExecutionStatus,
         executionTime: Long
     ) = withContext(Dispatchers.IO) {
         try {
-            val file = ensureWorkflowInInternalStorage(id)
+            val file = getInternalWorkflowFile(id)
             invalidateExternalTriggerCache()
             val updatedWorkflow = mutateWorkflowFileAtomically(
                 file = file,
@@ -977,9 +1356,32 @@ class WorkflowRepository(private val context: Context) {
      * Schedule a workflow
      */
     fun scheduleWorkflow(id: String): Boolean {
+        return scheduleWorkflowInternal(id, allowLegacyPromotion = true)
+    }
+
+    /** Startup/boot paths must never turn a public legacy definition into executable work. */
+    internal fun scheduleInternalWorkflow(id: String): Boolean {
+        return scheduleWorkflowInternal(id, allowLegacyPromotion = false)
+    }
+
+    private fun scheduleWorkflowInternal(id: String, allowLegacyPromotion: Boolean): Boolean {
         return try {
-            val workflowResult = kotlinx.coroutines.runBlocking { getWorkflowById(id) }
-            val workflow = workflowResult.getOrNull()
+            val internal = getInternalWorkflowFile(id)
+            val wasLegacyOnly = !internal.isFile
+            val workflow = kotlinx.coroutines.runBlocking {
+                if (!internal.isFile && allowLegacyPromotion) {
+                    runCatching { ensureWorkflowInInternalStorage(id) }.getOrNull()
+                }
+                synchronized(promotionLocks.computeIfAbsent(id) { Any() }) {
+                    if (!internal.isFile) null else runCatching {
+                        decodeWorkflowContentSafely(json, readWorkflowContentAtomically(internal), id)
+                    }.getOrNull()
+                }
+            }
+
+            if (wasLegacyOnly && internal.isFile) {
+                notifyWorkflowsChanged()
+            }
 
             if (workflow == null) {
                 AppLogger.w(TAG, "Workflow not found for scheduling: $id")
@@ -1048,7 +1450,42 @@ class WorkflowRepository(private val context: Context) {
         }
     }
 
-    private fun loadInternalWorkflowsForExternalTriggers(): List<Workflow> =
+    /** Returns only private definitions suitable for unattended execution and scheduling. */
+    internal suspend fun getAllInternalWorkflows(): Result<List<Workflow>> = withContext(Dispatchers.IO) {
+        try {
+            Result.success(loadInternalWorkflowsForAutomaticTriggers().sortedByDescending { it.updatedAt })
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to get private workflows", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Rebuild every trusted private schedule from a clean WorkManager slot. This does not depend
+     * on enumerating the attacker-writable legacy directory, so an old same-id request cannot
+     * survive by hiding beyond the legacy scan cap.
+     */
+    internal suspend fun rebuildInternalWorkflowSchedules(): Result<WorkflowScheduleRebuildResult> =
+        withContext(Dispatchers.IO) {
+            try {
+                val workflows = loadInternalWorkflowsForAutomaticTriggers()
+                Result.success(
+                    rebuildPrivateWorkflowSchedules(
+                        workflows = workflows,
+                        cancelAndWait = scheduler::cancelWorkflowAndWait,
+                        schedulePrivate = ::scheduleInternalWorkflow,
+                        onCancellationFailure = { id, error ->
+                            AppLogger.e(TAG, "Failed to clear existing private schedule: $id", error)
+                        },
+                    )
+                )
+            } catch (error: Exception) {
+                AppLogger.e(TAG, "Failed to rebuild private workflow schedules", error)
+                Result.failure(error)
+            }
+        }
+
+    private fun loadInternalWorkflowsForAutomaticTriggers(): List<Workflow> =
         canonicalWorkflowJsonFiles(paths.internalWorkflows, paths.internalRoot).mapNotNull { file ->
             runCatching { readWorkflowFile(file, file.nameWithoutExtension, isLegacy = false) }
                 .onFailure {
@@ -1074,7 +1511,7 @@ class WorkflowRepository(private val context: Context) {
                 continue
             }
 
-            val loaded = runCatching { loadInternalWorkflowsForExternalTriggers() }.getOrNull()
+            val loaded = runCatching { loadInternalWorkflowsForAutomaticTriggers() }.getOrNull()
                 ?: return@withLock null
             if (externalTriggerCacheGeneration.get() != generationBeforeRead) {
                 continue
@@ -1087,37 +1524,36 @@ class WorkflowRepository(private val context: Context) {
     }
 
     /**
-     * Called when the user toggles the legacy-workflow read switch. Reschedules any workflow that
-     * becomes effective/ineffective as a result.
-     *
-     * @param nowEnabled true if the switch was just turned on; false if just turned off.
+     * Clears WorkManager jobs that may have been created from public definitions by older builds.
+     * If a private definition now owns the same id, its trusted schedule is rebuilt afterwards.
      */
-    suspend fun onLegacyReadSwitchChanged(nowEnabled: Boolean) = withContext(Dispatchers.IO) {
+    internal suspend fun resetSchedulesForLegacyWorkflowIds() = withContext(Dispatchers.IO) {
         val legacyDir = paths.legacyWorkflows
-        val hidden = legacyPrefs.hiddenLegacyWorkflowIds()
-        if (!legacyDir.isDirectory) {
-            notifyWorkflowsChanged()
-            return@withContext
-        }
+        if (!legacyDir.isDirectory) return@withContext
         val files = canonicalWorkflowJsonFiles(
             legacyDir,
             requireNotNull(paths.legacyRoot.parentFile),
+            LEGACY_WORKFLOW_SCAN_LIMITS,
         )
-        for (file in files) {
-            val id = file.nameWithoutExtension
-            if (id in hidden) continue
-            val internal = getInternalWorkflowFile(id)
-            if (internal.exists()) continue  // internal copy keeps its existing schedule
-            val workflow = runCatching { readWorkflowFile(file, id, isLegacy = true) }.getOrNull() ?: continue
-            if (!workflow.enabled || !hasScheduleTrigger(workflow)) continue
-            if (nowEnabled) {
-                // Newly-visible legacy workflow: schedule it.
-                scheduleWorkflow(id)
-            } else {
-                // Switch just turned off: stop scheduling the legacy-only workflow.
-                unscheduleWorkflow(id)
-            }
-        }
+        cancelLegacyWorkflowScheduleIds(
+            workflowIds = files.map { file -> file.nameWithoutExtension },
+            cancelAndWait = scheduler::cancelWorkflowAndWait,
+            onCancellationFailure = { id, error ->
+                AppLogger.e(TAG, "Failed to synchronously clear legacy workflow schedule: $id", error)
+            },
+        )
+    }
+
+    /**
+     * Called when the user toggles the legacy-workflow read switch. Public definitions are
+     * display-only; clear any stale WorkManager requests created by older versions.
+     *
+     * @param nowEnabled true if the switch was just turned on; false if just turned off.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    suspend fun onLegacyReadSwitchChanged(nowEnabled: Boolean) = withContext(Dispatchers.IO) {
+        resetSchedulesForLegacyWorkflowIds()
+        rebuildInternalWorkflowSchedules().getOrThrow()
         notifyWorkflowsChanged()
     }
 
@@ -1143,6 +1579,7 @@ class WorkflowRepository(private val context: Context) {
                     triggerWorkflowInternal(
                         id = match.workflowId,
                         triggerNodeId = match.triggerNodeId,
+                        executionOrigin = WorkflowExecutionOrigin.AUTHENTICATED_EXTERNAL,
                         authorizationCheck = { latest ->
                             latest.enabled && latest.nodes.filterIsInstance<TriggerNode>().any { node ->
                                 node.id == match.triggerNodeId &&
@@ -1194,6 +1631,7 @@ class WorkflowRepository(private val context: Context) {
                         id = match.workflowId,
                         triggerNodeId = match.triggerNodeId,
                         triggerExtras = extras,
+                        executionOrigin = WorkflowExecutionOrigin.AUTHENTICATED_EXTERNAL,
                         authorizationCheck = { latest ->
                             latest.enabled && latest.nodes.filterIsInstance<TriggerNode>().any { node ->
                                 node.id == match.triggerNodeId &&
@@ -1212,7 +1650,7 @@ class WorkflowRepository(private val context: Context) {
         extras: Map<String, String> = emptyMap()
     ) = withContext(Dispatchers.IO) {
         AppLogger.d(TAG, "Checking for cold-start app-open-triggered workflows")
-        val workflows = getAllWorkflows().getOrNull() ?: return@withContext
+        val workflows = getAllInternalWorkflows().getOrNull() ?: return@withContext
         val triggerExtras =
             buildMap {
                 put("trigger_source", "cold_start_app_open")
@@ -1228,7 +1666,14 @@ class WorkflowRepository(private val context: Context) {
                             "Cold-start app-open trigger matched for workflow '${workflow.name}' on node '${node.name}'. Triggering."
                         )
                         launch {
-                            triggerWorkflow(workflow.id, node.id, triggerExtras)
+                            triggerWorkflowInternal(
+                                id = workflow.id,
+                                triggerNodeId = node.id,
+                                triggerExtras = triggerExtras,
+                                executionOrigin = WorkflowExecutionOrigin.AUTOMATIC,
+                            ) { nodeId, state ->
+                                AppLogger.d(TAG, "Node $nodeId state: $state")
+                            }
                         }
                     }
                 }
@@ -1245,7 +1690,7 @@ class WorkflowRepository(private val context: Context) {
         val workflows = if (cached != null && now - speechTriggerCachedAtMs < SPEECH_TRIGGER_CACHE_TTL_MS) {
             cached
         } else {
-            val loaded = getAllWorkflows().getOrNull() ?: emptyList()
+            val loaded = getAllInternalWorkflows().getOrNull() ?: emptyList()
             speechTriggerCachedWorkflows = loaded
             speechTriggerCachedAtMs = now
             loaded
@@ -1289,7 +1734,13 @@ class WorkflowRepository(private val context: Context) {
                         speechTriggerLastFireAtMs[cooldownKey] = now
                         AppLogger.d(TAG, "Speech trigger matched for workflow '${workflow.name}' on node '${node.name}'. Triggering.")
                         launch {
-                            triggerWorkflow(workflow.id, node.id)
+                            triggerWorkflowInternal(
+                                id = workflow.id,
+                                triggerNodeId = node.id,
+                                executionOrigin = WorkflowExecutionOrigin.AUTOMATIC,
+                            ) { nodeId, state ->
+                                AppLogger.d(TAG, "Node $nodeId state: $state")
+                            }
                         }
                     }
                 }
@@ -1340,23 +1791,82 @@ internal fun resolveWorkflowStorageChild(
 internal fun canonicalWorkflowJsonFiles(
     directory: File,
     trustedAnchor: File = directory,
-): List<File> {
-    if (!isWorkflowManagedRootTrusted(directory, trustedAnchor)) return emptyList()
-    val canonicalAnchor = runCatching { trustedAnchor.canonicalFile }.getOrNull() ?: return emptyList()
-    val canonicalDirectory = runCatching { directory.canonicalFile }.getOrNull() ?: return emptyList()
+    limits: WorkflowFileScanLimits = WorkflowFileScanLimits(),
+): List<File> = scanCanonicalWorkflowJsonFiles(directory, trustedAnchor, limits).files
+
+internal fun scanCanonicalWorkflowJsonFiles(
+    directory: File,
+    trustedAnchor: File = directory,
+    limits: WorkflowFileScanLimits = WorkflowFileScanLimits(),
+): WorkflowFileScanResult {
+    require(limits.maxFiles >= 0)
+    require(limits.maxEntriesVisited >= 0)
+    require(limits.maxTotalBytes >= 0L)
+    require(limits.maxFileBytes >= 0L)
+    val empty = WorkflowFileScanResult(emptyList(), truncated = false, skippedEntries = 0)
+    if (limits.maxFiles == 0 || limits.maxEntriesVisited == 0) {
+        return WorkflowFileScanResult(emptyList(), truncated = directory.isDirectory, skippedEntries = 0)
+    }
+    if (!isWorkflowManagedRootTrusted(directory, trustedAnchor)) return empty
+    val canonicalAnchor = runCatching { trustedAnchor.canonicalFile }.getOrNull() ?: return empty
+    val canonicalDirectory = runCatching { directory.canonicalFile }.getOrNull() ?: return empty
     if (
         canonicalDirectory != canonicalAnchor &&
         !canonicalDirectory.path.startsWith(canonicalAnchor.path + File.separator)
     ) {
-        return emptyList()
+        return empty
     }
-    if (!canonicalDirectory.isDirectory) return emptyList()
-    return canonicalDirectory.listFiles { file -> file.isFile && file.extension == "json" }
-        .orEmpty()
-        .filter { file ->
-            !Files.isSymbolicLink(file.toPath()) &&
-                runCatching { file.canonicalFile.parentFile == canonicalDirectory }.getOrDefault(false)
+    if (!canonicalDirectory.isDirectory) return empty
+
+    val accepted = ArrayList<File>(minOf(limits.maxFiles, 64))
+    var visited = 0
+    var totalBytes = 0L
+    var skipped = 0
+    var truncated = false
+    return runCatching {
+        Files.newDirectoryStream(canonicalDirectory.toPath()).use { entries ->
+            val iterator = entries.iterator()
+            while (iterator.hasNext()) {
+                if (visited >= limits.maxEntriesVisited || accepted.size >= limits.maxFiles) {
+                    truncated = true
+                    break
+                }
+                val path = iterator.next()
+                visited++
+                if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                    skipped++
+                    continue
+                }
+                val file = path.toFile()
+                if (file.extension != "json" || Files.isSymbolicLink(path)) {
+                    skipped++
+                    continue
+                }
+                if (runCatching { file.canonicalFile.parentFile == canonicalDirectory }.getOrDefault(false).not()) {
+                    skipped++
+                    continue
+                }
+                val attributes = runCatching {
+                    Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+                }.getOrNull()
+                if (attributes == null || !attributes.isRegularFile) {
+                    skipped++
+                    continue
+                }
+                val fileBytes = attributes.size()
+                if (
+                    fileBytes > limits.maxFileBytes ||
+                    fileBytes > limits.maxTotalBytes - totalBytes
+                ) {
+                    skipped++
+                    continue
+                }
+                accepted += file
+                totalBytes += fileBytes
+            }
         }
+        WorkflowFileScanResult(accepted, truncated, skipped)
+    }.getOrDefault(empty)
 }
 
 /** Rejects a managed root when it or any lexical component below [trustedAnchor] is a symlink. */
@@ -1379,8 +1889,19 @@ internal fun workflowDeletionSucceeded(
     legacyExisted: Boolean
 ): Boolean = if (internalExisted) internalRemoved else legacyExisted
 
-/** Selects the newest record across the private runtime root and the pre-migration legacy root. */
-internal fun latestWorkflowExecutionRecordFile(vararg directories: File): File? =
-    directories.asSequence()
-        .flatMap { directory -> canonicalWorkflowJsonFiles(directory).asSequence() }
-        .maxWithOrNull(compareBy<File>({ it.lastModified() }, { it.name }))
+/** Private execution history is authoritative; legacy history is only a fallback. */
+internal fun latestWorkflowExecutionRecordFile(
+    internalFiles: List<File>,
+    legacyFiles: List<File>,
+): File? = (internalFiles.ifEmpty { legacyFiles })
+    .maxWithOrNull(compareBy<File>({ it.lastModified() }, { it.name }))
+
+internal fun requireWorkflowExecutionRecordOwnership(
+    record: WorkflowExecutionRecord,
+    expectedWorkflowId: String,
+): WorkflowExecutionRecord {
+    require(record.workflowId == expectedWorkflowId) {
+        "Workflow execution record belongs to a different workflow"
+    }
+    return record
+}

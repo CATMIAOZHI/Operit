@@ -1,16 +1,36 @@
 package com.ai.assistance.operit.core.workflow
 
 import android.content.Context
+import android.util.AtomicFile
+import java.io.File
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
+internal fun loadOrCreateWorkflowSigningSecret(
+    readExisting: () -> ByteArray?,
+    writeNew: (ByteArray) -> Unit,
+    randomBytes: (Int) -> ByteArray = { size -> ByteArray(size).also(SecureRandom()::nextBytes) },
+): ByteArray {
+    readExisting()?.takeIf { it.size == WORKFLOW_SIGNING_SECRET_BYTES }?.let { return it }
+    return randomBytes(WORKFLOW_SIGNING_SECRET_BYTES).also { secret ->
+        require(secret.size == WORKFLOW_SIGNING_SECRET_BYTES)
+        writeNew(secret)
+    }
+}
+
+private const val WORKFLOW_SIGNING_SECRET_BYTES = 32
+private const val WORKFLOW_SIGNING_SECRET_FILE_NAME = "workflow_auth_signing_secret_v1"
+
+internal fun workflowSigningSecretFile(noBackupFilesDir: File): File =
+    File(noBackupFilesDir, WORKFLOW_SIGNING_SECRET_FILE_NAME)
+
 class WorkflowAuthTokenManager(context: Context) {
-    private val preferences = context.applicationContext.getSharedPreferences(
-        PREFERENCES_NAME,
-        Context.MODE_PRIVATE
+    private val applicationContext = context.applicationContext
+    private val secretFile = AtomicFile(
+        workflowSigningSecretFile(applicationContext.noBackupFilesDir)
     )
     private val codec: WorkflowAuthTokenCodec by lazy {
         WorkflowAuthTokenCodec(loadOrCreateSigningSecret())
@@ -21,26 +41,37 @@ class WorkflowAuthTokenManager(context: Context) {
     fun isAuthenticAuthToken(token: String?): Boolean = codec.isAuthentic(token)
 
     private fun loadOrCreateSigningSecret(): ByteArray = synchronized(secretLock) {
-        preferences.getString(SIGNING_SECRET_KEY, null)
-            ?.let(::decodeSecret)
-            ?.takeIf { it.size == SIGNING_SECRET_BYTES }
-            ?.let { return@synchronized it }
+        val secret = loadOrCreateWorkflowSigningSecret(
+            readExisting = { runCatching { secretFile.readFully() }.getOrNull() },
+            writeNew = { value ->
+                secretFile.baseFile.parentFile?.mkdirs()
+                val output = secretFile.startWrite()
+                try {
+                    output.write(value)
+                    secretFile.finishWrite(output)
+                } catch (error: Throwable) {
+                    secretFile.failWrite(output)
+                    throw error
+                }
+            },
+        )
 
-        val secret = ByteArray(SIGNING_SECRET_BYTES).also(SecureRandom()::nextBytes)
-        val encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(secret)
-        check(preferences.edit().putString(SIGNING_SECRET_KEY, encoded).commit()) {
-            "Unable to persist workflow trigger signing secret"
+        // Never reuse a backup-eligible secret from an earlier implementation or a restored
+        // snapshot. Internal workflow definitions are normalized against this no-backup key on
+        // read, so restored external-trigger credentials rotate before they are shown or used.
+        check(
+            applicationContext.getSharedPreferences(LEGACY_PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit()
+        ) {
+            "Unable to remove legacy workflow trigger signing secret"
         }
         secret
     }
 
-    private fun decodeSecret(encoded: String): ByteArray? =
-        runCatching { Base64.getUrlDecoder().decode(encoded) }.getOrNull()
-
     private companion object {
-        const val PREFERENCES_NAME = "workflow_auth_tokens"
-        const val SIGNING_SECRET_KEY = "installation_signing_secret_v1"
-        const val SIGNING_SECRET_BYTES = 32
+        const val LEGACY_PREFERENCES_NAME = "workflow_auth_tokens"
         val secretLock = Any()
     }
 }

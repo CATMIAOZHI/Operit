@@ -7,6 +7,7 @@ import com.ai.assistance.operit.data.model.TriggerNode
 import com.ai.assistance.operit.data.model.Workflow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -41,6 +42,17 @@ class WorkflowScheduler(private val context: Context) {
         
         // WorkManager data keys
         const val KEY_TRIGGER_NODE_ID = "trigger_node_id"
+        const val KEY_SCHEDULE_FINGERPRINT = "schedule_fingerprint"
+
+        internal fun scheduleFingerprint(workflowId: String, triggerNode: TriggerNode): String {
+            val canonicalConfig = triggerNode.triggerConfig.toSortedMap().entries.joinToString("\u0000") {
+                (key, value) -> "${key.length}:$key${value.length}:$value"
+            }
+            val payload = "$workflowId\u0000${triggerNode.id}\u0000${triggerNode.triggerType}\u0000$canonicalConfig"
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest(payload.toByteArray(Charsets.UTF_8))
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
+        }
     }
 
     private val workManager: WorkManager by lazy { 
@@ -69,10 +81,18 @@ class WorkflowScheduler(private val context: Context) {
             return false
         }
 
+        val scheduleFingerprint = scheduleFingerprint(workflow.id, triggerNode)
+
         return when (scheduleType) {
-            SCHEDULE_TYPE_INTERVAL -> scheduleIntervalWorkflow(workflow.id, triggerNode.id, config)
-            SCHEDULE_TYPE_SPECIFIC_TIME -> scheduleOneTimeWorkflow(workflow.id, triggerNode.id, config)
-            SCHEDULE_TYPE_CRON -> scheduleCronWorkflow(workflow.id, triggerNode.id, config)
+            SCHEDULE_TYPE_INTERVAL -> scheduleIntervalWorkflow(
+                workflow.id, triggerNode.id, config, scheduleFingerprint
+            )
+            SCHEDULE_TYPE_SPECIFIC_TIME -> scheduleOneTimeWorkflow(
+                workflow.id, triggerNode.id, config, scheduleFingerprint
+            )
+            SCHEDULE_TYPE_CRON -> scheduleCronWorkflow(
+                workflow.id, triggerNode.id, config, scheduleFingerprint
+            )
             else -> {
                 AppLogger.e(TAG, "Unknown schedule type: $scheduleType")
                 false
@@ -83,7 +103,12 @@ class WorkflowScheduler(private val context: Context) {
     /**
      * Schedule workflow with fixed interval
      */
-    private fun scheduleIntervalWorkflow(workflowId: String, triggerNodeId: String, config: Map<String, String>): Boolean {
+    private fun scheduleIntervalWorkflow(
+        workflowId: String,
+        triggerNodeId: String,
+        config: Map<String, String>,
+        scheduleFingerprint: String,
+    ): Boolean {
         val intervalMs = config[CONFIG_INTERVAL_MS]?.toLongOrNull() ?: return false
         val repeat = config[CONFIG_REPEAT]?.toBoolean() ?: true
 
@@ -106,7 +131,8 @@ class WorkflowScheduler(private val context: Context) {
             .setInputData(
                 workDataOf(
                     WorkflowWorker.KEY_WORKFLOW_ID to workflowId,
-                    KEY_TRIGGER_NODE_ID to triggerNodeId
+                    KEY_TRIGGER_NODE_ID to triggerNodeId,
+                    KEY_SCHEDULE_FINGERPRINT to scheduleFingerprint,
                 )
             )
             .addTag(workflowId)
@@ -125,7 +151,12 @@ class WorkflowScheduler(private val context: Context) {
     /**
      * Schedule workflow for specific time
      */
-    private fun scheduleOneTimeWorkflow(workflowId: String, triggerNodeId: String, config: Map<String, String>): Boolean {
+    private fun scheduleOneTimeWorkflow(
+        workflowId: String,
+        triggerNodeId: String,
+        config: Map<String, String>,
+        scheduleFingerprint: String,
+    ): Boolean {
         val specificTimeStr = config[CONFIG_SPECIFIC_TIME] ?: return false
         val repeat = config[CONFIG_REPEAT]?.toBoolean() ?: false
 
@@ -153,7 +184,8 @@ class WorkflowScheduler(private val context: Context) {
             .setInputData(
                 workDataOf(
                     WorkflowWorker.KEY_WORKFLOW_ID to workflowId,
-                    KEY_TRIGGER_NODE_ID to triggerNodeId
+                    KEY_TRIGGER_NODE_ID to triggerNodeId,
+                    KEY_SCHEDULE_FINGERPRINT to scheduleFingerprint,
                 )
             )
             .setInitialDelay(delay, TimeUnit.MILLISECONDS)
@@ -175,7 +207,12 @@ class WorkflowScheduler(private val context: Context) {
      * 
      * Simplified cron implementation that calculates next execution time
      */
-    private fun scheduleCronWorkflow(workflowId: String, triggerNodeId: String, config: Map<String, String>): Boolean {
+    private fun scheduleCronWorkflow(
+        workflowId: String,
+        triggerNodeId: String,
+        config: Map<String, String>,
+        scheduleFingerprint: String,
+    ): Boolean {
         val cronExpression = config[CONFIG_CRON_EXPRESSION] ?: return false
         val repeat = config[CONFIG_REPEAT]?.toBoolean() ?: true
 
@@ -210,7 +247,8 @@ class WorkflowScheduler(private val context: Context) {
                     .setInputData(
                         workDataOf(
                             WorkflowWorker.KEY_WORKFLOW_ID to workflowId,
-                            KEY_TRIGGER_NODE_ID to triggerNodeId
+                            KEY_TRIGGER_NODE_ID to triggerNodeId,
+                            KEY_SCHEDULE_FINGERPRINT to scheduleFingerprint,
                         )
                     )
                     .setInitialDelay(delay, TimeUnit.MILLISECONDS)
@@ -225,11 +263,15 @@ class WorkflowScheduler(private val context: Context) {
                 AppLogger.d(TAG, "Scheduled cron workflow (periodic): $workflowId, trigger: $triggerNodeId, expression: $cronExpression")
             } else {
                 // Fallback to one-time for complex cron patterns
-                scheduleOneTimeWorkflowWithDelay(workflowId, triggerNodeId, delay)
+                scheduleOneTimeWorkflowWithDelay(
+                    workflowId, triggerNodeId, delay, scheduleFingerprint
+                )
                 AppLogger.d(TAG, "Scheduled cron workflow (one-time): $workflowId, trigger: $triggerNodeId, expression: $cronExpression")
             }
         } else {
-            scheduleOneTimeWorkflowWithDelay(workflowId, triggerNodeId, delay)
+            scheduleOneTimeWorkflowWithDelay(
+                workflowId, triggerNodeId, delay, scheduleFingerprint
+            )
             AppLogger.d(TAG, "Scheduled cron workflow (one-time): $workflowId, trigger: $triggerNodeId, expression: $cronExpression")
         }
 
@@ -239,7 +281,12 @@ class WorkflowScheduler(private val context: Context) {
     /**
      * Helper to schedule one-time work with delay
      */
-    private fun scheduleOneTimeWorkflowWithDelay(workflowId: String, triggerNodeId: String, delayMs: Long) {
+    private fun scheduleOneTimeWorkflowWithDelay(
+        workflowId: String,
+        triggerNodeId: String,
+        delayMs: Long,
+        scheduleFingerprint: String,
+    ) {
         val constraints = Constraints.Builder()
             .setRequiresBatteryNotLow(false)
             .build()
@@ -249,7 +296,8 @@ class WorkflowScheduler(private val context: Context) {
             .setInputData(
                 workDataOf(
                     WorkflowWorker.KEY_WORKFLOW_ID to workflowId,
-                    KEY_TRIGGER_NODE_ID to triggerNodeId
+                    KEY_TRIGGER_NODE_ID to triggerNodeId,
+                    KEY_SCHEDULE_FINGERPRINT to scheduleFingerprint,
                 )
             )
             .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
@@ -269,6 +317,12 @@ class WorkflowScheduler(private val context: Context) {
     fun cancelWorkflow(workflowId: String) {
         workManager.cancelUniqueWork(getWorkName(workflowId))
         AppLogger.d(TAG, "Cancelled workflow schedule: $workflowId")
+    }
+
+    /** Used by security-sensitive legacy cleanup before a trusted replacement is scheduled. */
+    internal fun cancelWorkflowAndWait(workflowId: String) {
+        workManager.cancelUniqueWork(getWorkName(workflowId)).result.get()
+        AppLogger.d(TAG, "Synchronously cancelled workflow schedule: $workflowId")
     }
 
     /**

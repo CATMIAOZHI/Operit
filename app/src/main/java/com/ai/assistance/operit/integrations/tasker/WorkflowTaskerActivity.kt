@@ -12,6 +12,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.core.workflow.WorkflowAuthTokenManager
 import com.ai.assistance.operit.core.workflow.WorkflowIntentSecurity
 import com.ai.assistance.operit.data.repository.WorkflowRepository
@@ -29,6 +30,9 @@ import com.joaomgcd.taskerpluginlibrary.runner.TaskerPluginResultError
 import com.joaomgcd.taskerpluginlibrary.runner.TaskerPluginResultSucess
 import kotlinx.coroutines.runBlocking
 import java.util.ArrayList
+
+internal fun taskerWorkflowDataAccessAllowed(mainDataAccessAllowed: Boolean): Boolean =
+    mainDataAccessAllowed
 
 /**
  * Tasker Plugin Activity for triggering workflows
@@ -212,6 +216,11 @@ class WorkflowTaskerRunner : TaskerPluginRunnerAction<WorkflowTaskerInput, Unit>
         context: Context,
         input: TaskerInput<WorkflowTaskerInput>
     ): TaskerPluginResult<Unit> {
+        if (!taskerWorkflowDataAccessAllowed(OperitApplication.isMainDataAccessAllowed(context))) {
+            return TaskerPluginResultError(
+                IllegalStateException("Workflow data is unavailable while migration or restore is in progress")
+            )
+        }
         val legacyParams = input.regular.params
         val command = input.regular.command ?: legacyParams?.getOrNull(0)
         val authToken = input.regular.authToken ?: legacyParams?.getOrNull(1)

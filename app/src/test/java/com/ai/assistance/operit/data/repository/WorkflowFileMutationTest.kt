@@ -121,6 +121,76 @@ class WorkflowFileMutationTest {
         assertEquals(99L, updated.lastExecutionTime)
     }
 
+    @Test
+    fun executionMetadataWriteDoesNotRecreateADeletedPrivateDefinition() {
+        val deletedFile = File(temporaryFolder.root, "deleted.json")
+        var writerCalled = false
+
+        val result = mutateWorkflowFileAtomically(
+            file = deletedFile,
+            workflowId = "deleted",
+            json = json,
+            lock = Any(),
+            reader = { error("missing private file must not be read") },
+            writer = { _, _ -> writerCalled = true },
+            transform = { error("missing private file must not be patched") },
+        )
+
+        assertEquals(null, result)
+        assertFalse(writerCalled)
+        assertFalse(deletedFile.exists())
+    }
+
+    @Test
+    fun legacyEditPublishesOnlyTheFinalDisabledPrivateDefinition() {
+        val internalFile = File(temporaryFolder.root, "promoted.json")
+        val legacy = Workflow(id = "promoted", name = "legacy", enabled = true)
+        val requested = legacy.copy(name = "edited", enabled = false)
+        val visibleWrites = mutableListOf<Workflow>()
+
+        val updated = updateEffectiveWorkflowFileAtomically(
+            internalFile = internalFile,
+            workflowId = legacy.id,
+            fallbackWorkflow = legacy,
+            json = json,
+            lock = Any(),
+            reader = { error("private definition does not exist yet") },
+            writer = { file, content ->
+                val visible = decodeWorkflowContentSafely(json, content, legacy.id)
+                visibleWrites += visible
+                file.writeText(content)
+            },
+            transform = { _, promotingLegacy ->
+                assertTrue(promotingLegacy)
+                requested
+            },
+        )
+
+        assertEquals(listOf(requested), visibleWrites)
+        assertEquals(requested, updated)
+        assertFalse(decodeWorkflowContentSafely(json, internalFile.readText(), legacy.id).enabled)
+    }
+
+    @Test
+    fun privateOnlyMutationCannotUseAnAbsentLegacyFallback() {
+        val internalFile = File(temporaryFolder.root, "private-only.json")
+        var writerCalled = false
+
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            updateEffectiveWorkflowFileAtomically(
+                internalFile = internalFile,
+                workflowId = "private-only",
+                fallbackWorkflow = null,
+                json = json,
+                lock = Any(),
+                writer = { _, _ -> writerCalled = true },
+                transform = { latest, _ -> latest },
+            )
+        }
+        assertFalse(writerCalled)
+        assertFalse(internalFile.exists())
+    }
+
     private fun workflowWithToken(token: String): Workflow = Workflow(
         id = "workflow-1",
         name = "initial",

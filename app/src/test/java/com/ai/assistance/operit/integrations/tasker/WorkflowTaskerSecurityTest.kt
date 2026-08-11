@@ -20,6 +20,31 @@ import org.mockito.kotlin.mock
 
 class WorkflowTaskerSecurityTest {
     @Test
+    fun runnerFailsClosedWhileMainWorkflowDataIsGated() {
+        assertFalse(taskerWorkflowDataAccessAllowed(false))
+        assertTrue(taskerWorkflowDataAccessAllowed(true))
+
+        val runnerSource = java.io.File(
+            "src/main/java/com/ai/assistance/operit/integrations/tasker/WorkflowTaskerActivity.kt"
+        ).readText()
+        assertTrue(
+            runnerSource.contains(
+                "taskerWorkflowDataAccessAllowed(OperitApplication.isMainDataAccessAllowed(context))"
+            )
+        )
+
+        val receiverSource = java.io.File(
+            "src/main/java/com/ai/assistance/operit/integrations/tasker/WorkflowTaskerReceiver.kt"
+        ).readText()
+        val gateIndex = receiverSource.indexOf("OperitApplication.isMainDataAccessAllowed(context)")
+        val tokenReadIndex = receiverSource.indexOf("WorkflowIntentSecurity.readAuthTokenSafely(intent)")
+        val managerIndex = receiverSource.indexOf("WorkflowAuthTokenManager(context)")
+        assertTrue(gateIndex >= 0)
+        assertTrue(gateIndex < tokenReadIndex)
+        assertTrue(gateIndex < managerIndex)
+    }
+
+    @Test
     fun taskerInput_publishesCommandAndAuthTokenFields() {
         assertNotNull(WorkflowTaskerInput::class.java.getAnnotation(TaskerInputRoot::class.java))
         val annotatedNames = WorkflowTaskerInput::class.java.declaredFields

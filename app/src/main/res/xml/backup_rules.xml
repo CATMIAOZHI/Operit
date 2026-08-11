@@ -6,6 +6,9 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
+    <!-- The workflow HMAC key is installation-bound. This also excludes the backup-eligible
+         SharedPreferences file used by prerelease builds before the key moved to noBackup. -->
+    <exclude domain="sharedpref" path="workflow_auth_tokens.xml"/>
     <!--
    <include domain="sharedpref" path="."/>
    <exclude domain="sharedpref" path="device.xml"/>

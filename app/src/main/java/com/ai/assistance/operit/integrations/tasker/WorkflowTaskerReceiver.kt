@@ -48,13 +48,12 @@ class WorkflowTaskerReceiver : BroadcastReceiver() {
         if (action.isNullOrBlank()) {
             return
         }
+        if (!OperitApplication.isMainDataAccessAllowed(context)) return
         val authToken = WorkflowIntentSecurity.readAuthTokenSafely(intent)
         if (!WorkflowAuthTokenManager(context).isAuthenticAuthToken(authToken)) {
             AppLogger.w(TAG, "Rejected workflow trigger broadcast without a valid authentication token")
             return
         }
-        if (!OperitApplication.isMainDataAccessAllowed(context)) return
-
         AppLogger.d(TAG, "Received workflow trigger broadcast for action: $action. Checking for matching workflows.")
 
         // Use goAsync to allow async work
@@ -100,13 +99,9 @@ class WorkflowBootReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val repository = WorkflowRepository(context.applicationContext)
-                val result = repository.getAllWorkflows()
-                
-                result.getOrNull()?.forEach { workflow ->
-                    if (workflow.enabled) {
-                        repository.scheduleWorkflow(workflow.id)
-                        AppLogger.d(TAG, "Rescheduled workflow: ${workflow.name}")
-                    }
+                repository.resetSchedulesForLegacyWorkflowIds()
+                repository.rebuildInternalWorkflowSchedules().onFailure { error ->
+                    AppLogger.e(TAG, "Failed to rebuild private schedules after boot", error)
                 }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Error rescheduling workflows after boot", e)

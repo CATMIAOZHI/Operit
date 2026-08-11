@@ -2,9 +2,15 @@ package com.ai.assistance.operit.data.repository
 
 import java.io.File
 import java.nio.file.Files
+import com.ai.assistance.operit.core.workflow.WorkflowScheduler
+import com.ai.assistance.operit.data.model.TriggerNode
+import com.ai.assistance.operit.data.model.Workflow
+import com.ai.assistance.operit.data.model.WorkflowExecutionRecord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeNoException
 import org.junit.Test
@@ -17,6 +23,228 @@ import org.junit.Test
  * repository must uphold, expressed through the [SourcedEntry]/[StorageSource] primitives.
  */
 class WorkflowStoragePolicyTest {
+
+    @Test
+    fun legacyDisplayIsDisabledAndOnlyUserInitiatedExecutionMayPromoteIt() {
+        val enabledLegacy = Workflow(id = "legacy", enabled = true)
+        val projected = projectLegacyWorkflowForDisplay(enabledLegacy)
+
+        assertFalse(projected.enabled)
+        assertEquals(
+            WorkflowExecutionStorageAction.REJECT,
+            workflowExecutionStorageAction(false, WorkflowExecutionOrigin.AUTOMATIC),
+        )
+        assertEquals(
+            WorkflowExecutionStorageAction.REJECT,
+            workflowExecutionStorageAction(false, WorkflowExecutionOrigin.AUTHENTICATED_EXTERNAL),
+        )
+        assertEquals(
+            WorkflowExecutionStorageAction.PROMOTE_LEGACY,
+            workflowExecutionStorageAction(false, WorkflowExecutionOrigin.USER_INITIATED),
+        )
+        assertEquals(
+            WorkflowExecutionStorageAction.USE_PRIVATE,
+            workflowExecutionStorageAction(true, WorkflowExecutionOrigin.AUTOMATIC),
+        )
+
+        val alreadyDisabled = enabledLegacy.copy(enabled = false)
+        assertSame(alreadyDisabled, projectLegacyWorkflowForDisplay(alreadyDisabled))
+    }
+
+    @Test
+    fun privateScheduleRebuildCancelsEveryTrustedIdBeforeScheduling() {
+        val workflows = listOf(
+            Workflow(id = "enabled", enabled = true),
+            Workflow(id = "disabled", enabled = false),
+            Workflow(id = "cancel-fails", enabled = true),
+        )
+        val events = mutableListOf<String>()
+        val result = rebuildPrivateWorkflowSchedules(
+            workflows = workflows,
+            cancelAndWait = { id ->
+                events += "cancel:$id"
+                if (id == "cancel-fails") error("cancel failed")
+            },
+            schedulePrivate = { id ->
+                events += "schedule:$id"
+                true
+            },
+        )
+
+        assertEquals(
+            listOf(
+                "cancel:enabled",
+                "schedule:enabled",
+                "cancel:disabled",
+                "cancel:cancel-fails",
+            ),
+            events,
+        )
+        assertEquals(1, result.scheduledCount)
+        assertEquals(1, result.cancellationFailures)
+    }
+
+    @Test
+    fun legacyScheduleCleanupNeverSchedulesAReplacementAfterCancellationFailure() {
+        val cancelled = mutableListOf<String>()
+        val failures = cancelLegacyWorkflowScheduleIds(
+            workflowIds = listOf("first", "fails", "last"),
+            cancelAndWait = { id ->
+                cancelled += id
+                if (id == "fails") error("cancel failed")
+            },
+        )
+
+        assertEquals(listOf("first", "fails", "last"), cancelled)
+        assertEquals(1, failures)
+    }
+
+    @Test
+    fun scheduleFingerprintBindsTrustedNodeAndConfiguration() {
+        val original = TriggerNode(
+            id = "schedule-node",
+            triggerType = "schedule",
+            triggerConfig = linkedMapOf("repeat" to "true", "interval_ms" to "900000"),
+        )
+        val reordered = original.copy(
+            triggerConfig = linkedMapOf("interval_ms" to "900000", "repeat" to "true"),
+        )
+        val changed = original.copy(triggerConfig = original.triggerConfig + ("interval_ms" to "1800000"))
+
+        assertEquals(
+            WorkflowScheduler.scheduleFingerprint("workflow", original),
+            WorkflowScheduler.scheduleFingerprint("workflow", reordered),
+        )
+        assertFalse(
+            WorkflowScheduler.scheduleFingerprint("workflow", original) ==
+                WorkflowScheduler.scheduleFingerprint("workflow", changed)
+        )
+    }
+
+    @Test
+    fun scheduledExecutionAuthorizationRejectsDisabledMissingAndStalePlans() {
+        val node = TriggerNode(
+            id = "schedule-node",
+            triggerType = "schedule",
+            triggerConfig = mapOf("interval_ms" to "900000", "enabled" to "true"),
+        )
+        val workflow = Workflow(id = "workflow", enabled = true, nodes = listOf(node))
+        val fingerprint = WorkflowScheduler.scheduleFingerprint(workflow.id, node)
+
+        assertTrue(isTrustedScheduleExecutionAuthorized(workflow, node.id, fingerprint))
+        assertFalse(
+            isTrustedScheduleExecutionAuthorized(workflow.copy(enabled = false), node.id, fingerprint)
+        )
+        assertFalse(isTrustedScheduleExecutionAuthorized(workflow, "missing", fingerprint))
+        assertFalse(isTrustedScheduleExecutionAuthorized(workflow, node.id, "stale"))
+        assertFalse(
+            isTrustedScheduleExecutionAuthorized(
+                workflow.copy(nodes = listOf(node.copy(triggerConfig = node.triggerConfig + ("enabled" to "false")))),
+                node.id,
+                fingerprint,
+            )
+        )
+        assertFalse(
+            isTrustedScheduleExecutionAuthorized(
+                workflow.copy(nodes = listOf(node.copy(triggerType = "manual"))),
+                node.id,
+                fingerprint,
+            )
+        )
+    }
+
+    @Test
+    fun untrustedDirectoryScanStopsAtEntryFileAndByteBudgets() {
+        val root = Files.createTempDirectory("workflow-bounded-scan").toFile()
+        try {
+            repeat(20) { index -> File(root, "workflow-$index.json").writeText("1234567890") }
+
+            val entryBounded = scanCanonicalWorkflowJsonFiles(
+                root,
+                limits = WorkflowFileScanLimits(maxFiles = 20, maxEntriesVisited = 3),
+            )
+            assertTrue(entryBounded.files.size <= 3)
+            assertTrue(entryBounded.truncated)
+
+            val fileBounded = canonicalWorkflowJsonFiles(
+                root,
+                limits = WorkflowFileScanLimits(maxFiles = 2, maxEntriesVisited = 20),
+            )
+            assertEquals(2, fileBounded.size)
+
+            val byteBounded = canonicalWorkflowJsonFiles(
+                root,
+                limits = WorkflowFileScanLimits(
+                    maxFiles = 20,
+                    maxEntriesVisited = 20,
+                    maxTotalBytes = 15,
+                    maxFileBytes = 10,
+                ),
+            )
+            assertEquals(1, byteBounded.size)
+
+            val singleFileBounded = scanCanonicalWorkflowJsonFiles(
+                root,
+                limits = WorkflowFileScanLimits(
+                    maxFiles = 20,
+                    maxEntriesVisited = 20,
+                    maxTotalBytes = 100,
+                    maxFileBytes = 9,
+                ),
+            )
+            assertTrue(singleFileBounded.files.isEmpty())
+            assertEquals(20, singleFileBounded.skippedEntries)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun boundedNoFollowReaderEnforcesActualAggregateBytes() {
+        val root = Files.createTempDirectory("workflow-bounded-read").toFile()
+        try {
+            val first = File(root, "first.json").apply { writeText("1234567890") }
+            val second = File(root, "second.json").apply { writeText("abcdefghij") }
+            val budget = WorkflowByteBudget(15)
+
+            assertEquals(
+                "1234567890",
+                readWorkflowTextBoundedNoFollow(first, 10, "too large", budget),
+            )
+            assertEquals(5L, budget.remainingBytes)
+            assertThrows(IllegalArgumentException::class.java) {
+                readWorkflowTextBoundedNoFollow(second, 10, "too large", budget)
+            }
+            assertEquals(0L, budget.remainingBytes)
+
+            assertThrows(IllegalArgumentException::class.java) {
+                readWorkflowTextBoundedNoFollow(first, 10, "too large", budget)
+            }
+            assertEquals(0L, budget.remainingBytes)
+
+            assertThrows(IllegalArgumentException::class.java) {
+                readWorkflowTextBoundedNoFollow(first, 9, "too large")
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun untrustedJsonPreflightRejectsDepthAndElementBombsButIgnoresStrings() {
+        validateUntrustedWorkflowJson(
+            """{"text":"[[[[,,,,::::]]]]"}""",
+            maxDepth = 2,
+            maxStructuralTokens = 4,
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            validateUntrustedWorkflowJson("[".repeat(65) + "]".repeat(65))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            validateUntrustedWorkflowJson("[0,0,0]", maxStructuralTokens = 3)
+        }
+    }
 
     @Test
     fun workflowIdsResolveOnlyAsDirectChildrenOfManagedRoots() {
@@ -62,7 +290,7 @@ class WorkflowStoragePolicyTest {
             }
 
             assertEquals(listOf(inside), canonicalWorkflowJsonFiles(scanned))
-            assertEquals(inside, latestWorkflowExecutionRecordFile(scanned))
+            assertEquals(inside, latestWorkflowExecutionRecordFile(listOf(inside), emptyList()))
         } finally {
             root.deleteRecursively()
         }
@@ -83,7 +311,7 @@ class WorkflowStoragePolicyTest {
 
             assertNull(resolveWorkflowStorageChild(linkedRoot.toFile(), "outside", ".json"))
             assertTrue(canonicalWorkflowJsonFiles(linkedRoot.toFile()).isEmpty())
-            assertNull(latestWorkflowExecutionRecordFile(linkedRoot.toFile()))
+            assertNull(latestWorkflowExecutionRecordFile(emptyList(), emptyList()))
 
             val nestedRoot = File(linkedRoot.toFile(), "nested")
             File(outside, "nested").mkdirs()
@@ -103,7 +331,7 @@ class WorkflowStoragePolicyTest {
     }
 
     @Test
-    fun latestExecutionRecordFallsBackToLegacyAndThenPrefersNewerInternalLog() {
+    fun latestExecutionRecordFallsBackToLegacyButAlwaysPrefersPrivateHistory() {
         val root = Files.createTempDirectory("workflow-logs").toFile()
         val internal = File(root, "internal").apply { mkdirs() }
         val legacy = File(root, "legacy").apply { mkdirs() }
@@ -114,16 +342,40 @@ class WorkflowStoragePolicyTest {
             }
             File(legacy, "ignored.txt").writeText("not a record")
 
-            assertEquals(legacyRecord, latestWorkflowExecutionRecordFile(internal, legacy))
+            assertEquals(
+                legacyRecord,
+                latestWorkflowExecutionRecordFile(emptyList(), canonicalWorkflowJsonFiles(legacy)),
+            )
 
             val internalRecord = File(internal, "internal.json").apply {
                 writeText("{}")
-                setLastModified(200L)
+                setLastModified(50L)
             }
-            assertEquals(internalRecord, latestWorkflowExecutionRecordFile(internal, legacy))
+            assertEquals(
+                internalRecord,
+                latestWorkflowExecutionRecordFile(
+                    canonicalWorkflowJsonFiles(internal),
+                    canonicalWorkflowJsonFiles(legacy),
+                ),
+            )
         } finally {
             root.deleteRecursively()
         }
+    }
+
+    @Test
+    fun executionRecordMustBelongToRequestedWorkflow() {
+        val record = WorkflowExecutionRecord(
+            workflowId = "other",
+            workflowName = "Other",
+            success = true,
+            message = "done",
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            requireWorkflowExecutionRecordOwnership(record, "requested")
+        }
+        assertSame(record, requireWorkflowExecutionRecordOwnership(record, "other"))
     }
 
     @Test
