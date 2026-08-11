@@ -360,7 +360,7 @@ function createApiHandler({
         let restartError = null;
         if (typeof restartAgent === "function") {
           try {
-            restartScheduled = !!restartAgent("api.startup.apply_recommended_bind");
+            restartScheduled = !!(await restartAgent("api.startup.apply_recommended_bind"));
             restartAlreadyScheduled = !restartScheduled;
           } catch (error) {
             restartError = error && error.message ? error.message : String(error);

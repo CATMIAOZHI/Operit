@@ -85,6 +85,9 @@ function createConfigHarness(options = {}) {
       if (options.restartThrows) {
         throw new Error("simulated restart failure");
       }
+      if (options.restartRejects) {
+        return Promise.reject(new Error("simulated async restart failure"));
+      }
       return options.restartResult !== false;
     },
     processService: {
@@ -244,6 +247,21 @@ test("restart scheduling failure reports that config applied and manual restart 
   assert.equal(result.body.restartAlreadyScheduled, false);
   assert.equal(result.body.manualRestartRequired, true);
   assert.equal(result.body.restartError, "simulated restart failure");
+  assert.equal(state.config.bindAddress, "192.168.1.20");
+});
+
+test("asynchronous restart failure is awaited and requires a manual restart", async () => {
+  const { handler, state } = createConfigHarness({ restartRejects: true });
+
+  const result = await callApi(handler, "POST", "/api/startup/apply_recommended_bind", {
+    token: "current-secret"
+  });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.configApplied, true);
+  assert.equal(result.body.restartScheduled, false);
+  assert.equal(result.body.restartAlreadyScheduled, false);
+  assert.equal(result.body.manualRestartRequired, true);
+  assert.equal(result.body.restartError, "simulated async restart failure");
   assert.equal(state.config.bindAddress, "192.168.1.20");
 });
 
