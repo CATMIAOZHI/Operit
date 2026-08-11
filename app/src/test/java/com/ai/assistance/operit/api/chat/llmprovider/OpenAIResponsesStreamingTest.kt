@@ -254,6 +254,40 @@ class OpenAIResponsesStreamingTest {
     }
 
     @Test
+    fun chatCompletionsRegularContentFlushesBeforeNextTool() = runBlocking {
+        val sseBody =
+            listOf(
+                """data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"/safe\"}"}}]},"finish_reason":null}]}""",
+                """data: {"choices":[{"delta":{"content":"between tools"},"finish_reason":null}]}""",
+                """data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"visit_web","arguments":"{\"url\":\"https://safe.example\"}"}}]},"finish_reason":null}]}""",
+                """data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}""",
+                "data: [DONE]",
+            ).joinToString(separator = "\n\n", postfix = "\n\n")
+        val provider =
+            OpenAIProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "test-model",
+                client = clientForSse(sseBody),
+                enableToolCall = true,
+            )
+
+        withoutAndroidLogging {
+            val visibleOutput =
+                ChatUtils.removeThinkingContent(
+                    collectResponse(provider, Mockito.mock(Context::class.java))
+                )
+            val firstToolIndex = visibleOutput.indexOf("name=\"write_file\"")
+            val bufferedTextIndex = visibleOutput.indexOf("between tools")
+            val secondToolIndex = visibleOutput.indexOf("name=\"visit_web\"")
+
+            assertTrue("Visible output: $visibleOutput", firstToolIndex >= 0)
+            assertTrue("Visible output: $visibleOutput", bufferedTextIndex > firstToolIndex)
+            assertTrue("Visible output: $visibleOutput", secondToolIndex > bufferedTextIndex)
+        }
+    }
+
+    @Test
     fun responsesCompletedReasoningWhileToolOpenAfterRegularText_isIgnored() = runBlocking {
         val sseBody =
             listOf(

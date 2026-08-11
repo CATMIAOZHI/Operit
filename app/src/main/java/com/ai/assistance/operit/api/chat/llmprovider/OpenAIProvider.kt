@@ -1948,6 +1948,9 @@ open class OpenAIProvider(
             // 检测工具切换
             if (state.lastProcessedToolIndex != null && state.lastProcessedToolIndex != index) {
                 handleToolSwitch(state.lastProcessedToolIndex!!, state, emitter)
+                // Text observed while the previous tool was open belongs between the two calls.
+                // Flush only after the previous envelope closes and before opening the next one.
+                flushPendingRegularContent(state, emitter)
             }
             state.lastProcessedToolIndex = index
 
