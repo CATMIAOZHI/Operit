@@ -10,6 +10,8 @@ import androidx.lifecycle.viewModelScope
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.core.workflow.NodeExecutionState
+import com.ai.assistance.operit.core.workflow.WorkflowAuthTokenManager
+import com.ai.assistance.operit.core.workflow.WorkflowIntentSecurity
 import com.ai.assistance.operit.data.model.ConditionNode
 import com.ai.assistance.operit.data.model.ConditionOperator
 import com.ai.assistance.operit.data.model.ExecuteNode
@@ -59,7 +61,7 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
     
     var error by mutableStateOf<String?>(null)
         private set
-    
+
     var currentWorkflow by mutableStateOf<Workflow?>(null)
         private set
 
@@ -393,6 +395,7 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun buildIntentChatBroadcastTemplateWorkflow(context: Context, name: String, description: String): Workflow {
+        val workflowAuthTokenManager = WorkflowAuthTokenManager(context)
         val triggerId = UUID.randomUUID().toString()
         val startId = UUID.randomUUID().toString()
         val createChatId = UUID.randomUUID().toString()
@@ -407,7 +410,8 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
             name = context.getString(R.string.workflow_trigger_intent),
             triggerType = "intent",
             triggerConfig = mapOf(
-                "action" to "com.ai.assistance.operit.TRIGGER_WORKFLOW"
+                WorkflowIntentSecurity.CONFIG_ACTION to WorkflowIntentSecurity.ACTION_TRIGGER_WORKFLOW,
+                WorkflowIntentSecurity.CONFIG_AUTH_TOKEN to workflowAuthTokenManager.newAuthToken()
             ),
             position = templateNodePosition(0)
         )

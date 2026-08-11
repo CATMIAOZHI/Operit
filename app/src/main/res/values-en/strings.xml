@@ -6538,6 +6538,16 @@
     <string name="workflow_template_logic_or">Logic OR Template %1$s</string>
     <string name="workflow_template_calculate">Calculation Template %1$s</string>
     <string name="workflow_trigger_intent">Intent Trigger</string>
+    <string name="workflow_intent_trigger_auth_help">External automation must send the fixed action and include this workflow\'s auth_token in the “com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN” extra. Treat the token as a sensitive credential.</string>
+    <string name="workflow_tasker_trigger_auth_help">Enter the same command and auth_token in Tasker\'s Operit Workflow action. Existing Tasker configurations using the old params format must be updated. Treat the token as a sensitive credential.</string>
+    <string name="workflow_tasker_config_title">Configure Operit workflow</string>
+    <string name="workflow_tasker_config_help">Copy command and auth_token from the target workflow\'s Tasker trigger node. Legacy params configurations must be updated here before they can run again.</string>
+    <string name="workflow_tasker_config_command_hint">Workflow command</string>
+    <string name="workflow_tasker_config_auth_token_hint">Workflow auth_token</string>
+    <string name="workflow_tasker_config_sensitive_warning">auth_token is a sensitive credential. Do not share it with untrusted apps or people.</string>
+    <string name="workflow_tasker_config_save">Save to Tasker</string>
+    <string name="workflow_tasker_config_command_required">Enter the workflow command</string>
+    <string name="workflow_tasker_config_auth_token_invalid">Copy the complete valid auth_token from the target workflow in this installation</string>
     <string name="workflow_trigger_floating">Start Floating Window</string>
     <string name="workflow_trigger_create_chat">Create Chat</string>
     <string name="workflow_action_extract_message">Extract Intent Message (message)</string>

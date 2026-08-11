@@ -460,11 +460,15 @@
             </intent-filter>
         </activity>
         
-        <!-- Internal Workflow Receiver -->
+        <!-- Authenticated Workflow Receiver for external automation apps -->
         <receiver
             android:name=".integrations.tasker.WorkflowTaskerReceiver"
-            android:exported="false"
-            android:enabled="true" />
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="com.ai.assistance.operit.TRIGGER_WORKFLOW" />
+            </intent-filter>
+        </receiver>
         
         <!-- Boot Completed Receiver for rescheduling workflows -->
         <receiver

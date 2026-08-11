@@ -4,8 +4,8 @@
 
 当前实现支持：
 
-- **每个工作流的 Intent Trigger 可以配置自己的 `action`**
-- 外部 App 通过发送广播（推荐使用“显式广播”）即可触发匹配的工作流
+- **每个工作流的 Intent Trigger 可以配置自己的 `action` 和独立、由当前安装签名的 `auth_token`**
+- 外部 App 发送广播时必须同时提供正确 action 与令牌；推荐使用显式广播
 
 对应代码：
 
@@ -22,6 +22,8 @@
 
 - `triggerType == "intent"`
 - `triggerConfig["action"] == intent.action`
+- `triggerConfig["auth_token"]` 与广播 extra
+  `com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN` 完全一致
 
 则该工作流会被触发执行。
 
@@ -40,23 +42,25 @@ Android 对隐式广播有各种限制（尤其是后台、Android 8+ 等）。
 ## 2. Receiver / Component 信息
 
 - **Receiver 类**：`com.ai.assistance.operit.integrations.tasker.WorkflowTaskerReceiver`
-- **包名**：`com.ai.assistance.operit`
-- **Component**：`com.ai.assistance.operit/.integrations.tasker.WorkflowTaskerReceiver`
+- **Receiver 代码类名**：`com.ai.assistance.operit.integrations.tasker.WorkflowTaskerReceiver`
+- **默认个人版 applicationId**：`com.rainy.operitry`（clone 等变体后缀不同）
+- **Component 格式**：`<applicationId>/com.ai.assistance.operit.integrations.tasker.WorkflowTaskerReceiver`
 
 ---
 
-## 3. 配置工作流的 action
+## 3. 配置 action 与令牌
 
 在工作流编辑器中，将触发器设置为：
 
 - **类型**：Intent
 - **action**：填写你希望外部触发的 action，例如：
   - `com.example.myapp.TRIGGER_OPERIT_WORKFLOW_A`
+- **auth_token**：由编辑器使用当前安装的私有签名密钥自动生成。复制到发送方配置中，不要手工构造、缩短、记录到日志或公开分享；其他安装生成的 token 也不会通过校验。
 
 注意：
 
-- action 只是一个字符串，用于匹配。
-- 触发时 intent 的 extras 会作为 TriggerNode 的输出 JSON（字符串）提供给下游节点（可用 ExtractNode(JSON) 提取字段）。
+- action 与 auth_token 必须同时匹配。
+- 触发时普通 intent extras 会作为 TriggerNode 的输出 JSON（字符串）提供给下游节点（可用 ExtractNode(JSON) 提取字段）。认证令牌会在匹配后移除，不会传给下游节点。
 
 ---
 
@@ -66,13 +70,14 @@ Android 对隐式广播有各种限制（尤其是后台、Android 8+ 等）。
 
 ```bash
 adb shell am broadcast \
-  -n com.ai.assistance.operit/.integrations.tasker.WorkflowTaskerReceiver \
+  -n com.rainy.operitry/com.ai.assistance.operit.integrations.tasker.WorkflowTaskerReceiver \
   -a com.example.myapp.TRIGGER_OPERIT_WORKFLOW_A \
+  --es com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN "<工作流中的 auth_token>" \
   --es message "hello from adb" \
   --es request_id "req-1001"
 ```
 
-- `-n` 指定 component，确保发给 Operit。
+- `-n` 指定 component，确保发给正确 applicationId；使用其他构建变体时替换前半部分。
 - `-a` 为你在工作流 Trigger 里配置的 action。
 - `--es/--ez/--ei/...` 为 extras，会被工作流 TriggerNode 收集并输出。
 
@@ -82,11 +87,12 @@ adb shell am broadcast \
 
 ```bash
 adb shell am broadcast \
-  -a com.example.myapp.TRIGGER_OPERIT_WORKFLOW_A \
+  -a com.ai.assistance.operit.TRIGGER_WORKFLOW \
+  --es com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN "<工作流中的 auth_token>" \
   --es message "hello"
 ```
 
-但这取决于系统版本、ROM 策略以及 Operit 是否能在后台接收该隐式广播。
+Manifest 只为内置默认 action 注册隐式过滤器；自定义 action 必须使用显式 component。投递还取决于系统版本和 ROM 的后台限制。
 
 ### 4.3 方式 C：使用内置默认 action（兼容用法）
 
@@ -99,6 +105,7 @@ adb shell am broadcast \
 ```bash
 adb shell am broadcast \
   -a com.ai.assistance.operit.TRIGGER_WORKFLOW \
+  --es com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN "<工作流中的 auth_token>" \
   --es message "hello" \
   --es request_id "req-1002"
 ```
@@ -165,5 +172,6 @@ TriggerNode 输出（示意）：
 
 ## 8. 注意事项
 
-- 该 Receiver 为 `exported=true`：任何 App 都可以发送广播到该入口。
-- 如果你担心滥用，建议后续增加 permission 或者在 Receiver 里做校验/白名单。
+- 该 Receiver 为 `exported=true`，但无有效的每工作流令牌时会在读取工作流前拒绝请求。
+- `auth_token` 是执行工作流的能力凭据，由当前安装的私有密钥签名并使用 URL-safe 字符编码；必须复制编辑器生成的完整值，不要手工构造。不要放入公共仓库、截图、日志或回传 extras；怀疑泄露时，在编辑器中删除旧值并保存，让应用生成新的签名 token，再同步更新发送方。
+- 旧公共 Downloads 工作流只通过“读取旧工作流”兼容开关显示，内部存储中的同名版本始终优先，原文件不会被修改。仅存在于旧目录的工作流不能直接接受外部 Intent/Tasker 触发；第一次修改、启停或执行时会写时复制到内部存储，并在内部副本可见前轮换全部外部触发 token。复制后请从编辑器读取新 token 并同步更新发送方；原有计划触发与启用状态会保留。

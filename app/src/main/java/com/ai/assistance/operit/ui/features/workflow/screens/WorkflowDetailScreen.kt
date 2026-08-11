@@ -35,6 +35,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.config.SystemToolPrompts
 import com.ai.assistance.operit.core.tools.AIToolHandler
+import com.ai.assistance.operit.core.workflow.WorkflowIntentSecurity
+import com.ai.assistance.operit.core.workflow.WorkflowAuthTokenManager
 import com.ai.assistance.operit.data.model.Workflow
 import com.ai.assistance.operit.data.model.WorkflowNode
 import com.ai.assistance.operit.data.model.TriggerNode
@@ -707,6 +709,7 @@ fun NodeDialog(
     var actionTypeExpanded by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val workflowAuthTokenManager = remember(context) { WorkflowAuthTokenManager(context) }
     val toolHandler = remember(context) { AIToolHandler.getInstance(context) }
     val packageManager = remember(context) { toolHandler.getOrCreatePackageManager() }
     val allToolNames = remember(context) {
@@ -1899,8 +1902,8 @@ fun NodeDialog(
                                             // 设置默认配置示例
                                             triggerConfig = when (key) {
                                                 "schedule" -> """{"schedule_type":"interval","interval_ms":"900000","repeat":"true","enabled":"true"}"""
-                                                "tasker" -> """{"variable_name": "%evtprm()"}"""
-                                                "intent" -> """{"action": "com.example.MY_ACTION"}"""
+                                                "tasker" -> """{"${WorkflowIntentSecurity.CONFIG_TASKER_COMMAND}": "start_meeting", "${WorkflowIntentSecurity.CONFIG_AUTH_TOKEN}": "${workflowAuthTokenManager.newAuthToken()}"}"""
+                                                "intent" -> """{"${WorkflowIntentSecurity.CONFIG_ACTION}": "${WorkflowIntentSecurity.ACTION_TRIGGER_WORKFLOW}", "${WorkflowIntentSecurity.CONFIG_AUTH_TOKEN}": "${workflowAuthTokenManager.newAuthToken()}"}"""
                                                 "speech" -> """{"pattern": "(?i)\\bhello\\b", "ignore_case": "true", "require_final": "true", "cooldown_ms": "3000"}"""
                                                 else -> "{}"
                                             }
@@ -1946,6 +1949,20 @@ fun NodeDialog(
                             if (triggerType == "speech") {
                                 Text(
                                     text = stringResource(R.string.workflow_speech_trigger_help),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 6.dp)
+                                )
+                            } else if (triggerType == "intent") {
+                                Text(
+                                    text = stringResource(R.string.workflow_intent_trigger_auth_help),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 6.dp)
+                                )
+                            } else if (triggerType == "tasker") {
+                                Text(
+                                    text = stringResource(R.string.workflow_tasker_trigger_auth_help),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(top = 6.dp)

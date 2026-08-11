@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.core.workflow.WorkflowIntentSecurity
+import com.ai.assistance.operit.core.workflow.WorkflowAuthTokenManager
 import com.ai.assistance.operit.data.repository.WorkflowRepository
 import com.ai.assistance.operit.core.application.OperitApplication
 import kotlinx.coroutines.CoroutineScope
@@ -20,16 +22,23 @@ class WorkflowTaskerReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "WorkflowTaskerReceiver"
-        const val ACTION_TRIGGER_WORKFLOW = "com.ai.assistance.operit.TRIGGER_WORKFLOW"
+        const val ACTION_TRIGGER_WORKFLOW = WorkflowIntentSecurity.ACTION_TRIGGER_WORKFLOW
+        const val EXTRA_AUTH_TOKEN = WorkflowIntentSecurity.EXTRA_AUTH_TOKEN
         
         /**
-         * Creates an intent to trigger workflows based on intent data.
-         * This can be used by other parts of the app or external apps to trigger a check.
+         * Creates an authenticated intent to trigger workflows based on intent data.
+         * External automation apps must use the token shown in the workflow's Intent trigger.
          */
-        fun createTriggerIntent(context: Context, extras: Bundle? = null): Intent {
+        fun createTriggerIntent(
+            context: Context,
+            authToken: String,
+            extras: Bundle? = null
+        ): Intent {
+            require(WorkflowIntentSecurity.isValidAuthToken(authToken)) { "Invalid workflow auth token" }
             return Intent(ACTION_TRIGGER_WORKFLOW).apply {
                 setPackage(context.packageName)
                 extras?.let { putExtras(it) }
+                putExtra(EXTRA_AUTH_TOKEN, authToken)
             }
         }
     }
@@ -37,6 +46,11 @@ class WorkflowTaskerReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
         if (action.isNullOrBlank()) {
+            return
+        }
+        val authToken = WorkflowIntentSecurity.readAuthTokenSafely(intent)
+        if (!WorkflowAuthTokenManager(context).isAuthenticAuthToken(authToken)) {
+            AppLogger.w(TAG, "Rejected workflow trigger broadcast without a valid authentication token")
             return
         }
         if (!OperitApplication.isMainDataAccessAllowed(context)) return

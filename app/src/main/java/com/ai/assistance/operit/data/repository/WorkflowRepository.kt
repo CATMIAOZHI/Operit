@@ -5,7 +5,9 @@ import android.content.Intent
 import android.util.AtomicFile
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.workflow.NodeExecutionState
+import com.ai.assistance.operit.core.workflow.WorkflowAuthTokenManager
 import com.ai.assistance.operit.core.workflow.WorkflowExecutor
+import com.ai.assistance.operit.core.workflow.WorkflowIntentSecurity
 import com.ai.assistance.operit.core.workflow.WorkflowScheduler
 import com.ai.assistance.operit.data.model.ExecutionStatus
 import com.ai.assistance.operit.data.model.TriggerNode
@@ -20,6 +22,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -28,14 +32,157 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+
+internal data class ExternalWorkflowTriggerMatch(
+    val workflowId: String,
+    val workflowName: String,
+    val triggerNodeId: String,
+    val triggerNodeName: String
+)
+
+internal fun selectExternalWorkflowTriggerMatches(
+    workflows: List<Workflow>,
+    matcher: (TriggerNode) -> Boolean
+): List<ExternalWorkflowTriggerMatch> = workflows.asSequence()
+    .filter { it.enabled }
+    .flatMap { workflow ->
+        workflow.nodes.asSequence()
+            .filterIsInstance<TriggerNode>()
+            .filter(matcher)
+            .map { node ->
+                ExternalWorkflowTriggerMatch(
+                    workflowId = workflow.id,
+                    workflowName = workflow.name,
+                    triggerNodeId = node.id,
+                    triggerNodeName = node.name
+                )
+            }
+    }
+    .toList()
+
+internal fun summarizeExternalTriggerResults(
+    results: List<Result<String>>
+): Result<Int> {
+    if (results.isEmpty()) {
+        return Result.failure(IllegalStateException("No enabled workflow matched this external trigger"))
+    }
+    val failureCount = results.count(Result<String>::isFailure)
+    if (failureCount > 0) {
+        return Result.failure(
+            IllegalStateException("$failureCount of ${results.size} matched workflow triggers failed")
+        )
+    }
+    return Result.success(results.size)
+}
+
+internal fun decodeWorkflowContentSafely(
+    json: Json,
+    content: String,
+    workflowId: String
+): Workflow = try {
+    val element = json.parseToJsonElement(content)
+    val workflowElement = JsonObject((element as JsonObject) + ("id" to JsonPrimitive(workflowId)))
+    json.decodeFromJsonElement(Workflow.serializer(), workflowElement)
+} catch (error: Exception) {
+    // kotlinx.serialization parse messages may echo the surrounding JSON, including auth_token.
+    // Do not retain the original exception as a cause or expose its message to logs/callers.
+    throw IllegalArgumentException("Invalid workflow JSON (${error::class.java.simpleName})")
+}
+
+internal fun writeWorkflowContentAtomically(file: File, content: String) {
+    val parent = file.parentFile ?: throw IllegalStateException("Workflow file has no parent directory")
+    if (!parent.exists() && !parent.mkdirs()) {
+        throw IllegalStateException("Failed to create workflow directory")
+    }
+    val atomicFile = AtomicFile(file)
+    val output = atomicFile.startWrite()
+    try {
+        output.write(content.toByteArray(Charsets.UTF_8))
+        atomicFile.finishWrite(output)
+    } catch (error: Throwable) {
+        atomicFile.failWrite(output)
+        throw error
+    }
+}
+
+internal fun readWorkflowContentAtomically(file: File): String =
+    AtomicFile(file).openRead().bufferedReader(Charsets.UTF_8).use { reader -> reader.readText() }
+
+internal fun mutateWorkflowFileAtomically(
+    file: File,
+    workflowId: String,
+    json: Json,
+    lock: Any,
+    reader: (File) -> String = ::readWorkflowContentAtomically,
+    writer: (File, String) -> Unit = ::writeWorkflowContentAtomically,
+    transform: (Workflow) -> Workflow
+): Workflow? = synchronized(lock) {
+    if (!file.isFile) return@synchronized null
+    val latestWorkflow = decodeWorkflowContentSafely(json, reader(file), workflowId)
+    val updatedWorkflow = transform(latestWorkflow)
+    writer(file, json.encodeToString(updatedWorkflow))
+    updatedWorkflow
+}
+
+internal fun mergeWorkflowDefinitionWithLatestRuntime(
+    requestedWorkflow: Workflow,
+    latestWorkflow: Workflow
+): Workflow = requestedWorkflow.copy(
+    lastExecutionStatus = latestWorkflow.lastExecutionStatus,
+    lastExecutionTime = latestWorkflow.lastExecutionTime,
+    totalExecutions = latestWorkflow.totalExecutions,
+    successfulExecutions = latestWorkflow.successfulExecutions,
+    failedExecutions = latestWorkflow.failedExecutions
+)
+
+internal fun updateWorkflowFileAtomically(
+    file: File,
+    workflowId: String,
+    requestedWorkflow: Workflow,
+    json: Json,
+    lock: Any,
+    reader: (File) -> String = ::readWorkflowContentAtomically,
+    writer: (File, String) -> Unit = ::writeWorkflowContentAtomically,
+    prepareRequested: (Workflow, Workflow) -> Workflow = ::mergeWorkflowDefinitionWithLatestRuntime
+): Workflow = synchronized(lock) {
+    val latestWorkflow = decodeWorkflowContentSafely(json, reader(file), workflowId)
+    val workflowToWrite = prepareRequested(requestedWorkflow, latestWorkflow)
+    writer(file, json.encodeToString(workflowToWrite))
+    workflowToWrite
+}
+
+internal fun applyWorkflowExecutionStatus(
+    workflow: Workflow,
+    status: ExecutionStatus,
+    executionTime: Long
+): Workflow = workflow.copy(
+    lastExecutionStatus = status,
+    lastExecutionTime = executionTime
+)
+
+internal fun applyWorkflowExecutionStatistics(
+    workflow: Workflow,
+    status: ExecutionStatus,
+    executionTime: Long
+): Workflow = workflow.copy(
+    lastExecutionStatus = status,
+    lastExecutionTime = executionTime,
+    totalExecutions = workflow.totalExecutions + 1,
+    successfulExecutions = workflow.successfulExecutions + if (status == ExecutionStatus.SUCCESS) 1 else 0,
+    failedExecutions = workflow.failedExecutions + if (status == ExecutionStatus.FAILED) 1 else 0
+)
 
 /**
  * 工作流仓库
@@ -64,14 +211,21 @@ class WorkflowRepository(private val context: Context) {
 
     // Lazy initialization to avoid WorkManager initialization issues during app startup
     private val scheduler by lazy { WorkflowScheduler(context) }
+    private val authTokenManager by lazy { WorkflowAuthTokenManager(context) }
 
     companion object {
         private const val TAG = "WorkflowRepository"
         private const val MAX_EXECUTION_LOG_FILES_PER_WORKFLOW = 30
+        private const val MAX_LEGACY_WORKFLOW_FILE_BYTES = 1024 * 1024
 
-        // Per-workflow-id lock serializing write-on-copy promotion so a concurrent mutator of
-        // the same id cannot race the existence-check + atomic-rename sequence.
+        // Per-workflow-id lock serializing promotion and every workflow definition mutation.
         private val promotionLocks = ConcurrentHashMap<String, Any>()
+
+        private val externalTriggerCacheMutex = Mutex()
+        private val externalTriggerCacheGeneration = AtomicLong(0L)
+
+        @Volatile
+        private var externalTriggerCachedWorkflows: List<Workflow>? = null
 
         private const val SPEECH_TRIGGER_CACHE_TTL_MS = 2000L
         private val speechTriggerLastFireAtMs = ConcurrentHashMap<String, Long>()
@@ -91,7 +245,13 @@ class WorkflowRepository(private val context: Context) {
         fun notifyWorkflowsChanged() {
             speechTriggerCachedWorkflows = null
             speechTriggerCachedAtMs = 0L
+            invalidateExternalTriggerCache()
             workflowUpdateEvents.tryEmit(Unit)
+        }
+
+        private fun invalidateExternalTriggerCache() {
+            externalTriggerCacheGeneration.incrementAndGet()
+            externalTriggerCachedWorkflows = null
         }
 
         private fun publishRunningWorkflowIdsLocked() {
@@ -189,11 +349,36 @@ class WorkflowRepository(private val context: Context) {
         return null
     }
 
-    private fun readWorkflowFile(file: File, workflowId: String = file.nameWithoutExtension): Workflow {
-        val element = json.parseToJsonElement(file.readText())
-        // id is filename-derived (the on-disk field is not trusted), keeping write-on-copy safe.
-        val workflowElement = JsonObject((element as JsonObject) + ("id" to JsonPrimitive(workflowId)))
-        return json.decodeFromJsonElement(Workflow.serializer(), workflowElement)
+    private fun readWorkflowFile(
+        file: File,
+        workflowId: String = file.nameWithoutExtension,
+        isLegacy: Boolean = false
+    ): Workflow {
+        val content = if (isLegacy) {
+            readLegacyWorkflowContentBounded(file)
+        } else {
+            synchronized(promotionLocks.computeIfAbsent(workflowId) { Any() }) {
+                readWorkflowContentAtomically(file)
+            }
+        }
+        return decodeWorkflowContentSafely(json, content, workflowId)
+    }
+
+    private fun readLegacyWorkflowContentBounded(file: File): String {
+        require(file.length() <= MAX_LEGACY_WORKFLOW_FILE_BYTES) { "Legacy workflow file is too large" }
+        return file.inputStream().buffered().use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                require(total <= MAX_LEGACY_WORKFLOW_FILE_BYTES) { "Legacy workflow file is too large" }
+                output.write(buffer, 0, read)
+            }
+            output.toString(Charsets.UTF_8.name())
+        }
     }
 
     private fun getExecutionLogDirectory(workflowId: String, createIfMissing: Boolean = true): File {
@@ -257,26 +442,7 @@ class WorkflowRepository(private val context: Context) {
      * overwrite that could corrupt a workflow JSON on crash.
      */
     private fun atomicWrite(file: File, content: String) {
-        val parent = file.parentFile
-            ?: throw IllegalStateException("Workflow file has no parent directory")
-        if (!parent.exists() && !parent.mkdirs()) {
-            throw IllegalStateException("Failed to create workflow directory: ${parent.absolutePath}")
-        }
-        val atomicFile = AtomicFile(file)
-        var output: java.io.FileOutputStream? = null
-        try {
-            output = atomicFile.startWrite()
-            output.write(content.toByteArray(Charsets.UTF_8))
-            atomicFile.finishWrite(output)
-            output = null
-        } catch (e: Exception) {
-            try {
-                output?.let { atomicFile.failWrite(it) }
-            } catch (rollbackError: Exception) {
-                AppLogger.e(TAG, "Failed to roll back workflow write: ${file.name}", rollbackError)
-            }
-            throw e
-        }
+        writeWorkflowContentAtomically(file, content)
     }
 
     /**
@@ -292,42 +458,22 @@ class WorkflowRepository(private val context: Context) {
         val effective = findEffectiveWorkflowFile(id)
             ?: throw IllegalStateException("Workflow not found for write-on-copy: $id")
 
-        val parent = internal.parentFile
-            ?: throw IllegalStateException("Workflow file has no parent directory")
-        if (!parent.exists()) parent.mkdirs()
         if (!effective.isLegacy) return internal
 
-        // Serialize per-id promotion. A concurrent createWorkflow could create `internal`
-        // between a check and renameTo; on some platforms File.renameTo atomically REPLACES an
-        // existing destination, which would clobber a newer internal copy with the stale legacy
-        // source. The per-id lock closes that window: re-check existence inside the lock and
-        // only rename when no internal copy exists. createWorkflow does not take this lock, but
-        // createWorkflow only runs for genuinely new ids (no legacy copy), so it never competes
-        // with a promotion of the same id; updateWorkflow/setWorkflowEnabled/execution writes
-        // all funnel through ensureWorkflowInInternalStorage, so the lock covers them.
+        // Serialize per-id promotion and normalize external-trigger tokens before the internal
+        // copy becomes visible. A legacy Downloads file is not trusted to carry a token issued
+        // for this workflow, even if an attacker copied a valid token from another workflow.
         val lock = promotionLocks.computeIfAbsent(id) { Any() }
         synchronized(lock) {
             if (internal.exists() && internal.isFile) return internal
-            // Race-safe atomic promotion: copy into a process-unique temp, then renameTo only
-            // when internal is still absent. File.createTempFile guarantees a unique path per
-            // call, so two concurrent promotions (even across lock retries) never share a temp.
-            val tmp = File.createTempFile("wf_promote_${id}_", ".tmp", parent)
-            try {
-                effective.sourceFile.copyTo(tmp, overwrite = true)
-                if (!internal.exists()) {
-                    if (!tmp.renameTo(internal)) {
-                        // renameTo returned false but internal still absent — unexpected IO
-                        // failure. Surface it rather than silently dropping the promotion.
-                        if (!internal.exists()) {
-                            throw java.io.IOException("Failed to promote workflow $id into internal storage")
-                        }
-                        // Otherwise a concurrent creator won; accept its internal copy.
-                    }
-                }
-                AppLogger.d(TAG, "Write-on-copy: legacy workflow $id copied to internal storage")
-            } finally {
-                if (tmp.exists()) tmp.delete()
-            }
+            val legacyWorkflow = readWorkflowFile(effective.sourceFile, id, isLegacy = true)
+            val promotedWorkflow = WorkflowIntentSecurity.normalizeExternalTriggerTokens(
+                workflow = legacyWorkflow,
+                replaceExistingTokens = true,
+                tokenFactory = authTokenManager::newAuthToken
+            )
+            atomicWrite(internal, json.encodeToString(promotedWorkflow))
+            AppLogger.d(TAG, "Write-on-copy: legacy workflow $id normalized into internal storage")
         }
         return internal
     }
@@ -345,6 +491,7 @@ class WorkflowRepository(private val context: Context) {
                 paths.internalWorkflows,
                 seenIds,
                 workflows,
+                isLegacy = false,
                 trustedAnchor = paths.internalRoot,
             )
 
@@ -358,6 +505,7 @@ class WorkflowRepository(private val context: Context) {
                         seenIds,
                         workflows,
                         skipIds = hidden,
+                        isLegacy = true,
                         trustedAnchor = requireNotNull(paths.legacyRoot.parentFile),
                     )
                 }
@@ -376,6 +524,7 @@ class WorkflowRepository(private val context: Context) {
         seenIds: MutableSet<String>,
         out: MutableList<Workflow>,
         skipIds: Set<String> = emptySet(),
+        isLegacy: Boolean,
         trustedAnchor: File = dir,
     ) {
         val files = canonicalWorkflowJsonFiles(dir, trustedAnchor)
@@ -384,7 +533,7 @@ class WorkflowRepository(private val context: Context) {
             if (id in seenIds) continue   // internal already wins; skip the legacy copy
             if (id in skipIds) continue   // hidden legacy; skip without aborting the scan
             try {
-                out += readWorkflowFile(file, id)
+                out += readWorkflowFile(file, id, isLegacy)
                 seenIds += id
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Failed to parse workflow file: ${file.name}", e)
@@ -399,7 +548,7 @@ class WorkflowRepository(private val context: Context) {
         try {
             val entry = findEffectiveWorkflowFile(id)
                 ?: return@withContext Result.success(null)
-            val workflow = readWorkflowFile(entry.sourceFile, id)
+            val workflow = readWorkflowFile(entry.sourceFile, id, entry.isLegacy)
             Result.success(workflow)
         } catch (e: Exception) {
             AppLogger.e(TAG, "Failed to get workflow by id: $id", e)
@@ -430,25 +579,29 @@ class WorkflowRepository(private val context: Context) {
     suspend fun createWorkflow(workflow: Workflow): Result<Workflow> = withContext(Dispatchers.IO) {
         try {
             require(workflow.id.isNotBlank()) { "Workflow id cannot be empty" }
-            val file = getInternalWorkflowFile(workflow.id)
-            val content = json.encodeToString(workflow)
-            // Serialize with promotion so a concurrent write-on-copy of the same id cannot
-            // have its atomic rename replace this freshly-created internal file on platforms
-            // where File.renameTo atomically overwrites an existing destination.
-            synchronized(promotionLocks.computeIfAbsent(workflow.id) { Any() }) {
+            val normalizedWorkflow = WorkflowIntentSecurity.normalizeExternalTriggerTokens(
+                workflow = workflow,
+                tokenValidator = authTokenManager::isAuthenticAuthToken,
+                tokenFactory = authTokenManager::newAuthToken
+            )
+            val file = getInternalWorkflowFile(normalizedWorkflow.id)
+            val content = json.encodeToString(normalizedWorkflow)
+            // Serialize with promotion and every other definition mutation of the same id.
+            invalidateExternalTriggerCache()
+            synchronized(promotionLocks.computeIfAbsent(normalizedWorkflow.id) { Any() }) {
                 atomicWrite(file, content)
             }
 
-            AppLogger.d(TAG, "Workflow created: ${workflow.id}")
+            AppLogger.d(TAG, "Workflow created: ${normalizedWorkflow.id}")
 
             // Schedule if enabled and has schedule trigger
-            if (workflow.enabled && hasScheduleTrigger(workflow)) {
-                scheduleWorkflow(workflow.id)
+            if (normalizedWorkflow.enabled && hasScheduleTrigger(normalizedWorkflow)) {
+                scheduleWorkflow(normalizedWorkflow.id)
             }
 
             notifyWorkflowsChanged()
 
-            Result.success(workflow)
+            Result.success(normalizedWorkflow)
         } catch (e: Exception) {
             AppLogger.e(TAG, "Failed to create workflow", e)
             Result.failure(e)
@@ -461,10 +614,25 @@ class WorkflowRepository(private val context: Context) {
     suspend fun updateWorkflow(workflow: Workflow): Result<Workflow> = withContext(Dispatchers.IO) {
         try {
             require(workflow.id.isNotBlank()) { "Workflow id cannot be empty" }
-            val updatedWorkflow = workflow.copy(updatedAt = System.currentTimeMillis())
-            val file = ensureWorkflowInInternalStorage(updatedWorkflow.id)
-            val content = json.encodeToString(updatedWorkflow)
-            atomicWrite(file, content)
+            val requestedWorkflow = workflow.copy(updatedAt = System.currentTimeMillis())
+            val file = ensureWorkflowInInternalStorage(requestedWorkflow.id)
+            invalidateExternalTriggerCache()
+            val updatedWorkflow = updateWorkflowFileAtomically(
+                file = file,
+                workflowId = requestedWorkflow.id,
+                requestedWorkflow = requestedWorkflow,
+                json = json,
+                lock = promotionLocks.computeIfAbsent(requestedWorkflow.id) { Any() },
+                prepareRequested = { requested, latest ->
+                    val normalized = WorkflowIntentSecurity.normalizeExternalTriggerTokensForUpdate(
+                        requestedWorkflow = requested,
+                        latestWorkflow = latest,
+                        tokenValidator = authTokenManager::isAuthenticAuthToken,
+                        tokenFactory = authTokenManager::newAuthToken
+                    )
+                    mergeWorkflowDefinitionWithLatestRuntime(normalized, latest)
+                }
+            )
 
             AppLogger.d(TAG, "Workflow updated: ${updatedWorkflow.id}")
 
@@ -487,14 +655,23 @@ class WorkflowRepository(private val context: Context) {
     suspend fun setWorkflowEnabled(id: String, enabled: Boolean): Result<Workflow> = withContext(Dispatchers.IO) {
         try {
             require(id.isNotBlank()) { "Workflow id cannot be empty" }
-            val entry = findEffectiveWorkflowFile(id)
-                ?: return@withContext Result.failure(Exception(context.getString(R.string.workflow_not_found)))
-
-            val workflow = readWorkflowFile(entry.sourceFile, id)
-            val updatedWorkflow = workflow.copy(enabled = enabled)
+            if (findEffectiveWorkflowFile(id) == null) {
+                return@withContext Result.failure(Exception(context.getString(R.string.workflow_not_found)))
+            }
             val file = ensureWorkflowInInternalStorage(id)
-            val content = json.encodeToString(updatedWorkflow)
-            atomicWrite(file, content)
+            invalidateExternalTriggerCache()
+            val updatedWorkflow = mutateWorkflowFileAtomically(
+                file = file,
+                workflowId = id,
+                json = json,
+                lock = promotionLocks.computeIfAbsent(id) { Any() }
+            ) { latest ->
+                WorkflowIntentSecurity.normalizeExternalTriggerTokens(
+                    workflow = latest.copy(enabled = enabled),
+                    tokenValidator = authTokenManager::isAuthenticAuthToken,
+                    tokenFactory = authTokenManager::newAuthToken
+                )
+            } ?: return@withContext Result.failure(Exception(context.getString(R.string.workflow_not_found)))
 
             AppLogger.d(TAG, "Workflow enabled state updated: ${updatedWorkflow.id} -> $enabled")
 
@@ -524,14 +701,21 @@ class WorkflowRepository(private val context: Context) {
         try {
             val internal = getInternalWorkflowFile(id)
             val legacy = getLegacyWorkflowFile(id)
-            val internalExisted = internal.exists() && internal.isFile
             // Probe the legacy file existence directly, NOT gated by the read switch. If the
             // switch is currently off but a Download copy exists, a future re-enable would
             // resurrect it after the internal copy is deleted — so hide it now regardless.
             val legacyExisted = legacy.exists() && legacy.isFile
 
-            val internalRemoved =
-                !internalExisted || internal.delete() || !internal.exists()
+            invalidateExternalTriggerCache()
+            val (internalExisted, internalRemoved) = synchronized(
+                promotionLocks.computeIfAbsent(id) { Any() }
+            ) {
+                val existed = internal.exists() && internal.isFile
+                existed to (!existed || AtomicFile(internal).run {
+                    delete()
+                    !internal.exists()
+                })
+            }
 
             // If a legacy copy still exists, hide it so it does not reappear on the next scan.
             if (legacyExisted) {
@@ -652,13 +836,31 @@ class WorkflowRepository(private val context: Context) {
         id: String,
         triggerNodeId: String? = null,
         triggerExtras: Map<String, String> = emptyMap(),
+        authorizationCheck: ((Workflow) -> Boolean)? = null,
         onNodeStateChange: (nodeId: String, state: NodeExecutionState) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
-        val workflowResult = getWorkflowById(id)
-        val workflow = workflowResult.getOrNull()
+        val workflow = if (authorizationCheck == null) {
+            getWorkflowById(id).getOrNull()
+        } else {
+            val internal = getInternalWorkflowFile(id)
+            synchronized(promotionLocks.computeIfAbsent(id) { Any() }) {
+                runCatching {
+                    if (!internal.isFile) null else decodeWorkflowContentSafely(
+                        json,
+                        readWorkflowContentAtomically(internal),
+                        id
+                    )
+                }.getOrNull()?.takeIf(authorizationCheck)
+            }
+        }
 
         if (workflow == null) {
-            return@withContext Result.failure(Exception(context.getString(R.string.workflow_not_exist, id)))
+            val message = if (authorizationCheck == null) {
+                context.getString(R.string.workflow_not_exist, id)
+            } else {
+                "External workflow trigger authorization is no longer valid"
+            }
+            return@withContext Result.failure(Exception(message))
         }
 
         if (!workflow.enabled) {
@@ -716,17 +918,21 @@ class WorkflowRepository(private val context: Context) {
         executionTime: Long
     ) = withContext(Dispatchers.IO) {
         try {
-            val workflowResult = getWorkflowById(id)
-            val workflow = workflowResult.getOrNull() ?: return@withContext
-
-            val updatedWorkflow = workflow.copy(
-                lastExecutionStatus = status,
-                lastExecutionTime = executionTime
-            )
-
             val file = ensureWorkflowInInternalStorage(id)
-            val content = json.encodeToString(updatedWorkflow)
-            atomicWrite(file, content)
+            invalidateExternalTriggerCache()
+            val updatedWorkflow = mutateWorkflowFileAtomically(
+                file = file,
+                workflowId = id,
+                json = json,
+                lock = promotionLocks.computeIfAbsent(id) { Any() }
+            ) { latest ->
+                val normalized = WorkflowIntentSecurity.normalizeExternalTriggerTokens(
+                    workflow = latest,
+                    tokenValidator = authTokenManager::isAuthenticAuthToken,
+                    tokenFactory = authTokenManager::newAuthToken
+                )
+                applyWorkflowExecutionStatus(normalized, status, executionTime)
+            } ?: return@withContext
 
             AppLogger.d(TAG, "Workflow execution status updated: $id -> $status")
             notifyWorkflowsChanged()
@@ -744,28 +950,21 @@ class WorkflowRepository(private val context: Context) {
         executionTime: Long
     ) = withContext(Dispatchers.IO) {
         try {
-            val workflowResult = getWorkflowById(id)
-            val workflow = workflowResult.getOrNull() ?: return@withContext
-
-            val updatedWorkflow = workflow.copy(
-                lastExecutionStatus = status,
-                lastExecutionTime = executionTime,
-                totalExecutions = workflow.totalExecutions + 1,
-                successfulExecutions = if (status == ExecutionStatus.SUCCESS) {
-                    workflow.successfulExecutions + 1
-                } else {
-                    workflow.successfulExecutions
-                },
-                failedExecutions = if (status == ExecutionStatus.FAILED) {
-                    workflow.failedExecutions + 1
-                } else {
-                    workflow.failedExecutions
-                }
-            )
-
             val file = ensureWorkflowInInternalStorage(id)
-            val content = json.encodeToString(updatedWorkflow)
-            atomicWrite(file, content)
+            invalidateExternalTriggerCache()
+            val updatedWorkflow = mutateWorkflowFileAtomically(
+                file = file,
+                workflowId = id,
+                json = json,
+                lock = promotionLocks.computeIfAbsent(id) { Any() }
+            ) { latest ->
+                val normalized = WorkflowIntentSecurity.normalizeExternalTriggerTokens(
+                    workflow = latest,
+                    tokenValidator = authTokenManager::isAuthenticAuthToken,
+                    tokenFactory = authTokenManager::newAuthToken
+                )
+                applyWorkflowExecutionStatistics(normalized, status, executionTime)
+            } ?: return@withContext
 
             AppLogger.d(TAG, "Workflow execution statistics updated: $id (total: ${updatedWorkflow.totalExecutions}, success: ${updatedWorkflow.successfulExecutions})")
             notifyWorkflowsChanged()
@@ -849,6 +1048,44 @@ class WorkflowRepository(private val context: Context) {
         }
     }
 
+    private fun loadInternalWorkflowsForExternalTriggers(): List<Workflow> =
+        canonicalWorkflowJsonFiles(paths.internalWorkflows, paths.internalRoot).mapNotNull { file ->
+            runCatching { readWorkflowFile(file, file.nameWithoutExtension, isLegacy = false) }
+                .onFailure {
+                    AppLogger.e(TAG, "Failed to parse internal workflow file: ${file.name}", it)
+                }
+                .getOrNull()
+        }
+
+    private suspend fun findExternalTriggerMatches(
+        matcher: (TriggerNode) -> Boolean
+    ): List<ExternalWorkflowTriggerMatch>? = externalTriggerCacheMutex.withLock {
+        var resolvedMatches: List<ExternalWorkflowTriggerMatch>? = null
+        var resolved = false
+        while (!resolved) {
+            val generationBeforeRead = externalTriggerCacheGeneration.get()
+            val cached = externalTriggerCachedWorkflows
+            if (cached != null) {
+                val matches = selectExternalWorkflowTriggerMatches(cached, matcher)
+                if (externalTriggerCacheGeneration.get() == generationBeforeRead) {
+                    resolvedMatches = matches
+                    resolved = true
+                }
+                continue
+            }
+
+            val loaded = runCatching { loadInternalWorkflowsForExternalTriggers() }.getOrNull()
+                ?: return@withLock null
+            if (externalTriggerCacheGeneration.get() != generationBeforeRead) {
+                continue
+            }
+            externalTriggerCachedWorkflows = loaded
+            resolvedMatches = selectExternalWorkflowTriggerMatches(loaded, matcher)
+            resolved = true
+        }
+        resolvedMatches
+    }
+
     /**
      * Called when the user toggles the legacy-workflow read switch. Reschedules any workflow that
      * becomes effective/ineffective as a result.
@@ -871,7 +1108,7 @@ class WorkflowRepository(private val context: Context) {
             if (id in hidden) continue
             val internal = getInternalWorkflowFile(id)
             if (internal.exists()) continue  // internal copy keeps its existing schedule
-            val workflow = runCatching { readWorkflowFile(file, id) }.getOrNull() ?: continue
+            val workflow = runCatching { readWorkflowFile(file, id, isLegacy = true) }.getOrNull() ?: continue
             if (!workflow.enabled || !hasScheduleTrigger(workflow)) continue
             if (nowEnabled) {
                 // Newly-visible legacy workflow: schedule it.
@@ -885,37 +1122,40 @@ class WorkflowRepository(private val context: Context) {
     }
 
 
-    /**
-     * Finds and triggers workflows based on a Tasker event.
-     * It checks all enabled workflows for a Tasker trigger node whose configuration matches the event data.
-     *
-     * @param params The list of parameters received from Tasker.
-     */
-    suspend fun triggerWorkflowsByTaskerEvent(params: List<String>?) = withContext(Dispatchers.IO) {
-        if (params.isNullOrEmpty()) return@withContext
+    /** Finds authenticated Tasker triggers in the private workflow store only. */
+    suspend fun triggerWorkflowsByTaskerEvent(
+        command: String?,
+        authToken: String?
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        if (command.isNullOrBlank() || !authTokenManager.isAuthenticAuthToken(authToken)) {
+            return@withContext Result.failure(IllegalArgumentException("Invalid external workflow credentials"))
+        }
 
-        AppLogger.d(TAG, "Checking for Tasker-triggered workflows with params: $params")
-        val workflows = getAllWorkflows().getOrNull() ?: return@withContext
+        AppLogger.d(TAG, "Checking for Tasker-triggered workflows with command: $command")
+        val matches = findExternalTriggerMatches { node ->
+            node.triggerType == "tasker" &&
+                WorkflowIntentSecurity.matchesTasker(node, command, authToken)
+        } ?: return@withContext Result.failure(IllegalStateException("Unable to read private workflows"))
 
-        coroutineScope {
-            workflows.filter { it.enabled }.forEach { workflow ->
-                workflow.nodes.forEach { node ->
-                    if (node is TriggerNode && node.triggerType == "tasker") {
-                        // Matching logic: The node's config expects a "command".
-                        // It checks if any of the parameters from Tasker exactly matches this command.
-                        // Example config: `{"command": "start_meeting"}`.
-                        // This will match if any of the params from Tasker is "start_meeting" (case-insensitive).
-                        val command = node.triggerConfig["command"]
-                        if (command != null && params.any { it.equals(command, ignoreCase = true) }) {
-                            AppLogger.d(TAG, "Tasker trigger matched for workflow '${workflow.name}' on node '${node.name}'. Triggering.")
-                            launch {
-                                triggerWorkflow(workflow.id, node.id)
+        val results = coroutineScope {
+            matches.map { match ->
+                async {
+                    triggerWorkflowInternal(
+                        id = match.workflowId,
+                        triggerNodeId = match.triggerNodeId,
+                        authorizationCheck = { latest ->
+                            latest.enabled && latest.nodes.filterIsInstance<TriggerNode>().any { node ->
+                                node.id == match.triggerNodeId &&
+                                    WorkflowIntentSecurity.matchesTasker(node, command, authToken)
                             }
                         }
+                    ) { nodeId, state ->
+                        AppLogger.d(TAG, "Node $nodeId state: $state")
                     }
                 }
-            }
+            }.awaitAll()
         }
+        summarizeExternalTriggerResults(results)
     }
 
     /**
@@ -926,34 +1166,42 @@ class WorkflowRepository(private val context: Context) {
      */
     suspend fun triggerWorkflowsByIntentEvent(intent: Intent) = withContext(Dispatchers.IO) {
         AppLogger.d(TAG, "Checking for Intent-triggered workflows for action: ${intent.action}")
-        val workflows = getAllWorkflows().getOrNull() ?: return@withContext
+        val suppliedToken = WorkflowIntentSecurity.readAuthTokenSafely(intent)
+        if (!authTokenManager.isAuthenticAuthToken(suppliedToken)) return@withContext
 
         val extras: Map<String, String> = try {
             val bundle = intent.extras
             if (bundle == null) {
                 emptyMap()
             } else {
-                bundle.keySet().associateWith { key ->
-                    bundle.get(key)?.toString() ?: ""
-                }
+                WorkflowIntentSecurity.sanitizeExternalTriggerExtras(
+                    bundle.keySet().associateWith { key -> bundle.get(key)?.toString() ?: "" }
+                )
             }
         } catch (_: Exception) {
             emptyMap()
         }
 
+        val matches = findExternalTriggerMatches { node ->
+            node.triggerType == "intent" &&
+                WorkflowIntentSecurity.matches(node, intent.action, suppliedToken)
+        } ?: return@withContext
+
         coroutineScope {
-            workflows.filter { it.enabled }.forEach { workflow ->
-                workflow.nodes.forEach { node ->
-                    if (node is TriggerNode && node.triggerType == "intent") {
-                        // Match based on the Intent action.
-                        // Example config: `{"action": "com.example.MY_ACTION"}`.
-                        val expectedAction = node.triggerConfig["action"]
-                        if (expectedAction != null && expectedAction.equals(intent.action, ignoreCase = true)) {
-                            AppLogger.d(TAG, "Intent trigger matched for workflow '${workflow.name}' on node '${node.name}'. Triggering.")
-                            launch {
-                                triggerWorkflow(workflow.id, node.id, extras)
+            matches.forEach { match ->
+                launch {
+                    triggerWorkflowInternal(
+                        id = match.workflowId,
+                        triggerNodeId = match.triggerNodeId,
+                        triggerExtras = extras,
+                        authorizationCheck = { latest ->
+                            latest.enabled && latest.nodes.filterIsInstance<TriggerNode>().any { node ->
+                                node.id == match.triggerNodeId &&
+                                    WorkflowIntentSecurity.matches(node, intent.action, suppliedToken)
                             }
                         }
+                    ) { nodeId, state ->
+                        AppLogger.d(TAG, "Node $nodeId state: $state")
                     }
                 }
             }
