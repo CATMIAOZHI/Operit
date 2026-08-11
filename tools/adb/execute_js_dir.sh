@@ -16,7 +16,7 @@ set -euo pipefail
 # - If env_file_path is omitted, tries <suite_dir>/.env.local
 # - Bundles the entry with esbuild first, so shared local modules work without app-side module loading.
 # - set OPERIT_RESULT_WAIT_SECONDS to customize result wait, default is 15 seconds
-# - set OPERIT_APP_PACKAGE to target another debug application ID, default is com.rainy.operitry
+# - set OPERIT_APP_PACKAGE to target another debug application ID, default is com.rainy.operitry.dev
 
 if [ -z "${1:-}" ]; then
   echo "Usage: $0 <suite_dir> [entry_js_rel_path] [function_name] [parameters_JSON|@params_file] [env_file_path]"
@@ -30,7 +30,7 @@ PARAMS_ARG="${4:-{}}"
 ENV_FILE_PATH="${5:-}"
 
 RESULT_WAIT_SECONDS="${OPERIT_RESULT_WAIT_SECONDS:-15}"
-APP_PACKAGE="${OPERIT_APP_PACKAGE:-com.rainy.operitry}"
+APP_PACKAGE="${OPERIT_APP_PACKAGE:-com.rainy.operitry.dev}"
 RECEIVER_COMPONENT="${APP_PACKAGE}/com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver"
 
 if [ ! -d "$SUITE_DIR" ]; then
