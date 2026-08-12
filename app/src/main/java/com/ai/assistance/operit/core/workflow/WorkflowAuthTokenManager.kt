@@ -3,6 +3,7 @@ package com.ai.assistance.operit.core.workflow
 import android.content.Context
 import android.util.AtomicFile
 import java.io.File
+import java.io.FileNotFoundException
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
@@ -23,9 +24,45 @@ internal fun loadOrCreateWorkflowSigningSecret(
 
 private const val WORKFLOW_SIGNING_SECRET_BYTES = 32
 private const val WORKFLOW_SIGNING_SECRET_FILE_NAME = "workflow_auth_signing_secret_v1"
+private const val WORKFLOW_AUTH_RESTORE_GENERATION_FILE_NAME = "workflow_auth_restore_generation_v1"
+private val workflowAuthStateLock = Any()
 
 internal fun workflowSigningSecretFile(noBackupFilesDir: File): File =
     File(noBackupFilesDir, WORKFLOW_SIGNING_SECRET_FILE_NAME)
+
+internal fun workflowAuthRestoreGenerationFile(noBackupFilesDir: File): File =
+    File(noBackupFilesDir, WORKFLOW_AUTH_RESTORE_GENERATION_FILE_NAME)
+
+internal fun loadWorkflowAuthRestoreGeneration(readExisting: () -> ByteArray): Long {
+    val encoded = try {
+        readExisting()
+    } catch (_: FileNotFoundException) {
+        return 0L
+    }
+    return encoded.toString(Charsets.UTF_8).toLongOrNull()?.takeIf { it >= 0L }
+        ?: throw IllegalStateException("Invalid workflow auth restore generation")
+}
+
+internal fun advanceWorkflowAuthRestoreGeneration(context: Context): Long =
+    synchronized(workflowAuthStateLock) {
+        val generationFile = AtomicFile(
+            workflowAuthRestoreGenerationFile(context.applicationContext.noBackupFilesDir)
+        )
+        val current = loadWorkflowAuthRestoreGeneration {
+            generationFile.readFully()
+        }
+        val next = Math.addExact(current, 1L)
+        generationFile.baseFile.parentFile?.mkdirs()
+        val output = generationFile.startWrite()
+        try {
+            output.write(next.toString().toByteArray(Charsets.UTF_8))
+            generationFile.finishWrite(output)
+        } catch (error: Throwable) {
+            generationFile.failWrite(output)
+            throw error
+        }
+        next
+    }
 
 class WorkflowAuthTokenManager(context: Context) {
     private val applicationContext = context.applicationContext
@@ -33,7 +70,10 @@ class WorkflowAuthTokenManager(context: Context) {
         workflowSigningSecretFile(applicationContext.noBackupFilesDir)
     )
     private val codec: WorkflowAuthTokenCodec by lazy {
-        WorkflowAuthTokenCodec(loadOrCreateSigningSecret())
+        WorkflowAuthTokenCodec(
+            secret = loadOrCreateSigningSecret(),
+            restoreGeneration = loadRestoreGeneration(),
+        )
     }
 
     fun newAuthToken(): String = codec.newToken()
@@ -45,7 +85,7 @@ class WorkflowAuthTokenManager(context: Context) {
         return codec.isAuthentic(token)
     }
 
-    private fun loadOrCreateSigningSecret(): ByteArray = synchronized(secretLock) {
+    private fun loadOrCreateSigningSecret(): ByteArray = synchronized(workflowAuthStateLock) {
         cachedSigningSecret?.let { return@synchronized it.copyOf() }
         val secret = loadOrCreateWorkflowSigningSecret(
             readExisting = { runCatching { secretFile.readFully() }.getOrNull() },
@@ -77,9 +117,17 @@ class WorkflowAuthTokenManager(context: Context) {
         secret
     }
 
+    private fun loadRestoreGeneration(): Long = synchronized(workflowAuthStateLock) {
+        val generationFile = AtomicFile(
+            workflowAuthRestoreGenerationFile(applicationContext.noBackupFilesDir)
+        )
+        loadWorkflowAuthRestoreGeneration {
+            generationFile.readFully()
+        }
+    }
+
     private companion object {
         const val LEGACY_PREFERENCES_NAME = "workflow_auth_tokens"
-        val secretLock = Any()
         @Volatile
         var cachedSigningSecret: ByteArray? = null
     }
@@ -87,6 +135,7 @@ class WorkflowAuthTokenManager(context: Context) {
 
 internal class WorkflowAuthTokenCodec(
     secret: ByteArray,
+    private val restoreGeneration: Long = 0L,
     private val randomBytes: (Int) -> ByteArray = { size ->
         ByteArray(size).also(SecureRandom()::nextBytes)
     }
@@ -113,9 +162,12 @@ internal class WorkflowAuthTokenCodec(
         return MessageDigest.isEqual(sign(payload), suppliedSignature)
     }
 
-    private fun sign(payload: String): ByteArray =
-        Mac.getInstance(HMAC_ALGORITHM).apply { init(signingKey) }
-            .doFinal(payload.toByteArray(Charsets.UTF_8))
+    private fun sign(payload: String): ByteArray {
+        val generationBoundPayload =
+            if (restoreGeneration == 0L) payload else "$restoreGeneration:$payload"
+        return Mac.getInstance(HMAC_ALGORITHM).apply { init(signingKey) }
+            .doFinal(generationBoundPayload.toByteArray(Charsets.UTF_8))
+    }
 
     private companion object {
         const val HMAC_ALGORITHM = "HmacSHA256"

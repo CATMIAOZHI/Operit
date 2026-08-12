@@ -75,8 +75,9 @@ object WorkflowIntentSecurity {
 
     /**
      * Normalizes a user update against the latest committed workflow. An existing trigger may
-     * keep only its current committed token. A model-facing full update omits this hidden field,
-     * so omission on the same trigger id and type inherits the latest committed token. A different
+     * keep only its current committed token. A trusted model-facing full update may explicitly
+     * opt in to inheriting this hidden field when it was redacted from the model response. Ordinary
+     * editor updates do not opt in, so deleting the token rotates it as documented. A different
      * submitted token is replaced instead of accepted, so a stale editor snapshot cannot restore a
      * token that was already rotated.
      * Newly-added external triggers always receive a fresh token. This also prevents a stale
@@ -85,6 +86,7 @@ object WorkflowIntentSecurity {
     fun normalizeExternalTriggerTokensForUpdate(
         requestedWorkflow: Workflow,
         latestWorkflow: Workflow,
+        inheritMissingToken: Boolean = false,
         tokenValidator: (String?) -> Boolean = ::isValidAuthToken,
         tokenFactory: () -> String
     ): Workflow {
@@ -102,7 +104,12 @@ object WorkflowIntentSecurity {
                 ?.takeIf { it.triggerType == node.triggerType }
             val latestToken = latestNode?.triggerConfig?.get(CONFIG_AUTH_TOKEN)
             val inheritableLatestToken = latestToken?.takeIf(tokenValidator)
-            if (submittedToken == null && latestNode != null && inheritableLatestToken != null) {
+            if (
+                inheritMissingToken &&
+                    submittedToken == null &&
+                    latestNode != null &&
+                    inheritableLatestToken != null
+            ) {
                 changed = true
                 return@map node.copy(
                     triggerConfig = node.triggerConfig +

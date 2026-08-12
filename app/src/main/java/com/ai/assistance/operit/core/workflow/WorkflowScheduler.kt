@@ -30,6 +30,22 @@ internal fun isActiveWorkflowScheduleState(state: WorkInfo.State): Boolean =
         state == WorkInfo.State.RUNNING ||
         state == WorkInfo.State.BLOCKED
 
+internal fun shouldRetireCompletedPreFingerprintOneTime(
+    workflow: Workflow,
+    workStates: Collection<WorkInfo.State>,
+    targetIsDue: Boolean,
+): Boolean {
+    if (workflow.scheduleFingerprintGeneration != null) return false
+    if (!targetIsDue) return false
+    val triggerNode = workflow.nodes.filterIsInstance<TriggerNode>()
+        .firstOrNull { it.triggerType == "schedule" }
+        ?: return false
+    if (triggerNode.triggerConfig[WorkflowScheduler.CONFIG_SCHEDULE_TYPE] !=
+        WorkflowScheduler.SCHEDULE_TYPE_SPECIFIC_TIME
+    ) return false
+    return WorkInfo.State.SUCCEEDED in workStates
+}
+
 /**
  * WorkflowScheduler manages scheduling workflows using WorkManager
  * 
@@ -478,6 +494,14 @@ class WorkflowScheduler(private val context: Context) {
         workManager.getWorkInfosForUniqueWork(getWorkName(workflowId)).get().any { info ->
             isActiveWorkflowScheduleState(info.state)
         }
+
+    internal fun shouldRetireCompletedPreFingerprintOneTimeAndWait(workflow: Workflow): Boolean =
+        shouldRetireCompletedPreFingerprintOneTime(
+            workflow = workflow,
+            workStates = workManager.getWorkInfosForUniqueWork(getWorkName(workflow.id)).get()
+                .map { info -> info.state },
+            targetIsDue = !isFutureSpecificTimeSchedule(workflow),
+        )
 
     /** Used by security-sensitive legacy cleanup before a trusted replacement is scheduled. */
     internal fun cancelWorkflowAndWait(workflowId: String) {

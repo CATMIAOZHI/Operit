@@ -1,10 +1,12 @@
 package com.ai.assistance.operit.data.repository
 
 import android.content.Context
+import androidx.work.WorkInfo
 import java.io.File
 import java.nio.file.Files
 import com.ai.assistance.operit.core.workflow.WorkflowScheduler
 import com.ai.assistance.operit.core.workflow.isActiveWorkflowScheduleState
+import com.ai.assistance.operit.core.workflow.shouldRetireCompletedPreFingerprintOneTime
 import com.ai.assistance.operit.core.workflow.specificTimeInitialDelay
 import com.ai.assistance.operit.core.workflow.shouldRetryWorkflowWorkerFailure
 import com.ai.assistance.operit.data.model.TriggerNode
@@ -335,6 +337,27 @@ class WorkflowStoragePolicyTest {
         assertTrue(scheduler.shouldPreserveActivePreFingerprintScheduleRequest(dueOneTime))
         assertFalse(scheduler.shouldPrepareFingerprintScheduleReconciliation(dueOneTime))
         assertTrue(scheduler.isRejectedPastSpecificTimeDefinition(dueOneTime))
+        assertTrue(
+            shouldRetireCompletedPreFingerprintOneTime(
+                dueOneTime,
+                listOf(WorkInfo.State.SUCCEEDED),
+                targetIsDue = true,
+            )
+        )
+        assertFalse(
+            shouldRetireCompletedPreFingerprintOneTime(
+                dueOneTime,
+                listOf(WorkInfo.State.CANCELLED, WorkInfo.State.FAILED),
+                targetIsDue = true,
+            )
+        )
+        assertFalse(
+            shouldRetireCompletedPreFingerprintOneTime(
+                dueOneTime,
+                listOf(WorkInfo.State.SUCCEEDED),
+                targetIsDue = false,
+            )
+        )
         assertEquals(
             WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION,
             prepareFingerprintGenerationForScheduledDefinition(
@@ -471,6 +494,23 @@ class WorkflowStoragePolicyTest {
                     scheduleFingerprintGeneration =
                         WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
                 )
+            )
+        )
+        assertFalse(
+            shouldRetireCompletedPreFingerprintOneTime(
+                dueOneTime.copy(
+                    scheduleFingerprintGeneration =
+                        WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
+                ),
+                listOf(WorkInfo.State.SUCCEEDED),
+                targetIsDue = true,
+            )
+        )
+        assertFalse(
+            shouldRetireCompletedPreFingerprintOneTime(
+                interval,
+                listOf(WorkInfo.State.SUCCEEDED),
+                targetIsDue = true,
             )
         )
     }

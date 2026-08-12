@@ -52,11 +52,15 @@ class WorkflowAutomaticExecutionEntryPointTest {
             rebuildOne.indexOf("WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION")
         val rebuildPreserveIndex =
             rebuildOne.indexOf("scheduler.shouldPreserveActivePreFingerprintScheduleRequest(latest)")
+        val rebuildCompletedIndex =
+            rebuildOne.indexOf("scheduler.shouldRetireCompletedPreFingerprintOneTimeAndWait(latest)")
         val rebuildScheduleIndex = rebuildOne.indexOf("scheduleWorkflowLocked(")
         assertTrue(rebuildRejectedCheckIndex in 0 until rebuildSchedulableCheckIndex)
         assertTrue(rebuildSchedulableCheckIndex in 0 until rebuildActiveCheckIndex)
         assertTrue(rebuildActiveCheckIndex in 0 until rebuildPreserveIndex)
-        assertTrue(rebuildPreserveIndex in 0 until rebuildScheduleIndex)
+        assertTrue(rebuildPreserveIndex in 0 until rebuildCompletedIndex)
+        assertTrue(rebuildCompletedIndex in 0 until rebuildScheduleIndex)
+        assertTrue(rebuildOne.contains("writeWorkflowContentAtomically(internal"))
         assertTrue(rebuildOne.contains("allowDuePreFingerprintOneTime = allowPastSpecificTime"))
         val legacyCancel = repository.substring(
             repository.indexOf("private fun cancelLegacyOnlySchedule"),
@@ -88,6 +92,11 @@ class WorkflowAutomaticExecutionEntryPointTest {
         assertTrue(aiTools.contains("workflowRepository.setWorkflowEnabledFromPrivateStorage("))
         assertFalse(aiTools.contains("workflowRepository.updateWorkflow(updatedWorkflow)"))
         assertFalse(aiTools.contains("workflowRepository.setWorkflowEnabled(workflowId, enabled)"))
+        assertTrue(repository.contains("inheritModelRedactedExternalTriggerToken = false"))
+        assertTrue(repository.contains("inheritModelRedactedExternalTriggerToken = true"))
+        assertTrue(
+            repository.contains("inheritMissingToken = inheritModelRedactedExternalTriggerToken")
+        )
     }
 
     private fun source(relativePath: String): String {

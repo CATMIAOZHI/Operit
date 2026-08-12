@@ -152,12 +152,53 @@ class WorkflowIntentSecurityTest {
         val normalized = WorkflowIntentSecurity.normalizeExternalTriggerTokensForUpdate(
             requestedWorkflow = modelFacingUpdate,
             latestWorkflow = latest,
+            inheritMissingToken = true,
             tokenValidator = { WorkflowIntentSecurity.isValidAuthToken(it) },
             tokenFactory = { error("same-node omission must not rotate") },
         )
 
         assertEquals(
             strongToken,
+            (normalized.nodes.single() as TriggerNode)
+                .triggerConfig[WorkflowIntentSecurity.CONFIG_AUTH_TOKEN],
+        )
+    }
+
+    @Test
+    fun normalizeUpdate_rotatesTokenOmittedByEditor() {
+        val freshToken = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        val latest = Workflow(
+            id = "workflow-1",
+            nodes = listOf(
+                TriggerNode(
+                    id = "trigger-1",
+                    triggerType = "intent",
+                    triggerConfig = mapOf(
+                        WorkflowIntentSecurity.CONFIG_ACTION to
+                            WorkflowIntentSecurity.ACTION_TRIGGER_WORKFLOW,
+                        WorkflowIntentSecurity.CONFIG_AUTH_TOKEN to strongToken,
+                    ),
+                ),
+            ),
+        )
+        val editorUpdate = latest.copy(
+            nodes = listOf(
+                (latest.nodes.single() as TriggerNode).copy(
+                    triggerConfig = (latest.nodes.single() as TriggerNode).triggerConfig -
+                        WorkflowIntentSecurity.CONFIG_AUTH_TOKEN,
+                ),
+            ),
+        )
+
+        val normalized = WorkflowIntentSecurity.normalizeExternalTriggerTokensForUpdate(
+            requestedWorkflow = editorUpdate,
+            latestWorkflow = latest,
+            tokenValidator = { WorkflowIntentSecurity.isValidAuthToken(it) },
+            tokenFactory = { freshToken },
+        )
+
+        assertEquals(
+            freshToken,
             (normalized.nodes.single() as TriggerNode)
                 .triggerConfig[WorkflowIntentSecurity.CONFIG_AUTH_TOKEN],
         )

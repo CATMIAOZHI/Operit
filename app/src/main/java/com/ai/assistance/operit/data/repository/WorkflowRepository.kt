@@ -1140,14 +1140,23 @@ class WorkflowRepository(private val context: Context) {
      * 更新工作流
      */
     suspend fun updateWorkflow(workflow: Workflow): Result<Workflow> =
-        updateWorkflowInternal(workflow, allowLegacyPromotion = true)
+        updateWorkflowInternal(
+            workflow = workflow,
+            allowLegacyPromotion = true,
+            inheritModelRedactedExternalTriggerToken = false,
+        )
 
     internal suspend fun updateWorkflowFromPrivateStorage(workflow: Workflow): Result<Workflow> =
-        updateWorkflowInternal(workflow, allowLegacyPromotion = false)
+        updateWorkflowInternal(
+            workflow = workflow,
+            allowLegacyPromotion = false,
+            inheritModelRedactedExternalTriggerToken = true,
+        )
 
     private suspend fun updateWorkflowInternal(
         workflow: Workflow,
         allowLegacyPromotion: Boolean,
+        inheritModelRedactedExternalTriggerToken: Boolean,
     ): Result<Workflow> = withContext(Dispatchers.IO) {
         try {
             require(workflow.id.isNotBlank()) { "Workflow id cannot be empty" }
@@ -1186,6 +1195,7 @@ class WorkflowRepository(private val context: Context) {
                     WorkflowIntentSecurity.normalizeExternalTriggerTokensForUpdate(
                         requestedWorkflow = requestedWorkflow,
                         latestWorkflow = latest,
+                        inheritMissingToken = inheritModelRedactedExternalTriggerToken,
                         tokenValidator = authTokenManager::isAuthenticAuthToken,
                         tokenFactory = authTokenManager::newAuthToken,
                     )
@@ -1979,6 +1989,16 @@ class WorkflowRepository(private val context: Context) {
                 )
             if (preserveActiveSchedule) {
                 AppLogger.d(TAG, "Preserving active trusted schedule request: $id")
+                return@synchronized false
+            }
+            if (scheduler.shouldRetireCompletedPreFingerprintOneTimeAndWait(latest)) {
+                val retired = latest.copy(
+                    scheduleFingerprintGeneration =
+                        WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION,
+                )
+                writeWorkflowContentAtomically(internal, json.encodeToString(retired))
+                scheduler.cancelWorkflowAndWait(id)
+                AppLogger.d(TAG, "Preserving completed pre-fingerprint one-time schedule: $id")
                 return@synchronized false
             }
             val migratableSchedule =

@@ -3,6 +3,7 @@ package com.ai.assistance.operit.core.workflow
 import com.ai.assistance.operit.data.model.TriggerNode
 import com.ai.assistance.operit.data.model.Workflow
 import java.io.File
+import java.io.FileNotFoundException
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -45,6 +46,74 @@ class WorkflowAuthTokenManagerTest {
         assertEquals(1, generated)
         val noBackupRoot = File("no-backup-root")
         assertEquals(noBackupRoot, workflowSigningSecretFile(noBackupRoot).parentFile)
+        assertEquals(noBackupRoot, workflowAuthRestoreGenerationFile(noBackupRoot).parentFile)
+    }
+
+    @Test
+    fun sameInstallRestoreGenerationInvalidatesSnapshotTokens() {
+        val secret = ByteArray(32) { 7 }
+        val beforeRestore = WorkflowAuthTokenCodec(secret, restoreGeneration = 0L)
+        val snapshotToken = beforeRestore.newToken()
+        val afterRestore = WorkflowAuthTokenCodec(secret, restoreGeneration = 1L)
+        val replacementToken = afterRestore.newToken()
+
+        assertTrue(beforeRestore.isAuthentic(snapshotToken))
+        assertFalse(afterRestore.isAuthentic(snapshotToken))
+        assertTrue(afterRestore.isAuthentic(replacementToken))
+        assertFalse(WorkflowAuthTokenCodec(secret, restoreGeneration = 2L).isAuthentic(replacementToken))
+    }
+
+    @Test
+    fun restoreGenerationDefaultsOnlyWhenNoStateExistsAndRejectsCorruption() {
+        assertEquals(
+            0L,
+            loadWorkflowAuthRestoreGeneration { throw FileNotFoundException("not initialized") },
+        )
+        assertEquals(
+            4L,
+            loadWorkflowAuthRestoreGeneration { "4".toByteArray(Charsets.UTF_8) },
+        )
+        assertTrue(
+            runCatching {
+                loadWorkflowAuthRestoreGeneration { "invalid".toByteArray(Charsets.UTF_8) }
+            }.isFailure,
+        )
+        assertTrue(
+            runCatching {
+                loadWorkflowAuthRestoreGeneration { throw java.io.IOException("unreadable") }
+            }.isFailure,
+        )
+    }
+
+    @Test
+    fun restoreGenerationAlwaysUsesAtomicReadSoBackupRecoveryCanRun() {
+        var reads = 0
+        val recovered = loadWorkflowAuthRestoreGeneration {
+            reads += 1
+            "7".toByteArray(Charsets.UTF_8)
+        }
+        val source = File("src/main/java/com/ai/assistance/operit/core/workflow/WorkflowAuthTokenManager.kt")
+            .readText()
+
+        assertEquals(7L, recovered)
+        assertEquals(1, reads)
+        assertFalse(source.contains("generationFile.baseFile.exists()"))
+        assertTrue(source.contains("generationFile.readFully()"))
+    }
+
+    @Test
+    fun rawSnapshotReplacementAdvancesNoBackupAuthGeneration() {
+        val source = File("src/main/java/com/ai/assistance/operit/data/backup/RawSnapshotBackupManager.kt")
+            .readText()
+        val replaceFiles = source.indexOf(
+            "replaceDirContents(File(payloadDir, \"files\"), context.filesDir",
+        )
+        val advanceGeneration = source.indexOf("advanceWorkflowAuthRestoreGeneration(context)")
+        val restoreDone = source.indexOf("AppLogger.i(TAG, \"restore done:")
+
+        assertTrue(replaceFiles >= 0)
+        assertTrue(advanceGeneration > replaceFiles)
+        assertTrue(restoreDone > advanceGeneration)
     }
 
     @Test
