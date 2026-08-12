@@ -36,7 +36,18 @@ TOOLPKG_PATTERNS = (
     "npm-shrinkwrap.json",
     "pnpm-workspace.yaml",
     "tools/example_packages/packages_whitelist.txt",
+    "tools/example_packages/legacy_incompatible_packages.txt",
     "tools/example_packages/sync_example_packages.py",
+    "tools/sandboxpackage_dev_install_or_update.js",
+)
+ANDROID_JVM_PATTERNS = (
+    "tools/adb/execute_js.bat",
+    "tools/adb/execute_js.sh",
+    "tools/adb/execute_js_dir.bat",
+    "tools/adb/execute_js_dir.sh",
+    "tools/adb/run_sandbox_script.bat",
+    "tools/adb/run_sandbox_script.sh",
+    "tools/sandboxpackage_dev_install_or_update.js",
 )
 ANDROID_FULL_PATTERNS = (
     ".github/actions/android-checks/**",
@@ -54,14 +65,6 @@ ANDROID_FULL_PATTERNS = (
     "gradlew.bat",
     "settings.gradle.kts",
     "tools/native_ripgrep/**",
-)
-ANDROID_JVM_PATTERNS = (
-    "tools/adb/execute_js.bat",
-    "tools/adb/execute_js.sh",
-    "tools/adb/execute_js_dir.bat",
-    "tools/adb/execute_js_dir.sh",
-    "tools/adb/run_sandbox_script.bat",
-    "tools/adb/run_sandbox_script.sh",
 )
 ANDROID_MODULE_ROOTS = (
     "dragonbones",

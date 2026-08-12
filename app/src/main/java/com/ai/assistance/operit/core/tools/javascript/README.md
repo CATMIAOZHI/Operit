@@ -453,6 +453,8 @@ await toolCall('default', 'http_request', { url: 'https://example.com', method: 
 
 如果你只想看**给脚本开发者承诺的接口**，优先阅读 [docs/doc-src/dev-core/JAVA_BRIDGE_INTERFACE.md](../../../../../../../../docs/doc-src/dev-core/JAVA_BRIDGE_INTERFACE.md)。
 
+> 当前安全契约只允许该文档列出的纯数据类。下面涉及 Android/应用内部类、文件、线程、Context/Activity 或动态 dex/jar 的旧语法示例不再是可执行能力；这些入口会被 allowlist 或禁用 API 拒绝。宿主能力必须改走 `Tools`。
+
 ### 5.1 入口对象
 
 运行时会注入：
@@ -471,8 +473,6 @@ await toolCall('default', 'http_request', { url: 'https://example.com', method: 
 - `Java.newInstance(className, ...args)`
 - `Java.callStatic(className, methodName, ...args)`
 - `Java.callSuspend(className, methodName, ...args)`
-- `Java.loadDex(path, options?)`
-- `Java.loadJar(path, options?)`
 - `Java.listLoadedCodePaths()`
 
 ---
@@ -494,22 +494,16 @@ const text = sb.toString();
 
 ```js
 const Integer = Java.java.lang.Integer;
-const Build = Java.android.os.Build;
-const Version = Java.android.os.Build.VERSION;
-const AlertDialogBuilder = Java.android.app.AlertDialog.Builder;
+const StringBuilder = Java.java.lang.StringBuilder;
 ```
 
 静态字段 / 静态方法语法糖：
 
 ```js
 const Integer = Java.java.lang.Integer;
-const Build = Java.android.os.Build;
 
 const maxValue = Integer.MAX_VALUE;
 const parsed = Integer.parseInt('123');
-
-const model = Build.MODEL;
-const sdkInt = Build.VERSION.SDK_INT;
 
 // 等价底层写法
 const parsedByApi = Java.callStatic('java.lang.Integer', 'parseInt', '123');
@@ -518,15 +512,11 @@ const parsedByApi = Java.callStatic('java.lang.Integer', 'parseInt', '123');
 挂起调用既可以走顶层 API，也可以走类代理语法糖：
 
 ```js
-const SomeBridge = Java.com.ai.assistance.operit.SomeBridge;
-
-const resultA = await SomeBridge.callSuspend('loadSomething', 'arg1');
-
-const resultB = await Java.callSuspend(
-  'com.ai.assistance.operit.SomeBridge',
-  'loadSomething',
-  'arg1'
-);
+try {
+  await Java.callSuspend('java.lang.StringBuilder', 'missingSuspendMethod');
+} catch (error) {
+  console.log(String(error));
+}
 ```
 
 如果你手里拿到的是实例代理，也同样支持：
@@ -546,209 +536,73 @@ const stream = await enhancedAIService.callSuspend('sendMessage', options);
 #### 类代理
 
 ```js
-const File = Java.type('java.io.File');
-const file = File.newInstance('/sdcard/test.txt');
+const StringBuilder = Java.type('java.lang.StringBuilder');
+const builder = StringBuilder.newInstance();
 ```
 
 #### 实例代理
 
 ```js
-file.exists();
-file.getName();
-file.length();
+builder.append('safe');
+builder.length();
+builder.toString();
 ```
 
 #### 包代理
 
 ```js
-const Runnable = Java.java.lang.Runnable;
+const ArrayList = Java.java.util.ArrayList;
 ```
 
 这类代理支持：
 
-- `new Cls(...args)` / `Cls(...args)` / `Cls.newInstance(...args)`
-- `obj.method(...args)`，等价于 `obj.call('method', ...args)`
-- `obj.field` / `obj.field = value`，等价于 `obj.get('field')` / `obj.set('field', value)`
-- `Cls.STATIC_FIELD` / `Cls.STATIC_FIELD = value`，等价于 `Cls.getStatic('STATIC_FIELD')` / `Cls.setStatic('STATIC_FIELD', value)`
-- `Cls.staticMethod(...args)`，等价于 `Cls.callStatic('staticMethod', ...args)`
-- `Cls.InnerClass`，会按嵌套类解析成 `Outer$Inner`
+- `new Cls(...args)` / `Cls(...args)` / `Cls.newInstance(...args)`，但只匹配受限 profile 明确允许的构造器
+- `obj.method(...args)`，等价于 `obj.call('method', ...args)`；方法名同样必须进入正向成员 allowlist
+- `Cls.STATIC_FIELD` 只可读取 boxed primitive 的已列常量；字段写入与实例字段不开放
+- `Cls.staticMethod(...args)`，等价于 `Cls.callStatic('staticMethod', ...args)`，仍受成员 allowlist 约束
+- `Cls.InnerClass` 不会继承外层类权限；nested class 的 `$` 完整类名必须独立进入 allowlist，当前 profile 没有任何一项
 
 例如：
 
 ```js
-const System = Java.java.lang.System;
-const now = System.currentTimeMillis();
-
-const ActivityLifecycleManager = Java.com.ai.assistance.operit.core.application.ActivityLifecycleManager;
-const activity = ActivityLifecycleManager.INSTANCE.getCurrentActivity();
+const Integer = Java.java.lang.Integer;
+const value = Integer.parseInt('42');
 ```
 
-对于 Kotlin 类代理上的静态方法调用，运行时还会自动尝试 `Companion` 回退；
-因此很多 `companion object` 方法也可以直接写成 `SomeKotlinClass.someMethod()`。
+底层仍保留 Kotlin `Companion` 回退兼容逻辑，但当前安全 allowlist 不包含应用/Kotlin 业务类，不能把该逻辑当成脚本可用的宿主能力。
 
-#### 动态加载 dex / jar
+#### 动态加载 dex / jar（已禁用）
 
-如果脚本需要访问宿主 APK 之外的类，可以先把外部代码挂进 Java bridge 的
-`ClassLoader` 链，再正常使用 `Java.type(...)` / `Java.xxx.yyy`。
+严格模式不允许脚本扩展 `ClassLoader`。`Java.loadDex(...)` 与 `Java.loadJar(...)`
+仅保留兼容入口并始终返回失败；`Java.listLoadedCodePaths()` 不会包含由脚本新增的路径。
 
-加载 `.dex`：
-
-```js
-Java.loadDex('/data/user/<current_user_id>/com.ai.assistance.operit/files/plugins/demo.dex');
-
-const DemoEntry = Java.type('com.example.demo.Entry');
-const message = DemoEntry.callStatic('hello');
-```
-
-加载 `.jar`：
-
-```js
-Java.loadJar('/data/user/<current_user_id>/com.ai.assistance.operit/files/plugins/demo.jar');
-
-const DemoEntry = Java.type('com.example.demo.Entry');
-const instance = new DemoEntry();
-```
-
-如果外部代码还依赖 `.so`，可以额外指定原生库目录：
-
-```js
-Java.loadDex('/data/user/<current_user_id>/com.ai.assistance.operit/files/plugins/demo.dex', {
-  nativeLibraryDir: '/data/user/<current_user_id>/com.ai.assistance.operit/files/plugins/lib'
-});
-```
-
-如果外部 jar 和宿主 APK 存在同包名依赖冲突，可以显式指定子优先加载的包前缀：
-
-```js
-Java.loadJar('/data/user/<current_user_id>/com.ai.assistance.operit/files/plugins/demo.jar', {
-  childFirstPrefixes: [
-    'com.example.plugin.',
-    'org.apache.commons.'
-  ]
-});
-```
-
-查看当前会话里已经挂载过哪些外部代码：
+兼容状态可以查询，但脚本不能新增加载记录：
 
 ```js
 const loaded = Java.listLoadedCodePaths();
 console.log(JSON.stringify(loaded, null, 2));
 ```
 
-约束说明：
-
-- `loadDex(...)` 只接受 `.dex` 文件。
-- `loadJar(...)` 只接受 `.jar` 文件，并且 **jar 内必须包含 `classes.dex`**。
-- 传统 JVM `.class` jar 不能直接在 Android 里通过这个桥执行。
-- 调用顺序要先 `loadDex/loadJar`，再 `Java.type(...)` 或包代理访问类。
-- `childFirstPrefixes` 只会对子匹配包名前缀启用子优先查找，其余类仍保持默认父优先。
-- 同一路径重复加载会复用当前会话里已经创建的加载记录，不会重复挂载。
-
 ---
 
 ### 5.4 接口实现与回调
 
-你可以在 JS 里实现 Java 接口：
+`Java.implement(...)` / `Java.proxy(...)` 的 marker 兼容入口仍保留，但当前严格 profile 没有开放任何可消费代理的接口类型。`CharSequence`、`Runnable`、Listener、Android 接口与应用内部接口都会被拒绝；字符参数请直接传 JS 字符串。有状态 `CharSequence` 回调不参与长度预算，避免检查后改变长度。
 
 ```js
-const Runnable = Java.type('java.lang.Runnable');
-
-const runnable = Java.implement(Runnable, {
-  run() {
-    console.log('Runnable called from Java');
-  }
+const blockedSequence = Java.implement('java.lang.CharSequence', {
+  length() { return 3; },
+  charAt(index) { return 'abc'[index]; },
+  subSequence(start, end) { return 'abc'.slice(start, end); },
+  toString() { return 'abc'; }
 });
 ```
 
-或者 SAM 风格：
-
-```js
-const runnable = Java.implement('java.lang.Runnable', () => {
-  console.log('run');
-});
-```
-
-如果调用位置本身能推断目标接口，也支持更短的写法：
-
-```js
-const runnable = Java.implement(() => {
-  console.log('run');
-});
-```
-
-`Java.proxy(...)` 只是 `Java.implement(...)` 的别名：
-
-```js
-const runnable = Java.proxy(Runnable, {
-  run() {
-    console.log('run via proxy alias');
-  }
-});
-```
-
-多接口实现也支持：
-
-```js
-const impl = Java.implement([
-  'java.lang.Runnable',
-  'java.io.Closeable'
-], {
-  run() {},
-  close() {}
-});
-```
-
-除了显式 `Java.implement(...)` / `Java.proxy(...)`，**回调位置**还支持对象字面量语法糖：
-
-```js
-const ViewOnClickListener = Java.android.view.View.OnClickListener;
-
-button.setOnClickListener({
-  onClick(view) {
-    console.log('clicked', view);
-  }
-});
-
-const listener = ViewOnClickListener({
-  onClick(view) {
-    console.log('clicked from class proxy', view);
-  }
-});
-```
-
-这里的核心规则是：
+只有未来将具体接口加入独立 interface-proxy allowlist 后，以下转换规则才会生效：
 
 - 当 Java / Kotlin 方法或构造器的目标参数类型本身就是接口时，plain object 会自动适配成接口代理
 - 对象上的同名方法会映射到接口方法
 - `getX()` / `isX()` / `setX(v)` 这类 accessor，也可以映射到对象上的普通属性 `x`
-
-例如：
-
-```js
-someApi.setListener({
-  enabled: true,
-  onChanged(value) {
-    console.log('changed', value);
-  }
-});
-```
-
-如果接口方法是 `isEnabled()` / `getEnabled()` / `setEnabled(value)`，上面的 `enabled` 属性也可以被当成对应实现使用。
-
-回调参数和返回值仍然走普通桥接转换：
-
-- 参数会按桥接规则传回 JS
-- 非 `void` / 非 `Unit` 方法可以直接 `return`
-- `void` / `Unit` 回调可以不返回值
-
-桥内部会给这些 JS 对象分配对象 ID，并通过宿主回调回 JS。
-
-建议：
-
-- 单一 SAM 接口位置，可以优先用 `Java.implement(() => {})` 这种简写
-- 只是在某个方法调用点临时传 listener 时，优先用对象字面量回调，更短更直观
-- 需要多接口、方法名更明确、或者文档可读性更强时，优先显式写接口名 / 类代理
-- 不要把裸 JS 函数直接当普通桥接参数传给 Java；函数回调请走 `Java.implement(...)` / `Java.proxy(...)`
 
 ---
 
@@ -769,6 +623,7 @@ return obj.toString();
 - JS 接口回调标记不再需要手动释放；对应 Java 代理被 GC 后，运行时会自动解除当前 JS 回调注册
 - Java 实例代理不要再写 `obj.release()` / `Java.release(...)` / `Java.releaseAll()`
 - 运行时会在代理对象被 GC 后尝试解绑对应 handle，也会在引擎销毁时统一清理剩余句柄
+- 单个引擎最多保留 1,024 个 live Java object handles；达到上限时必须等待代理释放/GC，或结束当前引擎
 
 ---
 
@@ -805,7 +660,7 @@ result.size();         // 错，JS 里已经不是 java.util.List 了
 |------|------|
 | `null` / Kotlin `Unit` | `null` |
 | `String` / `char` | `string` |
-| Java 方法返回的 `CharSequence` 值 | 可按 `string` 使用 |
+| Java 方法声明返回 `CharSequence`、当前开放路径实际值为 `String` | 可按 `string` 使用；其他返回值仍按其实际类经过 allowlist 与 handle 校验 |
 | `boolean` / `Boolean` | `boolean` |
 | `int` / `long` / `double` / 其他 `Number` | `number` |
 | `float` | `number`（按 double 语义传） |
@@ -815,13 +670,14 @@ result.size();         // 错，JS 里已经不是 java.util.List 了
 | `Iterable`（含 `List` / `Set` 等） | 普通 JS 数组 |
 | Java 数组 | 普通 JS 数组 |
 | `JSONArray` | 普通 JS 数组 |
-| 其他普通 Java/Kotlin 对象 | Java 实例代理（handle proxy） |
+| allowlist 内的其他普通 Java/Kotlin 对象 | Java 实例代理（handle proxy） |
+| allowlist 外对象 | 拒绝 |
 
 这意味着：
 
 - 从 Java 回来的 `List<File>`，在 JS 里要按数组用：`length`、索引、`map/filter`
 - 从 Java 回来的 `Map<String, Object>`，在 JS 里要按 plain object 用
-- 如果返回的是普通对象代理，才会有 `obj.method()`、`obj.field` 这一类桥接能力
+- 如果返回的是 allowlist 内普通对象代理，才会有受成员契约限制的 `obj.method()` 能力；当前 profile 不开放实例字段
 - 但如果你自己显式构造的是 `new Java.java.lang.StringBuilder()`、`new Java.java.util.ArrayList()` 这类对象，拿到的仍然是 Java 实例代理，不会直接拍平成字符串或数组
 
 #### JS -> Java / Kotlin
@@ -835,14 +691,12 @@ JS 传参给 Java / Kotlin 时，桥接会按目标参数类型自动尝试转�
 | `number` | 各种数字类型：`byte` / `short` / `int` / `long` / `float` / `double` |
 | `boolean` | `boolean` / `Boolean`，也可参与部分数字转换 |
 | JS 数组 | Java 数组、`Collection`、`JSONArray` |
-| plain object | `Map`、`JSONObject`，或在目标是接口时转成接口实现代理 |
+| plain object | `Map`、`JSONObject`；当前 profile 不自动生成接口代理 |
 | Java 实例代理 | 还原成原始 Java 对象 |
-| `Java.implement(...)` / `Java.proxy(...)` 返回值 | Java 接口代理 |
+| `Java.implement(...)` / `Java.proxy(...)` 返回值 | 兼容 marker；当前 profile 无可消费的接口目标 |
 
 额外几条当前已支持的自动转换：
 
-- 目标参数是接口时，plain object 可以直接适配成接口代理
-- 对象属性 `enabled` 可以映射到 `getEnabled()` / `isEnabled()` / `setEnabled(...)`
 - JS 数组传给 Java varargs 时，会逐项按目标组件类型转换
 - 字符串传给 `Class<?>` 参数时，会按类名尝试 `Class.forName(...)`
 - `List` 传给 `JSONArray`、plain object 传给 `JSONObject` 也会自动包装
@@ -859,14 +713,7 @@ someApi.acceptConfig({
   retries: 3
 });
 
-// 3. plain object -> Java interface
-button.setOnClickListener({
-  onClick(view) {
-    console.log('clicked');
-  }
-});
-
-// 4. Java List -> JS array
+// 3. Java List -> JS array
 const files = someApi.listFiles();
 const names = files.map((file) => file.getName());
 ```
