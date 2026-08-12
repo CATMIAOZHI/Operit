@@ -7,8 +7,12 @@ if [ -z "${1:-}" ]; then
     echo "Example: $0 example.js @params.json"
     echo "Example: $0 example.js '{}' .env.local"
     echo "Note: set OPERIT_RESULT_WAIT_SECONDS to customize result wait, default is 15 seconds"
+    echo "Note: set OPERIT_APP_PACKAGE to target another debug application ID, default is com.rainy.operitry.dev"
     exit 1
 fi
+
+APP_PACKAGE="${OPERIT_APP_PACKAGE:-com.rainy.operitry.dev}"
+RECEIVER_COMPONENT="${APP_PACKAGE}/com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver"
 
 FILE_PATH="$1"
 if [ -z "${2:-}" ]; then
@@ -100,7 +104,7 @@ cleanup_local_params() {
 }
 
 echo "Creating directory structure..."
-TARGET_DIR="/sdcard/Android/data/com.ai.assistance.operit/js_temp"
+TARGET_DIR="/sdcard/Android/data/${APP_PACKAGE}/js_temp"
 adb -s "$DEVICE_SERIAL" shell mkdir -p "$TARGET_DIR"
 TARGET_FILE="$TARGET_DIR/$(basename "$FILE_PATH")"
 RESULT_STEM="$(printf "%s_%s" "$(basename "$FILE_PATH")" "$(date +%s)" | tr -c 'A-Za-z0-9._-' '_')"
@@ -148,9 +152,9 @@ adb -s "$DEVICE_SERIAL" shell rm -f "$TARGET_RESULT_FILE"
 
 echo "Running sandbox script with params source: $TARGET_PARAMS_FILE"
 if [ "$HAS_ENV_FILE" = "true" ]; then
-    adb -s "$DEVICE_SERIAL" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n com.ai.assistance.operit/.core.tools.javascript.ScriptExecutionReceiver --include-stopped-packages --es execution_mode 'script' --es file_path '$TARGET_FILE' --es params_file_path '$TARGET_PARAMS_FILE' --es env_file_path '$TARGET_ENV_FILE' --es result_file_path '$TARGET_RESULT_FILE' --ez temp_file true --ez temp_params_file true --ez temp_env_file true"
+    adb -s "$DEVICE_SERIAL" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n $RECEIVER_COMPONENT --include-stopped-packages --es execution_mode 'script' --es file_path '$TARGET_FILE' --es params_file_path '$TARGET_PARAMS_FILE' --es env_file_path '$TARGET_ENV_FILE' --es result_file_path '$TARGET_RESULT_FILE' --ez temp_file true --ez temp_params_file true --ez temp_env_file true"
 else
-    adb -s "$DEVICE_SERIAL" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n com.ai.assistance.operit/.core.tools.javascript.ScriptExecutionReceiver --include-stopped-packages --es execution_mode 'script' --es file_path '$TARGET_FILE' --es params_file_path '$TARGET_PARAMS_FILE' --es result_file_path '$TARGET_RESULT_FILE' --ez temp_file true --ez temp_params_file true"
+    adb -s "$DEVICE_SERIAL" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n $RECEIVER_COMPONENT --include-stopped-packages --es execution_mode 'script' --es file_path '$TARGET_FILE' --es params_file_path '$TARGET_PARAMS_FILE' --es result_file_path '$TARGET_RESULT_FILE' --ez temp_file true --ez temp_params_file true"
 fi
 if [ $? -ne 0 ]; then
     cleanup_local_params

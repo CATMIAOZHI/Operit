@@ -43,6 +43,31 @@ internal fun buildJavaClassBridgeDefinition(): String {
                 }
             }
 
+            function blockedClassLookupError(className) {
+                return new Error(
+                    "Java bridge class '" + String(className || '') + "' is not allowed"
+                );
+            }
+
+            function requireClassExistsRaw(className) {
+                var normalized = String(className || '').trim();
+                if (!normalized || !classExistsRaw(normalized)) {
+                    throw blockedClassLookupError(normalized);
+                }
+                return normalized;
+            }
+
+            function looksLikeClassSegment(value) {
+                if (typeof value !== 'string' || value.length === 0) {
+                    return false;
+                }
+                var segmentStart = Math.max(
+                    value.lastIndexOf('.'),
+                    value.lastIndexOf(String.fromCharCode(36))
+                ) + 1;
+                return /^[A-Z]/.test(value.slice(segmentStart));
+            }
+
             function isPropertyKeyName(value) {
                 return typeof value === 'string' && value.length > 0;
             }
@@ -259,17 +284,6 @@ internal fun buildJavaClassBridgeDefinition(): String {
                 return marker;
             }
 
-            function getJsInterfaceValue(marker) {
-                if (!marker || typeof marker !== 'object') {
-                    return undefined;
-                }
-                try {
-                    return marker.__javaJsValue;
-                } catch (_error) {
-                    return undefined;
-                }
-            }
-
             function hasUsableJavaInstanceMarker(value) {
                 if (!value || typeof value !== 'object') {
                     return false;
@@ -286,34 +300,6 @@ internal fun buildJavaClassBridgeDefinition(): String {
                 } catch (_error) {
                     return false;
                 }
-            }
-
-            function ensureJsInterfaceMarkerRegistered(marker) {
-                if (!marker || typeof marker !== 'object') {
-                    throw new Error('js interface marker is required');
-                }
-
-                var currentId = String(marker.__javaJsObjectId || '').trim();
-                if (
-                    currentId &&
-                    Object.prototype.hasOwnProperty.call(__javaBridgeJsObjectStore, currentId)
-                ) {
-                    marker.__javaJsObjectId = currentId;
-                    return marker;
-                }
-
-                var jsValue = getJsInterfaceValue(marker);
-                if (jsValue === undefined) {
-                    throw new Error(
-                        currentId
-                            ? ('js interface implementation is unavailable: ' + currentId)
-                            : 'js interface implementation is unavailable'
-                    );
-                }
-
-                var nextId = registerJsObject(jsValue);
-                marker.__javaJsObjectId = nextId;
-                return marker;
             }
 
             function buildJsInterfaceMarker(objectId, interfaceNames, jsValue) {
@@ -368,10 +354,16 @@ internal fun buildJavaClassBridgeDefinition(): String {
             }
 
             function unwrapValue(value) {
+                var bridgeNumberPrefix = '\u0000operit-java-number:';
+                if (typeof value === 'number' && !Number.isFinite(value)) {
+                    return bridgeNumberPrefix +
+                        (Number.isNaN(value) ? 'NaN' : (value > 0 ? 'Infinity' : '-Infinity'));
+                }
+                if (typeof value === 'string' && value.indexOf(bridgeNumberPrefix) === 0) {
+                    return bridgeNumberPrefix + 'STRING:' + value;
+                }
                 if (typeof value === 'function') {
-                    return ensureJsInterfaceMarkerRegistered(
-                        buildJsInterfaceMarker('', [], value)
-                    );
+                    throw new Error('Java bridge interface proxy is not allowed');
                 }
                 if (!value || typeof value !== 'object') {
                     return value;
@@ -386,13 +378,7 @@ internal fun buildJavaClassBridgeDefinition(): String {
                     Object.prototype.hasOwnProperty.call(value, '__javaJsInterface') &&
                     Object.prototype.hasOwnProperty.call(value, '__javaJsObjectId')
                 ) {
-                    return ensureJsInterfaceMarkerRegistered(
-                        buildJsInterfaceMarker(
-                            String(value.__javaJsObjectId || ''),
-                            value.__javaInterfaces,
-                            getJsInterfaceValue(value)
-                        )
-                    );
+                    throw new Error('Java bridge interface proxy is not allowed');
                 }
                 if (Array.isArray(value)) {
                     return value.map(function(item) {
@@ -409,6 +395,22 @@ internal fun buildJavaClassBridgeDefinition(): String {
             }
 
             function wrapValue(value) {
+                var bridgeNumberPrefix = '\u0000operit-java-number:';
+                var bridgeStringEscapePrefix = bridgeNumberPrefix + 'STRING:';
+                if (typeof value === 'string') {
+                    if (value.indexOf(bridgeStringEscapePrefix) === 0) {
+                        return value.substring(bridgeStringEscapePrefix.length);
+                    }
+                    if (value === bridgeNumberPrefix + 'NaN') {
+                        return NaN;
+                    }
+                    if (value === bridgeNumberPrefix + 'Infinity') {
+                        return Infinity;
+                    }
+                    if (value === bridgeNumberPrefix + '-Infinity') {
+                        return -Infinity;
+                    }
+                }
                 if (!value || typeof value !== 'object') {
                     return value;
                 }
@@ -798,11 +800,12 @@ internal fun buildJavaClassBridgeDefinition(): String {
                         );
                     },
                     get: function(fieldName) {
-                        if (arguments.length === 0) {
+                        var args = Array.prototype.slice.call(arguments);
+                        if (invokeBridgeBoolean('javaHasInstanceMethod', [handle, 'get'])) {
                             return invokeBridge('javaCallInstance', [
                                 handle,
                                 'get',
-                                '[]'
+                                JSON.stringify(normalizeArgs(args))
                             ]);
                         }
                         return invokeBridge('javaGetInstanceField', [
@@ -811,11 +814,12 @@ internal fun buildJavaClassBridgeDefinition(): String {
                         ]);
                     },
                     set: function(fieldName, value) {
-                        if (arguments.length === 1) {
+                        var args = Array.prototype.slice.call(arguments);
+                        if (invokeBridgeBoolean('javaHasInstanceMethod', [handle, 'set'])) {
                             return invokeBridge('javaCallInstance', [
                                 handle,
                                 'set',
-                                JSON.stringify(normalizeArgs([fieldName]))
+                                JSON.stringify(normalizeArgs(args))
                             ]);
                         }
                         return invokeBridge('javaSetInstanceField', [
@@ -985,6 +989,7 @@ internal fun buildJavaClassBridgeDefinition(): String {
             }
 
             function createClassProxy(className) {
+                className = requireClassExistsRaw(className);
                 var target = function() {
                     return target.newInstance.apply(target, arguments);
                 };
@@ -1145,6 +1150,9 @@ internal fun buildJavaClassBridgeDefinition(): String {
                         if (classExistsRaw(candidate)) {
                             return createClassProxy(candidate);
                         }
+                        if (looksLikeClassSegment(prop)) {
+                            throw blockedClassLookupError(candidate);
+                        }
                         return createPackageProxy(nextParts);
                     },
                     apply: function(_obj, _thisArg, args) {
@@ -1190,6 +1198,12 @@ internal fun buildJavaClassBridgeDefinition(): String {
                     var normalized = String(packageName || '').trim();
                     if (!normalized) {
                         throw new Error('package name is required');
+                    }
+                    if (looksLikeClassSegment(normalized)) {
+                        if (classExistsRaw(normalized)) {
+                            return createClassProxy(normalized);
+                        }
+                        throw blockedClassLookupError(normalized);
                     }
                     return createPackageProxy(normalized.split('.').filter(Boolean));
                 },
@@ -1304,6 +1318,9 @@ internal fun buildJavaClassBridgeDefinition(): String {
 
                     if (classExistsRaw(prop)) {
                         return createClassProxy(prop);
+                    }
+                    if (looksLikeClassSegment(prop)) {
+                        throw blockedClassLookupError(prop);
                     }
                     return createPackageProxy([prop]);
                 }

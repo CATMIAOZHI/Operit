@@ -53,4 +53,6 @@ kotlin {
 
 dependencies {
     implementation(libs.kotlinx.serialization)
+    testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
 }

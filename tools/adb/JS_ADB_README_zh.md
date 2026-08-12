@@ -66,20 +66,20 @@
 
 ## 真实测试资产
 
-仓库里的 [app/src/androidTest/js](/d:/Code/prog/assistance/app/src/androidTest/js) 不是普通示例目录，而是这套工具的重要使用场景之一。
+仓库里的 [app/src/androidTest/js](/d:/Code/prog/assistance/app/src/androidTest/js) 不是普通示例目录，而是这套工具的重要使用场景之一。当前 Java Bridge 真机契约入口是 `restricted_bridge`；`bridge_contract` / `bridge_edges` 依赖已撤销的 unrestricted bridge，仅保留作迁移资产，当前运行时应拒绝它们。
 
 其中包括：
 
-- JS bridge contract 测试
-- JS bridge edge case 测试
+- restricted Java bridge contract 测试
+- legacy unrestricted bridge contract / edge 资产（预期不兼容）
 - script mode contract 测试
 - browser tool smoke / probe
 - utility / ffmpeg / ttscleaner 等运行时测试资产
 
 典型目录：
 
-- [bridge_contract](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_contract)
-- [bridge_edges](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_edges)
+- [restricted_bridge](../../app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/restricted_bridge)
+- 仅供迁移参考：[bridge_contract](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_contract) 与 [bridge_edges](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_edges)
 - [script_mode_contract](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/script_mode_contract)
 - [browser main.js](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/defaultTool/standard/browser/main.js)
 - [ttscleaner.js](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/util/ttscleaner/ttscleaner.js)
@@ -95,6 +95,19 @@
 - 你改的是 `examples/` 里的 toolpkg 调试工具，例如 `operit_editor` 的 `debug_install_toolpkg`，通常是先 `tools/example_packages/sync_example_packages.py`，再用 `execute_js.bat` 去调这个工具
 
 ## 快速开始
+
+脚本默认连接 `personal/dev` 的 Operit Ry debug 应用 `com.rainy.operitry.dev`。仅当目标 debug 构建使用其他 application ID 时，才需要设置 `OPERIT_APP_PACKAGE`：
+
+```cmd
+set OPERIT_APP_PACKAGE=com.example.operit.debug
+tools\adb\execute_js.bat path\to\your\script.js functionName @params.json
+```
+
+```bash
+OPERIT_APP_PACKAGE=com.example.operit.debug ./tools/adb/execute_js.sh path/to/your/script.js functionName '{}'
+```
+
+普通 ADB shell 只允许调用 `debug` 变体的开发入口；该入口要求 shell 持有的系统级 `android.permission.DUMP`，普通第三方应用不能调用。`clone`、`release` 和 `nightly` 的接收器仍受应用签名权限保护，会拒绝普通 shell 广播。
 
 ### Windows：执行单文件导出函数
 
@@ -119,14 +132,14 @@ tools\adb\execute_js.bat examples\operit_editor.js debug_install_toolpkg @params
 Windows：
 
 ```cmd
-tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\bridge_contract\bridge_contract_runner.js run @params.json
+tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\restricted_bridge\restricted_bridge.js run @params.json
 tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\defaultTool\standard\browser\main.js run "{}"
 ```
 
 Linux/macOS：
 
 ```bash
-./tools/adb/execute_js_dir.sh app/src/androidTest/js com/ai/assistance/operit/core/tools/javascript/bridge_contract/bridge_contract_runner.js run @params.json
+./tools/adb/execute_js_dir.sh app/src/androidTest/js com/ai/assistance/operit/core/tools/javascript/restricted_bridge/restricted_bridge.js run @params.json
 ```
 
 ### 执行顶层 sandbox script
@@ -224,7 +237,7 @@ exports.main = main;
 最常见调用：
 
 ```cmd
-tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\bridge_contract\bridge_contract_runner.js run @params.json
+tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\restricted_bridge\restricted_bridge.js run @params.json
 ```
 
 调用格式：
@@ -444,7 +457,7 @@ tools\adb\execute_js.bat examples\my_script.js main @params.json
 ### 2. 跑一个 `androidTest/js` 目录测试入口
 
 ```cmd
-tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\bridge_contract\bridge_contract_runner.js run @params.json
+tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\restricted_bridge\restricted_bridge.js run @params.json
 ```
 
 ### 3. 跑一个顶层 script mode 探针

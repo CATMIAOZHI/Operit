@@ -551,13 +551,7 @@ await Tools.UI.swipe(540, 1800, 540, 900);
 
 ### 3.4. Java/Kotlin 类桥接 (Java Bridge)
 
-除了 `Tools` 外，脚本运行时还注入了 `Java` / `Kotlin` 全局对象，用于直接调用 Java/Kotlin/Android 类。
-
-这套能力适用于：
-
--   直接访问 Android SDK 类（如 `android.os.Build`、`android.os.SystemClock`）。
--   调用宿主应用暴露的类与单例对象。
--   在脚本中实现 Java 接口回调（如 `Runnable`、`Callable`、Listener）。
+除了 `Tools` 外，脚本运行时还注入了 `Java` / `Kotlin` 全局对象。它只用于 allowlist 内的纯数据处理类，不能访问 Android SDK、应用内部类、文件/进程 API 或动态代码。需要宿主能力时必须使用经过权限与参数检查的 `Tools`。
 
 #### 3.4.1. 两层 API
 
@@ -568,62 +562,52 @@ await Tools.UI.swipe(540, 1800, 540, 900);
 
 #### 3.4.2. 高层 API 常用能力
 
--   类获取：
-    -   语法糖（推荐）：`Java.java.lang.StringBuilder`、`Java.android.os.Build.VERSION`、`Java.android.app.AlertDialog.Builder`
+-   类获取（仅限 allowlist）：
+    -   语法糖（推荐）：`Java.java.lang.StringBuilder`
     -   兼容写法：`Java.type("java.lang.StringBuilder")`
     -   别名：`Java.use(...)` / `Java.importClass(...)`
--   包链访问：`Java.java.lang.System.currentTimeMillis()`
+-   包链访问：`Java.java.lang.Integer.parseInt("42")`
 -   静态调用：`Java.callStatic(className, methodName, ...args)`
 -   异步挂起调用：`Java.callSuspend(className, methodName, ...args)`（返回 Promise）
 -   构造实例：`Java.newInstance(className, ...args)` 或 `new Java.java.util.ArrayList()`
--   接口实现：
-    -   `Java.implement(interfaceNameOrNames, impl)`（支持字符串接口名或 `Java.xxx` 类代理）
-    -   `Java.proxy(interfaceNameOrNames, impl)`（`implement` 别名）
-    -   **语法糖**：当 Java/Kotlin 方法参数为接口类型时，可直接传 JS 函数/对象，桥接会自动推断接口并创建代理（无需显式 `implement`）
+-   接口 marker 兼容入口：`Java.implement(...)` / `Java.proxy(...)` 仍可构造 marker，但当前 profile 没有可消费的接口目标；把 marker、JS 函数或 plain object 传给接口参数都会在 native 注册前拒绝。
 -   生命周期管理：
-    -   Java 实例 handle 与 JS 接口回调都由运行时自动管理，无需手动释放脚本侧回调标记
+    -   Java 实例 handle 由运行时自动管理；当前不会创建 Java 接口回调代理
+
+当前 allowlist 为：
+
+-   `java.lang`: `Boolean`, `Byte`, `Character`, `Double`, `Float`, `Integer`, `Long`, `Number`, `Short`, `String`, `StringBuilder`
+-   `java.util`: `ArrayList`, `Collections`, `HashMap`, `HashSet`, `LinkedHashMap`, `LinkedHashSet`, `UUID`
+-   primitive：`boolean`, `byte`, `short`, `int`, `long`, `float`, `double`, `char`, `void`
+
+类进入 allowlist 后仍只开放 [Java Bridge Interface](doc-src/dev-core/JAVA_BRIDGE_INTERFACE.md) 列出的构造器、方法和只读常量；这不是“整类全部 public 成员”授权。容量型构造器、`ensureCapacity` / `setLength`、`String.repeat`、正则替换以及任意字段写入均不开放。`BigInteger` / `BigDecimal` 也不属于当前受限 profile；大数或宿主数据处理应走有参数边界的 `Tools`。
+
+`bigint` 不能被 `JSON.stringify` 直接传入 bridge；需要时先显式转换为十进制字符串。`Java.getApplicationContext()` / `getCurrentActivity()` / `loadDex()` / `loadJar()` 仅保留兼容入口并始终失败；`Java.classExists()` 对 allowlist 外类返回 `false`，`Java.type()` / `use()` / `importClass()` 与包链类名查找会在查找阶段立即拒绝，不会返回延迟到成员调用才失败的 class/package proxy。
 
 #### 3.4.3. 句柄与生命周期建议
 
 Java 复杂对象跨桥接会被包装成“实例代理”（内部是 handle 句柄），建议：
 
--   `Java.implement` / `Java.proxy` 产生的回调标记不再需要手动释放；对应 Java 代理被 GC 后，运行时会自动解除当前 JS 回调注册。
+-   `Java.implement` / `Java.proxy` 兼容入口仍可生成回调标记，但当前严格 profile 没有开放任何可消费代理的接口类型（包括 `CharSequence`）；字符数据请直接传 JS 字符串。未来若开放具体接口，对应 Java 代理被 GC 后会自动解除 JS 回调注册。
 -   Java 实例代理的 handle 解绑由运行时自动处理；业务脚本不再暴露 `obj.release()` / `Java.release(...)` / `Java.releaseAll()`。
 -   运行时会在代理对象被 GC 后尝试解绑对应 handle，也会在引擎销毁时清理剩余句柄；GC 时机本身仍然是不确定的。
+-   单个引擎最多保留 1,024 个 live Java object handles；达到上限时新的 Java 对象注册会失败，待代理释放/GC 后槽位可复用。
 -   Java Bridge 实例默认推荐 `obj.methodName()` 动态语法糖；运行时会优先把实例成员按方法解释，尽量保证这种写法可用。
 -   `obj.call('methodName', ...)` 仍可用于极少数字段/方法同名冲突，或在调试桥接问题时做显式调用。
--   `Java.implement(...)` / `Java.proxy(...)` 的 JS 回调会被调度回 QuickJS 运行时线程执行，而不是直接在 Java 调用方线程里执行；不要把它当成 JS 侧真正的多线程执行模型。
+-   若未来 allowlist 开放具体接口，`Java.implement(...)` / `Java.proxy(...)` 的 JS 回调会被调度回 QuickJS 运行时线程执行，而不是直接在 Java 调用方线程里执行；不要把它当成 JS 侧真正的多线程执行模型。
 -   “Java 返回值会被归一化” 与 “显式构造 Java 对象” 是两件事：例如 Java 方法返回的 `JSONArray` / `JSONObject` / `Map` / `List` 会在 JS 侧按数组或 plain object 使用；但 `new Java.java.lang.StringBuilder()`、`new Java.java.util.ArrayList()` 这种显式构造结果本身仍然是 Java 实例代理。
 
-#### 3.4.4. 示例：包链语法 + 回调
+#### 3.4.4. 示例：安全包链语法
 
 ```typescript
-const Thread = Java.java.lang.Thread;
-const Runnable = Java.java.lang.Runnable;
-
-let runCount = 0;
-const runnable = Java.implement(Runnable, () => {
-    runCount += 1;
-});
-
-const worker = new Thread(runnable);
-worker.start();
-worker.join(2000);
-console.log("runCount=", runCount);
+const Integer = Java.java.lang.Integer;
+const StringBuilder = Java.java.lang.StringBuilder;
+const value = Integer.parseInt("42");
+const text = new StringBuilder().append("value=").append(value).toString();
+console.log(text);
 ```
 
-#### 3.4.5. 示例：Android 类与内部类
-
-```typescript
-const Build = Java.android.os.Build;
-const Version = Java.android.os.Build.VERSION;
-const AlertDialogBuilder = Java.android.app.AlertDialog.Builder;
-
-console.log("brand=", String(Build.BRAND || ""));
-console.log("sdk=", Number(Version.SDK_INT));
-```
-
-#### 3.4.6. 底层 `NativeInterface.java*`（仅在必要时使用）
+#### 3.4.5. 底层 `NativeInterface.java*`（仅在必要时使用）
 
 高层 API 会自动处理参数转换、异常抛出与句柄包装。只有在调试底层行为时才建议直接使用 `NativeInterface.java*`：
 
@@ -640,20 +624,19 @@ console.log(parsed.data); // 42
 
 如果你在 TypeScript 中开发，建议先引用 `examples/types/index.d.ts`，即可获得 Java Bridge 的类型提示（含 `Java`、`Kotlin`、`NativeInterface`）。
 
-#### 3.4.7. 示例：suspend 调用（callback / Promise）
+#### 3.4.6. suspend 调用（callback / Promise）
 
 `callSuspend` 用于调用 Kotlin `suspend` 方法，始终返回 `Promise`。
 
 ```typescript
-const EnhancedAIService = Java.com.ai.assistance.operit.api.chat.EnhancedAIService;
-
-// Promise 形式
-const service = await EnhancedAIService.callSuspend(
-    "getAIServiceForFunction",
-    ctx,
-    FunctionType.CHAT
-);
+try {
+    await Java.callSuspend("java.lang.StringBuilder", "missingSuspendMethod");
+} catch (error) {
+    console.log("调用被安全拒绝或方法不存在", String(error));
+}
 ```
+
+`callSuspend` 的类检查、实例检查、参数解析或反射准备失败都会 reject Promise，不会永久 pending。
 
 ## 4. 编写第一个脚本 (TypeScript)
 
@@ -852,7 +835,19 @@ TypeScript 脚本 (`.ts`) 需要被编译成 JavaScript (`.js`)才能被执行�
 
 - **Android SDK (ADB)**: 确保你已经安装了 Android SDK，并且 `adb` 命令在你的系统路径中可用。
 - **安卓设备**: 连接一台开启了“USB调试”功能的安卓设备，并已授权电脑进行调试。
-- **Operit 应用程序**: 确保 `com.ai.assistance.operit` 应用程序已经安装并在目标设备上运行。脚本的执行依赖于应用内的 `ScriptExecutionReceiver` 来接收和处理来自 ADB 的命令。
+- **Operit 应用程序**: 确保 Operit Ry 的 debug 应用已经安装并在目标设备上运行。辅助脚本默认连接 `personal/dev` 的 `com.rainy.operitry.dev`，并依赖应用内的 `ScriptExecutionReceiver` 接收来自 ADB 的命令。
+
+如果目标 debug 构建使用其他 application ID，请先设置 `OPERIT_APP_PACKAGE`：
+
+```cmd
+set OPERIT_APP_PACKAGE=com.example.operit.debug
+```
+
+```bash
+export OPERIT_APP_PACKAGE=com.example.operit.debug
+```
+
+该外部脚本执行入口只为 `debug` 变体向 ADB shell 开放：接收器要求 shell 持有的系统级 `android.permission.DUMP`，普通第三方应用不能调用。`clone`、`release` 和 `nightly` 的接收器保留应用签名权限，普通 ADB shell 调用会被拒绝。
 
 ### 9.2. 执行脚本函数
 

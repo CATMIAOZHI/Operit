@@ -58,7 +58,15 @@ on:
       - terminal
       - tools/native_ripgrep/**
       - tools/example_packages/packages_whitelist.txt
+      - tools/example_packages/legacy_incompatible_packages.txt
       - tools/example_packages/sync_example_packages.py
+      - tools/adb/execute_js.bat
+      - tools/adb/execute_js.sh
+      - tools/adb/execute_js_dir.bat
+      - tools/adb/execute_js_dir.sh
+      - tools/adb/run_sandbox_script.bat
+      - tools/adb/run_sandbox_script.sh
+      - tools/sandboxpackage_dev_install_or_update.js
       - web-chat/**
 
 concurrency:

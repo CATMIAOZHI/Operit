@@ -1869,7 +1869,7 @@ class GeminiProvider(
                     // 处理思考模式状态切换
                     if (isThought && !isInThinkingMode) {
                         // 开始思考模式
-                        contentBuilder.append("<think>")
+                        contentBuilder.append(ChatUtils.PROVIDER_REASONING_OPEN_TAG)
                         isInThinkingMode = true
                         logDebug("开始思考模式")
                     } else if (!isThought && isInThinkingMode) {
@@ -1879,8 +1879,11 @@ class GeminiProvider(
                         logDebug("结束思考模式")
                     }
                     
-                    // 添加文本内容
-                    contentBuilder.append(text)
+                    // Provider-owned thought text is data inside our <think> envelope. Escape
+                    // markup at this boundary so it cannot close the envelope and inject a tool.
+                    contentBuilder.append(
+                        if (isThought) ChatUtils.escapeProviderReasoningMarkup(text) else text
+                    )
                     
                     if (isThought) {
                         logDebug("提取思考内容，长度=${text.length}")

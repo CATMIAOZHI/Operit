@@ -40,8 +40,8 @@ export const api = {
   getStartupState() {
     return requestJson("/api/startup/state");
   },
-  applyRecommendedBind() {
-    return requestJson("/api/startup/apply_recommended_bind", { method: "POST", body: {} });
+  applyRecommendedBind(token) {
+    return requestJson("/api/startup/apply_recommended_bind", { method: "POST", body: { token } });
   },
   executeCommand(payload) {
     return requestJson("/api/command/execute", { method: "POST", body: payload });

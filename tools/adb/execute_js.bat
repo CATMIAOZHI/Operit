@@ -10,6 +10,7 @@ if "%~1"=="" (
     echo Example: %0 example.js main @params.json
     echo Example: %0 example.js main "{}" .env.local
     echo Note: set OPERIT_RESULT_WAIT_SECONDS to customize result wait, default is 15 seconds
+    echo Note: set OPERIT_APP_PACKAGE to target another debug application ID, default is com.rainy.operitry.dev
     exit /b 1
 )
 
@@ -100,6 +101,13 @@ if %DEVICE_COUNT% equ 1 (
 endlocal & set "DEVICE_SERIAL=%DEVICE_SERIAL%"
 setlocal DisableDelayedExpansion
 
+if "%OPERIT_APP_PACKAGE%"=="" (
+    set "APP_PACKAGE=com.rainy.operitry.dev"
+) else (
+    set "APP_PACKAGE=%OPERIT_APP_PACKAGE%"
+)
+set "RECEIVER_COMPONENT=%APP_PACKAGE%/com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver"
+
 set "FILE_PATH=%~1"
 if "%~2"=="" (
     set "FUNCTION_NAME=main"
@@ -143,7 +151,7 @@ if not "%~3"=="" (
 
 REM File operations
 echo Creating directory structure...
-set "TARGET_DIR=/sdcard/Android/data/com.ai.assistance.operit/js_temp"
+set "TARGET_DIR=/sdcard/Android/data/%APP_PACKAGE%/js_temp"
 adb -s "%DEVICE_SERIAL%" shell mkdir -p "%TARGET_DIR%"
 
 for %%F in ("%FILE_PATH%") do set "TARGET_FILE=%TARGET_DIR%/%%~nxF"
@@ -203,9 +211,9 @@ adb -s "%DEVICE_SERIAL%" shell rm -f "%TARGET_RESULT_FILE%"
 REM Execute JS function
 echo Executing [%FUNCTION_NAME%] with params source: %TARGET_PARAMS_FILE%
 if "%HAS_ENV_FILE%"=="true" (
-    adb -s "%DEVICE_SERIAL%" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n com.ai.assistance.operit/.core.tools.javascript.ScriptExecutionReceiver --include-stopped-packages --es file_path '%TARGET_FILE%' --es function_name '%FUNCTION_NAME%' --es params_file_path '%TARGET_PARAMS_FILE%' --es env_file_path '%TARGET_ENV_FILE%' --es result_file_path '%TARGET_RESULT_FILE%' --ez temp_file true --ez temp_params_file true --ez temp_env_file true"
+    adb -s "%DEVICE_SERIAL%" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n %RECEIVER_COMPONENT% --include-stopped-packages --es file_path '%TARGET_FILE%' --es function_name '%FUNCTION_NAME%' --es params_file_path '%TARGET_PARAMS_FILE%' --es env_file_path '%TARGET_ENV_FILE%' --es result_file_path '%TARGET_RESULT_FILE%' --ez temp_file true --ez temp_params_file true --ez temp_env_file true"
 ) else (
-    adb -s "%DEVICE_SERIAL%" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n com.ai.assistance.operit/.core.tools.javascript.ScriptExecutionReceiver --include-stopped-packages --es file_path '%TARGET_FILE%' --es function_name '%FUNCTION_NAME%' --es params_file_path '%TARGET_PARAMS_FILE%' --es result_file_path '%TARGET_RESULT_FILE%' --ez temp_file true --ez temp_params_file true"
+    adb -s "%DEVICE_SERIAL%" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n %RECEIVER_COMPONENT% --include-stopped-packages --es file_path '%TARGET_FILE%' --es function_name '%FUNCTION_NAME%' --es params_file_path '%TARGET_PARAMS_FILE%' --es result_file_path '%TARGET_RESULT_FILE%' --ez temp_file true --ez temp_params_file true"
 )
 if errorlevel 1 (
     call :cleanup_local_params
