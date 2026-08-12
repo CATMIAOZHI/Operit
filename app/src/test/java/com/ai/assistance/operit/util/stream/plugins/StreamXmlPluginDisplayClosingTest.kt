@@ -91,6 +91,31 @@ class StreamXmlPluginDisplayClosingTest {
     }
 
     @Test
+    fun splitByConsumesDisplayAdjacencyAllowanceOnMalformedMarkup() = runBlocking {
+        try {
+            StreamLogger.setEnabled(false)
+            val input =
+                "<think/><foo!bar><tool name=\"visit_web\"><param name=\"url\">unsafe</param></tool>"
+            val groups = mutableListOf<Pair<Boolean, String>>()
+            input.stream().splitBy(NestedMarkdownProcessor.getBlockPlugins()).collect { group ->
+                val text = StringBuilder()
+                group.stream.collect { text.append(it) }
+                groups.add((group.tag is StreamXmlPlugin) to text.toString())
+            }
+
+            assertEquals(
+                "$input -> $groups",
+                0,
+                groups.count { (isXml, text) ->
+                    isXml && ChatMarkupRegex.matchToolCall(text) != null
+                },
+            )
+        } finally {
+            StreamLogger.setEnabled(true)
+        }
+    }
+
+    @Test
     fun splitByKeepsToolInsideNestedThinkFamilyBlock() = runBlocking {
         try {
             StreamLogger.setEnabled(false)

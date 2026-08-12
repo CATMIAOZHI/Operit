@@ -3,7 +3,6 @@ package com.ai.assistance.operit.api.chat.llmprovider
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
-import android.util.Base64
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
@@ -30,12 +29,12 @@ import com.ai.assistance.operit.util.stream.TextStreamEvent
 import com.ai.assistance.operit.util.stream.TextStreamEventType
 import com.ai.assistance.operit.util.stream.withEventChannel
 import com.ai.assistance.operit.util.stream.stream
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.Base64
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -392,7 +391,7 @@ open class OpenAIProvider(
         }
     }
 
-    private fun writeOutputImage(bytes: ByteArray, mimeType: String, prefix: String): Uri? {
+    protected open fun writeOutputImage(bytes: ByteArray, mimeType: String, prefix: String): Uri? {
         return try {
             val dir = getOutputImagesDir()
             if (!dir.exists()) {
@@ -429,21 +428,56 @@ open class OpenAIProvider(
     }
 
     private data class ImageBufferState(
-        val bytes: ByteArrayOutputStream = ByteArrayOutputStream(),
+        var bytes: ByteArray = ByteArray(0),
         var mimeType: String = "image/png"
     )
+
+    private suspend fun emitImageBytes(
+        emitter: StreamEmitter,
+        bytes: ByteArray,
+        mimeType: String,
+        prefix: String,
+        alt: String,
+    ) {
+        if (bytes.isEmpty()) return
+        val uri = writeOutputImage(bytes, mimeType, prefix) ?: return
+        emitImageMarkdown(emitter, uri, alt)
+    }
+
+    private suspend fun emitOrDeferImage(
+        state: StreamingState?,
+        emitter: StreamEmitter,
+        bytes: ByteArray,
+        mimeType: String,
+        prefix: String,
+        alt: String,
+    ) {
+        if (bytes.isEmpty()) return
+        if (state == null) {
+            emitImageBytes(emitter, bytes, mimeType, prefix, alt)
+            return
+        }
+        state.deferredOutput.addLast(
+            DeferredOutputSegment.Image(bytes, mimeType, prefix, alt)
+        )
+        flushDeferredOutput(state, emitter)
+    }
 
     private suspend fun flushImageBuffers(state: StreamingState, emitter: StreamEmitter) {
         if (state.imageBuffers.isEmpty()) return
         val pending = state.imageBuffers.toMap()
         state.imageBuffers.clear()
         pending.forEach { (index, bufferState) ->
-            val bytes = bufferState.bytes.toByteArray()
+            val bytes = bufferState.bytes
             if (bytes.isNotEmpty()) {
-                val uri = writeOutputImage(bytes, bufferState.mimeType, "openai_image_$index")
-                if (uri != null) {
-                    emitImageMarkdown(emitter, uri, "openai_image_$index")
-                }
+                emitOrDeferImage(
+                    state,
+                    emitter,
+                    bytes,
+                    bufferState.mimeType,
+                    "openai_image_$index",
+                    "openai_image_$index",
+                )
             }
         }
     }
@@ -462,23 +496,17 @@ open class OpenAIProvider(
                 val mimeType = outputMimeTypeFromFormat(obj.optString("output_format", "").ifBlank { null })
                 if (b64.isNotEmpty()) {
                     val bytes = try {
-                        Base64.decode(b64, Base64.DEFAULT)
+                        Base64.getMimeDecoder().decode(b64)
                     } catch (_: Exception) {
                         null
                     }
                     if (bytes != null && bytes.isNotEmpty()) {
-                        val uri = writeOutputImage(bytes, mimeType, "openai_image_$i")
-                        if (uri != null) {
-                            emitImageMarkdown(emitter, uri, "openai_image_$i")
-                        }
+                        emitOrDeferImage(state, emitter, bytes, mimeType, "openai_image_$i", "openai_image_$i")
                     }
                 } else if (url.isNotEmpty()) {
                     val bytes = downloadBytes(url)
                     if (bytes != null && bytes.isNotEmpty()) {
-                        val uri = writeOutputImage(bytes, mimeType, "openai_image_$i")
-                        if (uri != null) {
-                            emitImageMarkdown(emitter, uri, "openai_image_$i")
-                        }
+                        emitOrDeferImage(state, emitter, bytes, mimeType, "openai_image_$i", "openai_image_$i")
                     }
                 }
             }
@@ -493,14 +521,19 @@ open class OpenAIProvider(
             val mimeType = outputMimeTypeFromFormat(format)
             if (state != null && b64.isNotEmpty()) {
                 val decoded = try {
-                    Base64.decode(b64, Base64.DEFAULT)
+                    Base64.getMimeDecoder().decode(b64)
                 } catch (_: Exception) {
                     null
                 }
                 if (decoded != null) {
+                    // This endpoint emits progressive full-image snapshots. Retain only the
+                    // newest one so stream completion cannot publish stale previews as extras.
+                    state.imageBuffers.clear()
                     val buf = state.imageBuffers.getOrPut(idx) { ImageBufferState() }
                     buf.mimeType = mimeType
-                    buf.bytes.write(decoded)
+                    // Partial-image events are complete preview snapshots, not byte chunks.
+                    // Keep only the latest snapshot until a final image or stream end arrives.
+                    buf.bytes = decoded
                 }
                 if (eventType != "image_generation.partial_image") {
                     flushImageBuffers(state, emitter)
@@ -521,7 +554,11 @@ open class OpenAIProvider(
                     if (partType == "output_text" || partType == "text") {
                         val text = part.optString("text", "")
                         if (text.isNotEmpty()) {
-                            emitter.emitContent(text)
+                            if (state == null) {
+                                emitter.emitContent(text)
+                            } else {
+                                processContentDelta("", text, state, emitter)
+                            }
                             handledAny = true
                         }
                     }
@@ -533,25 +570,33 @@ open class OpenAIProvider(
                     if (isImage) {
                         if (b64.isNotEmpty()) {
                             val bytes = try {
-                                Base64.decode(b64, Base64.DEFAULT)
+                                Base64.getMimeDecoder().decode(b64)
                             } catch (_: Exception) {
                                 null
                             }
                             if (bytes != null && bytes.isNotEmpty()) {
-                                val uri = writeOutputImage(bytes, mimeType, "openai_image_${i}_$j")
-                                if (uri != null) {
-                                    emitImageMarkdown(emitter, uri, "openai_image_${i}_$j")
-                                    handledAny = true
-                                }
+                                emitOrDeferImage(
+                                    state,
+                                    emitter,
+                                    bytes,
+                                    mimeType,
+                                    "openai_image_${i}_$j",
+                                    "openai_image_${i}_$j",
+                                )
+                                handledAny = true
                             }
                         } else if (url.isNotEmpty()) {
                             val bytes = downloadBytes(url)
                             if (bytes != null && bytes.isNotEmpty()) {
-                                val uri = writeOutputImage(bytes, mimeType, "openai_image_${i}_$j")
-                                if (uri != null) {
-                                    emitImageMarkdown(emitter, uri, "openai_image_${i}_$j")
-                                    handledAny = true
-                                }
+                                emitOrDeferImage(
+                                    state,
+                                    emitter,
+                                    bytes,
+                                    mimeType,
+                                    "openai_image_${i}_$j",
+                                    "openai_image_${i}_$j",
+                                )
+                                handledAny = true
                             }
                         }
                     }
@@ -1774,6 +1819,13 @@ open class OpenAIProvider(
         data class Tool(val index: Int) : DeferredOutputSegment
 
         data class Text(val content: StringBuilder) : DeferredOutputSegment
+
+        data class Image(
+            val bytes: ByteArray,
+            val mimeType: String,
+            val prefix: String,
+            val alt: String,
+        ) : DeferredOutputSegment
     }
 
     private data class StreamingState(
@@ -2015,6 +2067,17 @@ open class OpenAIProvider(
                         state.lastProcessedToolIndex = null
                     }
                 }
+
+                is DeferredOutputSegment.Image -> {
+                    state.deferredOutput.removeFirst()
+                    emitImageBytes(
+                        emitter,
+                        segment.bytes,
+                        segment.mimeType,
+                        segment.prefix,
+                        segment.alt,
+                    )
+                }
             }
         }
     }
@@ -2107,14 +2170,10 @@ open class OpenAIProvider(
         val eventType = jsonResponse.optString("type", "")
 
         if (eventType.startsWith("response.image_generation_call.")) {
-            val normalized = JSONObject(jsonResponse.toString())
-            normalized.put(
-                "type",
-                eventType.removePrefix("response.").replace("image_generation_call.", "image_generation.")
-            )
-            if (tryHandleOpenAiImageResponse(normalized, emitter, state)) {
-                return
-            }
+            // Responses partial images are complete preview snapshots under
+            // `partial_image_b64`; the authoritative final image arrives as
+            // `response.output_item.done.item.result`. Do not concatenate previews.
+            return
         }
 
         when (eventType) {
@@ -2178,6 +2237,29 @@ open class OpenAIProvider(
                             AppLogger.d(
                                 "AIService",
                                 "Ignoring reasoning metadata received after a pending tool call",
+                            )
+                        }
+                    }
+                    return
+                }
+
+                if (item.optString("type", "") == "image_generation_call") {
+                    if (eventType == "response.output_item.done") {
+                        val result = item.optString("result", "")
+                        val bytes =
+                            if (result.isNotEmpty()) {
+                                runCatching { Base64.getMimeDecoder().decode(result) }.getOrNull()
+                            } else {
+                                null
+                            }
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            emitOrDeferImage(
+                                state,
+                                emitter,
+                                bytes,
+                                "image/png",
+                                "openai_image_$outputIndex",
+                                "openai_image_$outputIndex",
                             )
                         }
                     }

@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.api.chat.llmprovider
 
 import android.content.Context
+import android.net.Uri
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.util.AppLogger
@@ -454,6 +455,133 @@ class OpenAIResponsesStreamingTest {
                 enableRetry = false,
             ).collect { output.append(it) }
         return output.toString()
+    }
+
+    @Test
+    fun chatCompletionsBufferedImageStaysBehindPendingTool() = runBlocking {
+        val imageUri = Mockito.mock(Uri::class.java)
+        Mockito.`when`(imageUri.toString()).thenReturn("file:///generated.png")
+        val sseBody =
+            listOf(
+                """data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"/safe\"}"}}]},"finish_reason":null}]}""",
+                """data: {"type":"image_generation.completed","partial_image_index":0,"output_format":"png","b64_json":"AQ=="}""",
+                "data: [DONE]",
+            ).joinToString(separator = "\n\n", postfix = "\n\n")
+        val provider =
+            object : OpenAIProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "test-model",
+                client = clientForSse(sseBody),
+                enableToolCall = true,
+            ) {
+                override fun writeOutputImage(
+                    bytes: ByteArray,
+                    mimeType: String,
+                    prefix: String,
+                ): Uri = imageUri
+            }
+
+        withoutAndroidLogging {
+            val visibleOutput =
+                ChatUtils.removeThinkingContent(
+                    collectResponse(provider, Mockito.mock(Context::class.java))
+                )
+            val toolIndex = visibleOutput.indexOf("name=\"write_file\"")
+            val imageIndex = visibleOutput.indexOf("![openai_image_0](file:///generated.png)")
+
+            assertTrue("Visible output: $visibleOutput", toolIndex >= 0)
+            assertTrue("Visible output: $visibleOutput", imageIndex > toolIndex)
+        }
+    }
+
+    @Test
+    fun responsesFinalImageStaysBehindPendingToolAndIgnoresPartialPreview() = runBlocking {
+        val imageUri = Mockito.mock(Uri::class.java)
+        Mockito.`when`(imageUri.toString()).thenReturn("file:///responses-final.png")
+        val writtenImages = mutableListOf<ByteArray>()
+        val sseBody =
+            listOf(
+                """data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","name":"write_file","call_id":"call_1"}}""",
+                """data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":\"/safe\"}"}""",
+                """data: {"type":"response.image_generation_call.partial_image","output_index":1,"partial_image_index":0,"partial_image_b64":"Ag=="}""",
+                """data: {"type":"response.output_item.done","output_index":1,"item":{"type":"image_generation_call","status":"completed","result":"AQ=="}}""",
+                """data: {"type":"response.function_call_arguments.done","output_index":0}""",
+                """data: {"type":"response.completed","response":{"output":[],"usage":{}}}""",
+            ).joinToString(separator = "\n\n", postfix = "\n\n")
+        val provider =
+            object : OpenAIProvider(
+                apiEndpoint = "https://example.test/v1/responses",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "test-model",
+                client = clientForSse(sseBody),
+                enableToolCall = true,
+            ) {
+                override val useResponsesApi: Boolean = true
+
+                override fun writeOutputImage(
+                    bytes: ByteArray,
+                    mimeType: String,
+                    prefix: String,
+                ): Uri {
+                    writtenImages.add(bytes.copyOf())
+                    return imageUri
+                }
+            }
+
+        withoutAndroidLogging {
+            val visibleOutput =
+                ChatUtils.removeThinkingContent(
+                    collectResponse(provider, Mockito.mock(Context::class.java))
+                )
+            val toolIndex = visibleOutput.indexOf("name=\"write_file\"")
+            val imageIndex = visibleOutput.indexOf("![openai_image_1](file:///responses-final.png)")
+
+            assertTrue("Visible output: $visibleOutput", toolIndex >= 0)
+            assertTrue("Visible output: $visibleOutput", imageIndex > toolIndex)
+            assertEquals(1, writtenImages.size)
+            assertTrue(writtenImages.single().contentEquals(byteArrayOf(1)))
+        }
+    }
+
+    @Test
+    fun compatibleOutputArrayTextAndImageStayBehindPendingTool() = runBlocking {
+        val imageUri = Mockito.mock(Uri::class.java)
+        Mockito.`when`(imageUri.toString()).thenReturn("file:///compatible.png")
+        val sseBody =
+            listOf(
+                """data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"/safe\"}"}}]},"finish_reason":null}]}""",
+                """data: {"output":[{"content":[{"type":"output_text","text":"after tool"},{"type":"output_image","mime_type":"image/png","b64_json":"AQ=="}]}]}""",
+                "data: [DONE]",
+            ).joinToString(separator = "\n\n", postfix = "\n\n")
+        val provider =
+            object : OpenAIProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "test-model",
+                client = clientForSse(sseBody),
+                enableToolCall = true,
+            ) {
+                override fun writeOutputImage(
+                    bytes: ByteArray,
+                    mimeType: String,
+                    prefix: String,
+                ): Uri = imageUri
+            }
+
+        withoutAndroidLogging {
+            val visibleOutput =
+                ChatUtils.removeThinkingContent(
+                    collectResponse(provider, Mockito.mock(Context::class.java))
+                )
+            val toolIndex = visibleOutput.indexOf("name=\"write_file\"")
+            val textIndex = visibleOutput.indexOf("after tool")
+            val imageIndex = visibleOutput.indexOf("![openai_image_0_1](file:///compatible.png)")
+
+            assertTrue("Visible output: $visibleOutput", toolIndex >= 0)
+            assertTrue("Visible output: $visibleOutput", textIndex > toolIndex)
+            assertTrue("Visible output: $visibleOutput", imageIndex > textIndex)
+        }
     }
 
     private suspend fun collectRevisedResponse(

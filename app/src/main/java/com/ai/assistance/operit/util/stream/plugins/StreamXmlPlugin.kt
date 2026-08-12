@@ -168,6 +168,11 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
                     if (tagName != null) {
                         if (startTagNameLexicalState == StartTagNameLexicalState.INVALID) {
                             reset()
+                            // A rejected candidate consumes the one-time adjacency allowance.
+                            // Otherwise malformed visible markup can bridge a display boundary to
+                            // an inline tool that would not normally be eligible to start here.
+                            allowStartAfterEndTag = false
+                            allowStartAfterPunctuation = false
                             return finish(includeTagsInOutput)
                         }
                         if (startTagQuote != null) {
