@@ -3,6 +3,25 @@ package com.ai.assistance.operit.util
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.withContent
 
+internal fun findMarkupTagEnd(content: String, tagStart: Int): Int {
+    var quote: Char? = null
+    var index = tagStart + 1
+    while (index < content.length) {
+        val char = content[index]
+        if (quote != null) {
+            if (char == quote) quote = null
+        } else {
+            when (char) {
+                '\'', '"' -> quote = char
+                '>' -> return index
+                '<' -> return -1
+            }
+        }
+        index++
+    }
+    return -1
+}
+
 /** Utility functions for chat message handling */
 object ChatUtils {
     // The version marker lives on the app-owned envelope, never in provider-controlled text.
@@ -247,30 +266,15 @@ object ChatUtils {
 
             val nameEnd = nameStart + tagName.length
             val boundary = content.getOrNull(nameEnd)
-            if (boundary != null && (boundary.isLetterOrDigit() || boundary == '_')) {
+            if (boundary != null && boundary != '>' && boundary != '/' && !boundary.isWhitespace()) {
+                // Only an exact XML name boundary can open a display-only block. Qualified names
+                // and malformed lookalikes such as <think!foo> are ordinary visible markup; an
+                // exact trailing `<think` with no boundary remains fail-closed below.
                 candidateStart = content.indexOf('<', candidateStart + 1)
                 continue
             }
 
-            var nextTerminator = -1
-            var quote: Char? = null
-            var suffixIndex = nameEnd
-            while (suffixIndex < content.length) {
-                val char = content[suffixIndex]
-                if (quote != null) {
-                    if (char == quote) quote = null
-                } else {
-                    when (char) {
-                        '\'', '"' -> quote = char
-                        '>' -> {
-                            nextTerminator = suffixIndex
-                            break
-                        }
-                        '<' -> break
-                    }
-                }
-                suffixIndex++
-            }
+            val nextTerminator = findMarkupTagEnd(content, candidateStart)
             if (nextTerminator < 0) {
                 return DisplayOnlyBlockTag(
                     start = candidateStart,

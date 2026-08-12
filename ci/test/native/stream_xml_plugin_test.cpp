@@ -56,6 +56,38 @@ bool expectMarkdownSessionKeepsQuotedMarkdownInXml() {
     return headingIsXml;
 }
 
+bool expectQualifiedXmlNameAndToolAreSeparateBlocks() {
+    constexpr int mdXmlBlock = 8;
+    const std::u16string input =
+            u"<search-results>visible</search-results>\n<tool name=\"visit_web\"></tool>";
+    const int qualifiedIndex = static_cast<int>(input.find(u"search-results"));
+    const int toolIndex = static_cast<int>(input.find(u"<tool"));
+    auto* session = streamnative::createMarkdownBlockSession();
+    const auto segments = streamnative::markdownSessionPush(
+            session,
+            reinterpret_cast<const jchar*>(input.data()),
+            static_cast<int>(input.size()));
+    streamnative::destroyMarkdownSession(session);
+
+    int qualifiedBlock = -1;
+    int toolBlock = -1;
+    for (size_t index = 0; index < segments.size(); ++index) {
+        const auto& segment = segments[index];
+        if (segment.type != mdXmlBlock) continue;
+        if (segment.start <= qualifiedIndex && qualifiedIndex < segment.end) {
+            qualifiedBlock = static_cast<int>(index);
+        }
+        if (segment.start <= toolIndex && toolIndex < segment.end) {
+            toolBlock = static_cast<int>(index);
+        }
+    }
+    if (qualifiedBlock < 0 || toolBlock < 0 || qualifiedBlock == toolBlock) {
+        std::cerr << "qualified XML name and following tool were not split into separate XML blocks\n";
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -88,6 +120,9 @@ int main() {
             u"<think title=\"x/>y\">",
             PluginState::PROCESSING,
             "quoted slash terminator is not self-closing");
+    ok &= expectState(u"<think!foo>", PluginState::IDLE, "invalid bang name boundary");
+    ok &= expectState(u"<think@foo>", PluginState::IDLE, "invalid at-sign name boundary");
     ok &= expectMarkdownSessionKeepsQuotedMarkdownInXml();
+    ok &= expectQualifiedXmlNameAndToolAreSeparateBlocks();
     return ok ? 0 : 1;
 }

@@ -91,6 +91,71 @@ class StreamXmlPluginDisplayClosingTest {
     }
 
     @Test
+    fun splitByKeepsQualifiedXmlNamesSeparateFromFollowingTools() = runBlocking {
+        try {
+            StreamLogger.setEnabled(false)
+            val input =
+                listOf(
+                    "<search-results>visible</search-results>",
+                    "<tool name=\"visit_web\"><param name=\"url\">one</param></tool>",
+                    "<think-step>visible</think-step>",
+                    "<tool name=\"visit_web\"><param name=\"url\">two</param></tool>",
+                    "<thinking.phase>visible</thinking.phase>",
+                    "<tool name=\"visit_web\"><param name=\"url\">three</param></tool>",
+                ).joinToString("\n")
+            val groups = mutableListOf<Pair<Boolean, String>>()
+            input.stream().splitBy(NestedMarkdownProcessor.getBlockPlugins()).collect { group ->
+                val text = StringBuilder()
+                group.stream.collect { text.append(it) }
+                groups.add((group.tag is StreamXmlPlugin) to text.toString())
+            }
+
+            assertEquals(
+                "$input -> $groups",
+                3,
+                groups.count { (isXml, text) ->
+                    isXml && ChatMarkupRegex.matchToolCall(text) != null
+                },
+            )
+        } finally {
+            StreamLogger.setEnabled(true)
+        }
+    }
+
+    @Test
+    fun splitByDoesNotTruncateInvalidNameBoundariesIntoDisplayTags() = runBlocking {
+        try {
+            StreamLogger.setEnabled(false)
+            for (invalid in listOf("<think!foo>visible</think!foo>", "<think@foo>visible</think@foo>")) {
+                val input =
+                    invalid + "\n" +
+                        "<tool name=\"visit_web\"><param name=\"url\">safe</param></tool>"
+                val groups = mutableListOf<Pair<Boolean, String>>()
+                input.stream().splitBy(NestedMarkdownProcessor.getBlockPlugins()).collect { group ->
+                    val text = StringBuilder()
+                    group.stream.collect { text.append(it) }
+                    groups.add((group.tag is StreamXmlPlugin) to text.toString())
+                }
+
+                assertEquals(
+                    "$input -> $groups",
+                    1,
+                    groups.count { (isXml, text) ->
+                        isXml && ChatMarkupRegex.matchToolCall(text) != null
+                    },
+                )
+                assertEquals(
+                    "$input -> $groups",
+                    0,
+                    groups.count { (isXml, text) -> isXml && invalid in text },
+                )
+            }
+        } finally {
+            StreamLogger.setEnabled(true)
+        }
+    }
+
+    @Test
     fun splitByDoesNotExposeToolInsideQuotedAttributedThinkingBlock() = runBlocking {
         try {
             StreamLogger.setEnabled(false)

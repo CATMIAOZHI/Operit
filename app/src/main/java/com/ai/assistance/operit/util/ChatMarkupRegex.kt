@@ -12,7 +12,7 @@ object ChatMarkupRegex {
 
     private val toolTagNameRegex = Regex("^$TOOL_TAG_NAME_REGEX_SOURCE$", RegexOption.IGNORE_CASE)
     private val toolResultTagNameRegex = Regex("^$TOOL_RESULT_TAG_NAME_REGEX_SOURCE$", RegexOption.IGNORE_CASE)
-    private val openingTagNameRegex = Regex("<([A-Za-z][A-Za-z0-9_]*)")
+    private val openingTagNameRegex = Regex("^<([A-Za-z][A-Za-z0-9_.:-]*)")
     private val toolStartTagRegex = Regex("<(?:$TOOL_TAG_NAME_REGEX_SOURCE)\\b", RegexOption.IGNORE_CASE)
     private val toolResultStartTagRegex = Regex("<(?:$TOOL_RESULT_TAG_NAME_REGEX_SOURCE)\\b", RegexOption.IGNORE_CASE)
     private val metaProviderAttrRegex = Regex("""\bprovider\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
@@ -231,7 +231,13 @@ object ChatMarkupRegex {
     }
 
     fun extractOpeningTagName(xml: String): String? {
-        return openingTagNameRegex.find(xml.trim())?.groupValues?.getOrNull(1)
+        val trimmed = xml.trimStart()
+        val match = openingTagNameRegex.find(trimmed) ?: return null
+        val boundary = trimmed.getOrNull(match.range.last + 1)
+        if (boundary != null && boundary != '>' && boundary != '/' && !boundary.isWhitespace()) {
+            return null
+        }
+        return match.groupValues.getOrNull(1)
     }
 
     fun generateRandomToolTagName(): String = "tool_${generateRandomTagCode()}"

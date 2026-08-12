@@ -52,7 +52,17 @@ class ChatUtilsThinkingEdgeTest {
     @Test(timeout = 1_000L)
     fun removeThinkingContent_handlesManyUnterminatedTagCandidatesInOnePass() {
         val malformed = "prefix" + "<think".repeat(10_000)
-        assertEquals("prefix", ChatUtils.removeThinkingContent(malformed))
+        assertEquals(
+            "prefix" + "<think".repeat(9_999),
+            ChatUtils.removeThinkingContent(malformed),
+        )
+    }
+
+    @Test fun removeThinkingContent_keepsInvalidDisplayNameBoundariesVisible() {
+        listOf("<think!foo>", "<think@foo>", "<think<foo>").forEach { lookalike ->
+            val content = "prefix${lookalike}visible"
+            assertEquals(content, ChatUtils.removeThinkingContent(content))
+        }
     }
 
     @Test fun removeThinkingContent_failsClosedOnCrossNestedDisplayBlocks() {

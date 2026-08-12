@@ -25,6 +25,7 @@ import com.ai.assistance.operit.util.stream.MutableSharedStream
 import com.ai.assistance.operit.util.stream.SharedStream
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.StreamCollector
+import com.ai.assistance.operit.util.stream.StreamLogger
 import com.ai.assistance.operit.util.stream.TextStreamEvent
 import com.ai.assistance.operit.util.stream.TextStreamEventType
 import com.ai.assistance.operit.util.stream.withEventChannel
@@ -1404,24 +1405,16 @@ open class OpenAIProvider(
      * Tool Call流式输出状态管理
      */
     private data class ToolCallState(
-        val emitted: MutableMap<Int, Boolean> = mutableMapOf(),
-        val nameEmitted: MutableMap<Int, Boolean> = mutableMapOf(),
-        val parser: MutableMap<Int, StreamingJsonXmlConverter> = mutableMapOf(),
-        val closed: MutableMap<Int, Boolean> = mutableMapOf(),
-        val fedLength: MutableMap<Int, Int> = mutableMapOf(),
         val tagNames: MutableMap<Int, String> = mutableMapOf()
     ) {
-        fun getParser(index: Int) = parser.getOrPut(index) { StreamingJsonXmlConverter() }
-
         fun getTagName(index: Int) =
             tagNames.getOrPut(index) { ChatMarkupRegex.generateRandomToolTagName() }
 
+        fun clear(index: Int) {
+            tagNames.remove(index)
+        }
+
         fun clear() {
-            emitted.clear()
-            nameEmitted.clear()
-            parser.clear()
-            closed.clear()
-            fedLength.clear()
             tagNames.clear()
         }
     }
@@ -1777,6 +1770,12 @@ open class OpenAIProvider(
     /**
      * 流式响应处理状态
      */
+    private sealed interface DeferredOutputSegment {
+        data class Tool(val index: Int) : DeferredOutputSegment
+
+        data class Text(val content: StringBuilder) : DeferredOutputSegment
+    }
+
     private data class StreamingState(
         var chunkCount: Int = 0,
         var lastLogTime: Long = System.currentTimeMillis(),
@@ -1785,12 +1784,15 @@ open class OpenAIProvider(
         var hasEmittedRegularContent: Boolean = false,
         var streamedReasoningContentLength: Int = 0,
         var reasoningObserved: Boolean = false,
+        var suppressedReasoningAfterTool: Boolean = false,
         var isFirstResponse: Boolean = true,
         val accumulatedToolCalls: MutableMap<Int, JSONObject> = mutableMapOf(),
         val toolCallState: ToolCallState = ToolCallState(),
         var lastProcessedToolIndex: Int? = null,
         val imageBuffers: MutableMap<Int, ImageBufferState> = mutableMapOf(),
-        val pendingRegularContent: StringBuilder = StringBuilder(),
+        val deferredOutput: java.util.ArrayDeque<DeferredOutputSegment> = java.util.ArrayDeque(),
+        val queuedToolIndices: MutableSet<Int> = mutableSetOf(),
+        val completedToolIndices: MutableSet<Int> = mutableSetOf(),
     )
 
     private suspend fun closeReasoningBlockIfOpen(
@@ -1804,30 +1806,22 @@ open class OpenAIProvider(
         return true
     }
 
-    /**
-     * 处理工具切换：关闭前一个工具
-     */
-    private suspend fun handleToolSwitch(
-        prevIndex: Int,
-        state: StreamingState,
-        emitter: StreamEmitter
-    ) {
-        if (state.toolCallState.closed[prevIndex] != true && 
-            state.toolCallState.nameEmitted[prevIndex] == true) {
-            closeToolCallIfOpen(prevIndex, state, emitter)
-            AppLogger.d("AIService", "检测到工具切换，关闭前一个工具 index=$prevIndex")
+    private fun queueToolOutput(index: Int, state: StreamingState) {
+        if (state.queuedToolIndices.add(index)) {
+            state.deferredOutput.addLast(DeferredOutputSegment.Tool(index))
         }
     }
 
     /**
      * 处理单个工具调用的增量数据
      */
-    private suspend fun processToolCallChunk(
+    private fun accumulateToolCallChunk(
         index: Int,
         deltaCall: JSONObject,
         state: StreamingState,
-        emitter: StreamEmitter
-    ) {
+    ): Boolean {
+        queueToolOutput(index, state)
+
         // 获取或创建该index的累积对象
         val accumulated = state.accumulatedToolCalls.getOrPut(index) {
             createToolCallAccumulator(index)
@@ -1842,33 +1836,13 @@ open class OpenAIProvider(
         }
 
         // 处理function字段
-        val deltaFunction = deltaCall.optJSONObject("function") ?: return
+        val deltaFunction = deltaCall.optJSONObject("function") ?: return false
         val accFunction = accumulated.getJSONObject("function")
         
         // 处理工具名
         val name = deltaFunction.optString("name", "")
         if (name.isNotEmpty()) {
             accFunction.put("name", name)
-            // 流式输出开始标签
-            if (state.toolCallState.nameEmitted[index] != true) {
-                val toolTagName = state.toolCallState.getTagName(index)
-                val toolStartTag = if (state.toolCallState.emitted[index] != true) {
-                    state.toolCallState.emitted[index] = true
-                    "\n<$toolTagName name=\"$name\">"
-                } else {
-                    ""
-                }
-                if (toolStartTag.isNotEmpty()) {
-                    emitter.emitTag(toolStartTag)
-                }
-                state.toolCallState.nameEmitted[index] = true
-
-                // 如果参数先到，工具名后到，在此处一次性补喂已累计参数
-                val canonicalArgs = accFunction.optString("arguments", "")
-                if (canonicalArgs.isNotEmpty()) {
-                    feedParserFromCanonical(index, canonicalArgs, state, emitter)
-                }
-            }
         }
         
         // 处理参数
@@ -1879,11 +1853,81 @@ open class OpenAIProvider(
             val changed = mergedArgs != currentArgs
             if (changed) {
                 accFunction.put("arguments", mergedArgs)
-                if (state.toolCallState.nameEmitted[index] == true) {
-                    feedParserFromCanonical(index, mergedArgs, state, emitter)
-                }
             }
         }
+
+        return true
+    }
+
+    private suspend fun processToolCallChunk(
+        index: Int,
+        deltaCall: JSONObject,
+        state: StreamingState,
+        emitter: StreamEmitter,
+    ) {
+        val previousIndex = state.lastProcessedToolIndex
+        if (previousIndex != null && previousIndex != index &&
+            isToolCallCompleteAtSwitch(previousIndex, state)
+        ) {
+            state.completedToolIndices.add(previousIndex)
+            flushDeferredOutput(state, emitter)
+        }
+
+        if (!accumulateToolCallChunk(index, deltaCall, state)) {
+            state.lastProcessedToolIndex = index
+            return
+        }
+        state.lastProcessedToolIndex = index
+    }
+
+    private fun isToolCallCompleteAtSwitch(index: Int, state: StreamingState): Boolean {
+        val function = state.accumulatedToolCalls[index]?.optJSONObject("function") ?: return false
+        if (function.optString("name", "").isEmpty()) return false
+        val arguments = function.optString("arguments", "")
+        if (arguments.isEmpty()) return false
+        return runCatching { JSONObject(arguments) }.isSuccess
+    }
+
+    private suspend fun emitCompletedToolCall(
+        index: Int,
+        state: StreamingState,
+        emitter: StreamEmitter,
+    ): Boolean {
+        val function = state.accumulatedToolCalls[index]?.optJSONObject("function") ?: return false
+        val name = function.optString("name", "")
+        if (name.isEmpty()) return false
+
+        val arguments = function.optString("arguments", "")
+        if (arguments.isNotEmpty() && runCatching { JSONObject(arguments) }.isFailure) {
+            StreamLogger.w(
+                "OpenAIProvider",
+                "丢弃无法安全闭合的流式 tool envelope，并保留其后的常规正文",
+            )
+            return false
+        }
+
+        // Build and validate every JSON-to-XML event before publishing the opening tag. A
+        // malformed provider payload therefore cannot require a mid-response rollback, and
+        // downstream consumers never observe a transient, unclosed tool envelope.
+        val parser = StreamingJsonXmlConverter()
+        val events =
+            buildList {
+                if (arguments.isNotEmpty()) addAll(parser.feed(arguments))
+                addAll(parser.flush())
+            }
+        if (parser.hasUnfinishedParam()) {
+            StreamLogger.w(
+                "OpenAIProvider",
+                "丢弃 JSON-to-XML 解析器无法闭合的流式 tool envelope",
+            )
+            return false
+        }
+
+        val toolTagName = state.toolCallState.getTagName(index)
+        emitter.emitTag("\n<$toolTagName name=\"$name\">")
+        emitter.handleJsonEvents(events)
+        emitter.emitTag("\n</$toolTagName>")
+        return true
     }
 
     /**
@@ -1897,36 +1941,6 @@ open class OpenAIProvider(
 
         // 增量通道：默认直接追加；若供应商偶发回传完整快照，则直接切换为快照值。
         return if (incoming.startsWith(existing)) incoming else existing + incoming
-    }
-
-    /**
-     * 基于 canonical arguments 与 fedLength 游标，向解析器仅喂入新增部分。
-     */
-    private suspend fun feedParserFromCanonical(
-        index: Int,
-        canonicalArgs: String,
-        state: StreamingState,
-        emitter: StreamEmitter
-    ): Int {
-        val previousFedLength = (state.toolCallState.fedLength[index] ?: 0).coerceAtLeast(0)
-        val safeFedLength = previousFedLength.coerceAtMost(canonicalArgs.length)
-        if (safeFedLength == canonicalArgs.length) {
-            state.toolCallState.fedLength[index] = safeFedLength
-            return 0
-        }
-
-        val deltaToFeed = canonicalArgs.substring(safeFedLength)
-        val events = state.toolCallState.getParser(index).feed(deltaToFeed)
-        emitter.handleJsonEvents(events)
-        state.toolCallState.fedLength[index] = canonicalArgs.length
-        return deltaToFeed.length
-    }
-
-    private fun getAccumulatedToolArguments(state: StreamingState, index: Int): String {
-        return state.accumulatedToolCalls[index]
-            ?.optJSONObject("function")
-            ?.optString("arguments", "")
-            ?: ""
     }
 
     /**
@@ -1945,90 +1959,82 @@ open class OpenAIProvider(
             val index = deltaCall.optInt("index", -1)
             if (index < 0) continue
 
-            // 检测工具切换
-            if (state.lastProcessedToolIndex != null && state.lastProcessedToolIndex != index) {
-                handleToolSwitch(state.lastProcessedToolIndex!!, state, emitter)
-                // Text observed while the previous tool was open belongs between the two calls.
-                // Flush only after the previous envelope closes and before opening the next one.
-                flushPendingRegularContent(state, emitter)
-            }
-            state.lastProcessedToolIndex = index
-
             // Chat Completions 的 tool_calls.arguments 为增量片段。
             processToolCallChunk(index, deltaCall, state, emitter)
         }
     }
 
-    private suspend fun closeToolCallIfOpen(
-        index: Int,
-        state: StreamingState,
-        emitter: StreamEmitter
-    ) {
-        if (state.toolCallState.closed[index] == true || state.toolCallState.nameEmitted[index] != true) {
-            return
-        }
-
-        val accumulatedArgsBeforeFlush = getAccumulatedToolArguments(state, index)
-        val toolTagName =
-            requireNotNull(state.toolCallState.tagNames[index]) {
-                "Missing tool XML tag name for streaming tool call index=$index"
-            }
-
-        val parser = state.toolCallState.getParser(index)
-        val events = parser.flush()
-        emitter.handleJsonEvents(events)
-
-        if (parser.hasUnfinishedParam()) {
-            val parsedAsJson = runCatching { JSONObject(accumulatedArgsBeforeFlush) }.isSuccess
-            if (parsedAsJson) {
-                AppLogger.w(
-                    "AIService",
-                    "Tool 参数解析器状态未闭合，但累计 arguments 已是合法 JSON，强制补全标签收尾，index=$index"
-                )
-                emitter.emitTag("</param>")
-                emitter.emitTag("\n</$toolTagName>")
-                state.toolCallState.closed[index] = true
-                return
-            }
-
-            AppLogger.w(
-                "AIService",
-                "检测到未完成的 tool 参数，跳过自动补 </tool>，index=$index, argsLen=${accumulatedArgsBeforeFlush.length}"
-            )
-            return
-        }
-
-        emitter.emitTag("\n</$toolTagName>")
-        state.toolCallState.closed[index] = true
-    }
-
     private fun hasOpenToolCalls(state: StreamingState): Boolean {
-        return state.toolCallState.nameEmitted.any { (index, emitted) ->
-            emitted && state.toolCallState.closed[index] != true
+        return state.queuedToolIndices.isNotEmpty()
+    }
+
+    private fun queueRegularContent(content: String, state: StreamingState) {
+        val tail = state.deferredOutput.peekLast()
+        if (tail is DeferredOutputSegment.Text) {
+            tail.content.append(content)
+        } else {
+            state.deferredOutput.addLast(DeferredOutputSegment.Text(StringBuilder(content)))
         }
     }
 
-    private suspend fun closeAllOpenToolCalls(
-        state: StreamingState,
-        emitter: StreamEmitter
-    ) {
-        if (!hasOpenToolCalls(state)) return
-
-        val sortedIndices = state.accumulatedToolCalls.keys.sorted()
-        for (index in sortedIndices) {
-            closeToolCallIfOpen(index, state, emitter)
-        }
-    }
-
-    private suspend fun flushPendingRegularContent(
+    private suspend fun emitRegularContentDirect(
+        content: String,
         state: StreamingState,
         emitter: StreamEmitter,
     ) {
-        if (state.pendingRegularContent.isEmpty() || hasOpenToolCalls(state)) return
+        if (content.isEmpty()) return
+        closeReasoningBlockIfOpen(state, emitter)
+        state.hasEmittedRegularContent = true
+        if (state.isFirstResponse) {
+            state.isFirstResponse = false
+            AppLogger.d("AIService", "【发送消息】收到首个有效内容片段")
+        }
+        emitter.emitContent(content)
+    }
 
-        val pendingContent = state.pendingRegularContent.toString()
-        state.pendingRegularContent.setLength(0)
-        processContentDelta("", pendingContent, state, emitter)
+    private suspend fun flushDeferredOutput(
+        state: StreamingState,
+        emitter: StreamEmitter,
+    ) {
+        while (state.deferredOutput.isNotEmpty()) {
+            when (val segment = state.deferredOutput.peekFirst()) {
+                is DeferredOutputSegment.Text -> {
+                    state.deferredOutput.removeFirst()
+                    emitRegularContentDirect(segment.content.toString(), state, emitter)
+                }
+
+                is DeferredOutputSegment.Tool -> {
+                    if (segment.index !in state.completedToolIndices) return
+                    state.deferredOutput.removeFirst()
+                    emitCompletedToolCall(segment.index, state, emitter)
+                    state.completedToolIndices.remove(segment.index)
+                    state.queuedToolIndices.remove(segment.index)
+                    state.accumulatedToolCalls.remove(segment.index)
+                    state.toolCallState.clear(segment.index)
+                    if (state.lastProcessedToolIndex == segment.index) {
+                        state.lastProcessedToolIndex = null
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun completeToolCall(
+        index: Int,
+        state: StreamingState,
+        emitter: StreamEmitter,
+    ) {
+        if (index !in state.queuedToolIndices) return
+        state.completedToolIndices.add(index)
+        flushDeferredOutput(state, emitter)
+    }
+
+    private suspend fun finalizeOpenToolSequence(
+        state: StreamingState,
+        emitter: StreamEmitter,
+    ) {
+        state.completedToolIndices.addAll(state.accumulatedToolCalls.keys)
+        flushDeferredOutput(state, emitter)
     }
 
     private fun hasResponsesReasoningItem(responseObj: JSONObject?): Boolean {
@@ -2164,8 +2170,15 @@ open class OpenAIProvider(
                     }
                     if (eventType == "response.output_item.done") {
                         closeReasoningBlockIfOpen(state, emitter)
-                        OpenAIResponsesPayloadAdapter.createReasoningMetadataTag(item)?.let { metadataTag ->
-                            emitter.emitTag(metadataTag)
+                        if (!hasOpenToolCalls(state)) {
+                            OpenAIResponsesPayloadAdapter.createReasoningMetadataTag(item)?.let { metadataTag ->
+                                emitter.emitTag(metadataTag)
+                            }
+                        } else {
+                            AppLogger.d(
+                                "AIService",
+                                "Ignoring reasoning metadata received after a pending tool call",
+                            )
                         }
                     }
                     return
@@ -2196,8 +2209,7 @@ open class OpenAIProvider(
 
                 // 对于 output_item 事件，仅更新工具元信息（name/id）。
                 // 参数统一由 response.function_call_arguments.delta 通道累积，避免快照+增量混拼导致 JSON 破坏。
-                processToolCallChunk(outputIndex, deltaCall, state, emitter)
-                state.lastProcessedToolIndex = outputIndex
+                accumulateToolCallChunk(outputIndex, deltaCall, state)
                 // 某些供应商会先发送 output_item.done，随后才发送 function_call_arguments.delta。
                 // 因此不在 output_item.done 阶段关闭工具调用，改由
                 // response.function_call_arguments.done / response.completed 统一收口。
@@ -2229,16 +2241,13 @@ open class OpenAIProvider(
                 }
 
                 processToolCallChunk(outputIndex, deltaCall, state, emitter)
-                state.lastProcessedToolIndex = outputIndex
             }
 
             "response.function_call_arguments.done" -> {
                 if (!enableToolCall) return
                 val outputIndex = jsonResponse.optInt("output_index", -1)
                 if (outputIndex >= 0) {
-                    closeToolCallIfOpen(outputIndex, state, emitter)
-                    flushPendingRegularContent(state, emitter)
-                    state.lastProcessedToolIndex = outputIndex
+                    completeToolCall(outputIndex, state, emitter)
                 }
             }
 
@@ -2255,9 +2264,8 @@ open class OpenAIProvider(
                 }
 
                 val reasoningWasOpen = closeReasoningBlockIfOpen(state, emitter)
-                closeAllOpenToolCalls(state, emitter)
-                flushPendingRegularContent(state, emitter)
-                if (!reasoningWasOpen) {
+                finalizeOpenToolSequence(state, emitter)
+                if (!reasoningWasOpen && !state.suppressedReasoningAfterTool) {
                     val lateReasoningText = extractResponsesReasoningText(responseObj)
                     if (lateReasoningText.isNotEmpty() && state.streamedReasoningContentLength == 0) {
                         emitCompletedResponsesReasoningText(lateReasoningText, state, emitter)
@@ -2305,7 +2313,7 @@ open class OpenAIProvider(
         }
 
         if (hasOpenToolCalls(state)) {
-            closeAllOpenToolCalls(state, emitter)
+            finalizeOpenToolSequence(state, emitter)
             AppLogger.d("AIService", "Tool Call流式收尾，finish_reason=$normalizedFinishReason")
 
             onTokensUpdated(
@@ -2318,7 +2326,7 @@ open class OpenAIProvider(
             state.accumulatedToolCalls.clear()
             state.lastProcessedToolIndex = null
         }
-        flushPendingRegularContent(state, emitter)
+        flushDeferredOutput(state, emitter)
     }
 
     /**
@@ -2333,16 +2341,17 @@ open class OpenAIProvider(
         val hasReasoning = reasoningContent.isNotNullOrEmpty()
         val hasRegular = regularContent.isNotNullOrEmpty()
 
-        // Once structured tool markup has started, provider text cannot be inserted without
-        // corrupting the still-open XML envelope. Reasoning that arrives out of protocol order
-        // remains untrusted and is discarded; visible content is buffered until the tool closes.
+        // Once a structured tool has been observed, preserve provider order in a deferred output
+        // queue. Reasoning that arrives out of protocol order remains untrusted and is discarded;
+        // visible content is committed only after every earlier tool segment is complete.
         if (hasOpenToolCalls(state) && (hasReasoning || hasRegular)) {
             if (hasReasoning) {
+                state.suppressedReasoningAfterTool = true
                 AppLogger.d("AIService", "Ignoring provider reasoning received during an open tool call")
             }
             if (hasRegular) {
-                state.pendingRegularContent.append(regularContent)
-                AppLogger.d("AIService", "Buffering regular content received during an open tool call")
+                queueRegularContent(regularContent, state)
+                AppLogger.d("AIService", "Queueing regular content behind a pending tool call")
             }
             return
         }
@@ -2383,6 +2392,7 @@ open class OpenAIProvider(
         emitter: StreamEmitter
     ) {
         if (hasOpenToolCalls(state)) {
+            state.suppressedReasoningAfterTool = true
             AppLogger.d("AIService", "Ignoring completed reasoning received during an open tool call")
             return
         }
@@ -2484,8 +2494,7 @@ open class OpenAIProvider(
                 if (data == "[DONE]") {
                     flushImageBuffers(state, emitter)
                     closeReasoningBlockIfOpen(state, emitter)
-                    closeAllOpenToolCalls(state, emitter)
-                    flushPendingRegularContent(state, emitter)
+                    finalizeOpenToolSequence(state, emitter)
                     AppLogger.d("AIService", "【发送消息】收到流结束标记[DONE]")
                     break
                 }
@@ -2521,8 +2530,7 @@ open class OpenAIProvider(
                 }
             }
             
-            closeAllOpenToolCalls(state, emitter)
-            flushPendingRegularContent(state, emitter)
+            finalizeOpenToolSequence(state, emitter)
 
             AppLogger.d(
                 "AIService",

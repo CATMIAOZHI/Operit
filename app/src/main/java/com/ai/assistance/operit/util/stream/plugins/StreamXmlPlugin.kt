@@ -6,7 +6,14 @@ import com.ai.assistance.operit.util.displayEndTagNames
 import com.ai.assistance.operit.util.stream.*
 
 private const val GROUP_TAG_NAME = 1
-private const val GROUP_CONTENT = 2
+
+private enum class StartTagNameLexicalState {
+    WAIT_LT,
+    EXPECT_FIRST,
+    IN_NAME,
+    IN_ATTRS,
+    INVALID,
+}
 
 /**
  * A stream processing plugin to identify and process XML-formatted data streams. This
@@ -35,6 +42,7 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
     private var startTagQuote: Char? = null
     private var startTagLastNonWhitespaceOutsideQuote: Char? = null
     private var pendingStartTagName: String? = null
+    private var startTagNameLexicalState: StartTagNameLexicalState = StartTagNameLexicalState.WAIT_LT
 
     private val punctuationTriggers =
             setOf('，', '。', '？', '！', '：', '（', '）', '【', '】', '《', '》', ':', ',', '.', '?', '!', '~', '～')
@@ -55,11 +63,20 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
                                         }
                                         greedyStar {
                                             predicate("xmlTagNameContinuation") {
-                                                (it in 'A'..'Z') || (it in 'a'..'z') || (it in '0'..'9') || it == '_'
+                                                (it in 'A'..'Z') ||
+                                                    (it in 'a'..'z') ||
+                                                    (it in '0'..'9') ||
+                                                    it == '_' ||
+                                                    it == '-' ||
+                                                    it == '.' ||
+                                                    it == ':'
                                             }
                                         }
                                     }
-                                    // Optional: Match attributes until the tag closes
+                                    // Optional: Match attributes until the tag closes. The plugin's
+                                    // quote-aware lexical state independently verifies the exact
+                                    // name boundary because this graph's greedy group does not
+                                    // expose a stable suffix capture.
                                     greedyStar { notChar('>') }
                                     char('>')
                                 }
@@ -143,11 +160,16 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
                 updateStartTagLexicalState(c)
             } else {
                 resetStartTagLexicalState()
+                updateStartTagLexicalState(c)
             }
             when (val result = startTagMatcher.processChar(c)) {
                 is StreamKmpMatchResult.Match -> {
                     val tagName = result.groups[GROUP_TAG_NAME]
                     if (tagName != null) {
+                        if (startTagNameLexicalState == StartTagNameLexicalState.INVALID) {
+                            reset()
+                            return finish(includeTagsInOutput)
+                        }
                         if (startTagQuote != null) {
                             // The graph stops at every `>`, including one inside a quoted
                             // attribute. Keep the already recognized tag name and continue with
@@ -246,6 +268,44 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
     }
 
     private fun updateStartTagLexicalState(c: Char) {
+        when (startTagNameLexicalState) {
+            StartTagNameLexicalState.WAIT_LT -> {
+                if (c == '<') startTagNameLexicalState = StartTagNameLexicalState.EXPECT_FIRST
+                return
+            }
+
+            StartTagNameLexicalState.EXPECT_FIRST -> {
+                startTagNameLexicalState =
+                    if (c in 'A'..'Z' || c in 'a'..'z') {
+                        StartTagNameLexicalState.IN_NAME
+                    } else {
+                        StartTagNameLexicalState.INVALID
+                    }
+                if (startTagNameLexicalState == StartTagNameLexicalState.IN_NAME) {
+                    startTagLastNonWhitespaceOutsideQuote = c
+                }
+                return
+            }
+
+            StartTagNameLexicalState.IN_NAME -> {
+                val isContinuation =
+                    c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' || c in "_.:-"
+                when {
+                    isContinuation -> startTagLastNonWhitespaceOutsideQuote = c
+                    c == '>' -> Unit
+                    c == '/' || c.isWhitespace() -> {
+                        startTagNameLexicalState = StartTagNameLexicalState.IN_ATTRS
+                        if (c == '/') startTagLastNonWhitespaceOutsideQuote = c
+                    }
+                    else -> startTagNameLexicalState = StartTagNameLexicalState.INVALID
+                }
+                return
+            }
+
+            StartTagNameLexicalState.INVALID -> return
+            StartTagNameLexicalState.IN_ATTRS -> Unit
+        }
+
         val quote = startTagQuote
         if (quote != null) {
             if (c == quote) startTagQuote = null
@@ -262,6 +322,7 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
         startTagQuote = null
         startTagLastNonWhitespaceOutsideQuote = null
         pendingStartTagName = null
+        startTagNameLexicalState = StartTagNameLexicalState.WAIT_LT
     }
 
     private fun handleDefaultCharacter(c: Char): Boolean {

@@ -82,7 +82,8 @@ bool StreamXmlPlugin::isDisplayTagName(const std::u16string& tagName) {
 }
 
 bool StreamXmlPlugin::isTagNameContinuationChar(char16_t c) {
-    return isAsciiLetter(c) || (c >= u'0' && c <= u'9') || c == u'_';
+    return isAsciiLetter(c) || (c >= u'0' && c <= u'9') || c == u'_' ||
+           c == u'-' || c == u'.' || c == u':';
 }
 
 bool StreamXmlPlugin::isPunctuationTrigger(char16_t c) {

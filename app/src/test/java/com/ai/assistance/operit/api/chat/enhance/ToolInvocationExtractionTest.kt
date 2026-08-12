@@ -97,6 +97,32 @@ class ToolInvocationExtractionTest {
     }
 
     @Test
+    fun executableExtraction_doesNotTreatQualifiedXmlNamesAsDisplayBlocks() = runBlocking {
+        val content =
+            listOf(
+                "<search-results>visible</search-results>",
+                "<tool name=\"visit_web\"><param name=\"url\">https://first.example</param></tool>",
+                "<think-step>visible</think-step>",
+                "<tool name=\"visit_web\"><param name=\"url\">https://second.example</param></tool>",
+                "<thinking.phase>visible</thinking.phase>",
+                "<tool name=\"visit_web\"><param name=\"url\">https://third.example</param></tool>",
+            ).joinToString("\n")
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(
+            listOf(
+                "https://first.example",
+                "https://second.example",
+                "https://third.example",
+            ),
+            invocations.map { it.tool.parameters.single().value },
+        )
+    }
+
+    @Test
     fun executableExtraction_ignoresProviderAttemptToCloseThinkingWrapper() = runBlocking {
         val providerReasoning =
             ChatUtils.escapeProviderReasoningMarkup(

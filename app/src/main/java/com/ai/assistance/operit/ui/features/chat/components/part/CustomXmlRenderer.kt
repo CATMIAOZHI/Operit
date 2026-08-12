@@ -49,6 +49,7 @@ import com.ai.assistance.operit.util.DisplayEndMatchResult
 import com.ai.assistance.operit.util.DisplayEndTagMatcher
 import com.ai.assistance.operit.util.displayEndTagNames
 import com.ai.assistance.operit.util.findDisplayEndTagRange
+import com.ai.assistance.operit.util.findMarkupTagEnd
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.stream
 import kotlinx.serialization.json.Json
@@ -114,14 +115,13 @@ internal fun resolveXmlTagNameForRendering(content: String): String? {
 
 internal fun isXmlFullyClosedForRendering(content: String): Boolean {
     val tagName = ChatMarkupRegex.extractOpeningTagName(content) ?: return false
-
-    if (content.endsWith("/>")) {
-        return true
-    }
-
-    val startTagEnd = content.indexOf('>')
+    val startTagStart = content.indexOf('<')
+    val startTagEnd = findMarkupTagEnd(content, startTagStart)
     if (startTagEnd < 0) {
         return false
+    }
+    if (content.substring(startTagStart + 1, startTagEnd).trimEnd().endsWith('/')) {
+        return true
     }
 
     if (displayEndTagNames(tagName) != null) {
@@ -148,7 +148,7 @@ internal fun extractXmlContentForRendering(content: String, tagName: String? = n
         return content
     }
 
-    val startTagEnd = content.indexOf('>', startTagIndex)
+    val startTagEnd = findMarkupTagEnd(content, startTagIndex)
     if (startTagEnd < 0) {
         return content
     }
@@ -171,6 +171,7 @@ internal fun createThinkMarkdownCharStreamForRendering(
     val validClosingNames = checkNotNull(displayEndTagNames(tagName))
     val endTagMatcher = DisplayEndTagMatcher(validClosingNames)
     var startTagClosed = false
+    var openingQuote: Char? = null
     var reachedEndTag = false
     val tailBuffer = StringBuilder()
 
@@ -179,8 +180,13 @@ internal fun createThinkMarkdownCharStreamForRendering(
             if (reachedEndTag) return@forEach
 
             if (!startTagClosed) {
-                if (ch == '>') {
-                    startTagClosed = true
+                if (openingQuote != null) {
+                    if (ch == openingQuote) openingQuote = null
+                } else {
+                    when (ch) {
+                        '\'', '"' -> openingQuote = ch
+                        '>' -> startTagClosed = true
+                    }
                 }
                 return@forEach
             }
