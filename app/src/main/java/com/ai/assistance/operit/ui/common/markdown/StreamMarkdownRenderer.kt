@@ -87,6 +87,7 @@ internal enum class MarkdownRenderMode {
 }
 
 internal val LocalMarkdownRenderMode = compositionLocalOf { MarkdownRenderMode.STATIC }
+internal val LocalDecodeProviderReasoningEntities = compositionLocalOf { false }
 
 private data class PendingLineBreakState(
     val count: Int = 0,
@@ -396,6 +397,7 @@ fun StreamMarkdownRenderer(
         state: StreamMarkdownRendererState? = null,
         enableDialogs: Boolean = true,
         fillMaxWidth: Boolean = true,
+        decodeProviderReasoningEntities: Boolean = false,
 ) {
     // 使用传入的state或创建新的state
     val rendererState = state ?: remember { StreamMarkdownRendererState() }
@@ -632,7 +634,10 @@ fun StreamMarkdownRenderer(
 
     // 渲染Markdown内容 - 使用统一的Canvas渲染器
     Surface(modifier = modifier, color = Color.Transparent, shape = RoundedCornerShape(4.dp)) {
-        CompositionLocalProvider(LocalMarkdownRenderMode provides MarkdownRenderMode.STREAMING) {
+        CompositionLocalProvider(
+            LocalMarkdownRenderMode provides MarkdownRenderMode.STREAMING,
+            LocalDecodeProviderReasoningEntities provides decodeProviderReasoningEntities,
+        ) {
             key(rendererId) {
                 UnifiedMarkdownCanvas(
                     nodes = renderNodes,
@@ -852,6 +857,7 @@ fun StreamMarkdownRenderer(
         state: StreamMarkdownRendererState? = null,
         enableDialogs: Boolean = true,
         fillMaxWidth: Boolean = true,
+        decodeProviderReasoningEntities: Boolean = false,
 ) {
     // 使用传入的state或创建新的state
     val rendererState = state ?: remember(content) { StreamMarkdownRendererState() }
@@ -951,7 +957,10 @@ fun StreamMarkdownRenderer(
 
     // 渲染Markdown内容 - 使用统一的Canvas渲染器
     Surface(modifier = modifier, color = Color.Transparent, shape = RoundedCornerShape(4.dp)) {
-        CompositionLocalProvider(LocalMarkdownRenderMode provides MarkdownRenderMode.STATIC) {
+        CompositionLocalProvider(
+            LocalMarkdownRenderMode provides MarkdownRenderMode.STATIC,
+            LocalDecodeProviderReasoningEntities provides decodeProviderReasoningEntities,
+        ) {
             key(rendererId) {
                 UnifiedMarkdownCanvas(
                     nodes = renderNodes,

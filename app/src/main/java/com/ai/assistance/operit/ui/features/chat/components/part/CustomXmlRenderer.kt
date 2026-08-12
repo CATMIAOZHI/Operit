@@ -45,6 +45,11 @@ import com.ai.assistance.operit.ui.common.markdown.XmlRenderPluginRegistry
 import com.ai.assistance.operit.ui.common.rememberLocal
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.ChatMarkupRegex
+import com.ai.assistance.operit.util.DisplayEndMatchResult
+import com.ai.assistance.operit.util.DisplayEndTagMatcher
+import com.ai.assistance.operit.util.displayEndTagNames
+import com.ai.assistance.operit.util.findDisplayEndTagRange
+import com.ai.assistance.operit.util.findMarkupTagEnd
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.stream
 import kotlinx.serialization.json.Json
@@ -98,6 +103,124 @@ private fun String.decodeToolXmlText(): String =
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&amp;", "&")
+
+internal fun resolveXmlTagNameForRendering(content: String): String? {
+    val rawTagName = ChatMarkupRegex.extractOpeningTagName(content) ?: return null
+    return if (displayEndTagNames(rawTagName) != null) {
+        rawTagName.lowercase()
+    } else {
+        ChatMarkupRegex.normalizeToolLikeTagName(rawTagName)
+    }
+}
+
+internal fun isXmlFullyClosedForRendering(content: String): Boolean {
+    val tagName = ChatMarkupRegex.extractOpeningTagName(content) ?: return false
+    val startTagStart = content.indexOf('<')
+    val startTagEnd = findMarkupTagEnd(content, startTagStart)
+    if (startTagEnd < 0) {
+        return false
+    }
+    if (content.substring(startTagStart + 1, startTagEnd).trimEnd().endsWith('/')) {
+        return true
+    }
+
+    if (displayEndTagNames(tagName) != null) {
+        return findDisplayEndTagRange(content, tagName, startTagEnd + 1) != null
+    }
+
+    return content.contains("</$tagName>")
+}
+
+internal fun extractXmlContentForRendering(content: String, tagName: String? = null): String {
+    val rawTagName = ChatMarkupRegex.extractOpeningTagName(content) ?: return content
+    val normalizedRawTagName = ChatMarkupRegex.normalizeToolLikeTagName(rawTagName)
+    val effectiveTagName =
+        if (tagName != null && normalizedRawTagName != tagName) {
+            tagName
+        } else {
+            rawTagName
+        }
+    // Locate the actual opening spelling from the parsed content. The renderer normalizes the
+    // semantic tag separately, but display tags are intentionally case-insensitive.
+    val startTag = "<$rawTagName"
+    val startTagIndex = content.indexOf(startTag)
+    if (startTagIndex < 0) {
+        return content
+    }
+
+    val startTagEnd = findMarkupTagEnd(content, startTagIndex)
+    if (startTagEnd < 0) {
+        return content
+    }
+
+    val endIndex =
+        if (displayEndTagNames(effectiveTagName) != null) {
+            findDisplayEndTagRange(content, effectiveTagName, startTagEnd + 1)?.first ?: -1
+        } else {
+            content.lastIndexOf("</$effectiveTagName>")
+        }
+    val contentEndExclusive = if (endIndex > startTagEnd) endIndex else content.length
+
+    return content.substring(startTagEnd + 1, contentEndExclusive).trim()
+}
+
+internal fun createThinkMarkdownCharStreamForRendering(
+    xmlStream: Stream<String>,
+    tagName: String,
+): Stream<Char> = stream {
+    val validClosingNames = checkNotNull(displayEndTagNames(tagName))
+    val endTagMatcher = DisplayEndTagMatcher(validClosingNames)
+    var startTagClosed = false
+    var openingQuote: Char? = null
+    var reachedEndTag = false
+    val tailBuffer = StringBuilder()
+
+    xmlStream.collect { chunk ->
+        chunk.forEach { ch ->
+            if (reachedEndTag) return@forEach
+
+            if (!startTagClosed) {
+                if (openingQuote != null) {
+                    if (ch == openingQuote) openingQuote = null
+                } else {
+                    when (ch) {
+                        '\'', '"' -> openingQuote = ch
+                        '>' -> startTagClosed = true
+                    }
+                }
+                return@forEach
+            }
+
+            tailBuffer.append(ch)
+            when (endTagMatcher.processChar(ch)) {
+                DisplayEndMatchResult.MATCH -> {
+                    val prefixLength = tailBuffer.length - endTagMatcher.lastMatchLength
+                    val prefix = tailBuffer.substring(0, prefixLength)
+                    tailBuffer.setLength(0)
+                    prefix.forEach { emit(it) }
+                    reachedEndTag = true
+                }
+                DisplayEndMatchResult.IN_PROGRESS -> {
+                    val prefixLength = tailBuffer.length - endTagMatcher.candidateLength
+                    if (prefixLength > 0) {
+                        val prefix = tailBuffer.substring(0, prefixLength)
+                        tailBuffer.delete(0, prefixLength)
+                        prefix.forEach { emit(it) }
+                    }
+                }
+                DisplayEndMatchResult.NO_MATCH -> {
+                    val visible = tailBuffer.toString()
+                    tailBuffer.setLength(0)
+                    visible.forEach { emit(it) }
+                }
+            }
+        }
+    }
+
+    if (!reachedEndTag && tailBuffer.isNotEmpty()) {
+        tailBuffer.toString().forEach { emit(it) }
+    }
+}
 
 class CustomXmlRenderer(
     private val showThinkingProcess: Boolean = true,
@@ -264,7 +387,7 @@ class CustomXmlRenderer(
 
     /** 从XML字符串中提取第一个标签的名称。 例如: "<think>...</think>" -> "think" */
     private fun extractTagName(content: String): String? {
-        return ChatMarkupRegex.normalizeToolLikeTagName(extractRawTagName(content))
+        return resolveXmlTagNameForRendering(content)
     }
 
     private fun extractRawTagName(content: String): String? {
@@ -282,50 +405,12 @@ class CustomXmlRenderer(
 
     /** 检查XML标签是否完全闭合。 支持标准配对标签 (<tag>...</tag>) 和自闭合标签 (<tag/>)。 */
     private fun isXmlFullyClosed(content: String): Boolean {
-        val tagName = extractRawTagName(content) ?: return false
-
-        // 处理自闭合标签，例如 <status type="completion"/>
-        if (content.endsWith("/>")) {
-            return true
-        }
-
-        // 处理标准配对标签
-        val closeTag = "</$tagName>"
-        return content.contains(closeTag)
+        return isXmlFullyClosedForRendering(content)
     }
 
     /** 从XML内容中提取纯文本内容 */
     private fun extractContentFromXml(content: String, tagName: String? = null): String {
-        val rawTagName = extractRawTagName(content) ?: return content
-        val normalizedRawTagName = ChatMarkupRegex.normalizeToolLikeTagName(rawTagName)
-        val effectiveTagName =
-            if (tagName != null && normalizedRawTagName != tagName) {
-                tagName
-            } else {
-                rawTagName
-            }
-        val startTag = "<$effectiveTagName"
-        val startTagIndex = content.indexOf(startTag)
-        if (startTagIndex < 0) {
-            return content
-        }
-
-        // 起始标签本身必须完整；如果连 '>' 都没有，保留原始内容以等待后续片段。
-        val startTagEnd = content.indexOf('>', startTagIndex)
-        if (startTagEnd < 0) {
-            return content
-        }
-
-        val endTag = "</$effectiveTagName>"
-        val endIndex = content.lastIndexOf(endTag)
-        val contentEndExclusive =
-            if (endIndex > startTagEnd) {
-                endIndex
-            } else {
-                content.length
-            }
-
-        return content.substring(startTagEnd + 1, contentEndExclusive).trim()
+        return extractXmlContentForRendering(content, tagName)
     }
 
     /** 从工具调用XML提取参数内容 */
@@ -347,19 +432,7 @@ class CustomXmlRenderer(
     /** 渲染 <search> 标签内容 (Google Search Grounding 来源) */
     @Composable
     private fun renderSearchContent(content: String, modifier: Modifier, textColor: Color) {
-        val startTag = "<search>"
-        val endTag = "</search>"
-        val startIndex = content.indexOf(startTag) + startTag.length
-
-        // 提取搜索来源内容
-        val searchText =
-                if (content.contains(endTag)) {
-                    val endIndex = content.lastIndexOf(endTag)
-                    content.substring(startIndex, endIndex).trim()
-                } else {
-                    // 没有结束标签，直接使用startIndex后的所有内容
-                    content.substring(startIndex).trim()
-                }
+        val searchText = extractXmlContentForRendering(content, "search")
 
         var expanded by remember { mutableStateOf(false) }  // 默认收起
 
@@ -516,12 +589,16 @@ class CustomXmlRenderer(
 
         val shouldComposeThinkBody =
             thinkVisibilityState.currentState || thinkVisibilityState.targetState
-        val thinkText =
+        val isEncodedProviderReasoning =
+            ChatUtils.isEncodedProviderReasoningEnvelope(content)
+        val rawThinkText =
             if (shouldComposeThinkBody) {
                 extractContentFromXml(content, tagName).trim()
             } else {
                 ""
             }
+        val thinkText =
+            ChatUtils.decodeProviderReasoningForDisplay(content, rawThinkText)
         val thinkMarkdownStream =
             remember(shouldComposeThinkBody, thinkExpandSession, xmlStream, tagName) {
                 if (!shouldComposeThinkBody || thinkExpandSession <= 0) {
@@ -671,7 +748,9 @@ class CustomXmlRenderer(
                                                     textColor = textColor.copy(alpha = 0.6f),
                                                     backgroundColor = Color.Transparent,
                                                     enableDialogs = enableDialogs,
-                                                    fillMaxWidth = true
+                                                    fillMaxWidth = true,
+                                                    decodeProviderReasoningEntities =
+                                                        isEncodedProviderReasoning,
                                                 )
                                             }
                                     } else if (thinkText.isNotBlank()) {
@@ -688,12 +767,14 @@ class CustomXmlRenderer(
                                                 shapes = MaterialTheme.shapes
                                             ) {
                                                 StreamMarkdownRenderer(
-                                                    content = thinkText,
+                                                    content = rawThinkText,
                                                     modifier = Modifier.fillMaxWidth(),
                                                     textColor = textColor.copy(alpha = 0.6f),
                                                     backgroundColor = Color.Transparent,
                                                     enableDialogs = enableDialogs,
-                                                    fillMaxWidth = true
+                                                    fillMaxWidth = true,
+                                                    decodeProviderReasoningEntities =
+                                                        isEncodedProviderReasoning,
                                                 )
                                             }
                                     } else {
@@ -713,41 +794,7 @@ class CustomXmlRenderer(
     private fun createThinkMarkdownCharStream(
         xmlStream: Stream<String>,
         tagName: String
-    ): Stream<Char> = stream {
-        val endTag = "</$tagName>"
-        var startTagClosed = false
-        var reachedEndTag = false
-        val tailBuffer = StringBuilder()
-
-        xmlStream.collect { chunk ->
-            chunk.forEach { ch ->
-                if (reachedEndTag) return@forEach
-
-                if (!startTagClosed) {
-                    if (ch == '>') {
-                        startTagClosed = true
-                    }
-                    return@forEach
-                }
-
-                tailBuffer.append(ch)
-
-                while (tailBuffer.length > endTag.length) {
-                    emit(tailBuffer[0])
-                    tailBuffer.deleteCharAt(0)
-                }
-
-                if (tailBuffer.length == endTag.length && tailBuffer.toString() == endTag) {
-                    tailBuffer.setLength(0)
-                    reachedEndTag = true
-                }
-            }
-        }
-
-        if (!reachedEndTag && tailBuffer.isNotEmpty()) {
-            tailBuffer.toString().forEach { emit(it) }
-        }
-    }
+    ): Stream<Char> = createThinkMarkdownCharStreamForRendering(xmlStream, tagName)
 
     /** 渲染标准工具请求标签 <tool name="..."><param name="param_name">param_value</param></tool> */
     @Composable

@@ -10,6 +10,7 @@ import android.text.style.StyleSpan
 import android.text.style.URLSpan
 import android.text.style.UnderlineSpan
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.ChatUtils
 import android.util.LruCache
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -465,17 +466,29 @@ internal fun CanvasMarkdownNodeRenderer(
     val currentXmlRenderer = rememberUpdatedState(xmlRenderer)
     val currentOnLinkClick = rememberUpdatedState(onLinkClick)
     
+    // Provider reasoning is entity-escaped before XML/Markdown classification. Decode only
+    // after the parser has fixed every node's type so text such as <tool> cannot be reclassified.
+    val decodeProviderReasoningEntities = LocalDecodeProviderReasoningEntities.current
+    val displayNode =
+        remember(node, decodeProviderReasoningEntities) {
+            if (decodeProviderReasoningEntities) {
+                decodeProviderReasoningEntitiesAfterMarkdownParsing(node)
+            } else {
+                node
+            }
+        }
+
     // 直接从 node 读取内容，不使用外层 key()
     // 让 Compose 根据节点的实际变化自然地触发 recompose，而不是强制重建
     // 这样可以保持 XML 渲染器等组件的内部状态（如折叠/展开状态）
-    val content = node.content
+    val content = displayNode.content
     
     // 【不使用 key() 包裹】直接调用 renderNodeContent
     // 让内部的 remember 和组件自己根据 content 的变化来决定是否重组
     // 这样 xmlRenderer 和 onLinkClick 的引用变化不会导致重组
     renderNodeContent(
         nodeKey = nodeKey,
-        node = node,
+        node = displayNode,
         content = content,
         textColor = textColor,
         fontSizes = fontSizes,
@@ -491,6 +504,14 @@ internal fun CanvasMarkdownNodeRenderer(
         isLastNode = isLastNode
     )
 }
+
+internal fun decodeProviderReasoningEntitiesAfterMarkdownParsing(
+    node: MarkdownNodeStable,
+): MarkdownNodeStable =
+    node.copy(
+        content = ChatUtils.decodeProviderReasoningMarkup(node.content),
+        children = node.children.map(::decodeProviderReasoningEntitiesAfterMarkdownParsing),
+    )
 
 /** 字体大小数据类 */
 private data class FontSizes(
