@@ -14,6 +14,62 @@ import com.ai.assistance.operit.data.model.ToolParameterSchema
  */
 object SystemToolPrompts {
 
+    private val nativeTodoToolsEn =
+        SystemToolPromptCategory(
+            categoryName = "Todo",
+            tools =
+                listOf(
+                    ToolPrompt(
+                        name = "todowrite",
+                        description = "Replace the current chat's native Todo list with a complete updated snapshot. The user sees this list in the chat UI.",
+                        parametersStructured =
+                            listOf(
+                                ToolParameterSchema(
+                                    name = "todos",
+                                    type = "string",
+                                    description = "JSON-encoded complete ordered array of objects: {content, status, priority}; status is pending | in_progress | completed | cancelled; priority is high | medium | low",
+                                    required = true,
+                                )
+                            ),
+                        details = """
+  - Use this tool for work with at least three distinct steps, multiple user requests, or other non-trivial execution. Skip it for simple one-step or informational responses.
+  - Every call replaces the entire list, so always include every Todo item in order. Never send only the changed item.
+  - While unfinished work remains, exactly one item must be `in_progress`. Mark work `completed` only after it and its required verification are actually finished.
+  - Update statuses as progress changes instead of batching updates at the end. Keep completed items in the list so the chat can retain its final progress record.
+  - This tool is host-managed and read-only to the user.
+""",
+                    )
+                ),
+        )
+
+    private val nativeTodoToolsCn =
+        SystemToolPromptCategory(
+            categoryName = "Todo",
+            tools =
+                listOf(
+                    ToolPrompt(
+                        name = "todowrite",
+                        description = "用完整的新快照替换当前聊天的原生 Todo 列表；用户会在聊天界面看到该列表。",
+                        parametersStructured =
+                            listOf(
+                                ToolParameterSchema(
+                                    name = "todos",
+                                    type = "string",
+                                    description = "JSON 编码的完整有序对象数组：{content, status, priority}；status 为 pending | in_progress | completed | cancelled；priority 为 high | medium | low",
+                                    required = true,
+                                )
+                            ),
+                        details = """
+  - 当任务包含至少三个独立步骤、多个用户要求或其他非简单执行时使用；简单的一步操作或仅回答信息时不要使用。
+  - 每次调用都会替换整个列表，因此必须按顺序传入全部 Todo，不能只传发生变化的一项。
+  - 仍有未完成工作时必须且只能有一项为 `in_progress`。只有任务及必要验证确实完成后，才能标为 `completed`。
+  - 进展发生时立即更新状态，不要全部堆到最后更新。保留已完成项，让聊天持久保存最终进度记录。
+  - 这是宿主管理、用户只读的工具。
+""",
+                    )
+                ),
+        )
+
     private fun buildSafBookmarksSectionEn(safBookmarkNames: List<String>): String {
         val names = safBookmarkNames.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
         if (names.isEmpty()) return ""
@@ -622,6 +678,9 @@ object SystemToolPrompts {
         )
 
         return buildList {
+            if (includeSubagentTools) {
+                add(nativeTodoToolsEn)
+            }
             add(basicTools)
             if (includeSubagentTools) {
                 add(subagentTools)
@@ -703,6 +762,9 @@ object SystemToolPrompts {
         )
 
         return buildList {
+            if (includeSubagentTools) {
+                add(nativeTodoToolsCn)
+            }
             add(basicToolsCn)
             if (includeSubagentTools) {
                 add(subagentToolsCn)

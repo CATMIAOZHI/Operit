@@ -28,6 +28,7 @@ internal class ChatBranchRepository(
     private val messageDao = database.messageDao()
     private val messageVariantDao = database.messageVariantDao()
     private val subagentRunDao = database.subagentRunDao()
+    private val chatTodoDao = database.chatTodoDao()
 
     suspend fun copyBranch(
         sourceChatId: String,
@@ -39,6 +40,7 @@ internal class ChatBranchRepository(
                 "Source chat does not exist: $sourceChatId"
             }
             chatDao.insertChat(branch)
+            chatTodoDao.copyForChat(sourceChatId, branch.id)
 
             val copiedMessageCount =
                 messageDao.countMessagesForChatUpToTimestamp(

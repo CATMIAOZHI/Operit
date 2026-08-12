@@ -8525,4 +8525,11 @@
     <string name="settings_legacy_workflows_description">以禁用状态显示 Download/Operit/workflow 中的旧工作流；普通编辑会导入但仍保持禁用，只有显式启用后才可执行或调度。安全扫描最多显示 1000 个定义、访问 4000 个目录项及读取 64 MiB；超出部分保留在原目录但不会显示。</string>
     <string name="settings_legacy_storage_update_failed">更新旧版存储兼容设置失败</string>
     <string name="mcp_repository_invalid_plugin_id">插件 ID 无效，已拒绝访问包目录</string>
+    <string name="chat_todo_step_progress">第 %1$d / %2$d 步</string>
+    <string name="toolreg_todowrite_desc">更新当前聊天的 Todo 列表</string>
+    <string name="chat_todo_tool_subagent_unavailable">子代理会话不能更新聊天 Todo</string>
+    <string name="chat_todo_tool_active_chat_required">更新 Todo 需要一个当前聊天</string>
+    <string name="chat_todo_tool_missing_todos">缺少必要参数：todos</string>
+    <string name="chat_todo_tool_updated">Todo 列表已更新（%1$d 项）</string>
+    <string name="chat_todo_tool_invalid_list">Todo 列表格式无效</string>
 </resources>

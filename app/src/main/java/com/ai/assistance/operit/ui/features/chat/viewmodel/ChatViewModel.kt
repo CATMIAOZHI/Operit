@@ -31,9 +31,11 @@ import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.ChatMessageLocatorPreview
+import com.ai.assistance.operit.data.model.ChatTodo
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.PromptFunctionType
 import com.ai.assistance.operit.data.model.ToolParameter
+import com.ai.assistance.operit.data.repository.ChatTodoRepository
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.ui.features.chat.webview.LocalWebServer
 import com.ai.assistance.operit.ui.floating.FloatingMode
@@ -53,6 +55,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.ai.assistance.operit.ui.floating.ui.pet.AvatarEmotionManager
@@ -247,6 +251,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     val chatHistoriesLoaded: StateFlow<Boolean> by lazy { chatHistoryDelegate.chatHistoriesLoaded }
     val chatFolders by lazy { chatHistoryDelegate.chatFolders }
     val currentChatId: StateFlow<String?> by lazy { chatHistoryDelegate.currentChatId }
+    val currentTodos: StateFlow<List<ChatTodo>> by lazy {
+        val repository = ChatTodoRepository.getInstance(context)
+        currentChatId
+            .flatMapLatest { chatId ->
+                if (chatId == null) flowOf(emptyList()) else repository.observe(chatId)
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyList(),
+            )
+    }
     val hasOlderDisplayHistory: StateFlow<Boolean> by lazy {
         chatHistoryDelegate.hasOlderDisplayHistory
     }

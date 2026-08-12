@@ -8544,4 +8544,11 @@
     <string name="settings_legacy_workflows_description">Show workflows from Download/Operit/workflow as disabled. A normal edit imports one but keeps it disabled; it can run or schedule only after you explicitly enable it. The safety scan shows at most 1,000 definitions, visits 4,000 directory entries, and reads 64 MiB; excess files remain in Downloads but are not shown.</string>
     <string name="settings_legacy_storage_update_failed">Failed to update legacy storage compatibility</string>
     <string name="mcp_repository_invalid_plugin_id">Invalid plugin ID; package-directory access was rejected</string>
+    <string name="chat_todo_step_progress">Step %1$d of %2$d</string>
+    <string name="toolreg_todowrite_desc">Update the current chat Todo list</string>
+    <string name="chat_todo_tool_subagent_unavailable">Subagent sessions cannot update chat Todos</string>
+    <string name="chat_todo_tool_active_chat_required">Updating Todos requires an active chat</string>
+    <string name="chat_todo_tool_missing_todos">Missing required parameter: todos</string>
+    <string name="chat_todo_tool_updated">Todo list updated (%1$d items)</string>
+    <string name="chat_todo_tool_invalid_list">Invalid Todo list format</string>
 </resources>
