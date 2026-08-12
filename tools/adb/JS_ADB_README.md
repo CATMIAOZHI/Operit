@@ -84,7 +84,7 @@ If you just want the short answer for "which tool should I use":
 - ADB debugging permission granted on the device
 - The Operit Ry debug application installed on the device
 
-The launchers target `com.rainy.operitry` by default. Set `OPERIT_APP_PACKAGE` when the debug build uses another application ID, for example `com.rainy.operitry.dev`.
+The launchers target the personal/dev debug application ID `com.rainy.operitry.dev` by default. Set `OPERIT_APP_PACKAGE` only when targeting another debug application ID.
 
 Only the debug variant exposes this development entry point, and it requires the system-level `android.permission.DUMP` permission held by ADB shell rather than ordinary third-party apps. The clone, release, and nightly receivers remain non-exported.
 

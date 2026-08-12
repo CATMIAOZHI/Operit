@@ -507,13 +507,19 @@ val verifyScriptExecutionReceiverManifests =
                 "com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver"
             val expectations =
                 listOf(
-                    Triple("debug", "true", "android.permission.DUMP"),
-                    Triple("clone", "false", ""),
-                    Triple("release", "false", ""),
-                    Triple("nightly", "false", "")
+                    arrayOf(
+                        "debug",
+                        "true",
+                        "android.permission.DUMP",
+                        "com.rainy.operitry.dev"
+                    ),
+                    arrayOf("clone", "false", "", "com.rainy.operitry.clone"),
+                    arrayOf("release", "false", "", "com.rainy.operitry"),
+                    arrayOf("nightly", "false", "", "com.rainy.operitry")
                 )
 
-            expectations.forEach { (variant, expectedExported, expectedPermission) ->
+            expectations.forEach {
+                    (variant, expectedExported, expectedPermission, expectedPackage) ->
                 val taskSuffix = variant.replaceFirstChar(Char::uppercase)
                 val manifestFile =
                     layout.buildDirectory
@@ -531,6 +537,10 @@ val verifyScriptExecutionReceiverManifests =
                         .apply { isNamespaceAware = true }
                         .newDocumentBuilder()
                         .parse(manifestFile)
+                val actualPackage = document.documentElement.getAttribute("package")
+                check(actualPackage == expectedPackage) {
+                    "$variant package=$actualPackage, expected $expectedPackage"
+                }
                 val receivers = document.getElementsByTagName("receiver")
                 val matchingReceivers =
                     (0 until receivers.length)
