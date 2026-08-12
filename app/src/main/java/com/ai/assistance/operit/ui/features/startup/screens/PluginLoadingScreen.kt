@@ -62,9 +62,15 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.mcp.MCPLocalServer
 import com.ai.assistance.operit.data.mcp.MCPRepository
 import com.ai.assistance.operit.data.mcp.plugins.MCPStarter
+import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceConfig
+import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceManager
+import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceRepository
+import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceState
 import com.ai.assistance.operit.ui.features.startup.components.SmoothLinearProgressIndicator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -80,6 +86,9 @@ enum class PluginStatus {
     SUCCESS, // 加载成功
     FAILED // 加载失败
 }
+
+private const val TERMINAL_SERVICE_ITEM_PREFIX = "terminal-service:"
+private fun terminalServiceItemId(serviceId: String): String = "$TERMINAL_SERVICE_ITEM_PREFIX$serviceId"
 
 /** 表示单个插件的加载信息 */
 data class PluginInfo(
@@ -460,6 +469,11 @@ interface SkipLoadingCallback {
  * 用于管理插件加载过程中的各种状态
  */
 class PluginLoadingState {
+    private data class McpStartupResult(
+        val successCount: Int,
+        val totalCount: Int,
+        val status: MCPStarter.PluginInitStatus
+    )
     // 进度值 (0.0f - 1.0f)
     private val _progress = MutableStateFlow(0f)
     val progress: StateFlow<Float> = _progress
@@ -568,6 +582,26 @@ class PluginLoadingState {
             _plugins.value = plugins
             _pluginsTotal.value = plugins.size
             _pluginsStarted.value = plugins.count { it.status == PluginStatus.SUCCESS }
+        }
+    }
+
+    private fun setStartupItems(
+        pluginIds: List<String>,
+        services: List<TerminalStartupServiceConfig>
+    ) {
+        val context = appContext
+        val items = pluginIds.map { id ->
+            val displayName = runCatching {
+                context?.let { MCPLocalServer.getInstance(it).getPluginMetadata(id)?.name }
+            }.getOrNull() ?: id.split("/").lastOrNull() ?: id
+            PluginInfo(id = id, displayName = displayName)
+        } + services.map { service ->
+            PluginInfo(id = terminalServiceItemId(service.id), displayName = service.name)
+        }
+        synchronized(pluginStateLock) {
+            _plugins.value = items
+            _pluginsTotal.value = items.size
+            _pluginsStarted.value = 0
         }
     }
 
@@ -725,7 +759,7 @@ class PluginLoadingState {
         _isExpanded.value = false
     }
 
-    // 添加方法来初始化MCP服务器并启动插件
+    // 初始化 MCP 插件与用户配置的终端启动服务。
     fun initializeMCPServer(context: Context, lifecycleScope: kotlinx.coroutines.CoroutineScope) {
         if (!mcpInitInProgress.compareAndSet(false, true)) {
             AppLogger.d("PluginLoadingState", "initializeMCPServer already running, skipping")
@@ -734,110 +768,101 @@ class PluginLoadingState {
 
         mcpInitJob = lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // 更新初始状态
                 updateMessage(context.getString(R.string.plugin_initializing))
                 updateProgress(0.05f)
-
-                // 获取MCPLocalServer实例
                 val mcpLocalServer = MCPLocalServer.getInstance(context)
-
-                // 更新状态
-                updateMessage(context.getString(R.string.plugin_starting_server))
-                updateProgress(0.1f)
-
-                // 服务器配置阶段
-                updateMessage(context.getString(R.string.plugin_configuring_server))
-                updateProgress(0.15f)
-
-                // 服务器启动成功，更新状态
-                updateMessage(context.getString(R.string.plugin_server_success))
-                updateProgress(0.2f)
-
-                // 服务器初始化中
-                updateMessage(context.getString(R.string.plugin_server_initializing))
-                updateProgress(0.25f)
-
-                try {
-                    // 获取MCPRepository实例
-                    val mcpRepository = MCPRepository(context)
-
-                    // 注意：工具注册现在在MCPStarter的验证阶段进行，确保插件真正就绪后才注册工具
-
-                    // 获取已安装的插件列表 (这是一个Set<String>)
+                val serviceRepository = TerminalStartupServiceRepository.getInstance(context)
+                val enabledServices = serviceRepository.snapshot().filter { it.enabled }
+                val mcpRepository = MCPRepository(context)
+                val pluginDiscovery = runCatching {
                     updateMessage(context.getString(R.string.plugin_loading_list))
-                    updateProgress(0.28f)
-                    AppLogger.d("PluginLoadingState", "启动前刷新 MCP 配置与插件列表")
                     mcpRepository.refreshPluginList()
-                    val installedPluginsSet = mcpRepository.installedPluginIds.first()
+                    mcpRepository.installedPluginIds.first().filter { mcpLocalServer.isServerEnabled(it) }
+                }.onFailure { error ->
+                    AppLogger.e("PluginLoadingState", "读取 MCP 插件列表失败", error)
+                }
+                val pluginsToStart = pluginDiscovery.getOrDefault(emptyList())
+                val pluginDiscoveryError = pluginDiscovery.exceptionOrNull()
 
-                    // 显式转换为List<String>
-                    val installedPluginsList = installedPluginsSet.toList()
+                setStartupItems(pluginsToStart, enabledServices)
+                if (pluginsToStart.isEmpty() && enabledServices.isEmpty() && pluginDiscoveryError == null) {
+                    updateMessage(context.getString(R.string.plugin_no_plugins_to_start))
+                    updateProgress(1f)
+                    hide()
+                    return@launch
+                }
 
-                    if (installedPluginsSet.isEmpty()) {
-                        // 没有安装的插件，直接进入主界面
-                        AppLogger.d("PluginLoadingState", "没有检测到已安装的插件，直接进入主界面")
-                        updateMessage(context.getString(R.string.plugin_no_plugins))
-                        updateProgress(1.0f)
+                updateMessage(context.getString(R.string.terminal_startup_starting_all))
+                updateProgress(0.25f)
+                val serviceManager = TerminalStartupServiceManager.getInstance(context)
+                val serviceDeferred = async {
+                    serviceManager.startEnabledServices(
+                        object : TerminalStartupServiceManager.ProgressListener {
+                            override fun onServiceStarting(config: TerminalStartupServiceConfig, index: Int, total: Int) {
+                                val itemId = terminalServiceItemId(config.id)
+                                updatePluginStatus(itemId, PluginStatus.LOADING, context.getString(R.string.terminal_startup_status_starting))
+                                appendPluginLog(itemId, "START")
+                            }
 
-                        // 立即隐藏插件加载界面
-                        hide()
-                        return@launch
-                    }
+                            override fun onServiceStatus(config: TerminalStartupServiceConfig, status: com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceStatus) {
+                                val itemId = terminalServiceItemId(config.id)
+                                when (status.state) {
+                                    TerminalStartupServiceState.RUNNING -> setPluginSuccess(itemId, context.getString(R.string.terminal_startup_status_running))
+                                    TerminalStartupServiceState.FAILED -> {
+                                        setPluginFailed(itemId, status.message)
+                                        forceExpanded()
+                                    }
+                                    TerminalStartupServiceState.STOPPED -> updatePluginStatus(itemId, PluginStatus.FAILED, status.message)
+                                    TerminalStartupServiceState.STARTING,
+                                    TerminalStartupServiceState.RESTARTING -> updatePluginStatus(itemId, PluginStatus.LOADING, status.message)
+                                }
+                            }
 
-                    // 筛选出将要启动的插件（已启用且满足条件的插件）
-                    val pluginsToStart = installedPluginsList.filter { pluginId ->
-                        val isEnabled = mcpLocalServer.isServerEnabled(pluginId)
-                        if (!isEnabled) {
-                            false
-                        } else {
-                            val pluginInfo = mcpRepository.getInstalledPluginInfo(pluginId)
-                            when (pluginInfo?.type) {
-                                "remote" -> true // 远程插件只需启用
-                                else -> true // 本地插件现在会自动部署，所以也包含在内
+                            override fun onServiceLog(config: TerminalStartupServiceConfig, message: String) {
+                                appendPluginLog(terminalServiceItemId(config.id), message)
                             }
                         }
-                    }
-
-                    // 设置插件列表，只传入将要启动的插件
-                    updateMessage(
-                            context.getString(R.string.plugin_preparing, pluginsToStart.size)
                     )
-                    updateProgress(0.32f)
-                    setPlugins(pluginsToStart)
+                }
 
-                    // 有安装的插件，使用MCPStarter启动
-                    updateMessage(context.getString(R.string.plugin_checking_env))
-                    updateProgress(0.35f)
+                val mcpCompletion = CompletableDeferred<McpStartupResult>()
+                if (pluginDiscoveryError != null) {
+                    mcpCompletion.complete(McpStartupResult(0, 0, MCPStarter.PluginInitStatus.OTHER_ERROR))
+                } else if (pluginsToStart.isEmpty()) {
+                    mcpCompletion.complete(McpStartupResult(0, 0, MCPStarter.PluginInitStatus.SUCCESS))
+                } else {
+                    MCPStarter(context).startAllDeployedPlugins(
+                        createPluginStartProgressListener(mcpLocalServer, context) { success, total, status ->
+                            mcpCompletion.complete(McpStartupResult(success, total, status))
+                        }
+                    )
+                }
 
-                    val mcpStarter = MCPStarter(context)
-                    val mcpLocalServer = MCPLocalServer.getInstance(context)
-
-                    // 创建一个适配器匿名类实现插件启动监听器
-                    updateMessage(context.getString(R.string.plugin_starting_plugins))
-                    updateProgress(0.38f)
-
-                    val progressListener =
-                            createPluginStartProgressListener(
-                                    mcpLocalServer,
-                                    lifecycleScope,
-                                    context
-                            )
-
-                    // 启动所有插件 - MCPStarter会处理各种检查逻辑
-                    mcpStarter.startAllDeployedPlugins(progressListener)
-                } catch (e: Exception) {
-                    // 处理插件加载过程中的异常
-                    AppLogger.e("PluginLoadingState", "加载插件过程中出错", e)
-                    updateMessage(e.message ?: context.getString(R.string.plugin_loading_failed))
-                    updateProgress(1.0f)
-
+                val serviceResults = serviceDeferred.await()
+                val mcpResult = mcpCompletion.await()
+                val serviceSuccesses = serviceResults.count { it.success }
+                val successCount = serviceSuccesses + mcpResult.successCount
+                val totalCount = serviceResults.size + mcpResult.totalCount
+                val hasFailures = successCount < totalCount || mcpResult.status != MCPStarter.PluginInitStatus.SUCCESS
+                updateProgress(1f)
+                updateMessage(
+                    context.getString(
+                        if (hasFailures) R.string.terminal_startup_complete_with_failures
+                        else R.string.terminal_startup_complete_success,
+                        successCount,
+                        totalCount
+                    )
+                )
+                if (hasFailures) {
                     forceExpanded()
+                } else {
+                    delay(100L)
+                    if (isVisible.value) hide()
                 }
             } catch (e: Exception) {
-                AppLogger.e("PluginLoadingState", "启动MCP服务器和插件时出错", e)
+                AppLogger.e("PluginLoadingState", "启动 MCP 插件和终端服务时出错", e)
                 updateMessage(e.message ?: context.getString(R.string.plugin_other_error))
                 updateProgress(1.0f)
-
                 forceExpanded()
             } finally {
                 mcpInitInProgress.set(false)
@@ -848,8 +873,8 @@ class PluginLoadingState {
     // 创建插件启动进度监听器
     private fun createPluginStartProgressListener(
             mcpLocalServer: MCPLocalServer,
-            lifecycleScope: kotlinx.coroutines.CoroutineScope,
-            context: Context
+            context: Context,
+            onComplete: (Int, Int, MCPStarter.PluginInitStatus) -> Unit
     ): MCPStarter.PluginStartProgressListener {
         return object : MCPStarter.PluginStartProgressListener {
             override fun onPluginStarting(pluginId: String, index: Int, total: Int) {
@@ -953,19 +978,11 @@ class PluginLoadingState {
                     }
                 }
 
-                updateProgress(1.0f)
-
                 val hasFailures = successCount < totalCount && totalCount > 0
                 if (status != MCPStarter.PluginInitStatus.SUCCESS || hasFailures) {
                     forceExpanded()
-                } else {
-                    lifecycleScope.launch {
-                        delay(100L)
-                        if (isVisible.value) {
-                            hide()
-                        }
-                    }
                 }
+                onComplete(successCount, totalCount, status)
             }
 
             override fun onAllPluginsVerified(

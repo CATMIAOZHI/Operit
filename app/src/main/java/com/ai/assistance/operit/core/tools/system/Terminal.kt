@@ -9,6 +9,7 @@ import com.ai.assistance.operit.terminal.SessionDirectoryEvent
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.data.TerminalState
 import com.ai.assistance.operit.terminal.provider.type.HiddenExecResult
+import com.ai.assistance.operit.terminal.provider.type.TerminalType
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -80,7 +81,17 @@ class Terminal private constructor(private val context: Context) {
         AppLogger.d(TAG, "Session ${newSession.id} initialized successfully")
         return newSession.id
     }
-    
+
+    /** Create a local session without changing the terminal currently shown to the user. */
+    suspend fun createLocalBackgroundSession(title: String? = null): String {
+        val newSession = terminalManager.createNewSession(
+            title = title,
+            terminalTypeOverride = TerminalType.LOCAL,
+            makeCurrent = false
+        )
+        return newSession.id
+    }
+
     /**
      * 切换到指定会话
      */
@@ -94,6 +105,13 @@ class Terminal private constructor(private val context: Context) {
     fun closeSession(sessionId: String) {
         terminalManager.closeSession(sessionId)
     }
+
+    /** Send a command to a session without waiting for the command to finish. */
+    suspend fun launchCommand(
+        sessionId: String,
+        command: String,
+        commandId: String = UUID.randomUUID().toString()
+    ): String = terminalManager.sendCommandToSession(sessionId, command, commandId)
 
     /**
      * 执行命令并等待其完成（不切换当前会话）

@@ -68,7 +68,8 @@ import com.ai.assistance.operit.ui.features.startup.screens.LocalPluginLoadingSt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MCPConfigScreen(
-    searchQuery: String = ""
+    searchQuery: String = "",
+    onOpenTerminalStartupServices: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val activity = context as? androidx.activity.ComponentActivity
@@ -1184,6 +1185,37 @@ fun MCPConfigScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
+                            }
+                        }
+                    }
+
+                    item {
+                        Card(
+                            onClick = onOpenTerminalStartupServices,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Terminal, contentDescription = null)
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        stringResource(R.string.terminal_startup_title),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        stringResource(R.string.terminal_startup_entry_description),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
                             }
                         }
                     }

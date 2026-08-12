@@ -127,6 +127,7 @@ private suspend fun runQuickPluginCreatorSetupAndPublishResult(
 fun PackageManagerScreen(
     onStartPluginCreation: (PluginCreationIntent) -> Unit = {},
     onOpenToolPkgPluginConfig: (String, String, String, Boolean) -> Unit = { _, _, _, _ -> },
+    onOpenTerminalStartupServices: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val toolHandler = remember { AIToolHandler.getInstance(context) }
@@ -936,7 +937,8 @@ fun PackageManagerScreen(
 
                     PackageTab.MCP -> {
                         MCPConfigScreen(
-                            searchQuery = mcpSearchQuery
+                            searchQuery = mcpSearchQuery,
+                            onOpenTerminalStartupServices = onOpenTerminalStartupServices
                         )
                     }
                 }
