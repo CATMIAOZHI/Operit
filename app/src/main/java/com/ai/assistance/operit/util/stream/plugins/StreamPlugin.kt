@@ -27,6 +27,13 @@ interface StreamPlugin {
      * for better state management.
      */
     val state: PluginState
+
+    /**
+     * Whether this plugin has already entered a lexical region that competing block plugins must
+     * not claim while this plugin is still confirming the full opener.
+     */
+    val blocksCompetingPluginsWhileTrying: Boolean
+        get() = false
     
     /**
      * 处理单个字符，并决定是否应将其发射到流中。
@@ -51,4 +58,4 @@ interface StreamPlugin {
      * 重置插件状态
      */
     fun reset()
-} 
+}

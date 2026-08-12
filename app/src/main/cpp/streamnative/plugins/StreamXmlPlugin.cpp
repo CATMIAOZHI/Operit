@@ -8,12 +8,21 @@ StreamXmlPlugin::StreamXmlPlugin(bool includeTagsInOutput)
           startState_(StartState::WAIT_LT),
           allowStartAfterEndTag_(false),
           allowStartAfterPunctuation_(false),
-          haveEndPattern_(false) {
+          haveEndPattern_(false),
+          displayEndMode_(false),
+          displayEndState_(DisplayEndState::WAIT_LT),
+          displayCandidateClosing_(false),
+          displayCandidateQuote_(0),
+          displayLastNonWhitespace_(0) {
     reset();
 }
 
 PluginState StreamXmlPlugin::state() const {
     return state_;
+}
+
+bool StreamXmlPlugin::blocksCompetingPluginsWhileTrying() const {
+    return state_ == PluginState::TRYING && startQuote_ != 0;
 }
 
 bool StreamXmlPlugin::initPlugin() {
@@ -28,6 +37,11 @@ void StreamXmlPlugin::reset() {
     endMatcher_.reset();
     endPattern_.clear();
     haveEndPattern_ = false;
+    displayEndMode_ = false;
+    resetDisplayEndCandidate();
+    displayFamilyStack_.clear();
+    startQuote_ = 0;
+    startLastNonWhitespace_ = 0;
     lastChar_ = 0;
 }
 
@@ -35,8 +49,42 @@ bool StreamXmlPlugin::isAsciiLetter(char16_t c) {
     return (c >= u'A' && c <= u'Z') || (c >= u'a' && c <= u'z');
 }
 
+char16_t StreamXmlPlugin::asciiLower(char16_t c) {
+    return (c >= u'A' && c <= u'Z') ? static_cast<char16_t>(c - u'A' + u'a') : c;
+}
+
+bool StreamXmlPlugin::isWhitespace(char16_t c) {
+    return (c >= u'\t' && c <= u'\r') || (c >= u'\u001C' && c <= u'\u001F') ||
+           c == u' ' || c == u'\u00A0' || c == u'\u1680' ||
+           (c >= u'\u2000' && c <= u'\u200A') || c == u'\u2028' || c == u'\u2029' ||
+           c == u'\u202F' || c == u'\u205F' || c == u'\u3000';
+}
+
+bool StreamXmlPlugin::equalsAsciiIgnoreCase(
+        const std::u16string& value,
+        const char16_t* expected) {
+    size_t index = 0;
+    while (expected[index] != 0) {
+        if (index >= value.size() || asciiLower(value[index]) != expected[index]) {
+            return false;
+        }
+        index++;
+    }
+    return index == value.size();
+}
+
+bool StreamXmlPlugin::isThinkFamilyTagName(const std::u16string& tagName) {
+    return equalsAsciiIgnoreCase(tagName, u"think") ||
+           equalsAsciiIgnoreCase(tagName, u"thinking");
+}
+
+bool StreamXmlPlugin::isDisplayTagName(const std::u16string& tagName) {
+    return isThinkFamilyTagName(tagName) || equalsAsciiIgnoreCase(tagName, u"search");
+}
+
 bool StreamXmlPlugin::isTagNameContinuationChar(char16_t c) {
-    return isAsciiLetter(c) || (c >= u'0' && c <= u'9') || c == u'_';
+    return isAsciiLetter(c) || (c >= u'0' && c <= u'9') || c == u'_' ||
+           c == u'-' || c == u'.' || c == u':';
 }
 
 bool StreamXmlPlugin::isPunctuationTrigger(char16_t c) {
@@ -113,6 +161,8 @@ bool StreamXmlPlugin::processStartMatcher(char16_t c) {
         case StartState::WAIT_LT: {
             if (c == u'<') {
                 tagName_.clear();
+                startQuote_ = 0;
+                startLastNonWhitespace_ = 0;
                 startState_ = StartState::WAIT_FIRST_LETTER;
                 state_ = PluginState::TRYING;
             }
@@ -130,7 +180,13 @@ bool StreamXmlPlugin::processStartMatcher(char16_t c) {
             return false;
         }
         case StartState::IN_TAG_NAME: {
-            if (c == u' ') {
+            if (isWhitespace(c)) {
+                startState_ = StartState::IN_ATTRS;
+                state_ = PluginState::TRYING;
+                return false;
+            }
+            if (c == u'/') {
+                startLastNonWhitespace_ = c;
                 startState_ = StartState::IN_ATTRS;
                 state_ = PluginState::TRYING;
                 return false;
@@ -151,11 +207,24 @@ bool StreamXmlPlugin::processStartMatcher(char16_t c) {
             return false;
         }
         case StartState::IN_ATTRS: {
+            if (startQuote_ != 0) {
+                if (!isWhitespace(c)) startLastNonWhitespace_ = c;
+                if (c == startQuote_) startQuote_ = 0;
+                state_ = PluginState::TRYING;
+                return false;
+            }
+            if (c == u'\'' || c == u'"') {
+                startLastNonWhitespace_ = c;
+                startQuote_ = c;
+                state_ = PluginState::TRYING;
+                return false;
+            }
             if (c == u'>') {
                 startState_ = StartState::WAIT_LT;
                 state_ = PluginState::TRYING;
                 return true;
             }
+            if (!isWhitespace(c)) startLastNonWhitespace_ = c;
             state_ = PluginState::TRYING;
             return false;
         }
@@ -164,6 +233,14 @@ bool StreamXmlPlugin::processStartMatcher(char16_t c) {
 }
 
 void StreamXmlPlugin::buildEndPattern() {
+    if (isDisplayTagName(tagName_)) {
+        displayEndMode_ = true;
+        resetDisplayEndCandidate();
+        displayFamilyStack_.clear();
+        displayFamilyStack_.push_back(displayTagFamily(tagName_));
+        haveEndPattern_ = false;
+        return;
+    }
     endPattern_.clear();
     endPattern_.reserve(tagName_.size() + 3);
     endPattern_.push_back(u'<');
@@ -174,14 +251,121 @@ void StreamXmlPlugin::buildEndPattern() {
     haveEndPattern_ = true;
 }
 
+bool StreamXmlPlugin::isValidDisplayEndName() const {
+    return !displayTagFamily(displayEndName_).empty();
+}
+
+std::u16string StreamXmlPlugin::displayTagFamily(const std::u16string& tagName) {
+    if (isThinkFamilyTagName(tagName)) return u"think";
+    if (equalsAsciiIgnoreCase(tagName, u"search")) return u"search";
+    return {};
+}
+
+void StreamXmlPlugin::resetDisplayEndCandidate() {
+    displayEndState_ = DisplayEndState::WAIT_LT;
+    displayEndName_.clear();
+    displayCandidateClosing_ = false;
+    displayCandidateQuote_ = 0;
+    displayLastNonWhitespace_ = 0;
+}
+
+void StreamXmlPlugin::restartDisplayEndMatcher(char16_t c) {
+    resetDisplayEndCandidate();
+    if (c == u'<') displayEndState_ = DisplayEndState::AFTER_LT;
+}
+
+bool StreamXmlPlugin::completeDisplayTagCandidate() {
+    const std::u16string family = displayTagFamily(displayEndName_);
+    const bool validName = !family.empty();
+    const bool validClosingSuffix = displayLastNonWhitespace_ == 0;
+    const bool selfClosing =
+            !displayCandidateClosing_ && displayLastNonWhitespace_ == u'/';
+    if (validName && displayCandidateClosing_ && validClosingSuffix) {
+        if (!displayFamilyStack_.empty() && displayFamilyStack_.back() == family) {
+            displayFamilyStack_.pop_back();
+            if (displayFamilyStack_.empty()) return true;
+        }
+    } else if (validName && !displayCandidateClosing_ && !selfClosing) {
+        displayFamilyStack_.push_back(family);
+    }
+    resetDisplayEndCandidate();
+    return false;
+}
+
+bool StreamXmlPlugin::processDisplayEndMatcher(char16_t c) {
+    switch (displayEndState_) {
+        case DisplayEndState::WAIT_LT:
+            if (c == u'<') displayEndState_ = DisplayEndState::AFTER_LT;
+            return false;
+        case DisplayEndState::AFTER_LT:
+            if (c == u'/') {
+                displayCandidateClosing_ = true;
+                displayEndName_.clear();
+                displayEndState_ = DisplayEndState::IN_NAME;
+            } else if (isAsciiLetter(c)) {
+                displayCandidateClosing_ = false;
+                displayEndName_.assign(1, asciiLower(c));
+                displayEndState_ = DisplayEndState::IN_NAME;
+            } else {
+                restartDisplayEndMatcher(c);
+            }
+            return false;
+        case DisplayEndState::IN_NAME:
+            if (isTagNameContinuationChar(c)) {
+                displayEndName_.push_back(asciiLower(c));
+                return false;
+            }
+            if (!isValidDisplayEndName()) {
+                restartDisplayEndMatcher(c);
+                return false;
+            }
+            if (c == u'>') return completeDisplayTagCandidate();
+            if (isWhitespace(c)) {
+                displayEndState_ = DisplayEndState::IN_SUFFIX;
+                return false;
+            }
+            if (!displayCandidateClosing_ && c == u'/') {
+                displayLastNonWhitespace_ = u'/';
+                displayEndState_ = DisplayEndState::IN_SUFFIX;
+                return false;
+            }
+            restartDisplayEndMatcher(c);
+            return false;
+        case DisplayEndState::IN_SUFFIX:
+            if (displayCandidateQuote_ != 0) {
+                if (!isWhitespace(c)) displayLastNonWhitespace_ = c;
+                if (c == displayCandidateQuote_) displayCandidateQuote_ = 0;
+                return false;
+            }
+            if (!displayCandidateClosing_ && (c == u'\'' || c == u'"')) {
+                displayLastNonWhitespace_ = c;
+                displayCandidateQuote_ = c;
+                return false;
+            }
+            if (c == u'<') {
+                restartDisplayEndMatcher(c);
+                return false;
+            }
+            if (c == u'>') return completeDisplayTagCandidate();
+            if (!isWhitespace(c)) displayLastNonWhitespace_ = c;
+            return false;
+    }
+    return false;
+}
+
 bool StreamXmlPlugin::processChar(char16_t c, bool atStartOfLine) {
-    const char16_t prevChar = lastChar_;
     auto finish = [&](bool result) {
         lastChar_ = c;
         return result;
     };
 
     if (state_ == PluginState::PROCESSING) {
+        if (displayEndMode_ && processDisplayEndMatcher(c)) {
+            allowStartAfterEndTag_ = true;
+            allowStartAfterPunctuation_ = false;
+            reset();
+            return finish(includeTagsInOutput_);
+        }
         if (haveEndPattern_) {
             if (endMatcher_.process(c)) {
                 allowStartAfterEndTag_ = true;
@@ -207,9 +391,13 @@ bool StreamXmlPlugin::processChar(char16_t c, bool atStartOfLine) {
     const bool startMatched = processStartMatcher(c);
 
     if (startMatched) {
-        if (prevChar == u'/') {
+        if (startLastNonWhitespace_ == u'/') {
             // Treat self-closing tags like <br/> as plain text to avoid entering XML mode.
+            const bool exposeAdjacentTag = isDisplayTagName(tagName_);
             reset();
+            // Only app-owned display tags may expose an immediately adjacent tool. Arbitrary
+            // self-closing HTML/XML remains plain text and does not broaden executable contexts.
+            allowStartAfterEndTag_ = exposeAdjacentTag;
             return finish(true);
         }
         state_ = PluginState::PROCESSING;
@@ -217,6 +405,8 @@ bool StreamXmlPlugin::processChar(char16_t c, bool atStartOfLine) {
         allowStartAfterPunctuation_ = false;
         buildEndPattern();
         startState_ = StartState::WAIT_LT;
+        startQuote_ = 0;
+        startLastNonWhitespace_ = 0;
         return finish(includeTagsInOutput_);
     }
 
