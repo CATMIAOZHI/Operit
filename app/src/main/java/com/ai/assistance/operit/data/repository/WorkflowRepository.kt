@@ -514,23 +514,35 @@ internal fun decodeWorkflowExecutionRecordSafely(
 }
 
 internal fun writeWorkflowContentAtomically(file: File, content: String) {
-    val parent = file.parentFile ?: throw IllegalStateException("Workflow file has no parent directory")
-    if (!parent.exists() && !parent.mkdirs()) {
-        throw IllegalStateException("Failed to create workflow directory")
-    }
-    val atomicFile = AtomicFile(file)
-    val output = atomicFile.startWrite()
-    try {
-        output.write(content.toByteArray(Charsets.UTF_8))
-        atomicFile.finishWrite(output)
-    } catch (error: Throwable) {
-        atomicFile.failWrite(output)
-        throw error
+    withWorkflowAtomicFileLock(file) {
+        val parent = file.parentFile ?: throw IllegalStateException("Workflow file has no parent directory")
+        if (!parent.exists() && !parent.mkdirs()) {
+            throw IllegalStateException("Failed to create workflow directory")
+        }
+        val atomicFile = AtomicFile(file)
+        val output = atomicFile.startWrite()
+        try {
+            output.write(content.toByteArray(Charsets.UTF_8))
+            atomicFile.finishWrite(output)
+        } catch (error: Throwable) {
+            atomicFile.failWrite(output)
+            throw error
+        }
     }
 }
 
 internal fun readWorkflowContentAtomically(file: File): String =
-    AtomicFile(file).openRead().bufferedReader(Charsets.UTF_8).use { reader -> reader.readText() }
+    withWorkflowAtomicFileLock(file) {
+        AtomicFile(file).openRead().bufferedReader(Charsets.UTF_8).use { reader -> reader.readText() }
+    }
+
+internal fun recoverAtomicWorkflowFile(file: File): Boolean =
+    withWorkflowAtomicFileLock(file) {
+        val backup = File(file.path + ".bak")
+        if (!file.isFile && !backup.isFile) return@withWorkflowAtomicFileLock false
+        AtomicFile(file).openRead().use { }
+        file.isFile
+    }
 
 internal fun mutateWorkflowFileAtomically(
     file: File,
@@ -568,6 +580,15 @@ internal fun prepareExplicitLegacyPromotionScheduleGeneration(
     scheduleReconciliationPending,
     rejectedPastSpecificTime,
 )
+
+private const val WORKFLOW_ATOMIC_FILE_LOCK_STRIPES = 64
+private val workflowAtomicFileLocks = Array(WORKFLOW_ATOMIC_FILE_LOCK_STRIPES) { Any() }
+
+internal fun <T> withWorkflowAtomicFileLock(file: File, block: () -> T): T {
+    val key = file.absoluteFile.normalize().path
+    val stripe = (key.hashCode() and Int.MAX_VALUE) % WORKFLOW_ATOMIC_FILE_LOCK_STRIPES
+    return synchronized(workflowAtomicFileLocks[stripe], block)
+}
 
 internal fun updateWorkflowFileAtomically(
     file: File,
@@ -764,8 +785,8 @@ class WorkflowRepository(private val context: Context) {
     // ------------------------------------------------------------------
 
     /** Internal primary workflow definition file (always writable). */
-    private fun getInternalWorkflowFile(workflowId: String): File =
-        requireNotNull(
+    private fun getInternalWorkflowFile(workflowId: String): File {
+        val file = requireNotNull(
             resolveWorkflowStorageChild(
                 root = paths.internalWorkflows,
                 workflowId = workflowId,
@@ -775,6 +796,11 @@ class WorkflowRepository(private val context: Context) {
         ) {
             "Invalid workflow id"
         }
+        synchronized(promotionLocks.computeIfAbsent(workflowId) { Any() }) {
+            recoverAtomicWorkflowFile(file)
+        }
+        return file
+    }
 
     /**
      * Legacy `Download/Operit/workflow/<id>.json`. Non-creating: never calls mkdirs. Only
@@ -978,6 +1004,7 @@ class WorkflowRepository(private val context: Context) {
                 workflows,
                 isLegacy = false,
                 trustedAnchor = paths.internalRoot,
+                recoverAtomicBackups = true,
             )
 
             // 2. Scan legacy Download store only if the read switch is on.
@@ -1013,8 +1040,14 @@ class WorkflowRepository(private val context: Context) {
         isLegacy: Boolean,
         scanLimits: WorkflowFileScanLimits = WorkflowFileScanLimits(),
         trustedAnchor: File = dir,
+        recoverAtomicBackups: Boolean = false,
     ) {
-        val scan = scanCanonicalWorkflowJsonFiles(dir, trustedAnchor, scanLimits)
+        val scan = scanCanonicalWorkflowJsonFiles(
+            dir,
+            trustedAnchor,
+            scanLimits,
+            recoverAtomicBackups = recoverAtomicBackups,
+        )
         if (isLegacy && (scan.truncated || scan.skippedEntries > 0)) {
             AppLogger.w(
                 TAG,
@@ -1107,7 +1140,7 @@ class WorkflowRepository(private val context: Context) {
             require(workflow.id.isNotBlank()) { "Workflow id cannot be empty" }
             val normalizedTokens = WorkflowIntentSecurity.normalizeExternalTriggerTokens(
                 workflow = workflow,
-                tokenValidator = authTokenManager::isAuthenticAuthToken,
+                replaceExistingTokens = true,
                 tokenFactory = authTokenManager::newAuthToken
             )
             val normalizedWorkflow = prepareFingerprintGenerationForScheduledDefinition(
@@ -1982,9 +2015,14 @@ class WorkflowRepository(private val context: Context) {
                 return@synchronized false
             }
             val activeSchedule = scheduler.hasActiveWorkflowScheduleAndWait(id)
+            val activeMatchingSchedule =
+                scheduler.hasActiveMatchingWorkflowScheduleAndWait(latest)
             val preserveActiveSchedule = activeSchedule && (
-                latest.scheduleFingerprintGeneration ==
-                    WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION ||
+                (
+                    latest.scheduleFingerprintGeneration ==
+                        WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION &&
+                        activeMatchingSchedule
+                ) ||
                     scheduler.shouldPreserveActivePreFingerprintScheduleRequest(latest)
                 )
             if (preserveActiveSchedule) {
@@ -2057,7 +2095,11 @@ class WorkflowRepository(private val context: Context) {
     }
 
     private fun loadInternalWorkflowsForAutomaticTriggers(): List<Workflow> =
-        canonicalWorkflowJsonFiles(paths.internalWorkflows, paths.internalRoot).mapNotNull { file ->
+        canonicalWorkflowJsonFiles(
+            paths.internalWorkflows,
+            paths.internalRoot,
+            recoverAtomicBackups = true,
+        ).mapNotNull { file ->
             runCatching { readWorkflowFile(file, file.nameWithoutExtension, isLegacy = false) }
                 .onFailure {
                     AppLogger.e(TAG, "Failed to parse internal workflow file: ${file.name}", it)
@@ -2363,12 +2405,22 @@ internal fun canonicalWorkflowJsonFiles(
     directory: File,
     trustedAnchor: File = directory,
     limits: WorkflowFileScanLimits = WorkflowFileScanLimits(),
-): List<File> = scanCanonicalWorkflowJsonFiles(directory, trustedAnchor, limits).files
+    recoverAtomicBackups: Boolean = false,
+    atomicRecovery: (File) -> Boolean = ::recoverAtomicWorkflowFile,
+): List<File> = scanCanonicalWorkflowJsonFiles(
+    directory,
+    trustedAnchor,
+    limits,
+    recoverAtomicBackups,
+    atomicRecovery,
+).files
 
 internal fun scanCanonicalWorkflowJsonFiles(
     directory: File,
     trustedAnchor: File = directory,
     limits: WorkflowFileScanLimits = WorkflowFileScanLimits(),
+    recoverAtomicBackups: Boolean = false,
+    atomicRecovery: (File) -> Boolean = ::recoverAtomicWorkflowFile,
 ): WorkflowFileScanResult {
     require(limits.maxFiles >= 0)
     require(limits.maxEntriesVisited >= 0)
@@ -2388,6 +2440,14 @@ internal fun scanCanonicalWorkflowJsonFiles(
         return empty
     }
     if (!canonicalDirectory.isDirectory) return empty
+
+    if (recoverAtomicBackups) {
+        recoverCanonicalAtomicWorkflowBackups(
+            canonicalDirectory,
+            limits.maxEntriesVisited,
+            atomicRecovery,
+        )
+    }
 
     val accepted = ArrayList<File>(minOf(limits.maxFiles, 64))
     var visited = 0
@@ -2438,6 +2498,33 @@ internal fun scanCanonicalWorkflowJsonFiles(
         }
         WorkflowFileScanResult(accepted, truncated, skipped)
     }.getOrDefault(empty)
+}
+
+private fun recoverCanonicalAtomicWorkflowBackups(
+    canonicalDirectory: File,
+    maxEntriesVisited: Int,
+    atomicRecovery: (File) -> Boolean,
+) {
+    runCatching {
+        Files.newDirectoryStream(canonicalDirectory.toPath(), "*.json.bak").use { entries ->
+            val iterator = entries.iterator()
+            var visited = 0
+            while (iterator.hasNext() && visited < maxEntriesVisited) {
+                val path = iterator.next()
+                visited++
+                if (
+                    Files.isSymbolicLink(path) ||
+                    !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                ) continue
+                val backup = path.toFile()
+                if (backup.canonicalFile.parentFile != canonicalDirectory) continue
+                val baseName = backup.name.removeSuffix(".bak")
+                val base = File(canonicalDirectory, baseName)
+                if (base.parentFile != canonicalDirectory || base.extension != "json") continue
+                runCatching { atomicRecovery(base) }
+            }
+        }
+    }
 }
 
 /** Rejects a managed root when it or any lexical component below [trustedAnchor] is a symlink. */

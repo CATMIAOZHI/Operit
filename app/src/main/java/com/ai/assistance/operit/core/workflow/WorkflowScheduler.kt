@@ -43,8 +43,14 @@ internal fun shouldRetireCompletedPreFingerprintOneTime(
     if (triggerNode.triggerConfig[WorkflowScheduler.CONFIG_SCHEDULE_TYPE] !=
         WorkflowScheduler.SCHEDULE_TYPE_SPECIFIC_TIME
     ) return false
-    return WorkInfo.State.SUCCEEDED in workStates
+    return WorkInfo.State.SUCCEEDED in workStates || WorkInfo.State.FAILED in workStates
 }
+
+internal fun isActiveMatchingWorkflowSchedule(
+    state: WorkInfo.State,
+    tags: Set<String>,
+    expectedFingerprintTag: String,
+): Boolean = isActiveWorkflowScheduleState(state) && expectedFingerprintTag in tags
 
 /**
  * WorkflowScheduler manages scheduling workflows using WorkManager
@@ -77,6 +83,7 @@ class WorkflowScheduler(private val context: Context) {
         // WorkManager data keys
         const val KEY_TRIGGER_NODE_ID = "trigger_node_id"
         const val KEY_SCHEDULE_FINGERPRINT = "schedule_fingerprint"
+        private const val SCHEDULE_FINGERPRINT_TAG_PREFIX = "workflow_schedule_fingerprint:"
         const val PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION = -1
         const val CLAIMED_SCHEDULE_FINGERPRINT_GENERATION = 0
         const val CURRENT_SCHEDULE_FINGERPRINT_GENERATION = 1
@@ -91,6 +98,9 @@ class WorkflowScheduler(private val context: Context) {
                 .digest(payload.toByteArray(Charsets.UTF_8))
             return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
         }
+
+        internal fun scheduleFingerprintTag(fingerprint: String): String =
+            SCHEDULE_FINGERPRINT_TAG_PREFIX + fingerprint
     }
 
     private val workManager: WorkManager by lazy { 
@@ -181,6 +191,7 @@ class WorkflowScheduler(private val context: Context) {
                 )
             )
             .addTag(workflowId)
+            .addTag(scheduleFingerprintTag(scheduleFingerprint))
             .build()
 
         workManager.enqueueUniquePeriodicWork(
@@ -239,6 +250,7 @@ class WorkflowScheduler(private val context: Context) {
             )
             .setInitialDelay(initialDelay, TimeUnit.MILLISECONDS)
             .addTag(workflowId)
+            .addTag(scheduleFingerprintTag(scheduleFingerprint))
             .build()
 
         workManager.enqueueUniqueWork(
@@ -302,6 +314,7 @@ class WorkflowScheduler(private val context: Context) {
                     )
                     .setInitialDelay(delay, TimeUnit.MILLISECONDS)
                     .addTag(workflowId)
+                    .addTag(scheduleFingerprintTag(scheduleFingerprint))
                     .build()
 
                 workManager.enqueueUniquePeriodicWork(
@@ -351,6 +364,7 @@ class WorkflowScheduler(private val context: Context) {
             )
             .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
             .addTag(workflowId)
+            .addTag(scheduleFingerprintTag(scheduleFingerprint))
             .build()
 
         workManager.enqueueUniqueWork(
@@ -494,6 +508,16 @@ class WorkflowScheduler(private val context: Context) {
         workManager.getWorkInfosForUniqueWork(getWorkName(workflowId)).get().any { info ->
             isActiveWorkflowScheduleState(info.state)
         }
+
+    internal fun hasActiveMatchingWorkflowScheduleAndWait(workflow: Workflow): Boolean {
+        val triggerNode = workflow.nodes.filterIsInstance<TriggerNode>()
+            .firstOrNull { it.triggerType == "schedule" }
+            ?: return false
+        val expectedTag = scheduleFingerprintTag(scheduleFingerprint(workflow.id, triggerNode))
+        return workManager.getWorkInfosForUniqueWork(getWorkName(workflow.id)).get().any { info ->
+            isActiveMatchingWorkflowSchedule(info.state, info.tags, expectedTag)
+        }
+    }
 
     internal fun shouldRetireCompletedPreFingerprintOneTimeAndWait(workflow: Workflow): Boolean =
         shouldRetireCompletedPreFingerprintOneTime(

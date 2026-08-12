@@ -149,7 +149,7 @@ object ToolExecutionTimingRepository {
     ): Map<ToolExecutionTimingKey, ToolExecutionTimingSnapshot> {
         val retained = LinkedHashMap<ToolExecutionTimingKey, ToolExecutionTimingSnapshot>()
         snapshots.entries
-            .takeLast(MAX_RETAINED_CALLS)
+            .drop((snapshots.size - MAX_RETAINED_CALLS).coerceAtLeast(0))
             .forEach { (key, snapshot) -> retained[key] = snapshot }
 
         var retainedTextChars = retained.values.sumOf { it.resultText.length + it.errorText.length }

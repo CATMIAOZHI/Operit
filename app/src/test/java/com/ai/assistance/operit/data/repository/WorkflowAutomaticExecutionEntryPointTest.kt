@@ -46,6 +46,8 @@ class WorkflowAutomaticExecutionEntryPointTest {
         )
         val rebuildActiveCheckIndex =
             rebuildOne.indexOf("scheduler.hasActiveWorkflowScheduleAndWait(id)")
+        val rebuildMatchingCheckIndex =
+            rebuildOne.indexOf("scheduler.hasActiveMatchingWorkflowScheduleAndWait(latest)")
         val rebuildSchedulableCheckIndex =
             rebuildOne.indexOf("scheduler.isSchedulableWorkflowDefinition(latest)")
         val rebuildRejectedCheckIndex =
@@ -57,7 +59,8 @@ class WorkflowAutomaticExecutionEntryPointTest {
         val rebuildScheduleIndex = rebuildOne.indexOf("scheduleWorkflowLocked(")
         assertTrue(rebuildRejectedCheckIndex in 0 until rebuildSchedulableCheckIndex)
         assertTrue(rebuildSchedulableCheckIndex in 0 until rebuildActiveCheckIndex)
-        assertTrue(rebuildActiveCheckIndex in 0 until rebuildPreserveIndex)
+        assertTrue(rebuildActiveCheckIndex in 0 until rebuildMatchingCheckIndex)
+        assertTrue(rebuildMatchingCheckIndex in 0 until rebuildPreserveIndex)
         assertTrue(rebuildPreserveIndex in 0 until rebuildCompletedIndex)
         assertTrue(rebuildCompletedIndex in 0 until rebuildScheduleIndex)
         assertTrue(rebuildOne.contains("writeWorkflowContentAtomically(internal"))
@@ -97,6 +100,14 @@ class WorkflowAutomaticExecutionEntryPointTest {
         assertTrue(
             repository.contains("inheritMissingToken = inheritModelRedactedExternalTriggerToken")
         )
+        val createWorkflow = repository.substring(
+            repository.indexOf("suspend fun createWorkflow"),
+            repository.indexOf("suspend fun updateWorkflow"),
+        )
+        assertTrue(createWorkflow.contains("replaceExistingTokens = true"))
+        assertTrue(repository.contains("recoverAtomicBackups = true"))
+        assertTrue(repository.contains("recoverAtomicWorkflowFile(file)"))
+        assertTrue(repository.contains("withWorkflowAtomicFileLock(file)"))
     }
 
     private fun source(relativePath: String): String {

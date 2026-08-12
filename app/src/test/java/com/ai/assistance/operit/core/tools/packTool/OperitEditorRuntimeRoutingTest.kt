@@ -11,7 +11,7 @@ class OperitEditorRuntimeRoutingTest {
         val source = File("src/main/assets/packages/operit_editor.js").readText()
 
         assertTrue(source.contains("packageSnapshot?.externalPackagesPath"))
-        assertTrue(source.contains("toolPkgDebugInstallComponent: `${appPackage}/"))
+        assertTrue(source.contains("toolPkgDebugInstallComponent: `${'$'}{appPackage}/"))
         assertTrue(source.contains("Android\\/data\\/([^/]+)\\/files\\/packages"))
         assertFalse(
             source.contains(

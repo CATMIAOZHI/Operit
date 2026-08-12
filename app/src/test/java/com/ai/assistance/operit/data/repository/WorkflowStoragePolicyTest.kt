@@ -4,8 +4,12 @@ import android.content.Context
 import androidx.work.WorkInfo
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import com.ai.assistance.operit.core.workflow.WorkflowScheduler
 import com.ai.assistance.operit.core.workflow.isActiveWorkflowScheduleState
+import com.ai.assistance.operit.core.workflow.isActiveMatchingWorkflowSchedule
 import com.ai.assistance.operit.core.workflow.shouldRetireCompletedPreFingerprintOneTime
 import com.ai.assistance.operit.core.workflow.specificTimeInitialDelay
 import com.ai.assistance.operit.core.workflow.shouldRetryWorkflowWorkerFailure
@@ -344,10 +348,17 @@ class WorkflowStoragePolicyTest {
                 targetIsDue = true,
             )
         )
+        assertTrue(
+            shouldRetireCompletedPreFingerprintOneTime(
+                dueOneTime,
+                listOf(WorkInfo.State.FAILED),
+                targetIsDue = true,
+            )
+        )
         assertFalse(
             shouldRetireCompletedPreFingerprintOneTime(
                 dueOneTime,
-                listOf(WorkInfo.State.CANCELLED, WorkInfo.State.FAILED),
+                listOf(WorkInfo.State.CANCELLED),
                 targetIsDue = true,
             )
         )
@@ -644,6 +655,29 @@ class WorkflowStoragePolicyTest {
         assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.SUCCEEDED))
         assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.FAILED))
         assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.CANCELLED))
+
+        val matchingTag = WorkflowScheduler.scheduleFingerprintTag("expected")
+        assertTrue(
+            isActiveMatchingWorkflowSchedule(
+                WorkInfo.State.ENQUEUED,
+                setOf("workflow", matchingTag),
+                matchingTag,
+            )
+        )
+        assertFalse(
+            isActiveMatchingWorkflowSchedule(
+                WorkInfo.State.ENQUEUED,
+                setOf("workflow"),
+                matchingTag,
+            )
+        )
+        assertFalse(
+            isActiveMatchingWorkflowSchedule(
+                WorkInfo.State.SUCCEEDED,
+                setOf(matchingTag),
+                matchingTag,
+            )
+        )
     }
 
     @Test
@@ -688,6 +722,91 @@ class WorkflowStoragePolicyTest {
             assertTrue(singleFileBounded.files.isEmpty())
             assertEquals(20, singleFileBounded.skippedEntries)
         } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun trustedInternalScanRecoversAtomicBackupBeforeEnumeratingDefinitions() {
+        val root = Files.createTempDirectory("workflow-atomic-backup-scan").toFile()
+        try {
+            val backup = File(root, "restored.json.bak").apply { writeText("restored") }
+            val recovered = mutableListOf<File>()
+
+            val files = canonicalWorkflowJsonFiles(
+                directory = root,
+                recoverAtomicBackups = true,
+                atomicRecovery = { base ->
+                    recovered += base
+                    assertTrue(backup.renameTo(base))
+                    true
+                },
+            )
+
+            assertEquals(listOf(File(root, "restored.json")), recovered)
+            assertEquals(listOf(File(root, "restored.json")), files)
+            assertEquals("restored", files.single().readText())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun failedAtomicBackupRecoveryDoesNotBlockOtherDefinitions() {
+        val root = Files.createTempDirectory("workflow-atomic-backup-isolation").toFile()
+        try {
+            File(root, "first.json.bak").writeText("first")
+            File(root, "second.json.bak").writeText("second")
+            var attempts = 0
+
+            val files = canonicalWorkflowJsonFiles(
+                directory = root,
+                recoverAtomicBackups = true,
+                atomicRecovery = { base ->
+                    attempts++
+                    if (attempts == 1) error("simulated recovery failure")
+                    assertTrue(File(base.path + ".bak").renameTo(base))
+                    true
+                },
+            )
+
+            assertEquals(2, attempts)
+            assertEquals(1, files.size)
+            assertTrue(files.single().name == "first.json" || files.single().name == "second.json")
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun atomicWorkflowFileOperationsShareOnePathLock() {
+        val root = Files.createTempDirectory("workflow-atomic-path-lock").toFile()
+        val file = File(root, "workflow.json")
+        val workers = 8
+        val iterations = 100
+        val start = CountDownLatch(1)
+        val done = CountDownLatch(workers)
+        val pool = Executors.newFixedThreadPool(workers)
+        var guardedValue = 0
+        try {
+            repeat(workers) {
+                pool.execute {
+                    start.await()
+                    repeat(iterations) {
+                        withWorkflowAtomicFileLock(file) {
+                            val current = guardedValue
+                            Thread.yield()
+                            guardedValue = current + 1
+                        }
+                    }
+                    done.countDown()
+                }
+            }
+            start.countDown()
+            assertTrue(done.await(10, TimeUnit.SECONDS))
+            assertEquals(workers * iterations, guardedValue)
+        } finally {
+            pool.shutdownNow()
             root.deleteRecursively()
         }
     }
