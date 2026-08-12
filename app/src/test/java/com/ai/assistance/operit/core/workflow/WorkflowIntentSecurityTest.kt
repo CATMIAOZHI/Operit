@@ -124,6 +124,89 @@ class WorkflowIntentSecurityTest {
     }
 
     @Test
+    fun normalizeUpdate_inheritsHiddenTokenForSameExternalTrigger() {
+        val latest = Workflow(
+            id = "workflow-1",
+            nodes = listOf(
+                TriggerNode(
+                    id = "trigger-1",
+                    triggerType = "intent",
+                    triggerConfig = mapOf(
+                        WorkflowIntentSecurity.CONFIG_ACTION to
+                            WorkflowIntentSecurity.ACTION_TRIGGER_WORKFLOW,
+                        WorkflowIntentSecurity.CONFIG_AUTH_TOKEN to strongToken,
+                    ),
+                ),
+            ),
+        )
+        val modelFacingUpdate = latest.copy(
+            name = "renamed",
+            nodes = listOf(
+                (latest.nodes.single() as TriggerNode).copy(
+                    triggerConfig = (latest.nodes.single() as TriggerNode).triggerConfig -
+                        WorkflowIntentSecurity.CONFIG_AUTH_TOKEN,
+                ),
+            ),
+        )
+
+        val normalized = WorkflowIntentSecurity.normalizeExternalTriggerTokensForUpdate(
+            requestedWorkflow = modelFacingUpdate,
+            latestWorkflow = latest,
+            tokenValidator = { WorkflowIntentSecurity.isValidAuthToken(it) },
+            tokenFactory = { error("same-node omission must not rotate") },
+        )
+
+        assertEquals(
+            strongToken,
+            (normalized.nodes.single() as TriggerNode)
+                .triggerConfig[WorkflowIntentSecurity.CONFIG_AUTH_TOKEN],
+        )
+    }
+
+    @Test
+    fun normalizeUpdate_rotatesWhenExternalTriggerTypeChanges() {
+        val freshToken = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        val latest = Workflow(
+            id = "workflow-1",
+            nodes = listOf(
+                TriggerNode(
+                    id = "trigger-1",
+                    triggerType = "intent",
+                    triggerConfig = mapOf(
+                        WorkflowIntentSecurity.CONFIG_ACTION to
+                            WorkflowIntentSecurity.ACTION_TRIGGER_WORKFLOW,
+                        WorkflowIntentSecurity.CONFIG_AUTH_TOKEN to strongToken,
+                    ),
+                ),
+            ),
+        )
+        val changedType = latest.copy(
+            nodes = listOf(
+                TriggerNode(
+                    id = "trigger-1",
+                    triggerType = "tasker",
+                    triggerConfig = mapOf(
+                        WorkflowIntentSecurity.CONFIG_TASKER_COMMAND to "start_meeting",
+                    ),
+                ),
+            ),
+        )
+
+        val normalized = WorkflowIntentSecurity.normalizeExternalTriggerTokensForUpdate(
+            requestedWorkflow = changedType,
+            latestWorkflow = latest,
+            tokenValidator = { WorkflowIntentSecurity.isValidAuthToken(it) },
+            tokenFactory = { freshToken },
+        )
+
+        assertEquals(
+            freshToken,
+            (normalized.nodes.single() as TriggerNode)
+                .triggerConfig[WorkflowIntentSecurity.CONFIG_AUTH_TOKEN],
+        )
+    }
+
+    @Test
     fun normalizeUpdate_rotatesTokenWhenStaleEditorRecreatesTriggerWithNewId() {
         val freshToken = "cccccccc-cccc-cccc-cccc-cccccccccccc"
         val latest = Workflow(

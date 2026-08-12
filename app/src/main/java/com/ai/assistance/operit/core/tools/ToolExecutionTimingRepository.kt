@@ -26,6 +26,8 @@ data class ToolExecutionTimingSnapshot(
 
 object ToolExecutionTimingRepository {
     private const val MAX_RETAINED_CALLS = 512
+    internal const val MAX_RETAINED_TEXT_CHARS =
+        ToolExecutionLimits.MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS * 16
 
     private val mutableTimings =
         MutableStateFlow<Map<ToolExecutionTimingKey, ToolExecutionTimingSnapshot>>(emptyMap())
@@ -118,7 +120,10 @@ object ToolExecutionTimingRepository {
         val key = ToolExecutionTimingKey(scopeId, invocation.invocationIndex)
         mutableTimings.update { current ->
             val existing = current[key] ?: return@update current
-            current + (key to transform(existing))
+            enforceRetentionLimits(
+                snapshots = current + (key to transform(existing)),
+                protectedKey = key,
+            )
         }
     }
 
@@ -129,14 +134,38 @@ object ToolExecutionTimingRepository {
     ) {
         val key = ToolExecutionTimingKey(scopeId, invocationIndex)
         mutableTimings.update { current ->
-            val updated = current + (key to create())
-            if (updated.size <= MAX_RETAINED_CALLS) {
-                updated
-            } else {
-                updated.entries
-                    .drop(updated.size - MAX_RETAINED_CALLS)
-                    .associate { it.toPair() }
-            }
+            enforceRetentionLimits(current + (key to create()))
         }
+    }
+
+    /**
+     * Keep timing metadata for recent calls, but cap the much larger live result payloads
+     * independently. The newest completed result remains available for the persistence/rendering
+     * handoff; older payloads are released first once the shared text budget is exhausted.
+     */
+    private fun enforceRetentionLimits(
+        snapshots: Map<ToolExecutionTimingKey, ToolExecutionTimingSnapshot>,
+        protectedKey: ToolExecutionTimingKey? = null,
+    ): Map<ToolExecutionTimingKey, ToolExecutionTimingSnapshot> {
+        val retained = LinkedHashMap<ToolExecutionTimingKey, ToolExecutionTimingSnapshot>()
+        snapshots.entries
+            .takeLast(MAX_RETAINED_CALLS)
+            .forEach { (key, snapshot) -> retained[key] = snapshot }
+
+        var retainedTextChars = retained.values.sumOf { it.resultText.length + it.errorText.length }
+        if (retainedTextChars <= MAX_RETAINED_TEXT_CHARS) return retained
+
+        val payloadEvictionOrder =
+            retained.entries
+                .toList()
+                .sortedBy { (key, _) -> key == protectedKey }
+        for ((key, snapshot) in payloadEvictionOrder) {
+            if (retainedTextChars <= MAX_RETAINED_TEXT_CHARS) break
+            val payloadChars = snapshot.resultText.length + snapshot.errorText.length
+            if (payloadChars == 0) continue
+            retained[key] = snapshot.copy(resultText = "", errorText = "")
+            retainedTextChars -= payloadChars
+        }
+        return retained
     }
 }

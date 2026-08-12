@@ -3106,6 +3106,11 @@
     <string name="thinking_type_mode">mode</string>
     <string name="thinking_quality">思考程度</string>
     <string name="thinking_quality_desc">仅在思考模式下生效。GPT-5.6 系列使用 5 档，其它模型保持原有 4 档；数值越高思考越深。</string>
+    <string name="thinking_quality_level_low">低</string>
+    <string name="thinking_quality_level_medium">中</string>
+    <string name="thinking_quality_level_high">高</string>
+    <string name="thinking_quality_level_xhigh">极高</string>
+    <string name="thinking_quality_level_max">最高</string>
     <string name="model_config">模型配置</string>
     <string name="model_config_desc">在这里选择一个已经配置好的模型，或者点击下方的管理配置去新建或修改模型</string>
     <string name="prompt">提示词</string>
