@@ -12,10 +12,36 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tools" / "example_packages"))
 
-from sync_example_packages import _manifest_runtime_files, _pack_toolpkg_folder  # noqa: E402
+from sync_example_packages import (  # noqa: E402
+    _exclude_expected_incompatible,
+    _manifest_runtime_files,
+    _pack_toolpkg_folder,
+)
 
 
 class ToolPkgRuntimeFilesTest(unittest.TestCase):
+    def test_sandboxpackage_installer_is_valid_javascript(self) -> None:
+        subprocess.run(
+            [
+                "node",
+                "--check",
+                str(REPO_ROOT / "tools" / "sandboxpackage_dev_install_or_update.js"),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_expected_incompatible_packages_are_excluded_from_build_check(self) -> None:
+        items = ["github.js", "deepsearching", "pdf_vision_parser.js", "subagent"]
+
+        filtered = _exclude_expected_incompatible(
+            items,
+            ["deepsearching", "pdf_vision_parser.js", "subagent"],
+        )
+
+        self.assertEqual(["github.js"], filtered)
+
     def test_ignored_runtime_files_are_included_in_archive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory)
