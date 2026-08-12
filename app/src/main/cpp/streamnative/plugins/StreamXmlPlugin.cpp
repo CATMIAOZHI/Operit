@@ -11,7 +11,11 @@ StreamXmlPlugin::StreamXmlPlugin(bool includeTagsInOutput)
           haveEndPattern_(false),
           displayEndMode_(false),
           displayThinkFamily_(false),
-          displayEndState_(DisplayEndState::WAIT_LT) {
+          displayEndState_(DisplayEndState::WAIT_LT),
+          displayCandidateClosing_(false),
+          displayCandidateQuote_(0),
+          displayLastNonWhitespace_(0),
+          displayDepth_(0) {
     reset();
 }
 
@@ -37,10 +41,10 @@ void StreamXmlPlugin::reset() {
     haveEndPattern_ = false;
     displayEndMode_ = false;
     displayThinkFamily_ = false;
-    displayEndState_ = DisplayEndState::WAIT_LT;
-    displayEndName_.clear();
+    resetDisplayEndCandidate();
+    displayDepth_ = 0;
     startQuote_ = 0;
-    startLastNonWhitespaceOutsideQuote_ = 0;
+    startLastNonWhitespace_ = 0;
     lastChar_ = 0;
 }
 
@@ -161,7 +165,7 @@ bool StreamXmlPlugin::processStartMatcher(char16_t c) {
             if (c == u'<') {
                 tagName_.clear();
                 startQuote_ = 0;
-                startLastNonWhitespaceOutsideQuote_ = 0;
+                startLastNonWhitespace_ = 0;
                 startState_ = StartState::WAIT_FIRST_LETTER;
                 state_ = PluginState::TRYING;
             }
@@ -185,7 +189,7 @@ bool StreamXmlPlugin::processStartMatcher(char16_t c) {
                 return false;
             }
             if (c == u'/') {
-                startLastNonWhitespaceOutsideQuote_ = c;
+                startLastNonWhitespace_ = c;
                 startState_ = StartState::IN_ATTRS;
                 state_ = PluginState::TRYING;
                 return false;
@@ -207,11 +211,13 @@ bool StreamXmlPlugin::processStartMatcher(char16_t c) {
         }
         case StartState::IN_ATTRS: {
             if (startQuote_ != 0) {
+                if (!isWhitespace(c)) startLastNonWhitespace_ = c;
                 if (c == startQuote_) startQuote_ = 0;
                 state_ = PluginState::TRYING;
                 return false;
             }
             if (c == u'\'' || c == u'"') {
+                startLastNonWhitespace_ = c;
                 startQuote_ = c;
                 state_ = PluginState::TRYING;
                 return false;
@@ -221,7 +227,7 @@ bool StreamXmlPlugin::processStartMatcher(char16_t c) {
                 state_ = PluginState::TRYING;
                 return true;
             }
-            if (!isWhitespace(c)) startLastNonWhitespaceOutsideQuote_ = c;
+            if (!isWhitespace(c)) startLastNonWhitespace_ = c;
             state_ = PluginState::TRYING;
             return false;
         }
@@ -233,8 +239,8 @@ void StreamXmlPlugin::buildEndPattern() {
     if (isDisplayTagName(tagName_)) {
         displayEndMode_ = true;
         displayThinkFamily_ = isThinkFamilyTagName(tagName_);
-        displayEndState_ = DisplayEndState::WAIT_LT;
-        displayEndName_.clear();
+        resetDisplayEndCandidate();
+        displayDepth_ = 1;
         haveEndPattern_ = false;
         return;
     }
@@ -255,55 +261,90 @@ bool StreamXmlPlugin::isValidDisplayEndName() const {
     return displayEndName_ == u"search";
 }
 
-bool StreamXmlPlugin::isValidDisplayEndPrefix() const {
-    const auto isPrefixOf = [&](const char16_t* value) {
-        size_t index = 0;
-        while (value[index] != 0 && index < displayEndName_.size()) {
-            if (displayEndName_[index] != value[index]) return false;
-            index++;
-        }
-        return index == displayEndName_.size();
-    };
-    return displayThinkFamily_ ? (isPrefixOf(u"think") || isPrefixOf(u"thinking"))
-                               : isPrefixOf(u"search");
+void StreamXmlPlugin::resetDisplayEndCandidate() {
+    displayEndState_ = DisplayEndState::WAIT_LT;
+    displayEndName_.clear();
+    displayCandidateClosing_ = false;
+    displayCandidateQuote_ = 0;
+    displayLastNonWhitespace_ = 0;
 }
 
 void StreamXmlPlugin::restartDisplayEndMatcher(char16_t c) {
-    displayEndName_.clear();
-    displayEndState_ = c == u'<' ? DisplayEndState::WAIT_SLASH
-                                 : DisplayEndState::WAIT_LT;
+    resetDisplayEndCandidate();
+    if (c == u'<') displayEndState_ = DisplayEndState::AFTER_LT;
+}
+
+bool StreamXmlPlugin::completeDisplayTagCandidate() {
+    const bool validName = isValidDisplayEndName();
+    const bool validClosingSuffix = displayLastNonWhitespace_ == 0;
+    const bool selfClosing =
+            !displayCandidateClosing_ && displayLastNonWhitespace_ == u'/';
+    if (validName && displayCandidateClosing_ && validClosingSuffix) {
+        if (displayDepth_ == 1) return true;
+        displayDepth_--;
+    } else if (validName && !displayCandidateClosing_ && !selfClosing) {
+        displayDepth_++;
+    }
+    resetDisplayEndCandidate();
+    return false;
 }
 
 bool StreamXmlPlugin::processDisplayEndMatcher(char16_t c) {
     switch (displayEndState_) {
         case DisplayEndState::WAIT_LT:
-            if (c == u'<') displayEndState_ = DisplayEndState::WAIT_SLASH;
+            if (c == u'<') displayEndState_ = DisplayEndState::AFTER_LT;
             return false;
-        case DisplayEndState::WAIT_SLASH:
+        case DisplayEndState::AFTER_LT:
             if (c == u'/') {
+                displayCandidateClosing_ = true;
                 displayEndName_.clear();
+                displayEndState_ = DisplayEndState::IN_NAME;
+            } else if (isAsciiLetter(c)) {
+                displayCandidateClosing_ = false;
+                displayEndName_.assign(1, asciiLower(c));
                 displayEndState_ = DisplayEndState::IN_NAME;
             } else {
                 restartDisplayEndMatcher(c);
             }
             return false;
         case DisplayEndState::IN_NAME:
-            if (isAsciiLetter(c)) {
+            if (isTagNameContinuationChar(c)) {
                 displayEndName_.push_back(asciiLower(c));
-                if (!isValidDisplayEndPrefix()) restartDisplayEndMatcher(c);
                 return false;
             }
-            if (c == u'>' && isValidDisplayEndName()) return true;
-            if (isWhitespace(c) && isValidDisplayEndName()) {
-                displayEndState_ = DisplayEndState::IN_WHITESPACE;
+            if (!isValidDisplayEndName()) {
+                restartDisplayEndMatcher(c);
+                return false;
+            }
+            if (c == u'>') return completeDisplayTagCandidate();
+            if (isWhitespace(c)) {
+                displayEndState_ = DisplayEndState::IN_SUFFIX;
+                return false;
+            }
+            if (!displayCandidateClosing_ && c == u'/') {
+                displayLastNonWhitespace_ = u'/';
+                displayEndState_ = DisplayEndState::IN_SUFFIX;
                 return false;
             }
             restartDisplayEndMatcher(c);
             return false;
-        case DisplayEndState::IN_WHITESPACE:
-            if (isWhitespace(c)) return false;
-            if (c == u'>') return true;
-            restartDisplayEndMatcher(c);
+        case DisplayEndState::IN_SUFFIX:
+            if (displayCandidateQuote_ != 0) {
+                if (!isWhitespace(c)) displayLastNonWhitespace_ = c;
+                if (c == displayCandidateQuote_) displayCandidateQuote_ = 0;
+                return false;
+            }
+            if (!displayCandidateClosing_ && (c == u'\'' || c == u'"')) {
+                displayLastNonWhitespace_ = c;
+                displayCandidateQuote_ = c;
+                return false;
+            }
+            if (c == u'<') {
+                restartDisplayEndMatcher(c);
+                return false;
+            }
+            if (c == u'>') return completeDisplayTagCandidate();
+            if (!isWhitespace(c)) displayLastNonWhitespace_ = c;
             return false;
     }
     return false;
@@ -347,7 +388,7 @@ bool StreamXmlPlugin::processChar(char16_t c, bool atStartOfLine) {
     const bool startMatched = processStartMatcher(c);
 
     if (startMatched) {
-        if (startLastNonWhitespaceOutsideQuote_ == u'/') {
+        if (startLastNonWhitespace_ == u'/') {
             // Treat self-closing tags like <br/> as plain text to avoid entering XML mode.
             const bool exposeAdjacentTag = isDisplayTagName(tagName_);
             reset();
@@ -362,7 +403,7 @@ bool StreamXmlPlugin::processChar(char16_t c, bool atStartOfLine) {
         buildEndPattern();
         startState_ = StartState::WAIT_LT;
         startQuote_ = 0;
-        startLastNonWhitespaceOutsideQuote_ = 0;
+        startLastNonWhitespace_ = 0;
         return finish(includeTagsInOutput_);
     }
 

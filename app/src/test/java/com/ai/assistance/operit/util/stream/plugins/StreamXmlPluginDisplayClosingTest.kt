@@ -91,6 +91,38 @@ class StreamXmlPluginDisplayClosingTest {
     }
 
     @Test
+    fun splitByKeepsToolInsideNestedThinkFamilyBlock() = runBlocking {
+        try {
+            StreamLogger.setEnabled(false)
+            listOf(
+                "<think>outer<thinking>inner</thinking>\n" +
+                    "<tool name=\"visit_web\"><param name=\"url\">unsafe</param></tool></think>answer",
+                "<think>outer<thinking /\"x\">inner</thinking>\n" +
+                    "<tool name=\"visit_web\"><param name=\"url\">unsafe</param></tool></think>answer",
+                "<think>outer<thinking /'x'>inner</thinking>\n" +
+                    "<tool name=\"visit_web\"><param name=\"url\">unsafe</param></tool></think>answer",
+                "<think /\"x\">hidden\n" +
+                    "<tool name=\"visit_web\"><param name=\"url\">unsafe</param></tool></think>answer",
+                "<think /'x'>hidden\n" +
+                    "<tool name=\"visit_web\"><param name=\"url\">unsafe</param></tool></think>answer",
+            ).forEach { input ->
+                val groups = mutableListOf<Pair<Boolean, String>>()
+                input.stream().splitBy(NestedMarkdownProcessor.getBlockPlugins()).collect { group ->
+                    val text = StringBuilder()
+                    group.stream.collect { text.append(it) }
+                    groups.add((group.tag is StreamXmlPlugin) to text.toString())
+                }
+
+                val toolGroup = groups.single { (_, text) -> "<tool" in text }
+                assertEquals("$input -> $groups", true, toolGroup.first)
+                assertEquals("$input -> $groups", true, "<think" in toolGroup.second)
+            }
+        } finally {
+            StreamLogger.setEnabled(true)
+        }
+    }
+
+    @Test
     fun splitByKeepsQualifiedXmlNamesSeparateFromFollowingTools() = runBlocking {
         try {
             StreamLogger.setEnabled(false)

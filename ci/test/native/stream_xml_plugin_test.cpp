@@ -88,6 +88,79 @@ bool expectQualifiedXmlNameAndToolAreSeparateBlocks() {
     return true;
 }
 
+bool expectNestedThinkFamilyKeepsToolInOuterBlock() {
+    constexpr int mdXmlBlock = 8;
+    const std::u16string input =
+            u"<think>outer<thinking>inner</thinking>\n"
+            u"<tool name=\"visit_web\"></tool></think>answer";
+    const int outerIndex = static_cast<int>(input.find(u"<think>"));
+    const int toolIndex = static_cast<int>(input.find(u"<tool"));
+    auto* session = streamnative::createMarkdownBlockSession();
+    const auto segments = streamnative::markdownSessionPush(
+            session,
+            reinterpret_cast<const jchar*>(input.data()),
+            static_cast<int>(input.size()));
+    streamnative::destroyMarkdownSession(session);
+
+    int outerBlock = -1;
+    int toolBlock = -1;
+    for (size_t index = 0; index < segments.size(); ++index) {
+        const auto& segment = segments[index];
+        if (segment.type != mdXmlBlock) continue;
+        if (segment.start <= outerIndex && outerIndex < segment.end) {
+            outerBlock = static_cast<int>(index);
+        }
+        if (segment.start <= toolIndex && toolIndex < segment.end) {
+            toolBlock = static_cast<int>(index);
+        }
+    }
+    if (outerBlock < 0 || toolBlock != outerBlock) {
+        std::cerr << "nested think-family tool escaped the outer XML block\n";
+        return false;
+    }
+    return true;
+}
+
+bool expectMalformedSlashQuoteOpenersKeepToolInOuterBlock() {
+    constexpr int mdXmlBlock = 8;
+    const std::u16string inputs[] = {
+            u"<think>outer<thinking /\"x\">inner</thinking>\n"
+            u"<tool name=\"visit_web\"></tool></think>answer",
+            u"<think>outer<thinking /'x'>inner</thinking>\n"
+            u"<tool name=\"visit_web\"></tool></think>answer",
+            u"<think /\"x\">hidden\n<tool name=\"visit_web\"></tool></think>answer",
+            u"<think /'x'>hidden\n<tool name=\"visit_web\"></tool></think>answer",
+    };
+    for (const auto& input : inputs) {
+        const int outerIndex = static_cast<int>(input.find(u"<think"));
+        const int toolIndex = static_cast<int>(input.find(u"<tool"));
+        auto* session = streamnative::createMarkdownBlockSession();
+        const auto segments = streamnative::markdownSessionPush(
+                session,
+                reinterpret_cast<const jchar*>(input.data()),
+                static_cast<int>(input.size()));
+        streamnative::destroyMarkdownSession(session);
+
+        int outerBlock = -1;
+        int toolBlock = -1;
+        for (size_t index = 0; index < segments.size(); ++index) {
+            const auto& segment = segments[index];
+            if (segment.type != mdXmlBlock) continue;
+            if (segment.start <= outerIndex && outerIndex < segment.end) {
+                outerBlock = static_cast<int>(index);
+            }
+            if (segment.start <= toolIndex && toolIndex < segment.end) {
+                toolBlock = static_cast<int>(index);
+            }
+        }
+        if (outerBlock < 0 || toolBlock != outerBlock) {
+            std::cerr << "slash-before-quote opener exposed a nested tool\n";
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -124,5 +197,7 @@ int main() {
     ok &= expectState(u"<think@foo>", PluginState::IDLE, "invalid at-sign name boundary");
     ok &= expectMarkdownSessionKeepsQuotedMarkdownInXml();
     ok &= expectQualifiedXmlNameAndToolAreSeparateBlocks();
+    ok &= expectNestedThinkFamilyKeepsToolInOuterBlock();
+    ok &= expectMalformedSlashQuoteOpenersKeepToolInOuterBlock();
     return ok ? 0 : 1;
 }

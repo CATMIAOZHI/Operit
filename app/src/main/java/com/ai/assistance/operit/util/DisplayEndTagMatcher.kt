@@ -16,6 +16,10 @@ internal enum class DisplayEndMatchResult {
 internal class DisplayEndTagMatcher(private val validNames: Set<String>) {
     private var phase = 0
     private val matchedName = StringBuilder()
+    private var candidateClosing = false
+    private var candidateQuote: Char? = null
+    private var lastNonWhitespace: Char? = null
+    private var depth = 1
 
     var candidateLength: Int = 0
         private set
@@ -33,48 +37,71 @@ internal class DisplayEndTagMatcher(private val validNames: Set<String>) {
             } else {
                 DisplayEndMatchResult.NO_MATCH
             }
-            1 -> if (char == '/') {
-                phase = 2
-                matchedName.clear()
-                candidateLength += 1
-                DisplayEndMatchResult.IN_PROGRESS
-            } else {
-                restartFrom(char)
-            }
-            2 -> {
+            1 ->
                 when {
+                    char == '/' -> {
+                        candidateClosing = true
+                        phase = 2
+                        matchedName.clear()
+                        candidateLength += 1
+                        DisplayEndMatchResult.IN_PROGRESS
+                    }
                     char.isLetter() -> {
+                        candidateClosing = false
+                        phase = 2
+                        matchedName.clear()
                         matchedName.append(char.lowercaseChar())
                         candidateLength += 1
-                        if (validNames.any { it.startsWith(matchedName.toString()) }) {
-                            DisplayEndMatchResult.IN_PROGRESS
-                        } else {
-                            restartFrom(char)
-                        }
+                        DisplayEndMatchResult.IN_PROGRESS
                     }
-                    char.isWhitespace() && matchedName.toString() in validNames -> {
+                    else -> restartFrom(char)
+                }
+            2 -> {
+                when {
+                    char.isLetterOrDigit() || char == '_' || char == '-' || char == '.' || char == ':' -> {
+                        matchedName.append(char.lowercaseChar())
+                        candidateLength += 1
+                        DisplayEndMatchResult.IN_PROGRESS
+                    }
+                    matchedName.toString() !in validNames -> restartFrom(char)
+                    char.isWhitespace() -> {
                         phase = 3
                         candidateLength += 1
                         DisplayEndMatchResult.IN_PROGRESS
                     }
-                    char == '>' && matchedName.toString() in validNames -> {
-                        candidateLength += 1
-                        completeMatch()
-                    }
-                    else -> restartFrom(char)
-                }
-            }
-            else -> {
-                when {
-                    char.isWhitespace() -> {
+                    !candidateClosing && char == '/' -> {
+                        phase = 3
+                        lastNonWhitespace = '/'
                         candidateLength += 1
                         DisplayEndMatchResult.IN_PROGRESS
                     }
                     char == '>' -> {
                         candidateLength += 1
-                        completeMatch()
+                        completeCandidate()
                     }
                     else -> restartFrom(char)
+                }
+            }
+            else -> {
+                candidateLength += 1
+                if (candidateQuote != null) {
+                    if (!char.isWhitespace()) lastNonWhitespace = char
+                    if (char == candidateQuote) candidateQuote = null
+                    DisplayEndMatchResult.IN_PROGRESS
+                } else {
+                    when {
+                        !candidateClosing && (char == '\'' || char == '"') -> {
+                            lastNonWhitespace = char
+                            candidateQuote = char
+                            DisplayEndMatchResult.IN_PROGRESS
+                        }
+                        char == '<' -> restartFrom(char)
+                        char == '>' -> completeCandidate()
+                        else -> {
+                            if (!char.isWhitespace()) lastNonWhitespace = char
+                            DisplayEndMatchResult.IN_PROGRESS
+                        }
+                    }
                 }
             }
         }
@@ -83,17 +110,37 @@ internal class DisplayEndTagMatcher(private val validNames: Set<String>) {
     fun reset() {
         resetCandidate()
         lastMatchLength = 0
+        depth = 1
     }
 
-    private fun completeMatch(): DisplayEndMatchResult {
-        lastMatchLength = candidateLength
+    private fun completeCandidate(): DisplayEndMatchResult {
+        val completedLength = candidateLength
+        val result =
+            when {
+                candidateClosing && lastNonWhitespace == null && depth == 1 -> {
+                    lastMatchLength = completedLength
+                    DisplayEndMatchResult.MATCH
+                }
+                candidateClosing && lastNonWhitespace == null -> {
+                    depth--
+                    DisplayEndMatchResult.NO_MATCH
+                }
+                !candidateClosing && lastNonWhitespace != '/' -> {
+                    depth++
+                    DisplayEndMatchResult.NO_MATCH
+                }
+                else -> DisplayEndMatchResult.NO_MATCH
+            }
         resetCandidate()
-        return DisplayEndMatchResult.MATCH
+        return result
     }
 
     private fun resetCandidate() {
         phase = 0
         matchedName.clear()
+        candidateClosing = false
+        candidateQuote = null
+        lastNonWhitespace = null
         candidateLength = 0
     }
 

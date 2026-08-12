@@ -276,9 +276,12 @@ object ChatUtils {
 
             val nextTerminator = findMarkupTagEnd(content, candidateStart)
             if (nextTerminator < 0) {
+                val nestedTagStart =
+                    if (isClosing) content.indexOf('<', nameEnd) else -1
                 return DisplayOnlyBlockTag(
                     start = candidateStart,
-                    endExclusive = content.length,
+                    endExclusive =
+                        if (nestedTagStart >= 0) nestedTagStart else content.length,
                     family = if (tagName.startsWith("think")) "think" else "search",
                     isClosing = isClosing,
                     isSelfClosing = false,

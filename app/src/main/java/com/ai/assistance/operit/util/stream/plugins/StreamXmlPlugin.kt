@@ -40,7 +40,7 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
     private var allowStartAfterPunctuation: Boolean = false
     private var lastChar: Char = '\u0000'
     private var startTagQuote: Char? = null
-    private var startTagLastNonWhitespaceOutsideQuote: Char? = null
+    private var startTagLastNonWhitespace: Char? = null
     private var pendingStartTagName: String? = null
     private var startTagNameLexicalState: StartTagNameLexicalState = StartTagNameLexicalState.WAIT_LT
 
@@ -231,7 +231,7 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
     }
 
     private fun completeStartTag(tagName: String): Boolean {
-        if (startTagLastNonWhitespaceOutsideQuote == '/') {
+        if (startTagLastNonWhitespace == '/') {
             // Treat self-closing tags like <br/> as plain text to avoid entering XML mode.
             reset()
             // Only app-owned display tags may expose an immediately adjacent tool. Treating
@@ -282,7 +282,7 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
                         StartTagNameLexicalState.INVALID
                     }
                 if (startTagNameLexicalState == StartTagNameLexicalState.IN_NAME) {
-                    startTagLastNonWhitespaceOutsideQuote = c
+                    startTagLastNonWhitespace = c
                 }
                 return
             }
@@ -291,11 +291,11 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
                 val isContinuation =
                     c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' || c in "_.:-"
                 when {
-                    isContinuation -> startTagLastNonWhitespaceOutsideQuote = c
+                    isContinuation -> startTagLastNonWhitespace = c
                     c == '>' -> Unit
                     c == '/' || c.isWhitespace() -> {
                         startTagNameLexicalState = StartTagNameLexicalState.IN_ATTRS
-                        if (c == '/') startTagLastNonWhitespaceOutsideQuote = c
+                        if (c == '/') startTagLastNonWhitespace = c
                     }
                     else -> startTagNameLexicalState = StartTagNameLexicalState.INVALID
                 }
@@ -308,19 +308,23 @@ class StreamXmlPlugin(private val includeTagsInOutput: Boolean = true) : StreamP
 
         val quote = startTagQuote
         if (quote != null) {
+            if (!c.isWhitespace()) startTagLastNonWhitespace = c
             if (c == quote) startTagQuote = null
             return
         }
         when (c) {
-            '\'', '"' -> startTagQuote = c
+            '\'', '"' -> {
+                startTagLastNonWhitespace = c
+                startTagQuote = c
+            }
             '>' -> Unit
-            else -> if (!c.isWhitespace()) startTagLastNonWhitespaceOutsideQuote = c
+            else -> if (!c.isWhitespace()) startTagLastNonWhitespace = c
         }
     }
 
     private fun resetStartTagLexicalState() {
         startTagQuote = null
-        startTagLastNonWhitespaceOutsideQuote = null
+        startTagLastNonWhitespace = null
         pendingStartTagName = null
         startTagNameLexicalState = StartTagNameLexicalState.WAIT_LT
     }

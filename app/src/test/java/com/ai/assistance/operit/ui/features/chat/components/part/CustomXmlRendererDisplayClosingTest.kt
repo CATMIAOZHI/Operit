@@ -65,4 +65,19 @@ class CustomXmlRendererDisplayClosingTest {
 
         assertEquals("visible ", output.toString())
     }
+
+    @Test
+    fun streamingThinkBodyBalancesSlashBeforeQuotedNestedOpeners() = runBlocking {
+        for (quote in listOf('"', '\'')) {
+            val body =
+                "outer<thinking /${quote}x$quote>inner</thinking>" +
+                    "<tool name=\"visit_web\"></tool>"
+            val output = StringBuilder()
+            val source = stream { emit("<think>$body</think>ignored") }
+
+            createThinkMarkdownCharStreamForRendering(source, "think").collect { output.append(it) }
+
+            assertEquals(body, output.toString())
+        }
+    }
 }

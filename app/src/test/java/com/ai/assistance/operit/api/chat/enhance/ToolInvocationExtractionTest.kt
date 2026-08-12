@@ -252,6 +252,22 @@ class ToolInvocationExtractionTest {
     }
 
     @Test
+    fun publicExtraction_resumesAtDisplayOpenerAfterUnfinishedStrayCloser() = runBlocking {
+        val prefixes = listOf("</think bogus ", "</think bogus \"")
+        for (prefix in prefixes) {
+            val response =
+                prefix + "<think>hidden\n" +
+                    "<tool name=\"visit_web\"><param name=\"url\">https://unsafe.example</param></tool>"
+
+            val invocations = withoutAndroidLogging {
+                ToolExecutionManager.extractToolInvocations(response)
+            }
+
+            assertEquals(prefix, emptyList<String>(), invocations.map { it.tool.name })
+        }
+    }
+
+    @Test
     fun executableExtraction_acceptsAttributedDisplayOpeners() = runBlocking {
         val content =
             "<think type=\"analysis\">draft</thinking >" +

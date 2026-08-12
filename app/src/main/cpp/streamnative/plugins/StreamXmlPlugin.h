@@ -27,9 +27,9 @@ private:
 
     enum class DisplayEndState {
         WAIT_LT,
-        WAIT_SLASH,
+        AFTER_LT,
         IN_NAME,
-        IN_WHITESPACE,
+        IN_SUFFIX,
     };
 
     bool includeTagsInOutput_;
@@ -47,8 +47,12 @@ private:
     bool displayThinkFamily_;
     DisplayEndState displayEndState_;
     std::u16string displayEndName_;
+    bool displayCandidateClosing_;
+    char16_t displayCandidateQuote_;
+    char16_t displayLastNonWhitespace_;
+    int displayDepth_;
     char16_t startQuote_ = 0;
-    char16_t startLastNonWhitespaceOutsideQuote_ = 0;
+    char16_t startLastNonWhitespace_ = 0;
     char16_t lastChar_ = 0;
 
     bool handleDefaultCharacter(char16_t c);
@@ -57,8 +61,9 @@ private:
     void buildEndPattern();
     bool processDisplayEndMatcher(char16_t c);
     void restartDisplayEndMatcher(char16_t c);
+    void resetDisplayEndCandidate();
+    bool completeDisplayTagCandidate();
     bool isValidDisplayEndName() const;
-    bool isValidDisplayEndPrefix() const;
 
     static bool isAsciiLetter(char16_t c);
     static char16_t asciiLower(char16_t c);
