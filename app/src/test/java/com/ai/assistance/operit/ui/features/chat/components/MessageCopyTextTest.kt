@@ -36,4 +36,18 @@ class MessageCopyTextTest {
 
         assertEquals("<meta charset=\"utf-8\">visibleanswer", cleanMessageContentForCopy(content))
     }
+
+    @Test fun cleanMessageContentForCopy_usesDisplayTagClosingGrammar() {
+        val content =
+            "prefix<think>private reasoning</think >middle" +
+                "<search>private source</search\n>answer"
+
+        assertEquals("prefixmiddleanswer", cleanMessageContentForCopy(content))
+    }
+
+    @Test fun cleanMessageContentForCopy_resumesAfterQuotedMalformedCloser() {
+        val content = "prefix</think bogus \"<think>private reasoning</think>answer"
+
+        assertEquals("prefix</think bogus \"answer", cleanMessageContentForCopy(content))
+    }
 }

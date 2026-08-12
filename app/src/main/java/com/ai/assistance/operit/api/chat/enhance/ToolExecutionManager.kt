@@ -77,6 +77,20 @@ object ToolExecutionManager {
         val orderedParameters: List<Pair<String, String>>,
     )
 
+    private data class ToolInvocationCandidate(
+        val toolMatch: MatchResult,
+        val startBoundaryIndex: Int,
+        val endBoundaryIndex: Int,
+        val parameters: List<ToolParameterCandidate>,
+    )
+
+    private data class ToolParameterCandidate(
+        val name: String,
+        val rawValue: String,
+        val startBoundaryIndex: Int,
+        val endBoundaryIndex: Int,
+    )
+
     /**
      * Per model turn state. Equality is deliberately exact: tool name, parameter order, names and
      * raw values must all match. Similar or normalized instructions never share a count.
@@ -670,9 +684,11 @@ object ToolExecutionManager {
      */
     suspend fun extractToolInvocations(response: String): List<ToolInvocation> {
         val invocations = mutableListOf<ToolInvocation>()
-        val content = response
-
-        val charStream = content.stream()
+        val candidates = mutableListOf<ToolInvocationCandidate>()
+        val candidateBoundaries = mutableListOf<Int>()
+        val protectedParameterRanges = mutableListOf<Int>()
+        val displayScanContent = StringBuilder(response.length)
+        val charStream = response.stream()
         val plugins = NestedMarkdownProcessor.getBlockPlugins()
 
         charStream.splitBy(plugins).collect { group ->
@@ -684,27 +700,104 @@ object ToolExecutionManager {
 
             if (group.tag is StreamXmlPlugin) {
                 ChatMarkupRegex.matchToolCall(chunkString)?.let { toolMatch ->
-                    val toolName = toolMatch.groupValues.getOrNull(2) ?: return@let
-                    val toolBody = toolMatch.groupValues.getOrNull(3).orEmpty()
-
-                    val parameters = mutableListOf<ToolParameter>()
-                    MessageContentParser.toolParamPattern.findAll(toolBody)
-                        .forEach { paramMatch ->
-                            val paramName = paramMatch.groupValues[1]
-                            val paramValue = paramMatch.groupValues[2]
-                            parameters.add(ToolParameter(paramName, unescapeXml(paramValue)))
+                    val candidateText = toolMatch.value
+                    val candidateOffsetInChunk = chunkString.indexOf(candidateText)
+                    if (candidateOffsetInChunk > 0) {
+                        displayScanContent.append(chunkString, 0, candidateOffsetInChunk)
+                    }
+                    val candidateScanStart = displayScanContent.length
+                    val startBoundaryIndex = candidateBoundaries.size
+                    candidateBoundaries.add(candidateScanStart)
+                    val toolBodyGroup = toolMatch.groups[3]
+                    val parameterCandidates =
+                        if (toolBodyGroup == null) {
+                            emptyList()
+                        } else {
+                            MessageContentParser.toolParamPattern.findAll(toolBodyGroup.value)
+                                .map { parameter ->
+                                    val parameterStart =
+                                        candidateScanStart +
+                                            toolBodyGroup.range.first +
+                                            parameter.range.first
+                                    val parameterEnd =
+                                        candidateScanStart +
+                                            toolBodyGroup.range.first +
+                                            parameter.range.last +
+                                            1
+                                    protectedParameterRanges.add(parameterStart)
+                                    protectedParameterRanges.add(parameterEnd)
+                                    val parameterStartBoundaryIndex = candidateBoundaries.size
+                                    candidateBoundaries.add(parameterStart)
+                                    val parameterEndBoundaryIndex = candidateBoundaries.size
+                                    candidateBoundaries.add(parameterEnd)
+                                    ToolParameterCandidate(
+                                        name = parameter.groupValues[1],
+                                        rawValue = parameter.groupValues[2],
+                                        startBoundaryIndex = parameterStartBoundaryIndex,
+                                        endBoundaryIndex = parameterEndBoundaryIndex,
+                                    )
+                                }
+                                .toList()
                         }
-
-                    val tool = AITool(name = toolName, parameters = parameters)
-                    invocations.add(
-                        ToolInvocation(
-                            tool = tool,
-                            rawText = toolMatch.value,
-                            responseLocation = toolMatch.range
+                    displayScanContent.append(candidateText)
+                    val endBoundaryIndex = candidateBoundaries.size
+                    candidateBoundaries.add(displayScanContent.length)
+                    candidates.add(
+                        ToolInvocationCandidate(
+                            toolMatch = toolMatch,
+                            startBoundaryIndex = startBoundaryIndex,
+                            endBoundaryIndex = endBoundaryIndex,
+                            parameters = parameterCandidates,
                         )
                     )
+                    val candidateEndInChunk = candidateOffsetInChunk + candidateText.length
+                    if (candidateEndInChunk < chunkString.length) {
+                        displayScanContent.append(chunkString, candidateEndInChunk, chunkString.length)
+                    }
+                    return@collect
                 }
             }
+
+            // Keep every non-executable group in the same global display-only state machine.
+            // This deliberately includes fenced examples and non-line-start pseudo XML: they are
+            // not executable contexts, so their parameter-looking text must not receive protection.
+            displayScanContent.append(chunkString)
+        }
+
+        val visibleCandidateBoundaries =
+            ChatUtils.displayOnlyBoundaryVisibility(
+                displayScanContent.toString(),
+                candidateBoundaries.toIntArray(),
+                protectedParameterRanges.toIntArray(),
+            )
+        candidates.forEach { candidate ->
+            if (!visibleCandidateBoundaries[candidate.startBoundaryIndex] ||
+                !visibleCandidateBoundaries[candidate.endBoundaryIndex]
+            ) {
+                return@forEach
+            }
+
+            val toolMatch = candidate.toolMatch
+            val toolName = toolMatch.groupValues.getOrNull(2) ?: return@forEach
+            val parameters =
+                candidate.parameters.mapNotNull { parameter ->
+                    if (!visibleCandidateBoundaries[parameter.startBoundaryIndex] ||
+                        !visibleCandidateBoundaries[parameter.endBoundaryIndex]
+                    ) {
+                        null
+                    } else {
+                        ToolParameter(parameter.name, unescapeXml(parameter.rawValue))
+                    }
+                }
+
+            val tool = AITool(name = toolName, parameters = parameters)
+            invocations.add(
+                ToolInvocation(
+                    tool = tool,
+                    rawText = toolMatch.value,
+                    responseLocation = toolMatch.range,
+                )
+            )
         }
 
         AppLogger.d(
@@ -871,7 +964,7 @@ object ToolExecutionManager {
     }
 
     internal suspend fun extractExecutableToolInvocations(response: String): List<ToolInvocation> =
-        extractToolInvocations(ChatUtils.removeThinkingContent(response))
+        extractToolInvocations(response)
 
     /**
      *

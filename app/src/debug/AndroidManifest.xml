@@ -7,11 +7,10 @@
             android:name=".debug.SubagentSliceDebugActivity"
             android:exported="false" />
 
-        <!-- ADB shell holds DUMP; ordinary apps cannot invoke this development-only entry point. -->
+        <!-- ADB shell holds DUMP; ordinary third-party apps do not. Release variants remain signature protected. -->
         <receiver
             android:name=".core.tools.javascript.ScriptExecutionReceiver"
-            android:exported="true"
             android:permission="android.permission.DUMP"
-            tools:replace="android:exported" />
+            tools:replace="android:permission" />
     </application>
 </manifest>

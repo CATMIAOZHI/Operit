@@ -16,22 +16,18 @@ class ScriptExecutionReceiverManifestTest {
         "com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver"
 
     @Test
-    fun mainManifestKeepsScriptExecutionReceiverPrivate() {
+    fun mainManifestProtectsExportedReceiverWithSignaturePermission() {
         val manifest = parseManifest(appDirectory.resolve("src/main/AndroidManifest.xml"))
+        val permissionName = "${'$'}{applicationId}.permission.EXECUTE_JS"
+        val permission =
+            manifest.elements("permission").single {
+                it.androidAttribute("name") == permissionName
+            }
         val receiver = manifest.receiver(receiverClass)
 
-        assertEquals("false", receiver.androidAttribute("exported"))
-        assertFalse(receiver.hasAttributeNS(androidNamespace, "permission"))
-        assertTrue(
-            receiver.getElementsByTagName("action").let { actions ->
-                (0 until actions.length)
-                    .map { actions.item(it) as Element }
-                    .any {
-                        it.androidAttribute("name") ==
-                            "com.ai.assistance.operit.EXECUTE_JS"
-                    }
-            }
-        )
+        assertEquals("signature", permission.androidAttribute("protectionLevel"))
+        assertEquals("true", receiver.androidAttribute("exported"))
+        assertEquals(permissionName, receiver.androidAttribute("permission"))
     }
 
     @Test
@@ -39,8 +35,7 @@ class ScriptExecutionReceiverManifestTest {
         val manifest = parseManifest(appDirectory.resolve("src/debug/AndroidManifest.xml"))
         val receiver = manifest.receiver(receiverClass)
 
-        assertEquals("true", receiver.androidAttribute("exported"))
-        assertEquals("android:exported", receiver.getAttributeNS(toolsNamespace, "replace"))
+        assertEquals("android:permission", receiver.getAttributeNS(toolsNamespace, "replace"))
         assertEquals("android.permission.DUMP", receiver.androidAttribute("permission"))
     }
 

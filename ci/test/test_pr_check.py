@@ -174,7 +174,6 @@ class ScopeClassificationTest(unittest.TestCase):
         installer_plan = classify_paths(["tools/sandboxpackage_dev_install_or_update.js"])
         self.assertTrue(installer_plan.toolpkg)
 
-
 class CandidateContractTest(unittest.TestCase):
     def test_stale_branch_uses_candidate_first_parent_diff(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

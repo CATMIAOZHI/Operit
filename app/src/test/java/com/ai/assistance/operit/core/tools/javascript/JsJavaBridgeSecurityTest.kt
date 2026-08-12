@@ -510,6 +510,103 @@ class JsJavaBridgeSecurityTest {
     }
 
     @Test
+    fun mutableBridgeContainersRejectDirectAndIndirectSelfReferences() {
+        val registry = ConcurrentHashMap<String, Any>()
+        val list = ArrayList<Any>()
+        val map = HashMap<Any, Any>()
+        registry["list"] = list
+        registry["map"] = map
+        val listMarker =
+            "{\"__javaHandle\":\"list\",\"__javaClass\":\"java.util.ArrayList\"}"
+        val mapMarker =
+            "{\"__javaHandle\":\"map\",\"__javaClass\":\"java.util.HashMap\"}"
+
+        val directListResult =
+            Mockito.mockStatic(AppLogger::class.java).use {
+                JsJavaBridgeDelegates.callInstance(
+                    instanceHandle = "list",
+                    methodName = "add",
+                    argsJson = "[$listMarker]",
+                    objectRegistry = registry
+                )
+            }
+        assertTrue(directListResult, directListResult.contains("\"success\":false"))
+        assertTrue(directListResult, directListResult.contains("cyclic container reference"))
+        assertTrue(list.isEmpty())
+
+        val indirectMapResult =
+            Mockito.mockStatic(AppLogger::class.java).use {
+                JsJavaBridgeDelegates.callInstance(
+                    instanceHandle = "map",
+                    methodName = "put",
+                    argsJson = "[\"nested\",[$mapMarker]]",
+                    objectRegistry = registry
+                )
+            }
+        assertTrue(indirectMapResult, indirectMapResult.contains("\"success\":false"))
+        assertTrue(indirectMapResult, indirectMapResult.contains("cyclic container reference"))
+        assertTrue(map.isEmpty())
+
+        val staticAddAllResult =
+            Mockito.mockStatic(AppLogger::class.java).use {
+                JsJavaBridgeDelegates.callStatic(
+                    className = "java.util.Collections",
+                    methodName = "addAll",
+                    argsJson = "[$listMarker,$listMarker]",
+                    objectRegistry = registry
+                )
+            }
+        assertTrue(staticAddAllResult, staticAddAllResult.contains("\"success\":false"))
+        assertTrue(list.isEmpty())
+
+        list.add("replace-me")
+        val staticFillResult =
+            Mockito.mockStatic(AppLogger::class.java).use {
+                JsJavaBridgeDelegates.callStatic(
+                    className = "java.util.Collections",
+                    methodName = "fill",
+                    argsJson = "[$listMarker,$listMarker]",
+                    objectRegistry = registry
+                )
+            }
+        assertTrue(staticFillResult, staticFillResult.contains("\"success\":false"))
+        assertEquals(listOf("replace-me"), list)
+
+        val staticCopyResult =
+            Mockito.mockStatic(AppLogger::class.java).use {
+                JsJavaBridgeDelegates.callStatic(
+                    className = "java.util.Collections",
+                    methodName = "copy",
+                    argsJson = "[$listMarker,[$listMarker]]",
+                    objectRegistry = registry
+                )
+            }
+        assertTrue(staticCopyResult, staticCopyResult.contains("\"success\":false"))
+        assertEquals(listOf("replace-me"), list)
+
+        val staticReplaceAllResult =
+            Mockito.mockStatic(AppLogger::class.java).use {
+                JsJavaBridgeDelegates.callStatic(
+                    className = "java.util.Collections",
+                    methodName = "replaceAll",
+                    argsJson = "[$listMarker,\"replace-me\",$listMarker]",
+                    objectRegistry = registry
+                )
+            }
+        assertTrue(staticReplaceAllResult, staticReplaceAllResult.contains("\"success\":false"))
+        assertEquals(listOf("replace-me"), list)
+
+        val clearResult =
+            JsJavaBridgeDelegates.callInstance(
+                instanceHandle = "list",
+                methodName = "clear",
+                argsJson = "[]",
+                objectRegistry = registry
+            )
+        assertTrue(clearResult, clearResult.contains("\"success\":true"))
+    }
+
+    @Test
     fun mapRemainsUsableAtTheDocumentedEntryLimit() {
         val registry = ConcurrentHashMap<String, Any>()
         val fullMap = HashMap<Int, Int>(65_536)

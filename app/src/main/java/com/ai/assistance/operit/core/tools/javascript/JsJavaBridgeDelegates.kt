@@ -1740,14 +1740,19 @@ internal object JsJavaBridgeDelegates {
         } else {
             validateBridgeReturnValue(args)
         }
+        if (targetClass == Collections::class.java) {
+            validateCollectionsMutationReferences(method, args)
+        }
         when (instance) {
             is StringBuilder -> validateStringBuilderInvocation(instance, method, args)
             is Map<*, *> -> {
                 validateBridgeReturnValue(instance)
+                validateMapMutationReferences(instance, method, args)
                 validateMapGrowth(instance, method, args)
             }
             is Collection<*> -> {
                 validateBridgeReturnValue(instance)
+                validateCollectionMutationReferences(instance, method, args)
                 validateCollectionGrowth(instance, method, args)
             }
         }
@@ -1864,6 +1869,103 @@ internal object JsJavaBridgeDelegates {
             "Java bridge collection exceeds the element limit " +
                 "($MAX_BRIDGE_MUTABLE_CONTAINER_SIZE)"
         }
+    }
+
+    private fun validateCollectionMutationReferences(
+        collection: Collection<*>,
+        method: Method,
+        args: Array<Any?>
+    ) {
+        val addedValues =
+            when (method.name) {
+                "add", "set" -> listOf(args.lastOrNull())
+                "addAll" ->
+                    args.filterIsInstance<Collection<*>>()
+                        .firstOrNull()
+                        .orEmpty()
+                        .toList()
+                else -> emptyList()
+            }
+        requireMutationDoesNotReferenceTarget(collection, addedValues)
+    }
+
+    private fun validateCollectionsMutationReferences(method: Method, args: Array<Any?>) {
+        val target = args.firstOrNull() as? Collection<*> ?: return
+        val insertedValues =
+            when (method.name) {
+                "addAll" -> args.getOrNull(1)?.let(::arrayElements).orEmpty()
+                "copy" -> (args.getOrNull(1) as? Collection<*>)?.toList().orEmpty()
+                "fill" -> listOf(args.getOrNull(1))
+                "replaceAll" -> listOf(args.getOrNull(2))
+                else -> emptyList()
+            }
+        requireMutationDoesNotReferenceTarget(target, insertedValues)
+    }
+
+    private fun validateMapMutationReferences(
+        map: Map<*, *>,
+        method: Method,
+        args: Array<Any?>
+    ) {
+        val insertedValues =
+            when (method.name) {
+                "put", "putIfAbsent" -> args.take(2)
+                "putAll" ->
+                    (args.firstOrNull() as? Map<*, *>)
+                        ?.entries
+                        ?.flatMap { listOf(it.key, it.value) }
+                        .orEmpty()
+                "replace" -> listOf(args.lastOrNull())
+                else -> emptyList()
+            }
+        requireMutationDoesNotReferenceTarget(map, insertedValues)
+    }
+
+    private fun requireMutationDoesNotReferenceTarget(
+        target: Any,
+        insertedValues: Iterable<Any?>
+    ) {
+        require(insertedValues.none { graphContainsIdentity(it, target) }) {
+            "Java bridge mutation would create a cyclic container reference"
+        }
+    }
+
+    private fun graphContainsIdentity(value: Any?, target: Any): Boolean {
+        val visited = IdentityHashMap<Any, Boolean>()
+
+        fun contains(current: Any?): Boolean {
+            if (current === target) return true
+            if (current == null || current === JSONObject.NULL) return false
+            val isContainer =
+                current is JSONObject ||
+                    current is JSONArray ||
+                    current is Map<*, *> ||
+                    current is Iterable<*> ||
+                    current.javaClass.isArray
+            if (!isContainer || visited.put(current, true) != null) return false
+
+            return when (current) {
+                is JSONObject -> {
+                    val keys = current.keys()
+                    var found = false
+                    while (keys.hasNext() && !found) {
+                        found = contains(current.opt(keys.next()))
+                    }
+                    found
+                }
+                is JSONArray ->
+                    (0 until current.length()).any { index -> contains(current.opt(index)) }
+                is Map<*, *> ->
+                    current.entries.any { entry -> contains(entry.key) || contains(entry.value) }
+                is Iterable<*> -> current.any(::contains)
+                else ->
+                    (0 until ReflectArray.getLength(current)).any { index ->
+                        contains(ReflectArray.get(current, index))
+                    }
+            }
+        }
+
+        return contains(value)
     }
 
     private fun countNewSetElements(existing: Set<*>, values: Iterable<*>): Int {
