@@ -1,7 +1,10 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
 import com.ai.assistance.operit.data.model.ChatHistory
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -20,6 +23,72 @@ class ChatHistoryCategoryTest {
         assertEquals(
             listOf("new-message", "empty", "pinned-old"),
             selectChatHistoriesForCategory(histories, ChatHistoryCategory.RECENT).map { it.id },
+        )
+    }
+
+    @Test
+    fun timeSection_usesActivityDateAndCollapsesSevenDaysAndOlder() {
+        val referenceDate = LocalDate.of(2026, 8, 11)
+        val today = LocalDateTime.of(2026, 8, 11, 12, 0)
+        val cases =
+            listOf(
+                today.plusDays(1) to ChatHistoryTimeSection.TODAY,
+                today to ChatHistoryTimeSection.TODAY,
+                today.minusDays(1) to ChatHistoryTimeSection.YESTERDAY,
+                today.minusDays(2) to ChatHistoryTimeSection.SUNDAY,
+                today.minusDays(3) to ChatHistoryTimeSection.SATURDAY,
+                today.minusDays(4) to ChatHistoryTimeSection.FRIDAY,
+                today.minusDays(5) to ChatHistoryTimeSection.THURSDAY,
+                today.minusDays(6) to ChatHistoryTimeSection.WEDNESDAY,
+                today.minusDays(7) to ChatHistoryTimeSection.SEVEN_DAYS_AGO,
+                today.minusDays(30) to ChatHistoryTimeSection.SEVEN_DAYS_AGO,
+            )
+
+        cases.forEachIndexed { index, (activityTime, expectedSection) ->
+            val candidate =
+                history("section-$index", createdMinutes = 0)
+                    .copy(createdAt = activityTime, lastMessageAt = activityTime)
+            assertEquals(expectedSection, candidate.timeSection(referenceDate))
+        }
+
+        val lastMessageWins =
+            history("last-message", createdMinutes = 0)
+                .copy(
+                    createdAt = today.minusDays(30),
+                    lastMessageAt = today,
+                )
+        assertEquals(ChatHistoryTimeSection.TODAY, lastMessageWins.timeSection(referenceDate))
+    }
+
+    @Test
+    fun nextDateRefresh_waitsUntilTheNextLocalMidnight() {
+        val zoneId = ZoneId.of("Asia/Shanghai")
+        val beforeMidnight = ZonedDateTime.of(2026, 8, 11, 23, 59, 59, 500_000_000, zoneId)
+        val noon = ZonedDateTime.of(2026, 8, 11, 12, 0, 0, 0, zoneId)
+
+        assertEquals(501L, millisUntilNextLocalDate(beforeMidnight.toInstant(), zoneId))
+        assertEquals(43_200_001L, millisUntilNextLocalDate(noon.toInstant(), zoneId))
+        assertEquals(501L, localDateRefreshDelayMillis(beforeMidnight.toInstant(), zoneId))
+        assertEquals(60_000L, localDateRefreshDelayMillis(noon.toInstant(), zoneId))
+    }
+
+    @Test
+    fun timeSection_reinterpretsRoomEpochWhenTimeZoneChanges() {
+        val instant = ZonedDateTime.of(2026, 8, 11, 23, 30, 0, 0, ZoneId.of("UTC")).toInstant()
+        val history =
+            history("time-zone", createdMinutes = 0)
+                .copy(
+                    createdAt = LocalDateTime.of(2026, 8, 11, 23, 30),
+                    createdAtEpochMillis = instant.toEpochMilli(),
+                )
+
+        assertEquals(
+            ChatHistoryTimeSection.TODAY,
+            history.timeSection(LocalDate.of(2026, 8, 11), ZoneId.of("UTC")),
+        )
+        assertEquals(
+            ChatHistoryTimeSection.TODAY,
+            history.timeSection(LocalDate.of(2026, 8, 12), ZoneId.of("Asia/Shanghai")),
         )
     }
 
