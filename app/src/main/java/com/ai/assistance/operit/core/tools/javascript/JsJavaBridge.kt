@@ -354,6 +354,14 @@ internal fun buildJavaClassBridgeDefinition(): String {
             }
 
             function unwrapValue(value) {
+                var bridgeNumberPrefix = '\u0000operit-java-number:';
+                if (typeof value === 'number' && !Number.isFinite(value)) {
+                    return bridgeNumberPrefix +
+                        (Number.isNaN(value) ? 'NaN' : (value > 0 ? 'Infinity' : '-Infinity'));
+                }
+                if (typeof value === 'string' && value.indexOf(bridgeNumberPrefix) === 0) {
+                    return bridgeNumberPrefix + 'STRING:' + value;
+                }
                 if (typeof value === 'function') {
                     throw new Error('Java bridge interface proxy is not allowed');
                 }
@@ -387,6 +395,22 @@ internal fun buildJavaClassBridgeDefinition(): String {
             }
 
             function wrapValue(value) {
+                var bridgeNumberPrefix = '\u0000operit-java-number:';
+                var bridgeStringEscapePrefix = bridgeNumberPrefix + 'STRING:';
+                if (typeof value === 'string') {
+                    if (value.indexOf(bridgeStringEscapePrefix) === 0) {
+                        return value.substring(bridgeStringEscapePrefix.length);
+                    }
+                    if (value === bridgeNumberPrefix + 'NaN') {
+                        return NaN;
+                    }
+                    if (value === bridgeNumberPrefix + 'Infinity') {
+                        return Infinity;
+                    }
+                    if (value === bridgeNumberPrefix + '-Infinity') {
+                        return -Infinity;
+                    }
+                }
                 if (!value || typeof value !== 'object') {
                     return value;
                 }

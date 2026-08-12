@@ -36,6 +36,8 @@ internal object JsJavaBridgeDelegates {
     private const val JS_INTERFACE_KEY = "__javaJsInterface"
     private const val JS_OBJECT_ID_KEY = "__javaJsObjectId"
     private const val JS_INTERFACES_KEY = "__javaInterfaces"
+    private const val BRIDGE_NUMBER_PREFIX = "\u0000operit-java-number:"
+    private const val BRIDGE_STRING_ESCAPE_PREFIX = "${BRIDGE_NUMBER_PREFIX}STRING:"
     private const val MAX_BRIDGE_SERIALIZATION_DEPTH = 64
     private const val MAX_BRIDGE_SERIALIZATION_ELEMENTS = 65_536
     private const val MAX_BRIDGE_SERIALIZATION_SCALAR_CHARS = 1_048_576
@@ -1746,12 +1748,10 @@ internal object JsJavaBridgeDelegates {
         when (instance) {
             is StringBuilder -> validateStringBuilderInvocation(instance, method, args)
             is Map<*, *> -> {
-                validateBridgeReturnValue(instance)
                 validateMapMutationReferences(instance, method, args)
                 validateMapGrowth(instance, method, args)
             }
             is Collection<*> -> {
-                validateBridgeReturnValue(instance)
                 validateCollectionMutationReferences(instance, method, args)
                 validateCollectionGrowth(instance, method, args)
             }
@@ -1895,8 +1895,13 @@ internal object JsJavaBridgeDelegates {
             when (method.name) {
                 "addAll" -> args.getOrNull(1)?.let(::arrayElements).orEmpty()
                 "copy" -> (args.getOrNull(1) as? Collection<*>)?.toList().orEmpty()
-                "fill" -> listOf(args.getOrNull(1))
-                "replaceAll" -> listOf(args.getOrNull(2))
+                "fill" -> if (target.isEmpty()) emptyList() else listOf(args.getOrNull(1))
+                "replaceAll" ->
+                    if (target.contains(args.getOrNull(1))) {
+                        listOf(args.getOrNull(2))
+                    } else {
+                        emptyList()
+                    }
                 else -> emptyList()
             }
         requireMutationDoesNotReferenceTarget(target, insertedValues)
@@ -1909,13 +1914,30 @@ internal object JsJavaBridgeDelegates {
     ) {
         val insertedValues =
             when (method.name) {
-                "put", "putIfAbsent" -> args.take(2)
+                "put" -> args.take(2)
+                "putIfAbsent" -> {
+                    val key = args.firstOrNull()
+                    when {
+                        map[key] != null -> emptyList()
+                        map.containsKey(key) -> listOf(args.getOrNull(1))
+                        else -> args.take(2)
+                    }
+                }
                 "putAll" ->
                     (args.firstOrNull() as? Map<*, *>)
                         ?.entries
                         ?.flatMap { listOf(it.key, it.value) }
                         .orEmpty()
-                "replace" -> listOf(args.lastOrNull())
+                "replace" -> {
+                    val key = args.firstOrNull()
+                    val willReplace =
+                        when (args.size) {
+                            2 -> map.containsKey(key)
+                            3 -> map.containsKey(key) && map[key] == args.getOrNull(1)
+                            else -> false
+                        }
+                    if (willReplace) listOf(args.lastOrNull()) else emptyList()
+                }
                 else -> emptyList()
             }
         requireMutationDoesNotReferenceTarget(map, insertedValues)
@@ -2112,6 +2134,7 @@ internal object JsJavaBridgeDelegates {
                 }
                 list
             }
+            is String -> if (interpretBridgeMarkers) decodeBridgeString(raw) else raw
             else -> raw
         }
     }
@@ -2160,12 +2183,12 @@ internal object JsJavaBridgeDelegates {
             JSONObject.NULL -> JSONObject.NULL
             is JSONObject -> value
             is JSONArray -> value
-            is String -> value
+            is String -> if (bridgeAware) encodeBridgeString(value) else value
             is Boolean -> value
             is Int -> value
             is Long -> value
-            is Double -> value
-            is Float -> value.toDouble()
+            is Double -> encodeNonFiniteNumber(value) ?: value
+            is Float -> encodeNonFiniteNumber(value.toDouble()) ?: value.toDouble()
             is Number -> value
             is Char -> value.toString()
             is Enum<*> -> value.name
@@ -2337,6 +2360,31 @@ internal object JsJavaBridgeDelegates {
 
         visit(value, 0)
     }
+
+    private fun encodeNonFiniteNumber(value: Double): String? =
+        when {
+            value.isNaN() -> "${BRIDGE_NUMBER_PREFIX}NaN"
+            value == Double.POSITIVE_INFINITY -> "${BRIDGE_NUMBER_PREFIX}Infinity"
+            value == Double.NEGATIVE_INFINITY -> "${BRIDGE_NUMBER_PREFIX}-Infinity"
+            else -> null
+        }
+
+    private fun encodeBridgeString(value: String): String =
+        if (value.startsWith(BRIDGE_NUMBER_PREFIX)) {
+            BRIDGE_STRING_ESCAPE_PREFIX + value
+        } else {
+            value
+        }
+
+    private fun decodeBridgeString(value: String): Any =
+        when {
+            value.startsWith(BRIDGE_STRING_ESCAPE_PREFIX) ->
+                value.removePrefix(BRIDGE_STRING_ESCAPE_PREFIX)
+            value == "${BRIDGE_NUMBER_PREFIX}NaN" -> Double.NaN
+            value == "${BRIDGE_NUMBER_PREFIX}Infinity" -> Double.POSITIVE_INFINITY
+            value == "${BRIDGE_NUMBER_PREFIX}-Infinity" -> Double.NEGATIVE_INFINITY
+            else -> value
+        }
 
     private fun exposeConstructedJavaObject(
         value: Any,

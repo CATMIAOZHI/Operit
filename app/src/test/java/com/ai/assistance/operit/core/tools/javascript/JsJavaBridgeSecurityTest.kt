@@ -29,6 +29,8 @@ class JsJavaBridgeSecurityTest {
         assertTrue(module.source.contains("requireClassExistsRaw"))
         assertTrue(module.source.contains("looksLikeClassSegment"))
         assertTrue(module.source.contains("Java bridge interface proxy is not allowed"))
+        assertTrue(module.source.contains("operit-java-number:"))
+        assertTrue(module.source.contains("Number.isFinite(value)"))
         assertFalse(module.source.contains("ensureJsInterfaceMarkerRegistered"))
 
         val getHelper =
@@ -552,7 +554,7 @@ class JsJavaBridgeSecurityTest {
                 JsJavaBridgeDelegates.callStatic(
                     className = "java.util.Collections",
                     methodName = "addAll",
-                    argsJson = "[$listMarker,$listMarker]",
+                    argsJson = "[$listMarker,[$listMarker]]",
                     objectRegistry = registry
                 )
             }
@@ -604,6 +606,127 @@ class JsJavaBridgeSecurityTest {
                 objectRegistry = registry
             )
         assertTrue(clearResult, clearResult.contains("\"success\":true"))
+    }
+
+    @Test
+    fun conditionalMapMutationsOnlyRejectCyclesWhenTheyActuallyWrite() {
+        val registry = ConcurrentHashMap<String, Any>()
+        val map = HashMap<Any, Any?>().apply {
+            put("present", "kept")
+            put("null-value", null)
+        }
+        registry["map"] = map
+        val marker = "{\"__javaHandle\":\"map\",\"__javaClass\":\"java.util.HashMap\"}"
+
+        val putIfAbsentNoOp =
+            JsJavaBridgeDelegates.callInstance(
+                instanceHandle = "map",
+                methodName = "putIfAbsent",
+                argsJson = "[\"present\",$marker]",
+                objectRegistry = registry
+            )
+        assertTrue(putIfAbsentNoOp, putIfAbsentNoOp.contains("\"success\":true"))
+        assertEquals("kept", map["present"])
+
+        val replaceMissingNoOp =
+            JsJavaBridgeDelegates.callInstance(
+                instanceHandle = "map",
+                methodName = "replace",
+                argsJson = "[\"missing\",$marker]",
+                objectRegistry = registry
+            )
+        assertTrue(replaceMissingNoOp, replaceMissingNoOp.contains("\"success\":true"))
+        assertFalse(map.containsKey("missing"))
+
+        val replaceMismatchNoOp =
+            JsJavaBridgeDelegates.callInstance(
+                instanceHandle = "map",
+                methodName = "replace",
+                argsJson = "[\"present\",\"other\",$marker]",
+                objectRegistry = registry
+            )
+        assertTrue(replaceMismatchNoOp, replaceMismatchNoOp.contains("\"success\":true"))
+        assertEquals("kept", map["present"])
+
+        val putIfAbsentWrite =
+            Mockito.mockStatic(AppLogger::class.java).use {
+                JsJavaBridgeDelegates.callInstance(
+                    instanceHandle = "map",
+                    methodName = "putIfAbsent",
+                    argsJson = "[\"null-value\",$marker]",
+                    objectRegistry = registry
+                )
+            }
+        assertTrue(putIfAbsentWrite, putIfAbsentWrite.contains("\"success\":false"))
+        assertTrue(map.containsKey("null-value"))
+        assertTrue(map["null-value"] == null)
+    }
+
+    @Test
+    fun bridgeTransportsNonFiniteNumbersWithoutJsonLoss() {
+        val registry = ConcurrentHashMap<String, Any>()
+
+        val nanField =
+            JsJavaBridgeDelegates.getStaticField(
+                className = "java.lang.Double",
+                fieldName = "NaN",
+                objectRegistry = registry
+            )
+        assertTrue(nanField, nanField.contains("\\u0000operit-java-number:NaN"))
+
+        val infinityResult =
+            JsJavaBridgeDelegates.callStatic(
+                className = "java.lang.Double",
+                methodName = "valueOf",
+                argsJson = "[\"Infinity\"]",
+                objectRegistry = registry
+            )
+        assertTrue(
+            infinityResult,
+            infinityResult.contains("\\u0000operit-java-number:Infinity")
+        )
+
+        val roundTrip =
+            JsJavaBridgeDelegates.callStatic(
+                className = "java.lang.Double",
+                methodName = "isNaN",
+                argsJson = "[\"\\u0000operit-java-number:NaN\"]",
+                objectRegistry = registry
+            )
+        assertTrue(roundTrip, roundTrip.contains("\"data\":true"))
+
+        val escapedString =
+            JsJavaBridgeDelegates.callStatic(
+                className = "java.lang.String",
+                methodName = "valueOf",
+                argsJson = "[\"\\u0000operit-java-number:STRING:\\u0000operit-java-number:NaN\"]",
+                objectRegistry = registry
+            )
+        assertTrue(escapedString, escapedString.contains("operit-java-number:STRING:"))
+        assertTrue(escapedString, escapedString.contains("operit-java-number:NaN"))
+    }
+
+    @Test
+    fun instanceValidationDoesNotRescanAnAlreadyValidatedContainer() {
+        val traversalCount = AtomicInteger(0)
+        val nested =
+            object : Iterable<String> {
+                override fun iterator(): Iterator<String> {
+                    traversalCount.incrementAndGet()
+                    return listOf("nested").iterator()
+                }
+            }
+        val list = ArrayList<Any>().apply { add(nested) }
+        val size = ArrayList::class.java.getMethod("size")
+
+        JsJavaBridgeDelegates.validateJavaBridgeMethodInvocation(
+            targetClass = ArrayList::class.java,
+            instance = list,
+            method = size,
+            args = emptyArray()
+        )
+
+        assertEquals(0, traversalCount.get())
     }
 
     @Test
