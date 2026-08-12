@@ -8,6 +8,8 @@ data class ChatTurnOptions(
     /** Stable in-process identity for callers that need the terminal result of this exact turn. */
     val turnId: String? = null,
     val isSubTask: Boolean = false,
+    /** Runtime model-function route. Internal turns can use a functional model without becoming CHAT. */
+    val functionType: FunctionType = FunctionType.CHAT,
     /** Per-turn hard gate. False hides tool schemas and ignores tool-call markup in the response. */
     val toolsEnabled: Boolean = true,
     /** When set, exposes only these tools and bypasses the ordinary global/tool-selector list. */

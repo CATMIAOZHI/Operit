@@ -1080,6 +1080,7 @@ class MessageProcessingDelegate(
                     workspacePath = workspacePath,
                     workspaceEnv = workspaceEnv,
                     promptFunctionType = promptFunctionType,
+                    functionType = turnOptions.functionType,
                     enableThinking = enableThinking,
                     enableMemoryAutoUpdate = enableMemoryAutoUpdate,
                     maxTokens = effectiveMaxTokens,
@@ -1142,7 +1143,7 @@ class MessageProcessingDelegate(
                 val loadProviderModelStartTime = messageTimingNow()
                 val (provider, modelName) = try {
                     service.getDisplayProviderAndModelForFunction(
-                        functionType = com.ai.assistance.operit.data.model.FunctionType.CHAT,
+                        functionType = turnOptions.functionType,
                         chatModelConfigIdOverride = chatModelConfigIdOverride,
                         chatModelIndexOverride = chatModelIndexOverride
                     )

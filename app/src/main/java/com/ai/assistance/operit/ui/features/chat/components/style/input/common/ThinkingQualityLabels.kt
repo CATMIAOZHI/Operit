@@ -11,7 +11,10 @@ import com.ai.assistance.operit.data.preferences.ApiPreferences
  * 标签仍表示档位语义。例如：low → Low，medium → Medium，high → High，xhigh → X-High，max → Max。
  */
 fun thinkingQualityLevelLabel(level: Int): String {
-    val effort = ApiPreferences.thinkingQualityEffort(level)
+    return thinkingEffortLabel(ApiPreferences.thinkingQualityEffort(level))
+}
+
+fun thinkingEffortLabel(effort: String): String {
     return if (effort == "xhigh") {
         "X-High"
     } else {

@@ -2833,6 +2833,9 @@
     <string name="current_config_label">Current Configuration: %1$s</string>
     <string name="default_config">Default Configuration</string>
     <string name="model_label">Model: %1$s</string>
+    <string name="functional_reasoning_intensity">Reasoning intensity</string>
+    <string name="functional_reasoning_intensity_desc">Always offers five levels from Low to Max. This setting affects only the selected function and overrides explicit reasoning parameters in its model configuration. The provider may interpret the selected level as reasoning effort, a token budget, or a thinking toggle, and may automatically fall back.</string>
+    <string name="functional_reasoning_chat_managed">Chat thinking and reasoning intensity are controlled from the chat input bar.</string>
     <string name="test_connection_success">Success</string>
     <string name="test_connection_failed">Failed: %1$s</string>
     <string name="test_connection_desc">Test Connection</string>
