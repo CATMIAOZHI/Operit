@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "../StreamKmpGraph.h"
 #include "StreamPlugin.h"
@@ -44,13 +45,12 @@ private:
     bool haveEndPattern_;
     KmpMatcher endMatcher_;
     bool displayEndMode_;
-    bool displayThinkFamily_;
     DisplayEndState displayEndState_;
     std::u16string displayEndName_;
     bool displayCandidateClosing_;
     char16_t displayCandidateQuote_;
     char16_t displayLastNonWhitespace_;
-    int displayDepth_;
+    std::vector<std::u16string> displayFamilyStack_;
     char16_t startQuote_ = 0;
     char16_t startLastNonWhitespace_ = 0;
     char16_t lastChar_ = 0;
@@ -64,6 +64,7 @@ private:
     void resetDisplayEndCandidate();
     bool completeDisplayTagCandidate();
     bool isValidDisplayEndName() const;
+    static std::u16string displayTagFamily(const std::u16string& tagName);
 
     static bool isAsciiLetter(char16_t c);
     static char16_t asciiLower(char16_t c);

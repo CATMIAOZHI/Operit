@@ -161,6 +161,44 @@ bool expectMalformedSlashQuoteOpenersKeepToolInOuterBlock() {
     return true;
 }
 
+bool expectCrossFamilyNestingKeepsToolInOuterBlock() {
+    constexpr int mdXmlBlock = 8;
+    const std::u16string inputs[] = {
+            u"<think><search>hidden</search><tool name=\"visit_web\"></tool></think>answer",
+            u"<search><thinking>hidden</thinking><tool name=\"visit_web\"></tool></search>answer",
+            u"<think><search>hidden</think><tool name=\"visit_web\"></tool></search>",
+            u"<search><think>hidden</search><tool name=\"visit_web\"></tool></think>",
+    };
+    for (const auto& input : inputs) {
+        const int outerIndex = static_cast<int>(input.find(u'<'));
+        const int toolIndex = static_cast<int>(input.find(u"<tool"));
+        auto* session = streamnative::createMarkdownBlockSession();
+        const auto segments = streamnative::markdownSessionPush(
+                session,
+                reinterpret_cast<const jchar*>(input.data()),
+                static_cast<int>(input.size()));
+        streamnative::destroyMarkdownSession(session);
+
+        int outerBlock = -1;
+        int toolBlock = -1;
+        for (size_t index = 0; index < segments.size(); ++index) {
+            const auto& segment = segments[index];
+            if (segment.type != mdXmlBlock) continue;
+            if (segment.start <= outerIndex && outerIndex < segment.end) {
+                outerBlock = static_cast<int>(index);
+            }
+            if (segment.start <= toolIndex && toolIndex < segment.end) {
+                toolBlock = static_cast<int>(index);
+            }
+        }
+        if (outerBlock < 0 || toolBlock != outerBlock) {
+            std::cerr << "cross-family display nesting exposed a nested tool\n";
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -199,5 +237,6 @@ int main() {
     ok &= expectQualifiedXmlNameAndToolAreSeparateBlocks();
     ok &= expectNestedThinkFamilyKeepsToolInOuterBlock();
     ok &= expectMalformedSlashQuoteOpenersKeepToolInOuterBlock();
+    ok &= expectCrossFamilyNestingKeepsToolInOuterBlock();
     return ok ? 0 : 1;
 }

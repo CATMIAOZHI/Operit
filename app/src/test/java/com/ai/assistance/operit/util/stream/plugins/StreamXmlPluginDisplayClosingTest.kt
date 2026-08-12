@@ -148,6 +148,32 @@ class StreamXmlPluginDisplayClosingTest {
     }
 
     @Test
+    fun splitByKeepsToolInsideCrossFamilyDisplayNesting() = runBlocking {
+        try {
+            StreamLogger.setEnabled(false)
+            listOf(
+                "<think><search>hidden</search><tool name=\"visit_web\"></tool></think>answer",
+                "<search><thinking>hidden</thinking><tool name=\"visit_web\"></tool></search>answer",
+                "<think><search>hidden</think><tool name=\"visit_web\"></tool></search>",
+                "<search><think>hidden</search><tool name=\"visit_web\"></tool></think>",
+            ).forEach { input ->
+                val groups = mutableListOf<Pair<Boolean, String>>()
+                input.stream().splitBy(NestedMarkdownProcessor.getBlockPlugins()).collect { group ->
+                    val text = StringBuilder()
+                    group.stream.collect { text.append(it) }
+                    groups.add((group.tag is StreamXmlPlugin) to text.toString())
+                }
+
+                val toolGroup = groups.single { (_, text) -> "<tool" in text }
+                assertEquals("$input -> $groups", true, toolGroup.first)
+                assertEquals("$input -> $groups", true, toolGroup.second.startsWith("<think") || toolGroup.second.startsWith("<search"))
+            }
+        } finally {
+            StreamLogger.setEnabled(true)
+        }
+    }
+
+    @Test
     fun splitByKeepsQualifiedXmlNamesSeparateFromFollowingTools() = runBlocking {
         try {
             StreamLogger.setEnabled(false)

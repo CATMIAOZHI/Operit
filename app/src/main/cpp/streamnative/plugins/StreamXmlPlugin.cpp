@@ -10,12 +10,10 @@ StreamXmlPlugin::StreamXmlPlugin(bool includeTagsInOutput)
           allowStartAfterPunctuation_(false),
           haveEndPattern_(false),
           displayEndMode_(false),
-          displayThinkFamily_(false),
           displayEndState_(DisplayEndState::WAIT_LT),
           displayCandidateClosing_(false),
           displayCandidateQuote_(0),
-          displayLastNonWhitespace_(0),
-          displayDepth_(0) {
+          displayLastNonWhitespace_(0) {
     reset();
 }
 
@@ -40,9 +38,8 @@ void StreamXmlPlugin::reset() {
     endPattern_.clear();
     haveEndPattern_ = false;
     displayEndMode_ = false;
-    displayThinkFamily_ = false;
     resetDisplayEndCandidate();
-    displayDepth_ = 0;
+    displayFamilyStack_.clear();
     startQuote_ = 0;
     startLastNonWhitespace_ = 0;
     lastChar_ = 0;
@@ -238,9 +235,9 @@ bool StreamXmlPlugin::processStartMatcher(char16_t c) {
 void StreamXmlPlugin::buildEndPattern() {
     if (isDisplayTagName(tagName_)) {
         displayEndMode_ = true;
-        displayThinkFamily_ = isThinkFamilyTagName(tagName_);
         resetDisplayEndCandidate();
-        displayDepth_ = 1;
+        displayFamilyStack_.clear();
+        displayFamilyStack_.push_back(displayTagFamily(tagName_));
         haveEndPattern_ = false;
         return;
     }
@@ -255,10 +252,13 @@ void StreamXmlPlugin::buildEndPattern() {
 }
 
 bool StreamXmlPlugin::isValidDisplayEndName() const {
-    if (displayThinkFamily_) {
-        return displayEndName_ == u"think" || displayEndName_ == u"thinking";
-    }
-    return displayEndName_ == u"search";
+    return !displayTagFamily(displayEndName_).empty();
+}
+
+std::u16string StreamXmlPlugin::displayTagFamily(const std::u16string& tagName) {
+    if (isThinkFamilyTagName(tagName)) return u"think";
+    if (equalsAsciiIgnoreCase(tagName, u"search")) return u"search";
+    return {};
 }
 
 void StreamXmlPlugin::resetDisplayEndCandidate() {
@@ -275,15 +275,18 @@ void StreamXmlPlugin::restartDisplayEndMatcher(char16_t c) {
 }
 
 bool StreamXmlPlugin::completeDisplayTagCandidate() {
-    const bool validName = isValidDisplayEndName();
+    const std::u16string family = displayTagFamily(displayEndName_);
+    const bool validName = !family.empty();
     const bool validClosingSuffix = displayLastNonWhitespace_ == 0;
     const bool selfClosing =
             !displayCandidateClosing_ && displayLastNonWhitespace_ == u'/';
     if (validName && displayCandidateClosing_ && validClosingSuffix) {
-        if (displayDepth_ == 1) return true;
-        displayDepth_--;
+        if (!displayFamilyStack_.empty() && displayFamilyStack_.back() == family) {
+            displayFamilyStack_.pop_back();
+            if (displayFamilyStack_.empty()) return true;
+        }
     } else if (validName && !displayCandidateClosing_ && !selfClosing) {
-        displayDepth_++;
+        displayFamilyStack_.push_back(family);
     }
     resetDisplayEndCandidate();
     return false;

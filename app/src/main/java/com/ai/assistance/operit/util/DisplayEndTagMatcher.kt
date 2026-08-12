@@ -19,7 +19,7 @@ internal class DisplayEndTagMatcher(private val validNames: Set<String>) {
     private var candidateClosing = false
     private var candidateQuote: Char? = null
     private var lastNonWhitespace: Char? = null
-    private var depth = 1
+    private val familyStack = mutableListOf(rootFamily())
 
     var candidateLength: Int = 0
         private set
@@ -63,7 +63,7 @@ internal class DisplayEndTagMatcher(private val validNames: Set<String>) {
                         candidateLength += 1
                         DisplayEndMatchResult.IN_PROGRESS
                     }
-                    matchedName.toString() !in validNames -> restartFrom(char)
+                    displayTagFamily(matchedName.toString()) == null -> restartFrom(char)
                     char.isWhitespace() -> {
                         phase = 3
                         candidateLength += 1
@@ -110,23 +110,27 @@ internal class DisplayEndTagMatcher(private val validNames: Set<String>) {
     fun reset() {
         resetCandidate()
         lastMatchLength = 0
-        depth = 1
+        familyStack.clear()
+        familyStack.add(rootFamily())
     }
 
     private fun completeCandidate(): DisplayEndMatchResult {
         val completedLength = candidateLength
+        val family = displayTagFamily(matchedName.toString())
         val result =
             when {
-                candidateClosing && lastNonWhitespace == null && depth == 1 -> {
-                    lastMatchLength = completedLength
-                    DisplayEndMatchResult.MATCH
-                }
-                candidateClosing && lastNonWhitespace == null -> {
-                    depth--
-                    DisplayEndMatchResult.NO_MATCH
+                family == null -> DisplayEndMatchResult.NO_MATCH
+                candidateClosing && lastNonWhitespace == null && familyStack.lastOrNull() == family -> {
+                    familyStack.removeAt(familyStack.lastIndex)
+                    if (familyStack.isEmpty()) {
+                        lastMatchLength = completedLength
+                        DisplayEndMatchResult.MATCH
+                    } else {
+                        DisplayEndMatchResult.NO_MATCH
+                    }
                 }
                 !candidateClosing && lastNonWhitespace != '/' -> {
-                    depth++
+                    familyStack.add(family)
                     DisplayEndMatchResult.NO_MATCH
                 }
                 else -> DisplayEndMatchResult.NO_MATCH
@@ -154,11 +158,22 @@ internal class DisplayEndTagMatcher(private val validNames: Set<String>) {
             DisplayEndMatchResult.NO_MATCH
         }
     }
+
+    private fun rootFamily(): String =
+        validNames.firstNotNullOfOrNull(::displayTagFamily)
+            ?: error("DisplayEndTagMatcher requires a display tag name")
 }
 
-internal fun displayEndTagNames(tagName: String): Set<String>? =
+private fun displayTagFamily(tagName: String): String? =
     when (tagName.lowercase()) {
-        "think", "thinking" -> setOf("think", "thinking")
+        "think", "thinking" -> "think"
+        "search" -> "search"
+        else -> null
+    }
+
+internal fun displayEndTagNames(tagName: String): Set<String>? =
+    when (displayTagFamily(tagName)) {
+        "think" -> setOf("think", "thinking")
         "search" -> setOf("search")
         else -> null
     }

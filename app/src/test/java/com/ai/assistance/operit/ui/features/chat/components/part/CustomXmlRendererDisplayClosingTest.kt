@@ -80,4 +80,32 @@ class CustomXmlRendererDisplayClosingTest {
             assertEquals(body, output.toString())
         }
     }
+
+    @Test
+    fun streamingDisplayBodyBalancesCrossFamilyNesting() = runBlocking {
+        listOf(
+            Triple(
+                "think",
+                "<search>hidden</search><tool name=\"visit_web\"></tool>",
+                "</think>ignored",
+            ),
+            Triple(
+                "search",
+                "<thinking>hidden</thinking><tool name=\"visit_web\"></tool>",
+                "</search>ignored",
+            ),
+            Triple(
+                "think",
+                "<search>hidden</think><tool name=\"visit_web\"></tool></search>",
+                "</think>ignored",
+            ),
+        ).forEach { (rootTag, body, tail) ->
+            val output = StringBuilder()
+            val source = stream { emit("<$rootTag>$body$tail") }
+
+            createThinkMarkdownCharStreamForRendering(source, rootTag).collect { output.append(it) }
+
+            assertEquals(body, output.toString())
+        }
+    }
 }
