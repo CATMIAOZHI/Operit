@@ -12,8 +12,20 @@ internal fun canClaimWorkflowGateRetry(markerState: Byte?): Boolean =
     markerState == WORKFLOW_GATE_RETRY_DEFERRED ||
         markerState == WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED
 
-internal fun canExecuteWorkflowGateRetry(markerState: Byte?): Boolean =
-    markerState != WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED
+internal enum class WorkflowGateRetryExecutionDecision {
+    EXECUTE,
+    RECONCILIATION_CLAIMED,
+    RETRY,
+}
+
+internal fun workflowGateRetryExecutionDecision(
+    markerState: Byte?,
+): WorkflowGateRetryExecutionDecision =
+    if (markerState == WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED) {
+        WorkflowGateRetryExecutionDecision.RECONCILIATION_CLAIMED
+    } else {
+        WorkflowGateRetryExecutionDecision.EXECUTE
+    }
 
 internal fun workflowGateRetryStateAfterDeferral(markerState: Byte?): Byte =
     if (markerState == WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED) {
@@ -49,16 +61,19 @@ internal class WorkflowGateRetryStore(context: Context) {
         }.getOrDefault(false)
     }
 
-    /** Returns false only when reconciliation already owns this previously gated request. */
-    fun consumeForExecution(workRequestId: UUID): Boolean = synchronized(lock) {
+    fun consumeForExecution(
+        workRequestId: UUID,
+    ): WorkflowGateRetryExecutionDecision = synchronized(lock) {
         val atomicFile = AtomicFile(markerFile(workRequestId))
         runCatching { readState(atomicFile) }.fold(
             onSuccess = { state ->
-                val canExecute = canExecuteWorkflowGateRetry(state)
-                if (canExecute) atomicFile.delete()
-                canExecute
+                val decision = workflowGateRetryExecutionDecision(state)
+                if (decision == WorkflowGateRetryExecutionDecision.EXECUTE) {
+                    atomicFile.delete()
+                }
+                decision
             },
-            onFailure = { false },
+            onFailure = { WorkflowGateRetryExecutionDecision.RETRY },
         )
     }
 

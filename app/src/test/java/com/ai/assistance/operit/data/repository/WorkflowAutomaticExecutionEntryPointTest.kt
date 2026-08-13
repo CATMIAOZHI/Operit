@@ -32,6 +32,8 @@ class WorkflowAutomaticExecutionEntryPointTest {
         assertTrue(worker.contains("Result.retry()"))
         assertTrue(worker.contains("WorkflowGateRetryStore(applicationContext).mark(id)"))
         assertTrue(worker.contains("WorkflowGateRetryStore(applicationContext).consumeForExecution(id)"))
+        assertTrue(worker.contains("WorkflowGateRetryExecutionDecision.RECONCILIATION_CLAIMED"))
+        assertTrue(worker.contains("WorkflowGateRetryExecutionDecision.RETRY"))
         assertTrue(
             worker.indexOf("consumeForExecution(id)") <
                 worker.indexOf("val repository = WorkflowRepository(applicationContext)")
@@ -98,7 +100,8 @@ class WorkflowAutomaticExecutionEntryPointTest {
         assertTrue(rebuildOne.contains("excludedWorkRequestIds = gateDeferredRequestIds"))
         val gateRetryStore = source("core/workflow/WorkflowGateRetryStore.kt")
         assertTrue(gateRetryStore.contains("WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED -> Unit"))
-        assertTrue(gateRetryStore.contains("if (canExecute) atomicFile.delete()"))
+        assertTrue(gateRetryStore.contains("onFailure = { WorkflowGateRetryExecutionDecision.RETRY }"))
+        assertTrue(gateRetryStore.contains("WorkflowGateRetryExecutionDecision.EXECUTE)"))
         val legacyCancel = repository.substring(
             repository.indexOf("private fun cancelLegacyOnlySchedule"),
             repository.indexOf("private fun loadInternalWorkflowsForAutomaticTriggers"),

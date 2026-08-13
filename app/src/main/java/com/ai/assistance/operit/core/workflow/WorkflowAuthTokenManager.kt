@@ -23,6 +23,14 @@ internal fun loadOrCreateWorkflowSigningSecret(
 }
 
 private const val WORKFLOW_SIGNING_SECRET_BYTES = 32
+
+internal fun loadWorkflowSigningSecret(readBytes: () -> ByteArray): ByteArray? =
+    try {
+        readBytes()
+    } catch (_: FileNotFoundException) {
+        null
+    }
+
 private const val WORKFLOW_SIGNING_SECRET_FILE_NAME = "workflow_auth_signing_secret_v1"
 private const val WORKFLOW_AUTH_RESTORE_GENERATION_FILE_NAME = "workflow_auth_restore_generation_v1"
 private val workflowAuthStateLock = Any()
@@ -88,7 +96,7 @@ class WorkflowAuthTokenManager(context: Context) {
     private fun loadOrCreateSigningSecret(): ByteArray = synchronized(workflowAuthStateLock) {
         cachedSigningSecret?.let { return@synchronized it.copyOf() }
         val secret = loadOrCreateWorkflowSigningSecret(
-            readExisting = { runCatching { secretFile.readFully() }.getOrNull() },
+            readExisting = { loadWorkflowSigningSecret { secretFile.readFully() } },
             writeNew = { value ->
                 secretFile.baseFile.parentFile?.mkdirs()
                 val output = secretFile.startWrite()

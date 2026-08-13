@@ -4,6 +4,7 @@ import com.ai.assistance.operit.data.model.TriggerNode
 import com.ai.assistance.operit.data.model.Workflow
 import java.io.File
 import java.io.FileNotFoundException
+import java.io.IOException
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -47,6 +48,20 @@ class WorkflowAuthTokenManagerTest {
         val noBackupRoot = File("no-backup-root")
         assertEquals(noBackupRoot, workflowSigningSecretFile(noBackupRoot).parentFile)
         assertEquals(noBackupRoot, workflowAuthRestoreGenerationFile(noBackupRoot).parentFile)
+    }
+
+    @Test
+    fun signingSecretReadTreatsOnlyMissingStateAsUninitialized() {
+        assertEquals(null, loadWorkflowSigningSecret { throw FileNotFoundException("missing") })
+        assertArrayEquals(
+            ByteArray(32) { 4 },
+            loadWorkflowSigningSecret { ByteArray(32) { 4 } },
+        )
+        assertTrue(
+            runCatching {
+                loadWorkflowSigningSecret { throw IOException("temporarily unreadable") }
+            }.isFailure,
+        )
     }
 
     @Test

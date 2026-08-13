@@ -16,10 +16,11 @@ import com.ai.assistance.operit.core.workflow.intervalReplacementInitialDelayMin
 import com.ai.assistance.operit.core.workflow.deferredCronInitialDelayMillis
 import com.ai.assistance.operit.core.workflow.atomicMarkerMayExist
 import com.ai.assistance.operit.core.workflow.canClaimWorkflowGateRetry
-import com.ai.assistance.operit.core.workflow.canExecuteWorkflowGateRetry
+import com.ai.assistance.operit.core.workflow.WorkflowGateRetryExecutionDecision
 import com.ai.assistance.operit.core.workflow.WORKFLOW_GATE_RETRY_DEFERRED
 import com.ai.assistance.operit.core.workflow.WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED
 import com.ai.assistance.operit.core.workflow.workflowGateRetryStateAfterDeferral
+import com.ai.assistance.operit.core.workflow.workflowGateRetryExecutionDecision
 import com.ai.assistance.operit.core.workflow.shouldRetireCompletedPreFingerprintOneTime
 import com.ai.assistance.operit.core.workflow.specificTimeInitialDelay
 import com.ai.assistance.operit.core.workflow.shouldRetryWorkflowWorkerFailure
@@ -701,9 +702,18 @@ class WorkflowStoragePolicyTest {
         assertFalse(atomicMarkerMayExist(baseExists = false, backupExists = false))
         assertTrue(canClaimWorkflowGateRetry(WORKFLOW_GATE_RETRY_DEFERRED))
         assertTrue(canClaimWorkflowGateRetry(WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED))
-        assertTrue(canExecuteWorkflowGateRetry(null))
-        assertTrue(canExecuteWorkflowGateRetry(WORKFLOW_GATE_RETRY_DEFERRED))
-        assertFalse(canExecuteWorkflowGateRetry(WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED))
+        assertEquals(
+            WorkflowGateRetryExecutionDecision.EXECUTE,
+            workflowGateRetryExecutionDecision(null),
+        )
+        assertEquals(
+            WorkflowGateRetryExecutionDecision.EXECUTE,
+            workflowGateRetryExecutionDecision(WORKFLOW_GATE_RETRY_DEFERRED),
+        )
+        assertEquals(
+            WorkflowGateRetryExecutionDecision.RECONCILIATION_CLAIMED,
+            workflowGateRetryExecutionDecision(WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED),
+        )
         assertEquals(
             WORKFLOW_GATE_RETRY_DEFERRED,
             workflowGateRetryStateAfterDeferral(null),
