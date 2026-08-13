@@ -31,7 +31,11 @@ class WorkflowAutomaticExecutionEntryPointTest {
         assertTrue(worker.contains("PreFingerprintScheduleReplacementPendingException"))
         assertTrue(worker.contains("Result.retry()"))
         assertTrue(worker.contains("WorkflowGateRetryStore(applicationContext).mark(id)"))
-        assertTrue(worker.contains("WorkflowGateRetryStore(applicationContext).consume(id)"))
+        assertTrue(worker.contains("WorkflowGateRetryStore(applicationContext).consumeForExecution(id)"))
+        assertTrue(
+            worker.indexOf("consumeForExecution(id)") <
+                worker.indexOf("val repository = WorkflowRepository(applicationContext)")
+        )
         assertTrue(worker.contains("scheduleFingerprint"))
         assertFalse(worker.contains("repository.triggerWorkflow(workflowId, triggerNodeId)"))
 
@@ -65,7 +69,7 @@ class WorkflowAutomaticExecutionEntryPointTest {
         val rebuildPreFingerprintCheckIndex =
             rebuildOne.indexOf("scheduler.hasActivePreFingerprintWorkflowScheduleAndWait(id)")
         val rebuildDeferredCheckIndex =
-            rebuildOne.indexOf("scheduler.gateDeferredWorkflowScheduleIdsAndWait(id)")
+            rebuildOne.indexOf("scheduler.claimGateDeferredWorkflowScheduleIdsAndWait(id)")
         val rebuildSchedulableCheckIndex =
             rebuildOne.indexOf("scheduler.isSchedulableWorkflowDefinition(latest)")
         val rebuildRejectedCheckIndex =
@@ -73,7 +77,7 @@ class WorkflowAutomaticExecutionEntryPointTest {
         val rebuildPreserveIndex =
             rebuildOne.indexOf("scheduler.shouldPreserveActivePreFingerprintScheduleRequest(latest)")
         val rebuildCompletedIndex =
-            rebuildOne.indexOf("scheduler.shouldRetireCompletedPreFingerprintOneTimeAndWait(latest)")
+            rebuildOne.indexOf("scheduler.shouldRetireCompletedPreFingerprintOneTimeAndWait(")
         val rebuildScheduleIndex = rebuildOne.indexOf("scheduleWorkflowLocked(")
         assertTrue(rebuildRejectedCheckIndex in 0 until rebuildSchedulableCheckIndex)
         assertTrue(rebuildSchedulableCheckIndex in 0 until rebuildActiveCheckIndex)
@@ -91,6 +95,10 @@ class WorkflowAutomaticExecutionEntryPointTest {
         assertTrue(rebuildOne.contains("recoveringOrphanedClaim,"))
         assertTrue(rebuildOne.contains("runDeferredCronImmediately ="))
         assertTrue(rebuildOne.contains("scheduler.consumeGateDeferredWorkflowSchedules(gateDeferredRequestIds)"))
+        assertTrue(rebuildOne.contains("excludedWorkRequestIds = gateDeferredRequestIds"))
+        val gateRetryStore = source("core/workflow/WorkflowGateRetryStore.kt")
+        assertTrue(gateRetryStore.contains("WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED -> Unit"))
+        assertTrue(gateRetryStore.contains("if (canExecute) atomicFile.delete()"))
         val legacyCancel = repository.substring(
             repository.indexOf("private fun cancelLegacyOnlySchedule"),
             repository.indexOf("private fun loadInternalWorkflowsForAutomaticTriggers"),
@@ -149,6 +157,14 @@ class WorkflowAutomaticExecutionEntryPointTest {
         assertTrue(repository.contains("recoverAtomicWorkflowFile(file)"))
         assertTrue(repository.contains("withWorkflowAtomicFileLock(file)"))
 
+        val enabledUpdate = repository.substring(
+            repository.indexOf("suspend fun setWorkflowEnabled(workflow:"),
+            repository.indexOf("suspend fun deleteWorkflow("),
+        )
+        assertTrue(enabledUpdate.contains("reviewedLegacySnapshot = workflow"))
+        assertTrue(enabledUpdate.contains("requireNotNull(reviewedLegacySnapshot)"))
+        assertFalse(enabledUpdate.contains("readWorkflowFile(entry.sourceFile"))
+
         val viewModel = source("ui/features/workflow/viewmodel/WorkflowViewModel.kt")
         val scheduleFromUi = viewModel.substring(
             viewModel.indexOf("fun scheduleWorkflow(workflowId:"),
@@ -156,6 +172,11 @@ class WorkflowAutomaticExecutionEntryPointTest {
         )
         assertTrue(scheduleFromUi.contains("withContext(Dispatchers.IO)"))
         assertTrue(scheduleFromUi.contains("repository.scheduleWorkflow(workflowId)"))
+        val enableFromUi = viewModel.substring(
+            viewModel.indexOf("fun setWorkflowEnabled(workflowId:"),
+            viewModel.indexOf("fun updateWorkflow(workflow:"),
+        )
+        assertTrue(enableFromUi.contains("repository.setWorkflowEnabled(previousWorkflow, enabled)"))
     }
 
     private fun source(relativePath: String): String {

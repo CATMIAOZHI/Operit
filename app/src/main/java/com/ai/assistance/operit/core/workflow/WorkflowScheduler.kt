@@ -30,12 +30,6 @@ internal fun isActiveWorkflowScheduleState(state: WorkInfo.State): Boolean =
         state == WorkInfo.State.RUNNING ||
         state == WorkInfo.State.BLOCKED
 
-internal fun isGateDeferredWorkflowSchedule(
-    state: WorkInfo.State,
-    workRequestId: UUID,
-    markedRequestIds: Set<UUID>,
-): Boolean = state == WorkInfo.State.ENQUEUED && workRequestId in markedRequestIds
-
 internal fun intervalReplacementInitialDelayMinutes(
     intervalMinutes: Long,
     delayFirstRun: Boolean,
@@ -48,8 +42,9 @@ internal fun deferredCronInitialDelayMillis(
 
 internal fun shouldRetireCompletedPreFingerprintOneTime(
     workflow: Workflow,
-    workStates: Collection<WorkInfo.State>,
+    workInfos: Collection<WorkflowScheduleWorkInfo>,
     targetIsDue: Boolean,
+    excludedWorkRequestIds: Set<UUID> = emptySet(),
 ): Boolean {
     if (workflow.scheduleFingerprintGeneration != null) return false
     if (!targetIsDue) return false
@@ -59,8 +54,20 @@ internal fun shouldRetireCompletedPreFingerprintOneTime(
     if (triggerNode.triggerConfig[WorkflowScheduler.CONFIG_SCHEDULE_TYPE] !=
         WorkflowScheduler.SCHEDULE_TYPE_SPECIFIC_TIME
     ) return false
-    return WorkInfo.State.SUCCEEDED in workStates || WorkInfo.State.FAILED in workStates
+    return workInfos.any { info ->
+        info.id !in excludedWorkRequestIds &&
+        (info.state == WorkInfo.State.SUCCEEDED || info.state == WorkInfo.State.FAILED) &&
+            info.tags.none { tag ->
+                tag.startsWith(WorkflowScheduler.SCHEDULE_FINGERPRINT_TAG_PREFIX)
+            }
+    }
 }
+
+internal data class WorkflowScheduleWorkInfo(
+    val state: WorkInfo.State,
+    val tags: Set<String>,
+    val id: UUID = UUID(0L, 0L),
+)
 
 internal fun isActiveMatchingWorkflowSchedule(
     state: WorkInfo.State,
@@ -555,15 +562,10 @@ class WorkflowScheduler(private val context: Context) {
             isActiveWorkflowScheduleState(info.state)
         }
 
-    internal fun gateDeferredWorkflowScheduleIdsAndWait(workflowId: String): Set<UUID> {
+    internal fun claimGateDeferredWorkflowScheduleIdsAndWait(workflowId: String): Set<UUID> {
         val workInfos = workManager.getWorkInfosForUniqueWork(getWorkName(workflowId)).get()
-        val markedIds = workInfos.mapNotNull { info ->
-            info.id.takeIf(gateRetryStore::isMarked)
-        }.toSet()
         return workInfos.mapNotNull { info ->
-            info.id.takeIf {
-                isGateDeferredWorkflowSchedule(info.state, info.id, markedIds)
-            }
+            info.id.takeIf(gateRetryStore::claimForReconciliation)
         }.toSet()
     }
 
@@ -590,12 +592,16 @@ class WorkflowScheduler(private val context: Context) {
             isActivePreFingerprintWorkflowSchedule(info.state, info.tags)
         }
 
-    internal fun shouldRetireCompletedPreFingerprintOneTimeAndWait(workflow: Workflow): Boolean =
+    internal fun shouldRetireCompletedPreFingerprintOneTimeAndWait(
+        workflow: Workflow,
+        excludedWorkRequestIds: Set<UUID> = emptySet(),
+    ): Boolean =
         shouldRetireCompletedPreFingerprintOneTime(
             workflow = workflow,
-            workStates = workManager.getWorkInfosForUniqueWork(getWorkName(workflow.id)).get()
-                .map { info -> info.state },
+            workInfos = workManager.getWorkInfosForUniqueWork(getWorkName(workflow.id)).get()
+                .map { info -> WorkflowScheduleWorkInfo(info.state, info.tags, info.id) },
             targetIsDue = !isFutureSpecificTimeSchedule(workflow),
+            excludedWorkRequestIds = excludedWorkRequestIds,
         )
 
     /** Used by security-sensitive legacy cleanup before a trusted replacement is scheduled. */

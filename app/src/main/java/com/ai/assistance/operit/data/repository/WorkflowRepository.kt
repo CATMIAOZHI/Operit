@@ -1271,18 +1271,29 @@ class WorkflowRepository(private val context: Context) {
         }
     }
 
-    suspend fun setWorkflowEnabled(id: String, enabled: Boolean): Result<Workflow> =
-        setWorkflowEnabledInternal(id, enabled, allowLegacyPromotion = true)
+    suspend fun setWorkflowEnabled(workflow: Workflow, enabled: Boolean): Result<Workflow> =
+        setWorkflowEnabledInternal(
+            id = workflow.id,
+            enabled = enabled,
+            allowLegacyPromotion = true,
+            reviewedLegacySnapshot = workflow,
+        )
 
     internal suspend fun setWorkflowEnabledFromPrivateStorage(
         id: String,
         enabled: Boolean,
-    ): Result<Workflow> = setWorkflowEnabledInternal(id, enabled, allowLegacyPromotion = false)
+    ): Result<Workflow> = setWorkflowEnabledInternal(
+        id = id,
+        enabled = enabled,
+        allowLegacyPromotion = false,
+        reviewedLegacySnapshot = null,
+    )
 
     private suspend fun setWorkflowEnabledInternal(
         id: String,
         enabled: Boolean,
         allowLegacyPromotion: Boolean,
+        reviewedLegacySnapshot: Workflow?,
     ): Result<Workflow> = withContext(Dispatchers.IO) {
         try {
             require(id.isNotBlank()) { "Workflow id cannot be empty" }
@@ -1294,8 +1305,12 @@ class WorkflowRepository(private val context: Context) {
                     ?.let { file -> SourcedEntry(file, StorageSource.INTERNAL, file) }
             }
                 ?: return@withContext Result.failure(Exception(context.getString(R.string.workflow_not_found)))
-            val fallbackWorkflow = effective.takeIf { entry -> entry.isLegacy }?.let { entry ->
-                readWorkflowFile(entry.sourceFile, id, isLegacy = true)
+            val fallbackWorkflow = effective.takeIf { entry -> entry.isLegacy }?.let {
+                requireNotNull(reviewedLegacySnapshot) {
+                    "A reviewed legacy workflow snapshot is required for promotion"
+                }.also { reviewed ->
+                    require(reviewed.id == id) { "Reviewed workflow id does not match promotion id" }
+                }
             }
             val file = internal
             invalidateExternalTriggerCache()
@@ -2038,7 +2053,7 @@ class WorkflowRepository(private val context: Context) {
                 return@synchronized false
             }
             val gateDeferredRequestIds =
-                scheduler.gateDeferredWorkflowScheduleIdsAndWait(id)
+                scheduler.claimGateDeferredWorkflowScheduleIdsAndWait(id)
             val deferredScheduleRetry = gateDeferredRequestIds.isNotEmpty()
             val activeMatchingSchedule =
                 scheduler.hasActiveMatchingWorkflowScheduleAndWait(latest)
@@ -2061,7 +2076,12 @@ class WorkflowRepository(private val context: Context) {
                 AppLogger.d(TAG, "Preserving active trusted schedule request: $id")
                 return@synchronized false
             }
-            if (scheduler.shouldRetireCompletedPreFingerprintOneTimeAndWait(latest)) {
+            if (
+                scheduler.shouldRetireCompletedPreFingerprintOneTimeAndWait(
+                    latest,
+                    excludedWorkRequestIds = gateDeferredRequestIds,
+                )
+            ) {
                 val retired = latest.copy(
                     scheduleFingerprintGeneration =
                         WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION,

@@ -44,7 +44,10 @@ class WorkflowWorker(
             AppLogger.w(TAG, "Deferred workflow execution while migration or restore is in progress")
             return Result.retry()
         }
-        WorkflowGateRetryStore(applicationContext).consume(id)
+        if (!WorkflowGateRetryStore(applicationContext).consumeForExecution(id)) {
+            AppLogger.w(TAG, "Skipping a gated request claimed by schedule reconciliation")
+            return Result.failure()
+        }
 
         AppLogger.d(TAG, "Executing scheduled workflow: $workflowId, trigger: $triggerNodeId")
 

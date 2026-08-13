@@ -8,13 +8,18 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import com.ai.assistance.operit.core.workflow.WorkflowScheduler
+import com.ai.assistance.operit.core.workflow.WorkflowScheduleWorkInfo
 import com.ai.assistance.operit.core.workflow.isActiveWorkflowScheduleState
-import com.ai.assistance.operit.core.workflow.isGateDeferredWorkflowSchedule
 import com.ai.assistance.operit.core.workflow.isActiveMatchingWorkflowSchedule
 import com.ai.assistance.operit.core.workflow.isActivePreFingerprintWorkflowSchedule
 import com.ai.assistance.operit.core.workflow.intervalReplacementInitialDelayMinutes
 import com.ai.assistance.operit.core.workflow.deferredCronInitialDelayMillis
 import com.ai.assistance.operit.core.workflow.atomicMarkerMayExist
+import com.ai.assistance.operit.core.workflow.canClaimWorkflowGateRetry
+import com.ai.assistance.operit.core.workflow.canExecuteWorkflowGateRetry
+import com.ai.assistance.operit.core.workflow.WORKFLOW_GATE_RETRY_DEFERRED
+import com.ai.assistance.operit.core.workflow.WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED
+import com.ai.assistance.operit.core.workflow.workflowGateRetryStateAfterDeferral
 import com.ai.assistance.operit.core.workflow.shouldRetireCompletedPreFingerprintOneTime
 import com.ai.assistance.operit.core.workflow.specificTimeInitialDelay
 import com.ai.assistance.operit.core.workflow.shouldRetryWorkflowWorkerFailure
@@ -349,29 +354,56 @@ class WorkflowStoragePolicyTest {
         assertTrue(
             shouldRetireCompletedPreFingerprintOneTime(
                 dueOneTime,
-                listOf(WorkInfo.State.SUCCEEDED),
+                listOf(WorkflowScheduleWorkInfo(WorkInfo.State.SUCCEEDED, emptySet())),
                 targetIsDue = true,
             )
         )
         assertTrue(
             shouldRetireCompletedPreFingerprintOneTime(
                 dueOneTime,
-                listOf(WorkInfo.State.FAILED),
+                listOf(WorkflowScheduleWorkInfo(WorkInfo.State.FAILED, emptySet())),
                 targetIsDue = true,
             )
         )
         assertFalse(
             shouldRetireCompletedPreFingerprintOneTime(
                 dueOneTime,
-                listOf(WorkInfo.State.CANCELLED),
+                listOf(WorkflowScheduleWorkInfo(WorkInfo.State.CANCELLED, emptySet())),
                 targetIsDue = true,
+            )
+        )
+        val claimedRequestId = java.util.UUID.randomUUID()
+        assertFalse(
+            shouldRetireCompletedPreFingerprintOneTime(
+                dueOneTime,
+                listOf(
+                    WorkflowScheduleWorkInfo(
+                        WorkInfo.State.FAILED,
+                        emptySet(),
+                        claimedRequestId,
+                    )
+                ),
+                targetIsDue = true,
+                excludedWorkRequestIds = setOf(claimedRequestId),
             )
         )
         assertFalse(
             shouldRetireCompletedPreFingerprintOneTime(
                 dueOneTime,
-                listOf(WorkInfo.State.SUCCEEDED),
+                listOf(WorkflowScheduleWorkInfo(WorkInfo.State.SUCCEEDED, emptySet())),
                 targetIsDue = false,
+            )
+        )
+        assertFalse(
+            shouldRetireCompletedPreFingerprintOneTime(
+                dueOneTime,
+                listOf(
+                    WorkflowScheduleWorkInfo(
+                        WorkInfo.State.SUCCEEDED,
+                        setOf(WorkflowScheduler.scheduleFingerprintTag("new-definition")),
+                    )
+                ),
+                targetIsDue = true,
             )
         )
         assertEquals(
@@ -518,14 +550,14 @@ class WorkflowStoragePolicyTest {
                     scheduleFingerprintGeneration =
                         WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION,
                 ),
-                listOf(WorkInfo.State.SUCCEEDED),
+                listOf(WorkflowScheduleWorkInfo(WorkInfo.State.SUCCEEDED, emptySet())),
                 targetIsDue = true,
             )
         )
         assertFalse(
             shouldRetireCompletedPreFingerprintOneTime(
                 interval,
-                listOf(WorkInfo.State.SUCCEEDED),
+                listOf(WorkflowScheduleWorkInfo(WorkInfo.State.SUCCEEDED, emptySet())),
                 targetIsDue = true,
             )
         )
@@ -660,28 +692,6 @@ class WorkflowStoragePolicyTest {
         assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.SUCCEEDED))
         assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.FAILED))
         assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.CANCELLED))
-        val markedRequestId = java.util.UUID.randomUUID()
-        assertTrue(
-            isGateDeferredWorkflowSchedule(
-                WorkInfo.State.ENQUEUED,
-                markedRequestId,
-                setOf(markedRequestId),
-            )
-        )
-        assertFalse(
-            isGateDeferredWorkflowSchedule(
-                WorkInfo.State.ENQUEUED,
-                markedRequestId,
-                emptySet(),
-            )
-        )
-        assertFalse(
-            isGateDeferredWorkflowSchedule(
-                WorkInfo.State.RUNNING,
-                markedRequestId,
-                setOf(markedRequestId),
-            )
-        )
         assertEquals(15L, intervalReplacementInitialDelayMinutes(15L, delayFirstRun = true))
         assertNull(intervalReplacementInitialDelayMinutes(15L, delayFirstRun = false))
         assertEquals(0L, deferredCronInitialDelayMillis(60_000L, runImmediately = true))
@@ -689,6 +699,19 @@ class WorkflowStoragePolicyTest {
         assertTrue(atomicMarkerMayExist(baseExists = true, backupExists = false))
         assertTrue(atomicMarkerMayExist(baseExists = false, backupExists = true))
         assertFalse(atomicMarkerMayExist(baseExists = false, backupExists = false))
+        assertTrue(canClaimWorkflowGateRetry(WORKFLOW_GATE_RETRY_DEFERRED))
+        assertTrue(canClaimWorkflowGateRetry(WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED))
+        assertTrue(canExecuteWorkflowGateRetry(null))
+        assertTrue(canExecuteWorkflowGateRetry(WORKFLOW_GATE_RETRY_DEFERRED))
+        assertFalse(canExecuteWorkflowGateRetry(WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED))
+        assertEquals(
+            WORKFLOW_GATE_RETRY_DEFERRED,
+            workflowGateRetryStateAfterDeferral(null),
+        )
+        assertEquals(
+            WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED,
+            workflowGateRetryStateAfterDeferral(WORKFLOW_GATE_RETRY_RECONCILIATION_CLAIMED),
+        )
 
         val matchingTag = WorkflowScheduler.scheduleFingerprintTag("expected")
         assertTrue(

@@ -1099,7 +1099,7 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             error = null
 
-            repository.setWorkflowEnabled(workflowId, enabled).fold(
+            repository.setWorkflowEnabled(previousWorkflow, enabled).fold(
                 onSuccess = { savedWorkflow ->
                     replaceWorkflowInState(savedWorkflow)
                     onSuccess()
