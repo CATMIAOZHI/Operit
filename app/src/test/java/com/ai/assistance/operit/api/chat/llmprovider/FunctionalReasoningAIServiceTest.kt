@@ -2,6 +2,7 @@ package com.ai.assistance.operit.api.chat.llmprovider
 
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.FunctionConfigMapping
@@ -227,20 +228,40 @@ class FunctionalReasoningAIServiceTest {
     }
 
     @Test
-    fun unknownDeepSeekModelsUseProviderDefaultWithoutAnEffortOverride() {
+    fun deepSeekFunctionalChoiceRemovesAConflictingNativeThinkingObject() {
         val request =
             buildFunctionalReasoningRequest(
                 providerType = ApiProviderType.DEEPSEEK,
-                modelName = "future-deepseek-model",
-                modelParameters = emptyList(),
+                modelName = "deepseek-v4-pro",
+                modelParameters =
+                    listOf(
+                        objectParameter("thinking", "{\"type\":\"disabled\"}"),
+                        stringParameter("reasoning_effort", "low"),
+                    ),
                 thinkingQualityLevel = 5,
             )
 
         assertTrue(request.enableThinking)
-        assertTrue(request.modelParameters.none { it.apiName == "reasoning_effort" })
+        assertTrue(request.modelParameters.none { it.apiName == "thinking" })
+        assertEquals("max", request.parameterValue("reasoning_effort"))
+    }
+
+    @Test
+    fun unknownDeepSeekModelsPreserveProviderManagedThinkingControls() {
+        val nativeThinking = objectParameter("thinking", "{\"type\":\"disabled\"}")
+        val nativeEffort = stringParameter("reasoning_effort", "low")
+        val request =
+            buildFunctionalReasoningRequest(
+                providerType = ApiProviderType.DEEPSEEK,
+                modelName = "future-deepseek-model",
+                modelParameters = listOf(nativeThinking, nativeEffort),
+                thinkingQualityLevel = 5,
+            )
+
+        assertTrue(request.enableThinking)
         val consumed = consumeAutomaticReasoningSuppression(request.modelParameters)
         assertTrue(consumed.suppressAutomaticReasoning)
-        assertTrue(consumed.modelParameters.isEmpty())
+        assertEquals(listOf(nativeThinking, nativeEffort), consumed.modelParameters)
     }
 
     @Test
@@ -936,6 +957,30 @@ class FunctionalReasoningAIServiceTest {
     }
 
     @Test
+    fun geminiFunctionalChoiceRemovesAConflictingNativeThinkingConfig() {
+        val request =
+            buildFunctionalReasoningRequest(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-3.1-pro-preview",
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            apiName = "thinkingConfig",
+                            value = "{\"includeThoughts\":false,\"thinkingLevel\":\"low\"}",
+                            category = ParameterCategory.GENERATION,
+                        )
+                    ),
+                thinkingQualityLevel = 5,
+            )
+        val finalThinkingConfig =
+            buildGeminiThinkingConfig(request.enableThinking, request.modelParameters)
+
+        assertTrue(request.modelParameters.none { it.apiName == "thinkingConfig" })
+        assertEquals("high", finalThinkingConfig?.getString("thinkingLevel"))
+        assertTrue(finalThinkingConfig?.getBoolean("includeThoughts") == true)
+    }
+
+    @Test
     fun gemini3ProMapsMediumSliderPositionToAnAcceptedLevel() {
         val request =
             buildFunctionalReasoningRequest(
@@ -1009,6 +1054,26 @@ class FunctionalReasoningAIServiceTest {
                     buildGeminiThinkingConfig(request.enableThinking, request.modelParameters),
                 )
             }
+    }
+
+    @Test
+    fun unsupportedGeminiModelsPreserveProviderManagedNativeThinkingConfig() {
+        val nativeThinkingConfig =
+            objectParameter(
+                apiName = "thinkingConfig",
+                value = "{\"includeThoughts\":true,\"thinkingLevel\":\"high\"}",
+                category = ParameterCategory.GENERATION,
+            )
+        val request =
+            buildFunctionalReasoningRequest(
+                providerType = ApiProviderType.GEMINI_GENERIC,
+                modelName = "future-gemini-model",
+                modelParameters = listOf(nativeThinkingConfig),
+                thinkingQualityLevel = 5,
+            )
+
+        assertFalse(request.enableThinking)
+        assertEquals(nativeThinkingConfig, request.modelParameters.single())
     }
 
     @Test
@@ -1152,5 +1217,21 @@ class FunctionalReasoningAIServiceTest {
             currentValue = value,
             isEnabled = isEnabled,
             valueType = ParameterValueType.INT,
+        )
+
+    private fun objectParameter(
+        apiName: String,
+        value: String,
+        category: ParameterCategory = ParameterCategory.OTHER,
+    ): ModelParameter<String> =
+        ModelParameter(
+            id = apiName,
+            name = apiName,
+            apiName = apiName,
+            defaultValue = value,
+            currentValue = value,
+            isEnabled = true,
+            valueType = ParameterValueType.OBJECT,
+            category = category,
         )
 }

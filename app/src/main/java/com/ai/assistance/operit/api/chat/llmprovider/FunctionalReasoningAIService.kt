@@ -545,7 +545,7 @@ private fun functionalReasoningApiNames(
 
         ApiProviderType.DEEPSEEK ->
             if (deepSeekFunctionalEffort(modelName, ApiPreferences.DEFAULT_THINKING_QUALITY_LEVEL) != null) {
-                setOf("reasoning_effort")
+                setOf("reasoning_effort", "thinking")
             } else {
                 emptySet()
             }
@@ -603,7 +603,14 @@ private fun functionalReasoningApiNames(
                 null -> emptySet()
             }
         ApiProviderType.GOOGLE,
-        ApiProviderType.GEMINI_GENERIC -> setOf("thinking_budget", "thinking_level")
+        ApiProviderType.GEMINI_GENERIC ->
+            buildSet {
+                add("thinking_budget")
+                add("thinking_level")
+                if (supportsGeminiFunctionalThinking(modelName)) {
+                    add("thinkingConfig")
+                }
+            }
 
         else -> emptySet()
     }
