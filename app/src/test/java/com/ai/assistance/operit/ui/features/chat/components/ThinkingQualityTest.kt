@@ -50,7 +50,7 @@ class ThinkingQualityTest {
         assertEquals("low", DeepseekProvider.normalizeDeepseekEffort("low"))
         assertEquals("high", DeepseekProvider.normalizeDeepseekEffort("medium"))
         assertEquals("high", DeepseekProvider.normalizeDeepseekEffort("high"))
-        assertEquals("xhigh", DeepseekProvider.normalizeDeepseekEffort("xhigh"))
+        assertEquals("max", DeepseekProvider.normalizeDeepseekEffort("xhigh"))
         assertEquals("max", DeepseekProvider.normalizeDeepseekEffort("max"))
     }
 }
