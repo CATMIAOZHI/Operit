@@ -837,6 +837,25 @@ class FunctionalReasoningAIServiceTest {
     }
 
     @Test
+    fun disabledChatThinkingDoesNotSerializeClaudeThinkingParameters() {
+        val requestJson = JSONObject()
+        val hasThinking =
+            applyCallerSuppliedClaudeThinkingParameters(
+                requestJson = requestJson,
+                modelParameters =
+                    listOf(
+                        stringParameter("thinking", "{\"type\":\"adaptive\"}"),
+                        stringParameter("output_config", "{\"effort\":\"max\"}"),
+                    ),
+                enableThinking = false,
+            )
+
+        assertFalse(hasThinking)
+        assertFalse(requestJson.has("thinking"))
+        assertFalse(requestJson.has("output_config"))
+    }
+
+    @Test
     fun gemini25MapsTheFiveLevelsToBudgets() {
         val request =
             buildFunctionalReasoningRequest(
@@ -848,6 +867,21 @@ class FunctionalReasoningAIServiceTest {
         val thinkingConfig = buildGeminiThinkingConfig(request.enableThinking, request.modelParameters)
 
         assertEquals(32_768, thinkingConfig?.getInt("thinkingBudget"))
+    }
+
+    @Test
+    fun disabledChatThinkingDoesNotSerializeGeminiThinkingParameters() {
+        val thinkingConfig =
+            buildGeminiThinkingConfig(
+                enableThinking = false,
+                modelParameters =
+                    listOf(
+                        intParameter("thinking_budget", 32_768),
+                        stringParameter("thinking_level", "high"),
+                    ),
+            )
+
+        assertEquals(null, thinkingConfig)
     }
 
     @Test

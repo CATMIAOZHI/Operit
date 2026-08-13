@@ -45,7 +45,12 @@ internal fun shouldPropagateClaudeCancellation(isManuallyCancelled: Boolean): Bo
 internal fun applyCallerSuppliedClaudeThinkingParameters(
     requestJson: JSONObject,
     modelParameters: List<ModelParameter<*>>,
+    enableThinking: Boolean = true,
 ): Boolean {
+    if (!enableThinking) {
+        return false
+    }
+
     fun parseObjectParameter(apiName: String): JSONObject? {
         val rawValue =
             modelParameters
@@ -1114,7 +1119,11 @@ class ClaudeProvider(
 
         // 添加 extended/adaptive thinking 支持；显式调用方参数优先于默认推断。
         val hasExplicitThinking =
-            applyCallerSuppliedClaudeThinkingParameters(jsonObject, modelParameters)
+            applyCallerSuppliedClaudeThinkingParameters(
+                requestJson = jsonObject,
+                modelParameters = modelParameters,
+                enableThinking = enableThinking,
+            )
         if (!hasExplicitThinking && enableThinking) {
             val format = getThinkingFormat()
             when (format) {

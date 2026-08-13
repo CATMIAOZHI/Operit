@@ -48,6 +48,10 @@ internal fun buildGeminiThinkingConfig(
     enableThinking: Boolean,
     modelParameters: List<ModelParameter<*>>,
 ): JSONObject? {
+    if (!enableThinking) {
+        return null
+    }
+
     val thinkingBudget =
         (modelParameters.lastOrNull { it.apiName == "thinking_budget" && it.isEnabled }
             ?.currentValue as? Number)?.toInt()
@@ -58,14 +62,8 @@ internal fun buildGeminiThinkingConfig(
             ?.toString()
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
-    if (!enableThinking && thinkingBudget == null && thinkingLevel == null) {
-        return null
-    }
-
     return JSONObject().apply {
-        if (enableThinking) {
-            put("includeThoughts", true)
-        }
+        put("includeThoughts", true)
         thinkingBudget?.let { put("thinkingBudget", it) }
         thinkingLevel?.let { put("thinkingLevel", it) }
     }
