@@ -576,3 +576,9 @@ dependencies {
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
 }
+
+// The workflow receiver security test validates dependency-contributed Tasker components in the
+// actual merged manifest, so keep that artifact fresh whenever the debug JVM suite runs.
+tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
+    dependsOn("processDebugMainManifest")
+}

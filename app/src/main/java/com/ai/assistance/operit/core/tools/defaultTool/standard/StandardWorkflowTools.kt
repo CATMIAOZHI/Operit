@@ -6,6 +6,7 @@ import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.WorkflowDetailResultData
 import com.ai.assistance.operit.core.tools.WorkflowListResultData
 import com.ai.assistance.operit.core.tools.WorkflowResultData
+import com.ai.assistance.operit.core.workflow.WorkflowIntentSecurity
 import com.ai.assistance.operit.data.model.*
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolResult
@@ -26,6 +27,34 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+internal fun redactWorkflowNodesForModel(nodes: List<WorkflowNode>): List<WorkflowNode> =
+    nodes.map { node ->
+        if (node is TriggerNode && WorkflowIntentSecurity.CONFIG_AUTH_TOKEN in node.triggerConfig) {
+            node.copy(
+                triggerConfig = node.triggerConfig - WorkflowIntentSecurity.CONFIG_AUTH_TOKEN
+            )
+        } else {
+            node
+        }
+    }
+
+internal fun workflowDetailResultDataForModel(workflow: Workflow): WorkflowDetailResultData =
+    WorkflowDetailResultData(
+        id = workflow.id,
+        name = workflow.name,
+        description = workflow.description,
+        nodes = redactWorkflowNodesForModel(workflow.nodes),
+        connections = workflow.connections,
+        enabled = workflow.enabled,
+        createdAt = workflow.createdAt,
+        updatedAt = workflow.updatedAt,
+        lastExecutionTime = workflow.lastExecutionTime,
+        lastExecutionStatus = workflow.lastExecutionStatus?.name,
+        totalExecutions = workflow.totalExecutions,
+        successfulExecutions = workflow.successfulExecutions,
+        failedExecutions = workflow.failedExecutions,
+    )
+
 /**
  * 工作流管理工具
  * 提供工作流的创建、查询、更新、启停、删除与触发功能
@@ -40,24 +69,6 @@ class StandardWorkflowTools(private val context: Context) {
     private val json = Json {
         ignoreUnknownKeys = true
         classDiscriminator = "__type"
-    }
-
-    private fun workflowDetailResultData(workflow: Workflow): WorkflowDetailResultData {
-        return WorkflowDetailResultData(
-            id = workflow.id,
-            name = workflow.name,
-            description = workflow.description,
-            nodes = workflow.nodes,
-            connections = workflow.connections,
-            enabled = workflow.enabled,
-            createdAt = workflow.createdAt,
-            updatedAt = workflow.updatedAt,
-            lastExecutionTime = workflow.lastExecutionTime,
-            lastExecutionStatus = workflow.lastExecutionStatus?.name,
-            totalExecutions = workflow.totalExecutions,
-            successfulExecutions = workflow.successfulExecutions,
-            failedExecutions = workflow.failedExecutions
-        )
     }
 
     /**
@@ -162,21 +173,7 @@ class StandardWorkflowTools(private val context: Context) {
                 ToolResult(
                     toolName = tool.name,
                     success = true,
-                    result = WorkflowDetailResultData(
-                        id = createdWorkflow.id,
-                        name = createdWorkflow.name,
-                        description = createdWorkflow.description,
-                        nodes = createdWorkflow.nodes,
-                        connections = createdWorkflow.connections,
-                        enabled = createdWorkflow.enabled,
-                        createdAt = createdWorkflow.createdAt,
-                        updatedAt = createdWorkflow.updatedAt,
-                        lastExecutionTime = createdWorkflow.lastExecutionTime,
-                        lastExecutionStatus = createdWorkflow.lastExecutionStatus?.name,
-                        totalExecutions = createdWorkflow.totalExecutions,
-                        successfulExecutions = createdWorkflow.successfulExecutions,
-                        failedExecutions = createdWorkflow.failedExecutions
-                    )
+                    result = workflowDetailResultDataForModel(createdWorkflow)
                 )
             } else {
                 ToolResult(
@@ -227,21 +224,7 @@ class StandardWorkflowTools(private val context: Context) {
                     ToolResult(
                         toolName = tool.name,
                         success = true,
-                        result = WorkflowDetailResultData(
-                            id = workflow.id,
-                            name = workflow.name,
-                            description = workflow.description,
-                            nodes = workflow.nodes,
-                            connections = workflow.connections,
-                            enabled = workflow.enabled,
-                            createdAt = workflow.createdAt,
-                            updatedAt = workflow.updatedAt,
-                            lastExecutionTime = workflow.lastExecutionTime,
-                            lastExecutionStatus = workflow.lastExecutionStatus?.name,
-                            totalExecutions = workflow.totalExecutions,
-                            successfulExecutions = workflow.successfulExecutions,
-                            failedExecutions = workflow.failedExecutions
-                        )
+                        result = workflowDetailResultDataForModel(workflow)
                     )
                 }
             } else {
@@ -328,9 +311,9 @@ class StandardWorkflowTools(private val context: Context) {
                     existingWorkflow.connections != updatedWorkflow.connections
             val enabledChanged = existingWorkflow.enabled != updatedWorkflow.enabled
             val result = if (contentChanged) {
-                workflowRepository.updateWorkflow(updatedWorkflow)
+                workflowRepository.updateWorkflowFromPrivateStorage(updatedWorkflow)
             } else if (enabledChanged) {
-                workflowRepository.setWorkflowEnabled(workflowId, enabled)
+                workflowRepository.setWorkflowEnabledFromPrivateStorage(workflowId, enabled)
             } else {
                 Result.success(existingWorkflow)
             }
@@ -340,21 +323,7 @@ class StandardWorkflowTools(private val context: Context) {
                 ToolResult(
                     toolName = tool.name,
                     success = true,
-                    result = WorkflowDetailResultData(
-                        id = savedWorkflow.id,
-                        name = savedWorkflow.name,
-                        description = savedWorkflow.description,
-                        nodes = savedWorkflow.nodes,
-                        connections = savedWorkflow.connections,
-                        enabled = savedWorkflow.enabled,
-                        createdAt = savedWorkflow.createdAt,
-                        updatedAt = savedWorkflow.updatedAt,
-                        lastExecutionTime = savedWorkflow.lastExecutionTime,
-                        lastExecutionStatus = savedWorkflow.lastExecutionStatus?.name,
-                        totalExecutions = savedWorkflow.totalExecutions,
-                        successfulExecutions = savedWorkflow.successfulExecutions,
-                        failedExecutions = savedWorkflow.failedExecutions
-                    )
+                    result = workflowDetailResultDataForModel(savedWorkflow)
                 )
             } else {
                 ToolResult(
@@ -404,17 +373,17 @@ class StandardWorkflowTools(private val context: Context) {
                 return ToolResult(
                     toolName = tool.name,
                     success = true,
-                    result = workflowDetailResultData(existingWorkflow)
+                    result = workflowDetailResultDataForModel(existingWorkflow)
                 )
             }
 
-            val saveResult = workflowRepository.setWorkflowEnabled(workflowId, enabled)
+            val saveResult = workflowRepository.setWorkflowEnabledFromPrivateStorage(workflowId, enabled)
             if (saveResult.isSuccess) {
                 val savedWorkflow = saveResult.getOrNull()!!
                 ToolResult(
                     toolName = tool.name,
                     success = true,
-                    result = workflowDetailResultData(savedWorkflow)
+                    result = workflowDetailResultDataForModel(savedWorkflow)
                 )
             } else {
                 ToolResult(
@@ -486,21 +455,7 @@ class StandardWorkflowTools(private val context: Context) {
                 return ToolResult(
                     toolName = tool.name,
                     success = true,
-                    result = WorkflowDetailResultData(
-                        id = savedWorkflow.id,
-                        name = savedWorkflow.name,
-                        description = savedWorkflow.description,
-                        nodes = savedWorkflow.nodes,
-                        connections = savedWorkflow.connections,
-                        enabled = savedWorkflow.enabled,
-                        createdAt = savedWorkflow.createdAt,
-                        updatedAt = savedWorkflow.updatedAt,
-                        lastExecutionTime = savedWorkflow.lastExecutionTime,
-                        lastExecutionStatus = savedWorkflow.lastExecutionStatus?.name,
-                        totalExecutions = savedWorkflow.totalExecutions,
-                        successfulExecutions = savedWorkflow.successfulExecutions,
-                        failedExecutions = savedWorkflow.failedExecutions
-                    )
+                    result = workflowDetailResultDataForModel(savedWorkflow)
                 )
             }
 
@@ -799,9 +754,9 @@ class StandardWorkflowTools(private val context: Context) {
                     existingWorkflow.connections != updatedWorkflow.connections
             val enabledChanged = existingWorkflow.enabled != updatedWorkflow.enabled
             val result = if (contentChanged) {
-                workflowRepository.updateWorkflow(updatedWorkflow)
+                workflowRepository.updateWorkflowFromPrivateStorage(updatedWorkflow)
             } else if (enabledChanged) {
-                workflowRepository.setWorkflowEnabled(workflowId, enabled)
+                workflowRepository.setWorkflowEnabledFromPrivateStorage(workflowId, enabled)
             } else {
                 Result.success(existingWorkflow)
             }
@@ -895,7 +850,7 @@ class StandardWorkflowTools(private val context: Context) {
         val currentJob = currentCoroutineContext().job
 
         return try {
-            val result = workflowRepository.triggerWorkflow(workflowId)
+            val result = workflowRepository.triggerWorkflowFromPrivateStorage(workflowId)
 
             if (result.isSuccess) {
                 ToolResult(
