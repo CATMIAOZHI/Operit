@@ -9,7 +9,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import com.ai.assistance.operit.core.workflow.WorkflowScheduler
 import com.ai.assistance.operit.core.workflow.isActiveWorkflowScheduleState
+import com.ai.assistance.operit.core.workflow.isGateDeferredWorkflowSchedule
 import com.ai.assistance.operit.core.workflow.isActiveMatchingWorkflowSchedule
+import com.ai.assistance.operit.core.workflow.intervalReplacementInitialDelayMinutes
+import com.ai.assistance.operit.core.workflow.deferredCronInitialDelayMillis
+import com.ai.assistance.operit.core.workflow.atomicMarkerMayExist
 import com.ai.assistance.operit.core.workflow.shouldRetireCompletedPreFingerprintOneTime
 import com.ai.assistance.operit.core.workflow.specificTimeInitialDelay
 import com.ai.assistance.operit.core.workflow.shouldRetryWorkflowWorkerFailure
@@ -655,6 +659,35 @@ class WorkflowStoragePolicyTest {
         assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.SUCCEEDED))
         assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.FAILED))
         assertFalse(isActiveWorkflowScheduleState(androidx.work.WorkInfo.State.CANCELLED))
+        val markedRequestId = java.util.UUID.randomUUID()
+        assertTrue(
+            isGateDeferredWorkflowSchedule(
+                WorkInfo.State.ENQUEUED,
+                markedRequestId,
+                setOf(markedRequestId),
+            )
+        )
+        assertFalse(
+            isGateDeferredWorkflowSchedule(
+                WorkInfo.State.ENQUEUED,
+                markedRequestId,
+                emptySet(),
+            )
+        )
+        assertFalse(
+            isGateDeferredWorkflowSchedule(
+                WorkInfo.State.RUNNING,
+                markedRequestId,
+                setOf(markedRequestId),
+            )
+        )
+        assertEquals(15L, intervalReplacementInitialDelayMinutes(15L, delayFirstRun = true))
+        assertNull(intervalReplacementInitialDelayMinutes(15L, delayFirstRun = false))
+        assertEquals(0L, deferredCronInitialDelayMillis(60_000L, runImmediately = true))
+        assertEquals(60_000L, deferredCronInitialDelayMillis(60_000L, runImmediately = false))
+        assertTrue(atomicMarkerMayExist(baseExists = true, backupExists = false))
+        assertTrue(atomicMarkerMayExist(baseExists = false, backupExists = true))
+        assertFalse(atomicMarkerMayExist(baseExists = false, backupExists = false))
 
         val matchingTag = WorkflowScheduler.scheduleFingerprintTag("expected")
         assertTrue(

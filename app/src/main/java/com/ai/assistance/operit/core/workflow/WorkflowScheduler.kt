@@ -30,6 +30,22 @@ internal fun isActiveWorkflowScheduleState(state: WorkInfo.State): Boolean =
         state == WorkInfo.State.RUNNING ||
         state == WorkInfo.State.BLOCKED
 
+internal fun isGateDeferredWorkflowSchedule(
+    state: WorkInfo.State,
+    workRequestId: UUID,
+    markedRequestIds: Set<UUID>,
+): Boolean = state == WorkInfo.State.ENQUEUED && workRequestId in markedRequestIds
+
+internal fun intervalReplacementInitialDelayMinutes(
+    intervalMinutes: Long,
+    delayFirstRun: Boolean,
+): Long? = intervalMinutes.takeIf { delayFirstRun }
+
+internal fun deferredCronInitialDelayMillis(
+    calculatedDelay: Long,
+    runImmediately: Boolean,
+): Long = if (runImmediately) 0L else calculatedDelay
+
 internal fun shouldRetireCompletedPreFingerprintOneTime(
     workflow: Workflow,
     workStates: Collection<WorkInfo.State>,
@@ -50,7 +66,9 @@ internal fun isActiveMatchingWorkflowSchedule(
     state: WorkInfo.State,
     tags: Set<String>,
     expectedFingerprintTag: String,
-): Boolean = isActiveWorkflowScheduleState(state) && expectedFingerprintTag in tags
+): Boolean =
+    isActiveWorkflowScheduleState(state) &&
+        expectedFingerprintTag in tags
 
 /**
  * WorkflowScheduler manages scheduling workflows using WorkManager
@@ -106,6 +124,7 @@ class WorkflowScheduler(private val context: Context) {
     private val workManager: WorkManager by lazy { 
         WorkManager.getInstance(context.applicationContext)
     }
+    private val gateRetryStore by lazy { WorkflowGateRetryStore(context.applicationContext) }
 
     /**
      * Schedule a workflow based on its trigger configuration
@@ -113,6 +132,8 @@ class WorkflowScheduler(private val context: Context) {
     fun scheduleWorkflow(
         workflow: Workflow,
         allowDuePreFingerprintOneTime: Boolean = false,
+        delayFirstIntervalRun: Boolean = false,
+        runDeferredCronImmediately: Boolean = false,
     ): Boolean {
         // Find the trigger node
         val triggerNode = workflow.nodes.filterIsInstance<TriggerNode>()
@@ -136,7 +157,11 @@ class WorkflowScheduler(private val context: Context) {
 
         return when (scheduleType) {
             SCHEDULE_TYPE_INTERVAL -> scheduleIntervalWorkflow(
-                workflow.id, triggerNode.id, config, scheduleFingerprint
+                workflow.id,
+                triggerNode.id,
+                config,
+                scheduleFingerprint,
+                delayFirstIntervalRun,
             )
             SCHEDULE_TYPE_SPECIFIC_TIME -> scheduleOneTimeWorkflow(
                 workflow.id,
@@ -146,7 +171,11 @@ class WorkflowScheduler(private val context: Context) {
                 allowDuePreFingerprintOneTime,
             )
             SCHEDULE_TYPE_CRON -> scheduleCronWorkflow(
-                workflow.id, triggerNode.id, config, scheduleFingerprint
+                workflow.id,
+                triggerNode.id,
+                config,
+                scheduleFingerprint,
+                runDeferredCronImmediately,
             )
             else -> {
                 AppLogger.e(TAG, "Unknown schedule type: $scheduleType")
@@ -163,6 +192,7 @@ class WorkflowScheduler(private val context: Context) {
         triggerNodeId: String,
         config: Map<String, String>,
         scheduleFingerprint: String,
+        delayFirstRun: Boolean,
     ): Boolean {
         val intervalMs = config[CONFIG_INTERVAL_MS]?.toLongOrNull() ?: return false
         val repeat = config[CONFIG_REPEAT]?.toBoolean() ?: true
@@ -183,6 +213,11 @@ class WorkflowScheduler(private val context: Context) {
             intervalMinutes, TimeUnit.MINUTES
         )
             .setConstraints(constraints)
+            .apply {
+                intervalReplacementInitialDelayMinutes(intervalMinutes, delayFirstRun)?.let { delay ->
+                    setInitialDelay(delay, TimeUnit.MINUTES)
+                }
+            }
             .setInputData(
                 workDataOf(
                     WorkflowWorker.KEY_WORKFLOW_ID to workflowId,
@@ -273,6 +308,7 @@ class WorkflowScheduler(private val context: Context) {
         triggerNodeId: String,
         config: Map<String, String>,
         scheduleFingerprint: String,
+        runImmediately: Boolean,
     ): Boolean {
         val cronExpression = config[CONFIG_CRON_EXPRESSION] ?: return false
         val repeat = config[CONFIG_REPEAT]?.toBoolean() ?: true
@@ -284,7 +320,10 @@ class WorkflowScheduler(private val context: Context) {
         }
 
         val currentTime = System.currentTimeMillis()
-        val delay = nextExecutionTime - currentTime
+        val delay = deferredCronInitialDelayMillis(
+            calculatedDelay = nextExecutionTime - currentTime,
+            runImmediately = runImmediately,
+        )
 
         if (delay < 0) {
             AppLogger.w(TAG, "Calculated cron time is in the past")
@@ -509,13 +548,33 @@ class WorkflowScheduler(private val context: Context) {
             isActiveWorkflowScheduleState(info.state)
         }
 
+    internal fun gateDeferredWorkflowScheduleIdsAndWait(workflowId: String): Set<UUID> {
+        val workInfos = workManager.getWorkInfosForUniqueWork(getWorkName(workflowId)).get()
+        val markedIds = workInfos.mapNotNull { info ->
+            info.id.takeIf(gateRetryStore::isMarked)
+        }.toSet()
+        return workInfos.mapNotNull { info ->
+            info.id.takeIf {
+                isGateDeferredWorkflowSchedule(info.state, info.id, markedIds)
+            }
+        }.toSet()
+    }
+
+    internal fun consumeGateDeferredWorkflowSchedules(workRequestIds: Set<UUID>) {
+        workRequestIds.forEach(gateRetryStore::consume)
+    }
+
     internal fun hasActiveMatchingWorkflowScheduleAndWait(workflow: Workflow): Boolean {
         val triggerNode = workflow.nodes.filterIsInstance<TriggerNode>()
             .firstOrNull { it.triggerType == "schedule" }
             ?: return false
         val expectedTag = scheduleFingerprintTag(scheduleFingerprint(workflow.id, triggerNode))
         return workManager.getWorkInfosForUniqueWork(getWorkName(workflow.id)).get().any { info ->
-            isActiveMatchingWorkflowSchedule(info.state, info.tags, expectedTag)
+            isActiveMatchingWorkflowSchedule(
+                info.state,
+                info.tags,
+                expectedTag,
+            )
         }
     }
 

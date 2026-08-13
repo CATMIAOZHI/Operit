@@ -29,18 +29,22 @@ class WorkflowWorker(
     }
 
     override suspend fun doWork(): Result {
-        if (!OperitApplication.isMainDataAccessAllowed(applicationContext)) {
-            AppLogger.w(TAG, "Deferred workflow execution while migration or restore is in progress")
-            return Result.retry()
-        }
         val workflowId = inputData.getString(KEY_WORKFLOW_ID)
         val triggerNodeId = inputData.getString(KEY_TRIGGER_NODE_ID)
         val scheduleFingerprint = inputData.getString(WorkflowScheduler.KEY_SCHEDULE_FINGERPRINT)
-        
+
         if (workflowId.isNullOrBlank() || triggerNodeId.isNullOrBlank()) {
             AppLogger.e(TAG, "Trusted workflow schedule metadata is missing from input data")
             return Result.failure()
         }
+        if (!OperitApplication.isMainDataAccessAllowed(applicationContext)) {
+            if (!WorkflowGateRetryStore(applicationContext).mark(id)) {
+                AppLogger.e(TAG, "Failed to mark gated workflow retry")
+            }
+            AppLogger.w(TAG, "Deferred workflow execution while migration or restore is in progress")
+            return Result.retry()
+        }
+        WorkflowGateRetryStore(applicationContext).consume(id)
 
         AppLogger.d(TAG, "Executing scheduled workflow: $workflowId, trigger: $triggerNodeId")
 

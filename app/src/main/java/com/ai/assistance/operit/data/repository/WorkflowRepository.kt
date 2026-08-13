@@ -1093,7 +1093,11 @@ class WorkflowRepository(private val context: Context) {
         try {
             val internalDirectory = getExecutionLogDirectory(workflowId, createIfMissing = false)
             val legacyDirectory = getLegacyExecutionLogDirectory(workflowId)
-            val internalFiles = canonicalWorkflowJsonFiles(internalDirectory)
+            val internalFiles = canonicalWorkflowJsonFiles(
+                internalDirectory,
+                trustedAnchor = context.noBackupFilesDir,
+                recoverAtomicBackups = true,
+            )
             val legacyScan = if (internalFiles.isEmpty()) {
                 scanCanonicalWorkflowJsonFiles(
                     directory = legacyDirectory,
@@ -1121,7 +1125,7 @@ class WorkflowRepository(private val context: Context) {
                     "Legacy workflow execution record is too large",
                 )
             } else {
-                latest.readText()
+                readWorkflowContentAtomically(latest)
             }
             if (isLegacy) validateUntrustedWorkflowJson(content)
             val record = decodeWorkflowExecutionRecordSafely(json, content, workflowId)
@@ -1830,6 +1834,7 @@ class WorkflowRepository(private val context: Context) {
             id,
             allowLegacyPromotion = false,
             allowClaimedMigration = true,
+            delayFirstIntervalRun = true,
         )
 
     /** Caller holds this workflow's promotion lock for the entire WorkManager operation. */
@@ -1838,6 +1843,8 @@ class WorkflowRepository(private val context: Context) {
         workflow: Workflow,
         allowClaimedMigration: Boolean,
         allowDuePreFingerprintOneTime: Boolean = false,
+        delayFirstIntervalRun: Boolean = false,
+        runDeferredCronImmediately: Boolean = false,
     ): Boolean {
         if (shouldDeferClaimedScheduleRebuild(workflow, allowClaimedMigration)) {
             AppLogger.d(TAG, "Schedule migration already owned by a running Worker: ${workflow.id}")
@@ -1863,6 +1870,8 @@ class WorkflowRepository(private val context: Context) {
                 scheduler.scheduleWorkflow(
                     prepared,
                     allowDuePreFingerprintOneTime = allowPastTarget,
+                    delayFirstIntervalRun = delayFirstIntervalRun,
+                    runDeferredCronImmediately = runDeferredCronImmediately,
                 )
             },
             cancel = { scheduler.cancelWorkflowAndWait(workflow.id) },
@@ -1901,6 +1910,7 @@ class WorkflowRepository(private val context: Context) {
         id: String,
         allowLegacyPromotion: Boolean,
         allowClaimedMigration: Boolean = false,
+        delayFirstIntervalRun: Boolean = false,
     ): Boolean {
         return try {
             val internal = getInternalWorkflowFile(id)
@@ -1923,7 +1933,12 @@ class WorkflowRepository(private val context: Context) {
                 // Keep definition read, WorkManager REPLACE, and generation commit in the same
                 // per-id order. A concurrent update can only run before this block (so we schedule
                 // its latest definition) or after it (and its own reconciliation wins last).
-                scheduleWorkflowLocked(internal, workflow, allowClaimedMigration)
+                scheduleWorkflowLocked(
+                    internal,
+                    workflow,
+                    allowClaimedMigration,
+                    delayFirstIntervalRun = delayFirstIntervalRun,
+                )
             }
             if (wasLegacyOnly && internal.isFile) notifyWorkflowsChanged()
             scheduled
@@ -2015,15 +2030,22 @@ class WorkflowRepository(private val context: Context) {
                 return@synchronized false
             }
             val activeSchedule = scheduler.hasActiveWorkflowScheduleAndWait(id)
+            val gateDeferredRequestIds =
+                scheduler.gateDeferredWorkflowScheduleIdsAndWait(id)
+            val deferredScheduleRetry = gateDeferredRequestIds.isNotEmpty()
             val activeMatchingSchedule =
                 scheduler.hasActiveMatchingWorkflowScheduleAndWait(latest)
             val preserveActiveSchedule = activeSchedule && (
                 (
                     latest.scheduleFingerprintGeneration ==
                         WorkflowScheduler.CURRENT_SCHEDULE_FINGERPRINT_GENERATION &&
-                        activeMatchingSchedule
+                        activeMatchingSchedule &&
+                        !deferredScheduleRetry
                 ) ||
-                    scheduler.shouldPreserveActivePreFingerprintScheduleRequest(latest)
+                    (
+                        scheduler.shouldPreserveActivePreFingerprintScheduleRequest(latest) &&
+                            !deferredScheduleRetry
+                    )
                 )
             if (preserveActiveSchedule) {
                 AppLogger.d(TAG, "Preserving active trusted schedule request: $id")
@@ -2043,7 +2065,10 @@ class WorkflowRepository(private val context: Context) {
                 scheduler.isMigratablePreFingerprintScheduleRequest(latest)
             val allowPastSpecificTime = migratableSchedule || (
                 scheduler.isSpecificTimeSchedule(latest) &&
-                    scheduler.isFutureSpecificTimeSchedule(latest)
+                    (
+                        scheduler.isFutureSpecificTimeSchedule(latest) ||
+                            deferredScheduleRetry
+                    )
                 )
             if (migratableSchedule) {
                 AppLogger.w(TAG, "Recreating missing or stale schedule request: $id")
@@ -2053,7 +2078,17 @@ class WorkflowRepository(private val context: Context) {
                 latest,
                 allowClaimedMigration = false,
                 allowDuePreFingerprintOneTime = allowPastSpecificTime,
+                delayFirstIntervalRun =
+                    latest.scheduleFingerprintGeneration ==
+                        WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION,
+                runDeferredCronImmediately =
+                    deferredScheduleRetry &&
+                        latest.scheduleFingerprintGeneration !=
+                            WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION,
             )
+            if (scheduled && deferredScheduleRetry) {
+                scheduler.consumeGateDeferredWorkflowSchedules(gateDeferredRequestIds)
+            }
             scheduled
         }
     }
