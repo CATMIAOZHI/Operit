@@ -3199,6 +3199,11 @@
     <string name="thinking_type_mode">mode</string>
     <string name="thinking_quality">Thinking intensity</string>
     <string name="thinking_quality_desc">Only effective in thinking mode. GPT-5.6 models use five levels; other models retain the original four levels. Higher values use deeper reasoning.</string>
+    <string name="thinking_quality_level_low">Low</string>
+    <string name="thinking_quality_level_medium">Medium</string>
+    <string name="thinking_quality_level_high">High</string>
+    <string name="thinking_quality_level_xhigh">X-High</string>
+    <string name="thinking_quality_level_max">Max</string>
     <string name="model_config">Model Configuration</string>
     <string name="model_config_desc">Select a configured model here, or click Manage Configuration below to create or modify models</string>
     <string name="prompt">Prompt</string>
@@ -6541,6 +6546,20 @@
     <string name="workflow_template_logic_or">Logic OR Template %1$s</string>
     <string name="workflow_template_calculate">Calculation Template %1$s</string>
     <string name="workflow_trigger_intent">Intent Trigger</string>
+    <string name="workflow_intent_trigger_auth_help">A new trigger\'s auth_token is generated when it is saved. Save the node and workflow first, then reopen this node and copy the persisted value. External automation must send an explicit broadcast to the current Operit build\'s WorkflowTaskerReceiver, include the fixed action, and provide that value in the “com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN” extra. Sending only the action leaks the token; setPackage without an explicit component will not deliver. Treat the token as a sensitive credential.</string>
+    <string name="workflow_tasker_trigger_auth_help">A new trigger\'s auth_token is generated when it is saved. Save the node and workflow first, then reopen this node and copy the persisted value. Enter the same command and auth_token in Tasker\'s Operit Workflow action. Existing Tasker configurations using the old params format must be updated. Treat the token as a sensitive credential.</string>
+    <string name="workflow_tasker_config_title">Configure Operit workflow</string>
+    <string name="workflow_tasker_config_help">Copy command and auth_token from the target workflow\'s Tasker trigger node. Legacy params configurations must be updated here before they can run again.</string>
+    <string name="workflow_tasker_config_command_hint">Workflow command</string>
+    <string name="workflow_tasker_config_auth_token_hint">Workflow auth_token</string>
+    <string name="workflow_tasker_config_sensitive_warning">auth_token is a sensitive credential. Do not share it with untrusted apps or people.</string>
+    <string name="workflow_tasker_config_save">Save to Tasker</string>
+    <string name="workflow_tasker_config_command_required">Enter the workflow command</string>
+    <string name="workflow_tasker_config_auth_token_invalid">Copy the complete valid auth_token from the target workflow in this installation</string>
+    <string name="workflow_tasker_action_command">Command: %1$s</string>
+    <string name="workflow_tasker_action_input_required">Workflow command and auth_token are required</string>
+    <string name="workflow_tasker_action_data_unavailable">Workflow data is unavailable while migration or restore is in progress</string>
+    <string name="workflow_tasker_action_auth_invalid">Workflow auth_token is not authentic for this installation</string>
     <string name="workflow_trigger_floating">Start Floating Window</string>
     <string name="workflow_trigger_create_chat">Create Chat</string>
     <string name="workflow_action_extract_message">Extract Intent Message (message)</string>
@@ -8500,7 +8519,7 @@
     <string name="settings_legacy_mcp_title">Read legacy MCP</string>
     <string name="settings_legacy_mcp_description">Load legacy MCP configuration and packages from Download/Operit</string>
     <string name="settings_legacy_workflows_title">Read legacy workflows</string>
-    <string name="settings_legacy_workflows_description">Show and schedule workflows from Download/Operit/workflow</string>
+    <string name="settings_legacy_workflows_description">Show workflows from Download/Operit/workflow as disabled. A normal edit imports one but keeps it disabled; it can run or schedule only after you explicitly enable it. The safety scan shows at most 1,000 definitions, visits 4,000 directory entries, and reads 64 MiB; excess files remain in Downloads but are not shown.</string>
     <string name="settings_legacy_storage_update_failed">Failed to update legacy storage compatibility</string>
     <string name="mcp_repository_invalid_plugin_id">Invalid plugin ID; package-directory access was rejected</string>
 </resources>

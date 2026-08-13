@@ -6,6 +6,7 @@ import com.ai.assistance.operit.data.model.ToolInvocation
 import com.ai.assistance.operit.data.model.ToolResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolExecutionTimingRepositoryTest {
@@ -104,6 +105,77 @@ class ToolExecutionTimingRepositoryTest {
         )
 
         assertEquals("demo:actual_tool", ToolExecutionTimingRepository.get(scopeId, 0)?.toolName)
+        ToolExecutionTimingRepository.clearScope(scopeId)
+    }
+
+    @Test
+    fun completedPayloads_releaseOldTextWhenSharedBudgetIsExceeded() {
+        val scopeId = "text-budget-${System.nanoTime()}"
+        val payload = "x".repeat(ToolExecutionLimits.MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS)
+        val count = ToolExecutionTimingRepository.MAX_RETAINED_TEXT_CHARS / payload.length + 2
+
+        repeat(count) { index ->
+            val invocation = invocation(callId = "budget-$index", invocationIndex = index)
+            ToolExecutionTimingRepository.register(scopeId, invocation)
+            ToolExecutionTimingRepository.markFinished(
+                scopeId = scopeId,
+                invocation = invocation,
+                result = result(payload),
+                durationMs = 100L,
+                state = ToolExecutionState.COMPLETED,
+            )
+        }
+
+        val retained = ToolExecutionTimingRepository.timings.value
+            .filterKeys { it.scopeId == scopeId }
+        assertEquals(count, retained.size)
+        assertTrue(
+            retained.values.sumOf { it.resultText.length + it.errorText.length } <=
+                ToolExecutionTimingRepository.MAX_RETAINED_TEXT_CHARS,
+        )
+        assertEquals("", ToolExecutionTimingRepository.get(scopeId, 0)?.resultText)
+        assertEquals(payload, ToolExecutionTimingRepository.get(scopeId, count - 1)?.resultText)
+        assertEquals(ToolExecutionState.COMPLETED, ToolExecutionTimingRepository.get(scopeId, 0)?.state)
+
+        ToolExecutionTimingRepository.clearScope(scopeId)
+    }
+
+    @Test
+    fun outOfOrderCompletion_keepsTheJustCompletedPayload() {
+        val scopeId = "out-of-order-budget-${System.nanoTime()}"
+        val payload = "x".repeat(ToolExecutionLimits.MAX_FINAL_TOOL_RESULT_MESSAGE_CHARS)
+        val count = ToolExecutionTimingRepository.MAX_RETAINED_TEXT_CHARS / payload.length + 2
+        val invocations =
+            (0 until count).map { index ->
+                invocation(callId = "out-of-order-$index", invocationIndex = index).also {
+                    ToolExecutionTimingRepository.register(scopeId, it)
+                }
+            }
+
+        invocations.drop(1).forEach { invocation ->
+            ToolExecutionTimingRepository.markFinished(
+                scopeId = scopeId,
+                invocation = invocation,
+                result = result(payload),
+                durationMs = 100L,
+                state = ToolExecutionState.COMPLETED,
+            )
+        }
+        ToolExecutionTimingRepository.markFinished(
+            scopeId = scopeId,
+            invocation = invocations.first(),
+            result = result(payload),
+            durationMs = 100L,
+            state = ToolExecutionState.COMPLETED,
+        )
+
+        assertEquals(payload, ToolExecutionTimingRepository.get(scopeId, 0)?.resultText)
+        assertTrue(
+            invocations.drop(1).any { invocation ->
+                ToolExecutionTimingRepository.get(scopeId, invocation.invocationIndex)?.resultText == ""
+            },
+        )
+
         ToolExecutionTimingRepository.clearScope(scopeId)
     }
 

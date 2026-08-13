@@ -923,6 +923,8 @@ exports.windows_exec = WindowsControl.windows_exec;
 
 如果子包里用到了 `Java.type(...)` / `Java.xxx.yyy` 这一套桥接，最需要记住的是：
 
+> Java Bridge 只允许 [Java Bridge Interface](doc-src/dev-core/JAVA_BRIDGE_INTERFACE.md) 列出的纯数据类；Android/应用内部类、文件/进程 API、Context/Activity 与动态 dex/jar 均不可用。需要宿主能力时使用 `Tools`。
+
 - **桥接会把很多 Java 类型自动归一成 JS 常用结构。**
 
 尤其是下面这些返回值，不要再按 Java 容器 API 去写：

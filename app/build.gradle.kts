@@ -14,6 +14,100 @@ plugins {
     id("kotlin-kapt")
 }
 
+val verifyScriptExecutionReceiverManifests =
+    tasks.register("verifyScriptExecutionReceiverManifests") {
+        group = "verification"
+        description =
+            "Verifies the merged ScriptExecutionReceiver permission policy for every app build type."
+        dependsOn(
+            "processDebugMainManifest",
+            "processCloneMainManifest",
+            "processReleaseMainManifest",
+            "processNightlyMainManifest"
+        )
+
+        doLast {
+            val androidNamespace = "http://schemas.android.com/apk/res/android"
+            val receiverClass =
+                "com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver"
+            val expectations =
+                listOf(
+                    arrayOf(
+                        "debug",
+                        "true",
+                        "android.permission.DUMP",
+                        "com.rainy.operitry.dev"
+                    ),
+                    arrayOf(
+                        "clone",
+                        "true",
+                        "com.rainy.operitry.clone.permission.EXECUTE_JS",
+                        "com.rainy.operitry.clone"
+                    ),
+                    arrayOf(
+                        "release",
+                        "true",
+                        "com.rainy.operitry.permission.EXECUTE_JS",
+                        "com.rainy.operitry"
+                    ),
+                    arrayOf(
+                        "nightly",
+                        "true",
+                        "com.rainy.operitry.permission.EXECUTE_JS",
+                        "com.rainy.operitry"
+                    )
+                )
+
+            expectations.forEach {
+                    (variant, expectedExported, expectedPermission, expectedPackage) ->
+                val taskSuffix = variant.replaceFirstChar(Char::uppercase)
+                val manifestFile =
+                    layout.buildDirectory
+                        .file(
+                            "intermediates/merged_manifest/$variant/" +
+                                "process${taskSuffix}MainManifest/AndroidManifest.xml"
+                        )
+                        .get()
+                        .asFile
+                check(manifestFile.isFile) {
+                    "Merged manifest does not exist: ${'$'}{manifestFile.absolutePath}"
+                }
+                val document =
+                    javax.xml.parsers.DocumentBuilderFactory.newInstance()
+                        .apply { isNamespaceAware = true }
+                        .newDocumentBuilder()
+                        .parse(manifestFile)
+                val actualPackage = document.documentElement.getAttribute("package")
+                check(actualPackage == expectedPackage) {
+                    "$variant package=$actualPackage, expected $expectedPackage"
+                }
+                val receivers = document.getElementsByTagName("receiver")
+                val matchingReceivers =
+                    (0 until receivers.length)
+                        .map { receivers.item(it) as org.w3c.dom.Element }
+                        .filter {
+                            it.getAttributeNS(androidNamespace, "name") == receiverClass
+                        }
+                check(matchingReceivers.size == 1) {
+                    "$variant must contain exactly one $receiverClass receiver"
+                }
+                val receiver = matchingReceivers.single()
+                val actualExported = receiver.getAttributeNS(androidNamespace, "exported")
+                val actualPermission = receiver.getAttributeNS(androidNamespace, "permission")
+                check(actualExported == expectedExported) {
+                    "$variant exported=$actualExported, expected $expectedExported"
+                }
+                check(actualPermission == expectedPermission) {
+                    "$variant permission=$actualPermission, expected $expectedPermission"
+                }
+            }
+        }
+    }
+
+tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
+    dependsOn(verifyScriptExecutionReceiverManifests)
+}
+
 val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
@@ -390,6 +484,7 @@ dependencies {
 
     // Test dependencies
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.room.testing)
@@ -487,4 +582,10 @@ dependencies {
     // Glance for Widgets (Compose for Widgets)
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
+}
+
+// The workflow receiver security test validates dependency-contributed Tasker components in the
+// actual merged manifest, so keep that artifact fresh whenever the debug JVM suite runs.
+tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
+    dependsOn("processDebugMainManifest")
 }

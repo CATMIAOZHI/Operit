@@ -383,12 +383,26 @@ fun Stream<Char>.splitBy(plugins: List<StreamPlugin>): Stream<StreamGroup<Stream
                                         }
                                 evaluationShouldEmit.add(shouldEmitMap)
 
-                                // 记录所有TRYING状态的插件
-                                val tryingPlugins =
-                                        plugins.filter { it.state == PluginState.TRYING }
+                                val blockingTryingPlugin =
+                                        plugins.find {
+                                            it.state == PluginState.TRYING &&
+                                                    it.blocksCompetingPluginsWhileTrying
+                                        }
+                                if (blockingTryingPlugin != null) {
+                                    // A quoted XML attribute may span lines and contain Markdown
+                                    // block syntax. Reset competitors on every character while the
+                                    // quote is open so they cannot claim the buffered XML opener.
+                                    plugins.forEach {
+                                        if (it != blockingTryingPlugin) it.reset()
+                                    }
+                                }
 
                                 val successfulPlugin =
-                                        plugins.find { it.state == PluginState.PROCESSING }
+                                        if (blockingTryingPlugin == null) {
+                                            plugins.find { it.state == PluginState.PROCESSING }
+                                        } else {
+                                            null
+                                        }
 
                                 if (successfulPlugin != null) {
                                     // --- 转换：评估中 -> 处理中 ---

@@ -1,7 +1,5 @@
 const http = require("http");
 const os = require("os");
-const path = require("path");
-const { spawn } = require("child_process");
 
 const {
   PROJECT_ROOT,
@@ -27,6 +25,7 @@ const { createRuntimeStore } = require("./stores/runtime-store");
 const { createStartupStateStore } = require("./stores/startup-state-store");
 const { createProcessService } = require("./services/process-service");
 const { createFileService } = require("./services/file-service");
+const { createRestartScheduler } = require("./services/restart-service");
 const { createApiHandler } = require("./handlers/api-handler");
 
 const logger = createRuntimeLogger({
@@ -85,7 +84,6 @@ function resolveRuntimeBindAddress(config) {
 }
 
 const runtimeBinding = resolveRuntimeBindAddress(state.config);
-let restartScheduled = false;
 
 logger.info("config.loaded", {
   agentVersion: AGENT_VERSION,
@@ -97,48 +95,12 @@ logger.info("config.loaded", {
   allowedPresets: state.config.allowedPresets
 });
 
-function scheduleRestart(reason) {
-  if (restartScheduled) {
-    logger.warn("server.restart.duplicate_request", { reason: reason || "unknown" });
-    return false;
-  }
-
-  restartScheduled = true;
-  logger.info("server.restart.requested", { reason: reason || "unknown" });
-
-  setTimeout(() => {
-    try {
-      const launcherScript = path.join(SCRIPTS_DIR, "launch_agent.ps1");
-      const psExe = process.env.SystemRoot
-        ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-        : "powershell.exe";
-
-      const child = spawn(psExe, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", launcherScript], {
-        cwd: PROJECT_ROOT,
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true
-      });
-
-      child.unref();
-      logger.info("server.restart.launcher_spawned", {
-        launcherScript,
-        pid: child.pid || null
-      });
-    } catch (error) {
-      logger.error("server.restart.spawn_failed", {
-        reason: reason || "unknown",
-        error: error && error.message ? error.message : String(error)
-      });
-      restartScheduled = false;
-      return;
-    }
-
-    setTimeout(() => shutdown("RESTART"), 120);
-  }, 120);
-
-  return true;
-}
+const scheduleRestart = createRestartScheduler({
+  projectRoot: PROJECT_ROOT,
+  scriptsDir: SCRIPTS_DIR,
+  logger,
+  shutdown
+});
 
 const apiHandler = createApiHandler({
   state,

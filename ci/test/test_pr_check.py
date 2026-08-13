@@ -98,6 +98,11 @@ class ScopeClassificationTest(unittest.TestCase):
         plan = classify_paths(["tools/example_packages/packages_whitelist.txt"])
 
         self.assertTrue(plan.toolpkg)
+
+    def test_legacy_incompatible_list_triggers_toolpkg(self) -> None:
+        plan = classify_paths(["tools/example_packages/legacy_incompatible_packages.txt"])
+
+        self.assertTrue(plan.toolpkg)
         self.assertFalse(plan.web)
         self.assertFalse(plan.android_full)
         self.assertFalse(plan.android_jvm)
@@ -148,6 +153,26 @@ class ScopeClassificationTest(unittest.TestCase):
         self.assertTrue(plan.android_jvm)
         self.assertFalse(plan.android_resources)
 
+    def test_script_bridge_contract_paths_trigger_jvm_lane(self) -> None:
+        contract_paths = (
+            "tools/adb/execute_js.bat",
+            "tools/adb/execute_js.sh",
+            "tools/adb/execute_js_dir.bat",
+            "tools/adb/execute_js_dir.sh",
+            "tools/adb/run_sandbox_script.bat",
+            "tools/adb/run_sandbox_script.sh",
+            "tools/sandboxpackage_dev_install_or_update.js",
+        )
+
+        for path in contract_paths:
+            with self.subTest(path=path):
+                plan = classify_paths([path])
+
+                self.assertTrue(plan.android_jvm)
+                self.assertFalse(plan.android_full)
+
+        installer_plan = classify_paths(["tools/sandboxpackage_dev_install_or_update.js"])
+        self.assertTrue(installer_plan.toolpkg)
 
 class CandidateContractTest(unittest.TestCase):
     def test_stale_branch_uses_candidate_first_parent_diff(self) -> None:

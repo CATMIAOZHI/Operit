@@ -89,7 +89,7 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.I
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuToggleDefinition
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuTogglePluginRegistry
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuToggleSlots
-import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabel
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabelRes
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardMemoryBindingSwitchConfirmDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardModelBindingSwitchConfirmDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ToolPromptManagerDialog
@@ -1468,11 +1468,13 @@ private fun ThinkingSettingsItem(
                                 ApiPreferences.MIN_THINKING_QUALITY_LEVEL - 1).coerceAtLeast(0),
                             decimalFormatPattern = "0",
                             valueFormatter = { value ->
-                                thinkingQualityLevelLabel(
-                                    value.roundToInt().coerceIn(
-                                        ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
-                                        maxThinkingQualityLevel
-                                    )
+                                context.getString(
+                                    thinkingQualityLevelLabelRes(
+                                        value.roundToInt().coerceIn(
+                                            ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
+                                            maxThinkingQualityLevel,
+                                        ),
+                                    ),
                                 )
                             }
                         )

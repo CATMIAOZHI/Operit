@@ -46,7 +46,7 @@ import com.ai.assistance.operit.ui.permissions.PermissionReviewResponsePolicy
 import com.ai.assistance.operit.util.ImagePoolManager
 import com.ai.assistance.operit.util.MediaPoolManager
 import com.ai.assistance.operit.util.LocaleUtils
-import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabel
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabelRes
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlin.math.roundToInt
@@ -847,7 +847,7 @@ fun FunctionConfigCard(
                                 style = MaterialTheme.typography.labelLarge,
                             )
                             Text(
-                                text = thinkingQualityLevelLabel(selectedReasoningLevel),
+                                text = stringResource(thinkingQualityLevelLabelRes(selectedReasoningLevel)),
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.primary,
@@ -875,7 +875,7 @@ fun FunctionConfigCard(
                                     ApiPreferences.MAX_THINKING_QUALITY_LEVEL
                             ).forEach { level ->
                                 Text(
-                                    text = thinkingQualityLevelLabel(level),
+                                    text = stringResource(thinkingQualityLevelLabelRes(level)),
                                     modifier = Modifier.weight(1f),
                                     style = MaterialTheme.typography.labelSmall,
                                     color =

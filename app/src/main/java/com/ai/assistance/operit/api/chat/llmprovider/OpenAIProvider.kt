@@ -3,7 +3,6 @@ package com.ai.assistance.operit.api.chat.llmprovider
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
-import android.util.Base64
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
@@ -25,16 +24,17 @@ import com.ai.assistance.operit.util.stream.MutableSharedStream
 import com.ai.assistance.operit.util.stream.SharedStream
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.StreamCollector
+import com.ai.assistance.operit.util.stream.StreamLogger
 import com.ai.assistance.operit.util.stream.TextStreamEvent
 import com.ai.assistance.operit.util.stream.TextStreamEventType
 import com.ai.assistance.operit.util.stream.withEventChannel
 import com.ai.assistance.operit.util.stream.stream
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.Base64
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -394,7 +394,7 @@ open class OpenAIProvider(
         }
     }
 
-    private fun writeOutputImage(bytes: ByteArray, mimeType: String, prefix: String): Uri? {
+    protected open fun writeOutputImage(bytes: ByteArray, mimeType: String, prefix: String): Uri? {
         return try {
             val dir = getOutputImagesDir()
             if (!dir.exists()) {
@@ -431,21 +431,56 @@ open class OpenAIProvider(
     }
 
     private data class ImageBufferState(
-        val bytes: ByteArrayOutputStream = ByteArrayOutputStream(),
+        var bytes: ByteArray = ByteArray(0),
         var mimeType: String = "image/png"
     )
+
+    private suspend fun emitImageBytes(
+        emitter: StreamEmitter,
+        bytes: ByteArray,
+        mimeType: String,
+        prefix: String,
+        alt: String,
+    ) {
+        if (bytes.isEmpty()) return
+        val uri = writeOutputImage(bytes, mimeType, prefix) ?: return
+        emitImageMarkdown(emitter, uri, alt)
+    }
+
+    private suspend fun emitOrDeferImage(
+        state: StreamingState?,
+        emitter: StreamEmitter,
+        bytes: ByteArray,
+        mimeType: String,
+        prefix: String,
+        alt: String,
+    ) {
+        if (bytes.isEmpty()) return
+        if (state == null) {
+            emitImageBytes(emitter, bytes, mimeType, prefix, alt)
+            return
+        }
+        state.deferredOutput.addLast(
+            DeferredOutputSegment.Image(bytes, mimeType, prefix, alt)
+        )
+        flushDeferredOutput(state, emitter)
+    }
 
     private suspend fun flushImageBuffers(state: StreamingState, emitter: StreamEmitter) {
         if (state.imageBuffers.isEmpty()) return
         val pending = state.imageBuffers.toMap()
         state.imageBuffers.clear()
         pending.forEach { (index, bufferState) ->
-            val bytes = bufferState.bytes.toByteArray()
+            val bytes = bufferState.bytes
             if (bytes.isNotEmpty()) {
-                val uri = writeOutputImage(bytes, bufferState.mimeType, "openai_image_$index")
-                if (uri != null) {
-                    emitImageMarkdown(emitter, uri, "openai_image_$index")
-                }
+                emitOrDeferImage(
+                    state,
+                    emitter,
+                    bytes,
+                    bufferState.mimeType,
+                    "openai_image_$index",
+                    "openai_image_$index",
+                )
             }
         }
     }
@@ -464,23 +499,17 @@ open class OpenAIProvider(
                 val mimeType = outputMimeTypeFromFormat(obj.optString("output_format", "").ifBlank { null })
                 if (b64.isNotEmpty()) {
                     val bytes = try {
-                        Base64.decode(b64, Base64.DEFAULT)
+                        Base64.getMimeDecoder().decode(b64)
                     } catch (_: Exception) {
                         null
                     }
                     if (bytes != null && bytes.isNotEmpty()) {
-                        val uri = writeOutputImage(bytes, mimeType, "openai_image_$i")
-                        if (uri != null) {
-                            emitImageMarkdown(emitter, uri, "openai_image_$i")
-                        }
+                        emitOrDeferImage(state, emitter, bytes, mimeType, "openai_image_$i", "openai_image_$i")
                     }
                 } else if (url.isNotEmpty()) {
                     val bytes = downloadBytes(url)
                     if (bytes != null && bytes.isNotEmpty()) {
-                        val uri = writeOutputImage(bytes, mimeType, "openai_image_$i")
-                        if (uri != null) {
-                            emitImageMarkdown(emitter, uri, "openai_image_$i")
-                        }
+                        emitOrDeferImage(state, emitter, bytes, mimeType, "openai_image_$i", "openai_image_$i")
                     }
                 }
             }
@@ -495,14 +524,19 @@ open class OpenAIProvider(
             val mimeType = outputMimeTypeFromFormat(format)
             if (state != null && b64.isNotEmpty()) {
                 val decoded = try {
-                    Base64.decode(b64, Base64.DEFAULT)
+                    Base64.getMimeDecoder().decode(b64)
                 } catch (_: Exception) {
                     null
                 }
                 if (decoded != null) {
+                    // This endpoint emits progressive full-image snapshots. Retain only the
+                    // newest one so stream completion cannot publish stale previews as extras.
+                    state.imageBuffers.clear()
                     val buf = state.imageBuffers.getOrPut(idx) { ImageBufferState() }
                     buf.mimeType = mimeType
-                    buf.bytes.write(decoded)
+                    // Partial-image events are complete preview snapshots, not byte chunks.
+                    // Keep only the latest snapshot until a final image or stream end arrives.
+                    buf.bytes = decoded
                 }
                 if (eventType != "image_generation.partial_image") {
                     flushImageBuffers(state, emitter)
@@ -523,7 +557,11 @@ open class OpenAIProvider(
                     if (partType == "output_text" || partType == "text") {
                         val text = part.optString("text", "")
                         if (text.isNotEmpty()) {
-                            emitter.emitContent(text)
+                            if (state == null) {
+                                emitter.emitContent(text)
+                            } else {
+                                processContentDelta("", text, state, emitter)
+                            }
                             handledAny = true
                         }
                     }
@@ -535,25 +573,33 @@ open class OpenAIProvider(
                     if (isImage) {
                         if (b64.isNotEmpty()) {
                             val bytes = try {
-                                Base64.decode(b64, Base64.DEFAULT)
+                                Base64.getMimeDecoder().decode(b64)
                             } catch (_: Exception) {
                                 null
                             }
                             if (bytes != null && bytes.isNotEmpty()) {
-                                val uri = writeOutputImage(bytes, mimeType, "openai_image_${i}_$j")
-                                if (uri != null) {
-                                    emitImageMarkdown(emitter, uri, "openai_image_${i}_$j")
-                                    handledAny = true
-                                }
+                                emitOrDeferImage(
+                                    state,
+                                    emitter,
+                                    bytes,
+                                    mimeType,
+                                    "openai_image_${i}_$j",
+                                    "openai_image_${i}_$j",
+                                )
+                                handledAny = true
                             }
                         } else if (url.isNotEmpty()) {
                             val bytes = downloadBytes(url)
                             if (bytes != null && bytes.isNotEmpty()) {
-                                val uri = writeOutputImage(bytes, mimeType, "openai_image_${i}_$j")
-                                if (uri != null) {
-                                    emitImageMarkdown(emitter, uri, "openai_image_${i}_$j")
-                                    handledAny = true
-                                }
+                                emitOrDeferImage(
+                                    state,
+                                    emitter,
+                                    bytes,
+                                    mimeType,
+                                    "openai_image_${i}_$j",
+                                    "openai_image_${i}_$j",
+                                )
+                                handledAny = true
                             }
                         }
                     }
@@ -1419,24 +1465,16 @@ open class OpenAIProvider(
      * Tool Call流式输出状态管理
      */
     private data class ToolCallState(
-        val emitted: MutableMap<Int, Boolean> = mutableMapOf(),
-        val nameEmitted: MutableMap<Int, Boolean> = mutableMapOf(),
-        val parser: MutableMap<Int, StreamingJsonXmlConverter> = mutableMapOf(),
-        val closed: MutableMap<Int, Boolean> = mutableMapOf(),
-        val fedLength: MutableMap<Int, Int> = mutableMapOf(),
         val tagNames: MutableMap<Int, String> = mutableMapOf()
     ) {
-        fun getParser(index: Int) = parser.getOrPut(index) { StreamingJsonXmlConverter() }
-
         fun getTagName(index: Int) =
             tagNames.getOrPut(index) { ChatMarkupRegex.generateRandomToolTagName() }
 
+        fun clear(index: Int) {
+            tagNames.remove(index)
+        }
+
         fun clear() {
-            emitted.clear()
-            nameEmitted.clear()
-            parser.clear()
-            closed.clear()
-            fedLength.clear()
             tagNames.clear()
         }
     }
@@ -1467,9 +1505,37 @@ open class OpenAIProvider(
 
         suspend fun emitThinkContent(thinkContent: String, tag: String = "think") {
             if (thinkContent.isNotNullOrEmpty()) {
-                val wrapped = "<$tag>$thinkContent</$tag>"
+                val protectedContent =
+                    if (tag.equals("think", ignoreCase = true) ||
+                        tag.equals("thinking", ignoreCase = true)
+                    ) {
+                        ChatUtils.escapeProviderReasoningMarkup(thinkContent)
+                    } else {
+                        thinkContent
+                    }
+                val openingTag =
+                    if (tag.equals("think", ignoreCase = true)) {
+                        ChatUtils.PROVIDER_REASONING_OPEN_TAG
+                    } else {
+                        "<$tag>"
+                    }
+                val wrapped = "$openingTag$protectedContent</$tag>"
                 emit(wrapped)
                 receivedContent.append(wrapped)
+                tokenCacheManager.addOutputTokens(ChatUtils.estimateTokenCount(thinkContent))
+                onTokensUpdated(
+                    tokenCacheManager.totalInputTokenCount,
+                    tokenCacheManager.cachedInputTokenCount,
+                    tokenCacheManager.outputTokenCount
+                )
+            }
+        }
+
+        suspend fun emitReasoningContent(thinkContent: String) {
+            if (thinkContent.isNotNullOrEmpty()) {
+                val protectedContent = ChatUtils.escapeProviderReasoningMarkup(thinkContent)
+                emit(protectedContent)
+                receivedContent.append(protectedContent)
                 tokenCacheManager.addOutputTokens(ChatUtils.estimateTokenCount(thinkContent))
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
@@ -1764,6 +1830,19 @@ open class OpenAIProvider(
     /**
      * 流式响应处理状态
      */
+    private sealed interface DeferredOutputSegment {
+        data class Tool(val index: Int) : DeferredOutputSegment
+
+        data class Text(val content: StringBuilder) : DeferredOutputSegment
+
+        data class Image(
+            val bytes: ByteArray,
+            val mimeType: String,
+            val prefix: String,
+            val alt: String,
+        ) : DeferredOutputSegment
+    }
+
     private data class StreamingState(
         var chunkCount: Int = 0,
         var lastLogTime: Long = System.currentTimeMillis(),
@@ -1772,37 +1851,44 @@ open class OpenAIProvider(
         var hasEmittedRegularContent: Boolean = false,
         var streamedReasoningContentLength: Int = 0,
         var reasoningObserved: Boolean = false,
+        var suppressedReasoningAfterTool: Boolean = false,
         var isFirstResponse: Boolean = true,
         val accumulatedToolCalls: MutableMap<Int, JSONObject> = mutableMapOf(),
         val toolCallState: ToolCallState = ToolCallState(),
         var lastProcessedToolIndex: Int? = null,
-        val imageBuffers: MutableMap<Int, ImageBufferState> = mutableMapOf()
+        val imageBuffers: MutableMap<Int, ImageBufferState> = mutableMapOf(),
+        val deferredOutput: java.util.ArrayDeque<DeferredOutputSegment> = java.util.ArrayDeque(),
+        val queuedToolIndices: MutableSet<Int> = mutableSetOf(),
+        val completedToolIndices: MutableSet<Int> = mutableSetOf(),
     )
 
-    /**
-     * 处理工具切换：关闭前一个工具
-     */
-    private suspend fun handleToolSwitch(
-        prevIndex: Int,
+    private suspend fun closeReasoningBlockIfOpen(
         state: StreamingState,
-        emitter: StreamEmitter
-    ) {
-        if (state.toolCallState.closed[prevIndex] != true && 
-            state.toolCallState.nameEmitted[prevIndex] == true) {
-            closeToolCallIfOpen(prevIndex, state, emitter)
-            AppLogger.d("AIService", "检测到工具切换，关闭前一个工具 index=$prevIndex")
+        emitter: StreamEmitter,
+    ): Boolean {
+        if (!state.isInReasoningMode) return false
+        state.isInReasoningMode = false
+        emitter.emitTag("</think>")
+        state.hasEmittedThinkStart = false
+        return true
+    }
+
+    private fun queueToolOutput(index: Int, state: StreamingState) {
+        if (state.queuedToolIndices.add(index)) {
+            state.deferredOutput.addLast(DeferredOutputSegment.Tool(index))
         }
     }
 
     /**
      * 处理单个工具调用的增量数据
      */
-    private suspend fun processToolCallChunk(
+    private fun accumulateToolCallChunk(
         index: Int,
         deltaCall: JSONObject,
         state: StreamingState,
-        emitter: StreamEmitter
-    ) {
+    ): Boolean {
+        queueToolOutput(index, state)
+
         // 获取或创建该index的累积对象
         val accumulated = state.accumulatedToolCalls.getOrPut(index) {
             createToolCallAccumulator(index)
@@ -1817,33 +1903,13 @@ open class OpenAIProvider(
         }
 
         // 处理function字段
-        val deltaFunction = deltaCall.optJSONObject("function") ?: return
+        val deltaFunction = deltaCall.optJSONObject("function") ?: return false
         val accFunction = accumulated.getJSONObject("function")
         
         // 处理工具名
         val name = deltaFunction.optString("name", "")
         if (name.isNotEmpty()) {
             accFunction.put("name", name)
-            // 流式输出开始标签
-            if (state.toolCallState.nameEmitted[index] != true) {
-                val toolTagName = state.toolCallState.getTagName(index)
-                val toolStartTag = if (state.toolCallState.emitted[index] != true) {
-                    state.toolCallState.emitted[index] = true
-                    "\n<$toolTagName name=\"$name\">"
-                } else {
-                    ""
-                }
-                if (toolStartTag.isNotEmpty()) {
-                    emitter.emitTag(toolStartTag)
-                }
-                state.toolCallState.nameEmitted[index] = true
-
-                // 如果参数先到，工具名后到，在此处一次性补喂已累计参数
-                val canonicalArgs = accFunction.optString("arguments", "")
-                if (canonicalArgs.isNotEmpty()) {
-                    feedParserFromCanonical(index, canonicalArgs, state, emitter)
-                }
-            }
         }
         
         // 处理参数
@@ -1854,11 +1920,81 @@ open class OpenAIProvider(
             val changed = mergedArgs != currentArgs
             if (changed) {
                 accFunction.put("arguments", mergedArgs)
-                if (state.toolCallState.nameEmitted[index] == true) {
-                    feedParserFromCanonical(index, mergedArgs, state, emitter)
-                }
             }
         }
+
+        return true
+    }
+
+    private suspend fun processToolCallChunk(
+        index: Int,
+        deltaCall: JSONObject,
+        state: StreamingState,
+        emitter: StreamEmitter,
+    ) {
+        val previousIndex = state.lastProcessedToolIndex
+        if (previousIndex != null && previousIndex != index &&
+            isToolCallCompleteAtSwitch(previousIndex, state)
+        ) {
+            state.completedToolIndices.add(previousIndex)
+            flushDeferredOutput(state, emitter)
+        }
+
+        if (!accumulateToolCallChunk(index, deltaCall, state)) {
+            state.lastProcessedToolIndex = index
+            return
+        }
+        state.lastProcessedToolIndex = index
+    }
+
+    private fun isToolCallCompleteAtSwitch(index: Int, state: StreamingState): Boolean {
+        val function = state.accumulatedToolCalls[index]?.optJSONObject("function") ?: return false
+        if (function.optString("name", "").isEmpty()) return false
+        val arguments = function.optString("arguments", "")
+        if (arguments.isEmpty()) return false
+        return runCatching { JSONObject(arguments) }.isSuccess
+    }
+
+    private suspend fun emitCompletedToolCall(
+        index: Int,
+        state: StreamingState,
+        emitter: StreamEmitter,
+    ): Boolean {
+        val function = state.accumulatedToolCalls[index]?.optJSONObject("function") ?: return false
+        val name = function.optString("name", "")
+        if (name.isEmpty()) return false
+
+        val arguments = function.optString("arguments", "")
+        if (arguments.isNotEmpty() && runCatching { JSONObject(arguments) }.isFailure) {
+            StreamLogger.w(
+                "OpenAIProvider",
+                "丢弃无法安全闭合的流式 tool envelope，并保留其后的常规正文",
+            )
+            return false
+        }
+
+        // Build and validate every JSON-to-XML event before publishing the opening tag. A
+        // malformed provider payload therefore cannot require a mid-response rollback, and
+        // downstream consumers never observe a transient, unclosed tool envelope.
+        val parser = StreamingJsonXmlConverter()
+        val events =
+            buildList {
+                if (arguments.isNotEmpty()) addAll(parser.feed(arguments))
+                addAll(parser.flush())
+            }
+        if (parser.hasUnfinishedParam()) {
+            StreamLogger.w(
+                "OpenAIProvider",
+                "丢弃 JSON-to-XML 解析器无法闭合的流式 tool envelope",
+            )
+            return false
+        }
+
+        val toolTagName = state.toolCallState.getTagName(index)
+        emitter.emitTag("\n<$toolTagName name=\"$name\">")
+        emitter.handleJsonEvents(events)
+        emitter.emitTag("\n</$toolTagName>")
+        return true
     }
 
     /**
@@ -1875,36 +2011,6 @@ open class OpenAIProvider(
     }
 
     /**
-     * 基于 canonical arguments 与 fedLength 游标，向解析器仅喂入新增部分。
-     */
-    private suspend fun feedParserFromCanonical(
-        index: Int,
-        canonicalArgs: String,
-        state: StreamingState,
-        emitter: StreamEmitter
-    ): Int {
-        val previousFedLength = (state.toolCallState.fedLength[index] ?: 0).coerceAtLeast(0)
-        val safeFedLength = previousFedLength.coerceAtMost(canonicalArgs.length)
-        if (safeFedLength == canonicalArgs.length) {
-            state.toolCallState.fedLength[index] = safeFedLength
-            return 0
-        }
-
-        val deltaToFeed = canonicalArgs.substring(safeFedLength)
-        val events = state.toolCallState.getParser(index).feed(deltaToFeed)
-        emitter.handleJsonEvents(events)
-        state.toolCallState.fedLength[index] = canonicalArgs.length
-        return deltaToFeed.length
-    }
-
-    private fun getAccumulatedToolArguments(state: StreamingState, index: Int): String {
-        return state.accumulatedToolCalls[index]
-            ?.optJSONObject("function")
-            ?.optString("arguments", "")
-            ?: ""
-    }
-
-    /**
      * 处理工具调用的增量数据
      */
     private suspend fun processToolCallsDelta(
@@ -1912,88 +2018,101 @@ open class OpenAIProvider(
         state: StreamingState,
         emitter: StreamEmitter
     ) {
-        // 如果正在思考模式，收到工具调用时应先关闭思考标签
-        if (state.isInReasoningMode) {
-            state.isInReasoningMode = false
-            emitter.emitTag("</think>")
-            state.hasEmittedThinkStart = false
-        }
+        // Structured tool markup must never be emitted inside provider-controlled reasoning.
+        closeReasoningBlockIfOpen(state, emitter)
 
         for (i in 0 until toolCallsDeltas.length()) {
             val deltaCall = toolCallsDeltas.getJSONObject(i)
             val index = deltaCall.optInt("index", -1)
             if (index < 0) continue
 
-            // 检测工具切换
-            if (state.lastProcessedToolIndex != null && state.lastProcessedToolIndex != index) {
-                handleToolSwitch(state.lastProcessedToolIndex!!, state, emitter)
-            }
-            state.lastProcessedToolIndex = index
-
             // Chat Completions 的 tool_calls.arguments 为增量片段。
             processToolCallChunk(index, deltaCall, state, emitter)
         }
     }
 
-    private suspend fun closeToolCallIfOpen(
+    private fun hasOpenToolCalls(state: StreamingState): Boolean {
+        return state.queuedToolIndices.isNotEmpty()
+    }
+
+    private fun queueRegularContent(content: String, state: StreamingState) {
+        val tail = state.deferredOutput.peekLast()
+        if (tail is DeferredOutputSegment.Text) {
+            tail.content.append(content)
+        } else {
+            state.deferredOutput.addLast(DeferredOutputSegment.Text(StringBuilder(content)))
+        }
+    }
+
+    private suspend fun emitRegularContentDirect(
+        content: String,
+        state: StreamingState,
+        emitter: StreamEmitter,
+    ) {
+        if (content.isEmpty()) return
+        closeReasoningBlockIfOpen(state, emitter)
+        state.hasEmittedRegularContent = true
+        if (state.isFirstResponse) {
+            state.isFirstResponse = false
+            AppLogger.d("AIService", "【发送消息】收到首个有效内容片段")
+        }
+        emitter.emitContent(content)
+    }
+
+    private suspend fun flushDeferredOutput(
+        state: StreamingState,
+        emitter: StreamEmitter,
+    ) {
+        while (state.deferredOutput.isNotEmpty()) {
+            when (val segment = state.deferredOutput.peekFirst()) {
+                is DeferredOutputSegment.Text -> {
+                    state.deferredOutput.removeFirst()
+                    emitRegularContentDirect(segment.content.toString(), state, emitter)
+                }
+
+                is DeferredOutputSegment.Tool -> {
+                    if (segment.index !in state.completedToolIndices) return
+                    state.deferredOutput.removeFirst()
+                    emitCompletedToolCall(segment.index, state, emitter)
+                    state.completedToolIndices.remove(segment.index)
+                    state.queuedToolIndices.remove(segment.index)
+                    state.accumulatedToolCalls.remove(segment.index)
+                    state.toolCallState.clear(segment.index)
+                    if (state.lastProcessedToolIndex == segment.index) {
+                        state.lastProcessedToolIndex = null
+                    }
+                }
+
+                is DeferredOutputSegment.Image -> {
+                    state.deferredOutput.removeFirst()
+                    emitImageBytes(
+                        emitter,
+                        segment.bytes,
+                        segment.mimeType,
+                        segment.prefix,
+                        segment.alt,
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun completeToolCall(
         index: Int,
         state: StreamingState,
-        emitter: StreamEmitter
+        emitter: StreamEmitter,
     ) {
-        if (state.toolCallState.closed[index] == true || state.toolCallState.nameEmitted[index] != true) {
-            return
-        }
-
-        val accumulatedArgsBeforeFlush = getAccumulatedToolArguments(state, index)
-        val toolTagName =
-            requireNotNull(state.toolCallState.tagNames[index]) {
-                "Missing tool XML tag name for streaming tool call index=$index"
-            }
-
-        val parser = state.toolCallState.getParser(index)
-        val events = parser.flush()
-        emitter.handleJsonEvents(events)
-
-        if (parser.hasUnfinishedParam()) {
-            val parsedAsJson = runCatching { JSONObject(accumulatedArgsBeforeFlush) }.isSuccess
-            if (parsedAsJson) {
-                AppLogger.w(
-                    "AIService",
-                    "Tool 参数解析器状态未闭合，但累计 arguments 已是合法 JSON，强制补全标签收尾，index=$index"
-                )
-                emitter.emitTag("</param>")
-                emitter.emitTag("\n</$toolTagName>")
-                state.toolCallState.closed[index] = true
-                return
-            }
-
-            AppLogger.w(
-                "AIService",
-                "检测到未完成的 tool 参数，跳过自动补 </tool>，index=$index, argsLen=${accumulatedArgsBeforeFlush.length}"
-            )
-            return
-        }
-
-        emitter.emitTag("\n</$toolTagName>")
-        state.toolCallState.closed[index] = true
+        if (index !in state.queuedToolIndices) return
+        state.completedToolIndices.add(index)
+        flushDeferredOutput(state, emitter)
     }
 
-    private fun hasOpenToolCalls(state: StreamingState): Boolean {
-        return state.toolCallState.nameEmitted.any { (index, emitted) ->
-            emitted && state.toolCallState.closed[index] != true
-        }
-    }
-
-    private suspend fun closeAllOpenToolCalls(
+    private suspend fun finalizeOpenToolSequence(
         state: StreamingState,
-        emitter: StreamEmitter
+        emitter: StreamEmitter,
     ) {
-        if (!hasOpenToolCalls(state)) return
-
-        val sortedIndices = state.accumulatedToolCalls.keys.sorted()
-        for (index in sortedIndices) {
-            closeToolCallIfOpen(index, state, emitter)
-        }
+        state.completedToolIndices.addAll(state.accumulatedToolCalls.keys)
+        flushDeferredOutput(state, emitter)
     }
 
     private fun hasResponsesReasoningItem(responseObj: JSONObject?): Boolean {
@@ -2066,14 +2185,10 @@ open class OpenAIProvider(
         val eventType = jsonResponse.optString("type", "")
 
         if (eventType.startsWith("response.image_generation_call.")) {
-            val normalized = JSONObject(jsonResponse.toString())
-            normalized.put(
-                "type",
-                eventType.removePrefix("response.").replace("image_generation_call.", "image_generation.")
-            )
-            if (tryHandleOpenAiImageResponse(normalized, emitter, state)) {
-                return
-            }
+            // Responses partial images are complete preview snapshots under
+            // `partial_image_b64`; the authoritative final image arrives as
+            // `response.output_item.done.item.result`. Do not concatenate previews.
+            return
         }
 
         when (eventType) {
@@ -2128,13 +2243,39 @@ open class OpenAIProvider(
                         emitCompletedResponsesReasoningText(itemReasoningText, state, emitter)
                     }
                     if (eventType == "response.output_item.done") {
-                        OpenAIResponsesPayloadAdapter.createReasoningMetadataTag(item)?.let { metadataTag ->
-                            if (state.isInReasoningMode) {
-                                state.isInReasoningMode = false
-                                emitter.emitTag("</think>")
-                                state.hasEmittedThinkStart = false
+                        closeReasoningBlockIfOpen(state, emitter)
+                        if (!hasOpenToolCalls(state)) {
+                            OpenAIResponsesPayloadAdapter.createReasoningMetadataTag(item)?.let { metadataTag ->
+                                emitter.emitTag(metadataTag)
                             }
-                            emitter.emitTag(metadataTag)
+                        } else {
+                            AppLogger.d(
+                                "AIService",
+                                "Ignoring reasoning metadata received after a pending tool call",
+                            )
+                        }
+                    }
+                    return
+                }
+
+                if (item.optString("type", "") == "image_generation_call") {
+                    if (eventType == "response.output_item.done") {
+                        val result = item.optString("result", "")
+                        val bytes =
+                            if (result.isNotEmpty()) {
+                                runCatching { Base64.getMimeDecoder().decode(result) }.getOrNull()
+                            } else {
+                                null
+                            }
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            emitOrDeferImage(
+                                state,
+                                emitter,
+                                bytes,
+                                "image/png",
+                                "openai_image_$outputIndex",
+                                "openai_image_$outputIndex",
+                            )
                         }
                     }
                     return
@@ -2143,6 +2284,8 @@ open class OpenAIProvider(
                 if (!enableToolCall || item.optString("type", "") != "function_call") {
                     return
                 }
+
+                closeReasoningBlockIfOpen(state, emitter)
 
                 val functionObj = JSONObject().apply {
                     val name = item.optString("name", "")
@@ -2163,8 +2306,7 @@ open class OpenAIProvider(
 
                 // 对于 output_item 事件，仅更新工具元信息（name/id）。
                 // 参数统一由 response.function_call_arguments.delta 通道累积，避免快照+增量混拼导致 JSON 破坏。
-                processToolCallChunk(outputIndex, deltaCall, state, emitter)
-                state.lastProcessedToolIndex = outputIndex
+                accumulateToolCallChunk(outputIndex, deltaCall, state)
                 // 某些供应商会先发送 output_item.done，随后才发送 function_call_arguments.delta。
                 // 因此不在 output_item.done 阶段关闭工具调用，改由
                 // response.function_call_arguments.done / response.completed 统一收口。
@@ -2174,6 +2316,8 @@ open class OpenAIProvider(
                 if (!enableToolCall) return
                 val outputIndex = jsonResponse.optInt("output_index", -1)
                 if (outputIndex < 0) return
+
+                closeReasoningBlockIfOpen(state, emitter)
 
                 val deltaCall = JSONObject().apply {
                     put("index", outputIndex)
@@ -2194,15 +2338,13 @@ open class OpenAIProvider(
                 }
 
                 processToolCallChunk(outputIndex, deltaCall, state, emitter)
-                state.lastProcessedToolIndex = outputIndex
             }
 
             "response.function_call_arguments.done" -> {
                 if (!enableToolCall) return
                 val outputIndex = jsonResponse.optInt("output_index", -1)
                 if (outputIndex >= 0) {
-                    closeToolCallIfOpen(outputIndex, state, emitter)
-                    state.lastProcessedToolIndex = outputIndex
+                    completeToolCall(outputIndex, state, emitter)
                 }
             }
 
@@ -2218,18 +2360,15 @@ open class OpenAIProvider(
                     state.reasoningObserved = true
                 }
 
-                if (state.isInReasoningMode) {
-                    state.isInReasoningMode = false
-                    emitter.emitTag("</think>")
-                    state.hasEmittedThinkStart = false
-                } else {
+                val reasoningWasOpen = closeReasoningBlockIfOpen(state, emitter)
+                finalizeOpenToolSequence(state, emitter)
+                if (!reasoningWasOpen && !state.suppressedReasoningAfterTool) {
                     val lateReasoningText = extractResponsesReasoningText(responseObj)
                     if (lateReasoningText.isNotEmpty() && state.streamedReasoningContentLength == 0) {
                         emitCompletedResponsesReasoningText(lateReasoningText, state, emitter)
                     }
                 }
-
-                closeAllOpenToolCalls(state, emitter)
+                closeReasoningBlockIfOpen(state, emitter)
                 applyUsageToCounters(usage, onTokensUpdated, onUsageReported, attemptNumber)
             }
 
@@ -2271,7 +2410,7 @@ open class OpenAIProvider(
         }
 
         if (hasOpenToolCalls(state)) {
-            closeAllOpenToolCalls(state, emitter)
+            finalizeOpenToolSequence(state, emitter)
             AppLogger.d("AIService", "Tool Call流式收尾，finish_reason=$normalizedFinishReason")
 
             onTokensUpdated(
@@ -2284,6 +2423,7 @@ open class OpenAIProvider(
             state.accumulatedToolCalls.clear()
             state.lastProcessedToolIndex = null
         }
+        flushDeferredOutput(state, emitter)
     }
 
     /**
@@ -2298,26 +2438,37 @@ open class OpenAIProvider(
         val hasReasoning = reasoningContent.isNotNullOrEmpty()
         val hasRegular = regularContent.isNotNullOrEmpty()
 
+        // Once a structured tool has been observed, preserve provider order in a deferred output
+        // queue. Reasoning that arrives out of protocol order remains untrusted and is discarded;
+        // visible content is committed only after every earlier tool segment is complete.
+        if (hasOpenToolCalls(state) && (hasReasoning || hasRegular)) {
+            if (hasReasoning) {
+                state.suppressedReasoningAfterTool = true
+                AppLogger.d("AIService", "Ignoring provider reasoning received during an open tool call")
+            }
+            if (hasRegular) {
+                queueRegularContent(regularContent, state)
+                AppLogger.d("AIService", "Queueing regular content behind a pending tool call")
+            }
+            return
+        }
+
         // 处理思考内容
         if (hasReasoning && !state.hasEmittedRegularContent) {
             state.streamedReasoningContentLength += reasoningContent.length
             if (!state.isInReasoningMode) {
                 state.isInReasoningMode = true
                 if (!state.hasEmittedThinkStart) {
-                    emitter.emitTag("<think>")
+                    emitter.emitTag(ChatUtils.PROVIDER_REASONING_OPEN_TAG)
                     state.hasEmittedThinkStart = true
                 }
             }
-            emitter.emitContent(reasoningContent)
+            emitter.emitReasoningContent(reasoningContent)
         }
         // 处理常规内容
         if (hasRegular) {
             // 如果之前在思考模式，现在切换到了常规内容，需要关闭思考标签
-            if (state.isInReasoningMode) {
-                state.isInReasoningMode = false
-                emitter.emitTag("</think>")
-                state.hasEmittedThinkStart = false
-            }
+            closeReasoningBlockIfOpen(state, emitter)
 
             // 硬切策略：正文一旦开始输出，后续到达的推理内容全部忽略
             state.hasEmittedRegularContent = true
@@ -2337,6 +2488,11 @@ open class OpenAIProvider(
         state: StreamingState,
         emitter: StreamEmitter
     ) {
+        if (hasOpenToolCalls(state)) {
+            state.suppressedReasoningAfterTool = true
+            AppLogger.d("AIService", "Ignoring completed reasoning received during an open tool call")
+            return
+        }
         if (state.hasEmittedRegularContent) {
             emitter.emitThinkContent(reasoningText)
             state.streamedReasoningContentLength += reasoningText.length
@@ -2375,6 +2531,14 @@ open class OpenAIProvider(
                     ""
                 }
 
+            // Resolve reasoning/content boundaries before emitting structured tool markup. Some
+            // compatible endpoints include reasoning_content and tool_calls in the same delta.
+            val reasoningContent = delta.optString("reasoning_content", "").ifBlank {
+                delta.optString("reasoning", "")
+            }
+            val regularContent = delta.optString("content", "")
+            processContentDelta(reasoningContent, regularContent, state, emitter)
+
             // 处理工具调用
             val toolCallsDeltas = delta.optJSONArray("tool_calls")
             if (toolCallsDeltas != null && toolCallsDeltas.length() > 0 && enableToolCall) {
@@ -2385,13 +2549,6 @@ open class OpenAIProvider(
             if (finishReason.isNotEmpty()) {
                 handleFinishReason(finishReason, state, emitter, onTokensUpdated)
             }
-
-            // 处理内容
-            val reasoningContent = delta.optString("reasoning_content", "").ifBlank {
-                delta.optString("reasoning", "")
-            }
-            val regularContent = delta.optString("content", "")
-            processContentDelta(reasoningContent, regularContent, state, emitter)
         }
         // 处理message格式（非流式响应）
         else {
@@ -2401,16 +2558,7 @@ open class OpenAIProvider(
                     message.optString("reasoning", "")
                 }
                 val regularContent = message.optString("content", "")
-
-                // 先处理思考内容（如果有）
-                if (reasoningContent.isNotNullOrEmpty() && !state.hasEmittedRegularContent) {
-                    emitter.emitThinkContent(reasoningContent)
-                }
-                // 然后处理常规内容
-                if (regularContent.isNotNullOrEmpty()) {
-                    state.hasEmittedRegularContent = true
-                    emitter.emitContent(regularContent)
-                }
+                processContentDelta(reasoningContent, regularContent, state, emitter)
             }
         }
 
@@ -2442,12 +2590,8 @@ open class OpenAIProvider(
                 val data = line.substring(5).trim()
                 if (data == "[DONE]") {
                     flushImageBuffers(state, emitter)
-                    closeAllOpenToolCalls(state, emitter)
-                    if (state.isInReasoningMode) {
-                        state.isInReasoningMode = false
-                        emitter.emitTag("</think>")
-                        state.hasEmittedThinkStart = false
-                    }
+                    closeReasoningBlockIfOpen(state, emitter)
+                    finalizeOpenToolSequence(state, emitter)
                     AppLogger.d("AIService", "【发送消息】收到流结束标记[DONE]")
                     break
                 }
@@ -2483,7 +2627,7 @@ open class OpenAIProvider(
                 }
             }
             
-            closeAllOpenToolCalls(state, emitter)
+            finalizeOpenToolSequence(state, emitter)
 
             AppLogger.d(
                 "AIService",

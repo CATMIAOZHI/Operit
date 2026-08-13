@@ -1,0 +1,8 @@
+# These packages depend on the retired unrestricted Java bridge.
+# Keep their sources for migration/reference, but do not publish or package them in --mode test.
+apktool
+deepsearching
+message_insert
+pdf_vision_parser.js
+qqbot
+subagent

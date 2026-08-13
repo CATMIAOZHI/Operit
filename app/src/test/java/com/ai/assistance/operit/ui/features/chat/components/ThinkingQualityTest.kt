@@ -1,8 +1,9 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.llmprovider.DeepseekProvider
 import com.ai.assistance.operit.data.preferences.ApiPreferences
-import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabel
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabelRes
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -26,17 +27,23 @@ class ThinkingQualityTest {
         assertEquals("max", ApiPreferences.thinkingQualityEffort(6))
     }
 
-    @Test fun labelDerivesFromEffort_forAllLevels() {
-        val expected = listOf("Low", "Medium", "High", "X-High", "Max")
+    @Test fun labelResourceDerivesFromEffort_forAllLevels() {
+        val expected = listOf(
+            R.string.thinking_quality_level_low,
+            R.string.thinking_quality_level_medium,
+            R.string.thinking_quality_level_high,
+            R.string.thinking_quality_level_xhigh,
+            R.string.thinking_quality_level_max,
+        )
         (ApiPreferences.MIN_THINKING_QUALITY_LEVEL..ApiPreferences.MAX_THINKING_QUALITY_LEVEL)
             .forEach { level ->
                 assertEquals(expected[level - ApiPreferences.MIN_THINKING_QUALITY_LEVEL],
-                    thinkingQualityLevelLabel(level))
+                    thinkingQualityLevelLabelRes(level))
             }
     }
 
-    @Test fun labelHandlesXhighSpecialCase() {
-        assertEquals("X-High", thinkingQualityLevelLabel(4))
+    @Test fun labelResourceHandlesXhighSpecialCase() {
+        assertEquals(R.string.thinking_quality_level_xhigh, thinkingQualityLevelLabelRes(4))
     }
 
     @Test fun deepseekNormalizesMediumToHigh() {
