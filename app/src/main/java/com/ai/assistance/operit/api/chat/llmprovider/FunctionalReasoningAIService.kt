@@ -115,7 +115,13 @@ internal fun buildFunctionalReasoningRequest(
     val effectiveLevel = normalizeFunctionalThinkingQualityLevel(thinkingQualityLevel)
     val parametersWithoutConflictingControls =
         modelParameters.filterNot {
-            it.apiName in functionalReasoningApiNames(providerType, modelName)
+            it.apiName in
+                functionalReasoningApiNames(
+                    providerType = providerType,
+                    modelName = modelName,
+                    effectiveLevel = effectiveLevel,
+                    modelParameters = modelParameters,
+                )
         }
     val overrideParameters =
         buildFunctionalReasoningParameters(
@@ -373,7 +379,7 @@ private fun buildGeminiFunctionalReasoningParameters(
     effectiveLevel: Int,
     modelParameters: List<ModelParameter<*>>,
 ): List<ModelParameter<*>> {
-    val normalizedModelName = modelName.lowercase()
+    val normalizedModelName = modelName.trim().lowercase().substringAfterLast('/')
     return when {
         isGemini25ProThinkingModel(normalizedModelName) ->
             listOf(
@@ -529,6 +535,8 @@ private fun aliyunFunctionalEffort(modelName: String, qualityLevel: Int): String
 private fun functionalReasoningApiNames(
     providerType: ApiProviderType?,
     modelName: String,
+    effectiveLevel: Int,
+    modelParameters: List<ModelParameter<*>>,
 ): Set<String> {
     return when (providerType) {
         ApiProviderType.OPENAI -> setOf("reasoning_effort")
@@ -563,17 +571,36 @@ private fun functionalReasoningApiNames(
             }
         ApiProviderType.ANTHROPIC,
         ApiProviderType.ANTHROPIC_GENERIC ->
-            if (claudeFunctionalThinkingMode(modelName) != null) {
-                setOf(
-                    "thinking",
-                    "budget_tokens",
-                    "output_config",
-                    "temperature",
-                    "top_p",
-                    "top_k",
-                )
-            } else {
-                emptySet()
+            when (claudeFunctionalThinkingMode(modelName)) {
+                ClaudeFunctionalThinkingMode.ADAPTIVE ->
+                    setOf(
+                        "thinking",
+                        "budget_tokens",
+                        "output_config",
+                        "temperature",
+                        "top_p",
+                        "top_k",
+                    )
+                ClaudeFunctionalThinkingMode.MANUAL -> {
+                    val controlNames =
+                        mutableSetOf(
+                            "thinking",
+                            "budget_tokens",
+                            "output_config",
+                        )
+                    if (
+                        anthropicFunctionalBudget(
+                            effectiveLevel = effectiveLevel,
+                            providerType = providerType,
+                            modelName = modelName,
+                            modelParameters = modelParameters,
+                        ) != null
+                    ) {
+                        controlNames += setOf("temperature", "top_p", "top_k")
+                    }
+                    controlNames
+                }
+                null -> emptySet()
             }
         ApiProviderType.GOOGLE,
         ApiProviderType.GEMINI_GENERIC -> setOf("thinking_budget", "thinking_level")

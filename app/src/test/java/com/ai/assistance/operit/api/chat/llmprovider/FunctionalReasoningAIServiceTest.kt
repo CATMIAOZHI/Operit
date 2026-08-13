@@ -805,17 +805,31 @@ class FunctionalReasoningAIServiceTest {
     @Test
     fun manualClaudeDisablesThinkingWhenMaxTokensCannotFitAValidBudget() {
         listOf(512, 1_024).forEach { maxTokens ->
+            val temperature = intParameter("temperature", 0)
+            val topP = intParameter("top_p", 1)
+            val topK = intParameter("top_k", 50)
             val request =
                 buildFunctionalReasoningRequest(
                     ApiProviderType.ANTHROPIC,
                     "claude-sonnet-4-5",
-                    listOf(intParameter("max_tokens", maxTokens)),
+                    listOf(
+                        intParameter("max_tokens", maxTokens),
+                        temperature,
+                        topP,
+                        topK,
+                    ),
                     5,
                 )
 
             assertFalse(request.enableThinking)
             assertTrue(request.modelParameters.none { it.apiName == "budget_tokens" })
             assertTrue(request.modelParameters.none { it.apiName == "thinking" })
+            assertEquals(
+                listOf(temperature, topP, topK),
+                request.modelParameters.filter {
+                    it.apiName == "temperature" || it.apiName == "top_p" || it.apiName == "top_k"
+                },
+            )
         }
     }
 
@@ -896,6 +910,29 @@ class FunctionalReasoningAIServiceTest {
         val thinkingConfig = buildGeminiThinkingConfig(request.enableThinking, request.modelParameters)
 
         assertEquals("high", thinkingConfig?.getString("thinkingLevel"))
+    }
+
+    @Test
+    fun prefixedGeminiModelIdsReceiveTheSameFunctionalControls() {
+        val gemini3Request =
+            buildFunctionalReasoningRequest(
+                ApiProviderType.GOOGLE,
+                "google/gemini-3.1-pro-preview",
+                emptyList(),
+                5,
+            )
+        val gemini25Request =
+            buildFunctionalReasoningRequest(
+                ApiProviderType.GEMINI_GENERIC,
+                "google/gemini-2.5-pro",
+                emptyList(),
+                5,
+            )
+
+        assertTrue(gemini3Request.enableThinking)
+        assertEquals("high", gemini3Request.parameterValue("thinking_level"))
+        assertTrue(gemini25Request.enableThinking)
+        assertEquals(32_768, gemini25Request.parameterValue("thinking_budget"))
     }
 
     @Test
