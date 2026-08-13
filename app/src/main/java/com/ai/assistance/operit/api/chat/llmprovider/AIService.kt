@@ -105,3 +105,9 @@ interface AIService {
         // 默认空实现，子类按需覆盖
     }
 }
+
+/** Optional structured identity for statistics when [AIService.providerModel] is display-facing. */
+internal interface TokenStatIdentitySource {
+    val tokenStatProvider: String
+    val tokenStatModel: String
+}

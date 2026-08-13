@@ -39,8 +39,8 @@ import org.mockito.kotlin.wheneverBlocking
 /**
  * 统计查询服务集成测试（真实 Room + JVM SQLite 驱动，阶段 3）：
  * 同事务只读快照（P1-2，含并发提交一致性）、固定查询次数（防 N+1，SQL 记录驱动）、
- * 生命周期分页增量聚合（P2-1，>10k 不整表实体化）、展示模型筛选语义与 IN 分块
- * （P2-2，null=全部/空=无事件/1000+ 模型分块）、IO 线程与 startedAtMs 索引
+ * 生命周期/范围分页增量聚合（>10k 不整表实体化）、展示模型筛选语义
+ * （null=全部/空=无事件/1000+ 模型不触发 SQLite IN 上限）、IO 线程与 startedAtMs 索引
  * （P2-3）、半开边界、初始回退、重估端到端、baseline 不进范围、Context 生产入口。
  */
 class TokenStatsQueryServiceRoomTest {
@@ -75,6 +75,7 @@ class TokenStatsQueryServiceRoomTest {
         TokenStatsQueryService.legacyPricesProvider = null
         TokenStatsQueryService.queryDispatcher = Dispatchers.IO
         TokenStatsQueryService.lifetimeEventPageSize = 1_000
+        TokenStatsQueryService.rangeEventPageSize = 1_000
         TokenStatsQueryService.activityEventPageSize = 1_000
         database.close()
     }
@@ -395,7 +396,7 @@ class TokenStatsQueryServiceRoomTest {
     }
 
     @Test
-    fun `display model filter uses a single IN join query not per model`() = runBlocking {
+    fun `display model filter uses identity snapshot and one bounded event page`() = runBlocking {
         val dao = database.tokenStatsDao()
         seedIdentity(dao, "id-1", model = "gpt-4o-2024-11-20", displayModelId = "gpt-4o-2024-11-20")
         seedIdentity(dao, "id-2", configId = "cfg-2", model = "deepseek-chat", displayModelId = "deepseek-chat")
@@ -415,15 +416,14 @@ class TokenStatsQueryServiceRoomTest {
                 shanghai,
             )
         assertEquals(2L, data.summary.requests)
-        val inQueries = recordingDriver.executed.filter { it.sql.contains("displayModelId IN") }
-        assertEquals(1, inQueries.size)
-        // 2 个范围参数 + 2 个 IN 参数
-        assertEquals(4, inQueries.single().questionMarkCount)
+        assertEquals(0, recordingDriver.executed.count { it.sql.contains("displayModelId IN") })
+        val pageQueries = recordingDriver.executed.filter { it.sql.contains("ORDER BY startedAtMs ASC") }
+        assertEquals(1, pageQueries.size)
+        assertTrue(pageQueries.single().rows <= TokenStatsQueryService.rangeEventPageSize)
     }
 
     @Test
-    fun `display model filter over 900 models chunks IN queries in one snapshot`() = runBlocking {
-        // P2-2：SQLite 变量上限（默认 999）防炸；分块 ≤900 在同事务内合并
+    fun `display model filter over 900 models pages without SQLite IN bindings`() = runBlocking {
         val dao = database.tokenStatsDao()
         val modelCount = 1_001
         val identities =
@@ -464,12 +464,10 @@ class TokenStatsQueryServiceRoomTest {
         assertEquals(modelCount.toLong(), data.summary.requests)
         assertEquals(modelCount, data.displayModels.size)
 
-        val inQueries = recordingDriver.executed.filter { it.sql.contains("displayModelId IN") }
-        assertEquals("IN 查询必须分块：900 + 101", 2, inQueries.size)
-        // 每块占位符 = 2 个范围参数 + IN 参数数，均不超过 SQLite 999 上限
-        val chunkSizes = inQueries.map { it.questionMarkCount - 2 }
-        assertTrue("chunk sizes $chunkSizes must not exceed 900", chunkSizes.all { it <= 900 })
-        assertEquals(modelCount, chunkSizes.sum())
+        assertEquals(0, recordingDriver.executed.count { it.sql.contains("displayModelId IN") })
+        val pageQueries = recordingDriver.executed.filter { it.sql.contains("ORDER BY startedAtMs ASC") }
+        assertEquals(2, pageQueries.size)
+        assertTrue(pageQueries.all { it.rows <= TokenStatsQueryService.rangeEventPageSize })
     }
 
     // ==== 生命周期分页（P2-1：不整表实体化） ====
@@ -693,29 +691,39 @@ class TokenStatsQueryServiceRoomTest {
     // ==== 查询次数（mock DAO 固定查询契约） ====
 
     @Test
-    fun `range data loads one snapshot and never re-fetches dao`() = runBlocking {
+    fun `range data loads one paged snapshot and never re-fetches dao`() = runBlocking {
         val dao = mock<TokenStatsDao>()
-        val snapshot =
-            TokenStatsQuerySnapshot(
-                events = listOf(event("e1", "id-1", 0L, cost = 1.0)),
-                identitiesById = mapOf("id-1" to identityEntity("id-1")),
+        wheneverBlocking {
+            dao.loadRangeSnapshotPaged(
+                anyLong(), anyLong(), anyOrNull(), anyBoolean(), anyInt(), any()
+            )
+        } doAnswer { invocation ->
+            @Suppress("UNCHECKED_CAST")
+            val onPage =
+                invocation.getArgument(5) as
+                    (List<TokenStatEventEntity>, Map<String, TokenStatIdentityEntity>, Map<String, TokenStatDisplayModelEntity>, List<TokenStatPriceOverrideEntity>) -> Unit
+            val identities = mapOf("id-1" to identityEntity("id-1"))
+            onPage(listOf(event("e1", "id-1", 0L, cost = 1.0)), identities, emptyMap(), emptyList())
+            TokenStatsRangeRead(
+                identitiesById = identities,
                 displayModelsById = emptyMap(),
                 overrides = emptyList(),
-                baselines = emptyList(),
             )
-        wheneverBlocking {
-            dao.loadRangeSnapshot(anyLong(), anyLong(), anyOrNull(), anyBoolean())
-        } doReturn snapshot
+        }
 
         val range = TokenStatsTimeRanges.customRange(0L, 3_600_000L)
         val data = TokenStatsQueryService.rangeData(dao, range, TokenStatsQueryParams(), shanghai)
         assertEquals(1L, data.summary.requests)
 
         verifyBlocking(dao, Mockito.times(1)) {
-            loadRangeSnapshot(anyLong(), anyLong(), anyOrNull(), anyBoolean())
+            loadRangeSnapshotPaged(
+                anyLong(), anyLong(), anyOrNull(), anyBoolean(), anyInt(), any()
+            )
         }
         verifyBlocking(dao, never()) { getAllEvents() }
-        verifyBlocking(dao, never()) { getEventsInRange(anyLong(), anyLong()) }
+        verifyBlocking(dao, never()) {
+            getEventsInRangePage(anyLong(), anyLong(), anyLong(), any(), anyInt())
+        }
         verifyBlocking(dao, never()) { getAllIdentities() }
         verifyBlocking(dao, never()) { getAllDisplayModels() }
         verifyBlocking(dao, never()) { getAllPriceOverrides() }
@@ -726,14 +734,14 @@ class TokenStatsQueryServiceRoomTest {
     fun `range data passes display model filter list and revalued override flag`() = runBlocking {
         val dao = mock<TokenStatsDao>()
         wheneverBlocking {
-            dao.loadRangeSnapshot(anyLong(), anyLong(), anyOrNull(), anyBoolean())
+            dao.loadRangeSnapshotPaged(
+                anyLong(), anyLong(), anyOrNull(), anyBoolean(), anyInt(), any()
+            )
         } doReturn
-            TokenStatsQuerySnapshot(
-                events = emptyList(),
+            TokenStatsRangeRead(
                 identitiesById = emptyMap(),
                 displayModelsById = emptyMap(),
                 overrides = emptyList(),
-                baselines = emptyList(),
             )
 
         val range = TokenStatsTimeRanges.customRange(0L, 3_600_000L)
@@ -743,7 +751,9 @@ class TokenStatsQueryServiceRoomTest {
             shanghai,
         )
         verifyBlocking(dao, Mockito.times(1)) {
-            loadRangeSnapshot(anyLong(), anyLong(), eq(listOf("m1", "m2")), eq(true))
+            loadRangeSnapshotPaged(
+                anyLong(), anyLong(), eq(listOf("m1", "m2")), eq(true), anyInt(), any()
+            )
         }
     }
 

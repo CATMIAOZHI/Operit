@@ -107,7 +107,7 @@
 
 【Sandbox Package：安装与排查】
 1) 沙盒包目录（外部）：
-- Android/data/com.rainy.operitry/files/packages
+- Android/data/<当前应用包名>/files/packages
 2) 内置包：
 - 内置包来自应用内置资源，不在上述外部目录；删除内置包文件不是常规操作，通常只做开关管理。
 3) 导入与删除：
@@ -345,7 +345,7 @@
 
 [Sandbox Package: install and troubleshooting]
 1) External sandbox packages directory:
-- Android/data/com.rainy.operitry/files/packages
+- Android/data/<current application package>/files/packages
 2) Built-in packages:
 - Built-in packages come from app bundled assets, not from the external directory above; usually manage via enable/disable instead of file deletion.
 3) Import and delete:
@@ -2020,13 +2020,22 @@ const operitEditorPackage = (function () {
         try {
             const locale = (getLang() ?? "").toLowerCase();
             const lang = locale.startsWith("zh") ? "zh" : locale.startsWith("en") ? "en" : "both";
-            let skillsDir = "";
+            let skillsDir;
             try {
-                skillsDir = await Tools.SoftwareSettings.getSkillsDirectory();
-            } catch (_) { }
-            const dirPath = typeof skillsDir === "string" && skillsDir.trim() !== "" ? skillsDir : "/sdcard/Download/Operit/skills";
+                const resolved = await Tools.SoftwareSettings.getSkillsDirectory();
+                if (typeof resolved !== "string" || resolved.trim() === "") {
+                    throw new Error("empty internal skills directory");
+                }
+                skillsDir = resolved.trim();
+            }
+            catch (error) {
+                const zhError = "无法获取应用内部 Skill 目录。请改用应用内的 Skill 导入或安装功能。";
+                const enError = "The app-internal Skills directory is unavailable. Use the in-app Skill import or install flow instead.";
+                const guidance = lang === "zh" ? zhError : lang === "en" ? enError : `${zhError}\n${enError}`;
+                throw new Error(`${guidance} (${get_error_message(error)})`);
+            }
             const zh = `如何制作 skill（简版）
-1. 先创建目录：${dirPath}/<skill_name>/
+1. 先创建目录：${skillsDir}/<skill_name>/
 2. 必备文件：SKILL.md
 3. 在 SKILL.md 顶部用 Markdown 元数据（frontmatter）写 name、description，例如：
 ---
@@ -2037,7 +2046,7 @@ description: 用一句话说明这个 skill 做什么
 5. 可选内容：scripts/、templates/、examples/、assets/；在 SKILL.md 里用相对路径引用
 6. 实践建议：优先下载现成 skill，直接解压过来，并确保目录下有 SKILL.md。`;
             const en = `How to make a skill (quick guide)
-1. Create a directory: ${dirPath}/<skill_name>/
+1. Create a directory: ${skillsDir}/<skill_name>/
 2. Required file: SKILL.md
 3. At the top of SKILL.md, use Markdown metadata (frontmatter) for name and description, for example:
 ---
@@ -2099,14 +2108,10 @@ description: one-line summary of what this skill does
             });
         }
     }
-    const SANDBOX_EXTERNAL_PACKAGES_DIR = "/sdcard/Android/data/com.rainy.operitry/files/packages";
     const TOOLPKG_DEBUG_INSTALL_ACTION = "com.ai.assistance.operit.DEBUG_INSTALL_TOOLPKG";
-    const TOOLPKG_DEBUG_INSTALL_COMPONENT = "com.rainy.operitry/com.ai.assistance.operit.core.tools.packTool.ToolPkgDebugInstallReceiver";
-    const SANDBOX_SCRIPT_EXECUTION_ACTION = "com.ai.assistance.operit.EXECUTE_JS";
-    const SANDBOX_SCRIPT_EXECUTION_COMPONENT = "com.rainy.operitry/com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver";
     const SANDBOX_SCRIPT_EXECUTION_MODE_SCRIPT = "script";
     const SANDBOX_SCRIPT_EXECUTION_MODE_CODE = "code";
-    const SANDBOX_JS_TEMP_DIR = "/sdcard/Android/data/com.rainy.operitry/js_temp";
+    const TOOLPKG_DEBUG_INSTALL_RECEIVER = "com.ai.assistance.operit.core.tools.packTool.ToolPkgDebugInstallReceiver";
     const DEFAULT_SANDBOX_REFRESH_TIMEOUT_MS = 1500;
     const DEFAULT_TOOLPKG_INSTALL_WAIT_MS = 1500;
     const DEFAULT_SANDBOX_SCRIPT_WAIT_MS = 15000;
@@ -2117,6 +2122,25 @@ description: one-line summary of what this skill does
     const TOOLPKG_SUBPACKAGE_ID_PATTERN = /^\s*["']?id["']?\s*:\s*["']([^"']+)["']/gm;
     const TOOLPKG_SKIP_DIR_NAMES = new Set([".git", "__pycache__"]);
     const TOOLPKG_SKIP_FILE_NAMES = new Set([".DS_Store", "Thumbs.db"]);
+    let cachedOperitRuntimeTargets = null;
+    async function resolve_operit_runtime_targets() {
+        if (cachedOperitRuntimeTargets)
+            return cachedOperitRuntimeTargets;
+        const packageSnapshot = await Tools.SoftwareSettings.listSandboxPackages();
+        const reportedPackagesPath = normalize_android_path(packageSnapshot?.externalPackagesPath);
+        const match = /(?:^|\/)Android\/data\/([^/]+)\/files\/packages\/?$/i.exec(reportedPackagesPath);
+        if (!match) {
+            throw new Error(`Cannot resolve current Operit package from external packages path: ${reportedPackagesPath || "<empty>"}`);
+        }
+        const appPackage = match[1];
+        cachedOperitRuntimeTargets = {
+            appPackage,
+            externalPackagesDir: `/sdcard/Android/data/${appPackage}/files/packages`,
+            toolPkgDebugInstallComponent: `${appPackage}/${TOOLPKG_DEBUG_INSTALL_RECEIVER}`,
+            jsTempDir: `/sdcard/Android/data/${appPackage}/js_temp`
+        };
+        return cachedOperitRuntimeTargets;
+    }
     function collect_related_package_load_errors(payload, packageName, ...relatedPaths) {
         const normalizedPackageName = normalize_package_key(packageName);
         const normalizedPaths = relatedPaths.map((path) => String(path ?? "").trim()).filter(Boolean);
@@ -2324,15 +2348,15 @@ description: one-line summary of what this skill does
             metadataBlock
         };
     }
-    async function delete_duplicate_external_js_package_files(packageName, keepPath) {
+    async function delete_duplicate_external_js_package_files(packageName, keepPath, externalPackagesDir) {
         const removedPaths = [];
-        const listing = await Tools.Files.list(SANDBOX_EXTERNAL_PACKAGES_DIR, "android");
+        const listing = await Tools.Files.list(externalPackagesDir, "android");
         for (const entry of listing?.entries ?? []) {
             const entryName = String(entry?.name ?? "").trim();
             if (!entryName || entry?.isDirectory || !entryName.toLowerCase().endsWith(".js")) {
                 continue;
             }
-            const candidatePath = path_join(SANDBOX_EXTERNAL_PACKAGES_DIR, entryName);
+            const candidatePath = path_join(externalPackagesDir, entryName);
             if (same_android_path(candidatePath, keepPath)) {
                 continue;
             }
@@ -2526,8 +2550,9 @@ description: one-line summary of what this skill does
             const activateAfterInstall = parse_boolean_like(params?.activate_after_install, true);
             const shouldEnable = enableAfterInstall || activateAfterInstall;
             logStep(`Install options -> enableAfterInstall=${String(enableAfterInstall)}, activateAfterInstall=${String(activateAfterInstall)}, shouldEnable=${String(shouldEnable)}`);
-            await ensure_android_directory(SANDBOX_EXTERNAL_PACKAGES_DIR);
-            const targetPath = path_join(SANDBOX_EXTERNAL_PACKAGES_DIR, `${safe_debug_file_stem(packageInfo.packageName, "debug_js_package")}.js`);
+            const runtimeTargets = await resolve_operit_runtime_targets();
+            await ensure_android_directory(runtimeTargets.externalPackagesDir);
+            const targetPath = path_join(runtimeTargets.externalPackagesDir, `${safe_debug_file_stem(packageInfo.packageName, "debug_js_package")}.js`);
             logStep(`Target install path -> ${targetPath}`);
             const copied = !same_android_path(sourcePath, targetPath);
             if (copied) {
@@ -2547,7 +2572,7 @@ description: one-line summary of what this skill does
                 return;
             }
             logStep("Verified installed JS package file exists.");
-            const removedDuplicateFiles = await delete_duplicate_external_js_package_files(packageInfo.packageName, targetPath);
+            const removedDuplicateFiles = await delete_duplicate_external_js_package_files(packageInfo.packageName, targetPath, runtimeTargets.externalPackagesDir);
             logStep(`Duplicate cleanup completed -> removed ${removedDuplicateFiles.length} file(s).`);
             const refresh = await refresh_sandbox_packages_until(packageInfo.packageName, DEFAULT_SANDBOX_REFRESH_TIMEOUT_MS);
             logStep(`Sandbox refresh completed -> found=${String(Boolean(refresh.packageEntry))}, builtIn=${String(refresh.packageEntry?.isBuiltIn ?? false)}`);
@@ -2635,6 +2660,7 @@ description: one-line summary of what this skill does
         });
         let finalPayload = null;
         try {
+            const runtimeTargets = await resolve_operit_runtime_targets();
             const resolvedSource = await resolve_toolpkg_source(params?.source_path ?? "");
             logStep(`Resolved ToolPkg source -> kind=${resolvedSource.sourceKind}, packageId=${resolvedSource.packageId}, sourcePath=${resolvedSource.sourcePath}`);
             cleanupPaths.push(...resolvedSource.temporaryPaths);
@@ -2649,8 +2675,8 @@ description: one-line summary of what this skill does
                 cleanupPaths.push(...builtArchive.temporaryPaths);
                 logStep(`Built archive -> ${archivePath}`);
             }
-            await ensure_android_directory(SANDBOX_EXTERNAL_PACKAGES_DIR);
-            const targetPath = path_join(SANDBOX_EXTERNAL_PACKAGES_DIR, `${safe_debug_file_stem(resolvedSource.packageId, "toolpkg")}.toolpkg`);
+            await ensure_android_directory(runtimeTargets.externalPackagesDir);
+            const targetPath = path_join(runtimeTargets.externalPackagesDir, `${safe_debug_file_stem(resolvedSource.packageId, "toolpkg")}.toolpkg`);
             logStep(`Target install path -> ${targetPath}`);
             if (!same_android_path(archivePath, targetPath)) {
                 logStep("Archive path differs from target; replacing target archive before copy.");
@@ -2674,7 +2700,7 @@ description: one-line summary of what this skill does
             logStep(`Install options -> resetSubpackageStates=${String(resetSubpackageStates)}, waitMs=${String(waitMs)}`);
             const broadcastResult = await Tools.System.sendBroadcast({
                 action: TOOLPKG_DEBUG_INSTALL_ACTION,
-                component: TOOLPKG_DEBUG_INSTALL_COMPONENT,
+                component: runtimeTargets.toolPkgDebugInstallComponent,
                 extras: {
                     package_name: resolvedSource.packageId,
                     file_path: targetPath,
@@ -2792,6 +2818,7 @@ description: one-line summary of what this skill does
         });
         let finalPayload = null;
         try {
+            const runtimeTargets = await resolve_operit_runtime_targets();
             const sourcePath = normalize_android_path(params?.source_path);
             const sourceCode = typeof params?.source_code === "string" ? params.source_code : "";
             const hasInlineCode = sourceCode.trim().length > 0;
@@ -2839,7 +2866,7 @@ description: one-line summary of what this skill does
                 }
             }
             const executionMode = hasInlineCode ? SANDBOX_SCRIPT_EXECUTION_MODE_CODE : SANDBOX_SCRIPT_EXECUTION_MODE_SCRIPT;
-            const scriptIdentityPath = sourcePath || path_join(SANDBOX_JS_TEMP_DIR, `${scriptLabel}_${Date.now()}.inline.js`);
+            const scriptIdentityPath = sourcePath || path_join(runtimeTargets.jsTempDir, `${scriptLabel}_${Date.now()}.inline.js`);
             logStep(`Execution mode -> ${executionMode}`);
             logStep(`Execution target -> ${scriptIdentityPath}`);
             const executionResult = await Tools.SoftwareSettings.executeSandboxScriptDirect({

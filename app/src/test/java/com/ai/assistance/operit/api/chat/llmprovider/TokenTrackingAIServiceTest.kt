@@ -43,6 +43,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -240,6 +241,58 @@ class TokenTrackingAIServiceTest {
             Thread.sleep(20)
         }
         fail("spool worker threads leaked: ${live()}")
+    }
+
+    @Test
+    fun `raw restore waits for request identity admission before replacement`() = runBlocking {
+        val admissionEntered = CountDownLatch(1)
+        val releaseAdmission = CountDownLatch(1)
+        val replacementEntered = CountDownLatch(1)
+        val blockingDao = mock<TokenStatsDao>()
+        whenever(blockingDao.ensureIdentityAndCaptureGenerationTx(any(), any())).thenAnswer {
+            admissionEntered.countDown()
+            gateIgnoringInterrupts(releaseAdmission)
+            0L
+        }
+        val proxy = mock<AppDatabase>()
+        whenever(proxy.tokenStatsDao()).thenReturn(blockingDao)
+        TokenStatsLedger.databaseProvider = { proxy }
+
+        val requestJob = launch(Dispatchers.Default) {
+            runCatching {
+                tracked(FakeAiService { _ -> stream { delay(60_000) } })
+                    .sendMessage(context = context)
+                .collect { }
+            }
+        }
+        var restoreJob: kotlinx.coroutines.Job? = null
+        try {
+            assertTrue("request must enter the Room identity transaction", admissionEntered.await(5, TimeUnit.SECONDS))
+
+            restoreJob = launch(Dispatchers.Default) {
+                TokenStatSpool.withExclusiveSnapshotAccess(
+                    context = context,
+                    drainBefore = false,
+                    clearAfter = true,
+                ) {
+                    replacementEntered.countDown()
+                }
+            }
+            assertFalse(
+                "replacement must not pass request admission while its Room transaction is live",
+                replacementEntered.await(250, TimeUnit.MILLISECONDS),
+            )
+
+            releaseAdmission.countDown()
+            assertTrue("replacement should continue after admission commits", replacementEntered.await(5, TimeUnit.SECONDS))
+            restoreJob.join()
+        } finally {
+            releaseAdmission.countDown()
+            restoreJob?.cancelAndJoin()
+            requestJob.cancelAndJoin()
+            TokenStatsLedger.databaseProvider = { database }
+            TokenStatSpool.clearPendingStateForTest()
+        }
     }
 
     @Test
@@ -471,11 +524,13 @@ class TokenTrackingAIServiceTest {
     @Test
     fun `real job cancellation records cancelled event with usage and propagates`() =
         runBlocking {
+            val usageObserved = CompletableDeferred<Unit>()
             val fake =
                 FakeAiService { onUsage ->
                     stream {
                         emit("partial")
                         onUsage?.invoke(usage(), 1)
+                        usageObserved.complete(Unit)
                         delay(60_000)
                     }
                 }
@@ -490,8 +545,9 @@ class TokenTrackingAIServiceTest {
                         throw e
                     }
                 }
-            // 等流开始并已上报 usage 后再真实取消 Job
-            delay(50)
+            // 等流开始并已上报 usage 后再真实取消 Job。事件握手避免
+            // CI 高负载下固定 50ms 未能启动 provider 而误读空列表。
+            withTimeout(5_000) { usageObserved.await() }
             job.cancelAndJoin()
             assertNotNull("original cancellation must propagate", propagated)
             val event = database.tokenStatsDao().getAllEvents()[0]

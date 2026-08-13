@@ -36,11 +36,7 @@ internal fun buildRuntimeBootstrapModules(
             source = buildComposeDslContextBridgeDefinition(),
             globals = listOf("OperitComposeDslRuntime")
         ),
-        module(
-            fileName = "quickjs/init/java-bridge.js",
-            source = buildJavaClassBridgeDefinition(),
-            globals = listOf("Java", "Kotlin")
-        ),
+        buildRestrictedJavaBridgeBootstrapModule(),
         module(
             fileName = "quickjs/init/third-party-libs.js",
             source = getJsThirdPartyLibraries(),
@@ -88,6 +84,14 @@ internal fun buildRuntimeBootstrapModules(
             source = loadPakoJs(context),
             globals = listOf("pako")
         )
+    )
+}
+
+internal fun buildRestrictedJavaBridgeBootstrapModule(): JsBootstrapModule {
+    return module(
+        fileName = "quickjs/init/java-bridge.js",
+        source = buildJavaClassBridgeDefinition(),
+        globals = listOf("Java", "Kotlin")
     )
 }
 

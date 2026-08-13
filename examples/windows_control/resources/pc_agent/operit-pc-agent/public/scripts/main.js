@@ -6,6 +6,7 @@ import { createWizardPage, createWizardController } from "./features/wizard-page
 import { createCommandsPage, createCommandsController } from "./features/commands-page.js";
 import { createSettingsPage, createSettingsController } from "./features/settings-page.js";
 import { createProcessesPage, createProcessesController } from "./features/processes-page.js";
+import { applyAcceptedApiToken } from "./services/api-token-session.js";
 
 const refs = {};
 const i18n = createI18n();
@@ -27,6 +28,7 @@ const state = {
   wizardBindAutoApplied: false,
   health: null,
   config: null,
+  configAuthToken: "",
   presetItems: [],
   startupIssue: null
 };
@@ -36,6 +38,19 @@ let commandsController = null;
 let manageController = null;
 let settingsController = null;
 let toastSeq = 0;
+
+function rememberApiToken(token) {
+  applyAcceptedApiToken({
+    token,
+    state,
+    refs,
+    onMobileTokenUpdated: () => {
+      if (wizardController) {
+        wizardController.handleMobileSnippetInput();
+      }
+    }
+  });
+}
 
 function getRouteFromHash() {
   const hash = String(window.location.hash || "").replace(/^#\/?/, "").trim();
@@ -144,11 +159,13 @@ function createControllers() {
   settingsController = createSettingsController({
     api,
     refs,
+    state,
     t,
     W,
     render,
     helpers,
     callbacks: {
+      onApiTokenAccepted: rememberApiToken,
       onConfigSaved: async () => {
         await Promise.all([loadConfigAndPresets({ showOutput: false }), refreshHealth()]);
       }
@@ -166,11 +183,7 @@ function createControllers() {
       reloadConfigAndHealth: async () => {
         await Promise.all([loadConfigAndPresets({ showOutput: false }), refreshHealth()]);
       },
-      onConfigUpdated: (config) => {
-        state.config = config;
-        settingsController.fillSettingsForm(config);
-        wizardController.fillWizardStep1Form(config);
-      }
+      onApiTokenAccepted: rememberApiToken
     }
   });
 }
@@ -352,17 +365,31 @@ async function applyRecommendedBindFromStartupIssue() {
   );
 
   try {
-    const result = await api.applyRecommendedBind();
+    const currentToken = String(
+      (refs.wizardCurrentApiTokenInput && refs.wizardCurrentApiTokenInput.value) || state.configAuthToken || ""
+    ).trim();
+    if (!currentToken) {
+      throw new Error(t("error.currentApiTokenRequired"));
+    }
+
+    const result = await api.applyRecommendedBind(currentToken);
+    rememberApiToken(currentToken);
     const appliedBind = result && result.bindAddress ? String(result.bindAddress) : "";
 
-    setNotice("warn", t("message.startupApplyRestarting", { bindAddress: appliedBind || "-" }));
+    if (result.manualRestartRequired) {
+      setNotice("warn", t("message.startupApplyManualRestart", { bindAddress: appliedBind || "-" }));
+    } else {
+      setNotice("warn", t("message.startupApplyRestarting", { bindAddress: appliedBind || "-" }));
+    }
 
     state.startupIssue = null;
     renderStartupIssuePanel();
 
-    window.setTimeout(() => {
-      window.location.reload();
-    }, 2600);
+    if (!result.manualRestartRequired) {
+      window.setTimeout(() => {
+        window.location.reload();
+      }, 2600);
+    }
   } catch (error) {
     setNotice("error", t("message.startupApplyFailed", { error: asErrorMessage(error) }));
   } finally {
@@ -426,11 +453,11 @@ async function loadConfigAndPresets(options = {}) {
   commandsController.renderPresetSelect(state.presetItems, config.allowedPresets || []);
 
   if (refs.commandTokenInput && !refs.commandTokenInput.value.trim()) {
-    refs.commandTokenInput.value = config.apiToken ? String(config.apiToken) : "";
+    refs.commandTokenInput.value = state.configAuthToken;
   }
 
   if (manageController) {
-    manageController.prefillToken(config.apiToken ? String(config.apiToken) : "");
+    manageController.prefillToken(state.configAuthToken);
     if (state.route === ROUTES.MANAGE) {
       void manageController.refreshSessions();
     }

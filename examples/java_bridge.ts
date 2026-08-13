@@ -5,8 +5,8 @@
  * - Java package-chain sugar / Java.use / Java.importClass / Kotlin
  * - Proxy-based class and instance calls
  * - Java.package and package-chain access
- * - Java.implement / Java.proxy
  * - NativeInterface.java* low-level bridge
+ * - Restricted-class rejection
  */
 
 interface BridgeTestParams {
@@ -50,21 +50,6 @@ function assertEq(actual: any, expected: any, message: string): void {
     }
 }
 
-function waitMs(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function waitUntil(predicate: () => boolean, timeoutMs: number, intervalMs: number): Promise<void> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-        if (predicate()) {
-            return;
-        }
-        await waitMs(intervalMs);
-    }
-    throw new Error(`waitUntil timeout (${timeoutMs}ms)`);
-}
-
 function parseNativeResult(raw: string): any {
     const parsed = JSON.parse(raw);
     assertTrue(parsed && typeof parsed === "object", "native result must be object");
@@ -95,7 +80,7 @@ function caseBridgeExposed(): any {
     assertTrue(typeof Java === "object", "Java global must exist");
     assertTrue(typeof Kotlin === "object", "Kotlin global must exist");
     assertTrue(Java.classExists("java.lang.StringBuilder"), "StringBuilder should exist");
-    assertTrue(Java.classExists("java.lang.Thread"), "Thread should exist");
+    assertTrue(!Java.classExists("java.lang.Thread"), "Thread must be blocked");
 
     const pkgProbe = Java.java && Java.java.lang;
     assertTrue(!!pkgProbe, "Java package-chain proxy should be available");
@@ -141,13 +126,6 @@ function caseProxyStaticAndInstance(): any {
 }
 
 function casePackageAccess(): any {
-    const nowByChain = Number(Java.java.lang.System.currentTimeMillis());
-    const nowByApi = Number(Java.callStatic("java.lang.System", "currentTimeMillis"));
-
-    assertTrue(Number.isFinite(nowByChain), "nowByChain should be finite number");
-    assertTrue(Number.isFinite(nowByApi), "nowByApi should be finite number");
-    assertTrue(Math.abs(nowByChain - nowByApi) < 5000, "time delta should be small");
-
     const utilPkg = Java.package("java.util");
     const ArrayList = utilPkg.ArrayList;
     const list = new ArrayList();
@@ -157,93 +135,22 @@ function casePackageAccess(): any {
     assertEq(list.size(), 2, "ArrayList size mismatch");
 
     return {
-        nowByChain,
-        nowByApi
+        size: list.size()
     };
 }
 
-async function caseImplementRunnable(): Promise<any> {
-    const Thread = Java.java.lang.Thread;
-    const Runnable = Java.java.lang.Runnable;
-
-    let runCount = 0;
-    const runnable = Java.implement(Runnable, () => {
-        runCount += 1;
-    });
-
-    const worker = new Thread(runnable);
-    worker.start();
-    await waitUntil(() => runCount > 0, 4000, 20);
-    worker.join(2000);
-    assertEq(runCount, 1, "Runnable should run exactly once");
-
-    return {
-        runCount
-    };
-}
-
-async function caseImplementShorthand(): Promise<any> {
-    const Thread = Java.java.lang.Thread;
-
-    let runCount = 0;
-    const runnable = Java.implement(() => {
-        runCount += 1;
-    });
-
-    const worker = new Thread(runnable);
-    worker.start();
-    await waitUntil(() => runCount > 0, 4000, 20);
-    worker.join(2000);
-    assertEq(runCount, 1, "Shorthand implement should run once");
-
-    return {
-        runCount
-    };
-}
-
-async function caseProxyAliasRunnable(): Promise<any> {
-    const Thread = Java.java.lang.Thread;
-    const Runnable = Java.java.lang.Runnable;
-
-    let runCount = 0;
-    const runnable = Java.proxy(Runnable, {
-        run() {
-            runCount += 1;
-        }
-    });
-
-    const worker = new Thread(runnable);
-    worker.start();
-    await waitUntil(() => runCount > 0, 4000, 20);
-    worker.join(2000);
-    assertEq(runCount, 1, "Java.proxy runnable should run once");
-
-    return {
-        runCount
-    };
-}
-
-async function caseImplementCallableReturn(): Promise<any> {
-    const FutureTask = Java.java.util.concurrent.FutureTask;
-    const Thread = Java.java.lang.Thread;
-    const Callable = Java.java.util.concurrent.Callable;
-
-    const callable = Java.implement(Callable, {
-        call() {
-            return "callable-ok";
-        }
-    });
-
-    const future = new FutureTask(callable);
-    const worker = new Thread(future);
-
-    worker.start();
-    await waitUntil(() => future.isDone(), 5000, 20);
-    const value = future.get();
-    assertEq(String(value), "callable-ok", "Callable return value mismatch");
-    return {
-        callableResult: String(value)
-    };
+function caseRestrictedBoundary(): any {
+    const blocked = [
+        "java.lang.Runtime",
+        "java.lang.ProcessBuilder",
+        "java.io.File",
+        "android.content.Context",
+        "com.ai.assistance.operit.core.application.ActivityLifecycleManager"
+    ];
+    for (const className of blocked) {
+        assertTrue(!Java.classExists(className), `${className} must be blocked`);
+    }
+    return { blocked };
 }
 
 function caseNativeLowLevel(): any {
@@ -263,71 +170,12 @@ function caseNativeLowLevel(): any {
     };
 }
 
-function caseAndroidBridgeDirect(): any {
-    const Build = Java.android.os.Build;
-    const Version = Java.android.os.Build.VERSION;
-    const Process = Java.android.os.Process;
-    const SystemClock = Java.android.os.SystemClock;
-    const ActivityLifecycleManager = Java.com.ai.assistance.operit.core.application.ActivityLifecycleManager;
-    const AlertDialogBuilder = Java.android.app.AlertDialog.Builder;
-
-    const manufacturer = String(Build.MANUFACTURER || "");
-    const model = String(Build.MODEL || "");
-    const brand = String(Build.BRAND || "");
-    const sdkInt = Number(Version.SDK_INT);
-    const release = String(Version.RELEASE || "");
-    const pid = Number(Process.myPid());
-    const uptimeMs = Number(SystemClock.uptimeMillis());
-    const activity = ActivityLifecycleManager.INSTANCE.getCurrentActivity();
-
-    let alertShown = false;
-    let alertError = "";
-    let builder: any = null;
-    let dialog: any = null;
-
-    try {
-        assertTrue(!!activity, "current activity should not be null");
-        builder = AlertDialogBuilder(activity);
-        builder.setTitle("Bridge Alert");
-        builder.setMessage(`bridge-alert-${Date.now()}`);
-        builder.setCancelable(true);
-        builder.setPositiveButton("OK", null);
-        dialog = builder.show();
-        alertShown = true;
-    } catch (error) {
-        alertError = String(error);
-    }
-
-    assertTrue(manufacturer.length > 0, "manufacturer should not be empty");
-    assertTrue(model.length > 0, "model should not be empty");
-    assertTrue(sdkInt > 0, "sdkInt should be positive");
-    assertTrue(pid > 0, "pid should be positive");
-    assertTrue(uptimeMs >= 0, "uptime should be non-negative");
-    assertTrue(alertShown, `alert should be shown, error=${alertError}`);
-
-    return {
-        manufacturer,
-        model,
-        brand,
-        sdkInt,
-        release,
-        pid,
-        uptimeMs,
-        alertShown,
-        alertError
-    };
-}
-
 const BRIDGE_CASES: BridgeCaseDefinition[] = [
     { name: "bridge_exposed", handler: caseBridgeExposed },
     { name: "proxy_static_and_instance", handler: caseProxyStaticAndInstance },
     { name: "package_access", handler: casePackageAccess },
-    { name: "implement_runnable", handler: caseImplementRunnable },
-    { name: "implement_shorthand", handler: caseImplementShorthand },
-    { name: "proxy_alias_runnable", handler: caseProxyAliasRunnable },
-    { name: "implement_callable_return", handler: caseImplementCallableReturn },
     { name: "native_low_level", handler: caseNativeLowLevel },
-    { name: "android_bridge_direct", handler: caseAndroidBridgeDirect }
+    { name: "restricted_boundary", handler: caseRestrictedBoundary }
 ];
 
 async function bridgeMain(params: BridgeTestParams = {}): Promise<void> {

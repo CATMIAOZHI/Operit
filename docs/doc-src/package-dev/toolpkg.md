@@ -727,7 +727,7 @@ ToolPkg.registerSummaryGenerateHook({
 
 ## 关于 `registerToolPkg()` 入口
 
-从 `examples/linux_ssh/src/main.ts` 与 `examples/deepsearching/src/plugin/deep-search-plugin.ts` 可以看出，工具包通常会在入口文件中导出一个 `registerToolPkg()` 函数，并在里面集中调用上述注册方法。
+从仍符合受限桥接契约的 `examples/linux_ssh/src/main.ts` 与 `examples/worldbook/src/main.ts` 可以看出，工具包通常会在入口文件中导出一个 `registerToolPkg()` 函数，并在里面集中调用上述注册方法。
 
 这是一种**从仓库示例总结出的约定**；它不是 `toolpkg.d.ts` 本身直接声明的函数签名。
 

@@ -31,11 +31,13 @@ class MigrationStateStoreJvmTest {
         tempDir = kotlin.io.path.createTempDirectory("migration-state").toFile()
         context = mockContext(tempDir)
         MigrationStateStore.fileIoProvider = { PlainFileStateIo(File(it.noBackupFilesDir, "official_operit_migration_state.txt")) }
+        MigrationStateStore.uriParserForTest = null
     }
 
     @After
     fun clearSeam() {
         MigrationStateStore.fileIoProvider = null
+        MigrationStateStore.uriParserForTest = null
     }
 
     private fun mockContext(tempDir: File): Context {
@@ -63,6 +65,17 @@ class MigrationStateStoreJvmTest {
             assertTrue(
                 MigrationStateStore.write(
                     context,
+                    MigrationStateStore.State.PENDING,
+                    finalState = MigrationStateStore.State.COMPLETED,
+                )
+            )
+            snapshot = MigrationStateStore.read(context)
+            assertEquals(MigrationStateStore.State.PENDING, snapshot.state)
+            assertEquals(MigrationStateStore.State.COMPLETED, snapshot.finalState)
+
+            assertTrue(
+                MigrationStateStore.write(
+                    context,
                     MigrationStateStore.State.RESTORE_REPLACED,
                     finalState = MigrationStateStore.State.COMPLETED
                 )
@@ -71,7 +84,8 @@ class MigrationStateStoreJvmTest {
             assertEquals(MigrationStateStore.State.RESTORE_REPLACED, snapshot.state)
             assertEquals(MigrationStateStore.State.COMPLETED, snapshot.finalState)
 
-            // finalState 只在 RESTORE_REPLACED 下有意义；落回 COMPLETED 后不再携带
+            // finalState 只在 PENDING raw restore / RESTORE_REPLACED 下有意义；
+            // 落回 COMPLETED 后不再携带。
             assertTrue(MigrationStateStore.write(context, MigrationStateStore.State.COMPLETED))
             assertEquals(MigrationStateStore.State.COMPLETED, MigrationStateStore.read(context).state)
             assertNull(MigrationStateStore.read(context).finalState)
@@ -87,9 +101,9 @@ class MigrationStateStoreJvmTest {
                     MigrationStateStore.State.IDLE,
                     finalState = MigrationStateStore.State.COMPLETED
                 )
-                fail("finalState outside RESTORE_REPLACED must be rejected")
+                fail("finalState outside PENDING or RESTORE_REPLACED must be rejected")
             } catch (e: IllegalStateException) {
-                assertTrue(e.message!!.contains("RESTORE_REPLACED"))
+                assertTrue(e.message!!.contains("PENDING or RESTORE_REPLACED"))
             }
             try {
                 MigrationStateStore.write(

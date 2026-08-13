@@ -948,6 +948,11 @@ class AIForegroundService : Service() {
                 exitProcess(0)
                 return
             }
+            is OperitApplication.MainApplicationInitResult.CompatibilityInitializationFailed -> {
+                AppLogger.e(TAG, "Legacy compatibility initialization failed; stopping service")
+                stopSelf()
+                return
+            }
         }
         wakeListeningSuspendedForIme = lastRequestedImeVisible
         AppLogger.d(TAG, "AI 前台服务创建。")

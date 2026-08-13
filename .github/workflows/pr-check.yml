@@ -335,6 +335,7 @@ jobs:
           test -s examples/toolpkg_wasm_demo/main.js
           test -s examples/toolpkg_wasm_demo/modules/core.wasm
           test -s examples/toolpkg_wasm_demo/dist/toolpkg_wasm_demo.toolpkg
+          npm --prefix examples/windows_control/resources/pc_agent/operit-pc-agent test
           python3 tools/example_packages/sync_example_packages.py --mode test --no-hot-reload
           python3 tools/example_packages/sync_example_packages.py --no-hot-reload
 

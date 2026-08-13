@@ -1642,7 +1642,7 @@ class GeminiProvider(
     }
 
     /** 从Gemini响应JSON中提取内容 */
-    private suspend fun extractContentFromJson(
+    internal suspend fun extractContentFromJson(
         context: Context,
         json: JSONObject,
         requestId: String,
@@ -1656,6 +1656,38 @@ class GeminiProvider(
 
         try {
             throwIfGeminiErrorPayload(context, json)
+
+            // Gemini may return billable usage without any candidates (for example, a response
+            // blocked by safety policy). Record server usage before candidate-dependent content
+            // parsing so the completed request does not fall back to unknown token counts.
+            val usageMetadata = json.optJSONObject("usageMetadata")
+            if (usageMetadata != null) {
+                // Explicit all-zero usageMetadata is still observed usage: test field presence,
+                // not whether values are positive. Long parsing is saturated at the legacy Int UI.
+                val hasServerUsage =
+                    usageMetadata.has("promptTokenCount") ||
+                        usageMetadata.has("cachedContentTokenCount") ||
+                        usageMetadata.has("candidatesTokenCount")
+                if (hasServerUsage) {
+                    val promptTokenCount = usageMetadata.optLong("promptTokenCount", 0).saturateToInt()
+                    val cachedContentTokenCount =
+                        usageMetadata.optLong("cachedContentTokenCount", 0).saturateToInt()
+                    val candidatesTokenCount = usageMetadata.optLong("candidatesTokenCount", 0).saturateToInt()
+                    val actualInputTokens = (promptTokenCount - cachedContentTokenCount).coerceAtLeast(0)
+                    tokenCacheManager.updateActualTokens(actualInputTokens, cachedContentTokenCount)
+                    tokenCacheManager.setOutputTokens(candidatesTokenCount)
+
+                    logDebug("API实际Token使用: 输入=$actualInputTokens, 缓存=$cachedContentTokenCount, 输出=$candidatesTokenCount")
+                    onTokensUpdated(
+                        tokenCacheManager.totalInputTokenCount,
+                        tokenCacheManager.cachedInputTokenCount,
+                        tokenCacheManager.outputTokenCount
+                    )
+                    onUsageReported?.let { callback ->
+                        ProviderUsageNormalizer.gemini(usageMetadata)?.let { callback(it, attemptNumber) }
+                    }
+                }
+            }
 
             // 提取候选项
             val candidates = json.optJSONArray("candidates")
@@ -1837,7 +1869,7 @@ class GeminiProvider(
                     // 处理思考模式状态切换
                     if (isThought && !isInThinkingMode) {
                         // 开始思考模式
-                        contentBuilder.append("<think>")
+                        contentBuilder.append(ChatUtils.PROVIDER_REASONING_OPEN_TAG)
                         isInThinkingMode = true
                         logDebug("开始思考模式")
                     } else if (!isThought && isInThinkingMode) {
@@ -1847,8 +1879,11 @@ class GeminiProvider(
                         logDebug("结束思考模式")
                     }
                     
-                    // 添加文本内容
-                    contentBuilder.append(text)
+                    // Provider-owned thought text is data inside our <think> envelope. Escape
+                    // markup at this boundary so it cannot close the envelope and inject a tool.
+                    contentBuilder.append(
+                        if (isThought) ChatUtils.escapeProviderReasoningMarkup(text) else text
+                    )
                     
                     if (isThought) {
                         logDebug("提取思考内容，长度=${text.length}")
@@ -1869,39 +1904,6 @@ class GeminiProvider(
 
             pendingThoughtSignatures.forEach { signature ->
                 appendGeminiThoughtSignatureMeta(contentBuilder, signature)
-            }
-
-            // 提取实际的token使用数据
-            val usageMetadata = json.optJSONObject("usageMetadata")
-            if (usageMetadata != null) {
-                // 评审 P1-5：显式全零 usageMetadata 也是“已观察到的 usage”——按字段
-                // 存在判断，不按 “>0” 过滤；P2-1：Long 解析，旧 UI 计数边界饱和 Int。
-                val hasServerUsage =
-                    usageMetadata.has("promptTokenCount") ||
-                        usageMetadata.has("cachedContentTokenCount") ||
-                        usageMetadata.has("candidatesTokenCount")
-                if (hasServerUsage) {
-                    // 更新实际的token计数
-                    val promptTokenCount = usageMetadata.optLong("promptTokenCount", 0).saturateToInt()
-                    val cachedContentTokenCount =
-                        usageMetadata.optLong("cachedContentTokenCount", 0).saturateToInt()
-                    val candidatesTokenCount = usageMetadata.optLong("candidatesTokenCount", 0).saturateToInt()
-                    val actualInputTokens = (promptTokenCount - cachedContentTokenCount).coerceAtLeast(0)
-                    tokenCacheManager.updateActualTokens(actualInputTokens, cachedContentTokenCount)
-                    tokenCacheManager.setOutputTokens(candidatesTokenCount)
-
-                    logDebug("API实际Token使用: 输入=$actualInputTokens, 缓存=$cachedContentTokenCount, 输出=$candidatesTokenCount")
-
-                    // 更新回调，使用实际的token统计
-                    onTokensUpdated(
-                        tokenCacheManager.totalInputTokenCount,
-                        tokenCacheManager.cachedInputTokenCount,
-                        tokenCacheManager.outputTokenCount
-                    )
-                    onUsageReported?.let { callback ->
-                        ProviderUsageNormalizer.gemini(usageMetadata)?.let { callback(it, attemptNumber) }
-                    }
-                }
             }
 
             // 将搜索来源拼接到内容最前面

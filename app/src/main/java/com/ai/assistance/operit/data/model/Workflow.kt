@@ -17,6 +17,11 @@ data class Workflow(
     val createdAt: Long = System.currentTimeMillis(),
     var updatedAt: Long = System.currentTimeMillis(),
     var enabled: Boolean = true,
+    // Absent only on definitions saved before WorkManager schedule fingerprints existed. The
+    // repository persists CLAIMED while legacy execution owns the request, PENDING while a
+    // trusted replacement/reconciliation still needs retrying, CURRENT after that WorkManager
+    // commit, and REJECTED for an explicitly unschedulable past one-time definition.
+    var scheduleFingerprintGeneration: Int? = null,
     // 执行统计信息
     var lastExecutionTime: Long? = null,  // 上次执行时间
     var lastExecutionStatus: ExecutionStatus? = null,  // 上次执行状态

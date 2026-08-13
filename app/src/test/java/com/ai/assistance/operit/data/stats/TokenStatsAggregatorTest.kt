@@ -978,6 +978,42 @@ class TokenStatsAggregatorTest {
         assertTrue(cost.isFullyKnown)
     }
 
+    @Test
+    fun `range aggregation is invariant across dao page boundaries`() {
+        val identities =
+            listOf(
+                identity("id-1", displayModelId = "display-a"),
+                identity("id-2", displayModelId = "display-b"),
+            ).associateBy { it.identityId }
+        val displays =
+            listOf(displayModel("display-a", "A"), displayModel("display-b", "B"))
+                .associateBy { it.displayModelId }
+        val events =
+            listOf(
+                event("e1", "id-1", 1_000L, cost = 0.1),
+                event("e2", "id-2", 2_000L, category = TokenStatCategory.SUMMARY.name, cost = null),
+                event("e3", "id-1", 3_000L, status = TokenStatStatus.FAILED.name, output = null),
+                event("e4", "id-2", 4_000L, reasoning = 20L, reasoningIncluded = false, cost = 0.2),
+            )
+        val range = TokenStatsTimeRanges.customRange(0L, TokenStatsTimeRanges.DAY_MS)
+        fun accumulator() =
+            TokenStatsAggregator.TokenStatsRangeAccumulator(
+                identitiesById = identities,
+                displayModelsById = displays,
+                overrides = emptyList(),
+                legacyPrices = emptyMap(),
+                range = range,
+                granularity = TokenStatsGranularity.HOURLY,
+                zone = shanghai,
+                params = params,
+            )
+
+        val singlePage = accumulator().apply { addPage(events) }.result()
+        val paged = accumulator().apply { events.chunked(2).forEach(::addPage) }.result()
+
+        assertEquals(singlePage, paged)
+    }
+
     // ==== baseline ====
 
     @Test

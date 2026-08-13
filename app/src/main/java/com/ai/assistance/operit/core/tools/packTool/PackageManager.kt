@@ -21,6 +21,8 @@ import com.ai.assistance.operit.core.tools.mcp.MCPManager
 import com.ai.assistance.operit.core.tools.mcp.MCPPackage
 import com.ai.assistance.operit.core.tools.mcp.MCPServerConfig
 import com.ai.assistance.operit.core.tools.mcp.MCPToolExecutor
+import com.ai.assistance.operit.data.mcp.MCPLocalServer
+import com.ai.assistance.operit.data.mcp.isRuntimeActivationAllowed
 import com.ai.assistance.operit.core.tools.skill.SkillManager
 import com.ai.assistance.operit.data.security.PluginDenylistRepository
 import com.ai.assistance.operit.data.preferences.SkillVisibilityPreferences
@@ -3430,6 +3432,9 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
      * @return 成功或失败的消息
      */
     fun useMCPServer(serverName: String): String {
+        if (!MCPLocalServer.getInstance(context).isRuntimeActivationAllowed(serverName)) {
+            return "MCP server '$serverName' is disabled or unavailable."
+        }
         // 检查服务器是否已注册
         if (!mcpManager.isServerRegistered(serverName)) {
             return "MCP server '$serverName' does not exist or is not registered."

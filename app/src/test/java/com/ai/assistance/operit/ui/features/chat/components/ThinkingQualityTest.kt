@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.llmprovider.DeepseekProvider
 import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSemantics
 import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSummary
@@ -8,8 +9,10 @@ import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.preferences.ApiPreferences
-import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabel
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingEffortLabelRes
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabelRes
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -31,17 +34,33 @@ class ThinkingQualityTest {
         assertEquals("max", ApiPreferences.thinkingQualityEffort(6))
     }
 
-    @Test fun labelDerivesFromEffort_forAllLevels() {
-        val expected = listOf("Low", "Medium", "High", "X-High", "Max")
+    @Test fun labelResourceDerivesFromEffort_forAllLevels() {
+        val expected = listOf(
+            R.string.thinking_quality_level_low,
+            R.string.thinking_quality_level_medium,
+            R.string.thinking_quality_level_high,
+            R.string.thinking_quality_level_xhigh,
+            R.string.thinking_quality_level_max,
+        )
         (ApiPreferences.MIN_THINKING_QUALITY_LEVEL..ApiPreferences.MAX_THINKING_QUALITY_LEVEL)
             .forEach { level ->
                 assertEquals(expected[level - ApiPreferences.MIN_THINKING_QUALITY_LEVEL],
-                    thinkingQualityLevelLabel(level))
+                    thinkingQualityLevelLabelRes(level))
             }
     }
 
-    @Test fun labelHandlesXhighSpecialCase() {
-        assertEquals("X-High", thinkingQualityLevelLabel(4))
+    @Test fun labelResourceHandlesXhighSpecialCase() {
+        assertEquals(R.string.thinking_quality_level_xhigh, thinkingQualityLevelLabelRes(4))
+    }
+
+    @Test fun effectiveEffortUsesLocalizedResourceMapping() {
+        assertEquals(R.string.thinking_quality_level_high, thinkingEffortLabelRes("high"))
+        assertEquals(R.string.thinking_quality_level_max, thinkingEffortLabelRes("max"))
+    }
+
+    @Test fun customEffectiveEffortFallsBackToRawValue() {
+        assertNull(thinkingEffortLabelRes("minimal"))
+        assertNull(thinkingEffortLabelRes("none"))
     }
 
     @Test fun deepseekNormalizesMediumToHigh() {
@@ -51,7 +70,6 @@ class ThinkingQualityTest {
         assertEquals("xhigh", DeepseekProvider.normalizeDeepseekEffort("xhigh"))
         assertEquals("max", DeepseekProvider.normalizeDeepseekEffort("max"))
     }
-
     @Test fun requestSummary_usesDeepseekEffectiveEffort() {
         assertEquals(
             ThinkingRequestSummary.Effort("high"),

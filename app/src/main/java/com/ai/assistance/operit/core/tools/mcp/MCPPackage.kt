@@ -6,6 +6,9 @@ import com.ai.assistance.operit.core.tools.PackageTool
 import com.ai.assistance.operit.core.tools.PackageToolParameter
 import com.ai.assistance.operit.core.tools.ToolPackage
 import com.ai.assistance.operit.data.mcp.plugins.MCPBridgeClient
+import com.ai.assistance.operit.data.mcp.MCPLocalServer
+import com.ai.assistance.operit.data.mcp.isRuntimeActivationAllowed
+import com.ai.assistance.operit.data.mcp.runWithMcpRuntimeActivationGuard
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 
@@ -39,13 +42,24 @@ data class MCPPackage(
         }
 
         fun loadFromServer(context: Context, serverConfig: MCPServerConfig): LoadResult {
+            val localServer = MCPLocalServer.getInstance(context)
+            if (!localServer.isRuntimeActivationAllowed(serverConfig.name)) {
+                return LoadResult(null, "MCP server is disabled or unavailable.")
+            }
             // 创建桥接客户端
             val bridgeClient = MCPBridgeClient(context, serverConfig.name)
             com.ai.assistance.operit.util.AppLogger.d(TAG, "正在连接到MCP服务器: ${serverConfig.name}")
 
             try {
                 // 尝试连接
-                val connected = runBlocking { bridgeClient.connect() }
+                val connected = runBlocking {
+                    runWithMcpRuntimeActivationGuard(
+                        isAllowed = {
+                            localServer.isRuntimeActivationAllowed(serverConfig.name)
+                        },
+                        onRevoked = { bridgeClient.unspawn() },
+                    ) { bridgeClient.connect() }
+                } ?: false
                 if (!connected) {
                     com.ai.assistance.operit.util.AppLogger.w(TAG, "无法连接到MCP服务器: ${serverConfig.name}")
                     return LoadResult(
@@ -59,7 +73,14 @@ data class MCPPackage(
                 com.ai.assistance.operit.util.AppLogger.d(TAG, "成功连接到MCP服务器: ${serverConfig.name}，开始获取工具列表")
 
                 // 获取工具列表
-                val jsonTools = runBlocking { bridgeClient.getTools() }
+                val jsonTools = runBlocking {
+                    runWithMcpRuntimeActivationGuard(
+                        isAllowed = {
+                            localServer.isRuntimeActivationAllowed(serverConfig.name)
+                        },
+                        onRevoked = { bridgeClient.unspawn() },
+                    ) { bridgeClient.getTools() }
+                } ?: return LoadResult(null, "MCP server was disabled while loading tools.")
                 if (jsonTools.isEmpty()) {
                     com.ai.assistance.operit.util.AppLogger.w(TAG, "MCP服务器 ${serverConfig.name} 没有提供任何工具")
                     // 不要因为没有工具就返回null

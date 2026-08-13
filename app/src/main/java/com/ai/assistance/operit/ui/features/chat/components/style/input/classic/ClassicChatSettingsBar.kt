@@ -93,7 +93,6 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.I
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuToggleDefinition
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuTogglePluginRegistry
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuToggleSlots
-import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabel
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingRequestSummaryLabel
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardMemoryBindingSwitchConfirmDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardModelBindingSwitchConfirmDialog
@@ -1324,6 +1323,14 @@ private fun ThinkingSettingsItem(
     onToggleInfoClick: (String, String) -> Unit
 ) {
     val context = LocalContext.current
+    val thinkingQualityLabels =
+        listOf(
+            stringResource(R.string.thinking_quality_level_low),
+            stringResource(R.string.thinking_quality_level_medium),
+            stringResource(R.string.thinking_quality_level_high),
+            stringResource(R.string.thinking_quality_level_xhigh),
+            stringResource(R.string.thinking_quality_level_max),
+        )
 
     @Composable
     fun ThinkingSubSettingItem(
@@ -1512,12 +1519,14 @@ private fun ThinkingSettingsItem(
                                 ApiPreferences.MIN_THINKING_QUALITY_LEVEL - 1).coerceAtLeast(0),
                             decimalFormatPattern = "0",
                             valueFormatter = { value ->
-                                thinkingQualityLevelLabel(
+                                val level =
                                     value.roundToInt().coerceIn(
                                         ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
-                                        maxThinkingQualityLevel
+                                        maxThinkingQualityLevel,
                                     )
-                                )
+                                thinkingQualityLabels[
+                                    level - ApiPreferences.MIN_THINKING_QUALITY_LEVEL
+                                ]
                             }
                         )
                     }

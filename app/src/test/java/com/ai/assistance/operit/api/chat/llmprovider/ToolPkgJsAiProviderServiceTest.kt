@@ -25,8 +25,8 @@ import org.mockito.Mockito.mock
  */
 class ToolPkgJsAiProviderServiceTest {
 
-    private fun service(): ToolPkgJsAiProviderService {
-        val config = ModelConfigData(id = "cfg-1", name = "cfg-1")
+    private fun service(modelName: String = ""): ToolPkgJsAiProviderService {
+        val config = ModelConfigData(id = "cfg-1", name = "cfg-1", modelName = modelName)
         val registration =
             ToolPkgAiProviderRegistration(
                 containerPackageName = "com.example.testpkg",
@@ -39,6 +39,14 @@ class ToolPkgJsAiProviderServiceTest {
                 calculateInputTokensFunctionName = "",
             )
         return ToolPkgJsAiProviderService(config, registration)
+    }
+
+    @Test
+    fun tokenStatisticsUseStableProviderIdWithoutChangingDisplayIdentity() {
+        val service = service(modelName = "model:variant")
+
+        assertEquals("Test Provider:model:variant", service.providerModel)
+        assertEquals("test-provider" to "model:variant", resolveTokenStatIdentity(service))
     }
 
     /** 假 runner：按给定 intermediate/final JSON 驱动真实 hook 编排层。 */

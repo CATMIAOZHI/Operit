@@ -3,6 +3,7 @@ package com.ai.assistance.operit.data.stats
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.SQLiteStatement
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * 记录型 SQLite 驱动（仅测试）：包装 [JdbcSQLiteDriver]，记录每条真实执行的 SQL、
@@ -22,7 +23,7 @@ class RecordingSQLiteDriver : SQLiteDriver {
     private val delegate = JdbcSQLiteDriver()
 
     /** 已执行完成的语句周期记录（按执行顺序）。 */
-    val executed = mutableListOf<RecordedSql>()
+    val executed = CopyOnWriteArrayList<RecordedSql>()
 
     fun clear() = executed.clear()
 

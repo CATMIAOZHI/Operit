@@ -16,6 +16,7 @@ set -euo pipefail
 # - If env_file_path is omitted, tries <suite_dir>/.env.local
 # - Bundles the entry with esbuild first, so shared local modules work without app-side module loading.
 # - set OPERIT_RESULT_WAIT_SECONDS to customize result wait, default is 15 seconds
+# - set OPERIT_APP_PACKAGE to target another debug application ID, default is com.rainy.operitry.dev
 
 if [ -z "${1:-}" ]; then
   echo "Usage: $0 <suite_dir> [entry_js_rel_path] [function_name] [parameters_JSON|@params_file] [env_file_path]"
@@ -29,6 +30,8 @@ PARAMS_ARG="${4:-{}}"
 ENV_FILE_PATH="${5:-}"
 
 RESULT_WAIT_SECONDS="${OPERIT_RESULT_WAIT_SECONDS:-15}"
+APP_PACKAGE="${OPERIT_APP_PACKAGE:-com.rainy.operitry.dev}"
+RECEIVER_COMPONENT="${APP_PACKAGE}/com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver"
 
 if [ ! -d "$SUITE_DIR" ]; then
   echo "Error: Suite directory does not exist - $SUITE_DIR"
@@ -78,7 +81,7 @@ else
 fi
 
 SUITE_NAME="$(basename "$SUITE_DIR")"
-TARGET_BASE="/sdcard/Android/data/com.ai.assistance.operit/js_temp"
+TARGET_BASE="/sdcard/Android/data/${APP_PACKAGE}/js_temp"
 TARGET_SUITES_DIR="$TARGET_BASE/suites"
 TARGET_RESULT_FILE="$TARGET_BASE/${SUITE_NAME}_${FUNCTION_NAME}_$RANDOM.json"
 BUNDLED_FILE="$(mktemp "${TMPDIR:-/tmp}/operit_js_bundle.XXXXXX.js")"
@@ -137,9 +140,9 @@ adb -s "$DEVICE_SERIAL" shell rm -f "$TARGET_RESULT_FILE"
 
 echo "Executing [$FUNCTION_NAME] from [$TARGET_ENTRY_FILE] ..."
 if [ "$HAS_ENV_FILE" = "true" ]; then
-  adb -s "$DEVICE_SERIAL" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n com.ai.assistance.operit/.core.tools.javascript.ScriptExecutionReceiver --include-stopped-packages --es file_path '$TARGET_ENTRY_FILE' --es function_name '$FUNCTION_NAME' --es params_file_path '$TARGET_PARAMS_FILE' --es env_file_path '$TARGET_ENV_FILE' --es result_file_path '$TARGET_RESULT_FILE' --ez temp_params_file true --ez temp_env_file true"
+  adb -s "$DEVICE_SERIAL" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n $RECEIVER_COMPONENT --include-stopped-packages --es file_path '$TARGET_ENTRY_FILE' --es function_name '$FUNCTION_NAME' --es params_file_path '$TARGET_PARAMS_FILE' --es env_file_path '$TARGET_ENV_FILE' --es result_file_path '$TARGET_RESULT_FILE' --ez temp_params_file true --ez temp_env_file true"
 else
-  adb -s "$DEVICE_SERIAL" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n com.ai.assistance.operit/.core.tools.javascript.ScriptExecutionReceiver --include-stopped-packages --es file_path '$TARGET_ENTRY_FILE' --es function_name '$FUNCTION_NAME' --es params_file_path '$TARGET_PARAMS_FILE' --es result_file_path '$TARGET_RESULT_FILE' --ez temp_params_file true"
+  adb -s "$DEVICE_SERIAL" shell "am broadcast -a com.ai.assistance.operit.EXECUTE_JS -n $RECEIVER_COMPONENT --include-stopped-packages --es file_path '$TARGET_ENTRY_FILE' --es function_name '$FUNCTION_NAME' --es params_file_path '$TARGET_PARAMS_FILE' --es result_file_path '$TARGET_RESULT_FILE' --ez temp_params_file true"
 fi
 
 echo "Waiting up to ${RESULT_WAIT_SECONDS}s for structured result..."

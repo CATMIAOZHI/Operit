@@ -173,32 +173,290 @@ object TokenStatsAggregator {
         zone: ZoneId,
         params: TokenStatsQueryParams,
     ): TokenStatsRangeData {
-        // 分类/状态筛选在聚合入口统一应用：汇总、桶、明细反映同一筛选结果
-        val filtered = filterByCategory(events, params).filterByStatus(params)
-        val pricing = pricingContext(overrides, legacyPrices, params)
-
-        val summary = totalsOf(filtered, identitiesById, pricing, params)
-        val performance = performanceOf(filtered)
-
-        val buckets = buildBuckets(
-            filtered, identitiesById, pricing, params, range, granularity, zone,
-        )
-
-        val displayModels = displayModelBreakdowns(filtered, identitiesById, displayModelsById, pricing, params)
-        val categories = categoryBreakdowns(filtered, identitiesById, pricing, params)
-        val statuses = statusBreakdowns(filtered, identitiesById, pricing, params)
-
-        return TokenStatsRangeData(
+        val accumulator = TokenStatsRangeAccumulator(
+            identitiesById = identitiesById,
+            displayModelsById = displayModelsById,
+            overrides = overrides,
+            legacyPrices = legacyPrices,
             range = range,
             granularity = granularity,
-            eventCount = filtered.size.toLong(),
-            summary = summary,
-            performance = performance,
-            buckets = buckets,
-            displayModels = displayModels,
-            categories = categories,
-            statuses = statuses,
+            zone = zone,
+            params = params,
         )
+        accumulator.addPage(events)
+        return accumulator.result()
+    }
+
+    /**
+     * Incremental range aggregator. DAO pages are consumed and released immediately; retained
+     * state is bounded by bucket, model, identity, category and status cardinality rather than
+     * by the number of events in the selected range.
+     */
+    internal class TokenStatsRangeAccumulator(
+        private val identitiesById: Map<String, TokenStatIdentityEntity>,
+        private val displayModelsById: Map<String, TokenStatDisplayModelEntity>,
+        overrides: List<TokenStatPriceOverrideEntity>,
+        legacyPrices: Map<String, LegacyPriceSettings?>,
+        private val range: TokenStatsTimeRange,
+        private val granularity: TokenStatsGranularity,
+        private val zone: ZoneId,
+        private val params: TokenStatsQueryParams,
+    ) {
+        private val pricing = PricingContext(overrides, legacyPrices, params)
+        private val bucketStarts = TokenStatsTimeRanges.bucketStarts(range, granularity, zone)
+        private val bucketEnds = bucketStarts.indices.map { index ->
+            TokenStatsTimeRanges.bucketEndMs(bucketStarts, index, granularity, zone)
+        }
+        private val total = Aggregate()
+        private val buckets = Array(bucketStarts.size) { Aggregate() }
+        private val bucketModels = Array(bucketStarts.size) { LinkedHashMap<String, Aggregate>() }
+        private val displayModels = LinkedHashMap<String, Aggregate>()
+        private val displayIdentityOrder = LinkedHashMap<String, LinkedHashSet<String>>()
+        private val identities = LinkedHashMap<String, IdentityAggregate>()
+        private val categories = LinkedHashMap<TokenStatCategory, Aggregate>()
+        private val statuses = LinkedHashMap<TokenStatStatus, Aggregate>()
+
+        fun addPage(events: List<TokenStatEventEntity>) {
+            for (event in events) {
+                val category = TokenStatCategory.fromName(event.category)
+                if (params.categories?.let { category !in it } == true) continue
+                val status = TokenStatStatus.fromName(event.status)
+                if (params.statuses?.let { status !in it } == true) continue
+
+                total.accept(event)
+                categories.getOrPut(category) { Aggregate() }.accept(event)
+                statuses.getOrPut(status) { Aggregate() }.accept(event)
+
+                val identity = identitiesById[event.statIdentityId]
+                val displayModelId = identity?.displayModelId
+                if (identity != null && displayModelId != null) {
+                    displayModels.getOrPut(displayModelId) { Aggregate() }.accept(event)
+                    displayIdentityOrder.getOrPut(displayModelId) { LinkedHashSet() }
+                        .add(identity.identityId)
+                    identities.getOrPut(identity.identityId) { IdentityAggregate(identity) }
+                        .accept(event)
+                }
+
+                val bucketIndex = TokenStatsTimeRanges.bucketIndexOf(
+                    event.startedAtMs,
+                    bucketStarts,
+                    granularity,
+                    zone,
+                ) ?: continue
+                buckets[bucketIndex].accept(event)
+                if (displayModelId != null) {
+                    bucketModels[bucketIndex].getOrPut(displayModelId) { Aggregate() }.accept(event)
+                }
+            }
+        }
+
+        fun result(): TokenStatsRangeData {
+            val bucketResults = bucketStarts.indices.map { index ->
+                TokenStatsTrendBucket(
+                    bucketStartMs = bucketStarts[index],
+                    bucketEndMs = bucketEnds[index],
+                    totals = buckets[index].totals(),
+                    byModel = bucketModels[index].mapValues { (_, aggregate) ->
+                        aggregate.modelBucket()
+                    },
+                    performance = buckets[index].performance(),
+                )
+            }
+            val displayResults = displayModels.map { (displayModelId, aggregate) ->
+                val display = displayModelsById[displayModelId]
+                val identityResults = displayIdentityOrder[displayModelId].orEmpty()
+                    .mapNotNull { identityId -> identities[identityId]?.result() }
+                    .sortedWith(
+                        compareByDescending<TokenStatsIdentityBreakdown> { it.totals.requests }
+                    )
+                TokenStatsDisplayModelBreakdown(
+                    displayModelId = displayModelId,
+                    displayName = display?.displayName ?: displayModelId,
+                    normalizedModel = display?.normalizedModel ?: displayModelId,
+                    totals = aggregate.totals(),
+                    identities = identityResults,
+                )
+            }.sortedWith(
+                compareByDescending<TokenStatsDisplayModelBreakdown> { it.totals.requests }
+                    .thenBy { it.displayName.lowercase() }
+            )
+            val categoryResults = categories.map { (category, aggregate) ->
+                TokenStatsCategoryBreakdown(category, aggregate.totals())
+            }.sortedWith(
+                compareByDescending<TokenStatsCategoryBreakdown> { it.totals.requests }
+                    .thenBy { it.category.name }
+            )
+            val statusResults = TokenStatStatus.entries.mapNotNull { status ->
+                statuses[status]?.let { TokenStatsStatusBreakdown(status, it.totals()) }
+            }
+            return TokenStatsRangeData(
+                range = range,
+                granularity = granularity,
+                eventCount = total.requests,
+                summary = total.totals(),
+                performance = total.performance(),
+                buckets = bucketResults,
+                displayModels = displayResults,
+                categories = categoryResults,
+                statuses = statusResults,
+            )
+        }
+
+        private inner class IdentityAggregate(
+            private val identity: TokenStatIdentityEntity,
+        ) {
+            private val aggregate = Aggregate()
+            private var latestEvent: TokenStatEventEntity? = null
+
+            fun accept(event: TokenStatEventEntity) {
+                aggregate.accept(event)
+                if (latestEvent == null || event.startedAtMs > latestEvent!!.startedAtMs) {
+                    latestEvent = event
+                }
+            }
+
+            fun result(): TokenStatsIdentityBreakdown =
+                TokenStatsIdentityBreakdown(
+                    identityId = identity.identityId,
+                    configId = identity.configId,
+                    provider = identity.provider,
+                    model = identity.model,
+                    totals = aggregate.totals(),
+                    pricing = pricingInfoFor(identity, latestEvent, pricing, params),
+                )
+        }
+
+        private inner class Aggregate {
+            var requests: Long = 0L
+                private set
+            private val uncached = RangeTokenAccumulator()
+            private val cached = RangeTokenAccumulator()
+            private val cacheWrite = RangeTokenAccumulator()
+            private val totalInput = RangeTokenAccumulator()
+            private val output = RangeTokenAccumulator()
+            private val reasoning = RangeTokenAccumulator()
+            private val totalTokens = RangeTokenAccumulator()
+            private val originalCosts = EnumMap<PricingCurrency, BigDecimal>(PricingCurrency::class.java)
+            private var costUnknownCount = 0L
+            private var unknownCoreTokenCount = 0L
+            private var ttftKnown = 0L
+            private var ttftUnknown = 0L
+            private var ttftTotal = 0L
+            private var generationKnown = 0L
+            private var generationUnknown = 0L
+            private var generationTotal = 0L
+
+            fun accept(event: TokenStatEventEntity) {
+                requests = TokenCostCalculator.saturatedAdd(requests, 1L)
+                uncached.accept(event.uncachedInputTokens)
+                cached.accept(event.cachedInputTokens)
+                cacheWrite.accept(event.cacheWriteTokens)
+                totalInput.accept(event.totalInputTokens)
+                output.accept(event.outputTokens)
+                reasoning.accept(independentlyBilledReasoning(event))
+                totalTokens.accept(canonicalTotalTokens(event))
+                if (
+                    event.uncachedInputTokens == null ||
+                    event.cachedInputTokens == null ||
+                    event.outputTokens == null
+                ) {
+                    unknownCoreTokenCount += 1L
+                }
+
+                val (amount, currency) = eventCost(
+                    event,
+                    identitiesById[event.statIdentityId],
+                    pricing,
+                    params,
+                )
+                if (amount == null || !amount.isFinite()) {
+                    costUnknownCount += 1L
+                } else {
+                    originalCosts.merge(currency, BigDecimal(amount)) { left, right ->
+                        left.add(right)
+                    }
+                }
+
+                val first = event.firstTokenAtMs
+                if (first != null && event.startedAtMs >= 0L && first >= event.startedAtMs) {
+                    ttftKnown += 1L
+                    ttftTotal = TokenCostCalculator.saturatedAdd(ttftTotal, first - event.startedAtMs)
+                } else {
+                    ttftUnknown += 1L
+                }
+                if (first != null && event.endedAtMs >= 0L && first >= 0L && event.endedAtMs >= first) {
+                    generationKnown += 1L
+                    generationTotal = TokenCostCalculator.saturatedAdd(
+                        generationTotal,
+                        event.endedAtMs - first,
+                    )
+                } else {
+                    generationUnknown += 1L
+                }
+            }
+
+            fun totals(): TokenStatsTotals =
+                TokenStatsTotals(
+                    requests = requests,
+                    uncachedInput = uncached.result(requests),
+                    cachedInput = cached.result(requests),
+                    cacheWrite = cacheWrite.result(requests),
+                    totalInput = totalInput.result(requests),
+                    output = output.result(requests),
+                    reasoning = reasoning.result(requests),
+                    totalTokens = totalTokens.result(requests),
+                    cost = buildCostSummary(originalCosts, costUnknownCount, requests, params),
+                )
+
+            fun performance(): TokenStatsPerformance =
+                TokenStatsPerformance(
+                    ttft = durationAggregate(ttftKnown, ttftUnknown, ttftTotal),
+                    generationDuration = durationAggregate(
+                        generationKnown,
+                        generationUnknown,
+                        generationTotal,
+                    ),
+                )
+
+            fun modelBucket(): TokenStatsModelBucket =
+                TokenStatsModelBucket(
+                    requests = requests,
+                    uncachedInput = uncached.knownSum,
+                    cachedInput = cached.knownSum,
+                    cacheWrite = cacheWrite.knownSum,
+                    output = output.knownSum,
+                    reasoning = reasoning.knownSum,
+                    totalTokens = totalTokens.knownSum,
+                    totalTokensUnknownEventCount = totalTokens.unknownCount,
+                    unknownTokenEventCount = unknownCoreTokenCount,
+                    cost = buildCostSummary(originalCosts, costUnknownCount, requests, params),
+                )
+        }
+
+        private class RangeTokenAccumulator {
+            var knownSum: Long = 0L
+                private set
+            private var knownCount = 0L
+            var unknownCount: Long = 0L
+                private set
+
+            fun accept(value: Long?) {
+                if (value == null) {
+                    unknownCount += 1L
+                } else {
+                    knownCount += 1L
+                    knownSum = TokenCostCalculator.saturatedAdd(knownSum, value)
+                }
+            }
+
+            fun result(totalCount: Long): TokenStatsTokenAggregate =
+                TokenStatsTokenAggregate(
+                    knownSum = knownSum,
+                    knownEventCount = knownCount,
+                    unknownEventCount = unknownCount,
+                    totalEventCount = totalCount,
+                )
+        }
     }
 
     // ==== 桶构建 ====
@@ -622,22 +880,34 @@ object TokenStatsAggregator {
         events: List<TokenStatEventEntity>,
         pricing: PricingContext,
         params: TokenStatsQueryParams,
+    ): TokenStatsPricingInfo? =
+        pricingInfoFor(
+            identity = identity,
+            latestEvent = events.maxByOrNull { it.startedAtMs },
+            pricing = pricing,
+            params = params,
+        )
+
+    private fun pricingInfoFor(
+        identity: TokenStatIdentityEntity,
+        latestEvent: TokenStatEventEntity?,
+        pricing: PricingContext,
+        params: TokenStatsQueryParams,
     ): TokenStatsPricingInfo? {
-        if (events.isEmpty()) return null
+        if (latestEvent == null) return null
         return if (params.mode == TokenStatsCostMode.REVALUED) {
             pricing.pricingFor(identity)?.toPricingInfo()
         } else {
-            val latest = events.maxByOrNull { it.startedAtMs } ?: return null
             TokenStatsPricingInfo(
-                billingMode = BillingMode.fromString(latest.billingMode),
-                currency = parseCurrency(latest.pricingCurrency),
-                inputPricePerMillion = latest.inputPricePerMillion,
-                cachedInputPricePerMillion = latest.cachedInputPricePerMillion,
-                cacheWritePricePerMillion = latest.cacheWritePricePerMillion,
-                outputPricePerMillion = latest.outputPricePerMillion,
-                pricePerRequest = latest.pricePerRequest,
-                source = PricingSource.fromName(latest.pricingSource),
-                known = latest.pricingSource != PricingSource.UNKNOWN.name,
+                billingMode = BillingMode.fromString(latestEvent.billingMode),
+                currency = parseCurrency(latestEvent.pricingCurrency),
+                inputPricePerMillion = latestEvent.inputPricePerMillion,
+                cachedInputPricePerMillion = latestEvent.cachedInputPricePerMillion,
+                cacheWritePricePerMillion = latestEvent.cacheWritePricePerMillion,
+                outputPricePerMillion = latestEvent.outputPricePerMillion,
+                pricePerRequest = latestEvent.pricePerRequest,
+                source = PricingSource.fromName(latestEvent.pricingSource),
+                known = latestEvent.pricingSource != PricingSource.UNKNOWN.name,
             )
         }
     }

@@ -98,6 +98,7 @@ import com.ai.assistance.operit.ui.features.chat.components.style.cursor.CursorS
 import com.ai.assistance.operit.ui.features.chat.components.style.bubble.BubbleImageStyleConfig
 import com.ai.assistance.operit.ui.features.chat.components.style.bubble.BubbleStyleChatMessage
 import com.ai.assistance.operit.util.ChatMarkupRegex
+import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.LatexMathMlConverter
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -115,15 +116,11 @@ internal fun cleanMessageContentForCopy(content: String): String {
         // Provider元数据必须保留在消息中供后续轮次使用，但不能暴露在复制内容中
         .let(ChatMarkupRegex::removeGeminiThoughtSignatureMeta)
         .let(ChatMarkupRegex::removeOpenAiResponsesReasoningMeta)
+        // Keep copy cleanup aligned with the renderer and executable-markup visibility grammar.
+        .let(ChatUtils::removeThinkingContent)
         // 移除状态标签
         .replace(ChatMarkupRegex.statusTag, "")
         .replace(ChatMarkupRegex.statusSelfClosingTag, "")
-        // 移除思考标签（包括 <think> 和 <thinking>）
-        .replace(ChatMarkupRegex.thinkTag, "")
-        .replace(ChatMarkupRegex.thinkSelfClosingTag, "")
-        // 移除搜索来源标签
-        .replace(ChatMarkupRegex.searchTag, "")
-        .replace(ChatMarkupRegex.searchSelfClosingTag, "")
         // 移除工具标签
         .replace(ChatMarkupRegex.toolTag, "")
         .replace(ChatMarkupRegex.toolSelfClosingTag, "")
