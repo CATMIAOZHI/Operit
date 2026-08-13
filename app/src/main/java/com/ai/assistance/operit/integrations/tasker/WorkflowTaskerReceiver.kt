@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.core.workflow.WorkflowIntentSecurity
+import com.ai.assistance.operit.core.workflow.WorkflowAuthTokenManager
 import com.ai.assistance.operit.data.repository.WorkflowRepository
 import com.ai.assistance.operit.core.application.OperitApplication
 import kotlinx.coroutines.CoroutineScope
@@ -20,16 +22,23 @@ class WorkflowTaskerReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "WorkflowTaskerReceiver"
-        const val ACTION_TRIGGER_WORKFLOW = "com.ai.assistance.operit.TRIGGER_WORKFLOW"
+        const val ACTION_TRIGGER_WORKFLOW = WorkflowIntentSecurity.ACTION_TRIGGER_WORKFLOW
+        const val EXTRA_AUTH_TOKEN = WorkflowIntentSecurity.EXTRA_AUTH_TOKEN
         
         /**
-         * Creates an intent to trigger workflows based on intent data.
-         * This can be used by other parts of the app or external apps to trigger a check.
+         * Creates an authenticated intent to trigger workflows based on intent data.
+         * External automation apps must use the token shown in the workflow's Intent trigger.
          */
-        fun createTriggerIntent(context: Context, extras: Bundle? = null): Intent {
-            return Intent(ACTION_TRIGGER_WORKFLOW).apply {
-                setPackage(context.packageName)
+        fun createTriggerIntent(
+            context: Context,
+            authToken: String,
+            extras: Bundle? = null
+        ): Intent {
+            require(WorkflowIntentSecurity.isValidAuthToken(authToken)) { "Invalid workflow auth token" }
+            return Intent(context, WorkflowTaskerReceiver::class.java).apply {
+                action = ACTION_TRIGGER_WORKFLOW
                 extras?.let { putExtras(it) }
+                putExtra(EXTRA_AUTH_TOKEN, authToken)
             }
         }
     }
@@ -40,14 +49,23 @@ class WorkflowTaskerReceiver : BroadcastReceiver() {
             return
         }
         if (!OperitApplication.isMainDataAccessAllowed(context)) return
+        val authToken = WorkflowIntentSecurity.readAuthTokenSafely(intent)
+        if (!WorkflowIntentSecurity.isValidAuthToken(authToken)) {
+            return
+        }
 
-        AppLogger.d(TAG, "Received workflow trigger broadcast for action: $action. Checking for matching workflows.")
-
-        // Use goAsync to allow async work
+        // Authentication may initialize the no-backup signing key. Keep that disk I/O, as well as
+        // workflow lookup, off BroadcastReceiver.onReceive's main-thread deadline.
         val pendingResult = goAsync()
-        
+
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                if (!WorkflowAuthTokenManager(context.applicationContext)
+                        .isAuthenticAuthToken(authToken)
+                ) {
+                    return@launch
+                }
+                AppLogger.d(TAG, "Received workflow trigger broadcast for action: $action. Checking for matching workflows.")
                 val repository = WorkflowRepository(context.applicationContext)
                 // New method to find and trigger workflows based on the intent's content (action, extras, etc.)
                 repository.triggerWorkflowsByIntentEvent(intent)
@@ -86,13 +104,9 @@ class WorkflowBootReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val repository = WorkflowRepository(context.applicationContext)
-                val result = repository.getAllWorkflows()
-                
-                result.getOrNull()?.forEach { workflow ->
-                    if (workflow.enabled) {
-                        repository.scheduleWorkflow(workflow.id)
-                        AppLogger.d(TAG, "Rescheduled workflow: ${workflow.name}")
-                    }
+                repository.resetSchedulesForLegacyWorkflowIds()
+                repository.rebuildInternalWorkflowSchedules().onFailure { error ->
+                    AppLogger.e(TAG, "Failed to rebuild private schedules after boot", error)
                 }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Error rescheduling workflows after boot", e)

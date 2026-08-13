@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.core.workflow
 
 import android.content.Context
+import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.data.repository.WorkflowRepository
 import kotlinx.coroutines.CoroutineScope
@@ -27,25 +28,20 @@ object WorkflowSchedulerInitializer {
         
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                if (!OperitApplication.isMainDataAccessAllowed(context)) {
+                    AppLogger.w(TAG, "Skipped workflow scheduling while migration or restore is in progress")
+                    return@launch
+                }
                 val repository = WorkflowRepository(context.applicationContext)
-                val result = repository.getAllWorkflows()
-                
-                result.getOrNull()?.let { workflows ->
-                    var scheduledCount = 0
-                    
-                    workflows.forEach { workflow ->
-                        if (workflow.enabled) {
-                            val success = repository.scheduleWorkflow(workflow.id)
-                            if (success) {
-                                scheduledCount++
-                                AppLogger.d(TAG, "Scheduled workflow: ${workflow.name} (${workflow.id})")
-                            }
-                        }
-                    }
-                    
-                    AppLogger.d(TAG, "Workflow scheduler initialized. Scheduled $scheduledCount workflows.")
+                repository.resetSchedulesForLegacyWorkflowIds()
+                repository.rebuildInternalWorkflowSchedules().getOrNull()?.let { rebuild ->
+                    AppLogger.d(
+                        TAG,
+                        "Workflow scheduler initialized. Scheduled ${rebuild.scheduledCount} " +
+                            "workflows; cancellation failures=${rebuild.cancellationFailures}."
+                    )
                 } ?: run {
-                    AppLogger.w(TAG, "Failed to get workflows during initialization")
+                    AppLogger.w(TAG, "Failed to rebuild workflows during initialization")
                 }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Error initializing workflow scheduler", e)

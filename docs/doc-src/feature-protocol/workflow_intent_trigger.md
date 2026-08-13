@@ -4,8 +4,8 @@
 
 当前实现支持：
 
-- **每个工作流的 Intent Trigger 可以配置自己的 `action`**
-- 外部 App 通过发送广播（推荐使用“显式广播”）即可触发匹配的工作流
+- **每个工作流的 Intent Trigger 可以配置自己的 `action` 和独立、由当前安装签名的 `auth_token`**
+- 外部 App 发送广播时必须同时提供正确 action 与令牌，并显式指定 Operit 的 Receiver component
 
 对应代码：
 
@@ -22,14 +22,16 @@
 
 - `triggerType == "intent"`
 - `triggerConfig["action"] == intent.action`
+- `triggerConfig["auth_token"]` 与广播 extra
+  `com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN` 完全一致
 
 则该工作流会被触发执行。
 
-### 1.2 为什么推荐“显式广播”
+### 1.2 为什么必须使用“显式广播”
 
 Android 对隐式广播有各种限制（尤其是后台、Android 8+ 等）。
 
-为了确保广播能稳定投递给 Operit，推荐使用：
+为了避免认证令牌被其他 App 的隐式 Receiver 接收，必须使用：
 
 - **显式广播**：指定 `component`（包名 + Receiver 类名）
 
@@ -40,55 +42,46 @@ Android 对隐式广播有各种限制（尤其是后台、Android 8+ 等）。
 ## 2. Receiver / Component 信息
 
 - **Receiver 类**：`com.ai.assistance.operit.integrations.tasker.WorkflowTaskerReceiver`
-- **包名**：`com.ai.assistance.operit`
-- **Component**：`com.ai.assistance.operit/.integrations.tasker.WorkflowTaskerReceiver`
+- **Receiver 代码类名**：`com.ai.assistance.operit.integrations.tasker.WorkflowTaskerReceiver`
+- **默认个人版 applicationId**：`com.rainy.operitry`（clone 等变体后缀不同）
+- **Component 格式**：`<applicationId>/com.ai.assistance.operit.integrations.tasker.WorkflowTaskerReceiver`
 
 ---
 
-## 3. 配置工作流的 action
+## 3. 配置 action 与令牌
 
 在工作流编辑器中，将触发器设置为：
 
 - **类型**：Intent
 - **action**：填写你希望外部触发的 action，例如：
   - `com.example.myapp.TRIGGER_OPERIT_WORKFLOW_A`
+- **auth_token**：保存新触发器时由仓库使用当前安装的私有签名密钥生成。先保存节点和工作流，再重新打开节点复制已经持久化的值；不要复制未保存的草稿、手工构造、缩短、记录到日志或公开分享。其他安装生成的 token 也不会通过校验。
 
 注意：
 
-- action 只是一个字符串，用于匹配。
-- 触发时 intent 的 extras 会作为 TriggerNode 的输出 JSON（字符串）提供给下游节点（可用 ExtractNode(JSON) 提取字段）。
+- action 与 auth_token 必须同时匹配。
+- 触发时普通 intent extras 会作为 TriggerNode 的输出 JSON（字符串）提供给下游节点（可用 ExtractNode(JSON) 提取字段）。认证令牌会在匹配后移除，不会传给下游节点。
 
 ---
 
 ## 4. adb 触发示例
 
-### 4.1 方式 A：显式广播（推荐，支持任意自定义 action）
+### 4.1 显式广播（必需，支持任意自定义 action）
 
 ```bash
 adb shell am broadcast \
-  -n com.ai.assistance.operit/.integrations.tasker.WorkflowTaskerReceiver \
+  -n com.rainy.operitry/com.ai.assistance.operit.integrations.tasker.WorkflowTaskerReceiver \
   -a com.example.myapp.TRIGGER_OPERIT_WORKFLOW_A \
+  --es com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN "<工作流中的 auth_token>" \
   --es message "hello from adb" \
   --es request_id "req-1001"
 ```
 
-- `-n` 指定 component，确保发给 Operit。
+- `-n` 指定 component，确保发给正确 applicationId；使用其他构建变体时替换前半部分。
 - `-a` 为你在工作流 Trigger 里配置的 action。
 - `--es/--ez/--ei/...` 为 extras，会被工作流 TriggerNode 收集并输出。
 
-### 4.2 方式 B：隐式广播（仅当系统允许投递时）
-
-如果你不想指定 component，可以试：
-
-```bash
-adb shell am broadcast \
-  -a com.example.myapp.TRIGGER_OPERIT_WORKFLOW_A \
-  --es message "hello"
-```
-
-但这取决于系统版本、ROM 策略以及 Operit 是否能在后台接收该隐式广播。
-
-### 4.3 方式 C：使用内置默认 action（兼容用法）
+### 4.2 使用内置默认 action（仍需显式 component）
 
 如果你的工作流 Trigger 里 `action` 配置的是默认值：
 
@@ -98,10 +91,14 @@ adb shell am broadcast \
 
 ```bash
 adb shell am broadcast \
+  -n com.rainy.operitry/com.ai.assistance.operit.integrations.tasker.WorkflowTaskerReceiver \
   -a com.ai.assistance.operit.TRIGGER_WORKFLOW \
+  --es com.ai.assistance.operit.extra.WORKFLOW_AUTH_TOKEN "<工作流中的 auth_token>" \
   --es message "hello" \
   --es request_id "req-1002"
 ```
+
+Receiver 不注册隐式 action filter。即使使用内置默认 action，也必须通过 `-n` 或 Android API 的显式 `ComponentName` 指定当前 Operit 构建变体与 Receiver。只设置 action 会把令牌暴露给其他匹配 Receiver；仅调用 `setPackage` 而不设置 component 也无法解析到该 Receiver。
 
 ---
 
@@ -165,5 +162,6 @@ TriggerNode 输出（示意）：
 
 ## 8. 注意事项
 
-- 该 Receiver 为 `exported=true`：任何 App 都可以发送广播到该入口。
-- 如果你担心滥用，建议后续增加 permission 或者在 Receiver 里做校验/白名单。
+- 该 Receiver 为 `exported=true`，但无有效的每工作流令牌时会在读取工作流前拒绝请求。
+- `auth_token` 是执行工作流的能力凭据，由当前安装的私有密钥签名并使用 URL-safe 字符编码；密钥保存在不参与备份/设备迁移的私有目录。新触发器在保存时生成持久 token；保存后重新打开节点再复制。恢复工作流备份或密钥变化后，应用会在第一次读取内部定义时先轮换失效 token，再把新值显示给编辑器。必须复制已保存的完整值，不要手工构造。不要放入公共仓库、截图、日志或回传 extras；怀疑泄露时，在编辑器中删除旧值并保存，让应用生成新的签名 token，再同步更新发送方。
+- 旧公共 Downloads 工作流只通过“读取旧工作流”兼容开关以禁用状态显示，内部存储中的同名版本始终优先，原文件不会被修改。仅存在于旧目录的工作流不会被启动、重启、语音、计划、Intent、Tasker 或 AI 工具自动执行；AI 的更新、补丁、启用、禁用和触发操作也只接受已经存在于应用私有存储中的定义。用户在编辑器中显式启用会先复制到内部存储并轮换全部外部触发 token；普通编辑也会导入，但会保持禁用，需再次显式启用才会执行或建立计划。复制后请从编辑器读取新 token 并同步更新发送方。兼容扫描最多访问 4000 个目录项、显示 1000 个定义并读取 64 MiB；超限文件保留在 Downloads，但不会显示，同时会写入安全警告日志。

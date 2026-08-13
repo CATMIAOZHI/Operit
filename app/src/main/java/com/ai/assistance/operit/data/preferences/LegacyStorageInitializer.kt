@@ -7,6 +7,16 @@ import com.ai.assistance.operit.util.OperitManagedPaths
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption
+
+internal fun legacyDirectoryHasAnyEntry(dir: File): Boolean {
+    val path = dir.toPath()
+    if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) return false
+    return runCatching {
+        Files.newDirectoryStream(path).use { entries -> entries.iterator().hasNext() }
+    }.getOrDefault(false)
+}
 
 /**
  * One-shot initializer that seeds [LegacyStoragePreferences] on first launch.
@@ -52,9 +62,9 @@ object LegacyStorageInitializer {
         }
 
         val paths = OperitManagedPaths(context)
-        val readSkills = hasLegacyContent(paths.legacySkills)
-        val readMcp = hasLegacyContent(paths.legacyMcp)
-        val readWorkflows = hasLegacyContent(paths.legacyWorkflows)
+        val readSkills = legacyDirectoryHasAnyEntry(paths.legacySkills)
+        val readMcp = legacyDirectoryHasAnyEntry(paths.legacyMcp)
+        val readWorkflows = legacyDirectoryHasAnyEntry(paths.legacyWorkflows)
         if (initialized) {
             // A raw snapshot from before the compatibility feature can replace DataStore while
             // the no-backup marker survives. Reconstruct missing keys without overwriting any
@@ -65,10 +75,4 @@ object LegacyStorageInitializer {
         }
     }
 
-    private fun hasLegacyContent(dir: File): Boolean {
-        // Non-creating: only consider a pre-existing directory that is non-empty. A missing or
-        // empty legacy directory yields false, so fresh installs default all switches off.
-        if (!dir.isDirectory) return false
-        return dir.listFiles()?.isNotEmpty() == true
-    }
 }
