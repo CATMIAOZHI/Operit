@@ -178,8 +178,10 @@ class WorkflowTaskerActivityConfig : Activity(), TaskerPluginConfig<WorkflowTask
 /**
  * Tasker Plugin Config Helper
  */
-class WorkflowTaskerConfigHelper(config: TaskerPluginConfig<WorkflowTaskerInput>) : 
-    TaskerPluginConfigHelper<WorkflowTaskerInput, Unit, WorkflowTaskerRunner>(config) {
+class WorkflowTaskerConfigHelper(
+    private val pluginConfig: TaskerPluginConfig<WorkflowTaskerInput>,
+) :
+    TaskerPluginConfigHelper<WorkflowTaskerInput, Unit, WorkflowTaskerRunner>(pluginConfig) {
 
     override val inputClass: Class<WorkflowTaskerInput>
         get() = WorkflowTaskerInput::class.java
@@ -200,7 +202,9 @@ class WorkflowTaskerConfigHelper(config: TaskerPluginConfig<WorkflowTaskerInput>
     ) {
         val command = input.regular.command ?: input.regular.params?.getOrNull(0)
         if (!command.isNullOrBlank()) {
-            blurbBuilder.append("Command: ").append(command)
+            blurbBuilder.append(
+                pluginConfig.context.getString(R.string.workflow_tasker_action_command, command)
+            )
         }
     }
 
@@ -208,7 +212,9 @@ class WorkflowTaskerConfigHelper(config: TaskerPluginConfig<WorkflowTaskerInput>
         val command = input.regular.command ?: input.regular.params?.getOrNull(0)
         val authToken = input.regular.authToken ?: input.regular.params?.getOrNull(1)
         return if (command.isNullOrBlank() || !WorkflowIntentSecurity.isValidAuthToken(authToken)) {
-            SimpleResultError("Workflow command and auth_token are required")
+            SimpleResultError(
+                pluginConfig.context.getString(R.string.workflow_tasker_action_input_required)
+            )
         } else {
             SimpleResultSuccess()
         }
@@ -239,7 +245,7 @@ class WorkflowTaskerRunner : TaskerPluginRunnerAction<WorkflowTaskerInput, Unit>
     ): TaskerPluginResult<Unit> {
         if (!taskerWorkflowDataAccessAllowed(OperitApplication.isMainDataAccessAllowed(context))) {
             return TaskerPluginResultError(
-                IllegalStateException("Workflow data is unavailable while migration or restore is in progress")
+                IllegalStateException(context.getString(R.string.workflow_tasker_action_data_unavailable))
             )
         }
         val legacyParams = input.regular.params
@@ -248,13 +254,13 @@ class WorkflowTaskerRunner : TaskerPluginRunnerAction<WorkflowTaskerInput, Unit>
 
         if (command.isNullOrBlank() || !WorkflowIntentSecurity.isValidAuthToken(authToken)) {
             return TaskerPluginResultError(
-                IllegalArgumentException("Workflow command and auth_token are required")
+                IllegalArgumentException(context.getString(R.string.workflow_tasker_action_input_required))
             )
         }
         val authTokenManager = WorkflowAuthTokenManager(context)
         if (!authTokenManager.isAuthenticAuthToken(authToken)) {
             return TaskerPluginResultError(
-                IllegalArgumentException("Workflow auth_token is not authentic for this installation")
+                IllegalArgumentException(context.getString(R.string.workflow_tasker_action_auth_invalid))
             )
         }
         return try {

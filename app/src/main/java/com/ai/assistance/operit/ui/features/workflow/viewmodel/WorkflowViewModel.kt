@@ -1496,7 +1496,9 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
     fun scheduleWorkflow(workflowId: String, onSuccess: () -> Unit = {}, onFailure: (String) -> Unit = {}) {
         viewModelScope.launch {
             try {
-                val success = repository.scheduleWorkflow(workflowId)
+                val success = withContext(Dispatchers.IO) {
+                    repository.scheduleWorkflow(workflowId)
+                }
                 if (success) {
                     loadWorkflows()
                     onSuccess()
@@ -1515,7 +1517,9 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
     fun unscheduleWorkflow(workflowId: String, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
             try {
-                repository.unscheduleWorkflow(workflowId)
+                withContext(Dispatchers.IO) {
+                    repository.unscheduleWorkflow(workflowId)
+                }
                 loadWorkflows()
                 onSuccess()
             } catch (e: Exception) {

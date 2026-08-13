@@ -11,6 +11,7 @@ import com.ai.assistance.operit.core.workflow.WorkflowScheduler
 import com.ai.assistance.operit.core.workflow.isActiveWorkflowScheduleState
 import com.ai.assistance.operit.core.workflow.isGateDeferredWorkflowSchedule
 import com.ai.assistance.operit.core.workflow.isActiveMatchingWorkflowSchedule
+import com.ai.assistance.operit.core.workflow.isActivePreFingerprintWorkflowSchedule
 import com.ai.assistance.operit.core.workflow.intervalReplacementInitialDelayMinutes
 import com.ai.assistance.operit.core.workflow.deferredCronInitialDelayMillis
 import com.ai.assistance.operit.core.workflow.atomicMarkerMayExist
@@ -702,6 +703,24 @@ class WorkflowStoragePolicyTest {
                 WorkInfo.State.ENQUEUED,
                 setOf("workflow"),
                 matchingTag,
+            )
+        )
+        assertTrue(
+            isActivePreFingerprintWorkflowSchedule(
+                WorkInfo.State.ENQUEUED,
+                setOf("workflow"),
+            )
+        )
+        assertFalse(
+            isActivePreFingerprintWorkflowSchedule(
+                WorkInfo.State.ENQUEUED,
+                setOf("workflow", matchingTag),
+            )
+        )
+        assertFalse(
+            isActivePreFingerprintWorkflowSchedule(
+                WorkInfo.State.SUCCEEDED,
+                setOf("workflow"),
             )
         )
         assertFalse(

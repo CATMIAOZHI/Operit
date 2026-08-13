@@ -2016,11 +2016,6 @@ class WorkflowRepository(private val context: Context) {
                 readWorkflowContentAtomically(internal),
                 id,
             )
-            // A running/retrying legacy Worker owns this migration. Cancelling its unique request
-            // here would leave CLAIMED durable with neither an owner nor a trusted replacement.
-            if (shouldDeferClaimedScheduleRebuild(latest, allowClaimedMigration = false)) {
-                return@synchronized false
-            }
             if (
                 latest.scheduleFingerprintGeneration ==
                     WorkflowScheduler.REJECTED_SCHEDULE_FINGERPRINT_GENERATION ||
@@ -2030,11 +2025,25 @@ class WorkflowRepository(private val context: Context) {
                 return@synchronized false
             }
             val activeSchedule = scheduler.hasActiveWorkflowScheduleAndWait(id)
+            val recoveringOrphanedClaim =
+                latest.scheduleFingerprintGeneration ==
+                    WorkflowScheduler.CLAIMED_SCHEDULE_FINGERPRINT_GENERATION &&
+                    !activeSchedule
+            // A live legacy Worker owns CLAIMED. Once its request is no longer active, recover the
+            // orphan without immediately replaying a recurring execution that may have side effects.
+            if (
+                shouldDeferClaimedScheduleRebuild(latest, allowClaimedMigration = false) &&
+                    !recoveringOrphanedClaim
+            ) {
+                return@synchronized false
+            }
             val gateDeferredRequestIds =
                 scheduler.gateDeferredWorkflowScheduleIdsAndWait(id)
             val deferredScheduleRetry = gateDeferredRequestIds.isNotEmpty()
             val activeMatchingSchedule =
                 scheduler.hasActiveMatchingWorkflowScheduleAndWait(latest)
+            val activePreFingerprintSchedule =
+                scheduler.hasActivePreFingerprintWorkflowScheduleAndWait(id)
             val preserveActiveSchedule = activeSchedule && (
                 (
                     latest.scheduleFingerprintGeneration ==
@@ -2044,6 +2053,7 @@ class WorkflowRepository(private val context: Context) {
                 ) ||
                     (
                         scheduler.shouldPreserveActivePreFingerprintScheduleRequest(latest) &&
+                            activePreFingerprintSchedule &&
                             !deferredScheduleRetry
                     )
                 )
@@ -2076,11 +2086,12 @@ class WorkflowRepository(private val context: Context) {
             val scheduled = scheduleWorkflowLocked(
                 internal,
                 latest,
-                allowClaimedMigration = false,
+                allowClaimedMigration = recoveringOrphanedClaim,
                 allowDuePreFingerprintOneTime = allowPastSpecificTime,
                 delayFirstIntervalRun =
                     latest.scheduleFingerprintGeneration ==
-                        WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION,
+                        WorkflowScheduler.PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION ||
+                        recoveringOrphanedClaim,
                 runDeferredCronImmediately =
                     deferredScheduleRetry &&
                         latest.scheduleFingerprintGeneration !=

@@ -6553,6 +6553,10 @@
     <string name="workflow_tasker_config_save">Save to Tasker</string>
     <string name="workflow_tasker_config_command_required">Enter the workflow command</string>
     <string name="workflow_tasker_config_auth_token_invalid">Copy the complete valid auth_token from the target workflow in this installation</string>
+    <string name="workflow_tasker_action_command">Command: %1$s</string>
+    <string name="workflow_tasker_action_input_required">Workflow command and auth_token are required</string>
+    <string name="workflow_tasker_action_data_unavailable">Workflow data is unavailable while migration or restore is in progress</string>
+    <string name="workflow_tasker_action_auth_invalid">Workflow auth_token is not authentic for this installation</string>
     <string name="workflow_trigger_floating">Start Floating Window</string>
     <string name="workflow_trigger_create_chat">Create Chat</string>
     <string name="workflow_action_extract_message">Extract Intent Message (message)</string>

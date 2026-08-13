@@ -7032,6 +7032,10 @@
     <string name="workflow_tasker_config_save">保存到 Tasker</string>
     <string name="workflow_tasker_config_command_required">请输入工作流 command</string>
     <string name="workflow_tasker_config_auth_token_invalid">请从此安装的目标工作流中复制完整、有效的 auth_token</string>
+    <string name="workflow_tasker_action_command">命令：%1$s</string>
+    <string name="workflow_tasker_action_input_required">必须提供工作流 command 和 auth_token</string>
+    <string name="workflow_tasker_action_data_unavailable">迁移或恢复期间无法访问工作流数据</string>
+    <string name="workflow_tasker_action_auth_invalid">auth_token 与此安装不匹配</string>
     <string name="workflow_trigger_floating">启动悬浮窗</string>
     <string name="workflow_trigger_create_chat">创建对话</string>
     <string name="workflow_action_extract_message">提取Intent消息（message）</string>

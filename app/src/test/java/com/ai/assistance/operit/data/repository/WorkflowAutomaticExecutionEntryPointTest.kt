@@ -62,6 +62,8 @@ class WorkflowAutomaticExecutionEntryPointTest {
             rebuildOne.indexOf("scheduler.hasActiveWorkflowScheduleAndWait(id)")
         val rebuildMatchingCheckIndex =
             rebuildOne.indexOf("scheduler.hasActiveMatchingWorkflowScheduleAndWait(latest)")
+        val rebuildPreFingerprintCheckIndex =
+            rebuildOne.indexOf("scheduler.hasActivePreFingerprintWorkflowScheduleAndWait(id)")
         val rebuildDeferredCheckIndex =
             rebuildOne.indexOf("scheduler.gateDeferredWorkflowScheduleIdsAndWait(id)")
         val rebuildSchedulableCheckIndex =
@@ -77,12 +79,16 @@ class WorkflowAutomaticExecutionEntryPointTest {
         assertTrue(rebuildSchedulableCheckIndex in 0 until rebuildActiveCheckIndex)
         assertTrue(rebuildActiveCheckIndex in 0 until rebuildDeferredCheckIndex)
         assertTrue(rebuildDeferredCheckIndex in 0 until rebuildMatchingCheckIndex)
-        assertTrue(rebuildMatchingCheckIndex in 0 until rebuildPreserveIndex)
+        assertTrue(rebuildMatchingCheckIndex in 0 until rebuildPreFingerprintCheckIndex)
+        assertTrue(rebuildPreFingerprintCheckIndex in 0 until rebuildPreserveIndex)
         assertTrue(rebuildPreserveIndex in 0 until rebuildCompletedIndex)
         assertTrue(rebuildCompletedIndex in 0 until rebuildScheduleIndex)
         assertTrue(rebuildOne.contains("writeWorkflowContentAtomically(internal"))
         assertTrue(rebuildOne.contains("allowDuePreFingerprintOneTime = allowPastSpecificTime"))
         assertTrue(rebuildOne.contains("deferredScheduleRetry"))
+        assertTrue(rebuildOne.contains("recoveringOrphanedClaim"))
+        assertTrue(rebuildOne.contains("allowClaimedMigration = recoveringOrphanedClaim"))
+        assertTrue(rebuildOne.contains("recoveringOrphanedClaim,"))
         assertTrue(rebuildOne.contains("runDeferredCronImmediately ="))
         assertTrue(rebuildOne.contains("scheduler.consumeGateDeferredWorkflowSchedules(gateDeferredRequestIds)"))
         val legacyCancel = repository.substring(
@@ -142,6 +148,14 @@ class WorkflowAutomaticExecutionEntryPointTest {
         assertTrue(replacement.contains("delayFirstIntervalRun = true"))
         assertTrue(repository.contains("recoverAtomicWorkflowFile(file)"))
         assertTrue(repository.contains("withWorkflowAtomicFileLock(file)"))
+
+        val viewModel = source("ui/features/workflow/viewmodel/WorkflowViewModel.kt")
+        val scheduleFromUi = viewModel.substring(
+            viewModel.indexOf("fun scheduleWorkflow(workflowId:"),
+            viewModel.indexOf("fun unscheduleWorkflow(workflowId:"),
+        )
+        assertTrue(scheduleFromUi.contains("withContext(Dispatchers.IO)"))
+        assertTrue(scheduleFromUi.contains("repository.scheduleWorkflow(workflowId)"))
     }
 
     private fun source(relativePath: String): String {

@@ -70,6 +70,13 @@ internal fun isActiveMatchingWorkflowSchedule(
     isActiveWorkflowScheduleState(state) &&
         expectedFingerprintTag in tags
 
+internal fun isActivePreFingerprintWorkflowSchedule(
+    state: WorkInfo.State,
+    tags: Set<String>,
+): Boolean =
+    isActiveWorkflowScheduleState(state) &&
+        tags.none { tag -> tag.startsWith(WorkflowScheduler.SCHEDULE_FINGERPRINT_TAG_PREFIX) }
+
 /**
  * WorkflowScheduler manages scheduling workflows using WorkManager
  * 
@@ -101,7 +108,7 @@ class WorkflowScheduler(private val context: Context) {
         // WorkManager data keys
         const val KEY_TRIGGER_NODE_ID = "trigger_node_id"
         const val KEY_SCHEDULE_FINGERPRINT = "schedule_fingerprint"
-        private const val SCHEDULE_FINGERPRINT_TAG_PREFIX = "workflow_schedule_fingerprint:"
+        internal const val SCHEDULE_FINGERPRINT_TAG_PREFIX = "workflow_schedule_fingerprint:"
         const val PENDING_REPLACEMENT_SCHEDULE_FINGERPRINT_GENERATION = -1
         const val CLAIMED_SCHEDULE_FINGERPRINT_GENERATION = 0
         const val CURRENT_SCHEDULE_FINGERPRINT_GENERATION = 1
@@ -577,6 +584,11 @@ class WorkflowScheduler(private val context: Context) {
             )
         }
     }
+
+    internal fun hasActivePreFingerprintWorkflowScheduleAndWait(workflowId: String): Boolean =
+        workManager.getWorkInfosForUniqueWork(getWorkName(workflowId)).get().any { info ->
+            isActivePreFingerprintWorkflowSchedule(info.state, info.tags)
+        }
 
     internal fun shouldRetireCompletedPreFingerprintOneTimeAndWait(workflow: Workflow): Boolean =
         shouldRetireCompletedPreFingerprintOneTime(

@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.integrations.tasker
 
 import android.content.Context
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.workflow.WorkflowIntentSecurity
 import com.ai.assistance.operit.data.model.TriggerNode
 import com.ai.assistance.operit.data.model.Workflow
@@ -17,6 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import com.joaomgcd.taskerpluginlibrary.config.TaskerPluginConfig
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 
 class WorkflowTaskerSecurityTest {
     @Test
@@ -84,7 +86,12 @@ class WorkflowTaskerSecurityTest {
         val input = TaskerInput(
             WorkflowTaskerInput(command = "start_meeting", authToken = token)
         )
-        val helper = WorkflowTaskerConfigHelper(mock<TaskerPluginConfig<WorkflowTaskerInput>>())
+        val context = mock<Context>()
+        whenever(context.getString(R.string.workflow_tasker_action_command, "start_meeting"))
+            .thenReturn("Command: start_meeting")
+        val config = mock<TaskerPluginConfig<WorkflowTaskerInput>>()
+        whenever(config.context).thenReturn(context)
+        val helper = WorkflowTaskerConfigHelper(config)
         val blurb = StringBuilder()
 
         helper.addToStringBlurb(input, blurb)
@@ -93,6 +100,25 @@ class WorkflowTaskerSecurityTest {
         assertTrue(helper.isInputValid(input).success)
         assertTrue(blurb.toString().contains("start_meeting"))
         assertFalse(blurb.toString().contains(token))
+    }
+
+    @Test
+    fun taskerUserVisibleMessagesComeFromLocalizedResources() {
+        val source = java.io.File(
+            "src/main/java/com/ai/assistance/operit/integrations/tasker/WorkflowTaskerActivity.kt"
+        ).readText()
+        listOf(
+            "workflow_tasker_action_command",
+            "workflow_tasker_action_input_required",
+            "workflow_tasker_action_data_unavailable",
+            "workflow_tasker_action_auth_invalid",
+        ).forEach { resourceName ->
+            assertTrue(source.contains("R.string.$resourceName"))
+            assertTrue(java.io.File("src/main/res/values/strings.xml").readText().contains("name=\"$resourceName\""))
+            assertTrue(java.io.File("src/main/res/values-en/strings.xml").readText().contains("name=\"$resourceName\""))
+        }
+        assertFalse(source.contains("blurbBuilder.append(\"Command: \""))
+        assertFalse(source.contains("SimpleResultError(\"Workflow command"))
     }
 
     @Test
