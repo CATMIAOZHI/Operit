@@ -42,6 +42,47 @@ import org.json.JSONObject
 internal fun shouldPropagateClaudeCancellation(isManuallyCancelled: Boolean): Boolean =
     isManuallyCancelled
 
+internal fun applyCallerSuppliedClaudeThinkingParameters(
+    requestJson: JSONObject,
+    modelParameters: List<ModelParameter<*>>,
+    enableThinking: Boolean = true,
+): Boolean {
+    if (!enableThinking) {
+        return false
+    }
+
+    fun parseObjectParameter(apiName: String): JSONObject? {
+        val rawValue =
+            modelParameters
+                .lastOrNull { it.apiName == apiName && it.isEnabled }
+                ?.currentValue
+                ?.toString()
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?: return null
+        return runCatching { JSONObject(rawValue) }
+            .getOrElse { error ->
+                runCatching {
+                    AppLogger.w(
+                        "ClaudeProvider",
+                        "Ignoring malformed caller-supplied $apiName object",
+                        error,
+                    )
+                }
+                null
+            }
+    }
+
+    val explicitThinking =
+        parseObjectParameter("thinking")
+    val explicitOutputConfig =
+        parseObjectParameter("output_config")
+
+    explicitThinking?.let { requestJson.put("thinking", it) }
+    explicitOutputConfig?.let { requestJson.put("output_config", it) }
+    return explicitThinking != null
+}
+
 class ClaudeProvider(
     private val apiEndpoint: String,
     private val apiKeyProvider: ApiKeyProvider,
@@ -57,7 +98,6 @@ class ClaudeProvider(
     private val JSON = "application/json".toMediaType()
     private val ANTHROPIC_VERSION = "2023-06-01" // Claude API版本
     private val PROMPT_CACHE_CONTROL_TYPE = "ephemeral"
-    private val DEFAULT_MAX_TOKENS = 4096
     private val EMPTY_MESSAGE_TEXT = "[Empty]"
 
     // 当前活跃的Call对象，用于取消流式传输
@@ -1048,15 +1088,13 @@ class ClaudeProvider(
         // 添加已启用的模型参数
         addParameters(jsonObject, modelParameters)
 
-        val maxTokensFromParams = modelParameters
-            .firstOrNull { it.apiName == "max_tokens" }
-            ?.currentValue
-        val maxTokensValue = (maxTokensFromParams as? Number)?.toInt()?.takeIf { it > 0 }
-            ?: jsonObject.optInt("max_tokens", 0).takeIf { it > 0 }
-            ?: resolveOfficialAnthropicMaxTokens()
-        if (maxTokensValue != null) {
-            jsonObject.put("max_tokens", maxTokensValue)
-        }
+        val maxTokensValue =
+            applyClaudeEffectiveMaxTokensParameter(
+                requestJson = jsonObject,
+                providerType = providerType,
+                modelName = modelName,
+                modelParameters = modelParameters,
+            )
 
         // 添加 Tool Call 工具定义（如果启用且有可用工具）
         var tools: JSONArray? = null
@@ -1079,8 +1117,14 @@ class ClaudeProvider(
             jsonObject.put("system", systemBlocks)
         }
 
-        // 添加extended thinking支持
-        if (enableThinking) {
+        // 添加 extended/adaptive thinking 支持；显式调用方参数优先于默认推断。
+        val hasExplicitThinking =
+            applyCallerSuppliedClaudeThinkingParameters(
+                requestJson = jsonObject,
+                modelParameters = modelParameters,
+                enableThinking = enableThinking,
+            )
+        if (!hasExplicitThinking && enableThinking) {
             val format = getThinkingFormat()
             when (format) {
                 ThinkingFormat.ADAPTIVE -> {
@@ -1099,11 +1143,8 @@ class ClaudeProvider(
                     val thinkingObject = JSONObject()
                     thinkingObject.put("type", "enabled")
 
-                    val budgetTokensFromParams = modelParameters
-                        .firstOrNull { it.apiName == "budget_tokens" }
-                        ?.currentValue
-                    val budgetTokensValue = (budgetTokensFromParams as? Number)?.toInt()?.takeIf { it > 0 }
-                        ?: minOf(1024, maxTokensValue ?: DEFAULT_MAX_TOKENS)
+                    val budgetTokensValue =
+                        resolveClaudeThinkingBudgetTokens(modelParameters, maxTokensValue)
                     thinkingObject.put("budget_tokens", budgetTokensValue)
 
                     jsonObject.put("thinking", thinkingObject)
@@ -1123,95 +1164,12 @@ class ClaudeProvider(
         return jsonObject.toString().toByteArray(Charsets.UTF_8).toRequestBody(JSON)
     }
 
-    private fun resolveOfficialAnthropicMaxTokens(): Int? {
-        if (providerType != ApiProviderType.ANTHROPIC) {
-            return null
-        }
-
-        val normalizedModelName = modelName.trim().lowercase()
-        return when {
-            normalizedModelName.startsWith("claude-opus-4-1") -> 32_000
-            normalizedModelName.startsWith("claude-opus-4") -> 32_000
-            normalizedModelName.startsWith("claude-sonnet-4") -> 64_000
-            normalizedModelName.startsWith("claude-3-7-sonnet") -> 64_000
-            normalizedModelName.startsWith("claude-3-5-sonnet") -> 8_192
-            normalizedModelName.startsWith("claude-3-5-haiku") -> 8_192
-            normalizedModelName.startsWith("claude-3-haiku") -> 4_096
-            else -> DEFAULT_MAX_TOKENS
-        }
-    }
-
-
     /**
      * 判断模型是否推荐使用 adaptive thinking 格式。
      * 仅做启发式匹配，覆盖已知官方模型家族和常见中转命名。
      */
     private fun prefersAdaptiveThinking(): Boolean {
-        val name = normalizeClaudeModelName(modelName)
-
-        if (hasClaudeFamilyAtLeast(name, "fable", 5, 0)) return true
-        if (hasClaudeFamilyAtLeast(name, "mythos", 5, 0)) return true
-
-        return hasClaudeFamilyAtLeast(name, "opus", 4, 6) ||
-                hasClaudeFamilyAtLeast(name, "sonnet", 4, 6)
-    }
-
-    private fun normalizeClaudeModelName(value: String): String {
-        return value
-            .trim()
-            .lowercase()
-            .replace(Regex("(?<=[a-z])(?=\\d)|(?<=\\d)(?=[a-z])"), "-")
-            .replace(Regex("[^a-z0-9]+"), "-")
-            .trim('-')
-    }
-
-    private fun hasClaudeFamilyAtLeast(
-        normalizedModelName: String,
-        family: String,
-        minMajor: Int,
-        minMinor: Int
-    ): Boolean {
-        val version = claudeFamilyVersion(normalizedModelName, family) ?: return false
-        val major = version.first
-        val minor = version.second
-        return major > minMajor || major == minMajor && minor >= minMinor
-    }
-
-    private fun claudeFamilyVersion(normalizedModelName: String, family: String): Pair<Int, Int>? {
-        val parts = normalizedModelName.split('-').filter { it.isNotEmpty() }
-        val familyIndex = parts.indexOf(family)
-        if (familyIndex == -1) return null
-
-        val beforeFamily = parts.take(familyIndex)
-            .takeLastWhileDigitParts()
-            .takeLast(2)
-        val beforeFamilyVersion = numericVersion(beforeFamily)
-        if (beforeFamilyVersion != null) return beforeFamilyVersion
-
-        val afterFamily = parts.drop(familyIndex + 1)
-            .takeWhileDigitParts()
-            .take(2)
-        return numericVersion(afterFamily)
-    }
-
-    private fun List<String>.takeLastWhileDigitParts(): List<String> {
-        return asReversed()
-            .takeWhile { it.isVersionPart() }
-            .asReversed()
-    }
-
-    private fun List<String>.takeWhileDigitParts(): List<String> {
-        return takeWhile { it.isVersionPart() }
-    }
-
-    private fun String.isVersionPart(): Boolean {
-        return all(Char::isDigit) && length < 8
-    }
-
-    private fun numericVersion(parts: List<String>): Pair<Int, Int>? {
-        val major = parts.firstOrNull()?.toIntOrNull() ?: return null
-        val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
-        return major to minor
+        return prefersClaudeAdaptiveThinkingModel(modelName)
     }
 
     /**

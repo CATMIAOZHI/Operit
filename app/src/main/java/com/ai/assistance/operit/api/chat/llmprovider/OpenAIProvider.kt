@@ -63,6 +63,9 @@ internal fun JSONObject.applyChatCompletionsStreamUsageOption(
     }
 }
 
+internal fun supportsAutomaticOpenAiChatReasoning(providerType: ApiProviderType): Boolean =
+    providerType == ApiProviderType.OPENAI || providerType == ApiProviderType.OPENAI_GENERIC
+
 /**
  * OpenAI API格式的实现，支持标准OpenAI接口和兼容此格式的其他提供商
  *
@@ -625,9 +628,21 @@ open class OpenAIProvider(
         availableTools: List<ToolPrompt>? = null,
         preserveThinkInHistory: Boolean = false
     ): RequestBody {
+        val automaticReasoningRequestParameters =
+            consumeAutomaticReasoningSuppression(modelParameters)
         val jsonString =
-            createRequestBodyInternal(context, chatHistory, modelParameters, stream, availableTools, preserveThinkInHistory)
-        if (!supportsOpenAiChatReasoningEffort()) {
+            createRequestBodyInternal(
+                context,
+                chatHistory,
+                automaticReasoningRequestParameters.modelParameters,
+                stream,
+                availableTools,
+                preserveThinkInHistory,
+            )
+        if (
+            automaticReasoningRequestParameters.suppressAutomaticReasoning ||
+                !supportsOpenAiChatReasoningEffort()
+        ) {
             return createJsonRequestBody(jsonString)
         }
         val requestJson = JSONObject(jsonString)
@@ -683,7 +698,7 @@ open class OpenAIProvider(
     }
 
     private fun supportsOpenAiChatReasoningEffort(): Boolean =
-        providerType == ApiProviderType.OPENAI || providerType == ApiProviderType.OPENAI_GENERIC
+        supportsAutomaticOpenAiChatReasoning(providerType)
 
     protected fun createJsonRequestBody(jsonString: String): RequestBody {
         return jsonString.toByteArray(Charsets.UTF_8).toRequestBody(JSON)

@@ -67,7 +67,7 @@ class ThinkingQualityTest {
         assertEquals("low", DeepseekProvider.normalizeDeepseekEffort("low"))
         assertEquals("high", DeepseekProvider.normalizeDeepseekEffort("medium"))
         assertEquals("high", DeepseekProvider.normalizeDeepseekEffort("high"))
-        assertEquals("xhigh", DeepseekProvider.normalizeDeepseekEffort("xhigh"))
+        assertEquals("max", DeepseekProvider.normalizeDeepseekEffort("xhigh"))
         assertEquals("max", DeepseekProvider.normalizeDeepseekEffort("max"))
     }
     @Test fun requestSummary_usesDeepseekEffectiveEffort() {
@@ -90,6 +90,96 @@ class ThinkingQualityTest {
                 modelName = "gemini-2.5-pro",
                 qualityLevel = 5,
                 modelParameters = emptyList(),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_reportsAnthropicLegacyBudgetSentByClaudeProvider() {
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(1_024),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-3-opus-20240229",
+                qualityLevel = 5,
+                modelParameters = emptyList(),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(2_048),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-3-opus-20240229",
+                qualityLevel = 1,
+                modelParameters = listOf(intParameter("budget_tokens", 2_048)),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(512),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC_GENERIC,
+                modelName = "legacy-claude-proxy",
+                qualityLevel = 3,
+                modelParameters = listOf(intParameter("max_tokens", 512)),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_reportsEnabledForAnthropicAdaptiveThinking() {
+        assertEquals(
+            ThinkingRequestSummary.Enabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-opus-4-6",
+                qualityLevel = 5,
+                modelParameters = listOf(intParameter("budget_tokens", 2_048)),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_respectsAnthropicExplicitThinkingObject() {
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-3-opus-20240229",
+                qualityLevel = 5,
+                modelParameters = listOf(objectParameter("thinking", "{\"type\":\"disabled\"}")),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(2_048),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-3-opus-20240229",
+                qualityLevel = 1,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinking",
+                            "{\"type\":\"enabled\",\"budget_tokens\":2048}",
+                        )
+                    ),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Enabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-3-opus-20240229",
+                qualityLevel = 1,
+                modelParameters = listOf(objectParameter("thinking", "{\"type\":\"adaptive\"}")),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_ignoresMalformedAnthropicThinkingObjectLikeProvider() {
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(1_024),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-3-opus-20240229",
+                qualityLevel = 5,
+                modelParameters = listOf(objectParameter("thinking", "not-json")),
             ),
         )
     }

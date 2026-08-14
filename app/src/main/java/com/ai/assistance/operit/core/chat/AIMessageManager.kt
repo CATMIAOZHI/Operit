@@ -24,6 +24,7 @@ import com.ai.assistance.operit.data.model.ChatMessageTimestampAllocator
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.model.ToolPrompt
 import com.ai.assistance.operit.data.model.PromptFunctionType
+import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.process.WorkspaceAttachmentProcessor
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.process.WorkspaceChangeTracker
@@ -336,6 +337,7 @@ object AIMessageManager {
         workspacePath: String?,
         workspaceEnv: String? = null,
         promptFunctionType: PromptFunctionType,
+        functionType: FunctionType = FunctionType.CHAT,
         enableThinking: Boolean,
         enableMemoryAutoUpdate: Boolean,
         maxTokens: Int,
@@ -487,6 +489,7 @@ object AIMessageManager {
                     chatHistory = memoryForRequest,
                     workspacePath = workspacePath,
                     workspaceEnv = workspaceEnv,
+                    functionType = functionType,
                     promptFunctionType = promptFunctionType,
                     enableThinking = enableThinking,
                     enableMemoryAutoUpdate = enableMemoryAutoUpdate,

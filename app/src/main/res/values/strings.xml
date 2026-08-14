@@ -2918,6 +2918,9 @@
     <string name="current_config_label">当前配置: %1$s</string>
     <string name="default_config">默认配置</string>
     <string name="model_label">模型: %1$s</string>
+    <string name="functional_reasoning_intensity">推理强度</string>
+    <string name="functional_reasoning_intensity_desc">固定为 Low 到 Max 五档，仅影响此功能并覆盖模型配置中的显式推理参数。服务会按自身能力将所选档位解释为推理强度、Token 预算或思考开关，并可能自动降级。</string>
+    <string name="functional_reasoning_chat_managed">常规对话的思考开关和推理强度由聊天输入栏控制。</string>
     <string name="test_connection_success">成功</string>
     <string name="test_connection_failed">失败: %1$s</string>
     <string name="test_connection_desc">测试连接</string>
@@ -8392,6 +8395,16 @@
     <string name="chat_category_all">所有</string>
     <string name="chat_category_recent">最近</string>
     <string name="chat_category_favorites">收藏</string>
+    <string name="chat_history_time_today">今天</string>
+    <string name="chat_history_time_yesterday">昨天</string>
+    <string name="chat_history_time_monday">星期一</string>
+    <string name="chat_history_time_tuesday">星期二</string>
+    <string name="chat_history_time_wednesday">星期三</string>
+    <string name="chat_history_time_thursday">星期四</string>
+    <string name="chat_history_time_friday">星期五</string>
+    <string name="chat_history_time_saturday">星期六</string>
+    <string name="chat_history_time_sunday">星期日</string>
+    <string name="chat_history_time_seven_days_ago">7天前</string>
     <string name="add_to_favorites">收藏对话</string>
     <string name="remove_from_favorites">取消收藏</string>
     <string name="permission_review_policy_title">自动审核策略</string>

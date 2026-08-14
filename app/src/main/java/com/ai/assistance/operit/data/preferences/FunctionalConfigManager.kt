@@ -17,11 +17,12 @@ import kotlinx.serialization.json.Json
 private val Context.functionalConfigDataStore: DataStore<Preferences> by
         preferencesDataStore(name = "functional_configs")
 
-/** 功能配置映射数据，包含配置ID和模型索引 */
+/** 功能配置映射数据，包含配置ID、模型索引和功能请求专属的思考程度。 */
 @Serializable
 data class FunctionConfigMapping(
     val configId: String = FunctionalConfigManager.DEFAULT_CONFIG_ID,
-    val modelIndex: Int = 0
+    val modelIndex: Int = 0,
+    val thinkingQualityLevel: Int = FunctionalConfigManager.DEFAULT_THINKING_QUALITY_LEVEL,
 )
 
 /** 管理不同功能使用的模型配置 这个类用于将FunctionType映射到对应的ModelConfigID */
@@ -34,6 +35,10 @@ class FunctionalConfigManager(private val context: Context) {
 
         // 默认映射值
         const val DEFAULT_CONFIG_ID = "default"
+
+        /** 功能请求固定使用与聊天设置一致的五档推理强度。 */
+        const val DEFAULT_THINKING_QUALITY_LEVEL =
+            ApiPreferences.DEFAULT_THINKING_QUALITY_LEVEL
     }
 
     // Json解析器
@@ -142,18 +147,40 @@ class FunctionalConfigManager(private val context: Context) {
     // 设置指定功能的配置ID和模型索引
     suspend fun setConfigForFunction(functionType: FunctionType, configId: String, modelIndex: Int) {
         val mapping = functionConfigMappingWithIndexFlow.first().toMutableMap()
-        mapping[functionType] = FunctionConfigMapping(configId, modelIndex)
+        val thinkingQualityLevel =
+            mapping[functionType]?.thinkingQualityLevel ?: DEFAULT_THINKING_QUALITY_LEVEL
+        mapping[functionType] =
+            FunctionConfigMapping(configId, modelIndex, thinkingQualityLevel)
+        saveFunctionConfigMappingWithIndex(mapping)
+    }
+
+    /** 设置指定功能请求的思考程度，同时保留当前模型配置与模型索引。 */
+    suspend fun setThinkingQualityForFunction(functionType: FunctionType, qualityLevel: Int) {
+        val mapping = functionConfigMappingWithIndexFlow.first().toMutableMap()
+        val current =
+            mapping[functionType] ?: FunctionConfigMapping(DEFAULT_CONFIG_ID, 0)
+        mapping[functionType] =
+            current.copy(thinkingQualityLevel = normalizeThinkingQualityLevel(qualityLevel))
         saveFunctionConfigMappingWithIndex(mapping)
     }
 
     // 重置指定功能的配置为默认
     suspend fun resetFunctionConfig(functionType: FunctionType) {
-        setConfigForFunction(functionType, DEFAULT_CONFIG_ID)
+        val mapping = functionConfigMappingWithIndexFlow.first().toMutableMap()
+        mapping[functionType] = FunctionConfigMapping(DEFAULT_CONFIG_ID, 0)
+        saveFunctionConfigMappingWithIndex(mapping)
     }
 
     // 重置所有功能配置为默认
     suspend fun resetAllFunctionConfigs() {
         val defaultMapping = FunctionType.values().associateWith { FunctionConfigMapping(DEFAULT_CONFIG_ID, 0) }
         saveFunctionConfigMappingWithIndex(defaultMapping)
+    }
+
+    private fun normalizeThinkingQualityLevel(qualityLevel: Int): Int {
+        return qualityLevel.coerceIn(
+            ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
+            ApiPreferences.MAX_THINKING_QUALITY_LEVEL,
+        )
     }
 }

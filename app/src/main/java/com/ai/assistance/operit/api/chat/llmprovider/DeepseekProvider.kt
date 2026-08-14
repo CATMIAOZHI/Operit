@@ -59,6 +59,8 @@ class DeepseekProvider(
         availableTools: List<ToolPrompt>?,
         preserveThinkInHistory: Boolean
     ): RequestBody {
+        val automaticReasoningRequestParameters =
+            consumeAutomaticReasoningSuppression(modelParameters)
         fun applyThinkingParamsIfNeeded(jsonObject: JSONObject) {
             val thinkingObject = jsonObject.optJSONObject("thinking") ?: JSONObject()
             val thinkingType = if (enableThinking) "enabled" else "disabled"
@@ -70,7 +72,12 @@ class DeepseekProvider(
                 return
             }
 
-            val effort = resolveDeepseekThinkingEffort(context)
+            val effort =
+                if (automaticReasoningRequestParameters.suppressAutomaticReasoning) {
+                    null
+                } else {
+                    resolveDeepseekThinkingEffort(context)
+                }
             if (effort != null && !jsonObject.has("reasoning_effort")) {
                 jsonObject.put("reasoning_effort", effort)
             }
@@ -87,7 +94,7 @@ class DeepseekProvider(
         applyThinkingParamsIfNeeded(jsonObject)
 
         // 添加已启用的模型参数
-        for (param in modelParameters) {
+        for (param in automaticReasoningRequestParameters.modelParameters) {
             if (param.isEnabled) {
                 when (param.valueType) {
                     com.ai.assistance.operit.data.model.ParameterValueType.INT ->
@@ -453,8 +460,7 @@ class DeepseekProvider(
             return null
         }
 
-        // DeepSeek 官方文档枚举为 low/high/max，medium/xhigh 为兼容值（服务端会把 medium 映射为 high、
-        // xhigh 映射为 high/max）。medium 显式归一化为 high，与官方映射一致，避免发送未收录值。
+        // DeepSeek 官方文档枚举为 low/high/max；五档 UI 在共享请求语义边界降级到这三个值。
         return ThinkingRequestSemantics.defaultReasoningEffort(
             com.ai.assistance.operit.data.model.ApiProviderType.DEEPSEEK,
             qualityLevel,
@@ -463,8 +469,7 @@ class DeepseekProvider(
 
     companion object {
         /**
-         * 将档位映射出的 reasoning_effort 归一化到 DeepSeek 官方接受的集合：
-         * medium 映射为 high（官方服务端对 medium 的处理一致），其余值透传。
+         * 将五档 UI 的 reasoning_effort 归一化到 DeepSeek 官方接受的 low/high/max。
          */
         fun normalizeDeepseekEffort(effort: String): String =
             ThinkingRequestSemantics.normalizeDeepseekEffort(effort)

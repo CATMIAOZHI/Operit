@@ -109,7 +109,7 @@ class QwenAIProvider(
                 "QwenAIProvider",
                 "Preserving caller-supplied SiliconFlow enable_thinking=${requestJson.opt("enable_thinking")}"
             )
-        } else {
+        } else if (siliconFlowSupportsThinkingToggle(modelName)) {
             requestJson.put("enable_thinking", enableThinking)
             AppLogger.d(
                 "QwenAIProvider",

@@ -124,7 +124,24 @@ object ThinkingRequestSemantics {
                     ?: ThinkingRequestSummary.Enabled
 
             ApiProviderType.ANTHROPIC,
-            ApiProviderType.ANTHROPIC_GENERIC,
+            ApiProviderType.ANTHROPIC_GENERIC ->
+                resolveAnthropicThinkingOverride(modelParameters)
+                    ?: if (prefersClaudeAdaptiveThinkingModel(modelName)) {
+                        ThinkingRequestSummary.Enabled
+                    } else {
+                        ThinkingRequestSummary.BudgetTokens(
+                            resolveClaudeThinkingBudgetTokens(
+                                modelParameters = modelParameters,
+                                maxTokens =
+                                    resolveClaudeEffectiveMaxTokens(
+                                        providerType = effectiveProviderType,
+                                        modelName = modelName,
+                                        modelParameters = modelParameters,
+                                    ),
+                            )
+                        )
+                    }
+
             ApiProviderType.GOOGLE,
             ApiProviderType.GEMINI_GENERIC -> ThinkingRequestSummary.Enabled
 
@@ -156,7 +173,12 @@ object ThinkingRequestSemantics {
     }
 
     fun normalizeDeepseekEffort(effort: String): String =
-        if (effort == "medium") "high" else effort
+        when (effort) {
+            "low" -> "low"
+            "medium", "high" -> "high"
+            "xhigh", "max" -> "max"
+            else -> effort
+        }
 
     fun defaultBudgetTokens(
         providerType: ApiProviderType,
@@ -254,6 +276,30 @@ object ThinkingRequestSemantics {
         return when (type.lowercase()) {
             "enabled" -> ThinkingRequestSummary.Enabled
             "disabled" -> ThinkingRequestSummary.Disabled
+            else -> ThinkingRequestSummary.CustomValue(type)
+        }
+    }
+
+    private fun resolveAnthropicThinkingOverride(
+        modelParameters: List<ModelParameter<*>>,
+    ): ThinkingRequestSummary? {
+        val parameter = enabledParameter(modelParameters, "thinking") ?: return null
+        val raw = parameter.currentValue.toString().trim()
+        val thinkingObject = parseObject(raw) ?: return null
+        val typeElement = thinkingObject["type"]
+            ?: return ThinkingRequestSummary.CustomValue(raw)
+        val type = (typeElement as? JsonPrimitive)?.contentOrNull?.trim()
+            ?: return ThinkingRequestSummary.CustomValue(typeElement.toString())
+        return when (type.lowercase()) {
+            "disabled" -> ThinkingRequestSummary.Disabled
+            "adaptive" -> ThinkingRequestSummary.Enabled
+            "enabled" -> {
+                val budgetElement = thinkingObject["budget_tokens"]
+                    ?: return ThinkingRequestSummary.Enabled
+                (budgetElement as? JsonPrimitive)?.intOrNull
+                    ?.let(ThinkingRequestSummary::BudgetTokens)
+                    ?: ThinkingRequestSummary.CustomValue(budgetElement.toString())
+            }
             else -> ThinkingRequestSummary.CustomValue(type)
         }
     }
