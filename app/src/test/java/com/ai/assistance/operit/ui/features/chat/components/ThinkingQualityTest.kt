@@ -94,6 +94,106 @@ class ThinkingQualityTest {
         )
     }
 
+    @Test fun requestSummary_reportsGeminiConfiguredThinkingIntensity() {
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(32_768),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-2.5-pro",
+                qualityLevel = 5,
+                modelParameters = listOf(intParameter("thinking_budget", 32_768)),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("high"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GEMINI_GENERIC,
+                modelName = "gemini-3.1-pro-preview",
+                qualityLevel = 5,
+                modelParameters = listOf(stringParameter("thinking_level", "high")),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(8_192),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-2.5-pro",
+                qualityLevel = 3,
+                modelParameters =
+                    listOf(
+                        stringParameter("thinking_level", "high"),
+                        intParameter("thinking_budget", 8_192),
+                    ),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("low"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GEMINI_GENERIC,
+                modelName = "gemini-3.1-pro-preview",
+                qualityLevel = 1,
+                modelParameters =
+                    listOf(
+                        stringParameter("thinking_budget", "invalid"),
+                        stringParameter("thinking_level", "low"),
+                    ),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_reportsAliyunConfiguredThinkingIntensity() {
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(16_384),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ALIYUN,
+                modelName = "qwen3-235b-a22b-thinking-2507",
+                qualityLevel = 4,
+                modelParameters =
+                    listOf(
+                        booleanParameter("enable_thinking", true),
+                        intParameter("thinking_budget", 16_384),
+                        stringParameter("reasoning_effort", "max"),
+                    ),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("high"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ALIYUN,
+                modelName = "qwen3.5-plus",
+                qualityLevel = 3,
+                modelParameters = listOf(stringParameter("reasoning_effort", "high")),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ALIYUN,
+                modelName = "qwen3.5-plus",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        booleanParameter("enable_thinking", false),
+                        intParameter("thinking_budget", 32_768),
+                        stringParameter("reasoning_effort", "max"),
+                    ),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("invalid"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ALIYUN,
+                modelName = "qwen3-235b-a22b-thinking-2507",
+                qualityLevel = 3,
+                modelParameters =
+                    listOf(
+                        stringParameter("thinking_budget", "invalid"),
+                        stringParameter("reasoning_effort", "high"),
+                    ),
+            ),
+        )
+    }
+
     @Test fun requestSummary_reportsAnthropicLegacyBudgetSentByClaudeProvider() {
         assertEquals(
             ThinkingRequestSummary.BudgetTokens(1_024),
@@ -134,6 +234,16 @@ class ThinkingQualityTest {
                 modelParameters = listOf(intParameter("budget_tokens", 2_048)),
             ),
         )
+        assertEquals(
+            ThinkingRequestSummary.Effort("max"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-opus-4-6",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(objectParameter("output_config", "{\"effort\":\"max\"}")),
+            ),
+        )
     }
 
     @Test fun requestSummary_respectsAnthropicExplicitThinkingObject() {
@@ -170,6 +280,61 @@ class ThinkingQualityTest {
                 modelParameters = listOf(objectParameter("thinking", "{\"type\":\"adaptive\"}")),
             ),
         )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-opus-4-6",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter("thinking", "{\"type\":\"disabled\"}"),
+                        objectParameter("output_config", "{\"effort\":\"max\"}"),
+                    ),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(4_096),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-3-opus-20240229",
+                qualityLevel = 3,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinking",
+                            "{\"type\":\"enabled\",\"budget_tokens\":4096}",
+                        ),
+                        objectParameter("output_config", "{\"effort\":\"max\"}"),
+                    ),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("max"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-opus-4-6",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter("thinking", "{\"type\":\"adaptive\"}"),
+                        objectParameter("output_config", "{\"effort\":\"max\"}"),
+                    ),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("custom"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-opus-4-6",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter("thinking", "{\"type\":\"custom\"}"),
+                        objectParameter("output_config", "{\"effort\":\"max\"}"),
+                    ),
+            ),
+        )
     }
 
     @Test fun requestSummary_ignoresMalformedAnthropicThinkingObjectLikeProvider() {
@@ -180,6 +345,15 @@ class ThinkingQualityTest {
                 modelName = "claude-3-opus-20240229",
                 qualityLevel = 5,
                 modelParameters = listOf(objectParameter("thinking", "not-json")),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Enabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-opus-4-6",
+                qualityLevel = 5,
+                modelParameters = listOf(objectParameter("output_config", "not-json")),
             ),
         )
     }

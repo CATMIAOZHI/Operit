@@ -118,32 +118,39 @@ object ThinkingRequestSemantics {
                     ?: ThinkingRequestSummary.Enabled
 
             ApiProviderType.ALIYUN ->
-                enabledParameter(modelParameters, "enable_thinking")
-                    ?.currentValue
-                    ?.let(::booleanSummary)
-                    ?: ThinkingRequestSummary.Enabled
+                resolveAliyunThinkingOverride(modelParameters) ?: ThinkingRequestSummary.Enabled
 
             ApiProviderType.ANTHROPIC,
-            ApiProviderType.ANTHROPIC_GENERIC ->
-                resolveAnthropicThinkingOverride(modelParameters)
-                    ?: if (prefersClaudeAdaptiveThinkingModel(modelName)) {
-                        ThinkingRequestSummary.Enabled
-                    } else {
-                        ThinkingRequestSummary.BudgetTokens(
-                            resolveClaudeThinkingBudgetTokens(
-                                modelParameters = modelParameters,
-                                maxTokens =
-                                    resolveClaudeEffectiveMaxTokens(
-                                        providerType = effectiveProviderType,
-                                        modelName = modelName,
+            ApiProviderType.ANTHROPIC_GENERIC -> {
+                val thinkingOverride = resolveAnthropicThinkingOverride(modelParameters)
+                when (thinkingOverride) {
+                    ThinkingRequestSummary.Disabled,
+                    is ThinkingRequestSummary.BudgetTokens,
+                    is ThinkingRequestSummary.CustomValue -> thinkingOverride
+                    else ->
+                        resolveAnthropicOutputConfigOverride(modelParameters)
+                            ?: thinkingOverride
+                            ?: if (prefersClaudeAdaptiveThinkingModel(modelName)) {
+                                ThinkingRequestSummary.Enabled
+                            } else {
+                                ThinkingRequestSummary.BudgetTokens(
+                                    resolveClaudeThinkingBudgetTokens(
                                         modelParameters = modelParameters,
-                                    ),
-                            )
-                        )
-                    }
+                                        maxTokens =
+                                            resolveClaudeEffectiveMaxTokens(
+                                                providerType = effectiveProviderType,
+                                                modelName = modelName,
+                                                modelParameters = modelParameters,
+                                            ),
+                                    )
+                                )
+                            }
+                }
+            }
 
             ApiProviderType.GOOGLE,
-            ApiProviderType.GEMINI_GENERIC -> ThinkingRequestSummary.Enabled
+            ApiProviderType.GEMINI_GENERIC ->
+                resolveGeminiThinkingOverride(modelParameters) ?: ThinkingRequestSummary.Enabled
 
             ApiProviderType.MOONSHOT,
             ApiProviderType.MIMO ->
@@ -303,6 +310,46 @@ object ThinkingRequestSemantics {
             else -> ThinkingRequestSummary.CustomValue(type)
         }
     }
+
+    private fun resolveAnthropicOutputConfigOverride(
+        modelParameters: List<ModelParameter<*>>,
+    ): ThinkingRequestSummary? {
+        val parameter = enabledParameter(modelParameters, "output_config") ?: return null
+        val outputConfig = parseObject(parameter.currentValue.toString().trim()) ?: return null
+        val effortElement = outputConfig["effort"] ?: return null
+        val effort = (effortElement as? JsonPrimitive)?.contentOrNull?.trim()
+        return if (!effort.isNullOrEmpty()) {
+            ThinkingRequestSummary.Effort(effort)
+        } else {
+            ThinkingRequestSummary.CustomValue(effortElement.toString())
+        }
+    }
+
+    private fun resolveAliyunThinkingOverride(
+        modelParameters: List<ModelParameter<*>>,
+    ): ThinkingRequestSummary? {
+        val enabledOverride = resolveBooleanParameter(modelParameters, "enable_thinking")
+        when (enabledOverride) {
+            ThinkingRequestSummary.Disabled,
+            is ThinkingRequestSummary.CustomValue -> return enabledOverride
+            else -> Unit
+        }
+        return enabledParameter(modelParameters, "thinking_budget")
+            ?.currentValue
+            ?.let(::valueSummary)
+            ?: enabledTextParameter(modelParameters, "reasoning_effort")?.let(::textSummary)
+            ?: enabledOverride
+    }
+
+    private fun resolveGeminiThinkingOverride(
+        modelParameters: List<ModelParameter<*>>,
+    ): ThinkingRequestSummary? =
+        (enabledParameter(modelParameters, "thinking_budget")?.currentValue as? Number)
+            ?.toInt()
+            ?.let(ThinkingRequestSummary::BudgetTokens)
+            ?: enabledTextParameter(modelParameters, "thinking_level")
+                ?.takeIf { it.isNotBlank() }
+                ?.let(ThinkingRequestSummary::Effort)
 
     private fun resolveBooleanParameter(
         modelParameters: List<ModelParameter<*>>,
