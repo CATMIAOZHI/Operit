@@ -87,7 +87,9 @@ data class ChatEntity(
                 locked = locked,
                 pinned = pinned,
                 isFavorite = isFavorite,
-                lastMessageAt = lastMessageAt
+                lastMessageAt = lastMessageAt,
+                createdAtEpochMillis = this.createdAt,
+                lastMessageAtEpochMillis = this.lastMessageAt,
         )
     }
 
@@ -99,11 +101,12 @@ data class ChatEntity(
                     id = chatHistory.id,
                     title = chatHistory.title,
                     createdAt =
-                            chatHistory
-                                    .createdAt
-                                    .atZone(ZoneId.systemDefault())
-                                    .toInstant()
-                                    .toEpochMilli(),
+                            chatHistory.createdAtEpochMillis
+                                    ?: chatHistory
+                                            .createdAt
+                                            .atZone(ZoneId.systemDefault())
+                                            .toInstant()
+                                            .toEpochMilli(),
                     updatedAt =
                             chatHistory
                                     .updatedAt
@@ -126,11 +129,10 @@ data class ChatEntity(
                     pinned = chatHistory.pinned,
                     isFavorite = chatHistory.isFavorite,
                     lastMessageAt =
-                            chatHistory
-                                    .lastMessageAt
-                                    ?.atZone(ZoneId.systemDefault())
-                                    ?.toInstant()
-                                    ?.toEpochMilli()
+                            chatHistory.lastMessageAt?.let {
+                                chatHistory.lastMessageAtEpochMillis
+                                    ?: it.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                            }
             )
         }
     }

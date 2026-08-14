@@ -8414,6 +8414,16 @@
     <string name="chat_category_all">All</string>
     <string name="chat_category_recent">Recent</string>
     <string name="chat_category_favorites">Favorites</string>
+    <string name="chat_history_time_today">Today</string>
+    <string name="chat_history_time_yesterday">Yesterday</string>
+    <string name="chat_history_time_monday">Monday</string>
+    <string name="chat_history_time_tuesday">Tuesday</string>
+    <string name="chat_history_time_wednesday">Wednesday</string>
+    <string name="chat_history_time_thursday">Thursday</string>
+    <string name="chat_history_time_friday">Friday</string>
+    <string name="chat_history_time_saturday">Saturday</string>
+    <string name="chat_history_time_sunday">Sunday</string>
+    <string name="chat_history_time_seven_days_ago">7 days ago</string>
     <string name="add_to_favorites">Add to favorites</string>
     <string name="remove_from_favorites">Remove from favorites</string>
     <string name="permission_review_policy_title">Automatic review policy</string>
