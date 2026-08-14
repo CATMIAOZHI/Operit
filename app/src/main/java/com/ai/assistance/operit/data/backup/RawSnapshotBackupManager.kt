@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import com.ai.assistance.operit.core.workflow.advanceWorkflowAuthRestoreGeneration
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.db.ObjectBoxManager
 import com.ai.assistance.operit.data.stats.TokenBaselineImportRunner
@@ -838,6 +839,11 @@ object RawSnapshotBackupManager {
                         replaceDirContents(File(payloadDir, "datastore"), File(context.dataDir, "datastore"))
                         withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_DATABASES) }
                         replaceDirContents(File(payloadDir, "databases"), File(context.dataDir, "databases"))
+
+                        // The signing key intentionally lives outside raw snapshots. Advance a
+                        // no-backup generation after replacement so credentials from the restored
+                        // files cannot become valid again under the preserved same-install key.
+                        advanceWorkflowAuthRestoreGeneration(context)
 
                         withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.FINALIZING) }
                     }

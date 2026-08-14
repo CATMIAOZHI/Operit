@@ -7,6 +7,7 @@ import com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory
 import com.ai.assistance.operit.api.chat.llmprovider.RateLimitedAIService
 import com.ai.assistance.operit.api.chat.llmprovider.RateLimiterRegistry
 import com.ai.assistance.operit.api.chat.llmprovider.RequestConcurrencyRegistry
+import com.ai.assistance.operit.api.chat.llmprovider.withFunctionalReasoning
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelParameter
@@ -139,7 +140,18 @@ class MultiServiceManager(private val context: Context) {
         val config = modelConfigManager.getModelConfigFlow(configMapping.configId).first()
 
         val actualModelIndex = getValidModelIndex(config.modelName, configMapping.modelIndex)
-        val service = createServiceFromConfig(config, actualModelIndex)
+        val selectedModelConfig =
+            config.copy(modelName = getModelByIndex(config.modelName, actualModelIndex))
+        val baseService = createServiceFromConfig(config, actualModelIndex)
+        val service =
+            if (functionType == FunctionType.CHAT) {
+                baseService
+            } else {
+                baseService.withFunctionalReasoning(
+                    config = selectedModelConfig,
+                    thinkingQualityLevel = configMapping.thinkingQualityLevel,
+                )
+            }
         val managedService = ManagedService(
             service = service,
             modelConfig = config,
@@ -151,7 +163,10 @@ class MultiServiceManager(private val context: Context) {
             defaultService = managedService
         }
 
-        AppLogger.d(TAG, "已为功能${functionType}创建服务实例，使用配置${config.name}，模型索引${configMapping.modelIndex}")
+        AppLogger.d(
+            TAG,
+            "已为功能${functionType}创建服务实例，使用配置${config.name}，模型索引${configMapping.modelIndex}，思考程度${configMapping.thinkingQualityLevel}",
+        )
         return managedService
     }
 

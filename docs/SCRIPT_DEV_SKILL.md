@@ -60,6 +60,8 @@ description: 用于 Operit Sandbox Package 开发。
 - 创建 `SandboxPackage_DEV` 目录
 - 下载并更新 `SKILL.md`
 - 同步并更新 `examples/packages/` 下的示范文件
+
+内置示例由当前 APK 的固定 `assets/packages` 只读接口逐文件读取，落盘统一经过需要权限检查的 `Tools.Files.writeBinary`。更新只覆盖同名内置示例，不会清空 `examples/packages/`，因此用户自行添加的文件会保留。
 - 下载并更新 `references/SCRIPT_DEV_GUIDE.md`
 - 下载并更新 `references/TOOLPKG_FORMAT_GUIDE.md`
 - 下载并更新 `types/` 下全部类型文件

@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.core.tools.javascript
 
+import android.webkit.JavascriptInterface
 import java.io.Closeable
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
@@ -126,7 +127,12 @@ class OperitQuickJsEngine : Closeable {
 
     private fun dispatchNativeCall(methodName: String, argsJson: String?): String? {
         val target = nativeInterfaceRef.get() ?: error("NativeInterface is not bound")
-        val args = decodeArgs(argsJson)
+        val args =
+            if (isNativeMethodStrictlyBudgeted(methodName)) {
+                decodeNativeInterfaceArgs(argsJson)
+            } else {
+                decodeLegacyNativeInterfaceArgs(argsJson)
+            }
         val method = resolveMethod(target, methodName, args.size)
         val convertedArgs = method.parameterTypes.mapIndexed { index, type ->
             convertArg(args[index], type)
@@ -137,13 +143,19 @@ class OperitQuickJsEngine : Closeable {
     private fun resolveMethod(target: Any, methodName: String, argCount: Int): Method {
         val cacheKey = "${target.javaClass.name}#$methodName/$argCount"
         return methodCache.getOrPut(cacheKey) {
-            target.javaClass.methods.firstOrNull { method ->
-                method.name == methodName && method.parameterTypes.size == argCount
-            } ?: error("NativeInterface method not found: $methodName/$argCount")
+            resolveJavascriptInterfaceMethod(target.javaClass, methodName, argCount)
+                ?: error("NativeInterface method not found: $methodName/$argCount")
         }
     }
 
-    private fun decodeArgs(argsJson: String?): List<Any?> {
+    private fun decodeJsonValue(valueJson: String?): Any? {
+        if (valueJson.isNullOrBlank()) {
+            return null
+        }
+        return normalizeJsonValue(JSONTokener(valueJson).nextValue())
+    }
+
+    private fun decodeLegacyNativeInterfaceArgs(argsJson: String?): List<Any?> {
         if (argsJson.isNullOrBlank()) {
             return emptyList()
         }
@@ -152,13 +164,6 @@ class OperitQuickJsEngine : Closeable {
             return emptyList()
         }
         return List(parsed.length()) { index -> normalizeJsonValue(parsed.opt(index)) }
-    }
-
-    private fun decodeJsonValue(valueJson: String?): Any? {
-        if (valueJson.isNullOrBlank()) {
-            return null
-        }
-        return normalizeJsonValue(JSONTokener(valueJson).nextValue())
     }
 
     private fun normalizeJsonValue(value: Any?): Any? {
@@ -197,5 +202,190 @@ class OperitQuickJsEngine : Closeable {
                 ?: 0f
             else -> value?.toString()
         }
+    }
+}
+
+private const val MAX_NATIVE_INTERFACE_ARGS_JSON_CHARS = 2_113_536
+private const val MAX_NATIVE_INTERFACE_ARGS_DEPTH = 64
+private const val MAX_NATIVE_INTERFACE_ARGS_ELEMENTS = 65_536
+private val STRICTLY_BUDGETED_NATIVE_METHODS =
+    setOf(
+        "javaClassExists",
+        "javaLoadDex",
+        "javaLoadJar",
+        "javaListLoadedCodePaths",
+        "javaGetApplicationContext",
+        "javaGetCurrentActivity",
+        "javaNewInstance",
+        "javaCallStatic",
+        "javaCallInstance",
+        "javaCallStaticSuspend",
+        "javaCallInstanceSuspend",
+        "javaGetStaticField",
+        "javaSetStaticField",
+        "javaGetInstanceField",
+        "javaHasInstanceMethod",
+        "javaSetInstanceField",
+        "javaPollPendingJsCallback",
+        "javaResolvePendingJsCallback",
+        "javaSleepMillis",
+        "__javaReleaseInstanceInternal",
+        "listSandboxPackageDevPackageAssets",
+        "readSandboxPackageDevPackageAssetBase64"
+    )
+
+internal fun isNativeMethodStrictlyBudgeted(methodName: String): Boolean =
+    methodName in STRICTLY_BUDGETED_NATIVE_METHODS
+
+internal fun decodeNativeInterfaceArgs(argsJson: String?): List<Any?> {
+    if (argsJson == null) {
+        return emptyList()
+    }
+    validateNativeInterfaceArgsJsonText(argsJson)
+    if (argsJson.isBlank()) {
+        return emptyList()
+    }
+
+    val parsed = JSONTokener(argsJson).nextValue()
+    if (parsed !is JSONArray) {
+        return emptyList()
+    }
+
+    var visitedElements = 0
+    fun consumeElement() {
+        visitedElements += 1
+        require(visitedElements <= MAX_NATIVE_INTERFACE_ARGS_ELEMENTS) {
+            "NativeInterface arguments exceed the element limit " +
+                "($MAX_NATIVE_INTERFACE_ARGS_ELEMENTS)"
+        }
+    }
+    fun normalize(value: Any?, depth: Int): Any? {
+        require(depth <= MAX_NATIVE_INTERFACE_ARGS_DEPTH) {
+            "NativeInterface arguments exceed the nesting depth limit " +
+                "($MAX_NATIVE_INTERFACE_ARGS_DEPTH)"
+        }
+        return when (value) {
+            JSONObject.NULL -> null
+            is JSONArray ->
+                List(value.length()) { index ->
+                    consumeElement()
+                    normalize(value.opt(index), depth + 1)
+                }
+            is JSONObject -> {
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    consumeElement()
+                    normalize(value.opt(keys.next()), depth + 1)
+                }
+                value.toString()
+            }
+            else -> value
+        }
+    }
+
+    return List(parsed.length()) { index ->
+        consumeElement()
+        normalize(parsed.opt(index), 1)
+    }
+}
+
+internal fun validateNativeInterfaceArgsJsonText(argsJson: String) {
+    require(argsJson.length <= MAX_NATIVE_INTERFACE_ARGS_JSON_CHARS) {
+        "NativeInterface arguments exceed the JSON text limit " +
+            "($MAX_NATIVE_INTERFACE_ARGS_JSON_CHARS characters)"
+    }
+
+    var depth = 0
+    var quoteCharacter: Char? = null
+    var escaped = false
+    var scannedElements = 0
+    val containerTypes = mutableListOf<Char>()
+    val arrayExpectingValue = mutableListOf<Boolean>()
+
+    fun consumeElement() {
+        scannedElements += 1
+        require(scannedElements <= MAX_NATIVE_INTERFACE_ARGS_ELEMENTS) {
+            "NativeInterface arguments exceed the element limit " +
+                "($MAX_NATIVE_INTERFACE_ARGS_ELEMENTS)"
+        }
+    }
+
+    argsJson.forEachIndexed { index, character ->
+        if (quoteCharacter != null) {
+            when {
+                escaped -> escaped = false
+                character == '\\' -> escaped = true
+                character == quoteCharacter -> quoteCharacter = null
+            }
+        } else {
+            require(
+                character != '\'' &&
+                    character != ';' &&
+                    character != '=' &&
+                    character != '#' &&
+                    !(
+                        character == '/' &&
+                            (argsJson.getOrNull(index + 1) == '/' || argsJson.getOrNull(index + 1) == '*')
+                    )
+            ) {
+                "NativeInterface arguments use a non-canonical JSON extension"
+            }
+            val currentIndex = containerTypes.lastIndex
+            if (
+                currentIndex >= 0 &&
+                    containerTypes[currentIndex] == '[' &&
+                    arrayExpectingValue[currentIndex] &&
+                    !character.isWhitespace() &&
+                    character != ']' &&
+                    character != ','
+            ) {
+                consumeElement()
+                arrayExpectingValue[currentIndex] = false
+            }
+            when (character) {
+                '"' -> quoteCharacter = character
+                '[', '{' -> {
+                    depth += 1
+                    require(depth <= MAX_NATIVE_INTERFACE_ARGS_DEPTH) {
+                        "NativeInterface arguments exceed the nesting depth limit " +
+                            "($MAX_NATIVE_INTERFACE_ARGS_DEPTH)"
+                    }
+                    containerTypes.add(character)
+                    arrayExpectingValue.add(character == '[')
+                }
+                ']', '}' -> if (depth > 0) {
+                    depth -= 1
+                    containerTypes.removeAt(containerTypes.lastIndex)
+                    arrayExpectingValue.removeAt(arrayExpectingValue.lastIndex)
+                }
+                ',' -> {
+                    val index = containerTypes.lastIndex
+                    if (index >= 0 && containerTypes[index] == '[') {
+                        if (arrayExpectingValue[index]) {
+                            consumeElement()
+                        }
+                        arrayExpectingValue[index] = true
+                    }
+                }
+                ':' -> {
+                    val index = containerTypes.lastIndex
+                    if (index >= 0 && containerTypes[index] == '{') {
+                        consumeElement()
+                    }
+                }
+            }
+        }
+    }
+}
+
+internal fun resolveJavascriptInterfaceMethod(
+    targetClass: Class<*>,
+    methodName: String,
+    argCount: Int
+): Method? {
+    return targetClass.methods.firstOrNull { method ->
+        method.name == methodName &&
+            method.parameterTypes.size == argCount &&
+            method.isAnnotationPresent(JavascriptInterface::class.java)
     }
 }

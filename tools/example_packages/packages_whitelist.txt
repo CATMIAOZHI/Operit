@@ -32,11 +32,7 @@ windows_control
 zhipu_draw.js
 zhipu_search.js
 linux_ssh
-deepsearching
-message_insert
-apktool
 remote_operit
 worldbook
-qqbot
 thinking_guidance
 plan_mode

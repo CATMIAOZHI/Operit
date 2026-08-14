@@ -70,6 +70,10 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
+    <permission
+        android:name="${applicationId}.permission.EXECUTE_JS"
+        android:protectionLevel="signature" />
+
     <queries>
         <!-- 允许查询和绑定到无障碍服务提供者应用 -->
         <package android:name="com.ai.assistance.operit.provider" />
@@ -355,7 +359,8 @@
         <!-- 添加广播接收器配置 -->
         <receiver
             android:name=".core.tools.javascript.ScriptExecutionReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="${applicationId}.permission.EXECUTE_JS">
             <intent-filter>
                 <action android:name="com.ai.assistance.operit.EXECUTE_JS" />
             </intent-filter>
@@ -460,16 +465,11 @@
             </intent-filter>
         </activity>
         
-        <!-- Workflow Tasker Receiver -->
+        <!-- Authenticated Workflow Receiver for external automation apps -->
         <receiver
             android:name=".integrations.tasker.WorkflowTaskerReceiver"
             android:exported="true"
-            android:enabled="true">
-            <intent-filter>
-                <action android:name="com.ai.assistance.operit.TRIGGER_WORKFLOW" />
-                <action android:name="com.twofortyfouram.locale.intent.action.FIRE_SETTING" />
-            </intent-filter>
-        </receiver>
+            android:enabled="true" />
         
         <!-- Boot Completed Receiver for rescheduling workflows -->
         <receiver

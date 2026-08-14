@@ -152,7 +152,7 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.P
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.PendingQueueMessageItem
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ToolPromptManagerDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberMentionVisualTransformation
-import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabel
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabelRes
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.floating.FloatingMode
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
@@ -1861,11 +1861,13 @@ private fun AgentThinkingSliderSettingItem(
             )
             Spacer(modifier = Modifier.weight(1f))
             Text(
-                text = thinkingQualityLevelLabel(
-                    sliderValue.roundToInt().coerceIn(
-                        ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
-                        maxThinkingQualityLevel
-                    )
+                text = stringResource(
+                    thinkingQualityLevelLabelRes(
+                        sliderValue.roundToInt().coerceIn(
+                            ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
+                            maxThinkingQualityLevel,
+                        ),
+                    ),
                 ),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,

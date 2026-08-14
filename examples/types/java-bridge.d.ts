@@ -6,6 +6,11 @@
  *   const obj = Cls.newInstance();
  *   obj.append("hello");
  *   const out = obj.toString();
+ *
+ * Security boundary: only the allowlisted data classes documented in
+ * docs/doc-src/dev-core/JAVA_BRIDGE_INTERFACE.md are accessible. Android/app
+ * classes, Context/Activity, process/file APIs, and external dex/jar loading
+ * are intentionally unavailable.
  */
 
 /**
@@ -17,9 +22,9 @@ export interface JavaBridgeHandle {
 }
 
 /**
- * Marker object produced by `Java.implement(...)`.
- * Pass this object to Java methods/constructors expecting interface arguments.
- * Runtime note: callbacks are marshalled back onto the QuickJS runtime thread.
+ * Compatibility marker produced by `Java.implement(...)`.
+ * The current restricted profile has no interface-proxy target allowlist entries,
+ * so passing this marker to Java methods or constructors is rejected.
  */
 export interface JavaBridgeJsInterfaceMarker {
     __javaJsInterface: true;
@@ -34,7 +39,6 @@ export type JavaBridgePrimitive =
     string |
     number |
     boolean |
-    bigint |
     null |
     undefined;
 
@@ -60,9 +64,20 @@ export type JavaBridgeValue =
     JavaBridgePackage;
 
 /**
- * Argument type accepted by Java bridge dynamic calls.
+ * Structured input accepted by Java bridge dynamic calls.
+ * Interface markers and class/package callable proxies are deliberately excluded:
+ * the restricted runtime rejects them before native registration or invocation.
  */
-export type JavaBridgeArg = JavaBridgeValue;
+export interface JavaBridgeInputRecord {
+    [key: string]: JavaBridgeArg;
+}
+
+export type JavaBridgeArg =
+    JavaBridgePrimitive |
+    JavaBridgeInputRecord |
+    JavaBridgeArg[] |
+    JavaBridgeHandle |
+    JavaBridgeInstance;
 
 /**
  * JS implementation target for Java interface callbacks.
@@ -78,8 +93,8 @@ export type JavaBridgeJsInterfaceImpl =
     Record<string, JavaBridgeJsMethod | JavaBridgeValue>;
 
 /**
- * Interface reference accepted by `Java.implement(...)` / `Java.proxy(...)`.
- * Supports both string class names and Java class proxies (e.g. `Java.java.lang.Runnable`).
+ * Interface reference syntax accepted by `Java.implement(...)` / `Java.proxy(...)`.
+ * Marker creation does not grant permission to consume that interface.
  */
 export type JavaBridgeInterfaceRef = string | JavaBridgeClass;
 
@@ -159,7 +174,7 @@ export interface JavaBridgeClass {
 
 /**
  * Dynamic package namespace proxy:
- * - e.g. `Java.java.lang.System`
+ * - e.g. `Java.java.lang.StringBuilder`
  */
 export interface JavaBridgePackage {
     (...args: JavaBridgeArg[]): JavaBridgeInstance;
@@ -186,16 +201,22 @@ export interface JavaBridgeApi {
     proxy(interfaceNames: JavaBridgeInterfaceRef[], impl: JavaBridgeJsInterfaceImpl): JavaBridgeJsInterfaceMarker;
     proxy(impl: JavaBridgeJsInterfaceImpl): JavaBridgeJsInterfaceMarker;
     classExists(className: string): boolean;
-    loadDex(path: string, options?: string | JavaBridgeExternalCodeLoadOptions): JavaBridgeLoadedCodePath;
-    loadJar(path: string, options?: string | JavaBridgeExternalCodeLoadOptions): JavaBridgeLoadedCodePath;
+    /** @deprecated Disabled by the restricted Java bridge; always throws. */
+    loadDex(path: string, options?: string | JavaBridgeExternalCodeLoadOptions): never;
+    /** @deprecated Disabled by the restricted Java bridge; always throws. */
+    loadJar(path: string, options?: string | JavaBridgeExternalCodeLoadOptions): never;
     listLoadedCodePaths(): JavaBridgeLoadedCodePath[];
     callStatic<T extends JavaBridgeValue = JavaBridgeValue>(className: string, methodName: string, ...args: JavaBridgeArg[]): T;
     callSuspend(className: string, methodName: string, ...args: JavaBridgeArg[]): Promise<JavaBridgeValue>;
     newInstance<T extends JavaBridgeInstance = JavaBridgeInstance>(className: string, ...args: JavaBridgeArg[]): T;
-    getApplicationContext<T extends JavaBridgeInstance = JavaBridgeInstance>(): T;
-    getContext<T extends JavaBridgeInstance = JavaBridgeInstance>(): T;
-    getCurrentActivity<T extends JavaBridgeInstance = JavaBridgeInstance>(): T;
-    getActivity<T extends JavaBridgeInstance = JavaBridgeInstance>(): T;
+    /** @deprecated Disabled by the restricted Java bridge; always throws. */
+    getApplicationContext(): never;
+    /** @deprecated Disabled by the restricted Java bridge; always throws. */
+    getContext(): never;
+    /** @deprecated Disabled by the restricted Java bridge; always throws. */
+    getCurrentActivity(): never;
+    /** @deprecated Disabled by the restricted Java bridge; always throws. */
+    getActivity(): never;
 
     [member: string]: JavaBridgeClass | JavaBridgePackage;
 }

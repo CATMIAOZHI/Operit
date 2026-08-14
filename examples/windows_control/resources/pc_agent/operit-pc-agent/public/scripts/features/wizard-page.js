@@ -21,7 +21,14 @@ export function createWizardPage({ t, W, on = {} }) {
           W.Field({ label: t("field.bindAddress") }, W.Input({ ref: "wizardBindAddressInput", placeholder: "127.0.0.1" })),
           W.Field({ label: t("field.port") }, W.Input({ ref: "wizardPortInput", type: "number", min: 1, max: 65535 })),
           W.Field({ label: t("field.maxCommandTimeoutMs") }, W.Input({ ref: "wizardMaxCommandInput", type: "number", min: 1000, max: 600000 })),
-          W.Field({ label: t("field.apiToken") }, W.Input({ ref: "wizardApiTokenInput", type: "password", placeholder: t("placeholder.apiTokenEmptyDisable") }))
+          W.Field(
+            { label: t("field.currentApiToken") },
+            W.Input({ ref: "wizardCurrentApiTokenInput", type: "password", autocomplete: "off", placeholder: t("placeholder.currentApiToken") })
+          ),
+          W.Field(
+            { label: t("field.newApiToken") },
+            W.Input({ ref: "wizardNewApiTokenInput", type: "password", autocomplete: "off", placeholder: t("placeholder.newApiTokenOptional") })
+          )
         ),
         W.Text({ as: "p", className: "wizard-hint", text: t("wizard.step1Hint") }),
         W.ButtonGroup(
@@ -76,7 +83,7 @@ export function createWizardPage({ t, W, on = {} }) {
 
 export function createWizardController({ api, refs, state, t, helpers, callbacks = {} }) {
   const { setBusy, setNotice, setJsonOutput, asErrorMessage } = helpers;
-  const { reloadConfigAndHealth, onConfigUpdated } = callbacks;
+  const { reloadConfigAndHealth, onApiTokenAccepted } = callbacks;
 
   function setWizardStep(stepIndex) {
     const safeStep = Math.max(0, Math.min(1, Number(stepIndex) || 0));
@@ -88,7 +95,10 @@ export function createWizardController({ api, refs, state, t, helpers, callbacks
     refs.wizardBindAddressInput.value = config.bindAddress || "";
     refs.wizardPortInput.value = config.port || 58321;
     refs.wizardMaxCommandInput.value = config.maxCommandMs || 30000;
-    refs.wizardApiTokenInput.value = config.apiToken || "";
+    if (state.configAuthToken) {
+      refs.wizardCurrentApiTokenInput.value = state.configAuthToken;
+    }
+    refs.wizardNewApiTokenInput.value = "";
   }
 
   function chooseRecommendedHost() {
@@ -177,7 +187,7 @@ export function createWizardController({ api, refs, state, t, helpers, callbacks
 
     const defaultValues = {
       baseUrl: buildRecommendedAgentBaseUrl(),
-      token: String((state.config && state.config.apiToken) || "").trim(),
+      token: String(state.configAuthToken || "").trim(),
       defaultShell: "powershell",
       timeoutMs: String((state.config && state.config.maxCommandMs) || 30000)
     };
@@ -288,14 +298,25 @@ export function createWizardController({ api, refs, state, t, helpers, callbacks
     setBusy("wizardSaveNextButton", true, t("action.saveAndNext"), t("action.working"));
 
     try {
+      const currentToken = refs.wizardCurrentApiTokenInput.value.trim();
+      const replacementToken = refs.wizardNewApiTokenInput.value.trim();
+      if (!currentToken) {
+        throw new Error(t("error.currentApiTokenRequired"));
+      }
       const payload = {
         bindAddress: refs.wizardBindAddressInput.value.trim(),
         port: Number(refs.wizardPortInput.value),
         maxCommandMs: Number(refs.wizardMaxCommandInput.value),
-        apiToken: refs.wizardApiTokenInput.value
+        token: currentToken,
+        ...(replacementToken ? { apiToken: replacementToken } : {})
       };
 
       const result = await api.updateConfig(payload);
+      const acceptedToken = replacementToken || currentToken;
+      if (typeof onApiTokenAccepted === "function") {
+        onApiTokenAccepted(acceptedToken);
+      }
+      refs.wizardNewApiTokenInput.value = "";
       setJsonOutput("wizardStep1Output", result);
 
       if (result.restartRequired) {
@@ -319,30 +340,21 @@ export function createWizardController({ api, refs, state, t, helpers, callbacks
 
 
   async function ensureAgentTokenForOneClick() {
-    const currentToken = String((state.config && state.config.apiToken) || "").trim();
+    const currentToken = String(state.configAuthToken || "").trim();
     if (currentToken) {
       return currentToken;
     }
-
-    const updated = await api.updateConfig({ apiToken: "" });
-    if (!updated || !updated.config) {
-      throw new Error("Failed to generate API token");
-    }
-
-    state.config = updated.config;
-
-    if (typeof onConfigUpdated === "function") {
-      onConfigUpdated(updated.config);
-    }
-
-    return String(updated.config.apiToken || "").trim();
+    throw new Error(t("error.currentApiTokenRequired"));
   }
 
   async function handleWizardOneClickFill() {
     setBusy("wizardOneClickFillButton", true, t("action.oneClickFill"), t("action.working"));
 
     try {
-      await ensureAgentTokenForOneClick();
+      const currentToken = await ensureAgentTokenForOneClick();
+      if (typeof onApiTokenAccepted === "function") {
+        onApiTokenAccepted(currentToken);
+      }
       syncFromState({ forceMobileDefaults: true });
       setNotice("ok", t("message.oneClickFilled"));
     } catch (error) {

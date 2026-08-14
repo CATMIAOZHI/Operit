@@ -51,18 +51,18 @@ This makes them suitable for:
 
 ## JS Test Suites In This Repo
 
-The directory [app/src/androidTest/js](/d:/Code/prog/assistance/app/src/androidTest/js) contains real JS runtime tests and probes, including:
+The directory [app/src/androidTest/js](/d:/Code/prog/assistance/app/src/androidTest/js) contains JS runtime tests and probes. The current Java bridge runtime suite is `restricted_bridge`; `bridge_contract` and `bridge_edges` are legacy unrestricted-bridge assets kept only for migration and are expected to be rejected by the current runtime.
 
-- bridge contract tests
-- bridge edge-case tests
+- restricted Java bridge contract tests
+- legacy unrestricted bridge contract/edge assets (expected incompatible)
 - script-mode contract tests
 - browser tool smoke tests
 - ffmpeg / utility probes
 
 Representative locations:
 
-- [app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_contract](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_contract)
-- [app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_edges](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_edges)
+- [app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/restricted_bridge](../../app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/restricted_bridge)
+- Legacy only: [bridge_contract](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_contract) and [bridge_edges](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/bridge_edges)
 - [app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/script_mode_contract](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/javascript/script_mode_contract)
 - [app/src/androidTest/js/com/ai/assistance/operit/core/tools/defaultTool/standard/browser/main.js](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/core/tools/defaultTool/standard/browser/main.js)
 - [app/src/androidTest/js/com/ai/assistance/operit/util/ttscleaner/ttscleaner.js](/d:/Code/prog/assistance/app/src/androidTest/js/com/ai/assistance/operit/util/ttscleaner/ttscleaner.js)
@@ -82,7 +82,20 @@ If you just want the short answer for "which tool should I use":
 - Android SDK (ADB)
 - Android device with USB debugging enabled
 - ADB debugging permission granted on the device
-- Your application installed on the device
+- The Operit Ry debug application installed on the device
+
+The launchers target the `personal/dev` debug application ID `com.rainy.operitry.dev` by default. Set `OPERIT_APP_PACKAGE` only when targeting another debug application ID:
+
+```bash
+OPERIT_APP_PACKAGE=com.example.operit.debug ./execute_js.sh path/to/your/script.js functionName '{}'
+```
+
+```cmd
+set OPERIT_APP_PACKAGE=com.example.operit.debug
+execute_js.bat path\to\your\script.js functionName @params.json
+```
+
+Only the `debug` variant exposes this development entry point to ADB shell, guarded by the shell-held platform `android.permission.DUMP`; ordinary third-party apps cannot call it. `clone`, `release`, and `nightly` keep the receiver behind the app's signature permission and reject ordinary shell broadcasts.
 
 ## Quick Start
 
@@ -133,7 +146,7 @@ Linux/macOS:
 More realistic examples:
 
 ```cmd
-tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\bridge_contract\bridge_contract_runner.js run @params.json
+tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\restricted_bridge\restricted_bridge.js run @params.json
 tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\defaultTool\standard\browser\main.js run "{}"
 ```
 
@@ -310,7 +323,7 @@ Use it for:
 Most common usage:
 
 ```cmd
-tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\bridge_contract\bridge_contract_runner.js run @params.json
+tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\restricted_bridge\restricted_bridge.js run @params.json
 ```
 
 Call format:
@@ -564,7 +577,7 @@ tools\adb\execute_js.bat examples\my_script.js main @params.json
 ### 2. Run one `androidTest/js` directory-based test entry
 
 ```cmd
-tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\bridge_contract\bridge_contract_runner.js run @params.json
+tools\adb\execute_js_dir.bat app\src\androidTest\js com\ai\assistance\operit\core\tools\javascript\restricted_bridge\restricted_bridge.js run @params.json
 ```
 
 ### 3. Run one top-level script-mode probe

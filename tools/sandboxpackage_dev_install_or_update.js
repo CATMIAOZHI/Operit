@@ -11,7 +11,6 @@ const SandboxPackageDevInstaller = (function () {
   const SCRIPTS_DIR = `${SKILL_ROOT}/scripts`;
   const EXAMPLES_DIR = `${SKILL_ROOT}/examples`;
   const EXAMPLE_PACKAGES_DIR = `${EXAMPLES_DIR}/packages`;
-  const BUILTIN_PACKAGES_ASSET_DIR = "packages";
   const CDN_BASE = "https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/main";
   const MAX_DOWNLOAD_CONCURRENCY = 8;
   const TYPE_FILES = [
@@ -40,7 +39,6 @@ const SandboxPackageDevInstaller = (function () {
     "ui.d.ts",
     "workflow.d.ts"
   ];
-
   const DOWNLOADS = [
     {
       url: `${CDN_BASE}/docs/SCRIPT_DEV_SKILL.md`,
@@ -54,12 +52,13 @@ const SandboxPackageDevInstaller = (function () {
       url: `${CDN_BASE}/docs/TOOLPKG_FORMAT_GUIDE.md`,
       destination: `${REFERENCES_DIR}/TOOLPKG_FORMAT_GUIDE.md`
     }
-  ].concat(
-    TYPE_FILES.map((fileName) => ({
-      url: `${CDN_BASE}/examples/types/${fileName}`,
-      destination: `${TYPES_DIR}/${fileName}`
-    }))
-  );
+  ]
+    .concat(
+      TYPE_FILES.map((fileName) => ({
+        url: `${CDN_BASE}/examples/types/${fileName}`,
+        destination: `${TYPES_DIR}/${fileName}`
+      }))
+    );
 
   function logStep(message) {
     SandboxPackageDevInstallerState.logs.push(message);
@@ -94,44 +93,44 @@ const SandboxPackageDevInstaller = (function () {
     await Promise.all(workers);
   }
 
-  function collectRelativeFiles(directory, relativePrefix, collectedFiles) {
-    const children = directory.listFiles();
-    if (!children) {
-      return;
-    }
-
-    for (let index = 0; index < children.length; index += 1) {
-      const child = children[index];
-      const relativePath = relativePrefix
-        ? `${relativePrefix}/${String(child.getName())}`
-        : String(child.getName());
-
-      if (child.isDirectory()) {
-        collectRelativeFiles(child, relativePath, collectedFiles);
-        continue;
-      }
-
-      collectedFiles.push(relativePath);
+  function requireBundledPackageAssetApi() {
+    if (
+      typeof NativeInterface !== "object" ||
+      typeof NativeInterface.listSandboxPackageDevPackageAssets !== "function" ||
+      typeof NativeInterface.readSandboxPackageDevPackageAssetBase64 !== "function"
+    ) {
+      throw new Error(
+        "This Operit build does not provide the read-only SandboxPackage_DEV asset API"
+      );
     }
   }
 
-  function syncBuiltInPackageExamples() {
-    const File = Java.type("java.io.File");
-    const AssetCopyUtils = Java.type("com.ai.assistance.operit.util.AssetCopyUtils");
-    const context = Java.getApplicationContext();
-    const outputDir = new File(EXAMPLE_PACKAGES_DIR);
-    const copiedFiles = [];
-
-    AssetCopyUtils.INSTANCE.copyAssetDirRecursive(
-      context,
-      BUILTIN_PACKAGES_ASSET_DIR,
-      outputDir,
-      true
-    );
-
-    collectRelativeFiles(outputDir, "", copiedFiles);
-    copiedFiles.sort();
-    return copiedFiles;
+  async function syncBundledPackageExamples() {
+    requireBundledPackageAssetApi();
+    const result = JSON.parse(NativeInterface.listSandboxPackageDevPackageAssets());
+    if (!result || result.success !== true || !Array.isArray(result.files)) {
+      throw new Error(
+        String(result && result.message ? result.message : "Failed to list bundled package examples")
+      );
+    }
+    for (const fileName of result.files) {
+      const readResult = JSON.parse(
+        NativeInterface.readSandboxPackageDevPackageAssetBase64(fileName)
+      );
+      if (!readResult || readResult.success !== true || typeof readResult.base64 !== "string") {
+        throw new Error(
+          String(
+            readResult && readResult.message
+              ? readResult.message
+              : `Failed to read bundled package example: ${fileName}`
+          )
+        );
+      }
+      const destination = `${EXAMPLE_PACKAGES_DIR}/${fileName}`;
+      logStep(`Writing built-in package example -> ${destination}`);
+      await Tools.Files.writeBinary(destination, readResult.base64, ENVIRONMENT);
+    }
+    return result.files;
   }
 
   async function run() {
@@ -142,10 +141,10 @@ const SandboxPackageDevInstaller = (function () {
     await makeDirectory(TYPES_DIR);
     await makeDirectory(SCRIPTS_DIR);
     await makeDirectory(EXAMPLES_DIR);
+    await makeDirectory(EXAMPLE_PACKAGES_DIR);
     await downloadAllFiles();
 
-    logStep(`Syncing built-in package examples -> ${EXAMPLE_PACKAGES_DIR}`);
-    const copiedExampleFiles = syncBuiltInPackageExamples();
+    const copiedExampleFiles = await syncBundledPackageExamples();
     logStep(`Built-in package examples synced -> ${copiedExampleFiles.length} files`);
 
     return {

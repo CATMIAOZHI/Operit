@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import android.widget.Toast
 import com.ai.assistance.operit.util.AssetCopyUtils
 import com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory
+import com.ai.assistance.operit.api.chat.llmprovider.withFunctionalReasoning
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkBuilder
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
@@ -38,14 +39,17 @@ import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.FunctionConfigMapping
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
+import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.core.config.FunctionalPrompts
 import com.ai.assistance.operit.core.tools.PermissionReviewSubmissionTool
 import com.ai.assistance.operit.ui.permissions.PermissionReviewResponsePolicy
 import com.ai.assistance.operit.util.ImagePoolManager
 import com.ai.assistance.operit.util.MediaPoolManager
 import com.ai.assistance.operit.util.LocaleUtils
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabelRes
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -171,6 +175,8 @@ fun FunctionalConfigScreen(
                             functionType = functionType,
                             currentConfig = currentConfig,
                             currentModelIndex = currentConfigMapping.modelIndex,
+                            currentThinkingQualityLevel =
+                                currentConfigMapping.thinkingQualityLevel,
                             availableConfigs = configSummaries,
                             onConfigSelected = { configId, modelIndex ->
                                 scope.launch {
@@ -183,6 +189,19 @@ fun FunctionalConfigScreen(
                                     EnhancedAIService.refreshServiceForFunction(
                                             context,
                                             functionType
+                                    )
+                                    showSaveSuccess = true
+                                }
+                            },
+                            onThinkingQualitySelected = { qualityLevel ->
+                                scope.launch {
+                                    functionalConfigManager.setThinkingQualityForFunction(
+                                        functionType,
+                                        qualityLevel,
+                                    )
+                                    EnhancedAIService.refreshServiceForFunction(
+                                        context,
+                                        functionType,
                                     )
                                     showSaveSuccess = true
                                 }
@@ -260,16 +279,30 @@ fun FunctionalConfigScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FunctionConfigCard(
         functionType: FunctionType,
         currentConfig: ModelConfigSummary?,
         currentModelIndex: Int,
+        currentThinkingQualityLevel: Int,
         availableConfigs: List<ModelConfigSummary>,
-        onConfigSelected: (String, Int) -> Unit
+        onConfigSelected: (String, Int) -> Unit,
+        onThinkingQualitySelected: (Int) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var expandedConfigId by remember { mutableStateOf<String?>(null) } // 记录当前展开的配置的模型列表
+    var pendingReasoningLevel by
+        remember(functionType, currentThinkingQualityLevel) {
+            mutableFloatStateOf(
+                currentThinkingQualityLevel
+                    .coerceIn(
+                        ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
+                        ApiPreferences.MAX_THINKING_QUALITY_LEVEL,
+                    )
+                    .toFloat()
+            )
+        }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val modelConfigManager = remember { ModelConfigManager(context) }
@@ -480,12 +513,22 @@ fun FunctionConfigCard(
                                             val selectedModelName = getModelByIndex(fullConfig.modelName, actualIndex)
                                             val configWithSelectedModel = fullConfig.copy(modelName = selectedModelName)
 
-                                            val service =
+                                            val baseService =
                                                     AIServiceFactory.createService(
                                                             config = configWithSelectedModel,
                                                             modelConfigManager = modelConfigManager,
                                                             context = context
                                                     )
+                                            val service =
+                                                if (functionType == FunctionType.CHAT) {
+                                                    baseService
+                                                } else {
+                                                    baseService.withFunctionalReasoning(
+                                                        config = configWithSelectedModel,
+                                                        thinkingQualityLevel =
+                                                            currentThinkingQualityLevel,
+                                                    )
+                                                }
 
                                             val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
                                             val result = when (functionType) {
@@ -780,6 +823,76 @@ fun FunctionConfigCard(
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (functionType == FunctionType.CHAT) {
+                    Text(
+                        text = stringResource(R.string.functional_reasoning_chat_managed),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    val selectedReasoningLevel = pendingReasoningLevel.roundToInt()
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.functional_reasoning_intensity),
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Text(
+                                text = stringResource(thinkingQualityLevelLabelRes(selectedReasoningLevel)),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        Slider(
+                            value = pendingReasoningLevel,
+                            onValueChange = { value ->
+                                pendingReasoningLevel = value.roundToInt().toFloat()
+                            },
+                            onValueChangeFinished = {
+                                onThinkingQualitySelected(pendingReasoningLevel.roundToInt())
+                            },
+                            valueRange =
+                                ApiPreferences.MIN_THINKING_QUALITY_LEVEL.toFloat()..
+                                    ApiPreferences.MAX_THINKING_QUALITY_LEVEL.toFloat(),
+                            steps =
+                                ApiPreferences.MAX_THINKING_QUALITY_LEVEL -
+                                    ApiPreferences.MIN_THINKING_QUALITY_LEVEL -
+                                    1,
+                        )
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            (
+                                ApiPreferences.MIN_THINKING_QUALITY_LEVEL..
+                                    ApiPreferences.MAX_THINKING_QUALITY_LEVEL
+                            ).forEach { level ->
+                                Text(
+                                    text = stringResource(thinkingQualityLevelLabelRes(level)),
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color =
+                                        if (level == selectedReasoningLevel) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = stringResource(R.string.functional_reasoning_intensity_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

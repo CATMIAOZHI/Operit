@@ -114,7 +114,7 @@ class PredicateCondition(
             "not letterOrDigit" -> "\\W"
             "any" -> "."
             "asciiXmlTagFirstChar" -> "[A-Za-z]"
-            "xmlTagNameContinuation" -> "[A-Za-z0-9_]"
+            "xmlTagNameContinuation" -> "[A-Za-z0-9_.:-]"
             else -> "." // 默认为任意字符
         }
     }
