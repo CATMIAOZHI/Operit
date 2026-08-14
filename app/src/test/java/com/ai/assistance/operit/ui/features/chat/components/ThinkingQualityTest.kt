@@ -463,6 +463,47 @@ class ThinkingQualityTest {
     }
 
     @Test fun requestSummary_preservesProviderOverridesWhileGlobalThinkingIsOff() {
+        val plainOpenAiCompatibleProviders =
+            listOf(
+                ApiProviderType.OPENAI_LOCAL,
+                ApiProviderType.LMSTUDIO,
+                ApiProviderType.OLLAMA,
+                ApiProviderType.MISTRAL,
+                ApiProviderType.FOUR_ROUTER,
+                ApiProviderType.BAIDU,
+                ApiProviderType.XUNFEI,
+                ApiProviderType.ZHIPU,
+                ApiProviderType.BAICHUAN,
+                ApiProviderType.IFLOW,
+                ApiProviderType.INFINIAI,
+                ApiProviderType.ALIPAY_BAILING,
+                ApiProviderType.PPINFRA,
+                ApiProviderType.NOVITA,
+                ApiProviderType.OTHER,
+            )
+        plainOpenAiCompatibleProviders.forEach { providerType ->
+            assertEquals(
+                providerType.name,
+                ThinkingRequestSummary.Effort("high"),
+                ThinkingRequestSemantics.resolve(
+                    providerType = providerType,
+                    modelName = "openai-compatible-model",
+                    qualityLevel = 5,
+                    modelParameters = listOf(stringParameter("reasoning_effort", "high")),
+                    enableThinking = false,
+                ),
+            )
+        }
+        assertEquals(
+            ThinkingRequestSummary.CustomValue(""),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI_LOCAL,
+                modelName = "openai-compatible-model",
+                qualityLevel = 5,
+                modelParameters = listOf(stringParameter("reasoning_effort", "   ")),
+                enableThinking = false,
+            ),
+        )
         assertEquals(
             ThinkingRequestSummary.Disabled,
             ThinkingRequestSemantics.resolve(

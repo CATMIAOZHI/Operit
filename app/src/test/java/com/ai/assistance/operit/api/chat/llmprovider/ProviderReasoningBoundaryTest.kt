@@ -5,6 +5,8 @@ import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.model.ApiProviderType
+import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.stream.StreamLogger
@@ -16,6 +18,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -23,6 +26,105 @@ import org.junit.Test
 import org.mockito.Mockito
 
 class ProviderReasoningBoundaryTest {
+    @Test
+    fun openAiCompatibleProviderPreservesExplicitReasoningEffortWhenThinkingIsOff() = runBlocking {
+        val provider =
+            object : OpenAIProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "openai-compatible-model",
+                client = OkHttpClient(),
+                providerType = ApiProviderType.OPENAI_LOCAL,
+            ) {
+                fun buildRequest(
+                    context: Context,
+                    modelParameters: List<ModelParameter<*>>,
+                ): JSONObject {
+                    val requestBody =
+                        createRequestBody(
+                            context = context,
+                            chatHistory = emptyList(),
+                            modelParameters = modelParameters,
+                            enableThinking = false,
+                            stream = false,
+                        )
+                    val buffer = Buffer()
+                    requestBody.writeTo(buffer)
+                    return JSONObject(buffer.readUtf8())
+                }
+            }
+        val reasoningEffort =
+            ModelParameter(
+                id = "reasoning_effort",
+                name = "reasoning_effort",
+                apiName = "reasoning_effort",
+                defaultValue = "high",
+                currentValue = "high",
+                isEnabled = true,
+                valueType = ParameterValueType.STRING,
+            )
+
+        withoutAndroidLoggingOnCurrentThread {
+            assertEquals(
+                "high",
+                provider
+                    .buildRequest(Mockito.mock(Context::class.java), listOf(reasoningEffort))
+                    .getString("reasoning_effort"),
+            )
+        }
+    }
+
+    @Test
+    fun thinOpenAiCompatibleProviderPreservesExplicitReasoningEffortWhenThinkingIsOff() = runBlocking {
+        var capturedRequest: JSONObject? = null
+        val provider =
+            MistralProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "mistral-compatible-model",
+                client =
+                    clientForBody(
+                        body =
+                            """
+                            {
+                              "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                              "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+                            }
+                            """.trimIndent(),
+                        mediaType = "application/json",
+                        onRequest = { capturedRequest = it },
+                    ),
+            )
+        val reasoningEffort =
+            ModelParameter(
+                id = "reasoning_effort",
+                name = "reasoning_effort",
+                apiName = "reasoning_effort",
+                defaultValue = "high",
+                currentValue = "high",
+                isEnabled = true,
+                valueType = ParameterValueType.STRING,
+            )
+
+        withoutAndroidLogging {
+            provider
+                .sendMessage(
+                    context = Mockito.mock(Context::class.java),
+                    chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                    modelParameters = listOf(reasoningEffort),
+                    enableThinking = false,
+                    stream = false,
+                    availableTools = null,
+                    preserveThinkInHistory = false,
+                    onTokensUpdated = { _, _, _ -> },
+                    onNonFatalError = {},
+                    enableRetry = false,
+                ).collect {}
+        }
+
+        assertEquals("high", capturedRequest?.getString("reasoning_effort"))
+    }
+
     @Test
     fun geminiReasoningCannotCloseThinkingEnvelopeAndInjectTool() = runBlocking {
         val provider =
@@ -183,9 +285,18 @@ class ProviderReasoningBoundaryTest {
     private fun clientForSse(sseBody: String): OkHttpClient =
         clientForBody(sseBody, "text/event-stream")
 
-    private fun clientForBody(body: String, mediaType: String): OkHttpClient =
+    private fun clientForBody(
+        body: String,
+        mediaType: String,
+        onRequest: ((JSONObject) -> Unit)? = null,
+    ): OkHttpClient =
         OkHttpClient.Builder()
             .addInterceptor { chain ->
+                onRequest?.let { callback ->
+                    val buffer = Buffer()
+                    chain.request().body?.writeTo(buffer)
+                    callback(JSONObject(buffer.readUtf8()))
+                }
                 Response.Builder()
                     .request(chain.request())
                     .protocol(Protocol.HTTP_1_1)

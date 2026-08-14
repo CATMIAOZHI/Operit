@@ -124,6 +124,24 @@ object ThinkingRequestSemantics {
                             ?.takeIf { it.isNotBlank() }
                             ?.let(ThinkingRequestSummary::Effort)
 
+                    ApiProviderType.OPENAI_LOCAL,
+                    ApiProviderType.LMSTUDIO,
+                    ApiProviderType.OLLAMA,
+                    ApiProviderType.MISTRAL,
+                    ApiProviderType.FOUR_ROUTER,
+                    ApiProviderType.BAIDU,
+                    ApiProviderType.XUNFEI,
+                    ApiProviderType.ZHIPU,
+                    ApiProviderType.BAICHUAN,
+                    ApiProviderType.IFLOW,
+                    ApiProviderType.INFINIAI,
+                    ApiProviderType.ALIPAY_BAILING,
+                    ApiProviderType.PPINFRA,
+                    ApiProviderType.NOVITA,
+                    ApiProviderType.OTHER ->
+                        enabledTextParameter(modelParameters, "reasoning_effort")
+                            ?.let(::textSummary)
+
                     ApiProviderType.OPENAI_RESPONSES,
                     ApiProviderType.OPENAI_RESPONSES_GENERIC ->
                         resolveResponsesOverride(modelParameters)
