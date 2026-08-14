@@ -52,6 +52,8 @@ class OpenAIResponsesProvider(
         availableTools: List<ToolPrompt>?,
         preserveThinkInHistory: Boolean
     ): RequestBody {
+        val automaticReasoningRequestParameters =
+            consumeAutomaticReasoningSuppression(modelParameters)
         val requestChatHistory =
             if (enableThinking) {
                 chatHistory
@@ -61,18 +63,20 @@ class OpenAIResponsesProvider(
         val baseRequestBodyJson = super.createRequestBodyInternal(
             context,
             requestChatHistory,
-            modelParameters,
+            automaticReasoningRequestParameters.modelParameters,
             stream,
             availableTools,
             preserveThinkInHistory
         )
         val jsonObject = JSONObject(baseRequestBodyJson)
 
-        applyResponsesReasoningEffort(
-            context = context,
-            requestJson = jsonObject,
-            enableThinking = enableThinking
-        )
+        if (!automaticReasoningRequestParameters.suppressAutomaticReasoning) {
+            applyResponsesReasoningEffort(
+                context = context,
+                requestJson = jsonObject,
+                enableThinking = enableThinking
+            )
+        }
 
         val logJson = JSONObject(jsonObject.toString())
         if (logJson.has("tools")) {

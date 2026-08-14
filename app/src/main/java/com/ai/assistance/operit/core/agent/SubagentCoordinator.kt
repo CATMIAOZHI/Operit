@@ -7,6 +7,7 @@ import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.data.model.ChatTurnOptions
 import com.ai.assistance.operit.data.model.ApiProviderType
+import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.model.ToolPrompt
@@ -54,6 +55,8 @@ data class SubagentTaskRequest(
     /** Actual model used by the parent turn; inherited when the profile has no fixed model. */
     val parentModelConfigId: String? = null,
     val parentModelIndex: Int? = null,
+    /** Runtime functional-model route. Ordinary subagents remain CHAT. */
+    val functionType: FunctionType = FunctionType.CHAT,
     /** False hides every tool schema and ignores tool-call markup for the turn. */
     val toolsEnabled: Boolean = true,
     /** Optional isolated result-tool surface used by internal reviewer turns. */
@@ -63,6 +66,24 @@ data class SubagentTaskRequest(
     /** Actual model lease held by a running parent Subagent, for reviewer-only reentrancy. */
     val reentrantParentModelConfigId: String? = null,
 )
+
+internal fun SubagentTaskRequest.toChatTurnOptions(
+    systemPrompt: String,
+    assistantRoleName: String,
+): ChatTurnOptions =
+    ChatTurnOptions(
+        persistTurn = true,
+        notifyReply = false,
+        isSubTask = true,
+        functionType = functionType,
+        toolsEnabled = toolsEnabled,
+        isolatedToolPrompts = isolatedToolPrompts,
+        terminalToolNames = terminalToolNames,
+        promptHooksEnabled = promptHooksEnabled,
+        systemPromptOverride = systemPrompt,
+        userRoleNameOverride = parentAgentName,
+        assistantRoleNameOverride = assistantRoleName,
+    )
 
 sealed interface SubagentTaskResult {
     val run: SubagentRunEntity
@@ -426,20 +447,12 @@ class SubagentCoordinator private constructor(context: Context) {
                                 roleCardId = null,
                                 proxySenderName = null,
                                 turnOptions =
-                                    ChatTurnOptions(
-                                        persistTurn = true,
-                                        notifyReply = false,
-                                        isSubTask = true,
-                                        toolsEnabled = request.toolsEnabled,
-                                        isolatedToolPrompts = request.isolatedToolPrompts,
-                                        terminalToolNames = request.terminalToolNames,
-                                        promptHooksEnabled = request.promptHooksEnabled,
-                                        systemPromptOverride =
+                                    request.toChatTurnOptions(
+                                        systemPrompt =
                                             SubagentPromptBuilder.buildSystemPrompt(
                                                 resolved.profile
                                             ),
-                                        userRoleNameOverride = request.parentAgentName,
-                                        assistantRoleNameOverride = resolved.profile.name,
+                                        assistantRoleName = resolved.profile.name,
                                     ),
                                 chatModelConfigIdOverride = modelConfigId,
                                 chatModelIndexOverride = modelIndex,

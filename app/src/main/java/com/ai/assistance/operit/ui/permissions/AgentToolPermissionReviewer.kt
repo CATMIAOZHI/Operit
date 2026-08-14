@@ -323,6 +323,7 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
                                 taskId = latestReviewerTaskId,
                                 parentModelConfigId = reviewerModel.configId,
                                 parentModelIndex = reviewerModel.modelIndex,
+                                functionType = FunctionType.PERMISSION_REVIEWER,
                                 toolsEnabled = true,
                                 isolatedToolPrompts = PermissionReviewInternalTools.prompts,
                                 terminalToolNames = setOf(PermissionReviewSubmissionTool.NAME),
