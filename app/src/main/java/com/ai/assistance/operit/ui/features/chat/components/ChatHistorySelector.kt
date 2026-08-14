@@ -28,7 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -102,6 +102,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -153,6 +154,11 @@ import coil.compose.rememberAsyncImagePainter
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.flowOf
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 
 private data class GroupTarget(
     val folderId: String,
@@ -232,6 +238,67 @@ private sealed interface HistoryListItem {
         val depth: Int = 1,
     ) : HistoryListItem
     data class Item(val history: ChatHistory, val depth: Int = 0) : HistoryListItem
+}
+
+@Composable
+private fun HistoryTimeSectionHeader(section: ChatHistoryTimeSection) {
+    val labelRes =
+        when (section) {
+            ChatHistoryTimeSection.TODAY -> R.string.chat_history_time_today
+            ChatHistoryTimeSection.YESTERDAY -> R.string.chat_history_time_yesterday
+            ChatHistoryTimeSection.MONDAY -> R.string.chat_history_time_monday
+            ChatHistoryTimeSection.TUESDAY -> R.string.chat_history_time_tuesday
+            ChatHistoryTimeSection.WEDNESDAY -> R.string.chat_history_time_wednesday
+            ChatHistoryTimeSection.THURSDAY -> R.string.chat_history_time_thursday
+            ChatHistoryTimeSection.FRIDAY -> R.string.chat_history_time_friday
+            ChatHistoryTimeSection.SATURDAY -> R.string.chat_history_time_saturday
+            ChatHistoryTimeSection.SUNDAY -> R.string.chat_history_time_sunday
+            ChatHistoryTimeSection.SEVEN_DAYS_AGO -> R.string.chat_history_time_seven_days_ago
+        }
+    Text(
+        text = stringResource(labelRes),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = FontWeight.SemiBold,
+    )
+}
+
+@Composable
+private fun rememberCurrentLocalDateContext(): CurrentLocalDateContext {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var currentContext by remember { mutableStateOf(currentLocalDateContext()) }
+    DisposableEffect(lifecycleOwner) {
+        val observer =
+            LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    currentContext = currentLocalDateContext()
+                }
+            }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val zoneId = ZoneId.systemDefault()
+            delay(localDateRefreshDelayMillis(Instant.now(), zoneId))
+            currentContext = currentLocalDateContext()
+        }
+    }
+    return currentContext
+}
+
+private data class CurrentLocalDateContext(
+    val date: LocalDate,
+    val zoneId: ZoneId,
+)
+
+private fun currentLocalDateContext(): CurrentLocalDateContext {
+    val zoneId = ZoneId.systemDefault()
+    return CurrentLocalDateContext(LocalDate.now(zoneId), zoneId)
 }
 
 @Composable
@@ -861,6 +928,7 @@ fun ChatHistorySelector(
         }
     }
     val actualLazyListState = lazyListState ?: rememberLazyListState()
+    val historyTimeContext = rememberCurrentLocalDateContext()
     val ungroupedText = stringResource(R.string.ungrouped)
     val categoryHistories =
         remember(chatHistories, selectedCategory) {
@@ -3406,16 +3474,16 @@ fun ChatHistorySelector(
                     .fillMaxWidth()
                     .padding(start = 10.dp, end = 22.dp)
             ) {
-                items(
+                itemsIndexed(
                     items = reorderItems,
-                    key = {
-                        when (it) {
-                            is HistoryListItem.CharacterHeader -> it.key
-                            is HistoryListItem.Header -> it.key
-                            is HistoryListItem.Item -> "chat:${it.history.id}"
+                    key = { _, item ->
+                        when (item) {
+                            is HistoryListItem.CharacterHeader -> item.key
+                            is HistoryListItem.Header -> item.key
+                            is HistoryListItem.Item -> "chat:${item.history.id}"
                         }
                     }
-                ) { item ->
+                ) { index, item ->
                     when (item) {
                         is HistoryListItem.CharacterHeader -> {
                         val userPreferencesManager = remember { UserPreferencesManager.getInstance(context) }
@@ -3759,6 +3827,26 @@ fun ChatHistorySelector(
                         }
                     }
                     is HistoryListItem.Item -> {
+                        if (
+                            selectedCategory == ChatHistoryCategory.RECENT &&
+                                searchQuery.isBlank()
+                        ) {
+                            val section =
+                                item.history.timeSection(
+                                    historyTimeContext.date,
+                                    historyTimeContext.zoneId,
+                                )
+                            val previousSection =
+                                (reorderItems.getOrNull(index - 1) as? HistoryListItem.Item)
+                                    ?.history
+                                    ?.timeSection(
+                                        historyTimeContext.date,
+                                        historyTimeContext.zoneId,
+                                    )
+                            if (section != previousSection) {
+                                HistoryTimeSectionHeader(section)
+                            }
+                        }
                         val deleteAction = SwipeAction(
                             onSwipe = { promptDeleteChat(item.history) },
                             icon = {

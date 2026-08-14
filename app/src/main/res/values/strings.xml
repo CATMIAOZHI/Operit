@@ -8393,6 +8393,16 @@
     <string name="chat_category_all">所有</string>
     <string name="chat_category_recent">最近</string>
     <string name="chat_category_favorites">收藏</string>
+    <string name="chat_history_time_today">今天</string>
+    <string name="chat_history_time_yesterday">昨天</string>
+    <string name="chat_history_time_monday">星期一</string>
+    <string name="chat_history_time_tuesday">星期二</string>
+    <string name="chat_history_time_wednesday">星期三</string>
+    <string name="chat_history_time_thursday">星期四</string>
+    <string name="chat_history_time_friday">星期五</string>
+    <string name="chat_history_time_saturday">星期六</string>
+    <string name="chat_history_time_sunday">星期日</string>
+    <string name="chat_history_time_seven_days_ago">7天前</string>
     <string name="add_to_favorites">收藏对话</string>
     <string name="remove_from_favorites">取消收藏</string>
     <string name="permission_review_policy_title">自动审核策略</string>
