@@ -141,6 +141,42 @@ class ThinkingQualityTest {
                     ),
             ),
         )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-2.5-flash",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        intParameter("thinking_budget", 32_768),
+                        stringParameter("thinking_level", "high"),
+                        objectParameter(
+                            "thinkingConfig",
+                            "{\"thinkingBudget\":0}",
+                            ParameterCategory.GENERATION,
+                        ),
+                    ),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("{\"thinkingBudget\":0}"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-2.5-flash",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        intParameter("thinking_budget", 32_768),
+                        stringParameter("thinking_level", "high"),
+                        stringParameter(
+                            "thinkingConfig",
+                            "{\"thinkingBudget\":0}",
+                            ParameterCategory.GENERATION,
+                        ),
+                    ),
+            ),
+        )
     }
 
     @Test fun requestSummary_reportsAliyunConfiguredThinkingIntensity() {
@@ -932,7 +968,11 @@ class ThinkingQualityTest {
         )
     }
 
-    private fun stringParameter(apiName: String, value: String) =
+    private fun stringParameter(
+        apiName: String,
+        value: String,
+        category: ParameterCategory = ParameterCategory.OTHER,
+    ) =
         ModelParameter(
             id = apiName,
             name = apiName,
@@ -941,7 +981,7 @@ class ThinkingQualityTest {
             currentValue = value,
             isEnabled = true,
             valueType = ParameterValueType.STRING,
-            category = ParameterCategory.OTHER,
+            category = category,
         )
 
     private fun intParameter(apiName: String, value: Int) =

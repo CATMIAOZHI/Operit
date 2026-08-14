@@ -3,6 +3,7 @@ package com.ai.assistance.operit.api.chat.llmprovider
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ParameterCategory
+import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -271,7 +272,9 @@ object ThinkingRequestSemantics {
 
             ApiProviderType.GOOGLE,
             ApiProviderType.GEMINI_GENERIC ->
-                resolveGeminiThinkingOverride(modelParameters) ?: ThinkingRequestSummary.Enabled
+                resolveGeminiNativeThinkingConfigOverride(modelParameters)
+                    ?: resolveGeminiThinkingOverride(modelParameters)
+                    ?: ThinkingRequestSummary.Enabled
 
             ApiProviderType.MOONSHOT,
             ApiProviderType.MIMO ->
@@ -441,9 +444,12 @@ object ThinkingRequestSemantics {
                 it.apiName == "thinkingConfig" &&
                     it.isEnabled &&
                     it.category != ParameterCategory.OTHER
-            }
+                }
                 ?: return null
         val raw = parameter.currentValue.toString().trim()
+        if (parameter.valueType != ParameterValueType.OBJECT) {
+            return ThinkingRequestSummary.CustomValue(raw)
+        }
         val thinkingConfig = parseObject(raw)
             ?: return ThinkingRequestSummary.CustomValue(raw)
 
