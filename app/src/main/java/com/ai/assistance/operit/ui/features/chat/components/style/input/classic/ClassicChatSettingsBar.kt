@@ -60,6 +60,7 @@ import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.library.MemoryAutoSaveScheduler
 import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSemantics
 import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSummary
+import com.ai.assistance.operit.api.chat.llmprovider.ClaudeThinkingFormatState
 import com.ai.assistance.operit.data.model.CharacterCardChatModelBindingMode
 import com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode
 import com.ai.assistance.operit.data.model.FunctionType
@@ -268,6 +269,7 @@ fun ClassicChatSettingsBar(
                 currentConfig?.apiProviderTypeId?.let(ToolPkgAiProviderRegistry::get) != null
         }
     }
+    val claudeThinkingFormats by ClaudeThinkingFormatState.formats.collectAsState()
     val thinkingRequestSummary =
         remember(
             currentConfig,
@@ -275,12 +277,15 @@ fun ClassicChatSettingsBar(
             thinkingQualityLevel,
             currentModelParameters,
             currentIsToolPkgProvider,
+            claudeThinkingFormats,
         ) {
             currentConfig?.let { config ->
                 ThinkingRequestSemantics.resolve(
                     providerType = config.apiProviderType,
                     providerTypeId = config.apiProviderTypeId,
                     isToolPkgProvider = currentIsToolPkgProvider,
+                    configId = config.id,
+                    apiEndpoint = config.apiEndpoint,
                     modelName = currentModelName,
                     qualityLevel = thinkingQualityLevel,
                     modelParameters = currentModelParameters,

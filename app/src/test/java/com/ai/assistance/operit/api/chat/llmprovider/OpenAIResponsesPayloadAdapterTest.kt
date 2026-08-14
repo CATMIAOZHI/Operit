@@ -63,4 +63,19 @@ class OpenAIResponsesPayloadAdapterTest {
             )
         )
     }
+
+    @Test
+    fun `independent effort fills missing blank or null reasoning effort`() {
+        listOf("{}", "{\"effort\":\"\"}", "{\"effort\":null}").forEach { reasoning ->
+            val request =
+                JSONObject().apply {
+                    put("reasoning", JSONObject(reasoning))
+                    put("reasoning_effort", "low")
+                }
+
+            val converted = OpenAIResponsesPayloadAdapter.toResponsesRequest(request)
+
+            assertEquals("low", converted.getJSONObject("reasoning").getString("effort"))
+        }
+    }
 }

@@ -9,6 +9,70 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
+
+internal enum class ClaudeThinkingFormat { ADAPTIVE, ENABLED }
+
+internal data class ClaudeThinkingFormatKey(
+    val configId: String,
+    val providerTypeId: String,
+    val apiEndpoint: String,
+    val modelName: String,
+)
+
+internal object ClaudeThinkingFormatState {
+    private val mutableFormats = MutableStateFlow<Map<ClaudeThinkingFormatKey, ClaudeThinkingFormat>>(emptyMap())
+    val formats: StateFlow<Map<ClaudeThinkingFormatKey, ClaudeThinkingFormat>> =
+        mutableFormats.asStateFlow()
+
+    fun key(
+        configId: String,
+        providerTypeId: String,
+        apiEndpoint: String,
+        modelName: String,
+    ): ClaudeThinkingFormatKey {
+        val normalizedConfigId = configId.trim()
+        return ClaudeThinkingFormatKey(
+            configId = normalizedConfigId,
+            providerTypeId =
+                providerTypeId.trim().lowercase().takeIf { normalizedConfigId.isEmpty() }.orEmpty(),
+            apiEndpoint = apiEndpoint.trim().trimEnd('/').lowercase(),
+            modelName = modelName.trim().lowercase(),
+        )
+    }
+
+    fun get(key: ClaudeThinkingFormatKey): ClaudeThinkingFormat? = mutableFormats.value[key]
+
+    fun transitionAfterFailure(
+        key: ClaudeThinkingFormatKey,
+        failedFormat: ClaudeThinkingFormat,
+    ): ClaudeThinkingFormat {
+        val fallbackFormat =
+            if (failedFormat == ClaudeThinkingFormat.ADAPTIVE) {
+                ClaudeThinkingFormat.ENABLED
+            } else {
+                ClaudeThinkingFormat.ADAPTIVE
+            }
+        val updatedFormats =
+            mutableFormats.updateAndGet { formats ->
+                val current = formats[key]
+                if (current == null || current == failedFormat) {
+                    formats + (key to fallbackFormat)
+                } else {
+                    formats
+                }
+            }
+        return updatedFormats.getValue(key)
+    }
+
+    fun clear(key: ClaudeThinkingFormatKey) {
+        mutableFormats.update { it - key }
+    }
+}
 
 sealed interface ThinkingRequestSummary {
     data class Effort(val value: String) : ThinkingRequestSummary
@@ -39,6 +103,8 @@ object ThinkingRequestSemantics {
         providerType: ApiProviderType,
         providerTypeId: String = providerType.name,
         isToolPkgProvider: Boolean = false,
+        configId: String = "",
+        apiEndpoint: String = "",
         modelName: String,
         qualityLevel: Int,
         modelParameters: List<ModelParameter<*>>,
@@ -123,6 +189,15 @@ object ThinkingRequestSemantics {
             ApiProviderType.ANTHROPIC,
             ApiProviderType.ANTHROPIC_GENERIC -> {
                 val thinkingOverride = resolveAnthropicThinkingOverride(modelParameters)
+                val runtimeFormat =
+                    ClaudeThinkingFormatState.get(
+                        ClaudeThinkingFormatState.key(
+                            configId = configId,
+                            providerTypeId = providerTypeId,
+                            apiEndpoint = apiEndpoint,
+                            modelName = modelName,
+                        )
+                    )
                 when (thinkingOverride) {
                     ThinkingRequestSummary.Disabled,
                     is ThinkingRequestSummary.BudgetTokens,
@@ -130,7 +205,10 @@ object ThinkingRequestSemantics {
                     else ->
                         resolveAnthropicOutputConfigOverride(modelParameters)
                             ?: thinkingOverride
-                            ?: if (prefersClaudeAdaptiveThinkingModel(modelName)) {
+                            ?: if (
+                                runtimeFormat == ClaudeThinkingFormat.ADAPTIVE ||
+                                    runtimeFormat == null && prefersClaudeAdaptiveThinkingModel(modelName)
+                            ) {
                                 ThinkingRequestSummary.Enabled
                             } else {
                                 ThinkingRequestSummary.BudgetTokens(
@@ -220,6 +298,9 @@ object ThinkingRequestSemantics {
     private fun resolveResponsesOverride(
         modelParameters: List<ModelParameter<*>>,
     ): ThinkingRequestSummary? {
+        val separateEffort =
+            enabledTextParameter(modelParameters, "reasoning_effort")
+                ?.takeIf { it.isNotBlank() }
         val reasoningParameter = enabledParameter(modelParameters, "reasoning")
         if (reasoningParameter != null) {
             val raw = reasoningParameter.currentValue.toString().trim()
@@ -227,17 +308,18 @@ object ThinkingRequestSemantics {
                 ?: return ThinkingRequestSummary.CustomValue(raw)
             reasoningObject["effort"]?.let { effortElement ->
                 val effort = (effortElement as? JsonPrimitive)?.contentOrNull?.trim()
-                return if (!effort.isNullOrEmpty()) {
+                return if (effortElement is JsonPrimitive && effort.isNullOrEmpty()) {
+                    separateEffort?.let(ThinkingRequestSummary::Effort)
+                } else if (!effort.isNullOrEmpty()) {
                     ThinkingRequestSummary.Effort(effort)
                 } else {
                     ThinkingRequestSummary.CustomValue(effortElement.toString())
                 }
             }
+            return separateEffort?.let(ThinkingRequestSummary::Effort)
         }
 
-        return enabledTextParameter(modelParameters, "reasoning_effort")
-            ?.takeIf { it.isNotBlank() }
-            ?.let(ThinkingRequestSummary::Effort)
+        return separateEffort?.let(ThinkingRequestSummary::Effort)
     }
 
     private fun resolveOpenRouterOverride(
@@ -248,6 +330,15 @@ object ThinkingRequestSemantics {
         val reasoningObject = parseObject(raw)
             ?: return ThinkingRequestSummary.CustomValue(raw)
 
+        reasoningObject["enabled"]?.let { enabledElement ->
+            val enabled = (enabledElement as? JsonPrimitive)?.booleanOrNull
+            if (enabled == false) {
+                return ThinkingRequestSummary.Disabled
+            }
+            if (enabled == null) {
+                return ThinkingRequestSummary.CustomValue(enabledElement.toString())
+            }
+        }
         reasoningObject["effort"]?.let { effortElement ->
             val effort = (effortElement as? JsonPrimitive)?.contentOrNull?.trim()
             return if (!effort.isNullOrEmpty()) {
@@ -261,10 +352,8 @@ object ThinkingRequestSemantics {
                 ?.let(ThinkingRequestSummary::BudgetTokens)
                 ?: ThinkingRequestSummary.CustomValue(budgetElement.toString())
         }
-        reasoningObject["enabled"]?.let { enabledElement ->
-            return (enabledElement as? JsonPrimitive)?.booleanOrNull?.let { enabled ->
-                if (enabled) ThinkingRequestSummary.Enabled else ThinkingRequestSummary.Disabled
-            } ?: ThinkingRequestSummary.CustomValue(enabledElement.toString())
+        if (reasoningObject["enabled"] != null) {
+            return ThinkingRequestSummary.Enabled
         }
         return null
     }

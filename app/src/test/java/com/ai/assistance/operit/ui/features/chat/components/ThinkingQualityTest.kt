@@ -2,6 +2,8 @@ package com.ai.assistance.operit.ui.features.chat.components
 
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.llmprovider.DeepseekProvider
+import com.ai.assistance.operit.api.chat.llmprovider.ClaudeThinkingFormat
+import com.ai.assistance.operit.api.chat.llmprovider.ClaudeThinkingFormatState
 import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSemantics
 import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSummary
 import com.ai.assistance.operit.data.model.ApiProviderType
@@ -358,6 +360,60 @@ class ThinkingQualityTest {
         )
     }
 
+    @Test fun requestSummary_reflectsClaudeRuntimeThinkingFormatFallback() {
+        val configId = "runtime-fallback-config"
+        val endpoint = "https://claude-fallback.example/v1/messages"
+        val modelName = "claude-opus-4-6"
+        val key =
+            ClaudeThinkingFormatState.key(
+                configId = configId,
+                providerTypeId = ApiProviderType.ANTHROPIC.name,
+                apiEndpoint = endpoint,
+                modelName = modelName,
+            )
+        try {
+            assertEquals(
+                ThinkingRequestSummary.Enabled,
+                ThinkingRequestSemantics.resolve(
+                    providerType = ApiProviderType.ANTHROPIC,
+                    configId = configId,
+                    apiEndpoint = endpoint,
+                    modelName = modelName,
+                    qualityLevel = 5,
+                    modelParameters = emptyList(),
+                ),
+            )
+
+            assertEquals(
+                ClaudeThinkingFormat.ENABLED,
+                ClaudeThinkingFormatState.transitionAfterFailure(
+                    key,
+                    ClaudeThinkingFormat.ADAPTIVE,
+                ),
+            )
+            assertEquals(
+                ClaudeThinkingFormat.ENABLED,
+                ClaudeThinkingFormatState.transitionAfterFailure(
+                    key,
+                    ClaudeThinkingFormat.ADAPTIVE,
+                ),
+            )
+            assertEquals(
+                ThinkingRequestSummary.BudgetTokens(1_024),
+                ThinkingRequestSemantics.resolve(
+                    providerType = ApiProviderType.ANTHROPIC,
+                    configId = configId,
+                    apiEndpoint = endpoint,
+                    modelName = modelName,
+                    qualityLevel = 5,
+                    modelParameters = emptyList(),
+                ),
+            )
+        } finally {
+            ClaudeThinkingFormatState.clear(key)
+        }
+    }
+
     @Test fun requestSummary_preservesCustomReasoningEffort() {
         assertEquals(
             ThinkingRequestSummary.Effort("max"),
@@ -392,6 +448,53 @@ class ThinkingQualityTest {
                 modelParameters = emptyList(),
             ),
         )
+    }
+
+    @Test fun requestSummary_prioritizesExplicitOpenRouterDisabledState() {
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENROUTER,
+                modelName = "openrouter/auto",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "reasoning",
+                            "{\"enabled\":false,\"max_tokens\":0}",
+                        )
+                    ),
+            ),
+        )
+    }
+
+    @Test fun requestSummary_fallsBackFromBlankResponsesEffortToSelectedQuality() {
+        listOf("{\"effort\":\"\"}", "{\"effort\":null}").forEach { reasoning ->
+            assertEquals(
+                ThinkingRequestSummary.Effort("max"),
+                ThinkingRequestSemantics.resolve(
+                    providerType = ApiProviderType.OPENAI_RESPONSES,
+                    modelName = "gpt-5.6",
+                    qualityLevel = 5,
+                    modelParameters = listOf(objectParameter("reasoning", reasoning)),
+                ),
+            )
+        }
+        listOf("{}", "{\"effort\":\"\"}", "{\"effort\":null}").forEach { reasoning ->
+            assertEquals(
+                ThinkingRequestSummary.Effort("low"),
+                ThinkingRequestSemantics.resolve(
+                    providerType = ApiProviderType.OPENAI_RESPONSES,
+                    modelName = "gpt-5.6",
+                    qualityLevel = 5,
+                    modelParameters =
+                        listOf(
+                            objectParameter("reasoning", reasoning),
+                            stringParameter("reasoning_effort", "low"),
+                        ),
+                ),
+            )
+        }
     }
 
     @Test fun requestSummary_reportsEnabledForToolPkgProvider() {

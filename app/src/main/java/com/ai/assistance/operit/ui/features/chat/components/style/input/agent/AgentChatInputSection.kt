@@ -113,6 +113,7 @@ import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.library.MemoryAutoSaveScheduler
 import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSemantics
 import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSummary
+import com.ai.assistance.operit.api.chat.llmprovider.ClaudeThinkingFormatState
 import com.ai.assistance.operit.core.tools.ToolProgressBus
 import com.ai.assistance.operit.data.model.AttachmentInfo
 import com.ai.assistance.operit.data.model.ChatMessage
@@ -437,6 +438,7 @@ fun AgentChatInputSection(
         } else {
             mappedModelName?.takeIf { it.isNotBlank() } ?: currentModelName
         }
+    val claudeThinkingFormats by ClaudeThinkingFormatState.formats.collectAsState()
     val thinkingRequestSummary =
         remember(
             activeConfigSummary,
@@ -444,12 +446,15 @@ fun AgentChatInputSection(
             thinkingQualityLevel,
             currentModelParameters,
             currentIsToolPkgProvider,
+            claudeThinkingFormats,
         ) {
             activeConfigSummary?.let { config ->
                 ThinkingRequestSemantics.resolve(
                     providerType = config.apiProviderType,
                     providerTypeId = config.apiProviderTypeId,
                     isToolPkgProvider = currentIsToolPkgProvider,
+                    configId = config.id,
+                    apiEndpoint = config.apiEndpoint,
                     modelName = mappedModelName.orEmpty(),
                     qualityLevel = thinkingQualityLevel,
                     modelParameters = currentModelParameters,
