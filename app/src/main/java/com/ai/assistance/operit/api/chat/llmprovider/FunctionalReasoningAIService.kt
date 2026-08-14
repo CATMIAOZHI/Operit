@@ -246,7 +246,7 @@ private fun buildFunctionalReasoningParameters(
                     apiName = "reasoning",
                     modelParameters = sourceModelParameters,
                     values = mapOf("effort" to effort),
-                    removedKeys = setOf("max_tokens"),
+                    removedKeys = setOf("enabled", "max_tokens"),
                 )
             )
 

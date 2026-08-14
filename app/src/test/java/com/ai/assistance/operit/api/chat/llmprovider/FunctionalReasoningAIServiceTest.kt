@@ -1097,7 +1097,7 @@ class FunctionalReasoningAIServiceTest {
     }
 
     @Test
-    fun openRouterEffortPreservesExcludeAndRemovesConflictingTokenBudget() {
+    fun openRouterEffortPreservesExcludeAndRemovesConflictingControls() {
         val request =
             buildFunctionalReasoningRequest(
                 ApiProviderType.OPENROUTER,
@@ -1105,7 +1105,7 @@ class FunctionalReasoningAIServiceTest {
                 listOf(
                     stringParameter(
                         "reasoning",
-                        "{\"effort\":\"low\",\"max_tokens\":2048,\"exclude\":true}",
+                        "{\"enabled\":false,\"effort\":\"low\",\"max_tokens\":2048,\"exclude\":true}",
                     )
                 ),
                 5,
@@ -1114,6 +1114,7 @@ class FunctionalReasoningAIServiceTest {
 
         assertEquals("max", reasoning.getString("effort"))
         assertTrue(reasoning.getBoolean("exclude"))
+        assertFalse(reasoning.has("enabled"))
         assertFalse(reasoning.has("max_tokens"))
     }
 
