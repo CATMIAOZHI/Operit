@@ -515,6 +515,9 @@ object ThinkingRequestSemantics {
     ): ThinkingRequestSummary? {
         val parameter = enabledParameter(modelParameters, "thinking") ?: return null
         val raw = parameter.currentValue.toString().trim()
+        if (parameter.valueType != ParameterValueType.OBJECT) {
+            return ThinkingRequestSummary.CustomValue(raw)
+        }
         val thinkingObject = parseObject(raw)
             ?: return ThinkingRequestSummary.CustomValue(raw)
         val typeElement = thinkingObject["type"]

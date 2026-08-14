@@ -201,6 +201,69 @@ class ProviderReasoningBoundaryTest {
     }
 
     @Test
+    fun thinkingStringParametersRemainStringsInProviderPayloads() = runBlocking {
+        val rawThinking = "{\"type\":\"enabled\"}"
+        val thinkingParameter =
+            ModelParameter(
+                id = "thinking",
+                name = "thinking",
+                apiName = "thinking",
+                defaultValue = rawThinking,
+                currentValue = rawThinking,
+                isEnabled = true,
+                valueType = ParameterValueType.STRING,
+            )
+        val capturedRequests = mutableMapOf<ApiProviderType, JSONObject>()
+        val providers =
+            listOf(
+                ApiProviderType.DEEPSEEK to
+                    DeepseekProvider(
+                        apiEndpoint = "https://example.test/v1/chat/completions",
+                        apiKeyProvider = SingleApiKeyProvider("test-key"),
+                        modelName = "deepseek-chat",
+                        client =
+                            clientForOpenAiResponse {
+                                capturedRequests[ApiProviderType.DEEPSEEK] = it
+                            },
+                    ),
+                ApiProviderType.MOONSHOT to
+                    KimiProvider(
+                        apiEndpoint = "https://example.test/v1/chat/completions",
+                        apiKeyProvider = SingleApiKeyProvider("test-key"),
+                        modelName = "kimi-k2.5",
+                        client =
+                            clientForOpenAiResponse {
+                                capturedRequests[ApiProviderType.MOONSHOT] = it
+                            },
+                    ),
+                ApiProviderType.MIMO to
+                    MimoProvider(
+                        apiEndpoint = "https://example.test/v1/chat/completions",
+                        apiKeyProvider = SingleApiKeyProvider("test-key"),
+                        modelName = "mimo-v2-flash",
+                        client =
+                            clientForOpenAiResponse {
+                                capturedRequests[ApiProviderType.MIMO] = it
+                            },
+                    ),
+            )
+
+        withoutAndroidLogging {
+            providers.forEach { (_, provider) ->
+                sendNonStreamingRequest(
+                    provider = provider,
+                    modelParameters = listOf(thinkingParameter),
+                    enableThinking = true,
+                )
+            }
+        }
+
+        providers.forEach { (providerType, _) ->
+            assertEquals(rawThinking, capturedRequests[providerType]?.getString("thinking"))
+        }
+    }
+
+    @Test
     fun geminiReasoningCannotCloseThinkingEnvelopeAndInjectTool() = runBlocking {
         val provider =
             GeminiProvider(

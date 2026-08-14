@@ -1070,6 +1070,25 @@ class ThinkingQualityTest {
         )
     }
 
+    @Test fun requestSummary_preservesNonObjectThinkingParameterAsCustomValue() {
+        val rawThinking = "{\"type\":\"enabled\"}"
+        listOf(
+            ApiProviderType.DEEPSEEK,
+            ApiProviderType.MOONSHOT,
+            ApiProviderType.MIMO,
+        ).forEach { providerType ->
+            assertEquals(
+                ThinkingRequestSummary.CustomValue(rawThinking),
+                ThinkingRequestSemantics.resolve(
+                    providerType = providerType,
+                    modelName = "custom-model",
+                    qualityLevel = 5,
+                    modelParameters = listOf(stringParameter("thinking", rawThinking)),
+                ),
+            )
+        }
+    }
+
     @Test fun requestSummary_handlesNonPrimitiveReasoningField() {
         assertEquals(
             ThinkingRequestSummary.CustomValue("{\"custom\":true}"),
