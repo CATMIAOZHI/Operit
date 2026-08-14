@@ -275,6 +275,7 @@ fun ClassicChatSettingsBar(
             currentConfig,
             currentModelName,
             thinkingQualityLevel,
+            enableThinkingMode,
             currentModelParameters,
             currentIsToolPkgProvider,
             claudeThinkingFormats,
@@ -289,6 +290,7 @@ fun ClassicChatSettingsBar(
                     modelName = currentModelName,
                     qualityLevel = thinkingQualityLevel,
                     modelParameters = currentModelParameters,
+                    enableThinking = enableThinkingMode,
                 )
             } ?: ThinkingRequestSummary.NotSent
         }
@@ -1411,11 +1413,7 @@ private fun ThinkingSettingsItem(
     val expandStateDesc =
             if (expanded) stringResource(R.string.expanded) else stringResource(R.string.collapsed)
 
-    val thinkingTypeText =
-            when {
-                enableThinkingMode -> thinkingRequestSummaryLabel(thinkingRequestSummary)
-                else -> stringResource(R.string.thinking_type_off)
-            }
+    val thinkingTypeText = thinkingRequestSummaryLabel(thinkingRequestSummary)
 
     val stateText = buildString {
         append(stringResource(R.string.thinking_mode))

@@ -426,6 +426,362 @@ class ThinkingQualityTest {
         )
     }
 
+    @Test fun requestSummary_preservesProviderOverridesWhileGlobalThinkingIsOff() {
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI,
+                modelName = "gpt-5.2",
+                qualityLevel = 5,
+                modelParameters = emptyList(),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue(""),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.NVIDIA,
+                modelName = "openai/gpt-oss-120b",
+                qualityLevel = 5,
+                modelParameters = listOf(stringParameter("reasoning_effort", "   ")),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-2.5-flash",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinkingConfig",
+                            "{\"includeThoughts\":true,\"thinkingBudget\":0}",
+                            ParameterCategory.GENERATION,
+                        )
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("{\"includeThoughts\":false}"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-3.1-pro-preview",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinkingConfig",
+                            "{\"includeThoughts\":false}",
+                            ParameterCategory.GENERATION,
+                        )
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.DEEPSEEK,
+                modelName = "deepseek-chat",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter("thinking", "{\"type\":\"disabled\"}"),
+                        stringParameter("reasoning_effort", "max"),
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("custom"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.DEEPSEEK,
+                modelName = "deepseek-chat",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter("thinking", "{\"type\":\"custom\"}"),
+                        stringParameter("reasoning_effort", "max"),
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("high"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.NVIDIA,
+                modelName = "openai/gpt-oss-120b",
+                qualityLevel = 1,
+                modelParameters = listOf(stringParameter("reasoning_effort", "high")),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Enabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.DEEPSEEK,
+                modelName = "deepseek-chat",
+                qualityLevel = 5,
+                modelParameters = listOf(objectParameter("thinking", "{\"type\":\"enabled\"}")),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ALIYUN,
+                modelName = "qwen3.5-plus",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        booleanParameter("enable_thinking", false),
+                        intParameter("thinking_budget", 32_768),
+                        stringParameter("reasoning_effort", "max"),
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("invalid"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ALIYUN,
+                modelName = "qwen3.5-plus",
+                qualityLevel = 5,
+                modelParameters = listOf(stringParameter("enable_thinking", "invalid")),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(8_192),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.SILICONFLOW,
+                modelName = "deepseek-ai/DeepSeek-R1",
+                qualityLevel = 1,
+                modelParameters =
+                    listOf(
+                        booleanParameter("enable_thinking", true),
+                        intParameter("thinking_budget", 8_192),
+                        stringParameter("reasoning_effort", "max"),
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.SILICONFLOW,
+                modelName = "deepseek-ai/DeepSeek-R1",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        booleanParameter("enable_thinking", false),
+                        intParameter("thinking_budget", 32_768),
+                        stringParameter("reasoning_effort", "max"),
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("invalid"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.SILICONFLOW,
+                modelName = "deepseek-ai/DeepSeek-R1",
+                qualityLevel = 5,
+                modelParameters = listOf(stringParameter("enable_thinking", "invalid")),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(16_384),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ALIYUN,
+                modelName = "qwen3.5-plus",
+                qualityLevel = 1,
+                modelParameters =
+                    listOf(
+                        booleanParameter("enable_thinking", true),
+                        intParameter("thinking_budget", 16_384),
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Enabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.SILICONFLOW,
+                modelName = "deepseek-ai/DeepSeek-R1",
+                qualityLevel = 1,
+                modelParameters = listOf(booleanParameter("enable_thinking", true)),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("high"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-3.1-pro-preview",
+                qualityLevel = 1,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            apiName = "thinkingConfig",
+                            value = "{\"includeThoughts\":true,\"thinkingLevel\":\"high\"}",
+                            category = ParameterCategory.GENERATION,
+                        )
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("max"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI,
+                modelName = "gpt-5.2",
+                qualityLevel = 1,
+                modelParameters = listOf(stringParameter("reasoning_effort", "max")),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(32_768),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-3.1-pro-preview",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinkingConfig",
+                            "{\"includeThoughts\":false,\"thinkingBudget\":32768}",
+                            ParameterCategory.GENERATION,
+                        )
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.BudgetTokens(8_192),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-3.1-pro-preview",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinkingConfig",
+                            "{\"includeThoughts\":true,\"thinkingBudget\":8192,\"thinkingLevel\":\"high\"}",
+                            ParameterCategory.GENERATION,
+                        )
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("not-json"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-3.1-pro-preview",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinkingConfig",
+                            "not-json",
+                            ParameterCategory.GENERATION,
+                        )
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("low"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-3.1-pro-preview",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinkingConfig",
+                            "{\"thinkingLevel\":\"low\"}",
+                            ParameterCategory.GENERATION,
+                        ),
+                        objectParameter(
+                            "thinkingConfig",
+                            "{\"thinkingLevel\":\"max\"}",
+                            ParameterCategory.OTHER,
+                        ),
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-3.1-pro-preview",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinkingConfig",
+                            "{\"thinkingLevel\":\"max\"}",
+                            ParameterCategory.OTHER,
+                        )
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("high"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENROUTER,
+                modelName = "openai/gpt-5.2",
+                qualityLevel = 1,
+                modelParameters = listOf(objectParameter("reasoning", "{\"effort\":\"high\"}")),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("low"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI_RESPONSES,
+                modelName = "gpt-5.2",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter("reasoning", "{}"),
+                        stringParameter("reasoning_effort", "low"),
+                    ),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENROUTER,
+                modelName = "openai/gpt-5.2",
+                qualityLevel = 5,
+                modelParameters = listOf(objectParameter("reasoning", "{}")),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI,
+                isToolPkgProvider = true,
+                modelName = "custom-toolpkg-model",
+                qualityLevel = 5,
+                modelParameters = listOf(stringParameter("reasoning_effort", "max")),
+                enableThinking = false,
+            ),
+        )
+    }
+
     @Test fun requestSummary_capsOpenRouterBudgetByMaxTokens() {
         assertEquals(
             ThinkingRequestSummary.BudgetTokens(4_095),
@@ -612,7 +968,11 @@ class ThinkingQualityTest {
             category = ParameterCategory.OTHER,
         )
 
-    private fun objectParameter(apiName: String, value: String) =
+    private fun objectParameter(
+        apiName: String,
+        value: String,
+        category: ParameterCategory = ParameterCategory.OTHER,
+    ) =
         ModelParameter(
             id = apiName,
             name = apiName,
@@ -621,6 +981,6 @@ class ThinkingQualityTest {
             currentValue = value,
             isEnabled = true,
             valueType = ParameterValueType.OBJECT,
-            category = ParameterCategory.OTHER,
+            category = category,
         )
 }

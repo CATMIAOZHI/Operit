@@ -2,6 +2,7 @@ package com.ai.assistance.operit.api.chat.llmprovider
 
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -108,7 +109,49 @@ object ThinkingRequestSemantics {
         modelName: String,
         qualityLevel: Int,
         modelParameters: List<ModelParameter<*>>,
+        enableThinking: Boolean = true,
     ): ThinkingRequestSummary {
+        if (!enableThinking) {
+            if (isToolPkgProvider) {
+                return ThinkingRequestSummary.Disabled
+            }
+            val preservedOverride =
+                when (ApiProviderType.fromProviderTypeId(providerTypeId)) {
+                    ApiProviderType.OPENAI,
+                    ApiProviderType.OPENAI_GENERIC ->
+                        enabledTextParameter(modelParameters, "reasoning_effort")
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let(ThinkingRequestSummary::Effort)
+
+                    ApiProviderType.OPENAI_RESPONSES,
+                    ApiProviderType.OPENAI_RESPONSES_GENERIC ->
+                        resolveResponsesOverride(modelParameters)
+
+                    ApiProviderType.OPENROUTER,
+                    ApiProviderType.NOUS_PORTAL ->
+                        resolveOpenRouterOverride(modelParameters)
+
+                    ApiProviderType.DEEPSEEK ->
+                        resolveDeepseekOverrideWhenThinkingDisabled(modelParameters)
+
+                    ApiProviderType.NVIDIA ->
+                        enabledTextParameter(modelParameters, "reasoning_effort")
+                            ?.let(::textSummary)
+
+                    ApiProviderType.ALIYUN ->
+                        resolveAliyunThinkingOverride(modelParameters)
+
+                    ApiProviderType.SILICONFLOW ->
+                        resolveSiliconFlowOverrideWhenThinkingDisabled(modelParameters)
+
+                    ApiProviderType.GOOGLE,
+                    ApiProviderType.GEMINI_GENERIC ->
+                        resolveGeminiNativeThinkingConfigOverride(modelParameters)
+
+                    else -> null
+                }
+            return preservedOverride ?: ThinkingRequestSummary.Disabled
+        }
         if (isToolPkgProvider) {
             return ThinkingRequestSummary.Enabled
         }
@@ -356,6 +399,72 @@ object ThinkingRequestSemantics {
             return ThinkingRequestSummary.Enabled
         }
         return null
+    }
+
+    private fun resolveDeepseekOverrideWhenThinkingDisabled(
+        modelParameters: List<ModelParameter<*>>,
+    ): ThinkingRequestSummary? {
+        val thinkingOverride = resolveThinkingObjectOverride(modelParameters) ?: return null
+        return when (thinkingOverride) {
+            ThinkingRequestSummary.Enabled,
+            is ThinkingRequestSummary.BudgetTokens ->
+                enabledTextParameter(modelParameters, "reasoning_effort")
+                    ?.let(::textSummary)
+                    ?: thinkingOverride
+
+            else -> thinkingOverride
+        }
+    }
+
+    private fun resolveSiliconFlowOverrideWhenThinkingDisabled(
+        modelParameters: List<ModelParameter<*>>,
+    ): ThinkingRequestSummary? {
+        val enabledOverride = resolveBooleanParameter(modelParameters, "enable_thinking")
+            ?: return null
+        return when (enabledOverride) {
+            ThinkingRequestSummary.Enabled ->
+                enabledParameter(modelParameters, "thinking_budget")
+                    ?.currentValue
+                    ?.let(::valueSummary)
+                    ?: enabledTextParameter(modelParameters, "reasoning_effort")?.let(::textSummary)
+                    ?: ThinkingRequestSummary.Enabled
+
+            else -> enabledOverride
+        }
+    }
+
+    private fun resolveGeminiNativeThinkingConfigOverride(
+        modelParameters: List<ModelParameter<*>>,
+    ): ThinkingRequestSummary? {
+        val parameter =
+            modelParameters.lastOrNull {
+                it.apiName == "thinkingConfig" &&
+                    it.isEnabled &&
+                    it.category != ParameterCategory.OTHER
+            }
+                ?: return null
+        val raw = parameter.currentValue.toString().trim()
+        val thinkingConfig = parseObject(raw)
+            ?: return ThinkingRequestSummary.CustomValue(raw)
+
+        thinkingConfig["thinkingBudget"]?.let { budgetElement ->
+            val budget = (budgetElement as? JsonPrimitive)?.intOrNull
+                ?: return ThinkingRequestSummary.CustomValue(budgetElement.toString())
+            return if (budget == 0) {
+                ThinkingRequestSummary.Disabled
+            } else {
+                ThinkingRequestSummary.BudgetTokens(budget)
+            }
+        }
+        thinkingConfig["thinkingLevel"]?.let { levelElement ->
+            val level = (levelElement as? JsonPrimitive)?.contentOrNull?.trim()
+            return if (!level.isNullOrEmpty()) {
+                ThinkingRequestSummary.Effort(level)
+            } else {
+                ThinkingRequestSummary.CustomValue(levelElement.toString())
+            }
+        }
+        return ThinkingRequestSummary.CustomValue(raw)
     }
 
     private fun resolveThinkingObjectOverride(

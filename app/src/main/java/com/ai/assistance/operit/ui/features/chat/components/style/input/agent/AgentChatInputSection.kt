@@ -444,6 +444,7 @@ fun AgentChatInputSection(
             activeConfigSummary,
             mappedModelName,
             thinkingQualityLevel,
+            enableThinkingMode,
             currentModelParameters,
             currentIsToolPkgProvider,
             claudeThinkingFormats,
@@ -458,6 +459,7 @@ fun AgentChatInputSection(
                     modelName = mappedModelName.orEmpty(),
                     qualityLevel = thinkingQualityLevel,
                     modelParameters = currentModelParameters,
+                    enableThinking = enableThinkingMode,
                 )
             } ?: ThinkingRequestSummary.NotSent
         }
@@ -1766,11 +1768,7 @@ private fun AgentThinkingSettingsItem(
     onThinkingQualityInfoClick: () -> Unit,
     onToggleInfoClick: (String, String) -> Unit,
 ) {
-    val thinkingTypeText =
-        when {
-            enableThinkingMode -> thinkingRequestSummaryLabel(thinkingRequestSummary)
-            else -> stringResource(R.string.thinking_type_off)
-        }
+    val thinkingTypeText = thinkingRequestSummaryLabel(thinkingRequestSummary)
 
     Row(
         modifier =
