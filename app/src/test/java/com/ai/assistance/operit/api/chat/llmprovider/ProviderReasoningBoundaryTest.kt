@@ -126,6 +126,81 @@ class ProviderReasoningBoundaryTest {
     }
 
     @Test
+    fun siliconFlowPreservesBudgetWithoutAnUnsupportedThinkingToggle() = runBlocking {
+        var capturedRequest: JSONObject? = null
+        val provider =
+            QwenAIProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "deepseek-ai/DeepSeek-R1",
+                client = clientForOpenAiResponse { capturedRequest = it },
+                qwenProviderType = ApiProviderType.SILICONFLOW,
+            )
+        val thinkingBudget =
+            ModelParameter(
+                id = "thinking_budget",
+                name = "thinking_budget",
+                apiName = "thinking_budget",
+                defaultValue = 8_192,
+                currentValue = 8_192,
+                isEnabled = true,
+                valueType = ParameterValueType.INT,
+            )
+
+        withoutAndroidLogging {
+            sendNonStreamingRequest(provider, listOf(thinkingBudget), enableThinking = false)
+        }
+
+        assertEquals(8_192, capturedRequest?.getInt("thinking_budget"))
+        assertEquals(false, capturedRequest?.has("enable_thinking"))
+    }
+
+    @Test
+    fun openRouterPreservesQuotedEnabledValueAsCallerSuppliedData() = runBlocking {
+        var capturedRequest: JSONObject? = null
+        val provider =
+            OpenRouterProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "openrouter/auto",
+                client = clientForOpenAiResponse { capturedRequest = it },
+            )
+        val reasoning =
+            ModelParameter(
+                id = "reasoning",
+                name = "reasoning",
+                apiName = "reasoning",
+                defaultValue = "{\"enabled\":\"false\",\"effort\":\"high\"}",
+                currentValue = "{\"enabled\":\"false\",\"effort\":\"high\"}",
+                isEnabled = true,
+                valueType = ParameterValueType.OBJECT,
+            )
+
+        withoutAndroidLogging {
+            sendNonStreamingRequest(provider, listOf(reasoning), enableThinking = false)
+        }
+
+        val finalReasoning = capturedRequest?.getJSONObject("reasoning")
+        assertEquals("false", finalReasoning?.getString("enabled"))
+        assertEquals("high", finalReasoning?.getString("effort"))
+
+        val stringReasoning =
+            ModelParameter(
+                id = "reasoning",
+                name = "reasoning",
+                apiName = "reasoning",
+                defaultValue = "{\"enabled\":false}",
+                currentValue = "{\"enabled\":false}",
+                isEnabled = true,
+                valueType = ParameterValueType.STRING,
+            )
+        withoutAndroidLogging {
+            sendNonStreamingRequest(provider, listOf(stringReasoning), enableThinking = false)
+        }
+        assertEquals("{\"enabled\":false}", capturedRequest?.getString("reasoning"))
+    }
+
+    @Test
     fun geminiReasoningCannotCloseThinkingEnvelopeAndInjectTool() = runBlocking {
         val provider =
             GeminiProvider(
@@ -285,6 +360,19 @@ class ProviderReasoningBoundaryTest {
     private fun clientForSse(sseBody: String): OkHttpClient =
         clientForBody(sseBody, "text/event-stream")
 
+    private fun clientForOpenAiResponse(onRequest: (JSONObject) -> Unit): OkHttpClient =
+        clientForBody(
+            body =
+                """
+                {
+                  "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                  "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+                }
+                """.trimIndent(),
+            mediaType = "application/json",
+            onRequest = onRequest,
+        )
+
     private fun clientForBody(
         body: String,
         mediaType: String,
@@ -307,6 +395,26 @@ class ProviderReasoningBoundaryTest {
                     .build()
             }
             .build()
+
+    private suspend fun sendNonStreamingRequest(
+        provider: OpenAIProvider,
+        modelParameters: List<ModelParameter<*>>,
+        enableThinking: Boolean,
+    ) {
+        provider
+            .sendMessage(
+                context = Mockito.mock(Context::class.java),
+                chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                modelParameters = modelParameters,
+                enableThinking = enableThinking,
+                stream = false,
+                availableTools = null,
+                preserveThinkInHistory = false,
+                onTokensUpdated = { _, _, _ -> },
+                onNonFatalError = {},
+                enableRetry = false,
+            ).collect {}
+    }
 
     private suspend fun <T> withoutAndroidLogging(block: suspend () -> T): T =
         withContext(Dispatchers.IO) {

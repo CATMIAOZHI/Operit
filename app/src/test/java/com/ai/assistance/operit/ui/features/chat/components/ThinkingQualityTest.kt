@@ -505,6 +505,26 @@ class ThinkingQualityTest {
             ),
         )
         assertEquals(
+            ThinkingRequestSummary.BudgetTokens(8_192),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.SILICONFLOW,
+                modelName = "deepseek-ai/DeepSeek-R1",
+                qualityLevel = 5,
+                modelParameters = listOf(intParameter("thinking_budget", 8_192)),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.SILICONFLOW,
+                modelName = "deepseek-ai/DeepSeek-V3.2",
+                qualityLevel = 5,
+                modelParameters = listOf(intParameter("thinking_budget", 8_192)),
+                enableThinking = false,
+            ),
+        )
+        assertEquals(
             ThinkingRequestSummary.Disabled,
             ThinkingRequestSemantics.resolve(
                 providerType = ApiProviderType.OPENAI,
@@ -899,6 +919,25 @@ class ThinkingQualityTest {
                     ),
             ),
         )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("\"false\""),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENROUTER,
+                modelName = "openrouter/auto",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(objectParameter("reasoning", "{\"enabled\":\"false\",\"effort\":\"high\"}")),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("{\"enabled\":false}"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENROUTER,
+                modelName = "openrouter/auto",
+                qualityLevel = 5,
+                modelParameters = listOf(stringParameter("reasoning", "{\"enabled\":false}")),
+            ),
+        )
     }
 
     @Test fun requestSummary_fallsBackFromBlankResponsesEffortToSelectedQuality() {
@@ -928,6 +967,41 @@ class ThinkingQualityTest {
                 ),
             )
         }
+        assertEquals(
+            ThinkingRequestSummary.Effort("low"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI_RESPONSES,
+                modelName = "gpt-5.6",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        stringParameter("reasoning", "legacy-string-value"),
+                        stringParameter("reasoning_effort", "low"),
+                    ),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("legacy-string-value"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI_RESPONSES,
+                modelName = "gpt-5.6",
+                qualityLevel = 5,
+                modelParameters = listOf(stringParameter("reasoning", "legacy-string-value")),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("low"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI_RESPONSES,
+                modelName = "gpt-5.6",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        stringParameter("reasoning", "{\"effort\":\"high\"}"),
+                        stringParameter("reasoning_effort", "low"),
+                    ),
+            ),
+        )
     }
 
     @Test fun requestSummary_reportsEnabledForToolPkgProvider() {

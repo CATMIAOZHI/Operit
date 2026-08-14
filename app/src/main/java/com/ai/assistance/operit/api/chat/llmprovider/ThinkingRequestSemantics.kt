@@ -161,7 +161,7 @@ object ThinkingRequestSemantics {
                         resolveAliyunThinkingOverride(modelParameters)
 
                     ApiProviderType.SILICONFLOW ->
-                        resolveSiliconFlowOverrideWhenThinkingDisabled(modelParameters)
+                        resolveSiliconFlowOverrideWhenThinkingDisabled(modelName, modelParameters)
 
                     ApiProviderType.GOOGLE,
                     ApiProviderType.GEMINI_GENERIC ->
@@ -368,8 +368,13 @@ object ThinkingRequestSemantics {
         val reasoningParameter = enabledParameter(modelParameters, "reasoning")
         if (reasoningParameter != null) {
             val raw = reasoningParameter.currentValue.toString().trim()
+            if (reasoningParameter.valueType != ParameterValueType.OBJECT) {
+                return separateEffort?.let(ThinkingRequestSummary::Effort)
+                    ?: ThinkingRequestSummary.CustomValue(raw)
+            }
             val reasoningObject = parseObject(raw)
-                ?: return ThinkingRequestSummary.CustomValue(raw)
+                ?: return separateEffort?.let(ThinkingRequestSummary::Effort)
+                    ?: ThinkingRequestSummary.CustomValue(raw)
             reasoningObject["effort"]?.let { effortElement ->
                 val effort = (effortElement as? JsonPrimitive)?.contentOrNull?.trim()
                 return if (effortElement is JsonPrimitive && effort.isNullOrEmpty()) {
@@ -391,11 +396,18 @@ object ThinkingRequestSemantics {
     ): ThinkingRequestSummary? {
         val parameter = enabledParameter(modelParameters, "reasoning") ?: return null
         val raw = parameter.currentValue.toString().trim()
+        if (parameter.valueType != ParameterValueType.OBJECT) {
+            return ThinkingRequestSummary.CustomValue(raw)
+        }
         val reasoningObject = parseObject(raw)
             ?: return ThinkingRequestSummary.CustomValue(raw)
 
         reasoningObject["enabled"]?.let { enabledElement ->
-            val enabled = (enabledElement as? JsonPrimitive)?.booleanOrNull
+            val enabledPrimitive = enabledElement as? JsonPrimitive
+            if (enabledPrimitive == null || enabledPrimitive.isString) {
+                return ThinkingRequestSummary.CustomValue(enabledElement.toString())
+            }
+            val enabled = enabledPrimitive.booleanOrNull
             if (enabled == false) {
                 return ThinkingRequestSummary.Disabled
             }
@@ -438,12 +450,19 @@ object ThinkingRequestSemantics {
     }
 
     private fun resolveSiliconFlowOverrideWhenThinkingDisabled(
+        modelName: String,
         modelParameters: List<ModelParameter<*>>,
     ): ThinkingRequestSummary? {
         val enabledOverride = resolveBooleanParameter(modelParameters, "enable_thinking")
-            ?: return null
-        return when (enabledOverride) {
-            ThinkingRequestSummary.Enabled ->
+        return when {
+            enabledOverride == null && siliconFlowSupportsThinkingToggle(modelName) -> null
+            enabledOverride == null ->
+                enabledParameter(modelParameters, "thinking_budget")
+                    ?.currentValue
+                    ?.let(::valueSummary)
+                    ?: enabledTextParameter(modelParameters, "reasoning_effort")?.let(::textSummary)
+
+            enabledOverride == ThinkingRequestSummary.Enabled ->
                 enabledParameter(modelParameters, "thinking_budget")
                     ?.currentValue
                     ?.let(::valueSummary)
