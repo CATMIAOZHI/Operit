@@ -429,6 +429,7 @@ class MessageCoordinationDelegate(
         val chatContextSettings =
             resolveChatContextSettingsForRequest(resolvedChatModelConfigIdOverride)
 
+        chatHistoryDelegate.clearTodoSnapshot(chatId)
         try {
             messageProcessingDelegate.regenerateAiMessageVariant(
                 chatId = chatId,

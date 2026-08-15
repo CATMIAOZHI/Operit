@@ -9,12 +9,15 @@ import com.ai.assistance.operit.data.model.ChatTodoPriority
 import com.ai.assistance.operit.data.model.ChatTodoStatus
 import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.repository.ChatTodoRepository
+import com.ai.assistance.operit.data.repository.validateChatTodoSnapshot
+import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 
 internal object ChatTodoTool {
     const val NAME = "todowrite"
+    private const val TAG = "ChatTodoTool"
 
     fun execute(context: Context, tool: AITool): ToolResult {
         val runtime = ToolExecutionManager.currentToolRuntimeContext()
@@ -26,12 +29,12 @@ internal object ChatTodoTool {
             return failure(context.getString(R.string.chat_todo_tool_active_chat_required))
         }
 
-        return try {
-            val rawTodos =
-                tool.parameters.firstOrNull { it.name == "todos" }?.value
-                    ?: return failure(context.getString(R.string.chat_todo_tool_missing_todos))
-            val json = JSONArray(rawTodos)
-            val todos =
+        val rawTodos =
+            tool.parameters.firstOrNull { it.name == "todos" }?.value
+                ?: return failure(context.getString(R.string.chat_todo_tool_missing_todos))
+        val todos =
+            try {
+                val json = JSONArray(rawTodos)
                 buildList {
                     repeat(json.length()) { index ->
                         val item = json.getJSONObject(index)
@@ -49,7 +52,12 @@ internal object ChatTodoTool {
                             )
                         )
                     }
-                }
+                }.also(::validateChatTodoSnapshot)
+            } catch (_: Exception) {
+                return failure(context.getString(R.string.chat_todo_tool_invalid_list))
+            }
+
+        return try {
             runBlocking(Dispatchers.IO) {
                 ChatTodoRepository.getInstance(context).replace(chatId, todos)
             }
@@ -61,8 +69,9 @@ internal object ChatTodoTool {
                         context.getString(R.string.chat_todo_tool_updated, todos.size)
                     ),
             )
-        } catch (_: Exception) {
-            failure(context.getString(R.string.chat_todo_tool_invalid_list))
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to persist Todo snapshot for chat $chatId", e)
+            failure(context.getString(R.string.chat_todo_tool_save_failed))
         }
     }
 

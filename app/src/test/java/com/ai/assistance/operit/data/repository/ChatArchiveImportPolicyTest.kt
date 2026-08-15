@@ -74,8 +74,18 @@ class ChatArchiveImportPolicyTest {
     }
 
     @Test
-    fun todoRestoreStartsAtV6() {
-        assertEquals(false, ChatArchiveImportPolicy.shouldRestoreTodos(5))
-        assertEquals(true, ChatArchiveImportPolicy.shouldRestoreTodos(6))
+    fun preV6ArchivesClearTodosAndV6RestoresThem() {
+        assertEquals(
+            ChatArchiveImportPolicy.TodoImportMode.CLEAR,
+            ChatArchiveImportPolicy.todoImportMode(2),
+        )
+        assertEquals(
+            ChatArchiveImportPolicy.TodoImportMode.CLEAR,
+            ChatArchiveImportPolicy.todoImportMode(5),
+        )
+        assertEquals(
+            ChatArchiveImportPolicy.TodoImportMode.RESTORE,
+            ChatArchiveImportPolicy.todoImportMode(6),
+        )
     }
 }

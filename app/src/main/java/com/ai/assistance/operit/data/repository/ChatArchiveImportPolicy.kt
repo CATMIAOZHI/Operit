@@ -3,6 +3,11 @@ package com.ai.assistance.operit.data.repository
 import com.ai.assistance.operit.data.model.OperitChatArchive
 
 internal object ChatArchiveImportPolicy {
+    enum class TodoImportMode {
+        CLEAR,
+        RESTORE,
+    }
+
     private val supportedVersions = setOf(2, 3, 4, 5, 6)
 
     fun validateHeader(archiveType: String, formatVersion: Int) {
@@ -28,10 +33,10 @@ internal object ChatArchiveImportPolicy {
         }
     }
 
-    fun shouldRestoreTodos(formatVersion: Int): Boolean {
+    fun todoImportMode(formatVersion: Int): TodoImportMode {
         require(formatVersion in supportedVersions) {
             "Unsupported archive version: $formatVersion"
         }
-        return formatVersion >= 6
+        return if (formatVersion >= 6) TodoImportMode.RESTORE else TodoImportMode.CLEAR
     }
 }

@@ -1636,6 +1636,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     saveChatHistoryInternal(
                         history = normalizedHistory,
                         preserveStructure = false,
+                        clearTodosAfterTranscriptReplace = true,
                     )
                 }
                 if (importedIndex % 20 == 0) {
@@ -2193,6 +2194,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         archiveFormatVersion: Int? = null,
         archivedFavorite: Boolean? = null,
         preserveStructure: Boolean = true,
+        clearTodosAfterTranscriptReplace: Boolean = false,
     ) {
         chatMutex(history.id).withLock {
             database.withTransaction {
@@ -2203,6 +2205,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     archivedFavorite = archivedFavorite,
                     preserveStructure = preserveStructure,
                 )
+                if (clearTodosAfterTranscriptReplace) {
+                    chatTodoDao.deleteByChatId(history.id)
+                }
             }
         }
         releaseLegacyFolderReservations(listOf(history.folderId))
@@ -2332,13 +2337,17 @@ class ChatHistoryManager private constructor(private val context: Context) {
             archiveFormatVersion = formatVersion,
             archivedFavorite = history.isFavorite,
         )
-        if (ChatArchiveImportPolicy.shouldRestoreTodos(formatVersion)) {
-            val todos = history.todos.map(OperitArchivedTodo::toChatTodo)
-            validateChatTodoSnapshot(todos)
-            chatTodoDao.replaceForChat(
-                history.id,
-                history.todos.mapIndexed { index, todo -> todo.toEntity(history.id, index) },
-            )
+        when (ChatArchiveImportPolicy.todoImportMode(formatVersion)) {
+            ChatArchiveImportPolicy.TodoImportMode.CLEAR ->
+                chatTodoDao.deleteByChatId(history.id)
+            ChatArchiveImportPolicy.TodoImportMode.RESTORE -> {
+                val todos = history.todos.map(OperitArchivedTodo::toChatTodo)
+                validateChatTodoSnapshot(todos)
+                chatTodoDao.replaceForChat(
+                    history.id,
+                    history.todos.mapIndexed { index, todo -> todo.toEntity(history.id, index) },
+                )
+            }
         }
     }
 
@@ -2581,6 +2590,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 database.withTransaction {
                     messageVariantDao.deleteVariantsForMessage(chatId, timestamp)
                     messageDao.deleteMessageByTimestamp(chatId, timestamp)
+                    chatTodoDao.deleteByChatId(chatId)
                     chatDao.recalculateLastMessageAt(chatId)
 
                     // Update chat metadata
@@ -2693,6 +2703,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         )
                     }
 
+                    chatTodoDao.deleteByChatId(chatId)
                     chatDao.getChatById(chatId)?.let { chat ->
                         chatDao.updateChatMetadata(
                             chatId = chatId,
@@ -2717,6 +2728,14 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     // 更新现有消息
     suspend fun updateMessage(chatId: String, message: ChatMessage) {
+        updateMessage(chatId, message, clearTodosAfterUpdate = false)
+    }
+
+    suspend fun updateMessage(
+        chatId: String,
+        message: ChatMessage,
+        clearTodosAfterUpdate: Boolean,
+    ) {
         chatMutex(chatId).withLock {
             try {
                 database.withTransaction {
@@ -2746,6 +2765,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                                 message.timestamp,
                                 message.selectedVariantIndex,
                             )
+                            if (clearTodosAfterUpdate) {
+                                chatTodoDao.deleteByChatId(chatId)
+                            }
                             chatDao.getChatById(chatId)?.let { chat ->
                                 chatDao.updateChatMetadata(
                                     chatId = chatId,
@@ -2804,6 +2826,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                                 currentWindowSize = chat.currentWindowSize
                             )
                         }
+                    }
+                    if (clearTodosAfterUpdate) {
+                        chatTodoDao.deleteByChatId(chatId)
                     }
                 }
             } catch (e: Exception) {
@@ -2887,6 +2912,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         )
                 }
                 messageDao.updateSelectedVariantIndex(chatId, messageTimestamp, selectedVariantIndex)
+                chatTodoDao.deleteByChatId(chatId)
+            }
+        }
+    }
+
+    suspend fun clearTodoSnapshot(chatId: String) {
+        chatMutex(chatId).withLock {
+            database.withTransaction {
+                chatTodoDao.deleteByChatId(chatId)
             }
         }
     }
@@ -3800,6 +3834,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     saveChatHistoryInternal(
                         history = normalizedHistory,
                         preserveStructure = false,
+                        clearTodosAfterTranscriptReplace = true,
                     )
                 }
 

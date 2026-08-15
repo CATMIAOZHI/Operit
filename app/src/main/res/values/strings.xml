@@ -8534,4 +8534,5 @@
     <string name="chat_todo_tool_missing_todos">缺少必要参数：todos</string>
     <string name="chat_todo_tool_updated">Todo 列表已更新（%1$d 项）</string>
     <string name="chat_todo_tool_invalid_list">Todo 列表格式无效</string>
+    <string name="chat_todo_tool_save_failed">保存 Todo 列表失败</string>
 </resources>

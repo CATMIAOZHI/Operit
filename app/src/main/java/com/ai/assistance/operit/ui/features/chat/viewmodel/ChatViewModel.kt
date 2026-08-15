@@ -1152,7 +1152,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 }
 
                 // 直接在数据库中更新该条消息
-                chatHistoryDelegate.addMessageToChat(editedMessage)
+                chatHistoryDelegate.addMessageToChat(
+                    editedMessage,
+                    clearTodosAfterUpdate = true,
+                )
 
                 messageCoordinationDelegate.refreshStableContextWindow(chatId = currentChatId.value)
 
