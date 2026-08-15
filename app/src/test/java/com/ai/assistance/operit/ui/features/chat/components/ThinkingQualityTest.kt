@@ -495,7 +495,7 @@ class ThinkingQualityTest {
             )
         }
         assertEquals(
-            ThinkingRequestSummary.CustomValue(""),
+            ThinkingRequestSummary.CustomValue("   "),
             ThinkingRequestSemantics.resolve(
                 providerType = ApiProviderType.OPENAI_LOCAL,
                 modelName = "openai-compatible-model",
@@ -535,7 +535,7 @@ class ThinkingQualityTest {
             ),
         )
         assertEquals(
-            ThinkingRequestSummary.CustomValue(""),
+            ThinkingRequestSummary.CustomValue("   "),
             ThinkingRequestSemantics.resolve(
                 providerType = ApiProviderType.NVIDIA,
                 modelName = "openai/gpt-oss-120b",
@@ -1087,6 +1087,87 @@ class ThinkingQualityTest {
                 ),
             )
         }
+    }
+
+    @Test fun requestSummary_matchesProviderSpecificTextAndBudgetSerialization() {
+        val paddedEffort = " high "
+        listOf(true, false).forEach { enableThinking ->
+            assertEquals(
+                ThinkingRequestSummary.CustomValue(paddedEffort),
+                ThinkingRequestSemantics.resolve(
+                    providerType = ApiProviderType.OPENAI,
+                    modelName = "gpt-5.6",
+                    qualityLevel = 5,
+                    modelParameters = listOf(stringParameter("reasoning_effort", paddedEffort)),
+                    enableThinking = enableThinking,
+                ),
+            )
+            assertEquals(
+                ThinkingRequestSummary.NotSent,
+                ThinkingRequestSemantics.resolve(
+                    providerType = ApiProviderType.LLAMA_CPP,
+                    modelName = "local-model.gguf",
+                    qualityLevel = 5,
+                    modelParameters = listOf(stringParameter("reasoning_effort", "high")),
+                    enableThinking = enableThinking,
+                ),
+            )
+        }
+        assertEquals(
+            ThinkingRequestSummary.Effort("high"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI_RESPONSES,
+                modelName = "gpt-5.6",
+                qualityLevel = 5,
+                modelParameters = listOf(stringParameter("reasoning_effort", paddedEffort)),
+            ),
+        )
+
+        listOf(ApiProviderType.MOONSHOT, ApiProviderType.MIMO).forEach { providerType ->
+            assertEquals(
+                ThinkingRequestSummary.Effort("max"),
+                ThinkingRequestSemantics.resolve(
+                    providerType = providerType,
+                    modelName = "custom-model",
+                    qualityLevel = 1,
+                    modelParameters =
+                        listOf(
+                            objectParameter("thinking", "{\"type\":\"enabled\"}"),
+                            stringParameter("reasoning_effort", "max"),
+                        ),
+                ),
+            )
+            assertEquals(
+                ThinkingRequestSummary.Disabled,
+                ThinkingRequestSemantics.resolve(
+                    providerType = providerType,
+                    modelName = "custom-model",
+                    qualityLevel = 5,
+                    modelParameters =
+                        listOf(
+                            objectParameter("thinking", "{\"type\":\"disabled\"}"),
+                            stringParameter("reasoning_effort", "max"),
+                        ),
+                ),
+            )
+        }
+
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("\"0\""),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-2.5-flash",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinkingConfig",
+                            "{\"thinkingBudget\":\"0\"}",
+                            ParameterCategory.GENERATION,
+                        )
+                    ),
+            ),
+        )
     }
 
     @Test fun requestSummary_handlesNonPrimitiveReasoningField() {

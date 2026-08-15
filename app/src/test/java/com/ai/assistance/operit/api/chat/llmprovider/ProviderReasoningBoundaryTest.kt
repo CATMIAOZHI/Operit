@@ -6,6 +6,7 @@ import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatUtils
@@ -32,9 +33,9 @@ class ProviderReasoningBoundaryTest {
             object : OpenAIProvider(
                 apiEndpoint = "https://example.test/v1/chat/completions",
                 apiKeyProvider = SingleApiKeyProvider("test-key"),
-                modelName = "openai-compatible-model",
+                modelName = "gpt-5.6",
                 client = OkHttpClient(),
-                providerType = ApiProviderType.OPENAI_LOCAL,
+                providerType = ApiProviderType.OPENAI,
             ) {
                 fun buildRequest(
                     context: Context,
@@ -58,15 +59,15 @@ class ProviderReasoningBoundaryTest {
                 id = "reasoning_effort",
                 name = "reasoning_effort",
                 apiName = "reasoning_effort",
-                defaultValue = "high",
-                currentValue = "high",
+                defaultValue = " high ",
+                currentValue = " high ",
                 isEnabled = true,
                 valueType = ParameterValueType.STRING,
             )
 
         withoutAndroidLoggingOnCurrentThread {
             assertEquals(
-                "high",
+                " high ",
                 provider
                     .buildRequest(Mockito.mock(Context::class.java), listOf(reasoningEffort))
                     .getString("reasoning_effort"),
@@ -213,6 +214,17 @@ class ProviderReasoningBoundaryTest {
                 isEnabled = true,
                 valueType = ParameterValueType.STRING,
             )
+        val rawEffort = " high "
+        val reasoningEffort =
+            ModelParameter(
+                id = "reasoning_effort",
+                name = "reasoning_effort",
+                apiName = "reasoning_effort",
+                defaultValue = rawEffort,
+                currentValue = rawEffort,
+                isEnabled = true,
+                valueType = ParameterValueType.STRING,
+            )
         val capturedRequests = mutableMapOf<ApiProviderType, JSONObject>()
         val providers =
             listOf(
@@ -252,7 +264,7 @@ class ProviderReasoningBoundaryTest {
             providers.forEach { (_, provider) ->
                 sendNonStreamingRequest(
                     provider = provider,
-                    modelParameters = listOf(thinkingParameter),
+                    modelParameters = listOf(thinkingParameter, reasoningEffort),
                     enableThinking = true,
                 )
             }
@@ -260,7 +272,75 @@ class ProviderReasoningBoundaryTest {
 
         providers.forEach { (providerType, _) ->
             assertEquals(rawThinking, capturedRequests[providerType]?.getString("thinking"))
+            assertEquals(rawEffort, capturedRequests[providerType]?.getString("reasoning_effort"))
         }
+    }
+
+    @Test
+    fun geminiPreservesQuotedNativeThinkingBudgetAsAString() = runBlocking {
+        var capturedRequest: JSONObject? = null
+        val provider =
+            GeminiProvider(
+                apiEndpoint = "https://example.test/v1/models/gemini-2.5-flash:generateContent",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "gemini-2.5-flash",
+                client =
+                    clientForBody(
+                        body =
+                            """
+                            {
+                              "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
+                              "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}
+                            }
+                            """.trimIndent(),
+                        mediaType = "application/json",
+                        onRequest = { capturedRequest = it },
+                    ),
+                providerType = ApiProviderType.GOOGLE,
+            )
+        val thinkingConfig =
+            ModelParameter(
+                id = "thinkingConfig",
+                name = "thinkingConfig",
+                apiName = "thinkingConfig",
+                defaultValue = "{\"thinkingBudget\":\"0\"}",
+                currentValue = "{\"thinkingBudget\":\"0\"}",
+                isEnabled = true,
+                valueType = ParameterValueType.OBJECT,
+                category = ParameterCategory.GENERATION,
+            )
+        val context =
+            Mockito.mock(Context::class.java) { invocation ->
+                if (invocation.method.name == "getString") {
+                    "test"
+                } else {
+                    Mockito.RETURNS_DEFAULTS.answer(invocation)
+                }
+            }
+
+        withoutAndroidLogging {
+            provider
+                .sendMessage(
+                    context = context,
+                    chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                    modelParameters = listOf(thinkingConfig),
+                    enableThinking = true,
+                    stream = false,
+                    availableTools = null,
+                    preserveThinkInHistory = false,
+                    onTokensUpdated = { _, _, _ -> },
+                    onNonFatalError = {},
+                    enableRetry = false,
+                ).collect {}
+        }
+
+        assertEquals(
+            "0",
+            capturedRequest
+                ?.getJSONObject("generationConfig")
+                ?.getJSONObject("thinkingConfig")
+                ?.getString("thinkingBudget"),
+        )
     }
 
     @Test

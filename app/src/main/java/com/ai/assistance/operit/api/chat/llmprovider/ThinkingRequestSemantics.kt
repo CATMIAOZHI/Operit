@@ -120,9 +120,7 @@ object ThinkingRequestSemantics {
                 when (ApiProviderType.fromProviderTypeId(providerTypeId)) {
                     ApiProviderType.OPENAI,
                     ApiProviderType.OPENAI_GENERIC ->
-                        enabledTextParameter(modelParameters, "reasoning_effort")
-                            ?.takeIf { it.isNotBlank() }
-                            ?.let(ThinkingRequestSummary::Effort)
+                        resolveOpenAiChatReasoningEffortOverride(modelParameters)
 
                     ApiProviderType.OPENAI_LOCAL,
                     ApiProviderType.LMSTUDIO,
@@ -139,7 +137,7 @@ object ThinkingRequestSemantics {
                     ApiProviderType.PPINFRA,
                     ApiProviderType.NOVITA,
                     ApiProviderType.OTHER ->
-                        enabledTextParameter(modelParameters, "reasoning_effort")
+                        enabledRawTextParameter(modelParameters, "reasoning_effort")
                             ?.let(::textSummary)
 
                     ApiProviderType.OPENAI_RESPONSES,
@@ -154,7 +152,7 @@ object ThinkingRequestSemantics {
                         resolveDeepseekOverrideWhenThinkingDisabled(modelParameters)
 
                     ApiProviderType.NVIDIA ->
-                        enabledTextParameter(modelParameters, "reasoning_effort")
+                        enabledRawTextParameter(modelParameters, "reasoning_effort")
                             ?.let(::textSummary)
 
                     ApiProviderType.ALIYUN ->
@@ -166,6 +164,8 @@ object ThinkingRequestSemantics {
                     ApiProviderType.GOOGLE,
                     ApiProviderType.GEMINI_GENERIC ->
                         resolveGeminiNativeThinkingConfigOverride(modelParameters)
+
+                    ApiProviderType.LLAMA_CPP -> ThinkingRequestSummary.NotSent
 
                     else -> null
                 }
@@ -180,9 +180,7 @@ object ThinkingRequestSemantics {
         return when (effectiveProviderType) {
             ApiProviderType.OPENAI,
             ApiProviderType.OPENAI_GENERIC ->
-                enabledTextParameter(modelParameters, "reasoning_effort")
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let(ThinkingRequestSummary::Effort)
+                resolveOpenAiChatReasoningEffortOverride(modelParameters)
                     ?: ThinkingRequestSummary.Effort(
                         defaultReasoningEffort(effectiveProviderType, qualityLevel)!!,
                     )
@@ -200,7 +198,7 @@ object ThinkingRequestSemantics {
                     is ThinkingRequestSummary.CustomValue -> return override
                     else -> Unit
                 }
-                enabledTextParameter(modelParameters, "reasoning_effort")
+                enabledRawTextParameter(modelParameters, "reasoning_effort")
                     ?.let(::textSummary)
                     ?: ThinkingRequestSummary.Effort(
                         defaultReasoningEffort(effectiveProviderType, qualityLevel)!!,
@@ -208,7 +206,7 @@ object ThinkingRequestSemantics {
             }
 
             ApiProviderType.NVIDIA ->
-                enabledTextParameter(modelParameters, "reasoning_effort")
+                enabledRawTextParameter(modelParameters, "reasoning_effort")
                     ?.let(::textSummary)
                     ?: if (modelName.contains("gpt-oss", ignoreCase = true)) {
                         ThinkingRequestSummary.Effort(
@@ -296,13 +294,15 @@ object ThinkingRequestSemantics {
 
             ApiProviderType.MOONSHOT,
             ApiProviderType.MIMO ->
-                resolveThinkingObjectOverride(modelParameters) ?: ThinkingRequestSummary.Enabled
+                resolveKimiThinkingOverride(modelParameters) ?: ThinkingRequestSummary.Enabled
 
             ApiProviderType.DOUBAO,
             ApiProviderType.MNN -> ThinkingRequestSummary.Enabled
 
+            ApiProviderType.LLAMA_CPP -> ThinkingRequestSummary.NotSent
+
             else ->
-                enabledTextParameter(modelParameters, "reasoning_effort")
+                enabledRawTextParameter(modelParameters, "reasoning_effort")
                     ?.let(::textSummary)
                     ?: ThinkingRequestSummary.NotSent
         }
@@ -441,7 +441,7 @@ object ThinkingRequestSemantics {
         return when (thinkingOverride) {
             ThinkingRequestSummary.Enabled,
             is ThinkingRequestSummary.BudgetTokens ->
-                enabledTextParameter(modelParameters, "reasoning_effort")
+                enabledRawTextParameter(modelParameters, "reasoning_effort")
                     ?.let(::textSummary)
                     ?: thinkingOverride
 
@@ -460,13 +460,15 @@ object ThinkingRequestSemantics {
                 enabledParameter(modelParameters, "thinking_budget")
                     ?.currentValue
                     ?.let(::valueSummary)
-                    ?: enabledTextParameter(modelParameters, "reasoning_effort")?.let(::textSummary)
+                    ?: enabledRawTextParameter(modelParameters, "reasoning_effort")
+                        ?.let(::textSummary)
 
             enabledOverride == ThinkingRequestSummary.Enabled ->
                 enabledParameter(modelParameters, "thinking_budget")
                     ?.currentValue
                     ?.let(::valueSummary)
-                    ?: enabledTextParameter(modelParameters, "reasoning_effort")?.let(::textSummary)
+                    ?: enabledRawTextParameter(modelParameters, "reasoning_effort")
+                        ?.let(::textSummary)
                     ?: ThinkingRequestSummary.Enabled
 
             else -> enabledOverride
@@ -491,7 +493,8 @@ object ThinkingRequestSemantics {
             ?: return ThinkingRequestSummary.CustomValue(raw)
 
         thinkingConfig["thinkingBudget"]?.let { budgetElement ->
-            val budget = (budgetElement as? JsonPrimitive)?.intOrNull
+            val budgetPrimitive = budgetElement as? JsonPrimitive
+            val budget = budgetPrimitive?.takeUnless { it.isString }?.intOrNull
                 ?: return ThinkingRequestSummary.CustomValue(budgetElement.toString())
             return if (budget == 0) {
                 ThinkingRequestSummary.Disabled
@@ -529,6 +532,20 @@ object ThinkingRequestSemantics {
             "disabled" -> ThinkingRequestSummary.Disabled
             else -> ThinkingRequestSummary.CustomValue(type)
         }
+    }
+
+    private fun resolveKimiThinkingOverride(
+        modelParameters: List<ModelParameter<*>>,
+    ): ThinkingRequestSummary? {
+        val thinkingOverride = resolveThinkingObjectOverride(modelParameters)
+        when (thinkingOverride) {
+            ThinkingRequestSummary.Disabled,
+            is ThinkingRequestSummary.CustomValue -> return thinkingOverride
+            else -> Unit
+        }
+        return enabledRawTextParameter(modelParameters, "reasoning_effort")
+            ?.let(::textSummary)
+            ?: thinkingOverride
     }
 
     private fun resolveAnthropicThinkingOverride(
@@ -581,7 +598,7 @@ object ThinkingRequestSemantics {
         return enabledParameter(modelParameters, "thinking_budget")
             ?.currentValue
             ?.let(::valueSummary)
-            ?: enabledTextParameter(modelParameters, "reasoning_effort")?.let(::textSummary)
+            ?: enabledRawTextParameter(modelParameters, "reasoning_effort")?.let(::textSummary)
             ?: enabledOverride
     }
 
@@ -617,6 +634,18 @@ object ThinkingRequestSemantics {
         apiName: String,
     ): String? = enabledParameter(modelParameters, apiName)?.currentValue?.toString()?.trim()
 
+    private fun enabledRawTextParameter(
+        modelParameters: List<ModelParameter<*>>,
+        apiName: String,
+    ): String? = enabledParameter(modelParameters, apiName)?.currentValue?.toString()
+
+    private fun resolveOpenAiChatReasoningEffortOverride(
+        modelParameters: List<ModelParameter<*>>,
+    ): ThinkingRequestSummary? =
+        enabledRawTextParameter(modelParameters, "reasoning_effort")
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::textSummary)
+
     private fun valueSummary(value: Any): ThinkingRequestSummary =
         (value as? Number)?.toInt()?.let(ThinkingRequestSummary::BudgetTokens)
             ?: ThinkingRequestSummary.CustomValue(value.toString())
@@ -629,6 +658,7 @@ object ThinkingRequestSemantics {
         }
 
     private fun textSummary(value: String): ThinkingRequestSummary =
-        value.takeIf { it.isNotBlank() }?.let(ThinkingRequestSummary::Effort)
+        value.takeIf { it.isNotBlank() && it == it.trim() }
+            ?.let(ThinkingRequestSummary::Effort)
             ?: ThinkingRequestSummary.CustomValue(value)
 }
