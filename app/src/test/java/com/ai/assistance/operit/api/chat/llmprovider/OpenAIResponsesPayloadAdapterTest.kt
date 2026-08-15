@@ -63,4 +63,34 @@ class OpenAIResponsesPayloadAdapterTest {
             )
         )
     }
+
+    @Test
+    fun `independent effort fills missing blank or null reasoning effort`() {
+        listOf("{}", "{\"effort\":\"\"}", "{\"effort\":null}").forEach { reasoning ->
+            val request =
+                JSONObject().apply {
+                    put("reasoning", JSONObject(reasoning))
+                    put("reasoning_effort", "low")
+                }
+
+            val converted = OpenAIResponsesPayloadAdapter.toResponsesRequest(request)
+
+            assertEquals("low", converted.getJSONObject("reasoning").getString("effort"))
+        }
+    }
+
+    @Test
+    fun `independent effort replaces a non-object reasoning value`() {
+        listOf("legacy-string-value", "{\"effort\":\"high\"}").forEach { reasoning ->
+            val request =
+                JSONObject().apply {
+                    put("reasoning", reasoning)
+                    put("reasoning_effort", "low")
+                }
+
+            val converted = OpenAIResponsesPayloadAdapter.toResponsesRequest(request)
+
+            assertEquals("low", converted.getJSONObject("reasoning").getString("effort"))
+        }
+    }
 }

@@ -91,7 +91,8 @@ class ClaudeProvider(
     private val customHeaders: Map<String, String> = emptyMap(),
     private val providerType: ApiProviderType = ApiProviderType.ANTHROPIC,
     private val enableToolCall: Boolean = false, // 是否启用Tool Call接口（预留，Claude有原生tool支持）
-    private val enableClaude1hPromptCache: Boolean = false
+    private val enableClaude1hPromptCache: Boolean = false,
+    private val configId: String = "",
 ) : AIService {
     // private val client: OkHttpClient = HttpClientFactory.instance
 
@@ -106,19 +107,20 @@ class ClaudeProvider(
     @Volatile private var isManuallyCancelled = false
 
     /**
-     * Thinking 格式模式。
-     * - ADAPTIVE: thinking.type="adaptive" + display=summarized（新模型）
-     * - ENABLED:  thinking.type="enabled" + budget_tokens（旧模型）
+     * 将运行时探测到的 thinking 格式与菜单使用的配置/模型键关联。
      */
-    private enum class ThinkingFormat { ADAPTIVE, ENABLED }
+    private val thinkingFormatKey =
+        ClaudeThinkingFormatState.key(
+            configId = configId,
+            providerTypeId = providerType.name,
+            apiEndpoint = apiEndpoint,
+            modelName = modelName,
+        )
 
-    /**
-     * 缓存：当前模型对应的 thinking 格式。
-     * 初始由模型名启发式决定；若 API 返回 thinking 类型不兼容的 400 错误，
-     * 会自动翻转并缓存，后续请求直接使用正确格式，避免重复失败。
-     */
-    @Volatile
-    private var cachedThinkingFormat: ThinkingFormat? = null
+    private data class BuiltRequestBody(
+        val body: RequestBody,
+        val thinkingFormat: ClaudeThinkingFormat?,
+    )
 
     /**
      * 由客户端错误（如4xx状态码）触发的API异常，是否重试由统一策略决定
@@ -1080,7 +1082,7 @@ class ClaudeProvider(
             stream: Boolean = true,
             availableTools: List<ToolPrompt>? = null,
             preserveThinkInHistory: Boolean = false
-    ): RequestBody {
+    ): BuiltRequestBody {
         val jsonObject = JSONObject()
         jsonObject.put("model", modelName)
         jsonObject.put("stream", stream)
@@ -1124,10 +1126,12 @@ class ClaudeProvider(
                 modelParameters = modelParameters,
                 enableThinking = enableThinking,
             )
+        var appliedThinkingFormat: ClaudeThinkingFormat? = null
         if (!hasExplicitThinking && enableThinking) {
             val format = getThinkingFormat()
+            appliedThinkingFormat = format
             when (format) {
-                ThinkingFormat.ADAPTIVE -> {
+                ClaudeThinkingFormat.ADAPTIVE -> {
                     // adaptive thinking: thinking.type=adaptive + display=summarized
                     // Opus 4.8/4.7 default display to "omitted" (empty thinking),
                     // must explicitly set "summarized" to receive thinking content.
@@ -1138,16 +1142,13 @@ class ClaudeProvider(
 
                     AppLogger.d("AIService", "启用Claude adaptive thinking, display=summarized")
                 }
-                ThinkingFormat.ENABLED -> {
+                ClaudeThinkingFormat.ENABLED -> {
                     // enabled thinking: thinking.type=enabled + budget_tokens
                     val thinkingObject = JSONObject()
                     thinkingObject.put("type", "enabled")
 
-                    val budgetTokensFromParams = modelParameters
-                        .lastOrNull { it.apiName == "budget_tokens" && it.isEnabled }
-                        ?.currentValue
-                    val budgetTokensValue = (budgetTokensFromParams as? Number)?.toInt()?.takeIf { it > 0 }
-                        ?: minOf(1024, maxTokensValue)
+                    val budgetTokensValue =
+                        resolveClaudeThinkingBudgetTokens(modelParameters, maxTokensValue)
                     thinkingObject.put("budget_tokens", budgetTokensValue)
 
                     jsonObject.put("thinking", thinkingObject)
@@ -1164,7 +1165,10 @@ class ClaudeProvider(
         }
         sanitizeImageDataForLogging(logJson)
         AppLogger.d("AIService", "Claude请求体: ${logJson.toString(4)}")
-        return jsonObject.toString().toByteArray(Charsets.UTF_8).toRequestBody(JSON)
+        return BuiltRequestBody(
+            body = jsonObject.toString().toByteArray(Charsets.UTF_8).toRequestBody(JSON),
+            thinkingFormat = appliedThinkingFormat,
+        )
     }
 
     /**
@@ -1180,25 +1184,23 @@ class ClaudeProvider(
      * 优先返回缓存值（包含回退后的正确结果）；
      * 无缓存时根据模型名启发式推断。
      */
-    private fun getThinkingFormat(): ThinkingFormat {
-        return cachedThinkingFormat
-            ?: if (prefersAdaptiveThinking()) ThinkingFormat.ADAPTIVE
-            else ThinkingFormat.ENABLED
+    private fun getThinkingFormat(): ClaudeThinkingFormat {
+        return ClaudeThinkingFormatState.get(thinkingFormatKey)
+            ?: if (prefersAdaptiveThinking()) ClaudeThinkingFormat.ADAPTIVE
+            else ClaudeThinkingFormat.ENABLED
     }
 
     /**
      * 在检测到 API 返回 thinking type 不兼容的 400 错误后，
      * 翻转当前缓存的 thinking 格式并记录日志。
      */
-    private fun flipThinkingFormat(): ThinkingFormat {
-        val current = getThinkingFormat()
-        val flipped = if (current == ThinkingFormat.ADAPTIVE) ThinkingFormat.ENABLED
-                      else ThinkingFormat.ADAPTIVE
-        cachedThinkingFormat = flipped
+    private fun flipThinkingFormat(failedFormat: ClaudeThinkingFormat): ClaudeThinkingFormat {
+        val flipped =
+            ClaudeThinkingFormatState.transitionAfterFailure(thinkingFormatKey, failedFormat)
         AppLogger.w(
             "AIService",
             "【Claude Thinking 回退】$modelName detected thinking type incompatibility, " +
-            "flipped $current → $flipped (cached for subsequent requests)"
+            "transitioned $failedFormat → $flipped (cached for subsequent requests)"
         )
         return flipped
     }
@@ -1470,6 +1472,7 @@ class ClaudeProvider(
                 throw UserCancellationException(context.getString(R.string.openai_error_request_cancelled))
             }
 
+            var attemptedThinkingFormat: ClaudeThinkingFormat? = null
             val call = try {
                 if (retryCount > 0) {
                     AppLogger.d(
@@ -1478,7 +1481,7 @@ class ClaudeProvider(
                     )
                 }
 
-                val requestBody = createRequestBody(
+                val builtRequestBody = createRequestBody(
                     context,
                     chatHistory,
                     modelParameters,
@@ -1487,12 +1490,13 @@ class ClaudeProvider(
                     availableTools,
                     preserveThinkInHistory
                 )
+                attemptedThinkingFormat = builtRequestBody.thinkingFormat
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
                     tokenCacheManager.cachedInputTokenCount,
                     tokenCacheManager.outputTokenCount
                 )
-                val request = createRequest(requestBody)
+                val request = createRequest(builtRequestBody.body)
                 client.newCall(request)
             } catch (e: Exception) {
                 throw e
@@ -1945,8 +1949,14 @@ class ClaudeProvider(
                 emitRollback(requestSavepointId)
 
                 // 检测 thinking type 不兼容错误，自动翻转格式并立即重试
-                if (enableThinking && !thinkingFormatFlipped && isThinkingTypeError(e)) {
-                    flipThinkingFormat()
+                val failedThinkingFormat = attemptedThinkingFormat
+                if (
+                    enableThinking &&
+                        !thinkingFormatFlipped &&
+                        failedThinkingFormat != null &&
+                        isThinkingTypeError(e)
+                ) {
+                    flipThinkingFormat(failedThinkingFormat)
                     thinkingFormatFlipped = true
                     onNonFatalError(
                         context.getString(R.string.provider_error_retry_message,

@@ -193,7 +193,10 @@ class OpenAIResponsesProvider(
             return null
         }
 
-        return ApiPreferences.thinkingQualityEffort(qualityLevel)
+        return ThinkingRequestSemantics.defaultReasoningEffort(
+            responsesProviderType,
+            qualityLevel,
+        )
     }
 
     private fun shouldAttachPromptCacheKey(): Boolean {
