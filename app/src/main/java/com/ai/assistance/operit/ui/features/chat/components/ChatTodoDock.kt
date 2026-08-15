@@ -37,6 +37,17 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatTodo
 import com.ai.assistance.operit.data.model.ChatTodoStatus
 
+internal fun currentTodoStep(todos: List<ChatTodo>): Int {
+    val inProgressIndex = todos.indexOfFirst { it.status == ChatTodoStatus.IN_PROGRESS }
+    val currentIndex =
+        if (inProgressIndex >= 0) {
+            inProgressIndex
+        } else {
+            todos.indexOfFirst { it.status == ChatTodoStatus.PENDING }
+        }
+    return if (currentIndex >= 0) currentIndex + 1 else todos.size
+}
+
 @Composable
 fun ChatTodoDock(
     chatId: String?,
@@ -54,10 +65,7 @@ fun ChatTodoDock(
         if (allTerminal) expanded = false
     }
 
-    val currentStep =
-        todos.indexOfFirst {
-            it.status == ChatTodoStatus.IN_PROGRESS || it.status == ChatTodoStatus.PENDING
-        }.let { index -> if (index >= 0) index + 1 else todos.size }
+    val currentStep = currentTodoStep(todos)
     val terminalCount =
         todos.count {
             it.status == ChatTodoStatus.COMPLETED || it.status == ChatTodoStatus.CANCELLED

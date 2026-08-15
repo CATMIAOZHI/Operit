@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.data.model
 
+import com.ai.assistance.operit.data.repository.OPERIT_ARCHIVE_CHAT_TODO_SNAPSHOT_COLUMNS
 import com.ai.assistance.operit.data.repository.OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS
 import java.time.LocalDateTime
 import kotlinx.serialization.decodeFromString
@@ -9,22 +10,43 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class OperitChatArchiveV5SerializationTest {
+class OperitChatArchiveV6SerializationTest {
     private val json = Json { encodeDefaults = true }
 
     @Test
-    fun snapshotProjectionIncludesAllPersistedSubagentMetadata() {
-        assertTrue("toolInvocationCount" in OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS)
-        assertTrue("archivedAt" in OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS)
+    fun legacyArchivedChatWithoutTodosDefaultsToEmptySnapshot() {
+        val decoded =
+            json.decodeFromString<OperitArchivedChat>(
+                """{"id":"legacy","title":"Legacy","messages":[]}"""
+            )
+
+        assertTrue(decoded.todos.isEmpty())
     }
 
     @Test
-    fun roundTripPreservesChatKindAndSubagentRun() {
+    fun snapshotProjectionsIncludePersistedMetadata() {
+        assertTrue("toolInvocationCount" in OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS)
+        assertTrue("archivedAt" in OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS)
+        assertEquals(
+            listOf("chatId", "position", "content", "status", "priority"),
+            OPERIT_ARCHIVE_CHAT_TODO_SNAPSHOT_COLUMNS,
+        )
+    }
+
+    @Test
+    fun roundTripPreservesChatKindSubagentRunAndTodos() {
+        val todo =
+            OperitArchivedTodo(
+                content = "Inspect archive",
+                status = ChatTodoStatus.IN_PROGRESS,
+                priority = ChatTodoPriority.HIGH,
+            )
         val parent =
             OperitArchivedChat(
                 id = "parent",
                 title = "Parent",
                 messages = emptyList(),
+                todos = listOf(todo),
                 createdAt = LocalDateTime.of(2026, 7, 30, 1, 2),
                 updatedAt = LocalDateTime.of(2026, 7, 30, 1, 3),
                 chatKind = ChatKind.NORMAL.name,
@@ -63,11 +85,11 @@ class OperitChatArchiveV5SerializationTest {
                 subagentRuns = listOf(run),
             )
 
-        val encoded = json.encodeToString(archive)
-        val decoded = json.decodeFromString<OperitChatArchive>(encoded)
+        val decoded = json.decodeFromString<OperitChatArchive>(json.encodeToString(archive))
 
-        assertEquals(5, decoded.formatVersion)
+        assertEquals(6, decoded.formatVersion)
         assertEquals(ChatKind.SUBAGENT.name, decoded.chats.single { it.id == "child" }.chatKind)
+        assertEquals(todo, decoded.chats.single { it.id == "parent" }.todos.single())
         assertEquals(run, decoded.subagentRuns.single())
     }
 }

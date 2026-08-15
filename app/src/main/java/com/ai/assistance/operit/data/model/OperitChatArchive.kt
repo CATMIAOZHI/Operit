@@ -15,7 +15,7 @@ data class OperitChatArchive(
 ) {
     companion object {
         const val ARCHIVE_TYPE = "operit_chat_archive"
-        const val CURRENT_FORMAT_VERSION = 5
+        const val CURRENT_FORMAT_VERSION = 6
     }
 }
 
@@ -53,6 +53,7 @@ data class OperitArchivedChat(
     val id: String,
     val title: String,
     val messages: List<OperitArchivedMessage>,
+    val todos: List<OperitArchivedTodo> = emptyList(),
     @Serializable(with = LocalDateTimeSerializer::class)
     val createdAt: LocalDateTime = LocalDateTime.now(),
     @Serializable(with = LocalDateTimeSerializer::class)
@@ -107,11 +108,13 @@ data class OperitArchivedChat(
         fun fromChatHistory(
             history: ChatHistory,
             messages: List<OperitArchivedMessage>,
+            todos: List<OperitArchivedTodo> = emptyList(),
         ): OperitArchivedChat {
             return OperitArchivedChat(
                 id = history.id,
                 title = history.title,
                 messages = messages,
+                todos = todos,
                 createdAt = history.createdAt,
                 updatedAt = history.updatedAt,
                 inputTokens = history.inputTokens,
@@ -132,6 +135,29 @@ data class OperitArchivedChat(
             )
         }
     }
+}
+
+@Serializable
+data class OperitArchivedTodo(
+    val content: String,
+    val status: ChatTodoStatus,
+    val priority: ChatTodoPriority,
+) {
+    fun toChatTodo(): ChatTodo =
+        ChatTodo(
+            content = content,
+            status = status,
+            priority = priority,
+        )
+
+    fun toEntity(chatId: String, position: Int): ChatTodoEntity =
+        ChatTodoEntity(
+            chatId = chatId,
+            position = position,
+            content = content,
+            status = status.name,
+            priority = priority.name,
+        )
 }
 
 @Serializable
