@@ -142,6 +142,7 @@ object ThinkingRequestSemantics {
                     ApiProviderType.OTHER ->
                         enabledRawTextParameter(modelParameters, "reasoning_effort")
                             ?.let(::textSummary)
+                            ?: ThinkingRequestSummary.NotSent
 
                     ApiProviderType.OPENAI_RESPONSES,
                     ApiProviderType.OPENAI_RESPONSES_GENERIC ->
@@ -296,7 +297,11 @@ object ThinkingRequestSemantics {
             ApiProviderType.MIMO ->
                 resolveKimiThinkingOverride(modelParameters) ?: ThinkingRequestSummary.Enabled
 
-            ApiProviderType.DOUBAO,
+            ApiProviderType.DOUBAO ->
+                enabledRawTextParameter(modelParameters, "reasoning_effort")
+                    ?.let(::textSummary)
+                    ?: ThinkingRequestSummary.Enabled
+
             ApiProviderType.MNN -> ThinkingRequestSummary.Enabled
 
             ApiProviderType.LLAMA_CPP -> ThinkingRequestSummary.NotSent
@@ -369,26 +374,32 @@ object ThinkingRequestSemantics {
         if (reasoningParameter != null) {
             val raw = reasoningParameter.currentValue.toString().trim()
             if (reasoningParameter.valueType != ParameterValueType.OBJECT) {
-                return separateEffort?.let(ThinkingRequestSummary::Effort)
+                return separateEffort?.let(::responsesEffortSummary)
                     ?: ThinkingRequestSummary.CustomValue(raw)
             }
             val reasoningObject = parseObject(raw)
-                ?: return separateEffort?.let(ThinkingRequestSummary::Effort)
+                ?: return separateEffort?.let(::responsesEffortSummary)
                     ?: ThinkingRequestSummary.CustomValue(raw)
             reasoningObject["effort"]?.let { effortElement ->
-                val effort = (effortElement as? JsonPrimitive)?.contentOrNull?.trim()
-                return if (effortElement is JsonPrimitive && effort.isNullOrEmpty()) {
-                    separateEffort?.let(ThinkingRequestSummary::Effort)
-                } else if (!effort.isNullOrEmpty()) {
-                    ThinkingRequestSummary.Effort(effort)
+                val effortPrimitive = effortElement as? JsonPrimitive
+                    ?: return ThinkingRequestSummary.CustomValue(effortElement.toString())
+                val rawEffort = effortPrimitive.contentOrNull
+                if (rawEffort.isNullOrBlank()) {
+                    return separateEffort?.let(::responsesEffortSummary)
+                }
+                if (!effortPrimitive.isString) {
+                    return ThinkingRequestSummary.CustomValue(effortElement.toString())
+                }
+                return if (rawEffort == "none") {
+                    ThinkingRequestSummary.Disabled
                 } else {
-                    ThinkingRequestSummary.CustomValue(effortElement.toString())
+                    textSummary(rawEffort)
                 }
             }
-            return separateEffort?.let(ThinkingRequestSummary::Effort)
+            return separateEffort?.let(::responsesEffortSummary)
         }
 
-        return separateEffort?.let(ThinkingRequestSummary::Effort)
+        return separateEffort?.let(::responsesEffortSummary)
     }
 
     private fun resolveOpenRouterOverride(
@@ -497,11 +508,7 @@ object ThinkingRequestSemantics {
             val budgetPrimitive = budgetElement as? JsonPrimitive
             val budget = budgetPrimitive?.takeUnless { it.isString }?.intOrNull
                 ?: return ThinkingRequestSummary.CustomValue(budgetElement.toString())
-            return if (budget == 0) {
-                ThinkingRequestSummary.Disabled
-            } else {
-                ThinkingRequestSummary.BudgetTokens(budget)
-            }
+            return geminiBudgetSummary(budget)
         }
         thinkingConfig["thinkingLevel"]?.let { levelElement ->
             val level = (levelElement as? JsonPrimitive)?.contentOrNull?.trim()
@@ -611,11 +618,7 @@ object ThinkingRequestSemantics {
             (enabledParameter(modelParameters, "thinking_budget")?.currentValue as? Number)
                 ?.toInt()
         if (budget != null) {
-            return if (budget == 0) {
-                ThinkingRequestSummary.Disabled
-            } else {
-                ThinkingRequestSummary.BudgetTokens(budget)
-            }
+            return geminiBudgetSummary(budget)
         }
         return enabledTextParameter(modelParameters, "thinking_level")
             ?.takeIf { it.isNotBlank() }
@@ -629,6 +632,20 @@ object ThinkingRequestSemantics {
         val value = enabledParameter(modelParameters, apiName)?.currentValue ?: return null
         return booleanSummary(value)
     }
+
+    private fun responsesEffortSummary(effort: String): ThinkingRequestSummary =
+        if (effort == "none") {
+            ThinkingRequestSummary.Disabled
+        } else {
+            ThinkingRequestSummary.Effort(effort)
+        }
+
+    private fun geminiBudgetSummary(budget: Int): ThinkingRequestSummary =
+        when (budget) {
+            -1 -> ThinkingRequestSummary.Enabled
+            0 -> ThinkingRequestSummary.Disabled
+            else -> ThinkingRequestSummary.BudgetTokens(budget)
+        }
 
     private fun parseObject(raw: String) =
         runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull()

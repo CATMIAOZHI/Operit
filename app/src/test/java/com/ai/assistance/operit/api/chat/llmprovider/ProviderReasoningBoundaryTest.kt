@@ -344,6 +344,35 @@ class ProviderReasoningBoundaryTest {
     }
 
     @Test
+    fun doubaoPreservesExplicitReasoningEffortAlongsideThinkingEnvelope() = runBlocking {
+        var capturedRequest: JSONObject? = null
+        val provider =
+            DoubaoAIProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "doubao-seed-1-6-thinking",
+                client = clientForOpenAiResponse { capturedRequest = it },
+            )
+        val reasoningEffort =
+            ModelParameter(
+                id = "reasoning_effort",
+                name = "reasoning_effort",
+                apiName = "reasoning_effort",
+                defaultValue = "high",
+                currentValue = "high",
+                isEnabled = true,
+                valueType = ParameterValueType.STRING,
+            )
+
+        withoutAndroidLogging {
+            sendNonStreamingRequest(provider, listOf(reasoningEffort), enableThinking = true)
+        }
+
+        assertEquals("high", capturedRequest?.getString("reasoning_effort"))
+        assertEquals("enabled", capturedRequest?.getJSONObject("thinking")?.getString("type"))
+    }
+
+    @Test
     fun geminiReasoningCannotCloseThinkingEnvelopeAndInjectTool() = runBlocking {
         val provider =
             GeminiProvider(

@@ -138,6 +138,31 @@ class ThinkingQualityTest {
             ),
         )
         assertEquals(
+            ThinkingRequestSummary.Enabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-2.5-flash",
+                qualityLevel = 5,
+                modelParameters = listOf(intParameter("thinking_budget", -1)),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Enabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-2.5-flash",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinkingConfig",
+                            "{\"thinkingBudget\":-1}",
+                            ParameterCategory.GENERATION,
+                        )
+                    ),
+            ),
+        )
+        assertEquals(
             ThinkingRequestSummary.Effort("low"),
             ThinkingRequestSemantics.resolve(
                 providerType = ApiProviderType.GEMINI_GENERIC,
@@ -551,6 +576,17 @@ class ThinkingQualityTest {
                     modelName = "openai-compatible-model",
                     qualityLevel = 5,
                     modelParameters = listOf(stringParameter("reasoning_effort", "high")),
+                    enableThinking = false,
+                ),
+            )
+            assertEquals(
+                providerType.name,
+                ThinkingRequestSummary.NotSent,
+                ThinkingRequestSemantics.resolve(
+                    providerType = providerType,
+                    modelName = "openai-compatible-model",
+                    qualityLevel = 5,
+                    modelParameters = emptyList(),
                     enableThinking = false,
                 ),
             )
@@ -1051,6 +1087,47 @@ class ThinkingQualityTest {
                     ),
             ),
         )
+        listOf(
+            listOf(objectParameter("reasoning", "{\"effort\":\"none\"}")),
+            listOf(stringParameter("reasoning_effort", "none")),
+            listOf(stringParameter("reasoning_effort", " none ")),
+            listOf(
+                objectParameter("reasoning", "{}"),
+                stringParameter("reasoning_effort", "none"),
+            ),
+        ).forEach { parameters ->
+            assertEquals(
+                ThinkingRequestSummary.Disabled,
+                ThinkingRequestSemantics.resolve(
+                    providerType = ApiProviderType.OPENAI_RESPONSES,
+                    modelName = "gpt-5.6",
+                    qualityLevel = 5,
+                    modelParameters = parameters,
+                ),
+            )
+        }
+        assertEquals(
+            ThinkingRequestSummary.CustomValue(" none "),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI_RESPONSES,
+                modelName = "gpt-5.6",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        objectParameter("reasoning", "{\"effort\":\" none \"}"),
+                        stringParameter("reasoning_effort", "high"),
+                    ),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("123"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENAI_RESPONSES,
+                modelName = "gpt-5.6",
+                qualityLevel = 5,
+                modelParameters = listOf(objectParameter("reasoning", "{\"effort\":123}")),
+            ),
+        )
         assertEquals(
             ThinkingRequestSummary.CustomValue("legacy-string-value"),
             ThinkingRequestSemantics.resolve(
@@ -1233,6 +1310,16 @@ class ThinkingQualityTest {
                 ),
             )
         }
+
+        assertEquals(
+            ThinkingRequestSummary.Effort("high"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.DOUBAO,
+                modelName = "doubao-seed-1-6-thinking",
+                qualityLevel = 1,
+                modelParameters = listOf(stringParameter("reasoning_effort", "high")),
+            ),
+        )
 
         assertEquals(
             ThinkingRequestSummary.CustomValue("\"0\""),
