@@ -7,7 +7,21 @@ import com.ai.assistance.operit.data.model.ChatTodoStatus
 import com.ai.assistance.operit.data.model.toChatTodo
 import com.ai.assistance.operit.data.model.toEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
+
+internal fun Flow<String?>.observeChatTodos(
+    observeTodos: (String) -> Flow<List<ChatTodo>>,
+): Flow<List<ChatTodo>> =
+    flatMapLatest { chatId ->
+        if (chatId == null) {
+            flowOf(emptyList())
+        } else {
+            observeTodos(chatId).onStart { emit(emptyList()) }
+        }
+    }
 
 class ChatTodoRepository private constructor(context: Context) {
     private val dao = AppDatabase.getDatabase(context.applicationContext).chatTodoDao()

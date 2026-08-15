@@ -6286,11 +6286,13 @@
     <string name="pkg_confirm_delete">Confirm Delete</string>
     <string name="pkg_delete_warning">Are you sure you want to delete package "%1$s"? This action cannot be undone.</string>
     <string name="pkg_delete">Delete</string>
+    <string name="pkg_delete_success">Package deleted</string>
     <string name="builtin_archive_title">Built-in archive</string>
     <string name="builtin_archive_description">Deleted built-in plugins and packages remain here and can be restored at any time.</string>
     <string name="builtin_archive_empty">No built-in plugins or packages have been archived</string>
     <string name="builtin_archive_back">Back to package manager</string>
     <string name="builtin_archive_action">Delete and archive</string>
+    <string name="builtin_archive_success">Built-in item moved to the archive</string>
     <string name="builtin_archive_confirm_title">Delete built-in item</string>
     <string name="builtin_archive_warning">“%1$s” will be disabled and moved to the built-in archive. You can restore it later from the archive page.</string>
     <string name="builtin_archive_restore">Restore</string>

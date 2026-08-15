@@ -29,6 +29,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+enum class PackageRemovalKind {
+    ARCHIVED,
+    DELETED,
+}
+
 @Composable
 fun PackageDetailsDialog(
         packageName: String,
@@ -38,7 +43,7 @@ fun PackageDetailsDialog(
         onRunScript: (String, PackageTool) -> Unit,
         onOpenToolPkgPluginConfig: (String, String, String, Boolean) -> Unit,
         onDismiss: () -> Unit,
-        onPackageDeleted: () -> Unit
+        onPackageRemoved: (PackageRemovalKind) -> Unit,
 ) {
     val context = LocalContext.current
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
@@ -159,7 +164,13 @@ fun PackageDetailsDialog(
                                         }
                                     if (deleted) {
                                         showDeleteConfirmDialog = false
-                                        onPackageDeleted()
+                                        onPackageRemoved(
+                                            if (isBuiltIn) {
+                                                PackageRemovalKind.ARCHIVED
+                                            } else {
+                                                PackageRemovalKind.DELETED
+                                            }
+                                        )
                                     } else {
                                         showDeleteConfirmDialog = false
                                     }

@@ -60,6 +60,7 @@ import com.ai.assistance.operit.ui.components.ErrorDialog
 import com.ai.assistance.operit.ui.features.packages.components.EmptyState
 import com.ai.assistance.operit.ui.features.packages.components.PackageTab
 import com.ai.assistance.operit.ui.features.packages.dialogs.PackageDetailsDialog
+import com.ai.assistance.operit.ui.features.packages.dialogs.PackageRemovalKind
 import com.ai.assistance.operit.ui.features.packages.dialogs.QuickPluginCreatorDialog
 import com.ai.assistance.operit.ui.features.packages.dialogs.ScriptExecutionDialog
 import com.ai.assistance.operit.ui.features.packages.lists.PackagesList
@@ -960,12 +961,12 @@ fun PackageManagerScreen(
                             visibleImportedPackages.value = imported.toList()
                         }
                     },
-                    onPackageDeleted = {
+                    onPackageRemoved = { removalKind ->
                         showDetails = false
                         scope.launch {
                             AppLogger.d(
                                 "PackageManagerScreen",
-                                "onPackageDeleted callback triggered. Refreshing package lists."
+                                "Package removed via $removalKind. Refreshing package lists."
                             )
                             // Refresh the package lists after deletion
                             isLoading = true
@@ -1002,7 +1003,14 @@ fun PackageManagerScreen(
                                 "Lists refreshed. Available: ${availablePackages.value.keys}, Imported: ${importedPackages.value}"
                             )
                             isLoading = false
-                            snackbarHostState.showSnackbar("Package deleted successfully.")
+                            snackbarHostState.showSnackbar(
+                                context.getString(
+                                    when (removalKind) {
+                                        PackageRemovalKind.ARCHIVED -> R.string.builtin_archive_success
+                                        PackageRemovalKind.DELETED -> R.string.pkg_delete_success
+                                    }
+                                )
+                            )
                         }
                     }
                 )

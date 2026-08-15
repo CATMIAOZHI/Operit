@@ -839,9 +839,9 @@ object SystemToolPrompts {
         toolOrder: List<String> = emptyList()
     ): List<ManageableToolPrompt> {
         val baseCategories = if (useEnglish) {
-            listOf(basicTools, subagentTools, fileSystemTools, httpTools, memoryTools)
+            listOf(nativeTodoToolsEn, basicTools, subagentTools, fileSystemTools, httpTools, memoryTools)
         } else {
-            listOf(basicToolsCn, subagentToolsCn, fileSystemToolsCn, httpToolsCn, memoryToolsCn)
+            listOf(nativeTodoToolsCn, basicToolsCn, subagentToolsCn, fileSystemToolsCn, httpToolsCn, memoryToolsCn)
         }
 
         val result = baseCategories

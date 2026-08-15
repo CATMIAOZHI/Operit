@@ -135,6 +135,16 @@ class SubagentToolExposureTest {
                 .flatMap { it.tools }
                 .count { it.name == TODO_TOOL_NAME },
         )
+        assertEquals(
+            1,
+            SystemToolPrompts.getManageableToolPrompts(useEnglish = true)
+                .count { it.name == TODO_TOOL_NAME },
+        )
+        assertEquals(
+            1,
+            SystemToolPrompts.getManageableToolPrompts(useEnglish = false)
+                .count { it.name == TODO_TOOL_NAME },
+        )
     }
 
     private fun assertTaskExactlyOnce(
