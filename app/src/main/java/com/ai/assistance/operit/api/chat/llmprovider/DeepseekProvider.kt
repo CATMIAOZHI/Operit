@@ -460,8 +460,11 @@ class DeepseekProvider(
             return null
         }
 
-        // DeepSeek 官方文档枚举为 low/high/max；五档 UI 在请求边界降级到这三个值。
-        return normalizeDeepseekEffort(ApiPreferences.thinkingQualityEffort(qualityLevel))
+        // DeepSeek 官方文档枚举为 low/high/max；五档 UI 在共享请求语义边界降级到这三个值。
+        return ThinkingRequestSemantics.defaultReasoningEffort(
+            com.ai.assistance.operit.data.model.ApiProviderType.DEEPSEEK,
+            qualityLevel,
+        )
     }
 
     companion object {
@@ -469,12 +472,7 @@ class DeepseekProvider(
          * 将五档 UI 的 reasoning_effort 归一化到 DeepSeek 官方接受的 low/high/max。
          */
         fun normalizeDeepseekEffort(effort: String): String =
-            when (effort) {
-                "low" -> "low"
-                "medium", "high" -> "high"
-                "xhigh", "max" -> "max"
-                else -> effort
-            }
+            ThinkingRequestSemantics.normalizeDeepseekEffort(effort)
     }
 
     override suspend fun sendMessage(

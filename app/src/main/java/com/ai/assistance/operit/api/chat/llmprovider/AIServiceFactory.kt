@@ -359,7 +359,8 @@ object AIServiceFactory {
                     customHeaders,
                     providerType,
                     enableToolCall,
-                    config.enableClaude1hPromptCache
+                    config.enableClaude1hPromptCache,
+                    config.id,
                 )
 
             // Gemini格式，支持Google Gemini系列及通用Gemini端点

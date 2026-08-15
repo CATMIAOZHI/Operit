@@ -908,6 +908,16 @@ internal fun resolveClaudeEffectiveMaxTokens(
         ?: DEFAULT_CLAUDE_MAX_TOKENS
 }
 
+internal fun resolveClaudeThinkingBudgetTokens(
+    modelParameters: List<ModelParameter<*>>,
+    maxTokens: Int,
+): Int =
+    (modelParameters.lastOrNull { it.apiName == "budget_tokens" && it.isEnabled }
+        ?.currentValue as? Number)
+        ?.toInt()
+        ?.takeIf { it > 0 }
+        ?: minOf(MIN_ANTHROPIC_THINKING_BUDGET, maxTokens)
+
 internal fun applyClaudeEffectiveMaxTokensParameter(
     requestJson: org.json.JSONObject,
     providerType: ApiProviderType?,

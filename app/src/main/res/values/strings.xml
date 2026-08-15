@@ -3107,6 +3107,8 @@
     <string name="thinking_settings_active_count">已启用 %1$d 项</string>
     <string name="thinking_type_off">off</string>
     <string name="thinking_type_mode">mode</string>
+    <string name="thinking_budget_tokens">%1$d 个 Token</string>
+    <string name="thinking_strength_not_sent">未传入</string>
     <string name="thinking_quality">思考程度</string>
     <string name="thinking_quality_desc">仅在思考模式下生效。GPT-5.6 系列使用 5 档，其它模型保持原有 4 档；数值越高思考越深。</string>
     <string name="thinking_quality_level_low">低</string>

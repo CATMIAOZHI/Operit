@@ -3197,6 +3197,8 @@
     <string name="thinking_settings_active_count">%1$d enabled</string>
     <string name="thinking_type_off">off</string>
     <string name="thinking_type_mode">mode</string>
+    <string name="thinking_budget_tokens">%1$d tokens</string>
+    <string name="thinking_strength_not_sent">Not sent</string>
     <string name="thinking_quality">Thinking intensity</string>
     <string name="thinking_quality_desc">Only effective in thinking mode. GPT-5.6 models use five levels; other models retain the original four levels. Higher values use deeper reasoning.</string>
     <string name="thinking_quality_level_low">Low</string>
