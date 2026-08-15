@@ -42,8 +42,8 @@ internal object ClaudeThinkingFormatState {
             configId = normalizedConfigId,
             providerTypeId =
                 providerTypeId.trim().lowercase().takeIf { normalizedConfigId.isEmpty() }.orEmpty(),
-            apiEndpoint = apiEndpoint.trim().trimEnd('/').lowercase(),
-            modelName = modelName.trim().lowercase(),
+            apiEndpoint = apiEndpoint.trim().trimEnd('/'),
+            modelName = modelName.trim(),
         )
     }
 
@@ -112,10 +112,13 @@ object ThinkingRequestSemantics {
         modelParameters: List<ModelParameter<*>>,
         enableThinking: Boolean = true,
     ): ThinkingRequestSummary {
+        // ToolPkg handlers receive the toggle, but each script decides whether and how to map it
+        // into a downstream provider request. Without a capability contract, no request control can
+        // be claimed here.
+        if (isToolPkgProvider) {
+            return ThinkingRequestSummary.NotSent
+        }
         if (!enableThinking) {
-            if (isToolPkgProvider) {
-                return ThinkingRequestSummary.Disabled
-            }
             val preservedOverride =
                 when (ApiProviderType.fromProviderTypeId(providerTypeId)) {
                     ApiProviderType.OPENAI,
@@ -170,9 +173,6 @@ object ThinkingRequestSemantics {
                     else -> null
                 }
             return preservedOverride ?: ThinkingRequestSummary.Disabled
-        }
-        if (isToolPkgProvider) {
-            return ThinkingRequestSummary.Enabled
         }
         val effectiveProviderType =
             ApiProviderType.fromProviderTypeId(providerTypeId)
@@ -424,7 +424,8 @@ object ThinkingRequestSemantics {
             }
         }
         reasoningObject["max_tokens"]?.let { budgetElement ->
-            return (budgetElement as? JsonPrimitive)?.intOrNull
+            val budgetPrimitive = budgetElement as? JsonPrimitive
+            return budgetPrimitive?.takeUnless { it.isString }?.intOrNull
                 ?.let(ThinkingRequestSummary::BudgetTokens)
                 ?: ThinkingRequestSummary.CustomValue(budgetElement.toString())
         }
@@ -564,7 +565,8 @@ object ThinkingRequestSemantics {
             "enabled" -> {
                 val budgetElement = thinkingObject["budget_tokens"]
                     ?: return ThinkingRequestSummary.Enabled
-                (budgetElement as? JsonPrimitive)?.intOrNull
+                val budgetPrimitive = budgetElement as? JsonPrimitive
+                budgetPrimitive?.takeUnless { it.isString }?.intOrNull
                     ?.let(ThinkingRequestSummary::BudgetTokens)
                     ?: ThinkingRequestSummary.CustomValue(budgetElement.toString())
             }
@@ -604,13 +606,21 @@ object ThinkingRequestSemantics {
 
     private fun resolveGeminiThinkingOverride(
         modelParameters: List<ModelParameter<*>>,
-    ): ThinkingRequestSummary? =
-        (enabledParameter(modelParameters, "thinking_budget")?.currentValue as? Number)
-            ?.toInt()
-            ?.let(ThinkingRequestSummary::BudgetTokens)
-            ?: enabledTextParameter(modelParameters, "thinking_level")
-                ?.takeIf { it.isNotBlank() }
-                ?.let(ThinkingRequestSummary::Effort)
+    ): ThinkingRequestSummary? {
+        val budget =
+            (enabledParameter(modelParameters, "thinking_budget")?.currentValue as? Number)
+                ?.toInt()
+        if (budget != null) {
+            return if (budget == 0) {
+                ThinkingRequestSummary.Disabled
+            } else {
+                ThinkingRequestSummary.BudgetTokens(budget)
+            }
+        }
+        return enabledTextParameter(modelParameters, "thinking_level")
+            ?.takeIf { it.isNotBlank() }
+            ?.let(ThinkingRequestSummary::Effort)
+    }
 
     private fun resolveBooleanParameter(
         modelParameters: List<ModelParameter<*>>,
@@ -641,10 +651,17 @@ object ThinkingRequestSemantics {
 
     private fun resolveOpenAiChatReasoningEffortOverride(
         modelParameters: List<ModelParameter<*>>,
-    ): ThinkingRequestSummary? =
-        enabledRawTextParameter(modelParameters, "reasoning_effort")
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::textSummary)
+    ): ThinkingRequestSummary? {
+        val effort =
+            enabledRawTextParameter(modelParameters, "reasoning_effort")
+                ?.takeIf { it.isNotBlank() }
+                ?: return null
+        return if (effort == "none") {
+            ThinkingRequestSummary.Disabled
+        } else {
+            textSummary(effort)
+        }
+    }
 
     private fun valueSummary(value: Any): ThinkingRequestSummary =
         (value as? Number)?.toInt()?.let(ThinkingRequestSummary::BudgetTokens)

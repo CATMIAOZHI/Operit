@@ -129,6 +129,15 @@ class ThinkingQualityTest {
             ),
         )
         assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-2.5-flash",
+                qualityLevel = 5,
+                modelParameters = listOf(intParameter("thinking_budget", 0)),
+            ),
+        )
+        assertEquals(
             ThinkingRequestSummary.Effort("low"),
             ThinkingRequestSemantics.resolve(
                 providerType = ApiProviderType.GEMINI_GENERIC,
@@ -373,6 +382,21 @@ class ThinkingQualityTest {
                     ),
             ),
         )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("\"2048\""),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.ANTHROPIC,
+                modelName = "claude-3-opus-20240229",
+                qualityLevel = 1,
+                modelParameters =
+                    listOf(
+                        objectParameter(
+                            "thinking",
+                            "{\"type\":\"enabled\",\"budget_tokens\":\"2048\"}",
+                        )
+                    ),
+            ),
+        )
     }
 
     @Test fun requestSummary_ignoresMalformedAnthropicThinkingObjectLikeProvider() {
@@ -450,6 +474,28 @@ class ThinkingQualityTest {
         }
     }
 
+    @Test fun claudeThinkingFormatKey_preservesCaseSensitiveEndpointPathsAndModelIds() {
+        val lowerCaseKey =
+            ClaudeThinkingFormatState.key(
+                configId = "",
+                providerTypeId = "ANTHROPIC",
+                apiEndpoint = "https://example.test/Claude/v1/messages",
+                modelName = "Claude-Custom",
+            )
+        val upperCaseKey =
+            ClaudeThinkingFormatState.key(
+                configId = "",
+                providerTypeId = "anthropic",
+                apiEndpoint = "https://example.test/claude/v1/messages/",
+                modelName = "claude-custom",
+            )
+
+        assertEquals("anthropic", lowerCaseKey.providerTypeId)
+        assertEquals("https://example.test/Claude/v1/messages", lowerCaseKey.apiEndpoint)
+        assertEquals("Claude-Custom", lowerCaseKey.modelName)
+        org.junit.Assert.assertNotEquals(lowerCaseKey, upperCaseKey)
+    }
+
     @Test fun requestSummary_preservesCustomReasoningEffort() {
         assertEquals(
             ThinkingRequestSummary.Effort("max"),
@@ -460,6 +506,21 @@ class ThinkingQualityTest {
                 modelParameters = listOf(stringParameter("reasoning_effort", "max")),
             ),
         )
+    }
+
+    @Test fun requestSummary_treatsOpenAiNoneEffortAsDisabled() {
+        listOf(true, false).forEach { enableThinking ->
+            assertEquals(
+                ThinkingRequestSummary.Disabled,
+                ThinkingRequestSemantics.resolve(
+                    providerType = ApiProviderType.OPENAI,
+                    modelName = "gpt-5.6",
+                    qualityLevel = 5,
+                    modelParameters = listOf(stringParameter("reasoning_effort", "none")),
+                    enableThinking = enableThinking,
+                ),
+            )
+        }
     }
 
     @Test fun requestSummary_preservesProviderOverridesWhileGlobalThinkingIsOff() {
@@ -867,7 +928,7 @@ class ThinkingQualityTest {
             ),
         )
         assertEquals(
-            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSummary.NotSent,
             ThinkingRequestSemantics.resolve(
                 providerType = ApiProviderType.OPENAI,
                 isToolPkgProvider = true,
@@ -938,6 +999,16 @@ class ThinkingQualityTest {
                 modelParameters = listOf(stringParameter("reasoning", "{\"enabled\":false}")),
             ),
         )
+        assertEquals(
+            ThinkingRequestSummary.CustomValue("\"1024\""),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OPENROUTER,
+                modelName = "openrouter/auto",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(objectParameter("reasoning", "{\"max_tokens\":\"1024\"}")),
+            ),
+        )
     }
 
     @Test fun requestSummary_fallsBackFromBlankResponsesEffortToSelectedQuality() {
@@ -1004,9 +1075,9 @@ class ThinkingQualityTest {
         )
     }
 
-    @Test fun requestSummary_reportsEnabledForToolPkgProvider() {
+    @Test fun requestSummary_reportsNotSentForToolPkgProviderWithoutCapabilityContract() {
         assertEquals(
-            ThinkingRequestSummary.Enabled,
+            ThinkingRequestSummary.NotSent,
             ThinkingRequestSemantics.resolve(
                 providerType = ApiProviderType.OTHER,
                 providerTypeId = "sample_toolpkg_provider",
@@ -1014,6 +1085,18 @@ class ThinkingQualityTest {
                 modelName = "plugin-model",
                 qualityLevel = 5,
                 modelParameters = emptyList(),
+            ),
+        )
+        assertEquals(
+            ThinkingRequestSummary.NotSent,
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.OTHER,
+                providerTypeId = "sample_toolpkg_provider",
+                isToolPkgProvider = true,
+                modelName = "plugin-model",
+                qualityLevel = 5,
+                modelParameters = emptyList(),
+                enableThinking = false,
             ),
         )
     }
@@ -1122,7 +1205,6 @@ class ThinkingQualityTest {
                 modelParameters = listOf(stringParameter("reasoning_effort", paddedEffort)),
             ),
         )
-
         listOf(ApiProviderType.MOONSHOT, ApiProviderType.MIMO).forEach { providerType ->
             assertEquals(
                 ThinkingRequestSummary.Effort("max"),
