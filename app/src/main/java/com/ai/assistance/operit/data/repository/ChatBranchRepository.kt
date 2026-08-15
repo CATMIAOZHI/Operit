@@ -14,6 +14,9 @@ internal data class ChatBranchCopyResult(
     val copiedSubagentCount: Int,
 )
 
+internal fun shouldCopyTodosToBranch(upToTimestampInclusive: Long?): Boolean =
+    upToTimestampInclusive == null
+
 /**
  * Copies one persisted conversation branch together with the Subagent chats referenced by the
  * copied transcript.
@@ -40,7 +43,9 @@ internal class ChatBranchRepository(
                 "Source chat does not exist: $sourceChatId"
             }
             chatDao.insertChat(branch)
-            chatTodoDao.copyForChat(sourceChatId, branch.id)
+            if (shouldCopyTodosToBranch(upToTimestampInclusive)) {
+                chatTodoDao.copyForChat(sourceChatId, branch.id)
+            }
 
             val copiedMessageCount =
                 messageDao.countMessagesForChatUpToTimestamp(

@@ -283,7 +283,13 @@ fun PackageManagerScreen(
     LaunchedEffect(availablePackages.value, archivedBuiltInPackageNames, packageSearchQuery) {
         val packagesMap =
             availablePackages.value.filter { (packageName, toolPackage) ->
-                !(toolPackage.isBuiltIn && archivedBuiltInPackageNames.contains(packageName))
+                !(
+                    toolPackage.isBuiltIn &&
+                        packageManager.isArchivedBuiltInPackageOrSubpackage(
+                            packageName = packageName,
+                            archivedPackageNames = archivedBuiltInPackageNames,
+                        )
+                )
             }
         val searchText = packageSearchQuery.trim()
         if (searchText.isEmpty()) {

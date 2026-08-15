@@ -34,6 +34,12 @@ enum class PackageRemovalKind {
     DELETED,
 }
 
+internal fun shouldShowPackageRemovalAction(
+    hasPackageMetadata: Boolean,
+    isBuiltIn: Boolean,
+    isToolPkgSubpackage: Boolean,
+): Boolean = hasPackageMetadata && (!isBuiltIn || !isToolPkgSubpackage)
+
 @Composable
 fun PackageDetailsDialog(
         packageName: String,
@@ -103,6 +109,8 @@ fun PackageDetailsDialog(
     val metaPackage = toolPackage ?: resolvedPackage
     val isToolPkgContainer = toolPkgDetails != null
     val isBuiltIn = metaPackage?.isBuiltIn == true
+    val isToolPkgSubpackage =
+        metaPackage != null && packageManager.isToolPkgSubpackage(packageName)
     val packageDisplayName =
         toolPkgDetails?.displayName?.takeIf { it.isNotBlank() }
             ?: metaPackage
@@ -623,7 +631,13 @@ fun PackageDetailsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
                 ) {
-                    if (metaPackage != null) {
+                    if (
+                        shouldShowPackageRemovalAction(
+                            hasPackageMetadata = metaPackage != null,
+                            isBuiltIn = isBuiltIn,
+                            isToolPkgSubpackage = isToolPkgSubpackage,
+                        )
+                    ) {
                         OutlinedButton(
                             onClick = { showDeleteConfirmDialog = true },
                             colors = ButtonDefaults.outlinedButtonColors(

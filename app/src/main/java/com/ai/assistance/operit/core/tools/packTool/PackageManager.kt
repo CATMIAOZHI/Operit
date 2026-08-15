@@ -54,6 +54,15 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.hjson.JsonValue
 
+internal fun archivedBuiltInOwnerPackageName(
+    normalizedPackageName: String,
+    owningContainerPackageName: String?,
+    archivedPackageNames: Set<String>,
+): String? {
+    val archiveKey = owningContainerPackageName ?: normalizedPackageName
+    return archiveKey.takeIf(archivedPackageNames::contains)
+}
+
 /**
  * Manages the loading, registration, and handling of tool packages
  *
@@ -2724,11 +2733,18 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         if (!availablePackages.containsKey(normalizedPackageName)) {
             return "Package not found in available packages: $normalizedPackageName"
         }
+        val archivedOwnerPackageName =
+            archivedBuiltInOwnerPackageName(
+                normalizedPackageName = normalizedPackageName,
+                owningContainerPackageName =
+                    resolveToolPkgSubpackageRuntime(normalizedPackageName)?.containerPackageName,
+                archivedPackageNames = getArchivedBuiltInPackageNamesInternal().toSet(),
+            )
         if (
-            availablePackages[normalizedPackageName]?.isBuiltIn == true &&
-            getArchivedBuiltInPackageNamesInternal().contains(normalizedPackageName)
+            archivedOwnerPackageName != null &&
+            availablePackages[archivedOwnerPackageName]?.isBuiltIn == true
         ) {
-            return "Built-in package is archived: $normalizedPackageName"
+            return "Built-in package is archived: $archivedOwnerPackageName"
         }
 
         val enabledPackageNames = LinkedHashSet(getEnabledPackageNames())
@@ -3237,6 +3253,23 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
     fun getArchivedBuiltInPackageNames(): Set<String> {
         ensureInitialized()
         return getArchivedBuiltInPackageNamesInternal().toSet()
+    }
+
+    internal fun isArchivedBuiltInPackageOrSubpackage(
+        packageName: String,
+        archivedPackageNames: Set<String>,
+    ): Boolean {
+        ensureInitialized()
+        val normalizedPackageName = normalizePackageName(packageName)
+        val archivedOwnerPackageName =
+            archivedBuiltInOwnerPackageName(
+                normalizedPackageName = normalizedPackageName,
+                owningContainerPackageName =
+                    resolveToolPkgSubpackageRuntime(normalizedPackageName)?.containerPackageName,
+                archivedPackageNames = archivedPackageNames,
+            )
+        return archivedOwnerPackageName != null &&
+            availablePackages[archivedOwnerPackageName]?.isBuiltIn == true
     }
 
     fun archiveBuiltInPackage(packageName: String): Boolean {
