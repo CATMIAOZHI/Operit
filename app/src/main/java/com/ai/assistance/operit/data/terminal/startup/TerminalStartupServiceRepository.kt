@@ -51,6 +51,11 @@ internal fun decodePersistedEnvironmentValue(rawValue: Any?): String {
     return rawValue
 }
 
+internal fun decodePersistedCommand(rawValue: Any?): String {
+    require(rawValue is String) { "Invalid terminal startup command" }
+    return rawValue
+}
+
 internal fun decodePersistedHealthCheckPort(rawValue: Any?): Int? {
     if (rawValue == null) return null
     val number = rawValue as? Number
@@ -421,7 +426,7 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                         name = item.optString("name").ifBlank { id },
                         launchMode =
                             TerminalStartupLaunchMode.valueOf(item.getString("launchMode")),
-                        command = item.optString("command"),
+                        command = decodePersistedCommand(item.get("command")),
                         scriptPath =
                             if (item.isNull("scriptPath")) null
                             else item.optString("scriptPath").takeIf { it.isNotBlank() },

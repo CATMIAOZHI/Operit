@@ -235,6 +235,20 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
+    fun `persisted command must remain a string`() {
+        assertEquals("", decodePersistedCommand(""))
+        assertEquals("echo ready", decodePersistedCommand("echo ready"))
+        listOf<Any?>(null, 1, true, emptyMap<String, String>()).forEach { raw ->
+            try {
+                decodePersistedCommand(raw)
+                fail("Expected invalid command failure for $raw")
+            } catch (_: IllegalArgumentException) {
+                // Expected.
+            }
+        }
+    }
+
+    @Test
     fun `disable preempts runtime before persistence while enable waits for commit`() {
         assertTrue(shouldPreemptRuntimeBeforePersisting(enabled = false))
         assertFalse(shouldPreemptRuntimeBeforePersisting(enabled = true))
