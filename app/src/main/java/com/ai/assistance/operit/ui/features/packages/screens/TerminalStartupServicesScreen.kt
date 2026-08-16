@@ -67,7 +67,7 @@ import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceConf
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceManager
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceRepository
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceState
-import com.ai.assistance.operit.data.terminal.startup.deletePersistedServiceThenStop
+import com.ai.assistance.operit.data.terminal.startup.stopRuntimeThenDeletePersisted
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,6 +86,7 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
     var creating by remember { mutableStateOf(false) }
     var logServiceId by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf<TerminalStartupServiceConfig?>(null) }
+    var deletingServiceIds by remember { mutableStateOf(emptySet<String>()) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -138,6 +139,7 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
             }
             items(services, key = { it.id }) { service ->
                 val status = statuses[service.id]
+                val isDeleting = service.id in deletingServiceIds
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
@@ -154,6 +156,7 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                             }
                             Switch(
                                 checked = service.enabled,
+                                enabled = !isDeleting,
                                 onCheckedChange = { enabled ->
                                     manager.setServiceEnabledAsync(service, enabled) { error ->
                                         scope.launch { snackbar.showSnackbar(error.message.orEmpty()) }
@@ -171,9 +174,12 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                             IconButton(
                                 onClick = { manager.startServiceAsync(service) },
-                                enabled = service.enabled
+                                enabled = service.enabled && !isDeleting
                             ) { Icon(Icons.Default.PlayArrow, stringResource(R.string.terminal_startup_start)) }
-                            IconButton(onClick = { manager.stopServiceAsync(service.id) }) {
+                            IconButton(
+                                onClick = { manager.stopServiceAsync(service.id) },
+                                enabled = !isDeleting,
+                            ) {
                                 Icon(Icons.Default.Stop, stringResource(R.string.terminal_startup_stop))
                             }
                             IconButton(
@@ -182,15 +188,18 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                                     Terminal.getInstance(context).switchToSession(sessionId)
                                     onOpenTerminal()
                                 },
-                                enabled = manager.getManagedSessionId(service.id) != null
+                                enabled = !isDeleting && manager.getManagedSessionId(service.id) != null
                             ) { Icon(Icons.Default.Terminal, stringResource(R.string.terminal_startup_open_terminal)) }
-                            IconButton(onClick = { logServiceId = service.id }) {
+                            IconButton(
+                                onClick = { logServiceId = service.id },
+                                enabled = !isDeleting,
+                            ) {
                                 Icon(Icons.Default.ListAlt, stringResource(R.string.terminal_startup_logs))
                             }
-                            IconButton(onClick = { editing = service }) {
+                            IconButton(onClick = { editing = service }, enabled = !isDeleting) {
                                 Icon(Icons.Default.Edit, stringResource(R.string.edit))
                             }
-                            IconButton(onClick = { deleting = service }) {
+                            IconButton(onClick = { deleting = service }, enabled = !isDeleting) {
                                 Icon(Icons.Default.Delete, stringResource(R.string.delete))
                             }
                         }
@@ -247,17 +256,57 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     deleting = null
+                    deletingServiceIds = deletingServiceIds + service.id
                     scope.launch {
-                        runCatching {
-                            deletePersistedServiceThenStop(
-                                deletePersisted = { repository.delete(service.id) },
-                                stopRuntime = { manager.stopService(service.id) },
-                            )
-                        }.onFailure { error ->
-                            snackbar.showSnackbar(
-                                error.message?.takeIf { it.isNotBlank() }
-                                    ?: context.getString(R.string.terminal_startup_error_delete)
-                            )
+                        try {
+                            runCatching {
+                                var restoreRuntimeAfterFailure = false
+                                var deletionOperation: Long? = null
+                                stopRuntimeThenDeletePersisted(
+                                    stopRuntime = {
+                                        manager.stopServiceForDeletion(service.id).let { result ->
+                                            restoreRuntimeAfterFailure = result.wasActive
+                                            deletionOperation = result.operation
+                                            result.terminated
+                                        }
+                                    },
+                                    deletePersisted = {
+                                        check(
+                                            manager.deletePersistedForOperation(
+                                                serviceId = service.id,
+                                                operation = requireNotNull(deletionOperation),
+                                                deletePersisted = { repository.delete(service.id) },
+                                            )
+                                        ) {
+                                            context.getString(R.string.terminal_startup_error_delete)
+                                        }
+                                    },
+                                    restoreRuntime = {
+                                        if (restoreRuntimeAfterFailure) {
+                                            manager.restoreServiceAfterFailedDeletion(
+                                                service,
+                                                requireNotNull(deletionOperation),
+                                            )
+                                        } else {
+                                            true
+                                        }
+                                    },
+                                    terminationFailure = {
+                                        IllegalStateException(
+                                            context.getString(
+                                                R.string.terminal_startup_message_previous_process_timeout
+                                            )
+                                        )
+                                    }
+                                )
+                            }.onFailure { error ->
+                                snackbar.showSnackbar(
+                                    error.message?.takeIf { it.isNotBlank() }
+                                        ?: context.getString(R.string.terminal_startup_error_delete)
+                                )
+                            }
+                        } finally {
+                            deletingServiceIds = deletingServiceIds - service.id
                         }
                     }
                 }) { Text(stringResource(R.string.delete)) }

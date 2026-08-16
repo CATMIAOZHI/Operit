@@ -38,13 +38,29 @@ internal fun decodePersistedHealthCheckPort(rawValue: Any?): Int? {
     return longValue.toInt()
 }
 
-internal suspend fun deletePersistedServiceThenStop(
+internal suspend fun stopRuntimeThenDeletePersisted(
+    stopRuntime: suspend () -> Boolean,
     deletePersisted: suspend () -> Unit,
-    stopRuntime: suspend () -> Unit,
+    restoreRuntime: suspend () -> Boolean,
+    terminationFailure: () -> Throwable,
 ) = withContext(NonCancellable) {
-    // Delete first so a failed config write cannot leave an enabled service stopped only in memory.
-    deletePersisted()
-    stopRuntime()
+    if (!stopRuntime()) throw terminationFailure()
+    try {
+        deletePersisted()
+    } catch (error: Throwable) {
+        if (!restoreRuntime()) {
+            error.addSuppressed(IllegalStateException("Failed to restore terminal startup service runtime"))
+        }
+        throw error
+    }
+}
+
+internal suspend fun persistAndPublish(
+    persist: suspend () -> Unit,
+    publish: () -> Unit,
+) = withContext(NonCancellable) {
+    persist()
+    publish()
 }
 
 internal suspend fun <T> useStagedFile(
@@ -141,8 +157,10 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
             } else {
                 updated.add(config)
             }
-            persistServices(updated)
-            _services.value = updated
+            persistAndPublish(
+                persist = { persistServices(updated) },
+                publish = { _services.value = updated },
+            )
         }
     }
 
@@ -150,11 +168,13 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
         writeMutex.withLock {
             ensureConfigLoaded()
             val updated = _services.value.filterNot { it.id == serviceId }
-            persistServices(updated)
-            _services.value = updated
-            withContext(Dispatchers.IO) {
-                scriptFile(serviceId).delete()
-                launcherFile(serviceId).delete()
+            withContext(NonCancellable) {
+                persistServices(updated)
+                _services.value = updated
+                withContext(Dispatchers.IO) {
+                    scriptFile(serviceId).delete()
+                    launcherFile(serviceId).delete()
+                }
             }
         }
     }
@@ -385,7 +405,10 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                                 if (!item.has("startupTimeoutMs") || item.isNull("startupTimeoutMs")) null
                                 else item.get("startupTimeoutMs")
                             ),
-                        autoRestart = item.optBoolean("autoRestart", true),
+                        autoRestart = decodePersistedAutoRestart(
+                            if (!item.has("autoRestart") || item.isNull("autoRestart")) null
+                            else item.get("autoRestart")
+                        ),
                         maxRestartAttempts =
                             item.optInt(
                                 "maxRestartAttempts",
@@ -445,5 +468,11 @@ internal fun decodePersistedStartupTimeoutMs(rawValue: Any?): Long {
 internal fun decodePersistedEnabled(rawValue: Any?): Boolean {
     if (rawValue == null) return true
     require(rawValue is Boolean) { "Invalid terminal startup enabled flag" }
+    return rawValue
+}
+
+internal fun decodePersistedAutoRestart(rawValue: Any?): Boolean {
+    if (rawValue == null) return true
+    require(rawValue is Boolean) { "Invalid terminal startup auto-restart flag" }
     return rawValue
 }

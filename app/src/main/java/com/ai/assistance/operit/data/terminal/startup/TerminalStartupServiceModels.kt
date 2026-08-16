@@ -50,3 +50,9 @@ data class TerminalStartupServiceStartResult(
     val message: String,
     val sessionId: String? = null
 )
+
+internal data class TerminalStartupRuntimeStopResult(
+    val terminated: Boolean,
+    val wasActive: Boolean,
+    val operation: Long,
+)

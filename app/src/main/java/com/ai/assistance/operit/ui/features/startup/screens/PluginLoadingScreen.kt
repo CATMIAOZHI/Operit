@@ -560,7 +560,7 @@ class PluginLoadingState {
     // 用于取消超时计时器
     private var timeoutJob: kotlinx.coroutines.Job? = null
 
-    private val mcpInitInProgress = AtomicBoolean(false)
+    private val initializationGuard = PluginInitializationGuard()
     private var mcpInitJob: Job? = null
 
     // 跳过加载事件回调
@@ -797,10 +797,9 @@ class PluginLoadingState {
     }
 
     /** 重置所有状态 */
-    fun reset() {
+    fun reset(): Boolean = initializationGuard.resetIfIdle {
         timeoutJob?.cancel()
         mcpInitJob?.cancel()
-        mcpInitInProgress.set(false)
         _progress.value = 0f
         _message.value = ""
         synchronized(pluginStateLock) {
@@ -821,7 +820,8 @@ class PluginLoadingState {
         startupScope: PluginStartupScope,
         onFinished: (completed: Boolean) -> Unit = {},
     ): Boolean {
-        if (!mcpInitInProgress.compareAndSet(false, true)) {
+        val initializationLease = initializationGuard.tryStart()
+        if (initializationLease == null) {
             AppLogger.d("PluginLoadingState", "initializeMCPServer already running, skipping")
             return false
         }
@@ -970,7 +970,7 @@ class PluginLoadingState {
                 forceExpanded()
                 completed = true
             } finally {
-                mcpInitInProgress.set(false)
+                initializationGuard.finish(initializationLease)
                 reportFinished(completed)
             }
         }
@@ -978,7 +978,7 @@ class PluginLoadingState {
             // A cancelled scope can prevent the coroutine body from starting at all, so its
             // finally block is not guaranteed to release the process-startup lease.
             if (cause is CancellationException) {
-                mcpInitInProgress.set(false)
+                initializationGuard.finish(initializationLease)
                 reportFinished(false)
             }
         }
@@ -1110,6 +1110,27 @@ class PluginLoadingState {
                 // 不需要修改这部分
             }
         }
+    }
+}
+
+internal class PluginInitializationGuard {
+    class Lease internal constructor()
+
+    private var activeLease: Lease? = null
+
+    fun tryStart(): Lease? = synchronized(this) {
+        if (activeLease != null) return@synchronized null
+        Lease().also { activeLease = it }
+    }
+
+    fun finish(lease: Lease) = synchronized(this) {
+        if (activeLease === lease) activeLease = null
+    }
+
+    fun resetIfIdle(reset: () -> Unit): Boolean = synchronized(this) {
+        if (activeLease != null) return@synchronized false
+        reset()
+        true
     }
 }
 

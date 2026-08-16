@@ -10,6 +10,33 @@ import org.junit.Test
 
 class PluginLoadingPolicyTest {
     @Test
+    fun `reset cannot cancel an active shared initialization`() {
+        val guard = PluginInitializationGuard()
+        var reset = false
+
+        val lease = requireNotNull(guard.tryStart())
+        assertFalse(guard.resetIfIdle { reset = true })
+        assertFalse(reset)
+        guard.finish(lease)
+        assertTrue(guard.resetIfIdle { reset = true })
+        assertTrue(reset)
+    }
+
+    @Test
+    fun `an old completion cannot release a newer initialization lease`() {
+        val guard = PluginInitializationGuard()
+        val first = requireNotNull(guard.tryStart())
+        guard.finish(first)
+        val second = requireNotNull(guard.tryStart())
+
+        guard.finish(first)
+
+        assertEquals(null, guard.tryStart())
+        guard.finish(second)
+        assertTrue(guard.tryStart() != null)
+    }
+
+    @Test
     fun `MCP runtime still initializes when no plugin remains enabled`() {
         assertTrue(shouldInitializeMcpRuntime(enabledPluginCount = 0, pluginDiscoveryError = null))
     }

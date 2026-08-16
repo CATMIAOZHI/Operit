@@ -141,9 +141,49 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
+    fun `invalid persisted auto restart flags fail closed`() {
+        assertTrue(decodePersistedAutoRestart(null))
+        assertTrue(decodePersistedAutoRestart(true))
+        assertFalse(decodePersistedAutoRestart(false))
+        listOf<Any>(1, 0, "true", "false").forEach { raw ->
+            try {
+                decodePersistedAutoRestart(raw)
+                fail("Expected invalid auto-restart flag failure for $raw")
+            } catch (_: IllegalArgumentException) {
+                // Expected.
+            }
+        }
+    }
+
+    @Test
     fun `disable preempts runtime before persistence while enable waits for commit`() {
         assertTrue(shouldPreemptRuntimeBeforePersisting(enabled = false))
         assertFalse(shouldPreemptRuntimeBeforePersisting(enabled = true))
+    }
+
+    @Test
+    fun `deletion recovery cannot overtake a newer runtime intent`() {
+        assertTrue(
+            isRuntimeOperationCurrent(
+                currentOperation = 1L,
+                currentGeneration = 1L,
+                operation = 1L,
+            )
+        )
+        assertFalse(
+            isRuntimeOperationCurrent(
+                currentOperation = 2L,
+                currentGeneration = 2L,
+                operation = 1L,
+            )
+        )
+        assertFalse(
+            isRuntimeOperationCurrent(
+                currentOperation = 2L,
+                currentGeneration = 1L,
+                operation = 1L,
+            )
+        )
     }
 
     @Test
@@ -216,34 +256,56 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
-    fun `failed persisted deletion does not stop the runtime`() = runBlocking {
-        var stopped = false
+    fun `failed persisted deletion restores a stopped runtime`() = runBlocking {
+        var restored = false
 
         try {
-            deletePersistedServiceThenStop(
+            stopRuntimeThenDeletePersisted(
+                stopRuntime = { true },
                 deletePersisted = { throw IllegalStateException("persist failed") },
-                stopRuntime = { stopped = true },
+                restoreRuntime = { restored = true; true },
+                terminationFailure = { IllegalStateException("stop failed") },
             )
             fail("Expected persistence failure")
         } catch (expected: IllegalStateException) {
             assertEquals("persist failed", expected.message)
         }
 
-        assertFalse(stopped)
+        assertTrue(restored)
     }
 
     @Test
-    fun `cancelling an entered deletion still stops runtime after persistence`() = runBlocking {
+    fun `failed runtime termination keeps persisted service`() = runBlocking {
+        var deleted = false
+        try {
+            stopRuntimeThenDeletePersisted(
+                stopRuntime = { false },
+                deletePersisted = { deleted = true },
+                restoreRuntime = { true },
+                terminationFailure = { IllegalStateException("stop failed") },
+            )
+            fail("Expected termination failure")
+        } catch (expected: IllegalStateException) {
+            assertEquals("stop failed", expected.message)
+        }
+        assertFalse(deleted)
+    }
+
+    @Test
+    fun `cancelling an entered deletion still completes stop and persistence`() = runBlocking {
         val deleteEntered = CompletableDeferred<Unit>()
         val releaseDelete = CompletableDeferred<Unit>()
-        var stopped = false
+        var deleted = false
         val job = launch {
-            deletePersistedServiceThenStop(
+            stopRuntimeThenDeletePersisted(
+                stopRuntime = { true },
                 deletePersisted = {
                     deleteEntered.complete(Unit)
                     releaseDelete.await()
+                    deleted = true
                 },
-                stopRuntime = { stopped = true },
+                restoreRuntime = { true },
+                terminationFailure = { IllegalStateException("stop failed") },
             )
         }
 
@@ -252,7 +314,30 @@ class TerminalStartupServicePolicyTest {
         releaseDelete.complete(Unit)
         job.join()
 
-        assertTrue(stopped)
+        assertTrue(deleted)
+    }
+
+    @Test
+    fun `cancelling an entered plain commit still publishes persisted state`() = runBlocking {
+        val persistEntered = CompletableDeferred<Unit>()
+        val releasePersist = CompletableDeferred<Unit>()
+        var published = false
+        val job = launch {
+            persistAndPublish(
+                persist = {
+                    persistEntered.complete(Unit)
+                    releasePersist.await()
+                },
+                publish = { published = true },
+            )
+        }
+
+        persistEntered.await()
+        job.cancel()
+        releasePersist.complete(Unit)
+        job.join()
+
+        assertTrue(published)
     }
 
     @Test

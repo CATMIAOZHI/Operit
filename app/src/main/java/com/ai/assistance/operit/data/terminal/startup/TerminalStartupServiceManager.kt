@@ -148,6 +148,12 @@ internal fun shouldRestartTerminalService(
 
 internal fun shouldPreemptRuntimeBeforePersisting(enabled: Boolean): Boolean = !enabled
 
+internal fun isRuntimeOperationCurrent(
+    currentOperation: Long?,
+    currentGeneration: Long?,
+    operation: Long,
+): Boolean = currentOperation == operation && currentGeneration == operation
+
 internal class BoundedLogBuffer(private val maxChars: Int) {
     private val chunks = ArrayDeque<String>()
     private var charCount = 0
@@ -261,7 +267,12 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         generation: Long,
     ): TerminalStartupServiceStartResult {
         return operationMutex(config.id).withLock {
-            if (!isCurrentGeneration(config.id, generation)) {
+            if (!isRuntimeOperationCurrent(
+                    currentOperation = operationSequences[config.id]?.get(),
+                    currentGeneration = generations[config.id]?.get(),
+                    operation = generation,
+                )
+            ) {
                 return@withLock TerminalStartupServiceStartResult(config.id, false, cancelledMessage())
             }
             if (!stopManagedRuntime(config.id, closeSession = true, updateStoppedStatus = false)) {
@@ -348,16 +359,78 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         scope.launch { startServiceWithGeneration(config, NO_OP_LISTENER, generation) }
     }
 
-    suspend fun stopService(serviceId: String) {
+    suspend fun stopService(serviceId: String): Boolean {
         val operation = reserveOperation(serviceId)
         cancelPendingToggle(serviceId)
         activateRuntimeGeneration(serviceId, operation)
-        stopServiceWithGeneration(serviceId, operation)
+        return stopServiceWithGeneration(serviceId, operation)
     }
 
-    private suspend fun stopServiceWithGeneration(serviceId: String, generation: Long) {
-        operationMutex(serviceId).withLock {
-            if (!isCurrentGeneration(serviceId, generation)) return@withLock
+    internal suspend fun stopServiceForDeletion(serviceId: String): TerminalStartupRuntimeStopResult {
+        val operation = reserveOperation(serviceId)
+        cancelPendingToggle(serviceId)
+        activateRuntimeGeneration(serviceId, operation)
+        return operationMutex(serviceId).withLock {
+            if (!isCurrentGeneration(serviceId, operation)) {
+                return@withLock TerminalStartupRuntimeStopResult(
+                    terminated = false,
+                    wasActive = false,
+                    operation = operation,
+                )
+            }
+            val state = _statuses.value[serviceId]?.state
+            val wasActive = managedSessionIds.containsKey(serviceId) ||
+                state == TerminalStartupServiceState.STARTING ||
+                state == TerminalStartupServiceState.RUNNING ||
+                state == TerminalStartupServiceState.RESTARTING
+            TerminalStartupRuntimeStopResult(
+                terminated = stopManagedRuntime(
+                    serviceId,
+                    closeSession = true,
+                    updateStoppedStatus = true,
+                ),
+                wasActive = wasActive,
+                operation = operation,
+            )
+        }
+    }
+
+    internal fun restoreServiceAfterFailedDeletion(
+        config: TerminalStartupServiceConfig,
+        operation: Long,
+    ): Boolean {
+        scope.launch {
+            // Reuse the deletion token. Any newer stop/toggle intent advances the generation and
+            // makes this recovery a no-op instead of letting an old deletion failure restart it.
+            startServiceWithGeneration(config, NO_OP_LISTENER, operation)
+        }
+        return true
+    }
+
+    internal suspend fun deletePersistedForOperation(
+        serviceId: String,
+        operation: Long,
+        deletePersisted: suspend () -> Unit,
+    ): Boolean = operationMutex(serviceId).withLock {
+        if (!isRuntimeOperationCurrent(
+                currentOperation = operationSequences[serviceId]?.get(),
+                currentGeneration = generations[serviceId]?.get(),
+                operation = operation,
+            )
+        ) {
+            return@withLock false
+        }
+        deletePersisted()
+        // Linearize a successful deletion after any action that raced with its disk commit. Those
+        // stale actions must not restart a service whose configuration and launcher are now gone.
+        val tombstoneOperation = reserveOperation(serviceId)
+        activateRuntimeGeneration(serviceId, tombstoneOperation)
+        true
+    }
+
+    private suspend fun stopServiceWithGeneration(serviceId: String, generation: Long): Boolean {
+        return operationMutex(serviceId).withLock {
+            if (!isCurrentGeneration(serviceId, generation)) return@withLock false
             stopManagedRuntime(serviceId, closeSession = true, updateStoppedStatus = true)
         }
     }
