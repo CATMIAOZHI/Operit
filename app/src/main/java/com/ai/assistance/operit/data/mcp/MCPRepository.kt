@@ -440,6 +440,7 @@ class MCPRepository(private val context: Context) {
                     AppLogger.e(TAG, "拒绝卸载非法插件 ID: $pluginId")
                     return@withContext false
                 }
+                val runtimeShutdownPlan = buildMcpRuntimeShutdownPlan(pluginId)
                 // 删除插件包目录：内部优先，旧版目录仅在开关开启时解析（用户显式卸载
                 // 是删除该插件自身文件的唯一合法入口；旧版配置 mcp_config.json 永不修改）。
                 val pluginDir = resolvePluginPackageDir(pluginId)
@@ -450,6 +451,7 @@ class MCPRepository(private val context: Context) {
                 }
 
                 if (result) {
+                    stopAndUnregisterMcpRuntime(runtimeShutdownPlan)
                     // 从MCPLocalServer中移除配置
                     mcpLocalServer.removeMCPServer(pluginId)
                     // 重新加载插件状态
@@ -974,7 +976,9 @@ class MCPRepository(private val context: Context) {
     suspend fun removeRemoteServer(serverId: String): Boolean {
         return withContext(Dispatchers.IO) {
             try {
+                val runtimeShutdownPlan = buildMcpRuntimeShutdownPlan(serverId)
                 mcpLocalServer.removeMCPServer(serverId)
+                stopAndUnregisterMcpRuntime(runtimeShutdownPlan)
                 // 重新加载插件状态
                 loadPluginsFromMCPLocalServer()
                 AppLogger.d(TAG, "远程服务器 $serverId 删除成功")
@@ -1340,6 +1344,16 @@ class MCPRepository(private val context: Context) {
                 AppLogger.e(TAG, "Failed to unregister runtime MCP entries for $pluginId", e)
             }
         }
+    }
+
+    fun unregisterAllRuntimeMcpEntries() {
+        val toolHandler = AIToolHandler.getInstance(context)
+        val mcpManager = MCPManager.getInstance(context)
+        val registeredServerNames = mcpManager.getRegisteredServers().keys
+        toolHandler.getAllToolNames()
+            .filter { toolName -> toolHandler.getToolExecutor(toolName) is MCPToolExecutor }
+            .forEach(toolHandler::unregisterTool)
+        registeredServerNames.forEach(mcpManager::unregisterServer)
     }
 
     /** Stops bridge, manager and tool registrations without changing persisted MCP settings. */

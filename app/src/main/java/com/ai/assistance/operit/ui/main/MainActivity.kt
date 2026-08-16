@@ -767,7 +767,6 @@ class MainActivity : ComponentActivity() {
             delay(500)
             val startedNow = pluginLoadingState.initializeMCPServer(
                 applicationContext,
-                processStartupScope,
                 com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.APP_BOOT,
             ) { completed ->
                 if (lease == null) return@initializeMCPServer

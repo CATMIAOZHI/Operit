@@ -70,7 +70,9 @@ import com.ai.assistance.operit.ui.features.startup.components.SmoothLinearProgr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -561,6 +563,7 @@ class PluginLoadingState {
     private var timeoutJob: kotlinx.coroutines.Job? = null
 
     private val initializationGuard = PluginInitializationGuard()
+    private val orchestrationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var mcpInitJob: Job? = null
 
     // 跳过加载事件回调
@@ -816,10 +819,10 @@ class PluginLoadingState {
     // 初始化 MCP 插件；应用启动时还会启动用户配置的终端服务。
     fun initializeMCPServer(
         context: Context,
-        lifecycleScope: kotlinx.coroutines.CoroutineScope,
         startupScope: PluginStartupScope,
         onFinished: (completed: Boolean) -> Unit = {},
     ): Boolean {
+        val appContext = context.applicationContext
         val initializationLease = initializationGuard.tryStart()
         if (initializationLease == null) {
             AppLogger.d("PluginLoadingState", "initializeMCPServer already running, skipping")
@@ -830,16 +833,16 @@ class PluginLoadingState {
         fun reportFinished(completed: Boolean) {
             if (finishReported.compareAndSet(false, true)) onFinished(completed)
         }
-        val initJob = lifecycleScope.launch(Dispatchers.IO) {
+        val initJob = orchestrationScope.launch {
             var completed = false
             try {
-                updateMessage(context.getString(R.string.plugin_initializing))
+                updateMessage(appContext.getString(R.string.plugin_initializing))
                 updateProgress(0.05f)
-                val mcpLocalServer = MCPLocalServer.getInstance(context)
+                val mcpLocalServer = MCPLocalServer.getInstance(appContext)
                 val serviceDiscovery: Result<List<TerminalStartupServiceConfig>> =
                     if (shouldStartTerminalServices(startupScope)) {
                         runCatching {
-                            TerminalStartupServiceRepository.getInstance(context)
+                            TerminalStartupServiceRepository.getInstance(appContext)
                                 .snapshot()
                                 .filter { it.enabled }
                         }.onFailure { error ->
@@ -853,12 +856,12 @@ class PluginLoadingState {
                 if (shouldStartTerminalServices(startupScope) && terminalConfigError == null) {
                     startTimeoutCheck(
                         combinedStartupLoadingTimeoutMs(enabledServices),
-                        lifecycleScope,
+                        orchestrationScope,
                     )
                 }
-                val mcpRepository = MCPRepository(context)
+                val mcpRepository = MCPRepository(appContext)
                 val pluginDiscovery = runCatching {
-                    updateMessage(context.getString(R.string.plugin_loading_list))
+                    updateMessage(appContext.getString(R.string.plugin_loading_list))
                     mcpRepository.refreshPluginList()
                     mcpRepository.installedPluginIds.first().filter { mcpLocalServer.isServerEnabled(it) }
                 }.onFailure { error ->
@@ -869,7 +872,7 @@ class PluginLoadingState {
 
                 setStartupItems(pluginsToStart, enabledServices, terminalConfigError)
                 updateMessage(
-                    context.getString(
+                    appContext.getString(
                         if (shouldStartTerminalServices(startupScope)) {
                             R.string.terminal_startup_starting_all
                         } else {
@@ -882,18 +885,18 @@ class PluginLoadingState {
                     if (!shouldStartTerminalServices(startupScope) || terminalConfigError != null) {
                         emptyList()
                     } else {
-                        TerminalStartupServiceManager.getInstance(context).startEnabledServices(
+                        TerminalStartupServiceManager.getInstance(appContext).startEnabledServices(
                             object : TerminalStartupServiceManager.ProgressListener {
                                 override fun onServiceStarting(config: TerminalStartupServiceConfig, index: Int, total: Int) {
                                     val itemId = terminalServiceItemId(config.id)
-                                    updatePluginStatus(itemId, PluginStatus.LOADING, context.getString(R.string.terminal_startup_status_starting))
+                                    updatePluginStatus(itemId, PluginStatus.LOADING, appContext.getString(R.string.terminal_startup_status_starting))
                                     appendPluginLog(itemId, "START")
                                 }
 
                                 override fun onServiceStatus(config: TerminalStartupServiceConfig, status: com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceStatus) {
                                     val itemId = terminalServiceItemId(config.id)
                                     when (status.state) {
-                                        TerminalStartupServiceState.RUNNING -> setPluginSuccess(itemId, context.getString(R.string.terminal_startup_status_running))
+                                        TerminalStartupServiceState.RUNNING -> setPluginSuccess(itemId, appContext.getString(R.string.terminal_startup_status_running))
                                         TerminalStartupServiceState.FAILED -> {
                                             setPluginFailed(itemId, status.message)
                                             forceExpanded()
@@ -921,14 +924,14 @@ class PluginLoadingState {
                 ) {
                     updateMessage(
                         pluginDiscoveryError?.message
-                            ?: context.getString(R.string.plugin_other_error)
+                            ?: appContext.getString(R.string.plugin_other_error)
                     )
                     mcpCompletion.complete(McpStartupResult(0, 0, MCPStarter.PluginInitStatus.OTHER_ERROR))
                 } else {
                     // MCPStarter also removes disabled/stale bridge services and runtime tools.
                     // It must run even when there are no enabled plugins left to start.
-                    MCPStarter(context).startAllDeployedPlugins(
-                        createPluginStartProgressListener(mcpLocalServer, context) { success, total, status ->
+                    MCPStarter(appContext).startAllDeployedPlugins(
+                        createPluginStartProgressListener(mcpLocalServer, appContext) { success, total, status ->
                             mcpCompletion.complete(McpStartupResult(success, total, status))
                         }
                     )
@@ -946,7 +949,7 @@ class PluginLoadingState {
                 updateProgress(1f)
                 if (shouldReplaceStartupMessageWithSummary(mcpResult.status)) {
                     updateMessage(
-                        context.getString(
+                        appContext.getString(
                             if (hasFailures) R.string.terminal_startup_complete_with_failures
                             else R.string.terminal_startup_complete_success,
                             successCount,
@@ -965,7 +968,7 @@ class PluginLoadingState {
                 throw cancelled
             } catch (e: Exception) {
                 AppLogger.e("PluginLoadingState", "启动 MCP 插件和终端服务时出错", e)
-                updateMessage(e.message ?: context.getString(R.string.plugin_other_error))
+                updateMessage(e.message ?: appContext.getString(R.string.plugin_other_error))
                 updateProgress(1.0f)
                 forceExpanded()
                 completed = true

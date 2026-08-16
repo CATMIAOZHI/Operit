@@ -410,10 +410,15 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                             else item.get("autoRestart")
                         ),
                         maxRestartAttempts =
-                            item.optInt(
-                                "maxRestartAttempts",
-                                TerminalStartupServiceConfig.DEFAULT_MAX_RESTART_ATTEMPTS
-                            ).coerceIn(0, TerminalStartupServiceConfig.DEFAULT_MAX_RESTART_ATTEMPTS)
+                            decodePersistedMaxRestartAttempts(
+                                if (!item.has("maxRestartAttempts") ||
+                                    item.isNull("maxRestartAttempts")
+                                ) {
+                                    null
+                                } else {
+                                    item.get("maxRestartAttempts")
+                                }
+                            )
                     )
                 )
             }
@@ -475,4 +480,17 @@ internal fun decodePersistedAutoRestart(rawValue: Any?): Boolean {
     if (rawValue == null) return true
     require(rawValue is Boolean) { "Invalid terminal startup auto-restart flag" }
     return rawValue
+}
+
+internal fun decodePersistedMaxRestartAttempts(rawValue: Any?): Int {
+    if (rawValue == null) return TerminalStartupServiceConfig.DEFAULT_MAX_RESTART_ATTEMPTS
+    require(rawValue is Number) { "Invalid terminal startup restart limit" }
+    val asDouble = rawValue.toDouble()
+    val value = rawValue.toLong()
+    require(
+        asDouble.isFinite() &&
+            asDouble == value.toDouble() &&
+            value in 0L..TerminalStartupServiceConfig.DEFAULT_MAX_RESTART_ATTEMPTS.toLong()
+    ) { "Invalid terminal startup restart limit" }
+    return value.toInt()
 }

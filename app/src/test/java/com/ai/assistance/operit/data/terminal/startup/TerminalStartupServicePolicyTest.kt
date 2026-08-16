@@ -156,6 +156,24 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
+    fun `invalid persisted restart limits fail closed`() {
+        assertEquals(
+            TerminalStartupServiceConfig.DEFAULT_MAX_RESTART_ATTEMPTS,
+            decodePersistedMaxRestartAttempts(null),
+        )
+        assertEquals(0, decodePersistedMaxRestartAttempts(0))
+        assertEquals(3, decodePersistedMaxRestartAttempts(3L))
+        listOf<Any>(-1, 4, 1.5, Double.NaN, "3").forEach { raw ->
+            try {
+                decodePersistedMaxRestartAttempts(raw)
+                fail("Expected invalid restart-limit failure for $raw")
+            } catch (_: IllegalArgumentException) {
+                // Expected.
+            }
+        }
+    }
+
+    @Test
     fun `disable preempts runtime before persistence while enable waits for commit`() {
         assertTrue(shouldPreemptRuntimeBeforePersisting(enabled = false))
         assertFalse(shouldPreemptRuntimeBeforePersisting(enabled = true))
@@ -253,6 +271,40 @@ class TerminalStartupServicePolicyTest {
         assertNull(shortResult)
         assertEquals(true, longResult)
         assertEquals(1, executions.get())
+    }
+
+    @Test
+    fun `completed probe is not reused by a later health-check attempt`() {
+        val key = UUID.randomUUID().toString()
+        val probeStarted = CountDownLatch(1)
+        val releaseProbe = CountDownLatch(1)
+        val firstFinished = CountDownLatch(1)
+        val executions = AtomicInteger()
+
+        val firstResult = runBlockingProbeWithTimeout(key, 20L) {
+            executions.incrementAndGet()
+            probeStarted.countDown()
+            releaseProbe.await()
+            firstFinished.countDown()
+            true
+        }
+        assertNull(firstResult)
+        probeStarted.await()
+        releaseProbe.countDown()
+        firstFinished.await()
+        val cleanupDeadline = System.nanoTime() + 1_000_000_000L
+        while (hasActiveTcpProbe(key) && System.nanoTime() < cleanupDeadline) {
+            Thread.yield()
+        }
+        assertFalse(hasActiveTcpProbe(key))
+
+        val secondResult = runBlockingProbeWithTimeout(key, 500L) {
+            executions.incrementAndGet()
+            false
+        }
+
+        assertFalse(secondResult ?: true)
+        assertEquals(2, executions.get())
     }
 
     @Test

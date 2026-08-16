@@ -62,13 +62,20 @@ private val TCP_PROBE_EXECUTOR = ThreadPoolExecutor(
 )
 private val ACTIVE_TCP_PROBES = ConcurrentHashMap<String, Future<Boolean>>()
 
+internal fun hasActiveTcpProbe(probeKey: String): Boolean =
+    ACTIVE_TCP_PROBES.containsKey(probeKey)
+
 internal fun runBlockingProbeWithTimeout(
     probeKey: String,
     timeoutMs: Long,
     probe: () -> Boolean,
 ): Boolean? {
     if (timeoutMs <= 0L) return null
-    val created = FutureTask(probe)
+    val created = object : FutureTask<Boolean>(probe) {
+        override fun done() {
+            ACTIVE_TCP_PROBES.remove(probeKey, this)
+        }
+    }
     val future = ACTIVE_TCP_PROBES.putIfAbsent(probeKey, created) ?: created.also {
         try {
             TCP_PROBE_EXECUTOR.execute(it)
@@ -87,8 +94,8 @@ internal fun runBlockingProbeWithTimeout(
         Thread.currentThread().interrupt()
         null
     } finally {
-        // A resolver may ignore interruption. Keep one in-flight probe per endpoint instead of
-        // spawning another thread on every health-check tick, and reap it once it completes.
+        // The completion hook handles callers that timed out before the underlying DNS/connect
+        // work returned. This removal closes the already-completed fast path as well.
         if (future.isDone) ACTIVE_TCP_PROBES.remove(probeKey, future)
     }
 }

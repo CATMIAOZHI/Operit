@@ -462,7 +462,21 @@ class MCPStarter(private val context: Context) {
 
                 val allInstalledPlugins = mcpRepository.installedPluginIds.first()
                 if (!requiresMcpRuntimeInitialization(allInstalledPlugins.size)) {
-                    progressListener.onAllPluginsStarted(0, 0, PluginInitStatus.SUCCESS)
+                    mcpRepository.unregisterAllRuntimeMcpEntries()
+                    val bridge = MCPBridge.getInstance(context)
+                    val bridgeStatus = bridge.listMcpServices()
+                    val cleanupSucceeded =
+                        if (bridgeStatus?.optBoolean("success", false) == true) {
+                            MCPBridge.reset(context)?.optBoolean("success", false) == true
+                        } else {
+                            true
+                        }
+                    progressListener.onAllPluginsStarted(
+                        0,
+                        0,
+                        if (cleanupSucceeded) PluginInitStatus.SUCCESS
+                        else PluginInitStatus.BRIDGE_FAILED,
+                    )
                     return@launch
                 }
 

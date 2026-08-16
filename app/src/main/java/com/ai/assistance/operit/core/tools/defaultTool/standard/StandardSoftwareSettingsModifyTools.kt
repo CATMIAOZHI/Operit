@@ -1509,7 +1509,6 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
         pluginLoadingState.show()
         pluginLoadingState.initializeMCPServer(
             context,
-            lifecycleScope,
             com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.MCP_ONLY,
         )
 
