@@ -249,6 +249,25 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
+    fun `persisted script path must remain a string`() {
+        assertNull(decodePersistedScriptPath(null))
+        assertNull(decodePersistedScriptPath(""))
+        assertNull(decodePersistedScriptPath("   "))
+        assertEquals(
+            "/data/user/0/app/files/operit/scripts/a.sh",
+            decodePersistedScriptPath("/data/user/0/app/files/operit/scripts/a.sh"),
+        )
+        listOf<Any?>(1, true, emptyMap<String, String>()).forEach { raw ->
+            try {
+                decodePersistedScriptPath(raw)
+                fail("Expected invalid script path failure for $raw")
+            } catch (_: IllegalArgumentException) {
+                // Expected.
+            }
+        }
+    }
+
+    @Test
     fun `disable preempts runtime before persistence while enable waits for commit`() {
         assertTrue(shouldPreemptRuntimeBeforePersisting(enabled = false))
         assertFalse(shouldPreemptRuntimeBeforePersisting(enabled = true))

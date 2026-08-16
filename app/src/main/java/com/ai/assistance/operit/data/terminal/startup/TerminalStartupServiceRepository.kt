@@ -56,6 +56,12 @@ internal fun decodePersistedCommand(rawValue: Any?): String {
     return rawValue
 }
 
+internal fun decodePersistedScriptPath(rawValue: Any?): String? {
+    if (rawValue == null) return null
+    require(rawValue is String) { "Invalid terminal startup script path" }
+    return rawValue.ifBlank { null }
+}
+
 internal fun decodePersistedHealthCheckPort(rawValue: Any?): Int? {
     if (rawValue == null) return null
     val number = rawValue as? Number
@@ -427,9 +433,10 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                         launchMode =
                             TerminalStartupLaunchMode.valueOf(item.getString("launchMode")),
                         command = decodePersistedCommand(item.get("command")),
-                        scriptPath =
-                            if (item.isNull("scriptPath")) null
-                            else item.optString("scriptPath").takeIf { it.isNotBlank() },
+                        scriptPath = decodePersistedScriptPath(
+                            if (!item.has("scriptPath") || item.isNull("scriptPath")) null
+                            else item.get("scriptPath")
+                        ),
                         scriptDisplayName =
                             if (item.isNull("scriptDisplayName")) null
                             else item.optString("scriptDisplayName").takeIf { it.isNotBlank() },
