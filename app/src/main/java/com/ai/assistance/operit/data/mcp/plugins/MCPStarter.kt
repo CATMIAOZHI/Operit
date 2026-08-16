@@ -27,6 +27,9 @@ import org.json.JSONObject
 internal fun requiresMcpRuntimeInitialization(installedPluginCount: Int): Boolean =
     installedPluginCount > 0
 
+internal fun didMcpBridgeCleanupSucceed(response: JSONObject?): Boolean =
+    response?.optBoolean("success", false) == true
+
 /**
  * MCP Plugin Starter
  *
@@ -463,14 +466,9 @@ class MCPStarter(private val context: Context) {
                 val allInstalledPlugins = mcpRepository.installedPluginIds.first()
                 if (!requiresMcpRuntimeInitialization(allInstalledPlugins.size)) {
                     mcpRepository.unregisterAllRuntimeMcpEntries()
-                    val bridge = MCPBridge.getInstance(context)
-                    val bridgeStatus = bridge.listMcpServices()
-                    val cleanupSucceeded =
-                        if (bridgeStatus?.optBoolean("success", false) == true) {
-                            MCPBridge.reset(context)?.optBoolean("success", false) == true
-                        } else {
-                            true
-                        }
+                    // A failed status query cannot prove that no stale bridge process or
+                    // registration remains. Always attempt reset and fail closed.
+                    val cleanupSucceeded = didMcpBridgeCleanupSucceed(MCPBridge.reset(context))
                     progressListener.onAllPluginsStarted(
                         0,
                         0,

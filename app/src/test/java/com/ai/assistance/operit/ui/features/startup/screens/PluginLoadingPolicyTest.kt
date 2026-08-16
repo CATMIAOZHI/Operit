@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.TestScope
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -15,6 +16,19 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PluginLoadingPolicyTest {
+    @Test
+    fun `registry teardown only clears the exact Activity binding`() {
+        val state = PluginLoadingState()
+        val first = PluginLoadingStateRegistry.bind(state, TestScope())
+        val second = PluginLoadingStateRegistry.bind(state, TestScope())
+
+        assertFalse(PluginLoadingStateRegistry.unbind(first))
+        assertTrue(PluginLoadingStateRegistry.isActive(second))
+        assertEquals(state, PluginLoadingStateRegistry.getActiveBinding()?.state)
+        assertTrue(PluginLoadingStateRegistry.unbind(second))
+        assertEquals(null, PluginLoadingStateRegistry.getActiveBinding())
+    }
+
     @Test
     fun `completed startup cancels its armed loading timeout`() = runTest {
         val state = PluginLoadingState()
@@ -81,6 +95,15 @@ class PluginLoadingPolicyTest {
     }
 
     @Test
+    fun `reserved app boot initialization rejects a concurrent restart lease`() {
+        val state = PluginLoadingState()
+        requireNotNull(state.reserveInitialization())
+
+        assertFalse(state.reset())
+        assertEquals(null, state.reserveInitialization())
+    }
+
+    @Test
     fun `an old completion cannot release a newer initialization lease`() {
         val guard = PluginInitializationGuard()
         val first = requireNotNull(guard.tryStart())
@@ -92,6 +115,16 @@ class PluginLoadingPolicyTest {
         assertEquals(null, guard.tryStart())
         guard.finish(second)
         assertTrue(guard.tryStart() != null)
+    }
+
+    @Test
+    fun `partial snapshots are available only while their initialization lease is active`() {
+        val guard = PluginInitializationGuard()
+        val lease = requireNotNull(guard.tryStart())
+
+        assertEquals("current batch", guard.withActive(lease) { "current batch" })
+        guard.finish(lease)
+        assertEquals(null, guard.withActive(lease) { "stale batch" })
     }
 
     @Test

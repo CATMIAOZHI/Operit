@@ -35,6 +35,17 @@ internal fun decodePersistedTerminalStartupServiceId(rawValue: Any?): String {
     return rawValue
 }
 
+internal fun decodeUniquePersistedTerminalStartupServiceId(
+    rawValue: Any?,
+    normalizedIds: MutableSet<String>,
+): String {
+    val id = decodePersistedTerminalStartupServiceId(rawValue)
+    require(normalizedIds.add(UUID.fromString(id).toString())) {
+        "Duplicate terminal startup service ID"
+    }
+    return id
+}
+
 internal fun decodePersistedHealthCheckPort(rawValue: Any?): Int? {
     if (rawValue == null) return null
     val number = rawValue as? Number
@@ -380,11 +391,13 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
         }
         val services = root.optJSONArray("services")
             ?: throw IllegalArgumentException("Missing terminal startup service list")
+        val normalizedIds = mutableSetOf<String>()
         return buildList {
             for (index in 0 until services.length()) {
                 val item = services.getJSONObject(index)
-                val id = decodePersistedTerminalStartupServiceId(
-                    if (!item.has("id") || item.isNull("id")) null else item.get("id")
+                val id = decodeUniquePersistedTerminalStartupServiceId(
+                    if (!item.has("id") || item.isNull("id")) null else item.get("id"),
+                    normalizedIds,
                 )
                 val environmentObject =
                     if (!item.has("environment") || item.isNull("environment")) {

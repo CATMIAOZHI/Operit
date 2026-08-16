@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.core.tools.defaultTool.standard
 
 import android.content.Context
+import android.os.SystemClock
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.llmprovider.ModelConfigConnectionTester
 import com.ai.assistance.operit.api.speech.SpeechServiceFactory
@@ -52,9 +53,13 @@ import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.preferences.SpeechServicesPreferences
 import com.ai.assistance.operit.data.skill.SkillRepository
 import com.ai.assistance.operit.ui.features.startup.screens.PluginLoadingStateRegistry
+import com.ai.assistance.operit.ui.features.startup.screens.PluginInitializationCompletion
+import com.ai.assistance.operit.ui.features.startup.screens.PluginLoadingSnapshot
 import com.ai.assistance.operit.ui.features.startup.screens.PluginStatus
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -74,6 +79,12 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
 /** 软件设置修改工具（包含 MCP 重启与日志收集） */
+internal fun isRequestedMcpRestartSuccessful(
+    timedOut: Boolean,
+    batchSuccessful: Boolean?,
+    failedCount: Int,
+): Boolean = !timedOut && batchSuccessful == true && failedCount == 0
+
 class StandardSoftwareSettingsModifyTools(private val context: Context) {
 
     fun readEnvironmentVariable(tool: AITool): ToolResult {
@@ -1480,54 +1491,65 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                 ?.coerceIn(5000L, 600000L)
                 ?: 120000L
 
-        val pluginLoadingState = PluginLoadingStateRegistry.getState()
-        val lifecycleScope = PluginLoadingStateRegistry.getScope()
+        val activeBinding = PluginLoadingStateRegistry.getActiveBinding()
+        val pluginLoadingState = activeBinding?.state
 
-        if (pluginLoadingState == null || lifecycleScope == null) {
-            return ToolResult(
-                toolName = tool.name,
-                success = false,
-                result =
-                    McpRestartWithLogsResultData(
-                        timeoutMs = timeoutMs,
-                        elapsedMs = 0L,
-                        timedOut = false,
-                        progress = 0.0,
-                        message = "",
-                        pluginsTotal = 0,
-                        pluginsStarted = 0,
-                        successCount = 0,
-                        failedCount = 0,
-                        plugins = emptyList(),
-                        extraLogs = emptyMap()
-                    ),
-                error = "Plugin loading state is unavailable. Open the main screen and retry."
+        fun unavailableResult(error: String) = ToolResult(
+            toolName = tool.name,
+            success = false,
+            result =
+                McpRestartWithLogsResultData(
+                    timeoutMs = timeoutMs,
+                    elapsedMs = 0L,
+                    timedOut = false,
+                    progress = 0.0,
+                    message = "",
+                    pluginsTotal = 0,
+                    pluginsStarted = 0,
+                    successCount = 0,
+                    failedCount = 0,
+                    plugins = emptyList(),
+                    extraLogs = emptyMap(),
+                ),
+            error = error,
+        )
+
+        if (pluginLoadingState == null) {
+            return unavailableResult(
+                "Plugin loading state is unavailable. Open the main screen and retry."
             )
         }
 
-        pluginLoadingState.reset()
-        pluginLoadingState.show()
-        pluginLoadingState.initializeMCPServer(
-            context,
-            com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.MCP_ONLY,
-        )
-
-        val startAt = System.currentTimeMillis()
-        while (true) {
-            val elapsed = System.currentTimeMillis() - startAt
-            val finished =
-                pluginLoadingState.progress.value >= 0.999f &&
-                    pluginLoadingState.message.value.isNotBlank()
-            if (finished || elapsed >= timeoutMs) {
-                break
-            }
-            delay(250L)
+        val completion = CompletableDeferred<PluginInitializationCompletion>()
+        val initializationLease =
+            pluginLoadingState.initializeMCPServer(
+                context,
+                com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.MCP_ONLY,
+                resetBeforeStart = true,
+                showBeforeStart = true,
+            ) { result -> completion.complete(result) }
+        if (initializationLease == null) {
+            return unavailableResult(
+                "MCP initialization is busy. Retry after the current startup finishes."
+            )
         }
-
-        val elapsedMs = System.currentTimeMillis() - startAt
-        val timedOut = elapsedMs >= timeoutMs
-        val plugins = pluginLoadingState.plugins.value
-        val pluginLogs = pluginLoadingState.pluginLogs.value
+        val startAt = SystemClock.elapsedRealtime()
+        val completedRun = withTimeoutOrNull(timeoutMs) { completion.await() }
+        val elapsedMs = SystemClock.elapsedRealtime() - startAt
+        val timedOut = completedRun == null
+        val batchSnapshot =
+            completedRun?.snapshot
+                ?: pluginLoadingState.snapshotIfActive(initializationLease)
+                ?: PluginLoadingSnapshot(
+                    progress = 0f,
+                    message = "MCP restart timed out before a final snapshot was available.",
+                    pluginsStarted = 0,
+                    pluginsTotal = 0,
+                    plugins = emptyList(),
+                    pluginLogs = emptyMap(),
+                )
+        val plugins = batchSnapshot.plugins
+        val pluginLogs = batchSnapshot.pluginLogs
         val failedCount = plugins.count { it.status == PluginStatus.FAILED }
         val successCount = plugins.count { it.status == PluginStatus.SUCCESS }
 
@@ -1551,16 +1573,20 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
         val hasFailures = failedCount > 0
         return ToolResult(
             toolName = tool.name,
-            success = !timedOut && !hasFailures,
+            success = isRequestedMcpRestartSuccessful(
+                timedOut = timedOut,
+                batchSuccessful = completedRun?.successful,
+                failedCount = failedCount,
+            ),
             result =
                 McpRestartWithLogsResultData(
                     timeoutMs = timeoutMs,
                     elapsedMs = elapsedMs,
                     timedOut = timedOut,
-                    progress = pluginLoadingState.progress.value.toDouble(),
-                    message = pluginLoadingState.message.value,
-                    pluginsTotal = pluginLoadingState.pluginsTotal.value,
-                    pluginsStarted = pluginLoadingState.pluginsStarted.value,
+                    progress = batchSnapshot.progress.toDouble(),
+                    message = batchSnapshot.message,
+                    pluginsTotal = batchSnapshot.pluginsTotal,
+                    pluginsStarted = batchSnapshot.pluginsStarted,
                     successCount = successCount,
                     failedCount = failedCount,
                     plugins = pluginItems,
@@ -1570,6 +1596,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                 when {
                     timedOut -> "MCP restart timed out after ${elapsedMs}ms"
                     hasFailures -> "Some MCP plugins failed to start"
+                    completedRun?.successful == false -> "MCP restart failed"
                     else -> null
                 }
         )

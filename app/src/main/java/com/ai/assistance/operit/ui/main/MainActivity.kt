@@ -160,6 +160,7 @@ class MainActivity : ComponentActivity() {
 
     // ======== MCP插件状态 ========
     private val pluginLoadingState = processPluginLoadingState
+    private var pluginLoadingBinding: PluginLoadingStateRegistry.Binding? = null
     private var processStartupLease: MainProcessStartupGate.Lease? = null
     private var processStartupInitializationStarted = false
 
@@ -364,7 +365,7 @@ class MainActivity : ComponentActivity() {
 
         // 设置上下文以便获取插件元数据
         pluginLoadingState.setAppContext(this)
-        PluginLoadingStateRegistry.bind(pluginLoadingState, lifecycleScope)
+        pluginLoadingBinding = PluginLoadingStateRegistry.bind(pluginLoadingState, lifecycleScope)
 
         // 设置跳过加载的回调
         val startupApplicationContext = applicationContext
@@ -775,6 +776,16 @@ class MainActivity : ComponentActivity() {
         if (processStartupInitializationStarted) return
         processStartupInitializationStarted = true
 
+        // Reserve initialization before the first-frame delay so an MCP-only restart cannot
+        // slip into the gap and make APP_BOOT appear to have started when it did not.
+        val initializationReservation = pluginLoadingState.reserveInitialization()
+        if (initializationReservation == null) {
+            processStartupLease?.let(processStartupGate::release)
+            processStartupLease = null
+            processStartupInitializationStarted = false
+            return
+        }
+
         // 显示插件加载界面
         pluginLoadingState.show()
 
@@ -791,12 +802,13 @@ class MainActivity : ComponentActivity() {
                 applicationContext,
                 com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.APP_BOOT,
                 initialTimeoutOwner = startupTimeoutOwner,
-            ) { completed ->
+                reservedInitializationLease = initializationReservation,
+            ) { completion ->
                 if (lease == null) return@initializeMCPServer
-                if (completed) processStartupGate.complete(lease)
+                if (completion.completed) processStartupGate.complete(lease)
                 else processStartupGate.release(lease)
             }
-            if (!startedNow && lease != null) {
+            if (startedNow == null && lease != null) {
                 processStartupGate.release(lease)
             }
         }
@@ -865,10 +877,12 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         AppLogger.d(TAG, "onDestroy called")
 
-        PluginLoadingStateRegistry.unbind(pluginLoadingState)
+        val isLastPluginLoadingBinding =
+            pluginLoadingBinding?.let(PluginLoadingStateRegistry::unbind) == true
+        pluginLoadingBinding = null
 
         // The process-scoped startup job and its UI state survive Activity recreation.
-        if (!isChangingConfigurations) {
+        if (!isChangingConfigurations && isLastPluginLoadingBinding) {
             pluginLoadingState.hide()
         }
 
@@ -889,7 +903,9 @@ class MainActivity : ComponentActivity() {
         AppLogger.d(TAG, "onConfigurationChanged: new orientation=${newConfig.orientation}, last orientation=${lastOrientation}")
 
         // 屏幕方向变化时，确保加载界面不可见
-        pluginLoadingState.hide()
+        if (pluginLoadingBinding?.let(PluginLoadingStateRegistry::isActive) == true) {
+            pluginLoadingState.hide()
+        }
 
         // 仅当方向确实发生变化时才处理
         if (newConfig.orientation != lastOrientation) {

@@ -39,7 +39,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -49,6 +51,10 @@ import kotlinx.coroutines.sync.withLock
 
 private const val PROCESS_START_GRACE_MS = 1_000L
 private const val HEALTH_POLL_INTERVAL_MS = 250L
+
+internal fun <T> SharedFlow<T>.signalCollectorSubscription(
+    collectorReady: CompletableDeferred<Unit>,
+): Flow<T> = onSubscription { collectorReady.complete(Unit) }
 
 private val TCP_PROBE_EXECUTOR = ThreadPoolExecutor(
     0,
@@ -826,12 +832,12 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         logJobs.remove(config.id)?.cancel()
         logJobs[config.id] = scope.launch {
             terminal.commandEvents
+                .signalCollectorSubscription(collectorReady)
                 .filter { event ->
                     event.sessionId == sessionId &&
                         event.commandId == commandId &&
                         isCurrentGeneration(config.id, generation)
                 }
-                .onStart { collectorReady.complete(Unit) }
                 // Completion events contain the full final output snapshot, not an increment.
                 // Stop at that event so logs are neither duplicated nor collected forever.
                 .takeWhile { event -> !event.isCompleted }

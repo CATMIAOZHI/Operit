@@ -8,25 +8,36 @@ val LocalPluginLoadingState = staticCompositionLocalOf<PluginLoadingState> {
 }
 
 object PluginLoadingStateRegistry {
-    @Volatile
-    private var activeState: PluginLoadingState? = null
+    class Binding internal constructor()
 
-    @Volatile
-    private var activeScope: CoroutineScope? = null
+    data class ActiveBinding internal constructor(
+        val state: PluginLoadingState,
+        val scope: CoroutineScope,
+    )
 
-    fun bind(state: PluginLoadingState, scope: CoroutineScope) {
-        activeState = state
-        activeScope = scope
+    private val bindings = LinkedHashMap<Binding, ActiveBinding>()
+
+    @Synchronized
+    fun bind(state: PluginLoadingState, scope: CoroutineScope): Binding {
+        val binding = Binding()
+        bindings[binding] = ActiveBinding(state, scope)
+        return binding
     }
 
-    fun unbind(state: PluginLoadingState) {
-        if (activeState === state) {
-            activeState = null
-            activeScope = null
-        }
+    /** Returns true only when this removal leaves no Activity binding behind. */
+    @Synchronized
+    fun unbind(binding: Binding): Boolean {
+        if (bindings.remove(binding) == null) return false
+        return bindings.isEmpty()
     }
 
-    fun getState(): PluginLoadingState? = activeState
+    @Synchronized
+    fun isActive(binding: Binding): Boolean = bindings.keys.lastOrNull() === binding
 
-    fun getScope(): CoroutineScope? = activeScope
+    @Synchronized
+    fun getActiveBinding(): ActiveBinding? = bindings.values.lastOrNull()
+
+    fun getState(): PluginLoadingState? = getActiveBinding()?.state
+
+    fun getScope(): CoroutineScope? = getActiveBinding()?.scope
 }

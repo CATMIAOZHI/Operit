@@ -817,8 +817,7 @@ class PluginLoadingState {
         // _isExpanded.value = false // 关闭时重置为折叠状态
     }
 
-    /** 重置所有状态 */
-    fun reset(): Boolean = initializationGuard.resetIfIdle {
+    private fun resetState() {
         cancelCurrentTimeoutCheck()
         mcpInitJob?.cancel()
         _progress.value = 0f
@@ -833,6 +832,27 @@ class PluginLoadingState {
         _hasTimedOut.value = false
         _isExpanded.value = false
     }
+
+    /** 重置所有状态 */
+    fun reset(): Boolean = initializationGuard.resetIfIdle(::resetState)
+
+    internal fun reserveInitialization(): PluginInitializationGuard.Lease? =
+        initializationGuard.tryStart()
+
+    internal fun snapshot(): PluginLoadingSnapshot = synchronized(pluginStateLock) {
+        PluginLoadingSnapshot(
+            progress = _progress.value,
+            message = _message.value,
+            pluginsStarted = _pluginsStarted.value,
+            pluginsTotal = _pluginsTotal.value,
+            plugins = _plugins.value.map(PluginInfo::copy),
+            pluginLogs = _pluginLogs.value.toMap(),
+        )
+    }
+
+    internal fun snapshotIfActive(
+        lease: PluginInitializationGuard.Lease,
+    ): PluginLoadingSnapshot? = initializationGuard.withActive(lease, ::snapshot)
 
     private fun cancelCurrentTimeoutCheck() {
         val jobToCancel = synchronized(timeoutLock) {
@@ -856,27 +876,46 @@ class PluginLoadingState {
     }
 
     // 初始化 MCP 插件；应用启动时还会启动用户配置的终端服务。
-    fun initializeMCPServer(
+    internal fun initializeMCPServer(
         context: Context,
         startupScope: PluginStartupScope,
         initialTimeoutOwner: Long? = null,
-        onFinished: (completed: Boolean) -> Unit = {},
-    ): Boolean {
+        resetBeforeStart: Boolean = false,
+        showBeforeStart: Boolean = false,
+        reservedInitializationLease: PluginInitializationGuard.Lease? = null,
+        onFinished: (PluginInitializationCompletion) -> Unit = {},
+    ): PluginInitializationGuard.Lease? {
         val appContext = context.applicationContext
-        val initializationLease = initializationGuard.tryStart()
+        val initializationLease =
+            if (reservedInitializationLease != null) {
+                reservedInitializationLease.takeIf(initializationGuard::isActive)
+            } else {
+                initializationGuard.tryStart()
+            }
         if (initializationLease == null) {
             cancelTimeoutCheckIfOwned(initialTimeoutOwner)
             AppLogger.d("PluginLoadingState", "initializeMCPServer already running, skipping")
-            return false
+            return null
         }
+        if (resetBeforeStart) resetState()
+        if (showBeforeStart) show()
 
         val finishReported = AtomicBoolean(false)
-        fun reportFinished(completed: Boolean) {
-            if (finishReported.compareAndSet(false, true)) onFinished(completed)
+        fun reportFinished(completed: Boolean, successful: Boolean) {
+            if (finishReported.compareAndSet(false, true)) {
+                onFinished(
+                    PluginInitializationCompletion(
+                        completed = completed,
+                        successful = successful,
+                        snapshot = snapshot(),
+                    )
+                )
+            }
         }
         var ownedTimeout = initialTimeoutOwner
         val initJob = orchestrationScope.launch {
             var completed = false
+            var successful = false
             try {
                 updateMessage(appContext.getString(R.string.plugin_initializing))
                 updateProgress(0.05f)
@@ -1007,6 +1046,7 @@ class PluginLoadingState {
                     delay(100L)
                     if (isVisible.value) hide()
                 }
+                successful = !hasFailures
                 completed = true
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -1020,8 +1060,11 @@ class PluginLoadingState {
                 completed = true
             } finally {
                 cancelTimeoutCheckIfOwned(ownedTimeout)
-                initializationGuard.finish(initializationLease)
-                reportFinished(completed)
+                try {
+                    reportFinished(completed, successful)
+                } finally {
+                    initializationGuard.finish(initializationLease)
+                }
             }
         }
         initJob.invokeOnCompletion { cause ->
@@ -1029,12 +1072,15 @@ class PluginLoadingState {
             // finally block is not guaranteed to release the process-startup lease.
             if (cause is CancellationException) {
                 cancelTimeoutCheckIfOwned(ownedTimeout)
-                initializationGuard.finish(initializationLease)
-                reportFinished(false)
+                try {
+                    reportFinished(completed = false, successful = false)
+                } finally {
+                    initializationGuard.finish(initializationLease)
+                }
             }
         }
         mcpInitJob = initJob
-        return true
+        return initializationLease
     }
 
     // 创建插件启动进度监听器
@@ -1164,6 +1210,21 @@ class PluginLoadingState {
     }
 }
 
+internal data class PluginLoadingSnapshot(
+    val progress: Float,
+    val message: String,
+    val pluginsStarted: Int,
+    val pluginsTotal: Int,
+    val plugins: List<PluginInfo>,
+    val pluginLogs: Map<String, String>,
+)
+
+internal data class PluginInitializationCompletion(
+    val completed: Boolean,
+    val successful: Boolean,
+    val snapshot: PluginLoadingSnapshot,
+)
+
 internal class PluginInitializationGuard {
     class Lease internal constructor()
 
@@ -1176,6 +1237,13 @@ internal class PluginInitializationGuard {
 
     fun finish(lease: Lease) = synchronized(this) {
         if (activeLease === lease) activeLease = null
+    }
+
+    fun isActive(lease: Lease): Boolean = synchronized(this) { activeLease === lease }
+
+    fun <T> withActive(lease: Lease, block: () -> T): T? = synchronized(this) {
+        if (activeLease !== lease) return@synchronized null
+        block()
     }
 
     fun resetIfIdle(reset: () -> Unit): Boolean = synchronized(this) {

@@ -7,10 +7,13 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -19,6 +22,18 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class TerminalStartupServicePolicyTest {
+    @Test
+    fun `collector readiness means a zero-replay shared flow is subscribed`() = runBlocking {
+        val events = MutableSharedFlow<String>()
+        val ready = CompletableDeferred<Unit>()
+        val received = async { events.signalCollectorSubscription(ready).first() }
+
+        ready.await()
+        events.emit("immediate output")
+
+        assertEquals("immediate output", received.await())
+    }
+
     @Test
     fun `startup logs stop reaching a detached UI listener`() {
         val received = mutableListOf<String>()
@@ -190,6 +205,20 @@ class TerminalStartupServicePolicyTest {
                     // Expected.
                 }
             }
+    }
+
+    @Test
+    fun `persisted service IDs must be unique regardless of UUID case`() {
+        val id = UUID.randomUUID().toString()
+        val normalizedIds = mutableSetOf<String>()
+
+        assertEquals(id, decodeUniquePersistedTerminalStartupServiceId(id, normalizedIds))
+        try {
+            decodeUniquePersistedTerminalStartupServiceId(id.uppercase(), normalizedIds)
+            fail("Expected duplicate service ID failure")
+        } catch (_: IllegalArgumentException) {
+            // Expected.
+        }
     }
 
     @Test
