@@ -91,6 +91,17 @@ import kotlin.system.exitProcess
 
 private const val TAG = "MainActivity"
 
+internal fun shouldStartProcessOwnedInitialization(
+    hasProcessStartupLease: Boolean,
+    showPermissionGuide: Boolean,
+    agreementAccepted: Boolean,
+): Boolean = hasProcessStartupLease && !showPermissionGuide && agreementAccepted
+
+internal fun shouldRunActivityStartupChecks(
+    isFreshActivityLaunch: Boolean,
+    hasProcessStartupLease: Boolean,
+): Boolean = isFreshActivityLaunch || hasProcessStartupLease
+
 internal class MainProcessStartupGate {
     class Lease internal constructor(val id: Long)
 
@@ -376,8 +387,13 @@ class MainActivity : ComponentActivity() {
         // Saved activity state can also be restored into a new process. A process-scoped gate
         // skips configuration-change recreation while still running startup after process death.
         processStartupLease = processStartupGate.claim()
-        if (processStartupLease != null) {
-            performInitialChecks()
+        val isFreshActivityLaunch = savedInstanceState == null
+        if (shouldRunActivityStartupChecks(
+                isFreshActivityLaunch = isFreshActivityLaunch,
+                hasProcessStartupLease = processStartupLease != null,
+            )
+        ) {
+            performActivityStartupChecks(prepareStartupChat = isFreshActivityLaunch)
         }
 
         // 设置双击返回退出
@@ -732,7 +748,7 @@ class MainActivity : ComponentActivity() {
     // ======== 设置初始占位内容 ========
 
     // ======== 执行初始化检查 ========
-    private fun performInitialChecks() {
+    private fun performActivityStartupChecks(prepareStartupChat: Boolean) {
         lifecycleScope.launch {
             // 1. 检查通知权限（Android 13+）
             checkNotificationPermission()
@@ -740,10 +756,15 @@ class MainActivity : ComponentActivity() {
             // 2. 检查权限级别设置
             checkPermissionLevelSet()
 
-            prepareStartupChatIfNeeded()
+            if (prepareStartupChat) prepareStartupChatIfNeeded()
 
             // 3. 在协议已接受且无需权限引导时，启动插件加载
-            if (!showPermissionGuide && agreementPreferences.isAgreementAccepted()) {
+            if (shouldStartProcessOwnedInitialization(
+                    hasProcessStartupLease = processStartupLease != null,
+                    showPermissionGuide = showPermissionGuide,
+                    agreementAccepted = agreementPreferences.isAgreementAccepted(),
+                )
+            ) {
                 startPluginLoading()
             }
         }
@@ -751,14 +772,15 @@ class MainActivity : ComponentActivity() {
 
     // ======== 启动插件加载 ========
     private fun startPluginLoading() {
+        if (processStartupInitializationStarted) return
+        processStartupInitializationStarted = true
+
         // 显示插件加载界面
         pluginLoadingState.show()
 
         // 启动超时检测（30秒）
-        pluginLoadingState.startTimeoutCheck(30000L, processStartupScope)
-
-        if (processStartupInitializationStarted) return
-        processStartupInitializationStarted = true
+        val startupTimeoutOwner =
+            pluginLoadingState.startTimeoutCheck(30000L, processStartupScope)
 
         // 初始化MCP服务器并启动插件
         // 轻微延迟让首帧 Compose 完成，避免启动阶段后台重任务立刻抢占导致掉帧
@@ -768,6 +790,7 @@ class MainActivity : ComponentActivity() {
             val startedNow = pluginLoadingState.initializeMCPServer(
                 applicationContext,
                 com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.APP_BOOT,
+                initialTimeoutOwner = startupTimeoutOwner,
             ) { completed ->
                 if (lease == null) return@initializeMCPServer
                 if (completed) processStartupGate.complete(lease)

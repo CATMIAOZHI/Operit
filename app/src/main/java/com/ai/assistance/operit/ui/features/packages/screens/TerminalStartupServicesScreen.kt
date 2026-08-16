@@ -66,6 +66,7 @@ import com.ai.assistance.operit.data.terminal.startup.TerminalStartupLaunchMode
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceConfig
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceManager
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceRepository
+import com.ai.assistance.operit.data.terminal.startup.TerminalStartupRuntimeRestoreException
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceState
 import com.ai.assistance.operit.data.terminal.startup.stopRuntimeThenDeletePersisted
 import kotlinx.coroutines.launch
@@ -301,8 +302,14 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                                 )
                             }.onFailure { error ->
                                 snackbar.showSnackbar(
-                                    error.message?.takeIf { it.isNotBlank() }
-                                        ?: context.getString(R.string.terminal_startup_error_delete)
+                                    if (error is TerminalStartupRuntimeRestoreException) {
+                                        context.getString(
+                                            R.string.terminal_startup_error_delete_restore_runtime
+                                        )
+                                    } else {
+                                        error.message?.takeIf { it.isNotBlank() }
+                                            ?: context.getString(R.string.terminal_startup_error_delete)
+                                    }
                                 )
                             }
                         } finally {

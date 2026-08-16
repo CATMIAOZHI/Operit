@@ -3,12 +3,70 @@ package com.ai.assistance.operit.ui.features.startup.screens
 import com.ai.assistance.operit.data.mcp.plugins.MCPStarter
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupLaunchMode
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceConfig
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class PluginLoadingPolicyTest {
+    @Test
+    fun `completed startup cancels its armed loading timeout`() = runTest {
+        val state = PluginLoadingState()
+        val owner = state.startTimeoutCheck(timeoutMillis = 1_000L, scope = this)
+
+        state.cancelTimeoutCheck(owner)
+        advanceUntilIdle()
+
+        assertFalse(state.hasTimedOut.value)
+    }
+
+    @Test
+    fun `old timeout completion and cleanup cannot affect a newer owner`() = runTest {
+        val state = PluginLoadingState()
+        val oldOwner = state.startTimeoutCheck(timeoutMillis = 1_000L, scope = this)
+        advanceTimeBy(1_000L)
+
+        state.startTimeoutCheck(timeoutMillis = 2_000L, scope = this)
+        state.cancelTimeoutCheck(oldOwner)
+        runCurrent()
+        assertFalse(state.hasTimedOut.value)
+
+        advanceTimeBy(2_000L)
+        runCurrent()
+        assertTrue(state.hasTimedOut.value)
+    }
+
+    @Test
+    fun `cleanup without an owned timeout cannot cancel another initialization timeout`() = runTest {
+        val state = PluginLoadingState()
+        state.startTimeoutCheck(timeoutMillis = 1_000L, scope = this)
+
+        state.cancelTimeoutCheckIfOwned(null)
+        advanceUntilIdle()
+
+        assertTrue(state.hasTimedOut.value)
+    }
+
+    @Test
+    fun `final result retires its timeout before publishing the final message`() = runTest {
+        val state = PluginLoadingState()
+        val owner = state.startTimeoutCheck(timeoutMillis = 1_000L, scope = this)
+        advanceTimeBy(1_000L)
+
+        state.cancelTimeoutCheck(owner)
+        state.updateMessage("final result")
+        runCurrent()
+
+        assertFalse(state.hasTimedOut.value)
+        assertEquals("final result", state.message.value)
+    }
+
     @Test
     fun `reset cannot cancel an active shared initialization`() {
         val guard = PluginInitializationGuard()

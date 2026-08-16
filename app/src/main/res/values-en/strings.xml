@@ -8618,4 +8618,5 @@
     <string name="terminal_startup_error_create_launcher_directory">Unable to create the launcher directory.</string>
     <string name="terminal_startup_error_load_config">Unable to read the startup service configuration. Changes were blocked to prevent data loss.</string>
     <string name="terminal_startup_error_delete">Unable to delete the startup service.</string>
+    <string name="terminal_startup_error_delete_restore_runtime">Unable to delete the startup service or restore its runtime.</string>
 </resources>

@@ -8,6 +8,46 @@ import org.junit.Test
 
 class MainProcessStartupGateTest {
     @Test
+    fun `activity checks distinguish fresh reopen recreation and process restoration`() {
+        assertTrue(
+            shouldRunActivityStartupChecks(
+                isFreshActivityLaunch = true,
+                hasProcessStartupLease = false,
+            )
+        )
+        assertFalse(
+            shouldRunActivityStartupChecks(
+                isFreshActivityLaunch = false,
+                hasProcessStartupLease = false,
+            )
+        )
+        assertTrue(
+            shouldRunActivityStartupChecks(
+                isFreshActivityLaunch = false,
+                hasProcessStartupLease = true,
+            )
+        )
+    }
+
+    @Test
+    fun `process-owned initialization still requires a startup lease`() {
+        assertTrue(
+            shouldStartProcessOwnedInitialization(
+                hasProcessStartupLease = true,
+                showPermissionGuide = false,
+                agreementAccepted = true,
+            )
+        )
+        assertFalse(
+            shouldStartProcessOwnedInitialization(
+                hasProcessStartupLease = false,
+                showPermissionGuide = false,
+                agreementAccepted = true,
+            )
+        )
+    }
+
+    @Test
     fun `completed startup is claimed once per process`() {
         val gate = MainProcessStartupGate()
         val lease = gate.claim()

@@ -24,6 +24,17 @@ import org.json.JSONObject
 internal fun terminalStartupServiceDirectory(noBackupFilesDir: File): File =
     File(noBackupFilesDir, "operit/terminal-startup-services")
 
+internal fun decodePersistedTerminalStartupServiceId(rawValue: Any?): String {
+    require(rawValue is String && rawValue.isNotBlank()) {
+        "Invalid terminal startup service ID"
+    }
+    val parsed = runCatching { UUID.fromString(rawValue) }.getOrNull()
+    require(parsed != null && parsed.toString().equals(rawValue, ignoreCase = true)) {
+        "Invalid terminal startup service ID"
+    }
+    return rawValue
+}
+
 internal fun decodePersistedHealthCheckPort(rawValue: Any?): Int? {
     if (rawValue == null) return null
     val number = rawValue as? Number
@@ -49,11 +60,14 @@ internal suspend fun stopRuntimeThenDeletePersisted(
         deletePersisted()
     } catch (error: Throwable) {
         if (!restoreRuntime()) {
-            error.addSuppressed(IllegalStateException("Failed to restore terminal startup service runtime"))
+            throw TerminalStartupRuntimeRestoreException(error)
         }
         throw error
     }
 }
+
+internal class TerminalStartupRuntimeRestoreException(cause: Throwable) :
+    IllegalStateException("Failed to restore terminal startup service runtime", cause)
 
 internal suspend fun persistAndPublish(
     persist: suspend () -> Unit,
@@ -144,10 +158,12 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
 
     fun getById(serviceId: String): TerminalStartupServiceConfig? {
         ensureConfigLoaded()
+        decodePersistedTerminalStartupServiceId(serviceId)
         return _services.value.firstOrNull { it.id == serviceId }
     }
 
     suspend fun upsert(config: TerminalStartupServiceConfig) {
+        decodePersistedTerminalStartupServiceId(config.id)
         writeMutex.withLock {
             ensureConfigLoaded()
             val updated = _services.value.toMutableList()
@@ -165,6 +181,7 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
     }
 
     suspend fun delete(serviceId: String) {
+        decodePersistedTerminalStartupServiceId(serviceId)
         writeMutex.withLock {
             ensureConfigLoaded()
             val updated = _services.value.filterNot { it.id == serviceId }
@@ -185,6 +202,7 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
         displayName: String?
     ): TerminalStartupServiceConfig = withContext(Dispatchers.IO) {
         ensureConfigLoaded()
+        decodePersistedTerminalStartupServiceId(config.id)
         ensureDirectories()
         val stagedFile = File.createTempFile("${config.id}.", ".pending", scriptsDirectory)
         useStagedFile(stagedFile) {
@@ -365,8 +383,9 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
         return buildList {
             for (index in 0 until services.length()) {
                 val item = services.getJSONObject(index)
-                val id = item.optString("id").takeIf { it.isNotBlank() }
-                    ?: throw IllegalArgumentException("Missing terminal startup service ID at index $index")
+                val id = decodePersistedTerminalStartupServiceId(
+                    if (!item.has("id") || item.isNull("id")) null else item.get("id")
+                )
                 val environmentObject =
                     if (!item.has("environment") || item.isNull("environment")) {
                         JSONObject()
@@ -437,9 +456,11 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
         }
     }
 
-    private fun scriptFile(serviceId: String): File = File(scriptsDirectory, "$serviceId.sh")
+    private fun scriptFile(serviceId: String): File =
+        File(scriptsDirectory, "${decodePersistedTerminalStartupServiceId(serviceId)}.sh")
 
-    private fun launcherFile(serviceId: String): File = File(launchersDirectory, "$serviceId.sh")
+    private fun launcherFile(serviceId: String): File =
+        File(launchersDirectory, "${decodePersistedTerminalStartupServiceId(serviceId)}.sh")
 
     companion object {
         private const val TAG = "TerminalStartupRepo"

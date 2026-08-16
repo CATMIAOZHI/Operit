@@ -174,6 +174,25 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
+    fun `persisted service IDs must be canonical UUID path components`() {
+        val validId = UUID.randomUUID().toString()
+        assertEquals(validId, decodePersistedTerminalStartupServiceId(validId))
+        assertEquals(
+            validId.uppercase(),
+            decodePersistedTerminalStartupServiceId(validId.uppercase()),
+        )
+        listOf<Any?>(null, "", "service", "../service", "a/b", "1-1-1-1-1", 7)
+            .forEach { raw ->
+                try {
+                    decodePersistedTerminalStartupServiceId(raw)
+                    fail("Expected invalid service ID failure for $raw")
+                } catch (_: IllegalArgumentException) {
+                    // Expected.
+                }
+            }
+    }
+
+    @Test
     fun `disable preempts runtime before persistence while enable waits for commit`() {
         assertTrue(shouldPreemptRuntimeBeforePersisting(enabled = false))
         assertFalse(shouldPreemptRuntimeBeforePersisting(enabled = true))
@@ -324,6 +343,29 @@ class TerminalStartupServicePolicyTest {
         }
 
         assertTrue(restored)
+    }
+
+    @Test
+    fun `failed persisted deletion waits for and reports failed runtime restoration`() = runBlocking {
+        var restorationFinished = false
+
+        try {
+            stopRuntimeThenDeletePersisted(
+                stopRuntime = { true },
+                deletePersisted = { throw IllegalStateException("persist failed") },
+                restoreRuntime = {
+                    restorationFinished = true
+                    false
+                },
+                terminationFailure = { IllegalStateException("stop failed") },
+            )
+            fail("Expected restoration failure")
+        } catch (expected: TerminalStartupRuntimeRestoreException) {
+            val rootCause = generateSequence<Throwable>(expected) { it.cause }.last()
+            assertEquals("persist failed", rootCause.message)
+        }
+
+        assertTrue(restorationFinished)
     }
 
     @Test

@@ -402,17 +402,13 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         }
     }
 
-    internal fun restoreServiceAfterFailedDeletion(
+    internal suspend fun restoreServiceAfterFailedDeletion(
         config: TerminalStartupServiceConfig,
         operation: Long,
-    ): Boolean {
-        scope.launch {
-            // Reuse the deletion token. Any newer stop/toggle intent advances the generation and
-            // makes this recovery a no-op instead of letting an old deletion failure restart it.
-            startServiceWithGeneration(config, NO_OP_LISTENER, operation)
-        }
-        return true
-    }
+    ): Boolean =
+        // Reuse the deletion token. Any newer stop/toggle intent advances the generation and
+        // makes this recovery a no-op instead of letting an old deletion failure restart it.
+        startServiceWithGeneration(config, NO_OP_LISTENER, operation).success
 
     internal suspend fun deletePersistedForOperation(
         serviceId: String,

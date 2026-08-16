@@ -71,6 +71,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -559,8 +560,12 @@ class PluginLoadingState {
     private val _hasTimedOut = MutableStateFlow(false)
     val hasTimedOut: StateFlow<Boolean> = _hasTimedOut
 
-    // 用于取消超时计时器
-    private var timeoutJob: kotlinx.coroutines.Job? = null
+    // Timeout ownership prevents an old batch from publishing after replacement or cancelling
+    // the timer owned by a newer batch.
+    private val timeoutLock = Any()
+    private var nextTimeoutOwner = 0L
+    private var activeTimeoutOwner: Long? = null
+    private var timeoutJob: Job? = null
 
     private val initializationGuard = PluginInitializationGuard()
     private val orchestrationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -766,23 +771,36 @@ class PluginLoadingState {
 
     // 触发跳过操作
     fun skip() {
-        timeoutJob?.cancel()
         hide()
         onSkipCallback?.invoke()
     }
 
     // 启动超时检测
-    fun startTimeoutCheck(timeoutMillis: Long = 30000L, scope: kotlinx.coroutines.CoroutineScope) {
-        timeoutJob?.cancel()
-        timeoutJob =
-                scope.launch {
-                    delay(timeoutMillis)
+    fun startTimeoutCheck(timeoutMillis: Long = 30000L, scope: CoroutineScope): Long {
+        val owner: Long
+        val newJob: Job
+        synchronized(timeoutLock) {
+            owner = ++nextTimeoutOwner
+            timeoutJob?.cancel()
+            newJob = scope.launch(start = CoroutineStart.LAZY) {
+                delay(timeoutMillis)
+                synchronized(timeoutLock) {
+                    if (activeTimeoutOwner != owner) return@launch
                     _hasTimedOut.value = true
                     updateMessage(
-                            appContext?.getString(R.string.plugin_loading_timeout)
-                                    ?: "Loading timeout, you can click \"Skip\" in the top right corner to continue"
+                        appContext?.getString(R.string.plugin_loading_timeout)
+                            ?: "Loading timeout, you can click \"Skip\" in the top right corner to continue"
                     )
+                    activeTimeoutOwner = null
+                    timeoutJob = null
                 }
+            }
+            activeTimeoutOwner = owner
+            timeoutJob = newJob
+            _hasTimedOut.value = false
+        }
+        newJob.start()
+        return owner
     }
 
     /** 显示加载屏幕 */
@@ -794,14 +812,14 @@ class PluginLoadingState {
 
     /** 隐藏加载屏幕 */
     fun hide() {
-        timeoutJob?.cancel()
+        cancelCurrentTimeoutCheck()
         _isVisible.value = false
         // _isExpanded.value = false // 关闭时重置为折叠状态
     }
 
     /** 重置所有状态 */
     fun reset(): Boolean = initializationGuard.resetIfIdle {
-        timeoutJob?.cancel()
+        cancelCurrentTimeoutCheck()
         mcpInitJob?.cancel()
         _progress.value = 0f
         _message.value = ""
@@ -816,15 +834,38 @@ class PluginLoadingState {
         _isExpanded.value = false
     }
 
+    private fun cancelCurrentTimeoutCheck() {
+        val jobToCancel = synchronized(timeoutLock) {
+            activeTimeoutOwner = null
+            timeoutJob.also { timeoutJob = null }
+        }
+        jobToCancel?.cancel()
+    }
+
+    internal fun cancelTimeoutCheck(owner: Long) {
+        val jobToCancel = synchronized(timeoutLock) {
+            if (activeTimeoutOwner != owner) return
+            activeTimeoutOwner = null
+            timeoutJob.also { timeoutJob = null }
+        }
+        jobToCancel?.cancel()
+    }
+
+    internal fun cancelTimeoutCheckIfOwned(owner: Long?) {
+        if (owner != null) cancelTimeoutCheck(owner)
+    }
+
     // 初始化 MCP 插件；应用启动时还会启动用户配置的终端服务。
     fun initializeMCPServer(
         context: Context,
         startupScope: PluginStartupScope,
+        initialTimeoutOwner: Long? = null,
         onFinished: (completed: Boolean) -> Unit = {},
     ): Boolean {
         val appContext = context.applicationContext
         val initializationLease = initializationGuard.tryStart()
         if (initializationLease == null) {
+            cancelTimeoutCheckIfOwned(initialTimeoutOwner)
             AppLogger.d("PluginLoadingState", "initializeMCPServer already running, skipping")
             return false
         }
@@ -833,6 +874,7 @@ class PluginLoadingState {
         fun reportFinished(completed: Boolean) {
             if (finishReported.compareAndSet(false, true)) onFinished(completed)
         }
+        var ownedTimeout = initialTimeoutOwner
         val initJob = orchestrationScope.launch {
             var completed = false
             try {
@@ -854,7 +896,7 @@ class PluginLoadingState {
                 val enabledServices = serviceDiscovery.getOrDefault(emptyList())
                 val terminalConfigError = serviceDiscovery.exceptionOrNull()?.message
                 if (shouldStartTerminalServices(startupScope) && terminalConfigError == null) {
-                    startTimeoutCheck(
+                    ownedTimeout = startTimeoutCheck(
                         combinedStartupLoadingTimeoutMs(enabledServices),
                         orchestrationScope,
                     )
@@ -946,6 +988,8 @@ class PluginLoadingState {
                 val hasFailures = terminalConfigError != null ||
                     successCount < totalCount ||
                     mcpResult.status != MCPStarter.PluginInitStatus.SUCCESS
+                cancelTimeoutCheckIfOwned(ownedTimeout)
+                ownedTimeout = null
                 updateProgress(1f)
                 if (shouldReplaceStartupMessageWithSummary(mcpResult.status)) {
                     updateMessage(
@@ -968,11 +1012,14 @@ class PluginLoadingState {
                 throw cancelled
             } catch (e: Exception) {
                 AppLogger.e("PluginLoadingState", "启动 MCP 插件和终端服务时出错", e)
+                cancelTimeoutCheckIfOwned(ownedTimeout)
+                ownedTimeout = null
                 updateMessage(e.message ?: appContext.getString(R.string.plugin_other_error))
                 updateProgress(1.0f)
                 forceExpanded()
                 completed = true
             } finally {
+                cancelTimeoutCheckIfOwned(ownedTimeout)
                 initializationGuard.finish(initializationLease)
                 reportFinished(completed)
             }
@@ -981,6 +1028,7 @@ class PluginLoadingState {
             // A cancelled scope can prevent the coroutine body from starting at all, so its
             // finally block is not guaranteed to release the process-startup lease.
             if (cause is CancellationException) {
+                cancelTimeoutCheckIfOwned(ownedTimeout)
                 initializationGuard.finish(initializationLease)
                 reportFinished(false)
             }
