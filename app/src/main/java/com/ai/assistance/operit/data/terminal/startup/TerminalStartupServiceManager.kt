@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.SystemClock
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.system.Terminal
+import com.ai.assistance.operit.terminal.TerminalSessionCleanupPendingCancellationException
+import com.ai.assistance.operit.terminal.TerminalSessionCleanupPendingException
 import com.ai.assistance.operit.util.AppLogger
 import java.net.InetSocketAddress
 import java.net.InetAddress
@@ -183,7 +185,8 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         val success: Boolean,
         val manuallyClosed: Boolean,
         val message: String,
-        val sessionId: String? = null
+        val sessionId: String? = null,
+        val retryBlocked: Boolean = false,
     )
 
     private enum class RestartWaitResult { READY, MANUALLY_CLOSED, TERMINATION_TIMEOUT, CANCELLED }
@@ -408,10 +411,21 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                 if (previousSessionId != null &&
                     !terminal.closeSessionAndAwait(previousSessionId, PROCESS_TERMINATION_TIMEOUT_MS)
                 ) {
+                    val message = previousProcessTerminationTimeoutMessage()
+                    updateStatus(
+                        config,
+                        TerminalStartupServiceStatus(
+                            serviceId = config.id,
+                            state = TerminalStartupServiceState.FAILED,
+                            message = message,
+                            restartAttempt = attempt,
+                        ),
+                        listener,
+                    )
                     return TerminalStartupServiceStartResult(
                         config.id,
                         false,
-                        previousProcessTerminationTimeoutMessage(),
+                        message,
                     )
                 }
                 if (previousSessionId != null) managedSessionIds.remove(config.id, previousSessionId)
@@ -428,7 +442,12 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                     sessionId = attemptResult.sessionId
                 )
             }
-            if (attemptResult.manuallyClosed || !config.autoRestart || attempt >= config.maxRestartAttempts) {
+            if (
+                attemptResult.manuallyClosed ||
+                    attemptResult.retryBlocked ||
+                    !config.autoRestart ||
+                    attempt >= config.maxRestartAttempts
+            ) {
                 val state =
                     if (attemptResult.manuallyClosed) TerminalStartupServiceState.STOPPED
                     else TerminalStartupServiceState.FAILED
@@ -524,9 +543,25 @@ class TerminalStartupServiceManager private constructor(context: Context) {
             )
             createdSessionId = null
             AttemptResult(true, false, message, sessionId)
+        } catch (cancelled: TerminalSessionCleanupPendingCancellationException) {
+            managedSessionIds[config.id] = cancelled.sessionId
+            throw cancelled
         } catch (cancelled: CancellationException) {
             createdSessionId?.let { cleanupAttemptSession(config.id, it) }
             throw cancelled
+        } catch (error: TerminalSessionCleanupPendingException) {
+            managedSessionIds[config.id] = error.sessionId
+            AppLogger.e(TAG, "Terminal session cleanup is still pending for ${config.id}", error)
+            val errorMessage = previousProcessTerminationTimeoutMessage()
+            appendLog(config.id, errorMessage)
+            logForwarder.emit(errorMessage)
+            AttemptResult(
+                success = false,
+                manuallyClosed = false,
+                message = errorMessage,
+                sessionId = error.sessionId,
+                retryBlocked = true,
+            )
         } catch (error: Exception) {
             createdSessionId?.let { cleanupAttemptSession(config.id, it) }
             AppLogger.e(TAG, "Failed to start terminal service ${config.id}", error)

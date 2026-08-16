@@ -1,6 +1,9 @@
 package com.ai.assistance.operit.ui.features.startup.screens
 
 import com.ai.assistance.operit.data.mcp.plugins.MCPStarter
+import com.ai.assistance.operit.data.terminal.startup.TerminalStartupLaunchMode
+import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceConfig
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -36,6 +39,34 @@ class PluginLoadingPolicyTest {
     fun `only app boot starts terminal startup services`() {
         assertTrue(shouldStartTerminalServices(PluginStartupScope.APP_BOOT))
         assertFalse(shouldStartTerminalServices(PluginStartupScope.MCP_ONLY))
+    }
+
+    @Test
+    fun `loading timeout covers the configured terminal retry budget`() {
+        assertEquals(30_000L, combinedStartupLoadingTimeoutMs(emptyList()))
+        val service = TerminalStartupServiceConfig(
+            id = "slow",
+            name = "slow",
+            launchMode = TerminalStartupLaunchMode.COMMAND,
+            command = "sleep 1",
+            startupTimeoutMs = 300_000L,
+            autoRestart = false,
+            maxRestartAttempts = 3,
+        )
+
+        assertEquals(338_000L, combinedStartupLoadingTimeoutMs(listOf(service)))
+        assertEquals(
+            264_000L,
+            combinedStartupLoadingTimeoutMs(
+                listOf(
+                    service.copy(
+                        startupTimeoutMs = 30_000L,
+                        autoRestart = true,
+                        maxRestartAttempts = 3,
+                    )
+                )
+            ),
+        )
     }
 
     @Test

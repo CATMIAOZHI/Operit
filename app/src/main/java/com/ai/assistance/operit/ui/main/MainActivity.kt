@@ -63,6 +63,8 @@ import com.ai.assistance.operit.ui.common.displays.VirtualDisplayOverlay
 import com.ai.assistance.operit.util.AnrMonitor
 import com.ai.assistance.operit.util.LocaleUtils
 import java.util.*
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineStart
@@ -87,9 +89,47 @@ import kotlin.system.exitProcess
 
 private const val TAG = "MainActivity"
 
+internal class MainProcessStartupGate {
+    class Lease internal constructor(val id: Long)
+
+    private sealed interface State {
+        data object Idle : State
+        data class InProgress(val lease: Lease) : State
+        data object Completed : State
+    }
+
+    private val nextLeaseId = AtomicLong(0L)
+    private val state = AtomicReference<State>(State.Idle)
+
+    fun claim(): Lease? {
+        while (true) {
+            when (val current = state.get()) {
+                State.Completed, is State.InProgress -> return null
+                State.Idle -> {
+                    val lease = Lease(nextLeaseId.incrementAndGet())
+                    if (state.compareAndSet(current, State.InProgress(lease))) return lease
+                }
+            }
+        }
+    }
+
+    fun complete(lease: Lease): Boolean = transition(lease, State.Completed)
+
+    fun release(lease: Lease): Boolean = transition(lease, State.Idle)
+
+    private fun transition(lease: Lease, target: State): Boolean {
+        while (true) {
+            val current = state.get()
+            if (current !is State.InProgress || current.lease !== lease) return false
+            if (state.compareAndSet(current, target)) return true
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_OPEN_SETTINGS_SHORTCUT = "com.ai.assistance.operit.action.OPEN_SETTINGS_SHORTCUT"
+        private val processStartupGate = MainProcessStartupGate()
     }
 
     // ======== 屏幕方向变更状态 ========
@@ -105,6 +145,8 @@ class MainActivity : ComponentActivity() {
 
     // ======== MCP插件状态 ========
     private val pluginLoadingState = PluginLoadingState()
+    private var processStartupLease: MainProcessStartupGate.Lease? = null
+    private var processStartupInitializationStarted = false
 
     // ======== 双击返回退出相关变量 ========
     private var backPressedTime: Long = 0
@@ -322,9 +364,10 @@ class MainActivity : ComponentActivity() {
         // 初始化并设置更新管理器
         setupUpdateManager()
 
-        // 只在首次创建时执行检查（非配置变更）
-        if (savedInstanceState == null) {
-            // 进行必要的初始检查
+        // Saved activity state can also be restored into a new process. A process-scoped gate
+        // skips configuration-change recreation while still running startup after process death.
+        processStartupLease = processStartupGate.claim()
+        if (processStartupLease != null) {
             performInitialChecks()
         }
 
@@ -709,11 +752,21 @@ class MainActivity : ComponentActivity() {
         // 轻微延迟让首帧 Compose 完成，避免启动阶段后台重任务立刻抢占导致掉帧
         lifecycleScope.launch {
             delay(500)
-            pluginLoadingState.initializeMCPServer(
+            val lease = processStartupLease
+            val startedNow = pluginLoadingState.initializeMCPServer(
                 this@MainActivity,
                 lifecycleScope,
                 com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.APP_BOOT,
-            )
+            ) { completed ->
+                if (lease == null) return@initializeMCPServer
+                if (completed) processStartupGate.complete(lease)
+                else processStartupGate.release(lease)
+            }
+            if (startedNow) {
+                processStartupInitializationStarted = true
+            } else if (!processStartupInitializationStarted && lease != null) {
+                processStartupGate.release(lease)
+            }
         }
     }
 
@@ -773,6 +826,10 @@ class MainActivity : ComponentActivity() {
 
 
     override fun onDestroy() {
+        if (!processStartupInitializationStarted) {
+            processStartupLease?.let(processStartupGate::release)
+        }
+        processStartupLease = null
         super.onDestroy()
         AppLogger.d(TAG, "onDestroy called")
 

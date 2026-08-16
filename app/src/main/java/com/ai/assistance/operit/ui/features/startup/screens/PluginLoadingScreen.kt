@@ -69,6 +69,7 @@ import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceStat
 import com.ai.assistance.operit.ui.features.startup.components.SmoothLinearProgressIndicator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -98,6 +99,30 @@ enum class PluginStartupScope {
 
 internal fun shouldStartTerminalServices(startupScope: PluginStartupScope): Boolean =
     startupScope == PluginStartupScope.APP_BOOT
+
+private const val BASE_PLUGIN_LOADING_TIMEOUT_MS = 30_000L
+private const val TERMINAL_SESSION_INITIALIZATION_BUDGET_MS = 30_000L
+private const val TERMINAL_PROCESS_SHUTDOWN_BUDGET_MS = 3_000L
+private const val STARTUP_COMPLETION_GRACE_MS = 5_000L
+
+internal fun combinedStartupLoadingTimeoutMs(
+    enabledServices: List<TerminalStartupServiceConfig>,
+): Long {
+    val terminalBudget = enabledServices.maxOfOrNull { config ->
+        val retryCount = if (config.autoRestart) config.maxRestartAttempts.coerceAtLeast(0) else 0
+        val attemptCount = retryCount + 1L
+        val attemptsBudget = attemptCount * (
+            TERMINAL_SESSION_INITIALIZATION_BUDGET_MS +
+                config.startupTimeoutMs +
+                TERMINAL_PROCESS_SHUTDOWN_BUDGET_MS
+            )
+        val restartDelayBudget = (1..retryCount).sumOf { attempt ->
+            (1_000L * (1L shl (attempt - 1).coerceIn(0, 4))).coerceAtMost(8_000L)
+        }
+        attemptsBudget + restartDelayBudget + STARTUP_COMPLETION_GRACE_MS
+    } ?: 0L
+    return maxOf(BASE_PLUGIN_LOADING_TIMEOUT_MS, terminalBudget)
+}
 
 internal fun shouldReplaceStartupMessageWithSummary(
     mcpStatus: MCPStarter.PluginInitStatus,
@@ -794,13 +819,19 @@ class PluginLoadingState {
         context: Context,
         lifecycleScope: kotlinx.coroutines.CoroutineScope,
         startupScope: PluginStartupScope,
-    ) {
+        onFinished: (completed: Boolean) -> Unit = {},
+    ): Boolean {
         if (!mcpInitInProgress.compareAndSet(false, true)) {
             AppLogger.d("PluginLoadingState", "initializeMCPServer already running, skipping")
-            return
+            return false
         }
 
-        mcpInitJob = lifecycleScope.launch(Dispatchers.IO) {
+        val finishReported = AtomicBoolean(false)
+        fun reportFinished(completed: Boolean) {
+            if (finishReported.compareAndSet(false, true)) onFinished(completed)
+        }
+        val initJob = lifecycleScope.launch(Dispatchers.IO) {
+            var completed = false
             try {
                 updateMessage(context.getString(R.string.plugin_initializing))
                 updateProgress(0.05f)
@@ -819,6 +850,12 @@ class PluginLoadingState {
                     }
                 val enabledServices = serviceDiscovery.getOrDefault(emptyList())
                 val terminalConfigError = serviceDiscovery.exceptionOrNull()?.message
+                if (shouldStartTerminalServices(startupScope) && terminalConfigError == null) {
+                    startTimeoutCheck(
+                        combinedStartupLoadingTimeoutMs(enabledServices),
+                        lifecycleScope,
+                    )
+                }
                 val mcpRepository = MCPRepository(context)
                 val pluginDiscovery = runCatching {
                     updateMessage(context.getString(R.string.plugin_loading_list))
@@ -923,15 +960,30 @@ class PluginLoadingState {
                     delay(100L)
                     if (isVisible.value) hide()
                 }
+                completed = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 AppLogger.e("PluginLoadingState", "启动 MCP 插件和终端服务时出错", e)
                 updateMessage(e.message ?: context.getString(R.string.plugin_other_error))
                 updateProgress(1.0f)
                 forceExpanded()
+                completed = true
             } finally {
                 mcpInitInProgress.set(false)
+                reportFinished(completed)
             }
         }
+        initJob.invokeOnCompletion { cause ->
+            // A cancelled scope can prevent the coroutine body from starting at all, so its
+            // finally block is not guaranteed to release the process-startup lease.
+            if (cause is CancellationException) {
+                mcpInitInProgress.set(false)
+                reportFinished(false)
+            }
+        }
+        mcpInitJob = initJob
+        return true
     }
 
     // 创建插件启动进度监听器
