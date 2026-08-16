@@ -378,10 +378,10 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                             else item.get("healthCheckPort")
                         ),
                         startupTimeoutMs =
-                            item.optLong(
-                                "startupTimeoutMs",
-                                TerminalStartupServiceConfig.DEFAULT_STARTUP_TIMEOUT_MS
-                            ).coerceIn(MIN_STARTUP_TIMEOUT_MS, MAX_STARTUP_TIMEOUT_MS),
+                            decodePersistedStartupTimeoutMs(
+                                if (!item.has("startupTimeoutMs") || item.isNull("startupTimeoutMs")) null
+                                else item.get("startupTimeoutMs")
+                            ),
                         autoRestart = item.optBoolean("autoRestart", true),
                         maxRestartAttempts =
                             item.optInt(
@@ -415,8 +415,6 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
         private const val CONFIG_FILE_NAME = "services.json"
         private const val CONFIG_VERSION = 1
         private const val PRIVATE_EXECUTABLE_MODE = 448 // 0700
-        private const val MIN_STARTUP_TIMEOUT_MS = 1_000L
-        private const val MAX_STARTUP_TIMEOUT_MS = 300_000L
         private val ENV_KEY_REGEX = Regex("[A-Za-z_][A-Za-z0-9_]*")
 
         @Volatile
@@ -427,4 +425,16 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                 instance ?: TerminalStartupServiceRepository(context).also { instance = it }
             }
     }
+}
+
+internal fun decodePersistedStartupTimeoutMs(rawValue: Any?): Long {
+    if (rawValue == null) return TerminalStartupServiceConfig.DEFAULT_STARTUP_TIMEOUT_MS
+    require(rawValue is Number) { "Invalid terminal startup timeout" }
+    val asDouble = rawValue.toDouble()
+    require(asDouble.isFinite() && asDouble % 1.0 == 0.0) { "Invalid terminal startup timeout" }
+    val value = rawValue.toLong()
+    require(value.toDouble() == asDouble && value in 1_000L..300_000L) {
+        "Invalid terminal startup timeout"
+    }
+    return value
 }

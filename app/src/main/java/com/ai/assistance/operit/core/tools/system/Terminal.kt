@@ -106,6 +106,9 @@ class Terminal private constructor(private val context: Context) {
         terminalManager.closeSession(sessionId)
     }
 
+    suspend fun closeSessionAndAwait(sessionId: String, timeoutMs: Long): Boolean =
+        terminalManager.closeSessionAndAwait(sessionId, timeoutMs)
+
     /** Send a command to a session without waiting for the command to finish. */
     suspend fun launchCommand(
         sessionId: String,

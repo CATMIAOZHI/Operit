@@ -20,7 +20,9 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -91,15 +93,37 @@ internal fun runBlockingProbeWithTimeout(
 internal class DetachableLogForwarder(
     target: (String) -> Unit
 ) {
-    @Volatile
+    private val lock = Any()
     private var target: ((String) -> Unit)? = target
+    private val pending = StringBuilder()
 
     fun emit(message: String) {
-        target?.invoke(message)
+        if (message.isBlank()) return
+        synchronized(lock) {
+            if (target == null) return
+            if (pending.isNotEmpty()) pending.append('\n')
+            pending.append(message)
+        }
+    }
+
+    fun flush() {
+        synchronized(lock) {
+            if (pending.isEmpty()) return
+            val message = pending.toString()
+            pending.setLength(0)
+            target?.invoke(message)
+        }
     }
 
     fun detach() {
-        target = null
+        synchronized(lock) {
+            if (pending.isNotEmpty()) {
+                val message = pending.toString()
+                pending.setLength(0)
+                target?.invoke(message)
+            }
+            target = null
+        }
     }
 }
 
@@ -119,6 +143,35 @@ internal fun shouldRestartTerminalService(
     maxRestartAttempts: Int,
 ): Boolean = enabled && autoRestart && restartAttempt < maxRestartAttempts
 
+internal class BoundedLogBuffer(private val maxChars: Int) {
+    private val chunks = ArrayDeque<String>()
+    private var charCount = 0
+
+    fun append(message: String) {
+        if (message.isBlank()) return
+        val chunk = if (chunks.isEmpty()) message else "\n$message"
+        chunks.addLast(chunk)
+        charCount += chunk.length
+        trimToLimit()
+    }
+
+    fun snapshot(): String = chunks.joinToString(separator = "")
+
+    private fun trimToLimit() {
+        while (charCount > maxChars && chunks.isNotEmpty()) {
+            val excess = charCount - maxChars
+            val first = chunks.removeFirst()
+            if (first.length > excess) {
+                val retained = first.substring(excess)
+                chunks.addFirst(retained)
+                charCount -= excess
+                return
+            }
+            charCount -= first.length
+        }
+    }
+}
+
 class TerminalStartupServiceManager private constructor(context: Context) {
     interface ProgressListener {
         fun onServiceStarting(config: TerminalStartupServiceConfig, index: Int, total: Int) {}
@@ -133,17 +186,22 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         val sessionId: String? = null
     )
 
-    private enum class RestartWaitResult { READY, MANUALLY_CLOSED, CANCELLED }
+    private enum class RestartWaitResult { READY, MANUALLY_CLOSED, TERMINATION_TIMEOUT, CANCELLED }
 
     private val appContext = context.applicationContext
     private val repository = TerminalStartupServiceRepository.getInstance(appContext)
     private val terminal = Terminal.getInstance(appContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val generations = ConcurrentHashMap<String, AtomicLong>()
+    private val operationSequences = ConcurrentHashMap<String, AtomicLong>()
+    private val intentJobs = ConcurrentHashMap<String, Job>()
     private val managedSessionIds = ConcurrentHashMap<String, String>()
     private val monitorJobs = ConcurrentHashMap<String, Job>()
     private val logJobs = ConcurrentHashMap<String, Job>()
     private val operationMutexes = ConcurrentHashMap<String, Mutex>()
+    private val logBuffers = ConcurrentHashMap<String, BoundedLogBuffer>()
+    private val logFlushScheduled = ConcurrentHashMap<String, AtomicBoolean>()
+    private val logForwarders = ConcurrentHashMap<String, DetachableLogForwarder>()
 
     private val _statuses = MutableStateFlow<Map<String, TerminalStartupServiceStatus>>(emptyMap())
     val statuses: StateFlow<Map<String, TerminalStartupServiceStatus>> = _statuses.asStateFlow()
@@ -185,30 +243,118 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         config: TerminalStartupServiceConfig,
         listener: ProgressListener = object : ProgressListener {}
     ): TerminalStartupServiceStartResult {
-        val generation = nextGeneration(config.id)
+        val operation = reserveOperation(config.id)
+        cancelPendingToggle(config.id)
+        activateRuntimeGeneration(config.id, operation)
+        return startServiceWithGeneration(config, listener, operation)
+    }
+
+    private suspend fun startServiceWithGeneration(
+        config: TerminalStartupServiceConfig,
+        listener: ProgressListener,
+        generation: Long,
+    ): TerminalStartupServiceStartResult {
         return operationMutex(config.id).withLock {
             if (!isCurrentGeneration(config.id, generation)) {
                 return@withLock TerminalStartupServiceStartResult(config.id, false, cancelledMessage())
             }
-            stopManagedRuntime(config.id, closeSession = true, updateStoppedStatus = false)
+            if (!stopManagedRuntime(config.id, closeSession = true, updateStoppedStatus = false)) {
+                val message = previousProcessTerminationTimeoutMessage()
+                updateStatus(
+                    config,
+                    TerminalStartupServiceStatus(
+                        serviceId = config.id,
+                        state = TerminalStartupServiceState.FAILED,
+                        message = message,
+                    ),
+                    listener,
+                )
+                return@withLock TerminalStartupServiceStartResult(config.id, false, message)
+            }
             clearLog(config.id)
             startWithRetries(config, generation, restartAttempt = 0, listener = listener)
         }
     }
 
+    fun setServiceEnabledAsync(
+        config: TerminalStartupServiceConfig,
+        enabled: Boolean,
+        onFailure: (Throwable) -> Unit = {},
+    ) {
+        val updated = config.copy(enabled = enabled)
+        val intentSequence = reserveOperation(config.id)
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                operationMutex(config.id).withLock {
+                    if (!isCurrentOperation(config.id, intentSequence)) return@withLock
+                    repository.upsert(updated)
+                    if (!isCurrentOperation(config.id, intentSequence)) return@withLock
+                    applyPersistedConfigLocked(updated, intentSequence)
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (isCurrentOperation(config.id, intentSequence)) {
+                    runCatching {
+                        operationMutex(config.id).withLock {
+                            if (!isCurrentOperation(config.id, intentSequence)) return@withLock
+                            repository.getById(config.id)?.let {
+                                applyPersistedConfigLocked(it, intentSequence)
+                            }
+                        }
+                    }.onFailure { recoveryError ->
+                        AppLogger.e(TAG, "Failed to restore terminal service ${config.id} after persistence error", recoveryError)
+                    }
+                }
+                onFailure(error)
+            }
+        }
+        intentJobs.put(config.id, job)?.cancel()
+        job.invokeOnCompletion { intentJobs.remove(config.id, job) }
+        job.start()
+    }
+
+    private suspend fun applyPersistedConfigLocked(
+        config: TerminalStartupServiceConfig,
+        generation: Long,
+    ) {
+        if (!activateRuntimeGenerationIfCurrentOperation(config.id, generation)) return
+        if (config.enabled) {
+            if (!stopManagedRuntime(config.id, closeSession = true, updateStoppedStatus = false)) {
+                throw IllegalStateException(previousProcessTerminationTimeoutMessage())
+            }
+            clearLog(config.id)
+            startWithRetries(config, generation, restartAttempt = 0, listener = NO_OP_LISTENER)
+        } else {
+            stopManagedRuntime(config.id, closeSession = true, updateStoppedStatus = true)
+        }
+    }
+
     fun startServiceAsync(config: TerminalStartupServiceConfig) {
-        scope.launch { startService(config) }
+        val generation = reserveOperation(config.id)
+        cancelPendingToggle(config.id)
+        activateRuntimeGeneration(config.id, generation)
+        scope.launch { startServiceWithGeneration(config, NO_OP_LISTENER, generation) }
     }
 
     suspend fun stopService(serviceId: String) {
-        nextGeneration(serviceId)
+        val operation = reserveOperation(serviceId)
+        cancelPendingToggle(serviceId)
+        activateRuntimeGeneration(serviceId, operation)
+        stopServiceWithGeneration(serviceId, operation)
+    }
+
+    private suspend fun stopServiceWithGeneration(serviceId: String, generation: Long) {
         operationMutex(serviceId).withLock {
+            if (!isCurrentGeneration(serviceId, generation)) return@withLock
             stopManagedRuntime(serviceId, closeSession = true, updateStoppedStatus = true)
         }
     }
 
     fun stopServiceAsync(serviceId: String) {
-        scope.launch { stopService(serviceId) }
+        val generation = reserveOperation(serviceId)
+        cancelPendingToggle(serviceId)
+        activateRuntimeGeneration(serviceId, generation)
+        scope.launch { stopServiceWithGeneration(serviceId, generation) }
     }
 
     private suspend fun startWithRetries(
@@ -243,9 +389,32 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                         )
                         return TerminalStartupServiceStartResult(config.id, false, message)
                     }
+                    RestartWaitResult.TERMINATION_TIMEOUT -> {
+                        val message = previousProcessTerminationTimeoutMessage()
+                        updateStatus(
+                            config,
+                            TerminalStartupServiceStatus(
+                                config.id,
+                                TerminalStartupServiceState.FAILED,
+                                message = message,
+                            ),
+                            listener,
+                        )
+                        return TerminalStartupServiceStartResult(config.id, false, message)
+                    }
                     RestartWaitResult.READY -> Unit
                 }
-                managedSessionIds.remove(config.id)?.let(terminal::closeSession)
+                val previousSessionId = managedSessionIds[config.id]
+                if (previousSessionId != null &&
+                    !terminal.closeSessionAndAwait(previousSessionId, PROCESS_TERMINATION_TIMEOUT_MS)
+                ) {
+                    return TerminalStartupServiceStartResult(
+                        config.id,
+                        false,
+                        previousProcessTerminationTimeoutMessage(),
+                    )
+                }
+                if (previousSessionId != null) managedSessionIds.remove(config.id, previousSessionId)
             }
 
             val attemptResult = startSingleAttempt(config, generation, attempt, listener)
@@ -289,6 +458,7 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         val logForwarder = DetachableLogForwarder { message ->
             listener.onServiceLog(config, message)
         }
+        logForwarders[config.id] = logForwarder
         updateStatus(
             config,
             TerminalStartupServiceStatus(
@@ -329,8 +499,9 @@ class TerminalStartupServiceManager private constructor(context: Context) {
             if (!readiness.success) {
                 val isStillManaged = managedSessionIds[config.id] == sessionId
                 if (isStillManaged) {
-                    managedSessionIds.remove(config.id, sessionId)
-                    terminal.closeSession(sessionId)
+                    if (terminal.closeSessionAndAwait(sessionId, PROCESS_TERMINATION_TIMEOUT_MS)) {
+                        managedSessionIds.remove(config.id, sessionId)
+                    }
                 }
                 createdSessionId = null
                 return readiness.copy(manuallyClosed = !isStillManaged || readiness.manuallyClosed)
@@ -367,6 +538,7 @@ class TerminalStartupServiceManager private constructor(context: Context) {
             // The command log collector can outlive app startup. Drop its UI listener after this
             // attempt finishes so it cannot retain PluginLoadingState or an Activity scope.
             logForwarder.detach()
+            logForwarders.remove(config.id, logForwarder)
         }
     }
 
@@ -431,13 +603,19 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                 val sessionId = managedSessionIds[config.id] ?: return@launch
                 val session = terminal.terminalState.value.sessions.firstOrNull { it.id == sessionId }
                 if (session == null) {
-                    managedSessionIds.remove(config.id, sessionId)
+                    val terminated =
+                        terminal.closeSessionAndAwait(sessionId, PROCESS_TERMINATION_TIMEOUT_MS)
+                    if (terminated) managedSessionIds.remove(config.id, sessionId)
                     updateStatus(
                         config,
                         TerminalStartupServiceStatus(
                             serviceId = config.id,
-                            state = TerminalStartupServiceState.STOPPED,
-                            message = sessionClosedMessage()
+                            state =
+                                if (terminated) TerminalStartupServiceState.STOPPED
+                                else TerminalStartupServiceState.FAILED,
+                            message =
+                                if (terminated) sessionClosedMessage()
+                                else previousProcessTerminationTimeoutMessage()
                         ),
                         NO_OP_LISTENER
                     )
@@ -519,10 +697,11 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                 .takeWhile { event -> !event.isCompleted }
                 .collect { event ->
                     incrementalStartupLogChunk(event.outputChunk, event.isCompleted)?.let { chunk ->
-                        appendLog(config.id, chunk)
+                        appendLog(config.id, chunk, publishImmediately = false)
                         logForwarder.emit(chunk)
                     }
                 }
+            publishLog(config.id)
         }
     }
 
@@ -530,24 +709,30 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         serviceId: String,
         closeSession: Boolean,
         updateStoppedStatus: Boolean
-    ) {
+    ): Boolean {
         monitorJobs.remove(serviceId)?.cancel()
         logJobs.remove(serviceId)?.cancel()
-        val sessionId = managedSessionIds.remove(serviceId)
-        if (closeSession && sessionId != null) {
-            terminal.closeSession(sessionId)
-        }
+        val sessionId = managedSessionIds[serviceId]
+        val terminated =
+            !closeSession || sessionId == null ||
+                terminal.closeSessionAndAwait(sessionId, PROCESS_TERMINATION_TIMEOUT_MS)
+        if (terminated && sessionId != null) managedSessionIds.remove(serviceId, sessionId)
         if (updateStoppedStatus) {
             _statuses.update { current ->
                 current +
                     (serviceId to
                         TerminalStartupServiceStatus(
                             serviceId = serviceId,
-                            state = TerminalStartupServiceState.STOPPED,
-                            message = stoppedMessage()
+                            state =
+                                if (terminated) TerminalStartupServiceState.STOPPED
+                                else TerminalStartupServiceState.FAILED,
+                            message =
+                                if (terminated) stoppedMessage()
+                                else previousProcessTerminationTimeoutMessage()
                         ))
             }
         }
+        return terminated
     }
 
     private fun updateStatus(
@@ -559,21 +744,62 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         listener.onServiceStatus(config, status)
     }
 
-    private fun appendLog(serviceId: String, message: String) {
+    private fun appendLog(serviceId: String, message: String, publishImmediately: Boolean = true) {
         if (message.isBlank()) return
+        val buffer = logBuffers.computeIfAbsent(serviceId) { BoundedLogBuffer(MAX_LOG_CHARS) }
+        synchronized(buffer) { buffer.append(message) }
+        if (publishImmediately) publishLog(serviceId) else scheduleLogPublish(serviceId)
+    }
+
+    private fun scheduleLogPublish(serviceId: String) {
+        val scheduled = logFlushScheduled.computeIfAbsent(serviceId) { AtomicBoolean() }
+        if (!scheduled.compareAndSet(false, true)) return
+        scope.launch {
+            delay(LOG_PUBLISH_INTERVAL_MS)
+            scheduled.set(false)
+            publishLog(serviceId)
+            logForwarders[serviceId]?.flush()
+        }
+    }
+
+    private fun publishLog(serviceId: String) {
+        val buffer = logBuffers[serviceId] ?: return
+        val snapshot = synchronized(buffer) { buffer.snapshot() }
         _logs.update { current ->
-            val existing = current[serviceId].orEmpty()
-            val combined = if (existing.isBlank()) message else "$existing\n$message"
-            current + (serviceId to combined.takeLast(MAX_LOG_CHARS))
+            if (current[serviceId] == snapshot) current else current + (serviceId to snapshot)
         }
     }
 
     private fun clearLog(serviceId: String) {
+        logBuffers.remove(serviceId)
+        logFlushScheduled.remove(serviceId)
         _logs.update { current -> current - serviceId }
     }
 
-    private fun nextGeneration(serviceId: String): Long =
-        generations.computeIfAbsent(serviceId) { AtomicLong() }.incrementAndGet()
+    private fun reserveOperation(serviceId: String): Long =
+        operationSequences.computeIfAbsent(serviceId) { AtomicLong() }.incrementAndGet()
+
+    private fun isCurrentOperation(serviceId: String, sequence: Long): Boolean =
+        operationSequences[serviceId]?.get() == sequence
+
+    private fun activateRuntimeGeneration(serviceId: String, generation: Long) {
+        generations.computeIfAbsent(serviceId) { AtomicLong() }
+            .updateAndGet { current -> maxOf(current, generation) }
+    }
+
+    private fun activateRuntimeGenerationIfCurrentOperation(
+        serviceId: String,
+        generation: Long,
+    ): Boolean {
+        if (!isCurrentOperation(serviceId, generation)) return false
+        val activated = generations.computeIfAbsent(serviceId) { AtomicLong() }
+            .updateAndGet { current -> maxOf(current, generation) }
+        return activated == generation && isCurrentOperation(serviceId, generation)
+    }
+
+    private fun cancelPendingToggle(serviceId: String) {
+        intentJobs.remove(serviceId)?.cancel()
+    }
 
     private fun isCurrentGeneration(serviceId: String, generation: Long): Boolean =
         generations[serviceId]?.get() == generation
@@ -591,8 +817,13 @@ class TerminalStartupServiceManager private constructor(context: Context) {
             if (!isCurrentGeneration(serviceId, generation)) return RestartWaitResult.CANCELLED
             val sessionId = managedSessionIds[serviceId]
             if (sessionId != null && terminal.terminalState.value.sessions.none { it.id == sessionId }) {
-                managedSessionIds.remove(serviceId, sessionId)
-                return RestartWaitResult.MANUALLY_CLOSED
+                val terminated =
+                    terminal.closeSessionAndAwait(sessionId, PROCESS_TERMINATION_TIMEOUT_MS)
+                if (terminated) {
+                    managedSessionIds.remove(serviceId, sessionId)
+                }
+                return if (terminated) RestartWaitResult.MANUALLY_CLOSED
+                else RestartWaitResult.TERMINATION_TIMEOUT
             }
             val slice = minOf(remaining, RESTART_CLOSE_POLL_INTERVAL_MS)
             delay(slice)
@@ -602,9 +833,10 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         else RestartWaitResult.CANCELLED
     }
 
-    private fun cleanupAttemptSession(serviceId: String, sessionId: String) {
-        managedSessionIds.remove(serviceId, sessionId)
-        terminal.closeSession(sessionId)
+    private suspend fun cleanupAttemptSession(serviceId: String, sessionId: String) {
+        if (terminal.closeSessionAndAwait(sessionId, PROCESS_TERMINATION_TIMEOUT_MS)) {
+            managedSessionIds.remove(serviceId, sessionId)
+        }
     }
 
     private fun restartDelayMs(attempt: Int): Long =
@@ -653,6 +885,8 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         appContext.getString(R.string.terminal_startup_message_tcp_timeout, host, port)
     private fun processTimeoutMessage() = appContext.getString(R.string.terminal_startup_message_process_timeout)
     private fun startupFailureMessage() = appContext.getString(R.string.terminal_startup_message_failed)
+    private fun previousProcessTerminationTimeoutMessage() =
+        appContext.getString(R.string.terminal_startup_message_previous_process_timeout)
     private fun stoppedMessage() = appContext.getString(R.string.terminal_startup_status_stopped)
     private fun processExitedMessage() = appContext.getString(R.string.terminal_startup_message_process_exited)
     private fun tcpUnhealthyMessage() = appContext.getString(R.string.terminal_startup_message_tcp_unhealthy)
@@ -677,6 +911,8 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         private const val BASE_RESTART_DELAY_MS = 1_000L
         private const val MAX_RESTART_DELAY_MS = 8_000L
         private const val MAX_LOG_CHARS = 200_000
+        private const val PROCESS_TERMINATION_TIMEOUT_MS = 3_000L
+        private const val LOG_PUBLISH_INTERVAL_MS = 250L
         private val NO_OP_LISTENER = object : ProgressListener {}
 
         @Volatile

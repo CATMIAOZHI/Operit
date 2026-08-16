@@ -5,6 +5,7 @@ import java.nio.file.Files
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
@@ -23,11 +24,46 @@ class TerminalStartupServicePolicyTest {
         val received = mutableListOf<String>()
         val forwarder = DetachableLogForwarder(received::add)
 
+        forwarder.emit("first")
+        forwarder.emit("second")
+        assertTrue(received.isEmpty())
+        forwarder.flush()
+        assertEquals(listOf("first\nsecond"), received)
         forwarder.emit("before detach")
         forwarder.detach()
         forwarder.emit("after detach")
 
-        assertEquals(listOf("before detach"), received)
+        assertEquals(listOf("first\nsecond", "before detach"), received)
+    }
+
+    @Test
+    fun `detach waits for an in-flight final log flush`() {
+        val callbackEntered = CountDownLatch(1)
+        val releaseCallback = CountDownLatch(1)
+        val detachFinished = AtomicBoolean(false)
+        val received = mutableListOf<String>()
+        val forwarder = DetachableLogForwarder { message ->
+            callbackEntered.countDown()
+            releaseCallback.await()
+            received += message
+        }
+        forwarder.emit("final")
+
+        val flushThread = Thread(forwarder::flush).apply { start() }
+        callbackEntered.await()
+        val detachThread = Thread {
+            forwarder.detach()
+            detachFinished.set(true)
+        }.apply { start() }
+        Thread.sleep(50L)
+        assertFalse(detachFinished.get())
+
+        releaseCallback.countDown()
+        flushThread.join()
+        detachThread.join()
+
+        assertTrue(detachFinished.get())
+        assertEquals(listOf("final"), received)
     }
 
     @Test
@@ -69,6 +105,35 @@ class TerminalStartupServicePolicyTest {
                 // Expected.
             }
         }
+    }
+
+    @Test
+    fun `invalid persisted startup timeouts fail closed`() {
+        assertEquals(
+            TerminalStartupServiceConfig.DEFAULT_STARTUP_TIMEOUT_MS,
+            decodePersistedStartupTimeoutMs(null),
+        )
+        assertEquals(1_000L, decodePersistedStartupTimeoutMs(1_000))
+        assertEquals(300_000L, decodePersistedStartupTimeoutMs(300_000L))
+        listOf<Any>(999, 300_001, 1_000.5, Double.NaN, "30000").forEach { raw ->
+            try {
+                decodePersistedStartupTimeoutMs(raw)
+                fail("Expected invalid timeout failure for $raw")
+            } catch (_: IllegalArgumentException) {
+                // Expected.
+            }
+        }
+    }
+
+    @Test
+    fun `bounded log buffer trims old chunks without changing recent output`() {
+        val buffer = BoundedLogBuffer(12)
+
+        buffer.append("first")
+        buffer.append("second")
+        buffer.append("third")
+
+        assertEquals("second\nthird", buffer.snapshot())
     }
 
     @Test

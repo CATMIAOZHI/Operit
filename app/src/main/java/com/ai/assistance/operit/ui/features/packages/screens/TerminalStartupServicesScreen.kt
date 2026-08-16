@@ -155,12 +155,8 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                             Switch(
                                 checked = service.enabled,
                                 onCheckedChange = { enabled ->
-                                    val updated = service.copy(enabled = enabled)
-                                    scope.launch {
-                                        runCatching {
-                                            repository.upsert(updated)
-                                            if (enabled) manager.startServiceAsync(updated) else manager.stopServiceAsync(service.id)
-                                        }.onFailure { snackbar.showSnackbar(it.message.orEmpty()) }
+                                    manager.setServiceEnabledAsync(service, enabled) { error ->
+                                        scope.launch { snackbar.showSnackbar(error.message.orEmpty()) }
                                     }
                                 }
                             )
