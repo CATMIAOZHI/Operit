@@ -18,24 +18,41 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal fun terminalStartupServiceDirectory(noBackupFilesDir: File): File =
+    File(noBackupFilesDir, "operit/terminal-startup-services")
+
 class TerminalStartupServiceRepository private constructor(context: Context) {
     private val appContext = context.applicationContext
-    private val baseDirectory = File(appContext.filesDir, "operit/terminal-startup-services")
+    // Commands and environment values are executable configuration. Keep them outside raw
+    // snapshots so an imported archive cannot install commands that run on the next startup.
+    private val baseDirectory = terminalStartupServiceDirectory(appContext.noBackupFilesDir)
     private val scriptsDirectory = File(baseDirectory, "scripts")
     private val launchersDirectory = File(baseDirectory, "launchers")
     private val configFile = AtomicFile(File(baseDirectory, CONFIG_FILE_NAME))
     private val writeMutex = Mutex()
 
-    private val _services = MutableStateFlow(loadServices())
+    private val initialLoad = loadServices()
+    private val loadFailure = initialLoad.exceptionOrNull()
+    private val _services = MutableStateFlow(initialLoad.getOrDefault(emptyList()))
     val services: StateFlow<List<TerminalStartupServiceConfig>> = _services.asStateFlow()
 
-    fun snapshot(): List<TerminalStartupServiceConfig> = _services.value
+    fun snapshot(): List<TerminalStartupServiceConfig> {
+        ensureConfigLoaded()
+        return _services.value
+    }
 
-    fun getById(serviceId: String): TerminalStartupServiceConfig? =
-        _services.value.firstOrNull { it.id == serviceId }
+    fun loadErrorMessage(): String? =
+        if (loadFailure == null) null
+        else appContext.getString(R.string.terminal_startup_error_load_config)
+
+    fun getById(serviceId: String): TerminalStartupServiceConfig? {
+        ensureConfigLoaded()
+        return _services.value.firstOrNull { it.id == serviceId }
+    }
 
     suspend fun upsert(config: TerminalStartupServiceConfig) {
         writeMutex.withLock {
+            ensureConfigLoaded()
             val updated = _services.value.toMutableList()
             val index = updated.indexOfFirst { it.id == config.id }
             if (index >= 0) {
@@ -50,6 +67,7 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
 
     suspend fun delete(serviceId: String) {
         writeMutex.withLock {
+            ensureConfigLoaded()
             val updated = _services.value.filterNot { it.id == serviceId }
             persistServices(updated)
             _services.value = updated
@@ -66,6 +84,7 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
         displayName: String?
     ): Pair<String, String> =
         withContext(Dispatchers.IO) {
+            ensureConfigLoaded()
             ensureDirectories()
             val target = scriptFile(serviceId)
             val input =
@@ -88,6 +107,7 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
 
     suspend fun writeLauncher(config: TerminalStartupServiceConfig): File =
         withContext(Dispatchers.IO) {
+            ensureConfigLoaded()
             ensureDirectories()
             val launcher = launcherFile(config.id)
             val atomicLauncher = AtomicFile(launcher)
@@ -141,16 +161,27 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
 
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 
-    private fun loadServices(): List<TerminalStartupServiceConfig> {
-        return runCatching {
+    private fun loadServices(): Result<List<TerminalStartupServiceConfig>> =
+        runCatching {
             ensureDirectories()
-            if (!configFile.baseFile.exists()) return emptyList()
-            configFile.openRead().bufferedReader(Charsets.UTF_8).use { reader ->
-                decodeServices(reader.readText())
+            if (!configFile.baseFile.exists()) {
+                emptyList()
+            } else {
+                configFile.openRead().bufferedReader(Charsets.UTF_8).use { reader ->
+                    decodeServices(reader.readText())
+                }
             }
         }.onFailure { error ->
             AppLogger.e(TAG, "Failed to load terminal startup services", error)
-        }.getOrDefault(emptyList())
+        }
+
+    private fun ensureConfigLoaded() {
+        loadFailure?.let { error ->
+            throw IllegalStateException(
+                requireNotNull(loadErrorMessage()),
+                error
+            )
+        }
     }
 
     private suspend fun persistServices(services: List<TerminalStartupServiceConfig>) {
@@ -204,14 +235,24 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
         }.toString(2)
 
     private fun decodeServices(text: String): List<TerminalStartupServiceConfig> {
-        if (text.isBlank()) return emptyList()
+        require(text.isNotBlank()) { "Empty terminal startup service configuration" }
         val root = JSONObject(text)
-        val services = root.optJSONArray("services") ?: return emptyList()
+        require(root.optInt("version", -1) == CONFIG_VERSION) {
+            "Unsupported terminal startup service configuration version"
+        }
+        val services = root.optJSONArray("services")
+            ?: throw IllegalArgumentException("Missing terminal startup service list")
         return buildList {
             for (index in 0 until services.length()) {
-                val item = services.optJSONObject(index) ?: continue
-                val id = item.optString("id").takeIf { it.isNotBlank() } ?: continue
-                val environmentObject = item.optJSONObject("environment") ?: JSONObject()
+                val item = services.getJSONObject(index)
+                val id = item.optString("id").takeIf { it.isNotBlank() }
+                    ?: throw IllegalArgumentException("Missing terminal startup service ID at index $index")
+                val environmentObject =
+                    if (!item.has("environment") || item.isNull("environment")) {
+                        JSONObject()
+                    } else {
+                        item.getJSONObject("environment")
+                    }
                 val environment = buildMap {
                     environmentObject.keys().forEach { key -> put(key, environmentObject.optString(key)) }
                 }
@@ -220,9 +261,7 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                         id = id,
                         name = item.optString("name").ifBlank { id },
                         launchMode =
-                            runCatching {
-                                TerminalStartupLaunchMode.valueOf(item.optString("launchMode"))
-                            }.getOrDefault(TerminalStartupLaunchMode.COMMAND),
+                            TerminalStartupLaunchMode.valueOf(item.getString("launchMode")),
                         command = item.optString("command"),
                         scriptPath =
                             if (item.isNull("scriptPath")) null

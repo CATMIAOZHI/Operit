@@ -8594,4 +8594,5 @@
     <string name="terminal_startup_error_create_directory">无法创建启动服务目录。</string>
     <string name="terminal_startup_error_create_script_directory">无法创建启动脚本目录。</string>
     <string name="terminal_startup_error_create_launcher_directory">无法创建启动器目录。</string>
+    <string name="terminal_startup_error_load_config">无法读取启动服务配置；为防止数据丢失，修改已被阻止。</string>
 </resources>

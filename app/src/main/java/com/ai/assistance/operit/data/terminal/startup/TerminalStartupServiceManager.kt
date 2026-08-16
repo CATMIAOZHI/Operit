@@ -24,11 +24,30 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+internal class DetachableLogForwarder(
+    target: (String) -> Unit
+) {
+    @Volatile
+    private var target: ((String) -> Unit)? = target
+
+    fun emit(message: String) {
+        target?.invoke(message)
+    }
+
+    fun detach() {
+        target = null
+    }
+}
+
+internal fun incrementalStartupLogChunk(outputChunk: String, isCompleted: Boolean): String? =
+    outputChunk.takeIf { !isCompleted && it.isNotBlank() }
 
 class TerminalStartupServiceManager private constructor(context: Context) {
     interface ProgressListener {
@@ -197,6 +216,9 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         restartAttempt: Int,
         listener: ProgressListener
     ): AttemptResult {
+        val logForwarder = DetachableLogForwarder { message ->
+            listener.onServiceLog(config, message)
+        }
         updateStatus(
             config,
             TerminalStartupServiceStatus(
@@ -225,7 +247,7 @@ class TerminalStartupServiceManager private constructor(context: Context) {
             managedSessionIds[config.id] = sessionId
             val commandId = UUID.randomUUID().toString()
             val collectorReady = CompletableDeferred<Unit>()
-            collectServiceLogs(config, sessionId, commandId, generation, collectorReady)
+            collectServiceLogs(config, sessionId, commandId, generation, collectorReady, logForwarder)
             collectorReady.await()
             terminal.launchCommand(
                 sessionId = sessionId,
@@ -267,8 +289,14 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         } catch (error: Exception) {
             createdSessionId?.let { cleanupAttemptSession(config.id, it) }
             AppLogger.e(TAG, "Failed to start terminal service ${config.id}", error)
-            appendLog(config.id, error.message ?: error.javaClass.simpleName)
+            val errorMessage = error.message ?: error.javaClass.simpleName
+            appendLog(config.id, errorMessage)
+            logForwarder.emit(errorMessage)
             AttemptResult(false, false, error.message ?: startupFailureMessage())
+        } finally {
+            // The command log collector can outlive app startup. Drop its UI listener after this
+            // attempt finishes so it cannot retain PluginLoadingState or an Activity scope.
+            logForwarder.detach()
         }
     }
 
@@ -382,7 +410,8 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         sessionId: String,
         commandId: String,
         generation: Long,
-        collectorReady: CompletableDeferred<Unit>
+        collectorReady: CompletableDeferred<Unit>,
+        logForwarder: DetachableLogForwarder
     ) {
         logJobs.remove(config.id)?.cancel()
         logJobs[config.id] = scope.launch {
@@ -393,9 +422,13 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                         isCurrentGeneration(config.id, generation)
                 }
                 .onStart { collectorReady.complete(Unit) }
+                // Completion events contain the full final output snapshot, not an increment.
+                // Stop at that event so logs are neither duplicated nor collected forever.
+                .takeWhile { event -> !event.isCompleted }
                 .collect { event ->
-                    if (event.outputChunk.isNotBlank()) {
-                        appendLog(config.id, event.outputChunk)
+                    incrementalStartupLogChunk(event.outputChunk, event.isCompleted)?.let { chunk ->
+                        appendLog(config.id, chunk)
+                        logForwarder.emit(chunk)
                     }
                 }
         }

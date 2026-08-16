@@ -8613,4 +8613,5 @@
     <string name="terminal_startup_error_create_directory">Unable to create the startup service directory.</string>
     <string name="terminal_startup_error_create_script_directory">Unable to create the startup script directory.</string>
     <string name="terminal_startup_error_create_launcher_directory">Unable to create the launcher directory.</string>
+    <string name="terminal_startup_error_load_config">Unable to read the startup service configuration. Changes were blocked to prevent data loss.</string>
 </resources>

@@ -74,6 +74,7 @@ import kotlinx.coroutines.launch
 fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
     val context = LocalContext.current
     val repository = remember { TerminalStartupServiceRepository.getInstance(context) }
+    val loadErrorMessage = remember(repository) { repository.loadErrorMessage() }
     val manager = remember { TerminalStartupServiceManager.getInstance(context) }
     val services by repository.services.collectAsState()
     val statuses by manager.statuses.collectAsState()
@@ -88,8 +89,10 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            FloatingActionButton(onClick = { creating = true }) {
-                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.terminal_startup_add))
+            if (loadErrorMessage == null) {
+                FloatingActionButton(onClick = { creating = true }) {
+                    Icon(Icons.Default.Add, contentDescription = stringResource(R.string.terminal_startup_add))
+                }
             }
         }
     ) { padding ->
@@ -105,7 +108,23 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (services.isEmpty()) {
+            if (loadErrorMessage != null) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Text(
+                            text = loadErrorMessage,
+                            modifier = Modifier.padding(24.dp),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            } else if (services.isEmpty()) {
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Text(
