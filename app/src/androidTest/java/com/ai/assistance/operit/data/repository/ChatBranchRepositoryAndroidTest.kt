@@ -7,6 +7,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatKind
+import com.ai.assistance.operit.data.model.ChatTodoEntity
+import com.ai.assistance.operit.data.model.ChatTodoPriority
+import com.ai.assistance.operit.data.model.ChatTodoStatus
 import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.data.model.SubagentRunStatus
@@ -124,6 +127,50 @@ class ChatBranchRepositoryAndroidTest {
         assertEquals(1, database.subagentRunDao().incrementToolInvocationCountByChildChatId(child.id))
         assertEquals(0, database.subagentRunDao().incrementToolInvocationCountByChildChatId("normal"))
         assertEquals(2, database.subagentRunDao().getByChildChatId(child.id)?.toolInvocationCount)
+    }
+
+    @Test
+    fun branchCopiesTodoSnapshotAndThenUpdatesIndependently() = runBlocking {
+        val parent = chat("parent", ChatKind.NORMAL)
+        val branch = chat("branch", ChatKind.BRANCH, parentChatId = parent.id)
+        database.chatDao().insertChat(parent)
+        database.chatTodoDao().insertAll(
+            listOf(
+                ChatTodoEntity(
+                    chatId = parent.id,
+                    position = 0,
+                    content = "inspect",
+                    status = ChatTodoStatus.IN_PROGRESS.name,
+                    priority = ChatTodoPriority.HIGH.name,
+                ),
+                ChatTodoEntity(
+                    chatId = parent.id,
+                    position = 1,
+                    content = "verify",
+                    status = ChatTodoStatus.PENDING.name,
+                    priority = ChatTodoPriority.MEDIUM.name,
+                ),
+            )
+        )
+
+        repository.copyBranch(parent.id, branch, upToTimestampInclusive = null)
+        database.chatTodoDao().replaceForChat(
+            parent.id,
+            database.chatTodoDao().getByChatId(parent.id).map {
+                it.copy(status = ChatTodoStatus.COMPLETED.name)
+            },
+        )
+
+        val branchTodos = database.chatTodoDao().getByChatId(branch.id)
+        assertEquals(listOf("inspect", "verify"), branchTodos.map { it.content })
+        assertEquals(
+            listOf(ChatTodoStatus.IN_PROGRESS.name, ChatTodoStatus.PENDING.name),
+            branchTodos.map { it.status },
+        )
+        assertEquals(
+            listOf(ChatTodoStatus.COMPLETED.name, ChatTodoStatus.COMPLETED.name),
+            database.chatTodoDao().getByChatId(parent.id).map { it.status },
+        )
     }
 
     @Test
