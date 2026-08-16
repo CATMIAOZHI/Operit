@@ -222,6 +222,19 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
+    fun `persisted environment values must remain strings`() {
+        assertEquals("value", decodePersistedEnvironmentValue("value"))
+        listOf<Any?>(null, 1, true, emptyMap<String, String>()).forEach { raw ->
+            try {
+                decodePersistedEnvironmentValue(raw)
+                fail("Expected invalid environment value failure for $raw")
+            } catch (_: IllegalArgumentException) {
+                // Expected.
+            }
+        }
+    }
+
+    @Test
     fun `disable preempts runtime before persistence while enable waits for commit`() {
         assertTrue(shouldPreemptRuntimeBeforePersisting(enabled = false))
         assertFalse(shouldPreemptRuntimeBeforePersisting(enabled = true))

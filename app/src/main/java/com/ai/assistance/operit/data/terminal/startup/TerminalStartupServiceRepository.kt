@@ -46,6 +46,11 @@ internal fun decodeUniquePersistedTerminalStartupServiceId(
     return id
 }
 
+internal fun decodePersistedEnvironmentValue(rawValue: Any?): String {
+    require(rawValue is String) { "Invalid terminal startup environment value" }
+    return rawValue
+}
+
 internal fun decodePersistedHealthCheckPort(rawValue: Any?): Int? {
     if (rawValue == null) return null
     val number = rawValue as? Number
@@ -406,7 +411,9 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                         item.getJSONObject("environment")
                     }
                 val environment = buildMap {
-                    environmentObject.keys().forEach { key -> put(key, environmentObject.optString(key)) }
+                    environmentObject.keys().forEach { key ->
+                        put(key, decodePersistedEnvironmentValue(environmentObject.get(key)))
+                    }
                 }
                 add(
                     TerminalStartupServiceConfig(

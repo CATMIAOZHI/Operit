@@ -51,6 +51,7 @@ import kotlinx.coroutines.sync.withLock
 
 private const val PROCESS_START_GRACE_MS = 1_000L
 private const val HEALTH_POLL_INTERVAL_MS = 250L
+private const val DELETED_SERVICE_OPERATION = Long.MIN_VALUE
 
 internal fun <T> SharedFlow<T>.signalCollectorSubscription(
     collectorReady: CompletableDeferred<Unit>,
@@ -211,12 +212,22 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         val retryBlocked: Boolean = false,
     )
 
+    private data class PurgedServiceJobs(
+        val intentJob: Job?,
+        val monitorJob: Job?,
+        val logJob: Job?,
+        val logForwarder: DetachableLogForwarder?,
+    )
+
     private enum class RestartWaitResult { READY, MANUALLY_CLOSED, TERMINATION_TIMEOUT, CANCELLED }
 
     private val appContext = context.applicationContext
     private val repository = TerminalStartupServiceRepository.getInstance(appContext)
     private val terminal = Terminal.getInstance(appContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val serviceStateLifecycleLock = Any()
+    private val deletedServiceIds = ConcurrentHashMap.newKeySet<String>()
+    private val deletedServiceMutex = Mutex()
     private val generations = ConcurrentHashMap<String, AtomicLong>()
     private val operationSequences = ConcurrentHashMap<String, AtomicLong>()
     private val intentJobs = ConcurrentHashMap<String, Job>()
@@ -344,7 +355,15 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                 onFailure(error)
             }
         }
-        intentJobs.put(config.id, job)?.cancel()
+        val previousJob = synchronized(serviceStateLifecycleLock) {
+            if (deletedServiceIds.contains(config.id)) return@synchronized job
+            intentJobs.put(config.id, job)
+        }
+        if (previousJob === job) {
+            job.cancel()
+            return
+        }
+        previousJob?.cancel()
         job.invokeOnCompletion { intentJobs.remove(config.id, job) }
         job.start()
     }
@@ -420,21 +439,24 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         serviceId: String,
         operation: Long,
         deletePersisted: suspend () -> Unit,
-    ): Boolean = operationMutex(serviceId).withLock {
-        if (!isRuntimeOperationCurrent(
-                currentOperation = operationSequences[serviceId]?.get(),
-                currentGeneration = generations[serviceId]?.get(),
-                operation = operation,
-            )
-        ) {
-            return@withLock false
+    ): Boolean {
+        val mutex = operationMutex(serviceId)
+        return mutex.withLock {
+            if (!isRuntimeOperationCurrent(
+                    currentOperation = operationSequences[serviceId]?.get(),
+                    currentGeneration = generations[serviceId]?.get(),
+                    operation = operation,
+                )
+            ) {
+                return@withLock false
+            }
+            deletePersisted()
+            // Linearize a successful deletion after any action that raced with its disk commit.
+            val tombstoneOperation = reserveOperation(serviceId)
+            activateRuntimeGeneration(serviceId, tombstoneOperation)
+            purgeDeletedServiceState(serviceId, mutex)
+            true
         }
-        deletePersisted()
-        // Linearize a successful deletion after any action that raced with its disk commit. Those
-        // stale actions must not restart a service whose configuration and launcher are now gone.
-        val tombstoneOperation = reserveOperation(serviceId)
-        activateRuntimeGeneration(serviceId, tombstoneOperation)
-        true
     }
 
     private suspend fun stopServiceWithGeneration(serviceId: String, generation: Long): Boolean {
@@ -864,18 +886,22 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                 terminal.closeSessionAndAwait(sessionId, PROCESS_TERMINATION_TIMEOUT_MS)
         if (terminated && sessionId != null) managedSessionIds.remove(serviceId, sessionId)
         if (updateStoppedStatus) {
-            _statuses.update { current ->
-                current +
-                    (serviceId to
-                        TerminalStartupServiceStatus(
-                            serviceId = serviceId,
-                            state =
-                                if (terminated) TerminalStartupServiceState.STOPPED
-                                else TerminalStartupServiceState.FAILED,
-                            message =
-                                if (terminated) stoppedMessage()
-                                else previousProcessTerminationTimeoutMessage()
-                        ))
+            synchronized(serviceStateLifecycleLock) {
+                if (!deletedServiceIds.contains(serviceId)) {
+                    _statuses.update { current ->
+                        current +
+                            (serviceId to
+                                TerminalStartupServiceStatus(
+                                    serviceId = serviceId,
+                                    state =
+                                        if (terminated) TerminalStartupServiceState.STOPPED
+                                        else TerminalStartupServiceState.FAILED,
+                                    message =
+                                        if (terminated) stoppedMessage()
+                                        else previousProcessTerminationTimeoutMessage()
+                                ))
+                    }
+                }
             }
         }
         return terminated
@@ -886,19 +912,30 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         status: TerminalStartupServiceStatus,
         listener: ProgressListener
     ) {
-        _statuses.update { current -> current + (config.id to status.copy(updatedAtMs = System.currentTimeMillis())) }
+        synchronized(serviceStateLifecycleLock) {
+            if (deletedServiceIds.contains(config.id)) return
+            _statuses.update { current ->
+                current + (config.id to status.copy(updatedAtMs = System.currentTimeMillis()))
+            }
+        }
         listener.onServiceStatus(config, status)
     }
 
     private fun appendLog(serviceId: String, message: String, publishImmediately: Boolean = true) {
         if (message.isBlank()) return
-        val buffer = logBuffers.computeIfAbsent(serviceId) { BoundedLogBuffer(MAX_LOG_CHARS) }
+        val buffer = synchronized(serviceStateLifecycleLock) {
+            if (deletedServiceIds.contains(serviceId)) return
+            logBuffers.computeIfAbsent(serviceId) { BoundedLogBuffer(MAX_LOG_CHARS) }
+        }
         synchronized(buffer) { buffer.append(message) }
         if (publishImmediately) publishLog(serviceId) else scheduleLogPublish(serviceId)
     }
 
     private fun scheduleLogPublish(serviceId: String) {
-        val scheduled = logFlushScheduled.computeIfAbsent(serviceId) { AtomicBoolean() }
+        val scheduled = synchronized(serviceStateLifecycleLock) {
+            if (deletedServiceIds.contains(serviceId)) return
+            logFlushScheduled.computeIfAbsent(serviceId) { AtomicBoolean() }
+        }
         if (!scheduled.compareAndSet(false, true)) return
         scope.launch {
             delay(LOG_PUBLISH_INTERVAL_MS)
@@ -909,10 +946,13 @@ class TerminalStartupServiceManager private constructor(context: Context) {
     }
 
     private fun publishLog(serviceId: String) {
-        val buffer = logBuffers[serviceId] ?: return
-        val snapshot = synchronized(buffer) { buffer.snapshot() }
-        _logs.update { current ->
-            if (current[serviceId] == snapshot) current else current + (serviceId to snapshot)
+        synchronized(serviceStateLifecycleLock) {
+            if (deletedServiceIds.contains(serviceId)) return
+            val buffer = logBuffers[serviceId] ?: return
+            val snapshot = synchronized(buffer) { buffer.snapshot() }
+            _logs.update { current ->
+                if (current[serviceId] == snapshot) current else current + (serviceId to snapshot)
+            }
         }
     }
 
@@ -922,36 +962,74 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         _logs.update { current -> current - serviceId }
     }
 
-    private fun reserveOperation(serviceId: String): Long =
+    private fun purgeDeletedServiceState(serviceId: String, mutex: Mutex) {
+        val purgedJobs = synchronized(serviceStateLifecycleLock) {
+            // UUIDs are never reused. Retaining only this small tombstone prevents stale callers
+            // that raced with deletion from rebuilding the cleared per-service maps.
+            deletedServiceIds.add(serviceId)
+            val jobs = PurgedServiceJobs(
+                intentJob = intentJobs.remove(serviceId),
+                monitorJob = monitorJobs.remove(serviceId),
+                logJob = logJobs.remove(serviceId),
+                logForwarder = logForwarders.remove(serviceId),
+            )
+            managedSessionIds.remove(serviceId)
+            logBuffers.remove(serviceId)
+            logFlushScheduled.remove(serviceId)
+            generations.remove(serviceId)
+            operationSequences.remove(serviceId)
+            operationMutexes.remove(serviceId, mutex)
+            jobs
+        }
+        purgedJobs.intentJob?.cancel()
+        purgedJobs.monitorJob?.cancel()
+        purgedJobs.logJob?.cancel()
+        purgedJobs.logForwarder?.detach()
+        _statuses.update { current -> current - serviceId }
+        _logs.update { current -> current - serviceId }
+    }
+
+    private fun reserveOperation(serviceId: String): Long = synchronized(serviceStateLifecycleLock) {
+        if (deletedServiceIds.contains(serviceId)) return@synchronized DELETED_SERVICE_OPERATION
         operationSequences.computeIfAbsent(serviceId) { AtomicLong() }.incrementAndGet()
+    }
 
     private fun isCurrentOperation(serviceId: String, sequence: Long): Boolean =
-        operationSequences[serviceId]?.get() == sequence
+        !deletedServiceIds.contains(serviceId) &&
+            operationSequences[serviceId]?.get() == sequence
 
     private fun activateRuntimeGeneration(serviceId: String, generation: Long) {
-        generations.computeIfAbsent(serviceId) { AtomicLong() }
-            .updateAndGet { current -> maxOf(current, generation) }
+        synchronized(serviceStateLifecycleLock) {
+            if (deletedServiceIds.contains(serviceId)) return
+            generations.computeIfAbsent(serviceId) { AtomicLong() }
+                .updateAndGet { current -> maxOf(current, generation) }
+        }
     }
 
     private fun activateRuntimeGenerationIfCurrentOperation(
         serviceId: String,
         generation: Long,
     ): Boolean {
-        if (!isCurrentOperation(serviceId, generation)) return false
-        val activated = generations.computeIfAbsent(serviceId) { AtomicLong() }
-            .updateAndGet { current -> maxOf(current, generation) }
-        return activated == generation && isCurrentOperation(serviceId, generation)
+        return synchronized(serviceStateLifecycleLock) {
+            if (!isCurrentOperation(serviceId, generation)) return@synchronized false
+            val activated = generations.computeIfAbsent(serviceId) { AtomicLong() }
+                .updateAndGet { current -> maxOf(current, generation) }
+            activated == generation && isCurrentOperation(serviceId, generation)
+        }
     }
 
     private fun cancelPendingToggle(serviceId: String) {
-        intentJobs.remove(serviceId)?.cancel()
+        val job = synchronized(serviceStateLifecycleLock) { intentJobs.remove(serviceId) }
+        job?.cancel()
     }
 
     private fun isCurrentGeneration(serviceId: String, generation: Long): Boolean =
-        generations[serviceId]?.get() == generation
+        !deletedServiceIds.contains(serviceId) && generations[serviceId]?.get() == generation
 
-    private fun operationMutex(serviceId: String): Mutex =
+    private fun operationMutex(serviceId: String): Mutex = synchronized(serviceStateLifecycleLock) {
+        if (deletedServiceIds.contains(serviceId)) return@synchronized deletedServiceMutex
         operationMutexes.computeIfAbsent(serviceId) { Mutex() }
+    }
 
     private suspend fun waitForRestartDelay(
         serviceId: String,

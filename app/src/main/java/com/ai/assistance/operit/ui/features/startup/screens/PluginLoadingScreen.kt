@@ -971,7 +971,7 @@ class PluginLoadingState {
                                 override fun onServiceStarting(config: TerminalStartupServiceConfig, index: Int, total: Int) {
                                     val itemId = terminalServiceItemId(config.id)
                                     updatePluginStatus(itemId, PluginStatus.LOADING, appContext.getString(R.string.terminal_startup_status_starting))
-                                    appendPluginLog(itemId, "START")
+                                    appendPluginLog(itemId, appContext.getString(R.string.terminal_startup_start))
                                 }
 
                                 override fun onServiceStatus(config: TerminalStartupServiceConfig, status: com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceStatus) {
