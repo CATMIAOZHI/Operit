@@ -7,6 +7,7 @@ import androidx.annotation.RequiresApi
 import com.ai.assistance.operit.terminal.CommandExecutionEvent
 import com.ai.assistance.operit.terminal.SessionDirectoryEvent
 import com.ai.assistance.operit.terminal.TerminalManager
+import com.ai.assistance.operit.terminal.TerminalSessionCloseOutcome
 import com.ai.assistance.operit.terminal.data.TerminalState
 import com.ai.assistance.operit.terminal.provider.type.HiddenExecResult
 import com.ai.assistance.operit.terminal.provider.type.TerminalType
@@ -108,6 +109,12 @@ class Terminal private constructor(private val context: Context) {
 
     suspend fun closeSessionAndAwait(sessionId: String, timeoutMs: Long): Boolean =
         terminalManager.closeSessionAndAwait(sessionId, timeoutMs)
+
+    suspend fun closeSessionWithOutcomeAndAwait(
+        sessionId: String,
+        timeoutMs: Long,
+    ): TerminalSessionCloseOutcome =
+        terminalManager.closeSessionWithOutcomeAndAwait(sessionId, timeoutMs)
 
     /** Send a command to a session without waiting for the command to finish. */
     suspend fun launchCommand(

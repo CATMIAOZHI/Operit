@@ -571,7 +571,7 @@ class PluginLoadingState {
 
     // 设置应用上下文
     fun setAppContext(context: Context) {
-        this.appContext = context
+        this.appContext = context.applicationContext
     }
 
     fun toggleExpansion() {

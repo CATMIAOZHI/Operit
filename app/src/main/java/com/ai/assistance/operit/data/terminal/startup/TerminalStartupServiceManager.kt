@@ -6,6 +6,7 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.system.Terminal
 import com.ai.assistance.operit.terminal.TerminalSessionCleanupPendingCancellationException
 import com.ai.assistance.operit.terminal.TerminalSessionCleanupPendingException
+import com.ai.assistance.operit.terminal.TerminalSessionCloseOutcome
 import com.ai.assistance.operit.util.AppLogger
 import java.net.InetSocketAddress
 import java.net.InetAddress
@@ -144,6 +145,8 @@ internal fun shouldRestartTerminalService(
     restartAttempt: Int,
     maxRestartAttempts: Int,
 ): Boolean = enabled && autoRestart && restartAttempt < maxRestartAttempts
+
+internal fun shouldPreemptRuntimeBeforePersisting(enabled: Boolean): Boolean = !enabled
 
 internal class BoundedLogBuffer(private val maxChars: Int) {
     private val chunks = ArrayDeque<String>()
@@ -286,6 +289,12 @@ class TerminalStartupServiceManager private constructor(context: Context) {
     ) {
         val updated = config.copy(enabled = enabled)
         val intentSequence = reserveOperation(config.id)
+        if (shouldPreemptRuntimeBeforePersisting(enabled)) {
+            // Stop readiness/retry work before waiting behind its long-held service mutex. If the
+            // persistence write fails, the recovery path below re-applies the stored config using
+            // this same operation token.
+            activateRuntimeGeneration(config.id, intentSequence)
+        }
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 operationMutex(config.id).withLock {
@@ -408,27 +417,47 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                     RestartWaitResult.READY -> Unit
                 }
                 val previousSessionId = managedSessionIds[config.id]
-                if (previousSessionId != null &&
-                    !terminal.closeSessionAndAwait(previousSessionId, PROCESS_TERMINATION_TIMEOUT_MS)
-                ) {
-                    val message = previousProcessTerminationTimeoutMessage()
-                    updateStatus(
-                        config,
-                        TerminalStartupServiceStatus(
-                            serviceId = config.id,
-                            state = TerminalStartupServiceState.FAILED,
-                            message = message,
-                            restartAttempt = attempt,
-                        ),
-                        listener,
-                    )
-                    return TerminalStartupServiceStartResult(
-                        config.id,
-                        false,
-                        message,
-                    )
+                if (previousSessionId != null) {
+                    when (
+                        terminal.closeSessionWithOutcomeAndAwait(
+                            previousSessionId,
+                            PROCESS_TERMINATION_TIMEOUT_MS,
+                        )
+                    ) {
+                        TerminalSessionCloseOutcome.CLOSED -> {
+                            managedSessionIds.remove(config.id, previousSessionId)
+                        }
+                        TerminalSessionCloseOutcome.ALREADY_CLOSED -> {
+                            managedSessionIds.remove(config.id, previousSessionId)
+                            val message = sessionClosedMessage()
+                            updateStatus(
+                                config,
+                                TerminalStartupServiceStatus(
+                                    serviceId = config.id,
+                                    state = TerminalStartupServiceState.STOPPED,
+                                    message = message,
+                                    restartAttempt = attempt,
+                                ),
+                                listener,
+                            )
+                            return TerminalStartupServiceStartResult(config.id, false, message)
+                        }
+                        TerminalSessionCloseOutcome.TERMINATION_TIMEOUT -> {
+                            val message = previousProcessTerminationTimeoutMessage()
+                            updateStatus(
+                                config,
+                                TerminalStartupServiceStatus(
+                                    serviceId = config.id,
+                                    state = TerminalStartupServiceState.FAILED,
+                                    message = message,
+                                    restartAttempt = attempt,
+                                ),
+                                listener,
+                            )
+                            return TerminalStartupServiceStartResult(config.id, false, message)
+                        }
+                    }
                 }
-                if (previousSessionId != null) managedSessionIds.remove(config.id, previousSessionId)
             }
 
             val attemptResult = startSingleAttempt(config, generation, attempt, listener)

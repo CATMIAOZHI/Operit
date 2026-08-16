@@ -126,6 +126,27 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
+    fun `invalid persisted enabled flags fail closed`() {
+        assertTrue(decodePersistedEnabled(null))
+        assertTrue(decodePersistedEnabled(true))
+        assertFalse(decodePersistedEnabled(false))
+        listOf<Any>(1, 0, "true", "false").forEach { raw ->
+            try {
+                decodePersistedEnabled(raw)
+                fail("Expected invalid enabled flag failure for $raw")
+            } catch (_: IllegalArgumentException) {
+                // Expected.
+            }
+        }
+    }
+
+    @Test
+    fun `disable preempts runtime before persistence while enable waits for commit`() {
+        assertTrue(shouldPreemptRuntimeBeforePersisting(enabled = false))
+        assertFalse(shouldPreemptRuntimeBeforePersisting(enabled = true))
+    }
+
+    @Test
     fun `bounded log buffer trims old chunks without changing recent output`() {
         val buffer = BoundedLogBuffer(12)
 

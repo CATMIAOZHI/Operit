@@ -371,7 +371,10 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                             else item.optString("scriptDisplayName").takeIf { it.isNotBlank() },
                         workingDirectory = item.optString("workingDirectory"),
                         environment = environment,
-                        enabled = item.optBoolean("enabled", true),
+                        enabled = decodePersistedEnabled(
+                            if (!item.has("enabled") || item.isNull("enabled")) null
+                            else item.get("enabled")
+                        ),
                         healthCheckHost = item.optString("healthCheckHost", "127.0.0.1"),
                         healthCheckPort = decodePersistedHealthCheckPort(
                             if (!item.has("healthCheckPort") || item.isNull("healthCheckPort")) null
@@ -437,4 +440,10 @@ internal fun decodePersistedStartupTimeoutMs(rawValue: Any?): Long {
         "Invalid terminal startup timeout"
     }
     return value
+}
+
+internal fun decodePersistedEnabled(rawValue: Any?): Boolean {
+    if (rawValue == null) return true
+    require(rawValue is Boolean) { "Invalid terminal startup enabled flag" }
+    return rawValue
 }

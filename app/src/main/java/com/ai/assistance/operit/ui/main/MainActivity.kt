@@ -71,6 +71,8 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -130,6 +132,8 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_OPEN_SETTINGS_SHORTCUT = "com.ai.assistance.operit.action.OPEN_SETTINGS_SHORTCUT"
         private val processStartupGate = MainProcessStartupGate()
+        private val processStartupScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        private val processPluginLoadingState = PluginLoadingState()
     }
 
     // ======== 屏幕方向变更状态 ========
@@ -144,7 +148,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var mcpRepository: MCPRepository
 
     // ======== MCP插件状态 ========
-    private val pluginLoadingState = PluginLoadingState()
+    private val pluginLoadingState = processPluginLoadingState
     private var processStartupLease: MainProcessStartupGate.Lease? = null
     private var processStartupInitializationStarted = false
 
@@ -352,9 +356,14 @@ class MainActivity : ComponentActivity() {
         PluginLoadingStateRegistry.bind(pluginLoadingState, lifecycleScope)
 
         // 设置跳过加载的回调
+        val startupApplicationContext = applicationContext
         pluginLoadingState.setOnSkipCallback {
             AppLogger.d(TAG, "用户跳过了插件加载过程")
-            Toast.makeText(this, getString(R.string.plugin_loading_skipped), Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                startupApplicationContext,
+                startupApplicationContext.getString(R.string.plugin_loading_skipped),
+                Toast.LENGTH_SHORT,
+            ).show()
         }
 
         // 设置初始界面
@@ -746,25 +755,26 @@ class MainActivity : ComponentActivity() {
         pluginLoadingState.show()
 
         // 启动超时检测（30秒）
-        pluginLoadingState.startTimeoutCheck(30000L, lifecycleScope)
+        pluginLoadingState.startTimeoutCheck(30000L, processStartupScope)
+
+        if (processStartupInitializationStarted) return
+        processStartupInitializationStarted = true
 
         // 初始化MCP服务器并启动插件
         // 轻微延迟让首帧 Compose 完成，避免启动阶段后台重任务立刻抢占导致掉帧
-        lifecycleScope.launch {
+        val lease = processStartupLease
+        processStartupScope.launch {
             delay(500)
-            val lease = processStartupLease
             val startedNow = pluginLoadingState.initializeMCPServer(
-                this@MainActivity,
-                lifecycleScope,
+                applicationContext,
+                processStartupScope,
                 com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.APP_BOOT,
             ) { completed ->
                 if (lease == null) return@initializeMCPServer
                 if (completed) processStartupGate.complete(lease)
                 else processStartupGate.release(lease)
             }
-            if (startedNow) {
-                processStartupInitializationStarted = true
-            } else if (!processStartupInitializationStarted && lease != null) {
+            if (!startedNow && lease != null) {
                 processStartupGate.release(lease)
             }
         }
@@ -835,8 +845,10 @@ class MainActivity : ComponentActivity() {
 
         PluginLoadingStateRegistry.unbind(pluginLoadingState)
 
-        // 确保隐藏加载界面
-        pluginLoadingState.hide()
+        // The process-scoped startup job and its UI state survive Activity recreation.
+        if (!isChangingConfigurations) {
+            pluginLoadingState.hide()
+        }
 
         // 主界面销毁时，确保关闭虚拟屏幕 Overlay 并断开 Shower WebSocket 连接
         try {
