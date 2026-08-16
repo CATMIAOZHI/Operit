@@ -67,6 +67,7 @@ import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceConf
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceManager
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceRepository
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceState
+import com.ai.assistance.operit.data.terminal.startup.deletePersistedServiceThenStop
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -251,8 +252,17 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                 TextButton(onClick = {
                     deleting = null
                     scope.launch {
-                        manager.stopService(service.id)
-                        repository.delete(service.id)
+                        runCatching {
+                            deletePersistedServiceThenStop(
+                                deletePersisted = { repository.delete(service.id) },
+                                stopRuntime = { manager.stopService(service.id) },
+                            )
+                        }.onFailure { error ->
+                            snackbar.showSnackbar(
+                                error.message?.takeIf { it.isNotBlank() }
+                                    ?: context.getString(R.string.terminal_startup_error_delete)
+                            )
+                        }
                     }
                 }) { Text(stringResource(R.string.delete)) }
             },

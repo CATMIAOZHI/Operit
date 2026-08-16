@@ -8607,6 +8607,8 @@
     <string name="terminal_startup_message_failed">Startup failed</string>
     <string name="terminal_startup_message_process_exited">Service process exited; scheduling restart</string>
     <string name="terminal_startup_message_tcp_unhealthy">TCP health checks failed repeatedly; scheduling restart</string>
+    <string name="terminal_startup_message_process_exited_no_restart">Service process exited</string>
+    <string name="terminal_startup_message_tcp_unhealthy_no_restart">TCP health checks failed repeatedly</string>
     <string name="terminal_startup_message_restarting">Restarting in %1$d s (%2$d/%3$d)</string>
     <string name="terminal_startup_error_open_script">Unable to open the selected script.</string>
     <string name="terminal_startup_error_environment_key">Invalid environment variable name: %1$s</string>
@@ -8614,4 +8616,5 @@
     <string name="terminal_startup_error_create_script_directory">Unable to create the startup script directory.</string>
     <string name="terminal_startup_error_create_launcher_directory">Unable to create the launcher directory.</string>
     <string name="terminal_startup_error_load_config">Unable to read the startup service configuration. Changes were blocked to prevent data loss.</string>
+    <string name="terminal_startup_error_delete">Unable to delete the startup service.</string>
 </resources>

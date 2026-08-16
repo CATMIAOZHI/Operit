@@ -24,6 +24,29 @@ import org.json.JSONObject
 internal fun terminalStartupServiceDirectory(noBackupFilesDir: File): File =
     File(noBackupFilesDir, "operit/terminal-startup-services")
 
+internal fun decodePersistedHealthCheckPort(rawValue: Any?): Int? {
+    if (rawValue == null) return null
+    val number = rawValue as? Number
+        ?: throw IllegalArgumentException("Invalid terminal startup health-check port")
+    val doubleValue = number.toDouble()
+    val longValue = number.toLong()
+    require(
+        doubleValue.isFinite() &&
+            doubleValue == longValue.toDouble() &&
+            longValue in 1L..65535L
+    ) { "Invalid terminal startup health-check port" }
+    return longValue.toInt()
+}
+
+internal suspend fun deletePersistedServiceThenStop(
+    deletePersisted: suspend () -> Unit,
+    stopRuntime: suspend () -> Unit,
+) = withContext(NonCancellable) {
+    // Delete first so a failed config write cannot leave an enabled service stopped only in memory.
+    deletePersisted()
+    stopRuntime()
+}
+
 internal suspend fun <T> useStagedFile(
     stagedFile: File,
     block: suspend (File) -> T,
@@ -350,9 +373,10 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                         environment = environment,
                         enabled = item.optBoolean("enabled", true),
                         healthCheckHost = item.optString("healthCheckHost", "127.0.0.1"),
-                        healthCheckPort =
-                            if (item.isNull("healthCheckPort")) null
-                            else item.optInt("healthCheckPort").takeIf { it in 1..65535 },
+                        healthCheckPort = decodePersistedHealthCheckPort(
+                            if (!item.has("healthCheckPort") || item.isNull("healthCheckPort")) null
+                            else item.get("healthCheckPort")
+                        ),
                         startupTimeoutMs =
                             item.optLong(
                                 "startupTimeoutMs",

@@ -2,6 +2,9 @@ package com.ai.assistance.operit.data.terminal.startup
 
 import java.io.File
 import java.nio.file.Files
+import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
@@ -9,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -47,6 +51,122 @@ class TerminalStartupServicePolicyTest {
     fun `minimum process-only timeout becomes ready before its deadline`() {
         assertEquals(750L, processOnlyStartupReadyDelayMs(1_000L))
         assertEquals(1_000L, processOnlyStartupReadyDelayMs(30_000L))
+        assertEquals(10L, startupPollDelayMs(10L))
+        assertEquals(250L, startupPollDelayMs(1_000L))
+        assertEquals(0L, startupPollDelayMs(-1L))
+    }
+
+    @Test
+    fun `invalid persisted health-check ports fail closed`() {
+        assertEquals(null, decodePersistedHealthCheckPort(null))
+        assertEquals(1, decodePersistedHealthCheckPort(1))
+        assertEquals(65535, decodePersistedHealthCheckPort(65535L))
+        listOf<Any>(0, 65536, 1.5, 4_294_967_297L, Double.NaN, "123").forEach { raw ->
+            try {
+                decodePersistedHealthCheckPort(raw)
+                fail("Expected invalid port failure for $raw")
+            } catch (_: IllegalArgumentException) {
+                // Expected.
+            }
+        }
+    }
+
+    @Test
+    fun `restart policy rejects disabled exhausted and manual-only services`() {
+        assertTrue(shouldRestartTerminalService(true, true, 0, 3))
+        assertFalse(shouldRestartTerminalService(false, true, 0, 3))
+        assertFalse(shouldRestartTerminalService(true, false, 0, 3))
+        assertFalse(shouldRestartTerminalService(true, true, 3, 3))
+    }
+
+    @Test
+    fun `blocking endpoint probes return within their hard timeout`() {
+        val release = CountDownLatch(1)
+        val startedAt = System.nanoTime()
+
+        val result = runBlockingProbeWithTimeout(UUID.randomUUID().toString(), 50L) {
+            release.await()
+            true
+        }
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+        release.countDown()
+
+        assertNull(result)
+        assertTrue("probe took ${elapsedMs}ms", elapsedMs < 1_000L)
+    }
+
+    @Test
+    fun `long waiter reuses short waiter's endpoint probe without shortening its work`() {
+        val key = UUID.randomUUID().toString()
+        val probeStarted = CountDownLatch(1)
+        val releaseProbe = CountDownLatch(1)
+        val executions = AtomicInteger()
+        var shortResult: Boolean? = true
+        val shortWaiter = Thread {
+            shortResult = runBlockingProbeWithTimeout(key, 20L) {
+                executions.incrementAndGet()
+                probeStarted.countDown()
+                releaseProbe.await()
+                true
+            }
+        }
+        shortWaiter.start()
+        probeStarted.await()
+
+        val releaseThread = Thread {
+            Thread.sleep(80L)
+            releaseProbe.countDown()
+        }.apply { start() }
+        val longResult = runBlockingProbeWithTimeout(key, 500L) {
+            executions.incrementAndGet()
+            false
+        }
+        shortWaiter.join()
+        releaseThread.join()
+
+        assertNull(shortResult)
+        assertEquals(true, longResult)
+        assertEquals(1, executions.get())
+    }
+
+    @Test
+    fun `failed persisted deletion does not stop the runtime`() = runBlocking {
+        var stopped = false
+
+        try {
+            deletePersistedServiceThenStop(
+                deletePersisted = { throw IllegalStateException("persist failed") },
+                stopRuntime = { stopped = true },
+            )
+            fail("Expected persistence failure")
+        } catch (expected: IllegalStateException) {
+            assertEquals("persist failed", expected.message)
+        }
+
+        assertFalse(stopped)
+    }
+
+    @Test
+    fun `cancelling an entered deletion still stops runtime after persistence`() = runBlocking {
+        val deleteEntered = CompletableDeferred<Unit>()
+        val releaseDelete = CompletableDeferred<Unit>()
+        var stopped = false
+        val job = launch {
+            deletePersistedServiceThenStop(
+                deletePersisted = {
+                    deleteEntered.complete(Unit)
+                    releaseDelete.await()
+                },
+                stopRuntime = { stopped = true },
+            )
+        }
+
+        deleteEntered.await()
+        job.cancel()
+        releaseDelete.complete(Unit)
+        job.join()
+
+        assertTrue(stopped)
     }
 
     @Test

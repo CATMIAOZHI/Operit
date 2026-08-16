@@ -8588,6 +8588,8 @@
     <string name="terminal_startup_message_failed">启动失败</string>
     <string name="terminal_startup_message_process_exited">服务进程已退出，准备重启</string>
     <string name="terminal_startup_message_tcp_unhealthy">TCP 健康检查连续失败，准备重启</string>
+    <string name="terminal_startup_message_process_exited_no_restart">服务进程已退出</string>
+    <string name="terminal_startup_message_tcp_unhealthy_no_restart">TCP 健康检查连续失败</string>
     <string name="terminal_startup_message_restarting">%1$d 秒后重启（%2$d/%3$d）</string>
     <string name="terminal_startup_error_open_script">无法打开所选脚本。</string>
     <string name="terminal_startup_error_environment_key">无效的环境变量名：%1$s</string>
@@ -8595,4 +8597,5 @@
     <string name="terminal_startup_error_create_script_directory">无法创建启动脚本目录。</string>
     <string name="terminal_startup_error_create_launcher_directory">无法创建启动器目录。</string>
     <string name="terminal_startup_error_load_config">无法读取启动服务配置；为防止数据丢失，修改已被阻止。</string>
+    <string name="terminal_startup_error_delete">无法删除启动服务。</string>
 </resources>

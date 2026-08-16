@@ -1,13 +1,24 @@
 package com.ai.assistance.operit.data.terminal.startup
 
 import android.content.Context
+import android.os.SystemClock
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.system.Terminal
 import com.ai.assistance.operit.util.AppLogger
 import java.net.InetSocketAddress
+import java.net.InetAddress
 import java.net.Socket
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Future
+import java.util.concurrent.FutureTask
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +45,49 @@ import kotlinx.coroutines.sync.withLock
 private const val PROCESS_START_GRACE_MS = 1_000L
 private const val HEALTH_POLL_INTERVAL_MS = 250L
 
+private val TCP_PROBE_EXECUTOR = ThreadPoolExecutor(
+    0,
+    Int.MAX_VALUE,
+    30L,
+    TimeUnit.SECONDS,
+    SynchronousQueue(),
+    ThreadFactory { runnable ->
+        Thread(runnable, "terminal-startup-tcp-probe").apply { isDaemon = true }
+    },
+)
+private val ACTIVE_TCP_PROBES = ConcurrentHashMap<String, Future<Boolean>>()
+
+internal fun runBlockingProbeWithTimeout(
+    probeKey: String,
+    timeoutMs: Long,
+    probe: () -> Boolean,
+): Boolean? {
+    if (timeoutMs <= 0L) return null
+    val created = FutureTask(probe)
+    val future = ACTIVE_TCP_PROBES.putIfAbsent(probeKey, created) ?: created.also {
+        try {
+            TCP_PROBE_EXECUTOR.execute(it)
+        } catch (_: RejectedExecutionException) {
+            ACTIVE_TCP_PROBES.remove(probeKey, it)
+            return null
+        }
+    }
+    return try {
+        future.get(timeoutMs, TimeUnit.MILLISECONDS)
+    } catch (_: TimeoutException) {
+        null
+    } catch (_: ExecutionException) {
+        null
+    } catch (_: InterruptedException) {
+        Thread.currentThread().interrupt()
+        null
+    } finally {
+        // A resolver may ignore interruption. Keep one in-flight probe per endpoint instead of
+        // spawning another thread on every health-check tick, and reap it once it completes.
+        if (future.isDone) ACTIVE_TCP_PROBES.remove(probeKey, future)
+    }
+}
+
 internal class DetachableLogForwarder(
     target: (String) -> Unit
 ) {
@@ -54,6 +108,16 @@ internal fun incrementalStartupLogChunk(outputChunk: String, isCompleted: Boolea
 
 internal fun processOnlyStartupReadyDelayMs(startupTimeoutMs: Long): Long =
     minOf(PROCESS_START_GRACE_MS, (startupTimeoutMs - HEALTH_POLL_INTERVAL_MS).coerceAtLeast(0L))
+
+internal fun startupPollDelayMs(remainingMs: Long): Long =
+    remainingMs.coerceIn(0L, HEALTH_POLL_INTERVAL_MS)
+
+internal fun shouldRestartTerminalService(
+    enabled: Boolean,
+    autoRestart: Boolean,
+    restartAttempt: Int,
+    maxRestartAttempts: Int,
+): Boolean = enabled && autoRestart && restartAttempt < maxRestartAttempts
 
 class TerminalStartupServiceManager private constructor(context: Context) {
     interface ProgressListener {
@@ -311,10 +375,10 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         sessionId: String,
         generation: Long
     ): AttemptResult {
-        val startedAt = System.currentTimeMillis()
+        val startedAt = SystemClock.elapsedRealtime()
         val deadline = startedAt + config.startupTimeoutMs
         val processOnlyReadyAt = startedAt + processOnlyStartupReadyDelayMs(config.startupTimeoutMs)
-        while (System.currentTimeMillis() < deadline) {
+        while (SystemClock.elapsedRealtime() < deadline) {
             if (!isCurrentGeneration(config.id, generation)) {
                 return AttemptResult(false, true, cancelledMessage(), sessionId)
             }
@@ -326,13 +390,24 @@ class TerminalStartupServiceManager private constructor(context: Context) {
             }
             val port = config.healthCheckPort
             if (port == null) {
-                if (process?.isAlive == true && System.currentTimeMillis() >= processOnlyReadyAt) {
+                if (process?.isAlive == true && SystemClock.elapsedRealtime() >= processOnlyReadyAt) {
                     return AttemptResult(true, false, runningMessage(), sessionId)
                 }
-            } else if (isTcpReachable(config.healthCheckHost, port)) {
-                return AttemptResult(true, false, tcpReadyMessage(), sessionId)
+            } else {
+                val remainingMs = deadline - SystemClock.elapsedRealtime()
+                if (
+                    remainingMs > 0L &&
+                    isTcpReachable(
+                        config.healthCheckHost,
+                        port,
+                        minOf(remainingMs, TCP_CONNECT_TIMEOUT_MS.toLong()).toInt(),
+                    )
+                ) {
+                    return AttemptResult(true, false, tcpReadyMessage(), sessionId)
+                }
             }
-            delay(HEALTH_POLL_INTERVAL_MS)
+            val pollDelayMs = startupPollDelayMs(deadline - SystemClock.elapsedRealtime())
+            if (pollDelayMs > 0L) delay(pollDelayMs)
         }
         return AttemptResult(
             false,
@@ -383,7 +458,15 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                 if (processExited || tcpUnhealthy) {
                     if (tcpUnhealthy && process?.isAlive == true) process.destroy()
                     val latest = repository.getById(config.id)
-                    if (latest?.enabled == true && latest.autoRestart && restartAttempt < latest.maxRestartAttempts) {
+                    if (
+                        latest != null &&
+                        shouldRestartTerminalService(
+                            enabled = latest.enabled,
+                            autoRestart = latest.autoRestart,
+                            restartAttempt = restartAttempt,
+                            maxRestartAttempts = latest.maxRestartAttempts,
+                        )
+                    ) {
                         appendLog(config.id, if (tcpUnhealthy) tcpUnhealthyMessage() else processExitedMessage())
                         monitorJobs.remove(config.id)
                         scope.launch {
@@ -399,7 +482,9 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                             TerminalStartupServiceStatus(
                                 serviceId = config.id,
                                 state = TerminalStartupServiceState.FAILED,
-                                message = if (tcpUnhealthy) tcpUnhealthyMessage() else processExitedMessage(),
+                                message =
+                                    if (tcpUnhealthy) tcpUnhealthyNoRestartMessage()
+                                    else processExitedNoRestartMessage(),
                                 restartAttempt = restartAttempt
                             ),
                             NO_OP_LISTENER
@@ -525,13 +610,32 @@ class TerminalStartupServiceManager private constructor(context: Context) {
     private fun restartDelayMs(attempt: Int): Long =
         (BASE_RESTART_DELAY_MS * (1L shl (attempt - 1).coerceIn(0, 4))).coerceAtMost(MAX_RESTART_DELAY_MS)
 
-    private fun isTcpReachable(host: String, port: Int): Boolean =
-        runCatching {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress(host, port), TCP_CONNECT_TIMEOUT_MS)
+    private fun isTcpReachable(
+        host: String,
+        port: Int,
+        timeoutMs: Int = TCP_CONNECT_TIMEOUT_MS,
+    ): Boolean =
+        runBlockingProbeWithTimeout("$host:$port", timeoutMs.toLong()) {
+            // The shared endpoint probe always gets its full work budget. Individual startup and
+            // monitor callers only bound how long they wait for that same Future.
+            val deadline = SystemClock.elapsedRealtime() + TCP_CONNECT_TIMEOUT_MS
+            InetAddress.getAllByName(host).any { address ->
+                val remainingMs = deadline - SystemClock.elapsedRealtime()
+                if (remainingMs <= 0L) {
+                    false
+                } else {
+                    runCatching {
+                        Socket().use { socket ->
+                            socket.connect(
+                                InetSocketAddress(address, port),
+                                remainingMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                            )
+                        }
+                        true
+                    }.getOrDefault(false)
+                }
             }
-            true
-        }.getOrDefault(false)
+        } ?: false
 
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 
@@ -552,6 +656,10 @@ class TerminalStartupServiceManager private constructor(context: Context) {
     private fun stoppedMessage() = appContext.getString(R.string.terminal_startup_status_stopped)
     private fun processExitedMessage() = appContext.getString(R.string.terminal_startup_message_process_exited)
     private fun tcpUnhealthyMessage() = appContext.getString(R.string.terminal_startup_message_tcp_unhealthy)
+    private fun processExitedNoRestartMessage() =
+        appContext.getString(R.string.terminal_startup_message_process_exited_no_restart)
+    private fun tcpUnhealthyNoRestartMessage() =
+        appContext.getString(R.string.terminal_startup_message_tcp_unhealthy_no_restart)
     private fun restartingMessage(delayMs: Long, attempt: Int, maxAttempts: Int) =
         appContext.getString(
             R.string.terminal_startup_message_restarting,
