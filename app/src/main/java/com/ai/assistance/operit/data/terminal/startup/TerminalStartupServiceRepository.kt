@@ -9,6 +9,9 @@ import com.ai.assistance.operit.util.AppLogger
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,6 +23,61 @@ import org.json.JSONObject
 
 internal fun terminalStartupServiceDirectory(noBackupFilesDir: File): File =
     File(noBackupFilesDir, "operit/terminal-startup-services")
+
+internal suspend fun <T> useStagedFile(
+    stagedFile: File,
+    block: suspend (File) -> T,
+): T = try {
+    block(stagedFile)
+} finally {
+    stagedFile.delete()
+}
+
+internal suspend fun replaceStagedFileAndPersist(
+    stagedFile: File,
+    targetFile: File,
+    persist: suspend () -> Unit,
+) {
+    require(stagedFile.parentFile?.canonicalFile == targetFile.parentFile?.canonicalFile)
+    val backupFile = File(
+        requireNotNull(targetFile.parentFile),
+        ".${targetFile.name}.${UUID.randomUUID()}.backup",
+    )
+    var targetBackedUp = false
+    var stagedInstalled = false
+    try {
+        if (targetFile.exists()) {
+            check(targetFile.renameTo(backupFile)) { "Failed to back up ${targetFile.name}" }
+            targetBackedUp = true
+        }
+        check(stagedFile.renameTo(targetFile)) { "Failed to install ${targetFile.name}" }
+        stagedInstalled = true
+        persist()
+        if (targetBackedUp) {
+            backupFile.delete()
+        }
+    } catch (error: Throwable) {
+        if (stagedInstalled && targetFile.exists() && !targetFile.delete()) {
+            error.addSuppressed(IllegalStateException("Failed to remove replacement ${targetFile.name}"))
+        }
+        if (targetBackedUp && backupFile.exists() && !backupFile.renameTo(targetFile)) {
+            error.addSuppressed(IllegalStateException("Failed to restore ${targetFile.name}"))
+        }
+        throw error
+    } finally {
+        stagedFile.delete()
+    }
+}
+
+internal suspend fun replaceStagedFilePersistAndPublish(
+    stagedFile: File,
+    targetFile: File,
+    persist: suspend () -> Unit,
+    publish: () -> Unit,
+) = withContext(NonCancellable) {
+    replaceStagedFileAndPersist(stagedFile, targetFile, persist)
+    publish()
+}
 
 class TerminalStartupServiceRepository private constructor(context: Context) {
     private val appContext = context.applicationContext
@@ -78,32 +136,51 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
         }
     }
 
-    suspend fun importScript(
-        serviceId: String,
+    suspend fun upsertWithImportedScript(
+        config: TerminalStartupServiceConfig,
         sourceUri: Uri,
         displayName: String?
-    ): Pair<String, String> =
-        withContext(Dispatchers.IO) {
+    ): TerminalStartupServiceConfig = withContext(Dispatchers.IO) {
+        ensureConfigLoaded()
+        ensureDirectories()
+        val stagedFile = File.createTempFile("${config.id}.", ".pending", scriptsDirectory)
+        useStagedFile(stagedFile) {
             ensureConfigLoaded()
-            ensureDirectories()
-            val target = scriptFile(serviceId)
             val input =
                 appContext.contentResolver.openInputStream(sourceUri)
-                    ?: throw IllegalArgumentException(appContext.getString(R.string.terminal_startup_error_open_script))
-            val atomicTarget = AtomicFile(target)
-            val output = atomicTarget.startWrite()
-            try {
-                input.use { source -> source.copyTo(output) }
-                output.flush()
-                atomicTarget.finishWrite(output)
-            } catch (error: Exception) {
-                atomicTarget.failWrite(output)
-                throw error
+                    ?: throw IllegalArgumentException(
+                        appContext.getString(R.string.terminal_startup_error_open_script)
+                    )
+            input.use { source -> stagedFile.outputStream().use(source::copyTo) }
+            currentCoroutineContext().ensureActive()
+            val target = scriptFile(config.id)
+            val saved = config.copy(
+                scriptPath = target.absolutePath,
+                scriptDisplayName = displayName?.takeIf { it.isNotBlank() } ?: target.name,
+            )
+            writeMutex.withLock {
+                // Once the file/config commit begins, finish the rollback-or-publish sequence even
+                // if the editor's Compose scope is cancelled.
+                ensureConfigLoaded()
+                val updated = _services.value.toMutableList()
+                val index = updated.indexOfFirst { it.id == saved.id }
+                if (index >= 0) updated[index] = saved else updated.add(saved)
+                replaceStagedFilePersistAndPublish(
+                    stagedFile = stagedFile,
+                    targetFile = target,
+                    persist = {
+                        persistServices(updated)
+                    },
+                    publish = {
+                        _services.value = updated
+                    },
+                )
             }
             runCatching { Os.chmod(target.absolutePath, PRIVATE_EXECUTABLE_MODE) }
                 .onFailure { AppLogger.w(TAG, "Failed to mark imported script executable", it) }
-            target.absolutePath to (displayName?.takeIf { it.isNotBlank() } ?: target.name)
+            saved
         }
+    }
 
     suspend fun writeLauncher(config: TerminalStartupServiceConfig): File =
         withContext(Dispatchers.IO) {

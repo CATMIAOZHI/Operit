@@ -91,6 +91,18 @@ private const val TERMINAL_SERVICE_ITEM_PREFIX = "terminal-service:"
 private const val TERMINAL_SERVICE_CONFIG_ERROR_ID = "terminal-service:config-error"
 private fun terminalServiceItemId(serviceId: String): String = "$TERMINAL_SERVICE_ITEM_PREFIX$serviceId"
 
+enum class PluginStartupScope {
+    APP_BOOT,
+    MCP_ONLY,
+}
+
+internal fun shouldStartTerminalServices(startupScope: PluginStartupScope): Boolean =
+    startupScope == PluginStartupScope.APP_BOOT
+
+internal fun shouldReplaceStartupMessageWithSummary(
+    mcpStatus: MCPStarter.PluginInitStatus,
+): Boolean = mcpStatus == MCPStarter.PluginInitStatus.SUCCESS
+
 @Suppress("UNUSED_PARAMETER")
 internal fun shouldInitializeMcpRuntime(
     enabledPluginCount: Int,
@@ -777,8 +789,12 @@ class PluginLoadingState {
         _isExpanded.value = false
     }
 
-    // 初始化 MCP 插件与用户配置的终端启动服务。
-    fun initializeMCPServer(context: Context, lifecycleScope: kotlinx.coroutines.CoroutineScope) {
+    // 初始化 MCP 插件；应用启动时还会启动用户配置的终端服务。
+    fun initializeMCPServer(
+        context: Context,
+        lifecycleScope: kotlinx.coroutines.CoroutineScope,
+        startupScope: PluginStartupScope,
+    ) {
         if (!mcpInitInProgress.compareAndSet(false, true)) {
             AppLogger.d("PluginLoadingState", "initializeMCPServer already running, skipping")
             return
@@ -789,12 +805,18 @@ class PluginLoadingState {
                 updateMessage(context.getString(R.string.plugin_initializing))
                 updateProgress(0.05f)
                 val mcpLocalServer = MCPLocalServer.getInstance(context)
-                val serviceRepository = TerminalStartupServiceRepository.getInstance(context)
-                val serviceDiscovery = runCatching {
-                    serviceRepository.snapshot().filter { it.enabled }
-                }.onFailure { error ->
-                    AppLogger.e("PluginLoadingState", "读取终端启动服务配置失败", error)
-                }
+                val serviceDiscovery: Result<List<TerminalStartupServiceConfig>> =
+                    if (shouldStartTerminalServices(startupScope)) {
+                        runCatching {
+                            TerminalStartupServiceRepository.getInstance(context)
+                                .snapshot()
+                                .filter { it.enabled }
+                        }.onFailure { error ->
+                            AppLogger.e("PluginLoadingState", "读取终端启动服务配置失败", error)
+                        }
+                    } else {
+                        Result.success(emptyList())
+                    }
                 val enabledServices = serviceDiscovery.getOrDefault(emptyList())
                 val terminalConfigError = serviceDiscovery.exceptionOrNull()?.message
                 val mcpRepository = MCPRepository(context)
@@ -809,14 +831,21 @@ class PluginLoadingState {
                 val pluginDiscoveryError = pluginDiscovery.exceptionOrNull()
 
                 setStartupItems(pluginsToStart, enabledServices, terminalConfigError)
-                updateMessage(context.getString(R.string.terminal_startup_starting_all))
+                updateMessage(
+                    context.getString(
+                        if (shouldStartTerminalServices(startupScope)) {
+                            R.string.terminal_startup_starting_all
+                        } else {
+                            R.string.plugin_initializing
+                        }
+                    )
+                )
                 updateProgress(0.25f)
-                val serviceManager = TerminalStartupServiceManager.getInstance(context)
                 val serviceDeferred = async {
-                    if (terminalConfigError != null) {
+                    if (!shouldStartTerminalServices(startupScope) || terminalConfigError != null) {
                         emptyList()
                     } else {
-                        serviceManager.startEnabledServices(
+                        TerminalStartupServiceManager.getInstance(context).startEnabledServices(
                             object : TerminalStartupServiceManager.ProgressListener {
                                 override fun onServiceStarting(config: TerminalStartupServiceConfig, index: Int, total: Int) {
                                     val itemId = terminalServiceItemId(config.id)
@@ -853,6 +882,10 @@ class PluginLoadingState {
                         serviceDiscovery.exceptionOrNull()
                     )
                 ) {
+                    updateMessage(
+                        pluginDiscoveryError?.message
+                            ?: context.getString(R.string.plugin_other_error)
+                    )
                     mcpCompletion.complete(McpStartupResult(0, 0, MCPStarter.PluginInitStatus.OTHER_ERROR))
                 } else {
                     // MCPStarter also removes disabled/stale bridge services and runtime tools.
@@ -874,14 +907,16 @@ class PluginLoadingState {
                     successCount < totalCount ||
                     mcpResult.status != MCPStarter.PluginInitStatus.SUCCESS
                 updateProgress(1f)
-                updateMessage(
-                    context.getString(
-                        if (hasFailures) R.string.terminal_startup_complete_with_failures
-                        else R.string.terminal_startup_complete_success,
-                        successCount,
-                        totalCount
+                if (shouldReplaceStartupMessageWithSummary(mcpResult.status)) {
+                    updateMessage(
+                        context.getString(
+                            if (hasFailures) R.string.terminal_startup_complete_with_failures
+                            else R.string.terminal_startup_complete_success,
+                            successCount,
+                            totalCount
+                        )
                     )
-                )
+                }
                 if (hasFailures) {
                     forceExpanded()
                 } else {
@@ -969,6 +1004,9 @@ class PluginLoadingState {
             ) {
                 // 根据初始化状态显示不同的消息
                 when (status) {
+                    MCPStarter.PluginInitStatus.TERMINAL_SERVICE_UNAVAILABLE -> {
+                        updateMessage(context.getString(R.string.plugin_terminal_service_unavailable))
+                    }
                     MCPStarter.PluginInitStatus.NODEJS_MISSING -> {
                         updateMessage(context.getString(R.string.plugin_nodejs_missing))
                     }

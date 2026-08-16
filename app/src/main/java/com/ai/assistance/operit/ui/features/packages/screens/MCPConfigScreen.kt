@@ -1093,7 +1093,11 @@ fun MCPConfigScreen(
                                 if (lifecycleScope != null) {
                                     pluginLoadingState.reset() // 确保每次都重置状态
                                     pluginLoadingState.show()
-                                    pluginLoadingState.initializeMCPServer(context, lifecycleScope)
+                                    pluginLoadingState.initializeMCPServer(
+                                        context,
+                                        lifecycleScope,
+                                        com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.MCP_ONLY,
+                                    )
                                 } else {
                                     Toast.makeText(context, "Failed to start plugin loading", Toast.LENGTH_SHORT).show()
                                 }

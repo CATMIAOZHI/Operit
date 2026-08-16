@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.startup.screens
 
+import com.ai.assistance.operit.data.mcp.plugins.MCPStarter
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,6 +29,33 @@ class PluginLoadingPolicyTest {
                 pluginDiscoveryError = null,
                 terminalConfigError = IllegalStateException("terminal config failed"),
             )
+        )
+    }
+
+    @Test
+    fun `only app boot starts terminal startup services`() {
+        assertTrue(shouldStartTerminalServices(PluginStartupScope.APP_BOOT))
+        assertFalse(shouldStartTerminalServices(PluginStartupScope.MCP_ONLY))
+    }
+
+    @Test
+    fun `actionable MCP initialization failures are not replaced by generic summary`() {
+        assertFalse(
+            shouldReplaceStartupMessageWithSummary(
+                MCPStarter.PluginInitStatus.TERMINAL_SERVICE_UNAVAILABLE
+            )
+        )
+        assertFalse(
+            shouldReplaceStartupMessageWithSummary(MCPStarter.PluginInitStatus.NODEJS_MISSING)
+        )
+        assertFalse(
+            shouldReplaceStartupMessageWithSummary(MCPStarter.PluginInitStatus.BRIDGE_FAILED)
+        )
+        assertFalse(
+            shouldReplaceStartupMessageWithSummary(MCPStarter.PluginInitStatus.OTHER_ERROR)
+        )
+        assertTrue(
+            shouldReplaceStartupMessageWithSummary(MCPStarter.PluginInitStatus.SUCCESS)
         )
     }
 }

@@ -709,7 +709,11 @@ class MainActivity : ComponentActivity() {
         // 轻微延迟让首帧 Compose 完成，避免启动阶段后台重任务立刻抢占导致掉帧
         lifecycleScope.launch {
             delay(500)
-            pluginLoadingState.initializeMCPServer(this@MainActivity, lifecycleScope)
+            pluginLoadingState.initializeMCPServer(
+                this@MainActivity,
+                lifecycleScope,
+                com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.APP_BOOT,
+            )
         }
     }
 

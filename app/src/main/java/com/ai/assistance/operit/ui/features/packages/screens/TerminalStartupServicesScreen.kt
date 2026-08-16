@@ -212,10 +212,11 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                 scope.launch {
                     runCatching {
                         val saved = if (selectedScript != null) {
-                            val (path, name) = repository.importScript(config.id, selectedScript, selectedScriptName)
-                            config.copy(scriptPath = path, scriptDisplayName = name)
-                        } else config
-                        repository.upsert(saved)
+                            repository.upsertWithImportedScript(config, selectedScript, selectedScriptName)
+                        } else {
+                            repository.upsert(config)
+                            config
+                        }
                         if (saved.enabled) manager.startServiceAsync(saved) else manager.stopServiceAsync(saved.id)
                         creating = false
                         editing = null

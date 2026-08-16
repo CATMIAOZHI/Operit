@@ -1507,7 +1507,11 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
 
         pluginLoadingState.reset()
         pluginLoadingState.show()
-        pluginLoadingState.initializeMCPServer(context, lifecycleScope)
+        pluginLoadingState.initializeMCPServer(
+            context,
+            lifecycleScope,
+            com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.MCP_ONLY,
+        )
 
         val startAt = System.currentTimeMillis()
         while (true) {

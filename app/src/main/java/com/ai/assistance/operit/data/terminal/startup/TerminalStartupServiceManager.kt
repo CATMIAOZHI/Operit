@@ -31,6 +31,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+private const val PROCESS_START_GRACE_MS = 1_000L
+private const val HEALTH_POLL_INTERVAL_MS = 250L
+
 internal class DetachableLogForwarder(
     target: (String) -> Unit
 ) {
@@ -48,6 +51,9 @@ internal class DetachableLogForwarder(
 
 internal fun incrementalStartupLogChunk(outputChunk: String, isCompleted: Boolean): String? =
     outputChunk.takeIf { !isCompleted && it.isNotBlank() }
+
+internal fun processOnlyStartupReadyDelayMs(startupTimeoutMs: Long): Long =
+    minOf(PROCESS_START_GRACE_MS, (startupTimeoutMs - HEALTH_POLL_INTERVAL_MS).coerceAtLeast(0L))
 
 class TerminalStartupServiceManager private constructor(context: Context) {
     interface ProgressListener {
@@ -305,8 +311,9 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         sessionId: String,
         generation: Long
     ): AttemptResult {
-        val deadline = System.currentTimeMillis() + config.startupTimeoutMs
-        val processOnlyReadyAt = System.currentTimeMillis() + PROCESS_START_GRACE_MS
+        val startedAt = System.currentTimeMillis()
+        val deadline = startedAt + config.startupTimeoutMs
+        val processOnlyReadyAt = startedAt + processOnlyStartupReadyDelayMs(config.startupTimeoutMs)
         while (System.currentTimeMillis() < deadline) {
             if (!isCurrentGeneration(config.id, generation)) {
                 return AttemptResult(false, true, cancelledMessage(), sessionId)
@@ -555,8 +562,6 @@ class TerminalStartupServiceManager private constructor(context: Context) {
 
     companion object {
         private const val TAG = "TerminalStartupManager"
-        private const val PROCESS_START_GRACE_MS = 1_000L
-        private const val HEALTH_POLL_INTERVAL_MS = 250L
         private const val PROCESS_MONITOR_INTERVAL_MS = 1_000L
         private const val RESTART_CLOSE_POLL_INTERVAL_MS = 100L
         private const val TCP_FAILURE_THRESHOLD = 3
