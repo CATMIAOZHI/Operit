@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Check
@@ -59,6 +60,7 @@ import com.ai.assistance.operit.ui.components.ErrorDialog
 import com.ai.assistance.operit.ui.features.packages.components.EmptyState
 import com.ai.assistance.operit.ui.features.packages.components.PackageTab
 import com.ai.assistance.operit.ui.features.packages.dialogs.PackageDetailsDialog
+import com.ai.assistance.operit.ui.features.packages.dialogs.PackageRemovalKind
 import com.ai.assistance.operit.ui.features.packages.dialogs.QuickPluginCreatorDialog
 import com.ai.assistance.operit.ui.features.packages.dialogs.ScriptExecutionDialog
 import com.ai.assistance.operit.ui.features.packages.lists.PackagesList
@@ -86,6 +88,7 @@ private data class PackageManagerSnapshot(
     val allAvailablePackages: Map<String, ToolPackage>,
     val pluginContainers: Map<String, PackageManager.ToolPkgContainerDetails>,
     val importedPackages: List<String>,
+    val archivedBuiltInPackageNames: Set<String>,
     val packageLoadErrors: Map<String, String>,
     val packageLoadErrorInfos: List<PackageManager.PackageLoadErrorInfo>
 )
@@ -145,6 +148,8 @@ fun PackageManagerScreen(
     val importedPackages = remember { mutableStateOf<List<String>>(emptyList()) }
     // UI展示用的导入状态列表，与后端状态分离
     val visibleImportedPackages = remember { mutableStateOf<List<String>>(emptyList()) }
+    var archivedBuiltInPackageNames by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showBuiltInArchive by rememberSaveable { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(true) }
 
     // State for selected package and showing details
@@ -241,8 +246,19 @@ fun PackageManagerScreen(
         mcpSearchQuery = mcpSearchInput.trim()
     }
 
-    LaunchedEffect(pluginContainers.value, pluginSearchQuery) {
-        val pluginsMap = pluginContainers.value
+    LaunchedEffect(
+        pluginContainers.value,
+        allAvailablePackages.value,
+        archivedBuiltInPackageNames,
+        pluginSearchQuery,
+    ) {
+        val pluginsMap =
+            pluginContainers.value.filter { (packageName, _) ->
+                !(
+                    archivedBuiltInPackageNames.contains(packageName) &&
+                        allAvailablePackages.value[packageName]?.isBuiltIn == true
+                )
+            }
         val searchText = pluginSearchQuery.trim()
         if (searchText.isEmpty()) {
             filteredPluginContainers = pluginsMap
@@ -264,8 +280,17 @@ fun PackageManagerScreen(
         isPluginSearchFiltering = false
     }
 
-    LaunchedEffect(availablePackages.value, packageSearchQuery) {
-        val packagesMap = availablePackages.value
+    LaunchedEffect(availablePackages.value, archivedBuiltInPackageNames, packageSearchQuery) {
+        val packagesMap =
+            availablePackages.value.filter { (packageName, toolPackage) ->
+                !(
+                    toolPackage.isBuiltIn &&
+                        packageManager.isArchivedBuiltInPackageOrSubpackage(
+                            packageName = packageName,
+                            archivedPackageNames = archivedBuiltInPackageNames,
+                        )
+                )
+            }
         val searchText = packageSearchQuery.trim()
         if (searchText.isEmpty()) {
             filteredAvailablePackages = packagesMap
@@ -456,6 +481,7 @@ fun PackageManagerScreen(
                         allAvailablePackages = allAvailable,
                         pluginContainers = plugins,
                         importedPackages = imported,
+                        archivedBuiltInPackageNames = packageManager.getArchivedBuiltInPackageNames(),
                         packageLoadErrors = errors,
                         packageLoadErrorInfos = errorInfos
                     )
@@ -465,6 +491,7 @@ fun PackageManagerScreen(
             allAvailablePackages.value = loadResult.allAvailablePackages
             pluginContainers.value = loadResult.pluginContainers
             importedPackages.value = loadResult.importedPackages
+            archivedBuiltInPackageNames = loadResult.archivedBuiltInPackageNames
             packageLoadErrors.value = loadResult.packageLoadErrors
             packageLoadErrorInfos.value = loadResult.packageLoadErrorInfos
             // 初始化UI显示状态
@@ -547,6 +574,17 @@ fun PackageManagerScreen(
                                 contentDescription = context.getString(R.string.error_occurred_simple)
                             )
                         }
+                    }
+
+                    SmallFloatingActionButton(
+                        onClick = { showBuiltInArchive = true },
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Archive,
+                            contentDescription = stringResource(R.string.builtin_archive_title),
+                        )
                     }
 
                     // Environment variables management button
@@ -929,12 +967,12 @@ fun PackageManagerScreen(
                             visibleImportedPackages.value = imported.toList()
                         }
                     },
-                    onPackageDeleted = {
+                    onPackageRemoved = { removalKind ->
                         showDetails = false
                         scope.launch {
                             AppLogger.d(
                                 "PackageManagerScreen",
-                                "onPackageDeleted callback triggered. Refreshing package lists."
+                                "Package removed via $removalKind. Refreshing package lists."
                             )
                             // Refresh the package lists after deletion
                             isLoading = true
@@ -952,6 +990,7 @@ fun PackageManagerScreen(
                                         allAvailablePackages = allAvailable,
                                         pluginContainers = plugins,
                                         importedPackages = imported,
+                                        archivedBuiltInPackageNames = packageManager.getArchivedBuiltInPackageNames(),
                                         packageLoadErrors = packageManager.getPackageLoadErrors(),
                                         packageLoadErrorInfos = packageManager.getPackageLoadErrorInfos()
                                     )
@@ -961,6 +1000,7 @@ fun PackageManagerScreen(
                             allAvailablePackages.value = loadResult.allAvailablePackages
                             pluginContainers.value = loadResult.pluginContainers
                             importedPackages.value = loadResult.importedPackages
+                            archivedBuiltInPackageNames = loadResult.archivedBuiltInPackageNames
                             packageLoadErrors.value = loadResult.packageLoadErrors
                             packageLoadErrorInfos.value = loadResult.packageLoadErrorInfos
                             visibleImportedPackages.value = importedPackages.value.toList()
@@ -969,7 +1009,14 @@ fun PackageManagerScreen(
                                 "Lists refreshed. Available: ${availablePackages.value.keys}, Imported: ${importedPackages.value}"
                             )
                             isLoading = false
-                            snackbarHostState.showSnackbar("Package deleted successfully.")
+                            snackbarHostState.showSnackbar(
+                                context.getString(
+                                    when (removalKind) {
+                                        PackageRemovalKind.ARCHIVED -> R.string.builtin_archive_success
+                                        PackageRemovalKind.DELETED -> R.string.pkg_delete_success
+                                    }
+                                )
+                            )
                         }
                     }
                 )
@@ -1040,6 +1087,7 @@ fun PackageManagerScreen(
                                                 .getToolPkgPluginContainerDetails(context)
                                                 .associateBy { it.packageName },
                                         importedPackages = packageManager.getEnabledPackageNames(),
+                                        archivedBuiltInPackageNames = packageManager.getArchivedBuiltInPackageNames(),
                                         packageLoadErrors = packageManager.getPackageLoadErrors(),
                                         packageLoadErrorInfos = packageManager.getPackageLoadErrorInfos()
                                     )
@@ -1048,6 +1096,7 @@ fun PackageManagerScreen(
                             allAvailablePackages.value = refreshed.allAvailablePackages
                             pluginContainers.value = refreshed.pluginContainers
                             importedPackages.value = refreshed.importedPackages
+                            archivedBuiltInPackageNames = refreshed.archivedBuiltInPackageNames
                             packageLoadErrors.value = refreshed.packageLoadErrors
                             packageLoadErrorInfos.value = refreshed.packageLoadErrorInfos
                             visibleImportedPackages.value = refreshed.importedPackages.toList()
@@ -1061,6 +1110,49 @@ fun PackageManagerScreen(
                         }
                     },
                     onDismiss = { showPackageLoadErrorsDialog = false }
+                )
+            }
+
+            if (showBuiltInArchive) {
+                val archivedPlugins =
+                    pluginContainers.value.values
+                        .filter { details ->
+                            archivedBuiltInPackageNames.contains(details.packageName) &&
+                                allAvailablePackages.value[details.packageName]?.isBuiltIn == true
+                        }
+                        .sortedBy { it.displayName.lowercase() }
+                val archivedPackages =
+                    availablePackages.value.values
+                        .filter { toolPackage ->
+                            toolPackage.isBuiltIn &&
+                                archivedBuiltInPackageNames.contains(toolPackage.name)
+                        }
+                        .sortedBy { toolPackage ->
+                            toolPackage.displayName.resolve(context).lowercase()
+                        }
+                BuiltInArchiveScreen(
+                    plugins = archivedPlugins,
+                    packages = archivedPackages,
+                    onRestore = { packageName ->
+                        scope.launch {
+                            val restored =
+                                withContext(Dispatchers.IO) {
+                                    packageManager.restoreArchivedBuiltInPackage(packageName)
+                                }
+                            if (restored) {
+                                archivedBuiltInPackageNames =
+                                    packageManager.getArchivedBuiltInPackageNames()
+                                snackbarHostState.showSnackbar(
+                                    context.getString(R.string.builtin_archive_restore_success)
+                                )
+                            } else {
+                                snackbarHostState.showSnackbar(
+                                    context.getString(R.string.builtin_archive_restore_failed)
+                                )
+                            }
+                        }
+                    },
+                    onDismiss = { showBuiltInArchive = false },
                 )
             }
 

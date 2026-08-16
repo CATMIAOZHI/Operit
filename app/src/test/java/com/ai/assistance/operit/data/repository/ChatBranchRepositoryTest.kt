@@ -1,9 +1,17 @@
 package com.ai.assistance.operit.data.repository
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatBranchRepositoryTest {
+    @Test
+    fun `copies current Todo snapshot only for a full branch`() {
+        assertTrue(shouldCopyTodosToBranch(upToTimestampInclusive = null))
+        assertFalse(shouldCopyTodosToBranch(upToTimestampInclusive = 123L))
+    }
+
     @Test
     fun `extracts exact persisted tool call ids from copied markup`() {
         val contents =

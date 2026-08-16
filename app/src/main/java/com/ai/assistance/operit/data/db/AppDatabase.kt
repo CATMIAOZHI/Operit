@@ -10,12 +10,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.execSQL
 import com.ai.assistance.operit.data.dao.ChatDao
 import com.ai.assistance.operit.data.dao.ChatFolderDao
+import com.ai.assistance.operit.data.dao.ChatTodoDao
 import com.ai.assistance.operit.data.dao.MessageDao
 import com.ai.assistance.operit.data.dao.MessageVariantDao
 import com.ai.assistance.operit.data.dao.SubagentRunDao
 import com.ai.assistance.operit.data.dao.TokenStatsDao
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatFolderEntity
+import com.ai.assistance.operit.data.model.ChatTodoEntity
 import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.MessageVariantEntity
 import com.ai.assistance.operit.data.model.SubagentRunEntity
@@ -36,6 +38,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
     entities = [
         ChatEntity::class,
         ChatFolderEntity::class,
+        ChatTodoEntity::class,
         MessageEntity::class,
         MessageVariantEntity::class,
         SubagentRunEntity::class,
@@ -50,7 +53,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         TokenStatCleanupOperationEntity::class,
         TokenStatCleanupItemEntity::class,
     ],
-    version = 31,
+    version = 32,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -59,6 +62,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
 
     abstract fun chatFolderDao(): ChatFolderDao
+
+    abstract fun chatTodoDao(): ChatTodoDao
 
     /** 获取消息DAO */
     abstract fun messageDao(): MessageDao
@@ -878,6 +883,38 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        internal val MIGRATION_31_32 =
+            object : Migration(31, 32) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    createTables { sql -> db.execSQL(sql) }
+                }
+
+                override fun migrate(connection: SQLiteConnection) {
+                    createTables { sql -> connection.execSQL(sql) }
+                }
+
+                private fun createTables(execSql: (String) -> Unit) {
+                    execSql(
+                        """
+                        CREATE TABLE IF NOT EXISTS `chat_todos` (
+                            `chatId` TEXT NOT NULL,
+                            `position` INTEGER NOT NULL,
+                            `content` TEXT NOT NULL,
+                            `status` TEXT NOT NULL,
+                            `priority` TEXT NOT NULL,
+                            PRIMARY KEY(`chatId`, `position`),
+                            FOREIGN KEY(`chatId`) REFERENCES `chats`(`id`)
+                                ON UPDATE NO ACTION ON DELETE CASCADE
+                        )
+                        """.trimIndent()
+                    )
+                    execSql(
+                        "CREATE INDEX IF NOT EXISTS `index_chat_todos_chatId` " +
+                            "ON `chat_todos` (`chatId`)"
+                    )
+                }
+            }
+
         private val finalTrueAttributeRegex =
             Regex("""\bfinal\s*=\s*["']true["']""", RegexOption.IGNORE_CASE)
 
@@ -1013,6 +1050,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_28_29,
                                 MIGRATION_29_30,
                                 MIGRATION_30_31,
+                                MIGRATION_31_32,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

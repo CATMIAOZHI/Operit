@@ -1294,6 +1294,12 @@ class ChatHistoryDelegate(
         }
     }
 
+    suspend fun clearTodoSnapshot(chatId: String) {
+        historyUpdateMutex.withLock {
+            chatHistoryManager.clearTodoSnapshot(chatId)
+        }
+    }
+
     suspend fun addMessageVariant(
         timestamp: Long,
         message: ChatMessage,
@@ -1520,7 +1526,11 @@ class ChatHistoryDelegate(
         return false
     }
 
-    suspend fun addMessageToChat(message: ChatMessage, chatIdOverride: String? = null) {
+    suspend fun addMessageToChat(
+        message: ChatMessage,
+        chatIdOverride: String? = null,
+        clearTodosAfterUpdate: Boolean = false,
+    ) {
         historyUpdateMutex.withLock {
             val targetChatId = chatIdOverride ?: _currentChatId.value ?: return@withLock
 
@@ -1539,13 +1549,13 @@ class ChatHistoryDelegate(
                     TAG,
                     "当前会话正在切换，跳过内存刷新但继续持久化消息: timestamp=${message.timestamp}"
                 )
-                chatHistoryManager.updateMessage(targetChatId, message)
+                chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
                 return@withLock
             }
 
             if (!isCurrentChat) {
                     // 非当前会话：使用“更新或插入”语义，避免每个chunk都插入新消息
-                chatHistoryManager.updateMessage(targetChatId, message)
+                chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
                 return@withLock
             }
 
@@ -1555,7 +1565,7 @@ class ChatHistoryDelegate(
                     _chatHistory.value.any { it.timestamp == message.timestamp }
 
             if (didUpdateVisibleMessage) {
-                chatHistoryManager.updateMessage(targetChatId, message)
+                chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
             } else {
                 AppLogger.d(
                     TAG,
@@ -1565,7 +1575,7 @@ class ChatHistoryDelegate(
                     chatHistoryManager.addMessage(targetChatId, message)
                     refreshCurrentChatDisplayFlags(targetChatId)
                 } else {
-                    chatHistoryManager.updateMessage(targetChatId, message)
+                    chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
                 }
             }
         }

@@ -6603,7 +6603,19 @@
     <string name="pkg_confirm_delete">确认删除</string>
     <string name="pkg_delete_warning">确定要删除包 "%1$s" 吗？此操作无法撤销。</string>
     <string name="pkg_delete">删除</string>
+    <string name="pkg_delete_success">已删除包</string>
     <string name="pkg_close">关闭</string>
+    <string name="builtin_archive_title">内置归档</string>
+    <string name="builtin_archive_description">已删除的内置插件和内置包会保留在这里，可以随时恢复。</string>
+    <string name="builtin_archive_empty">还没有归档的内置插件或内置包</string>
+    <string name="builtin_archive_back">返回包管理</string>
+    <string name="builtin_archive_action">删除并归档</string>
+    <string name="builtin_archive_success">已将内置项目移到归档</string>
+    <string name="builtin_archive_confirm_title">删除内置项目</string>
+    <string name="builtin_archive_warning">“%1$s”会被关闭并移到内置归档，之后可以从归档页面恢复。</string>
+    <string name="builtin_archive_restore">加回</string>
+    <string name="builtin_archive_restore_success">已加回内置项目，当前保持关闭状态</string>
+    <string name="builtin_archive_restore_failed">无法加回内置项目</string>
     <string name="pkg_tool_list">工具列表</string>
     <string name="pkg_no_tools">暂无可用工具</string>
 
@@ -8515,4 +8527,12 @@
     <string name="settings_legacy_workflows_description">以禁用状态显示 Download/Operit/workflow 中的旧工作流；普通编辑会导入但仍保持禁用，只有显式启用后才可执行或调度。安全扫描最多显示 1000 个定义、访问 4000 个目录项及读取 64 MiB；超出部分保留在原目录但不会显示。</string>
     <string name="settings_legacy_storage_update_failed">更新旧版存储兼容设置失败</string>
     <string name="mcp_repository_invalid_plugin_id">插件 ID 无效，已拒绝访问包目录</string>
+    <string name="chat_todo_step_progress">第 %1$d / %2$d 步</string>
+    <string name="toolreg_todowrite_desc">更新当前聊天的 Todo 列表</string>
+    <string name="chat_todo_tool_subagent_unavailable">子代理会话不能更新聊天 Todo</string>
+    <string name="chat_todo_tool_active_chat_required">更新 Todo 需要一个当前聊天</string>
+    <string name="chat_todo_tool_missing_todos">缺少必要参数：todos</string>
+    <string name="chat_todo_tool_updated">Todo 列表已更新（%1$d 项）</string>
+    <string name="chat_todo_tool_invalid_list">Todo 列表格式无效</string>
+    <string name="chat_todo_tool_save_failed">保存 Todo 列表失败</string>
 </resources>

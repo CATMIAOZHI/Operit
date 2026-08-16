@@ -61,6 +61,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private val NON_SELECTABLE_WORKFLOW_TOOL_NAMES =
+    setOf("package_proxy", "proxy", "search", "todowrite")
+
+internal fun filterWorkflowSelectableToolNames(toolNames: List<String>): List<String> =
+    toolNames.filterNot(NON_SELECTABLE_WORKFLOW_TOOL_NAMES::contains)
+
 internal fun defaultWorkflowTriggerConfigJson(triggerType: String): String =
     when (triggerType) {
         "schedule" ->
@@ -725,9 +731,7 @@ fun NodeDialog(
     val packageManager = remember(context) { toolHandler.getOrCreatePackageManager() }
     val allToolNames = remember(context) {
         toolHandler.registerDefaultTools()
-        toolHandler.getAllToolNames().filterNot {
-            it == "package_proxy" || it == "proxy" || it == "search"
-        }
+        filterWorkflowSelectableToolNames(toolHandler.getAllToolNames())
     }
     val filteredToolNames = remember(actionType, allToolNames) {
         val query = actionType.trim()
