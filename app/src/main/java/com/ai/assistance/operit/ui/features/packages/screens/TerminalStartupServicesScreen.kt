@@ -69,7 +69,9 @@ import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceRepo
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupRuntimeRestoreException
 import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceState
 import com.ai.assistance.operit.data.terminal.startup.stopRuntimeThenDeletePersisted
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -218,13 +220,19 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
             onSave = { config, selectedScript, selectedScriptName ->
                 scope.launch {
                     runCatching {
-                        val saved = if (selectedScript != null) {
-                            repository.upsertWithImportedScript(config, selectedScript, selectedScriptName)
-                        } else {
-                            repository.upsert(config)
-                            config
+                        // The save can be cancelled by navigation while the imported-script
+                        // commit is finishing. Run the save plus the runtime handoff in a
+                        // non-cancellable block so a saved enabled service is never left
+                        // stopped because its start intent was dropped.
+                        withContext(NonCancellable) {
+                            val saved = if (selectedScript != null) {
+                                repository.upsertWithImportedScript(config, selectedScript, selectedScriptName)
+                            } else {
+                                repository.upsert(config)
+                                config
+                            }
+                            if (saved.enabled) manager.startServiceAsync(saved) else manager.stopServiceAsync(saved.id)
                         }
-                        if (saved.enabled) manager.startServiceAsync(saved) else manager.stopServiceAsync(saved.id)
                         creating = false
                         editing = null
                     }.onFailure { snackbar.showSnackbar(it.message.orEmpty()) }

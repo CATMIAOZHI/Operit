@@ -304,6 +304,54 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
+    fun `rollback restarts only a runtime that was active before the failed toggle`() {
+        // The rollback decision reads the runtime state captured when the toggle began, before
+        // any preempt could tear a STARTING/RESTARTING flow down to STOPPED.
+        assertTrue(
+            isServiceRuntimeActive(
+                hasManagedSession = true,
+                state = TerminalStartupServiceState.STOPPED,
+            )
+        )
+        assertTrue(
+            isServiceRuntimeActive(
+                hasManagedSession = false,
+                state = TerminalStartupServiceState.RUNNING,
+            )
+        )
+        assertTrue(
+            isServiceRuntimeActive(
+                hasManagedSession = false,
+                state = TerminalStartupServiceState.STARTING,
+            )
+        )
+        assertTrue(
+            isServiceRuntimeActive(
+                hasManagedSession = false,
+                state = TerminalStartupServiceState.RESTARTING,
+            )
+        )
+        assertFalse(
+            isServiceRuntimeActive(
+                hasManagedSession = false,
+                state = TerminalStartupServiceState.STOPPED,
+            )
+        )
+        assertFalse(
+            isServiceRuntimeActive(
+                hasManagedSession = false,
+                state = TerminalStartupServiceState.FAILED,
+            )
+        )
+        assertFalse(
+            isServiceRuntimeActive(
+                hasManagedSession = false,
+                state = null,
+            )
+        )
+    }
+
+    @Test
     fun `deletion recovery cannot overtake a newer runtime intent`() {
         assertTrue(
             isRuntimeOperationCurrent(

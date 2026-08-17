@@ -8620,4 +8620,5 @@
     <string name="terminal_startup_error_load_config">Unable to read the startup service configuration. Changes were blocked to prevent data loss.</string>
     <string name="terminal_startup_error_delete">Unable to delete the startup service.</string>
     <string name="terminal_startup_error_delete_restore_runtime">Unable to delete the startup service or restore its runtime.</string>
+    <string name="terminal_startup_error_remove_files">Unable to remove the startup service files.</string>
 </resources>

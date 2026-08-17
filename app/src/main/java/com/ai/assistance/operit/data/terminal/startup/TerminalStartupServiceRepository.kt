@@ -237,7 +237,7 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                     var committed = false
                     try {
                         check(!script.exists() && !launcher.exists()) {
-                            "Failed to remove terminal startup service files"
+                            appContext.getString(R.string.terminal_startup_error_remove_files)
                         }
                         persistServices(updated)
                         _services.value = updated

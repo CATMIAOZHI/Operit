@@ -168,6 +168,15 @@ internal fun isRuntimeOperationCurrent(
     operation: Long,
 ): Boolean = currentOperation == operation && currentGeneration == operation
 
+internal fun isServiceRuntimeActive(
+    hasManagedSession: Boolean,
+    state: TerminalStartupServiceState?,
+): Boolean =
+    hasManagedSession ||
+        state == TerminalStartupServiceState.STARTING ||
+        state == TerminalStartupServiceState.RUNNING ||
+        state == TerminalStartupServiceState.RESTARTING
+
 internal class BoundedLogBuffer(private val maxChars: Int) {
     private val chunks = ArrayDeque<String>()
     private var charCount = 0
@@ -338,6 +347,13 @@ class TerminalStartupServiceManager private constructor(context: Context) {
     ) {
         val updated = config.copy(enabled = enabled)
         val intentSequence = reserveOperation(config.id)
+        // Capture the pre-operation runtime state before any preempt can tear it down: the
+        // rollback path below must restore a runtime that was active when this toggle began,
+        // not the state that a cancelled startup flow left behind after the preempt.
+        val wasRuntimeActive = isServiceRuntimeActive(
+            hasManagedSession = managedSessionIds.containsKey(config.id),
+            state = _statuses.value[config.id]?.state,
+        )
         if (shouldPreemptRuntimeBeforePersisting(enabled)) {
             // Stop readiness/retry work before waiting behind its long-held service mutex. If the
             // persistence write fails, the recovery path below re-applies the stored config using
@@ -355,15 +371,22 @@ class TerminalStartupServiceManager private constructor(context: Context) {
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (isCurrentOperation(config.id, intentSequence)) {
-                    runCatching {
-                        operationMutex(config.id).withLock {
-                            if (!isCurrentOperation(config.id, intentSequence)) return@withLock
-                            repository.getById(config.id)?.let {
-                                applyPersistedConfigLocked(it, intentSequence)
+                    // A persistence failure rolls back the runtime only for a disable intent that
+                    // preempted an active runtime: re-apply the persisted enabled config so the
+                    // process is not left stopped. An enable intent never preempts, so a failed
+                    // write must leave the runtime exactly as it was (still active or manually
+                    // stopped) instead of re-applying the persisted disabled config.
+                    if (shouldPreemptRuntimeBeforePersisting(enabled) && wasRuntimeActive) {
+                        runCatching {
+                            operationMutex(config.id).withLock {
+                                if (!isCurrentOperation(config.id, intentSequence)) return@withLock
+                                repository.getById(config.id)?.let {
+                                    applyPersistedConfigLocked(it, intentSequence)
+                                }
                             }
+                        }.onFailure { recoveryError ->
+                            AppLogger.e(TAG, "Failed to restore terminal service ${config.id} after persistence error", recoveryError)
                         }
-                    }.onFailure { recoveryError ->
-                        AppLogger.e(TAG, "Failed to restore terminal service ${config.id} after persistence error", recoveryError)
                     }
                 }
                 onFailure(error)
@@ -417,6 +440,13 @@ class TerminalStartupServiceManager private constructor(context: Context) {
     internal suspend fun stopServiceForDeletion(serviceId: String): TerminalStartupRuntimeStopResult {
         val operation = reserveOperation(serviceId)
         cancelPendingToggle(serviceId)
+        // Capture whether the runtime was active before the preempt below: a STARTING or
+        // RESTARTING flow that this preempt cancels may flip the status to STOPPED before the
+        // rollback decision reads it, which would wrongly skip restoring it after a failed delete.
+        val wasActive = isServiceRuntimeActive(
+            hasManagedSession = managedSessionIds.containsKey(serviceId),
+            state = _statuses.value[serviceId]?.state,
+        )
         activateRuntimeGeneration(serviceId, operation)
         return operationMutex(serviceId).withLock {
             if (!isCurrentGeneration(serviceId, operation)) {
@@ -427,10 +457,6 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                 )
             }
             val state = _statuses.value[serviceId]?.state
-            val wasActive = managedSessionIds.containsKey(serviceId) ||
-                state == TerminalStartupServiceState.STARTING ||
-                state == TerminalStartupServiceState.RUNNING ||
-                state == TerminalStartupServiceState.RESTARTING
             TerminalStartupRuntimeStopResult(
                 terminated = stopManagedRuntime(
                     serviceId,
