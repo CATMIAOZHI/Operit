@@ -380,7 +380,9 @@ class TerminalStartupServiceManager private constructor(context: Context) {
             clearLog(config.id)
             startWithRetries(config, generation, restartAttempt = 0, listener = NO_OP_LISTENER)
         } else {
-            stopManagedRuntime(config.id, closeSession = true, updateStoppedStatus = true)
+            if (!stopManagedRuntime(config.id, closeSession = true, updateStoppedStatus = true)) {
+                throw IllegalStateException(previousProcessTerminationTimeoutMessage())
+            }
         }
     }
 

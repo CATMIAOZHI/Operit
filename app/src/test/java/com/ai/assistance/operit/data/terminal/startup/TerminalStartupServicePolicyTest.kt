@@ -283,6 +283,21 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
+    fun `persisted health-check host must remain a string`() {
+        assertEquals("127.0.0.1", decodePersistedHealthCheckHost(null))
+        assertEquals("127.0.0.1", decodePersistedHealthCheckHost(""))
+        assertEquals("localhost", decodePersistedHealthCheckHost("localhost"))
+        listOf<Any?>(1, true, emptyMap<String, String>()).forEach { raw ->
+            try {
+                decodePersistedHealthCheckHost(raw)
+                fail("Expected invalid health-check host failure for $raw")
+            } catch (_: IllegalArgumentException) {
+                // Expected.
+            }
+        }
+    }
+
+    @Test
     fun `disable preempts runtime before persistence while enable waits for commit`() {
         assertTrue(shouldPreemptRuntimeBeforePersisting(enabled = false))
         assertFalse(shouldPreemptRuntimeBeforePersisting(enabled = true))

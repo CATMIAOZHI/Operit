@@ -68,6 +68,12 @@ internal fun decodePersistedWorkingDirectory(rawValue: Any?): String {
     return rawValue
 }
 
+internal fun decodePersistedHealthCheckHost(rawValue: Any?): String {
+    if (rawValue == null) return "127.0.0.1"
+    require(rawValue is String) { "Invalid terminal startup health-check host" }
+    return rawValue.ifBlank { "127.0.0.1" }
+}
+
 internal fun decodePersistedHealthCheckPort(rawValue: Any?): Int? {
     if (rawValue == null) return null
     val number = rawValue as? Number
@@ -455,7 +461,10 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                             if (!item.has("enabled") || item.isNull("enabled")) null
                             else item.get("enabled")
                         ),
-                        healthCheckHost = item.optString("healthCheckHost", "127.0.0.1"),
+                        healthCheckHost = decodePersistedHealthCheckHost(
+                            if (!item.has("healthCheckHost") || item.isNull("healthCheckHost")) null
+                            else item.get("healthCheckHost")
+                        ),
                         healthCheckPort = decodePersistedHealthCheckPort(
                             if (!item.has("healthCheckPort") || item.isNull("healthCheckPort")) null
                             else item.get("healthCheckPort")
