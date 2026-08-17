@@ -63,12 +63,16 @@ import com.ai.assistance.operit.ui.common.displays.VirtualDisplayOverlay
 import com.ai.assistance.operit.util.AnrMonitor
 import com.ai.assistance.operit.util.LocaleUtils
 import java.util.*
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -87,9 +91,60 @@ import kotlin.system.exitProcess
 
 private const val TAG = "MainActivity"
 
+internal fun shouldStartProcessOwnedInitialization(
+    hasProcessStartupLease: Boolean,
+    showPermissionGuide: Boolean,
+    agreementAccepted: Boolean,
+): Boolean = hasProcessStartupLease && !showPermissionGuide && agreementAccepted
+
+internal fun shouldRunActivityStartupChecks(
+    isFreshActivityLaunch: Boolean,
+    hasProcessStartupLease: Boolean,
+): Boolean = isFreshActivityLaunch || hasProcessStartupLease
+
+internal class MainProcessStartupGate {
+    class Lease internal constructor(val id: Long)
+
+    private sealed interface State {
+        data object Idle : State
+        data class InProgress(val lease: Lease) : State
+        data object Completed : State
+    }
+
+    private val nextLeaseId = AtomicLong(0L)
+    private val state = AtomicReference<State>(State.Idle)
+
+    fun claim(): Lease? {
+        while (true) {
+            when (val current = state.get()) {
+                State.Completed, is State.InProgress -> return null
+                State.Idle -> {
+                    val lease = Lease(nextLeaseId.incrementAndGet())
+                    if (state.compareAndSet(current, State.InProgress(lease))) return lease
+                }
+            }
+        }
+    }
+
+    fun complete(lease: Lease): Boolean = transition(lease, State.Completed)
+
+    fun release(lease: Lease): Boolean = transition(lease, State.Idle)
+
+    private fun transition(lease: Lease, target: State): Boolean {
+        while (true) {
+            val current = state.get()
+            if (current !is State.InProgress || current.lease !== lease) return false
+            if (state.compareAndSet(current, target)) return true
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_OPEN_SETTINGS_SHORTCUT = "com.ai.assistance.operit.action.OPEN_SETTINGS_SHORTCUT"
+        private val processStartupGate = MainProcessStartupGate()
+        private val processStartupScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        private val processPluginLoadingState = PluginLoadingState()
     }
 
     // ======== 屏幕方向变更状态 ========
@@ -104,7 +159,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var mcpRepository: MCPRepository
 
     // ======== MCP插件状态 ========
-    private val pluginLoadingState = PluginLoadingState()
+    private val pluginLoadingState = processPluginLoadingState
+    private var pluginLoadingBinding: PluginLoadingStateRegistry.Binding? = null
+    private var processStartupLease: MainProcessStartupGate.Lease? = null
+    private var processStartupInitializationStarted = false
 
     // ======== 双击返回退出相关变量 ========
     private var backPressedTime: Long = 0
@@ -307,12 +365,17 @@ class MainActivity : ComponentActivity() {
 
         // 设置上下文以便获取插件元数据
         pluginLoadingState.setAppContext(this)
-        PluginLoadingStateRegistry.bind(pluginLoadingState, lifecycleScope)
+        pluginLoadingBinding = PluginLoadingStateRegistry.bind(pluginLoadingState, lifecycleScope)
 
         // 设置跳过加载的回调
+        val startupApplicationContext = applicationContext
         pluginLoadingState.setOnSkipCallback {
             AppLogger.d(TAG, "用户跳过了插件加载过程")
-            Toast.makeText(this, getString(R.string.plugin_loading_skipped), Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                startupApplicationContext,
+                startupApplicationContext.getString(R.string.plugin_loading_skipped),
+                Toast.LENGTH_SHORT,
+            ).show()
         }
 
         // 设置初始界面
@@ -322,10 +385,16 @@ class MainActivity : ComponentActivity() {
         // 初始化并设置更新管理器
         setupUpdateManager()
 
-        // 只在首次创建时执行检查（非配置变更）
-        if (savedInstanceState == null) {
-            // 进行必要的初始检查
-            performInitialChecks()
+        // Saved activity state can also be restored into a new process. A process-scoped gate
+        // skips configuration-change recreation while still running startup after process death.
+        processStartupLease = processStartupGate.claim()
+        val isFreshActivityLaunch = savedInstanceState == null
+        if (shouldRunActivityStartupChecks(
+                isFreshActivityLaunch = isFreshActivityLaunch,
+                hasProcessStartupLease = processStartupLease != null,
+            )
+        ) {
+            performActivityStartupChecks(prepareStartupChat = isFreshActivityLaunch)
         }
 
         // 设置双击返回退出
@@ -680,7 +749,7 @@ class MainActivity : ComponentActivity() {
     // ======== 设置初始占位内容 ========
 
     // ======== 执行初始化检查 ========
-    private fun performInitialChecks() {
+    private fun performActivityStartupChecks(prepareStartupChat: Boolean) {
         lifecycleScope.launch {
             // 1. 检查通知权限（Android 13+）
             checkNotificationPermission()
@@ -688,10 +757,15 @@ class MainActivity : ComponentActivity() {
             // 2. 检查权限级别设置
             checkPermissionLevelSet()
 
-            prepareStartupChatIfNeeded()
+            if (prepareStartupChat) prepareStartupChatIfNeeded()
 
             // 3. 在协议已接受且无需权限引导时，启动插件加载
-            if (!showPermissionGuide && agreementPreferences.isAgreementAccepted()) {
+            if (shouldStartProcessOwnedInitialization(
+                    hasProcessStartupLease = processStartupLease != null,
+                    showPermissionGuide = showPermissionGuide,
+                    agreementAccepted = agreementPreferences.isAgreementAccepted(),
+                )
+            ) {
                 startPluginLoading()
             }
         }
@@ -699,17 +773,44 @@ class MainActivity : ComponentActivity() {
 
     // ======== 启动插件加载 ========
     private fun startPluginLoading() {
+        if (processStartupInitializationStarted) return
+        processStartupInitializationStarted = true
+
+        // Reserve initialization before the first-frame delay so an MCP-only restart cannot
+        // slip into the gap and make APP_BOOT appear to have started when it did not.
+        val initializationReservation = pluginLoadingState.reserveInitialization()
+        if (initializationReservation == null) {
+            processStartupLease?.let(processStartupGate::release)
+            processStartupLease = null
+            processStartupInitializationStarted = false
+            return
+        }
+
         // 显示插件加载界面
         pluginLoadingState.show()
 
         // 启动超时检测（30秒）
-        pluginLoadingState.startTimeoutCheck(30000L, lifecycleScope)
+        val startupTimeoutOwner =
+            pluginLoadingState.startTimeoutCheck(30000L, processStartupScope)
 
         // 初始化MCP服务器并启动插件
         // 轻微延迟让首帧 Compose 完成，避免启动阶段后台重任务立刻抢占导致掉帧
-        lifecycleScope.launch {
+        val lease = processStartupLease
+        processStartupScope.launch {
             delay(500)
-            pluginLoadingState.initializeMCPServer(this@MainActivity, lifecycleScope)
+            val startedNow = pluginLoadingState.initializeMCPServer(
+                applicationContext,
+                com.ai.assistance.operit.ui.features.startup.screens.PluginStartupScope.APP_BOOT,
+                initialTimeoutOwner = startupTimeoutOwner,
+                reservedInitializationLease = initializationReservation,
+            ) { completion ->
+                if (lease == null) return@initializeMCPServer
+                if (completion.completed) processStartupGate.complete(lease)
+                else processStartupGate.release(lease)
+            }
+            if (startedNow == null && lease != null) {
+                processStartupGate.release(lease)
+            }
         }
     }
 
@@ -769,13 +870,21 @@ class MainActivity : ComponentActivity() {
 
 
     override fun onDestroy() {
+        if (!processStartupInitializationStarted) {
+            processStartupLease?.let(processStartupGate::release)
+        }
+        processStartupLease = null
         super.onDestroy()
         AppLogger.d(TAG, "onDestroy called")
 
-        PluginLoadingStateRegistry.unbind(pluginLoadingState)
+        val isLastPluginLoadingBinding =
+            pluginLoadingBinding?.let(PluginLoadingStateRegistry::unbind) == true
+        pluginLoadingBinding = null
 
-        // 确保隐藏加载界面
-        pluginLoadingState.hide()
+        // The process-scoped startup job and its UI state survive Activity recreation.
+        if (!isChangingConfigurations && isLastPluginLoadingBinding) {
+            pluginLoadingState.hide()
+        }
 
         // 主界面销毁时，确保关闭虚拟屏幕 Overlay 并断开 Shower WebSocket 连接
         try {
@@ -794,7 +903,9 @@ class MainActivity : ComponentActivity() {
         AppLogger.d(TAG, "onConfigurationChanged: new orientation=${newConfig.orientation}, last orientation=${lastOrientation}")
 
         // 屏幕方向变化时，确保加载界面不可见
-        pluginLoadingState.hide()
+        if (pluginLoadingBinding?.let(PluginLoadingStateRegistry::isActive) == true) {
+            pluginLoadingState.hide()
+        }
 
         // 仅当方向确实发生变化时才处理
         if (newConfig.orientation != lastOrientation) {
