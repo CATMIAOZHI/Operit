@@ -62,6 +62,12 @@ internal fun decodePersistedScriptPath(rawValue: Any?): String? {
     return rawValue.ifBlank { null }
 }
 
+internal fun decodePersistedWorkingDirectory(rawValue: Any?): String {
+    if (rawValue == null) return ""
+    require(rawValue is String) { "Invalid terminal startup working directory" }
+    return rawValue
+}
+
 internal fun decodePersistedHealthCheckPort(rawValue: Any?): Int? {
     if (rawValue == null) return null
     val number = rawValue as? Number
@@ -440,7 +446,10 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
                         scriptDisplayName =
                             if (item.isNull("scriptDisplayName")) null
                             else item.optString("scriptDisplayName").takeIf { it.isNotBlank() },
-                        workingDirectory = item.optString("workingDirectory"),
+                        workingDirectory = decodePersistedWorkingDirectory(
+                            if (!item.has("workingDirectory") || item.isNull("workingDirectory")) null
+                            else item.get("workingDirectory")
+                        ),
                         environment = environment,
                         enabled = decodePersistedEnabled(
                             if (!item.has("enabled") || item.isNull("enabled")) null

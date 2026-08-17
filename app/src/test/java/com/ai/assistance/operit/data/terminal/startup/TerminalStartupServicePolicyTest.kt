@@ -268,6 +268,21 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
+    fun `persisted working directory must remain a string`() {
+        assertEquals("", decodePersistedWorkingDirectory(null))
+        assertEquals("", decodePersistedWorkingDirectory(""))
+        assertEquals("/data/app", decodePersistedWorkingDirectory("/data/app"))
+        listOf<Any?>(1, true, emptyMap<String, String>()).forEach { raw ->
+            try {
+                decodePersistedWorkingDirectory(raw)
+                fail("Expected invalid working directory failure for $raw")
+            } catch (_: IllegalArgumentException) {
+                // Expected.
+            }
+        }
+    }
+
+    @Test
     fun `disable preempts runtime before persistence while enable waits for commit`() {
         assertTrue(shouldPreemptRuntimeBeforePersisting(enabled = false))
         assertFalse(shouldPreemptRuntimeBeforePersisting(enabled = true))
