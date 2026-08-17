@@ -967,7 +967,8 @@ class PluginLoadingState {
                         emptyList()
                     } else {
                         TerminalStartupServiceManager.getInstance(appContext).startEnabledServices(
-                            object : TerminalStartupServiceManager.ProgressListener {
+                            services = enabledServices,
+                            listener = object : TerminalStartupServiceManager.ProgressListener {
                                 override fun onServiceStarting(config: TerminalStartupServiceConfig, index: Int, total: Int) {
                                     val itemId = terminalServiceItemId(config.id)
                                     updatePluginStatus(itemId, PluginStatus.LOADING, appContext.getString(R.string.terminal_startup_status_starting))

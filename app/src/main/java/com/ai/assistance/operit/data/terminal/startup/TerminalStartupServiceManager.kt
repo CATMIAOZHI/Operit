@@ -249,8 +249,22 @@ class TerminalStartupServiceManager private constructor(context: Context) {
 
     suspend fun startEnabledServices(
         listener: ProgressListener = object : ProgressListener {}
+    ): List<TerminalStartupServiceStartResult> =
+        startEnabledServices(
+            services = repository.snapshot().filter { it.enabled },
+            listener = listener,
+        )
+
+    /**
+     * Starts the given enabled services. Callers that already discovered the enabled list
+     * (e.g. app-boot orchestration that also builds progress items and the timeout budget)
+     * must pass the same snapshot so execution matches what was displayed.
+     */
+    suspend fun startEnabledServices(
+        services: List<TerminalStartupServiceConfig>,
+        listener: ProgressListener = object : ProgressListener {}
     ): List<TerminalStartupServiceStartResult> = coroutineScope {
-        val enabled = repository.snapshot().filter { it.enabled }
+        val enabled = services.filter { it.enabled }
         enabled.mapIndexed { index, config ->
             async {
                 listener.onServiceStarting(config, index + 1, enabled.size)
@@ -776,6 +790,9 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                     val terminated =
                         terminal.closeSessionAndAwait(sessionId, PROCESS_TERMINATION_TIMEOUT_MS)
                     if (terminated) managedSessionIds.remove(config.id, sessionId)
+                    // A newer start/stop/toggle may have advanced the generation while awaiting
+                    // cleanup. Do not publish a stale status after it updated the service.
+                    if (!isCurrentGeneration(config.id, generation)) return@launch
                     updateStatus(
                         config,
                         TerminalStartupServiceStatus(
