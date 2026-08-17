@@ -33,6 +33,7 @@ import com.ai.assistance.operit.ui.features.help.screens.HelpScreen
 import com.ai.assistance.operit.ui.features.memory.screens.MemoryScreen
 import com.ai.assistance.operit.ui.features.packages.screens.MarketHomeTab
 import com.ai.assistance.operit.ui.features.packages.screens.PackageManagerScreen
+import com.ai.assistance.operit.ui.features.packages.screens.TerminalStartupServicesScreen
 import com.ai.assistance.operit.ui.features.packages.screens.ArtifactPublishScreen
 import com.ai.assistance.operit.ui.features.packages.screens.RepoMarketPublishScreen
 import com.ai.assistance.operit.ui.features.packages.screens.UnifiedMarketManageScreen
@@ -213,8 +214,25 @@ sealed class Screen(
                             keepAlive = keepAlive
                         )
                     )
-                }
+                },
+                onOpenTerminalStartupServices = { navigateTo(TerminalStartupServices) }
             )
+        }
+    }
+
+    data object TerminalStartupServices :
+            Screen(navItem = NavItem.Packages, titleRes = R.string.terminal_startup_title) {
+        @Composable
+        override fun Content(
+                navController: NavController,
+                navigateTo: ScreenNavigationHandler,
+                onGoBack: () -> Unit,
+                hasBackgroundImage: Boolean,
+                onLoading: (Boolean) -> Unit,
+                onError: (String) -> Unit,
+                onGestureConsumed: (Boolean) -> Unit
+        ) {
+            TerminalStartupServicesScreen(onOpenTerminal = { navigateTo(Terminal) })
         }
     }
 

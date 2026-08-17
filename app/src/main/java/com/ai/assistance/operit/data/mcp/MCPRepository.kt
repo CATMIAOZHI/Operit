@@ -440,6 +440,7 @@ class MCPRepository(private val context: Context) {
                     AppLogger.e(TAG, "拒绝卸载非法插件 ID: $pluginId")
                     return@withContext false
                 }
+                val runtimeShutdownPlan = buildMcpRuntimeShutdownPlan(pluginId)
                 // 删除插件包目录：内部优先，旧版目录仅在开关开启时解析（用户显式卸载
                 // 是删除该插件自身文件的唯一合法入口；旧版配置 mcp_config.json 永不修改）。
                 val pluginDir = resolvePluginPackageDir(pluginId)
@@ -450,6 +451,7 @@ class MCPRepository(private val context: Context) {
                 }
 
                 if (result) {
+                    stopAndUnregisterMcpRuntime(runtimeShutdownPlan, unregisterBridge = true)
                     // 从MCPLocalServer中移除配置
                     mcpLocalServer.removeMCPServer(pluginId)
                     // 重新加载插件状态
@@ -974,7 +976,9 @@ class MCPRepository(private val context: Context) {
     suspend fun removeRemoteServer(serverId: String): Boolean {
         return withContext(Dispatchers.IO) {
             try {
+                val runtimeShutdownPlan = buildMcpRuntimeShutdownPlan(serverId)
                 mcpLocalServer.removeMCPServer(serverId)
+                stopAndUnregisterMcpRuntime(runtimeShutdownPlan, unregisterBridge = true)
                 // 重新加载插件状态
                 loadPluginsFromMCPLocalServer()
                 AppLogger.d(TAG, "远程服务器 $serverId 删除成功")
@@ -1342,15 +1346,40 @@ class MCPRepository(private val context: Context) {
         }
     }
 
-    /** Stops bridge, manager and tool registrations without changing persisted MCP settings. */
-    private suspend fun stopAndUnregisterMcpRuntime(plan: McpRuntimeShutdownPlan) {
-        // a. 停止桥接进程（若存在）；失败不阻塞后续步骤
+    fun unregisterAllRuntimeMcpEntries() {
+        val toolHandler = AIToolHandler.getInstance(context)
+        val mcpManager = MCPManager.getInstance(context)
+        val registeredServerNames = mcpManager.getRegisteredServers().keys
+        toolHandler.getAllToolNames()
+            .filter { toolName -> toolHandler.getToolExecutor(toolName) is MCPToolExecutor }
+            .forEach(toolHandler::unregisterTool)
+        registeredServerNames.forEach(mcpManager::unregisterServer)
+    }
+
+    /**
+     * Stops bridge, manager and tool registrations without changing persisted MCP settings.
+     *
+     * @param unregisterBridge 为 true 时调用 [MCPBridge.unregisterMcpService] 从桥接注册表
+     * 移除服务（用于永久删除插件/远程服务器，避免 unspawn 在 100ms 后恢复注册表条目）；
+     * 为 false 时仅 [MCPBridge.unspawnMcpService] 停止进程但保留注册（用于禁用/旧版读取
+     * 开关等可重新启用的场景）。
+     */
+    private suspend fun stopAndUnregisterMcpRuntime(
+        plan: McpRuntimeShutdownPlan,
+        unregisterBridge: Boolean = false,
+    ) {
+        // a. 停止或注销桥接服务（若存在）；失败不阻塞后续步骤
         try {
             if (plan.serviceName != null) {
-                MCPBridge.getInstance(context).unspawnMcpService(plan.serviceName)
+                val bridge = MCPBridge.getInstance(context)
+                if (unregisterBridge) {
+                    bridge.unregisterMcpService(plan.serviceName)
+                } else {
+                    bridge.unspawnMcpService(plan.serviceName)
+                }
             }
         } catch (e: Exception) {
-            AppLogger.w(TAG, "停止桥接MCP服务失败: ${plan.pluginId}", e)
+            AppLogger.w(TAG, "停止或注销桥接MCP服务失败: ${plan.pluginId}", e)
         }
 
         // b/c. 注销 MCPManager 服务器与 AIToolHandler 工具

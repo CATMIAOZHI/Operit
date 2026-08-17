@@ -24,6 +24,44 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.json.JSONObject
 
+internal fun requiresMcpRuntimeInitialization(installedPluginCount: Int): Boolean =
+    installedPluginCount > 0
+
+internal fun isSuccessfulMcpBridgeResponse(response: JSONObject?): Boolean =
+    response?.opt("success") == true
+
+internal fun didMcpBridgeCleanupSucceed(response: JSONObject?): Boolean =
+    isSuccessfulMcpBridgeResponse(response)
+
+internal fun recordMcpServiceUnregisterResult(
+    registeredServiceNames: MutableSet<String>,
+    serviceName: String,
+    response: JSONObject?,
+): Boolean {
+    val succeeded = isSuccessfulMcpBridgeResponse(response)
+    if (succeeded) registeredServiceNames.remove(serviceName)
+    return succeeded
+}
+
+internal fun decodeRegisteredMcpServiceNames(response: JSONObject?): List<String>? {
+    val successfulResponse = response?.takeIf(::isSuccessfulMcpBridgeResponse) ?: return null
+    val services = successfulResponse.optJSONObject("result")?.optJSONArray("services") ?: return null
+    return buildList {
+        for (index in 0 until services.length()) {
+            val service = services.optJSONObject(index) ?: return null
+            val name = service.opt("name") as? String ?: return null
+            if (name.isBlank()) return null
+            add(name)
+        }
+    }
+}
+
+internal fun mcpStartupStatusAfterDisabledCleanup(
+    cleanupSucceeded: Boolean,
+): MCPStarter.PluginInitStatus =
+    if (cleanupSucceeded) MCPStarter.PluginInitStatus.SUCCESS
+    else MCPStarter.PluginInitStatus.BRIDGE_FAILED
+
 /**
  * MCP Plugin Starter
  *
@@ -452,6 +490,40 @@ class MCPStarter(private val context: Context) {
     ) {
         starterScope.launch {
             try {
+                val mcpRepository = MCPRepository(context)
+                val mcpLocalServer = MCPLocalServer.getInstance(context)
+                AppLogger.d(TAG, "Refreshing MCP config before batch startup")
+                mcpRepository.refreshPluginList()
+
+                val allInstalledPlugins = mcpRepository.installedPluginIds.first()
+                if (!requiresMcpRuntimeInitialization(allInstalledPlugins.size)) {
+                    mcpRepository.unregisterAllRuntimeMcpEntries()
+                    // A failed status query cannot prove that no stale bridge process or
+                    // registration remains. Always attempt reset and fail closed.
+                    val cleanupSucceeded = didMcpBridgeCleanupSucceed(MCPBridge.reset(context))
+                    progressListener.onAllPluginsStarted(
+                        0,
+                        0,
+                        if (cleanupSucceeded) PluginInitStatus.SUCCESS
+                        else PluginInitStatus.BRIDGE_FAILED,
+                    )
+                    return@launch
+                }
+
+                val (pluginsToStart, disabledPlugins) = allInstalledPlugins.partition { pluginId ->
+                    mcpLocalServer.isRuntimeActivationAllowed(pluginId)
+                }
+
+                // Runtime tool cleanup is local and must not depend on terminal, pnpm, or bridge
+                // availability. Otherwise disabling the final plugin can leave stale AI tools.
+                if (disabledPlugins.isNotEmpty()) {
+                    runCatching {
+                        mcpRepository.unregisterToolsForPlugins(disabledPlugins)
+                    }.onFailure { e ->
+                        AppLogger.e(TAG, "Failed to unregister runtime MCP tools for disabled plugins", e)
+                    }
+                }
+
                 // Check if terminal service is available
                 if (!isTerminalServiceConnected()) {
                     AppLogger.e(TAG, "Terminal service is not connected. Please start it first.")
@@ -471,67 +543,64 @@ class MCPStarter(private val context: Context) {
                     return@launch
                 }
 
-                val mcpRepository = MCPRepository(context)
-                val mcpLocalServer = MCPLocalServer.getInstance(context)
                 val bridge = MCPBridge.getInstance(context)
-                AppLogger.d(TAG, "Refreshing MCP config before batch startup")
-                mcpRepository.refreshPluginList()
-
-                // Get all installed plugins and partition into enabled and disabled
-                val allInstalledPlugins = mcpRepository.installedPluginIds.first()
-                val (pluginsToStart, disabledPlugins) = allInstalledPlugins.partition { pluginId ->
-                    mcpLocalServer.isRuntimeActivationAllowed(pluginId)
-                }
 
                 // Get the list of currently registered services from the bridge
                 val listResponse = bridge.listMcpServices()
-                val registeredServiceNames = mutableListOf<String>()
-                if (listResponse?.optBoolean("success", false) == true) {
-                    val services = listResponse.optJSONObject("result")?.optJSONArray("services")
-                    if (services != null) {
-                        for (i in 0 until services.length()) {
-                            services.optJSONObject(i)?.optString("name")?.let { registeredServiceNames.add(it) }
-                        }
+                val registeredServiceNames = decodeRegisteredMcpServiceNames(listResponse)?.toMutableSet()
+                val serviceListAvailable = registeredServiceNames != null
+
+                // Finish disabled-plugin cleanup before reporting startup success. Runtime tools
+                // may still exist even when the bridge currently reports no registered service.
+                var disabledServiceCleanupSucceeded = serviceListAvailable || disabledPlugins.isEmpty()
+                if (disabledPlugins.isNotEmpty()) {
+                    if (!serviceListAvailable) {
+                        AppLogger.e(TAG, "Cannot verify bridge services while cleaning up disabled plugins")
                     }
-                }
-
-                // Unregister any disabled plugins that are still registered in the bridge
-                if (registeredServiceNames.isNotEmpty() && disabledPlugins.isNotEmpty()) {
-                    starterScope.launch { // Unregister in a separate coroutine to not block startup sequence
-                        for (pluginId in disabledPlugins) {
-                            try {
-                                // Determine the service name for the disabled plugin
-                                val pluginInfo = mcpRepository.getInstalledPluginInfo(pluginId) ?: continue
-                                val baseServerName = pluginInfo.name.replace(" ", "_").lowercase()
-                                    .ifEmpty { pluginId.split("/").last().lowercase() }
-
-                                val serviceNameToUnregister = if (pluginInfo.type == "local") {
-                                    val pluginConfig = mcpLocalServer.getPluginConfig(pluginId)
-                                    extractServerNameFromConfig(pluginConfig) ?: baseServerName
-                                } else {
-                                    baseServerName
-                                }
-
-                                // If the service is in the registered list, unregister it
-                                if (registeredServiceNames.contains(serviceNameToUnregister)) {
-                                    AppLogger.d(TAG, "Unregistering disabled plugin '$pluginId' with service name '$serviceNameToUnregister'")
-                                    bridge.unregisterMcpService(serviceNameToUnregister)
-                                }
-                            } catch (e: Exception) {
-                                AppLogger.e(TAG, "Failed to unregister disabled plugin '$pluginId'", e)
+                    for (pluginId in disabledPlugins) {
+                        try {
+                            val pluginInfo = mcpRepository.getInstalledPluginInfo(pluginId)
+                            if (pluginInfo == null) {
+                                disabledServiceCleanupSucceeded = false
+                                AppLogger.e(TAG, "Cannot resolve installed plugin info while cleaning up '$pluginId'")
+                                continue
                             }
-                        }
+                            val baseServerName = pluginInfo.name.replace(" ", "_").lowercase()
+                                .ifEmpty { pluginId.split("/").last().lowercase() }
 
-                        runCatching {
-                            mcpRepository.unregisterToolsForPlugins(disabledPlugins)
-                        }.onFailure { e ->
-                            AppLogger.e(TAG, "Failed to unregister runtime MCP tools for disabled plugins", e)
+                            val serviceNameToUnregister = if (pluginInfo.type == "local") {
+                                val pluginConfig = mcpLocalServer.getPluginConfig(pluginId)
+                                extractServerNameFromConfig(pluginConfig) ?: baseServerName
+                            } else {
+                                baseServerName
+                            }
+
+                            if (registeredServiceNames?.contains(serviceNameToUnregister) == true) {
+                                AppLogger.d(TAG, "Unregistering disabled plugin '$pluginId' with service name '$serviceNameToUnregister'")
+                                val unregisterResponse = bridge.unregisterMcpService(serviceNameToUnregister)
+                                if (!recordMcpServiceUnregisterResult(
+                                        registeredServiceNames,
+                                        serviceNameToUnregister,
+                                        unregisterResponse,
+                                    )
+                                ) {
+                                    disabledServiceCleanupSucceeded = false
+                                    AppLogger.e(TAG, "Bridge failed to unregister disabled plugin '$pluginId'")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            disabledServiceCleanupSucceeded = false
+                            AppLogger.e(TAG, "Failed to unregister disabled plugin '$pluginId'", e)
                         }
                     }
                 }
 
                 if (pluginsToStart.isEmpty()) {
-                    progressListener.onAllPluginsStarted(0, 0, PluginInitStatus.SUCCESS)
+                    progressListener.onAllPluginsStarted(
+                        0,
+                        0,
+                        mcpStartupStatusAfterDisabledCleanup(disabledServiceCleanupSucceeded),
+                    )
                     return@launch
                 }
 
@@ -614,7 +683,7 @@ class MCPStarter(private val context: Context) {
                 progressListener.onAllPluginsStarted(
                     successCount,
                     pluginsToStart.size,
-                    PluginInitStatus.SUCCESS
+                    mcpStartupStatusAfterDisabledCleanup(disabledServiceCleanupSucceeded),
                 )
 
             } catch (e: Exception) {
