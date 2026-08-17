@@ -8585,6 +8585,7 @@
     <string name="terminal_startup_message_tcp_ready">TCP 健康检查通过</string>
     <string name="terminal_startup_message_tcp_timeout">等待 %1$s:%2$d 超时</string>
     <string name="terminal_startup_message_process_timeout">等待服务进程超时</string>
+    <string name="terminal_startup_message_session_init_timeout">终端会话初始化超时</string>
     <string name="terminal_startup_message_failed">启动失败</string>
     <string name="terminal_startup_message_previous_process_timeout">旧服务进程未能及时退出，已取消启动新实例</string>
     <string name="terminal_startup_message_process_exited">服务进程已退出，准备重启</string>

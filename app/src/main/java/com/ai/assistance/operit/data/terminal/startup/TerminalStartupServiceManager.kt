@@ -511,7 +511,21 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                     listener
                 )
                 when (waitForRestartDelay(config.id, generation, delayMs)) {
-                    RestartWaitResult.CANCELLED -> break
+                    RestartWaitResult.CANCELLED -> {
+                        // A newer start/stop/toggle preempted this restart. Finalize the item for
+                        // the app-boot listener so it does not remain LOADING/RESTARTING.
+                        val message = cancelledMessage()
+                        updateStatus(
+                            config,
+                            TerminalStartupServiceStatus(
+                                config.id,
+                                TerminalStartupServiceState.FAILED,
+                                message = message,
+                            ),
+                            listener,
+                        )
+                        break
+                    }
                     RestartWaitResult.MANUALLY_CLOSED -> {
                         val message = sessionClosedMessage()
                         updateStatus(
@@ -667,8 +681,25 @@ class TerminalStartupServiceManager private constructor(context: Context) {
             if (!readiness.success) {
                 val isStillManaged = managedSessionIds[config.id] == sessionId
                 if (isStillManaged) {
-                    if (terminal.closeSessionAndAwait(sessionId, PROCESS_TERMINATION_TIMEOUT_MS)) {
+                    // The manager owns this failed attempt. If termination is confirmed, drop the
+                    // tracked ID so the restart backoff does not treat the disappearance as a
+                    // user-initiated close. If termination times out, keep the ID tracked (the
+                    // old process may still be alive) and block retries instead of leaking it.
+                    val terminated =
+                        terminal.closeSessionAndAwait(sessionId, PROCESS_TERMINATION_TIMEOUT_MS)
+                    if (terminated) {
                         managedSessionIds.remove(config.id, sessionId)
+                    } else {
+                        val errorMessage = previousProcessTerminationTimeoutMessage()
+                        appendLog(config.id, errorMessage)
+                        logForwarder.emit(errorMessage)
+                        return AttemptResult(
+                            success = false,
+                            manuallyClosed = false,
+                            message = errorMessage,
+                            sessionId = sessionId,
+                            retryBlocked = true,
+                        )
                     }
                 }
                 createdSessionId = null
@@ -714,10 +745,10 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         } catch (error: Exception) {
             createdSessionId?.let { cleanupAttemptSession(config.id, it) }
             AppLogger.e(TAG, "Failed to start terminal service ${config.id}", error)
-            val errorMessage = error.message ?: error.javaClass.simpleName
+            val errorMessage = localizeStartupError(error)
             appendLog(config.id, errorMessage)
             logForwarder.emit(errorMessage)
-            AttemptResult(false, false, error.message ?: startupFailureMessage())
+            AttemptResult(false, false, errorMessage)
         } finally {
             // The command log collector can outlive app startup. Drop its UI listener after this
             // attempt finishes so it cannot retain PluginLoadingState or an Activity scope.
@@ -1128,6 +1159,12 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         appContext.getString(R.string.terminal_startup_message_tcp_timeout, host, port)
     private fun processTimeoutMessage() = appContext.getString(R.string.terminal_startup_message_process_timeout)
     private fun startupFailureMessage() = appContext.getString(R.string.terminal_startup_message_failed)
+    private fun localizeStartupError(error: Exception): String =
+        when (error.message) {
+            SESSION_INITIALIZATION_TIMEOUT_MESSAGE ->
+                appContext.getString(R.string.terminal_startup_message_session_init_timeout)
+            else -> error.message ?: startupFailureMessage()
+        }
     private fun previousProcessTerminationTimeoutMessage() =
         appContext.getString(R.string.terminal_startup_message_previous_process_timeout)
     private fun stoppedMessage() = appContext.getString(R.string.terminal_startup_status_stopped)
@@ -1156,6 +1193,7 @@ class TerminalStartupServiceManager private constructor(context: Context) {
         private const val MAX_LOG_CHARS = 200_000
         private const val PROCESS_TERMINATION_TIMEOUT_MS = 3_000L
         private const val LOG_PUBLISH_INTERVAL_MS = 250L
+        private const val SESSION_INITIALIZATION_TIMEOUT_MESSAGE = "Session initialization timeout"
         private val NO_OP_LISTENER = object : ProgressListener {}
 
         @Volatile

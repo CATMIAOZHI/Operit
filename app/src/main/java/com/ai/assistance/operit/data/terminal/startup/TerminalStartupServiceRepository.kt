@@ -225,11 +225,49 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
             ensureConfigLoaded()
             val updated = _services.value.filterNot { it.id == serviceId }
             withContext(NonCancellable) {
-                persistServices(updated)
-                _services.value = updated
+                // Remove managed files transactionally: rename each to a sibling backup first so
+                // a later failure can restore them, then commit the config and drop the backups.
                 withContext(Dispatchers.IO) {
-                    scriptFile(serviceId).delete()
-                    launcherFile(serviceId).delete()
+                    val script = scriptFile(serviceId)
+                    val launcher = launcherFile(serviceId)
+                    val scriptBackup = siblingBackupFile(script)
+                    val launcherBackup = siblingBackupFile(launcher)
+                    val backedUpScript = script.exists() && script.renameTo(scriptBackup)
+                    val backedUpLauncher = launcher.exists() && launcher.renameTo(launcherBackup)
+                    var committed = false
+                    try {
+                        check(!script.exists() && !launcher.exists()) {
+                            "Failed to remove terminal startup service files"
+                        }
+                        persistServices(updated)
+                        _services.value = updated
+                        committed = true
+                    } catch (error: Throwable) {
+                        // Restore the files that were moved aside before rethrowing. A backup
+                        // that cannot be restored is kept so the script is not lost.
+                        if (backedUpScript && !script.exists() && scriptBackup.exists() &&
+                            !scriptBackup.renameTo(script)
+                        ) {
+                            error.addSuppressed(
+                                IllegalStateException("Failed to restore ${script.name} from backup")
+                            )
+                        }
+                        if (backedUpLauncher && !launcher.exists() && launcherBackup.exists() &&
+                            !launcherBackup.renameTo(launcher)
+                        ) {
+                            error.addSuppressed(
+                                IllegalStateException("Failed to restore ${launcher.name} from backup")
+                            )
+                        }
+                        throw error
+                    } finally {
+                        // Only the commit path may discard backups. On failure the backups are
+                        // kept (restored or not) so the files can be recovered by hand.
+                        if (committed) {
+                            scriptBackup.delete()
+                            launcherBackup.delete()
+                        }
+                    }
                 }
             }
         }
@@ -511,6 +549,12 @@ class TerminalStartupServiceRepository private constructor(context: Context) {
 
     private fun launcherFile(serviceId: String): File =
         File(launchersDirectory, "${decodePersistedTerminalStartupServiceId(serviceId)}.sh")
+
+    private fun siblingBackupFile(file: File): File =
+        File(
+            requireNotNull(file.parentFile),
+            ".${file.name}.${UUID.randomUUID()}.delete-backup",
+        )
 
     companion object {
         private const val TAG = "TerminalStartupRepo"

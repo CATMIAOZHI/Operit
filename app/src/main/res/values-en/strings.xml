@@ -8604,6 +8604,7 @@
     <string name="terminal_startup_message_tcp_ready">TCP health check passed</string>
     <string name="terminal_startup_message_tcp_timeout">Timed out waiting for %1$s:%2$d</string>
     <string name="terminal_startup_message_process_timeout">Timed out waiting for the service process</string>
+    <string name="terminal_startup_message_session_init_timeout">Terminal session initialization timed out</string>
     <string name="terminal_startup_message_failed">Startup failed</string>
     <string name="terminal_startup_message_previous_process_timeout">The previous service process did not exit in time; the new instance was not started</string>
     <string name="terminal_startup_message_process_exited">Service process exited; scheduling restart</string>
