@@ -42,6 +42,47 @@ import org.json.JSONObject
 internal fun shouldPropagateClaudeCancellation(isManuallyCancelled: Boolean): Boolean =
     isManuallyCancelled
 
+internal fun applyCallerSuppliedClaudeThinkingParameters(
+    requestJson: JSONObject,
+    modelParameters: List<ModelParameter<*>>,
+    enableThinking: Boolean = true,
+): Boolean {
+    if (!enableThinking) {
+        return false
+    }
+
+    fun parseObjectParameter(apiName: String): JSONObject? {
+        val rawValue =
+            modelParameters
+                .lastOrNull { it.apiName == apiName && it.isEnabled }
+                ?.currentValue
+                ?.toString()
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?: return null
+        return runCatching { JSONObject(rawValue) }
+            .getOrElse { error ->
+                runCatching {
+                    AppLogger.w(
+                        "ClaudeProvider",
+                        "Ignoring malformed caller-supplied $apiName object",
+                        error,
+                    )
+                }
+                null
+            }
+    }
+
+    val explicitThinking =
+        parseObjectParameter("thinking")
+    val explicitOutputConfig =
+        parseObjectParameter("output_config")
+
+    explicitThinking?.let { requestJson.put("thinking", it) }
+    explicitOutputConfig?.let { requestJson.put("output_config", it) }
+    return explicitThinking != null
+}
+
 class ClaudeProvider(
     private val apiEndpoint: String,
     private val apiKeyProvider: ApiKeyProvider,
@@ -50,14 +91,14 @@ class ClaudeProvider(
     private val customHeaders: Map<String, String> = emptyMap(),
     private val providerType: ApiProviderType = ApiProviderType.ANTHROPIC,
     private val enableToolCall: Boolean = false, // 是否启用Tool Call接口（预留，Claude有原生tool支持）
-    private val enableClaude1hPromptCache: Boolean = false
+    private val enableClaude1hPromptCache: Boolean = false,
+    private val configId: String = "",
 ) : AIService {
     // private val client: OkHttpClient = HttpClientFactory.instance
 
     private val JSON = "application/json".toMediaType()
     private val ANTHROPIC_VERSION = "2023-06-01" // Claude API版本
     private val PROMPT_CACHE_CONTROL_TYPE = "ephemeral"
-    private val DEFAULT_MAX_TOKENS = 4096
     private val EMPTY_MESSAGE_TEXT = "[Empty]"
 
     // 当前活跃的Call对象，用于取消流式传输
@@ -66,19 +107,20 @@ class ClaudeProvider(
     @Volatile private var isManuallyCancelled = false
 
     /**
-     * Thinking 格式模式。
-     * - ADAPTIVE: thinking.type="adaptive" + display=summarized（新模型）
-     * - ENABLED:  thinking.type="enabled" + budget_tokens（旧模型）
+     * 将运行时探测到的 thinking 格式与菜单使用的配置/模型键关联。
      */
-    private enum class ThinkingFormat { ADAPTIVE, ENABLED }
+    private val thinkingFormatKey =
+        ClaudeThinkingFormatState.key(
+            configId = configId,
+            providerTypeId = providerType.name,
+            apiEndpoint = apiEndpoint,
+            modelName = modelName,
+        )
 
-    /**
-     * 缓存：当前模型对应的 thinking 格式。
-     * 初始由模型名启发式决定；若 API 返回 thinking 类型不兼容的 400 错误，
-     * 会自动翻转并缓存，后续请求直接使用正确格式，避免重复失败。
-     */
-    @Volatile
-    private var cachedThinkingFormat: ThinkingFormat? = null
+    private data class BuiltRequestBody(
+        val body: RequestBody,
+        val thinkingFormat: ClaudeThinkingFormat?,
+    )
 
     /**
      * 由客户端错误（如4xx状态码）触发的API异常，是否重试由统一策略决定
@@ -1040,7 +1082,7 @@ class ClaudeProvider(
             stream: Boolean = true,
             availableTools: List<ToolPrompt>? = null,
             preserveThinkInHistory: Boolean = false
-    ): RequestBody {
+    ): BuiltRequestBody {
         val jsonObject = JSONObject()
         jsonObject.put("model", modelName)
         jsonObject.put("stream", stream)
@@ -1048,15 +1090,13 @@ class ClaudeProvider(
         // 添加已启用的模型参数
         addParameters(jsonObject, modelParameters)
 
-        val maxTokensFromParams = modelParameters
-            .firstOrNull { it.apiName == "max_tokens" }
-            ?.currentValue
-        val maxTokensValue = (maxTokensFromParams as? Number)?.toInt()?.takeIf { it > 0 }
-            ?: jsonObject.optInt("max_tokens", 0).takeIf { it > 0 }
-            ?: resolveOfficialAnthropicMaxTokens()
-        if (maxTokensValue != null) {
-            jsonObject.put("max_tokens", maxTokensValue)
-        }
+        val maxTokensValue =
+            applyClaudeEffectiveMaxTokensParameter(
+                requestJson = jsonObject,
+                providerType = providerType,
+                modelName = modelName,
+                modelParameters = modelParameters,
+            )
 
         // 添加 Tool Call 工具定义（如果启用且有可用工具）
         var tools: JSONArray? = null
@@ -1079,11 +1119,19 @@ class ClaudeProvider(
             jsonObject.put("system", systemBlocks)
         }
 
-        // 添加extended thinking支持
-        if (enableThinking) {
+        // 添加 extended/adaptive thinking 支持；显式调用方参数优先于默认推断。
+        val hasExplicitThinking =
+            applyCallerSuppliedClaudeThinkingParameters(
+                requestJson = jsonObject,
+                modelParameters = modelParameters,
+                enableThinking = enableThinking,
+            )
+        var appliedThinkingFormat: ClaudeThinkingFormat? = null
+        if (!hasExplicitThinking && enableThinking) {
             val format = getThinkingFormat()
+            appliedThinkingFormat = format
             when (format) {
-                ThinkingFormat.ADAPTIVE -> {
+                ClaudeThinkingFormat.ADAPTIVE -> {
                     // adaptive thinking: thinking.type=adaptive + display=summarized
                     // Opus 4.8/4.7 default display to "omitted" (empty thinking),
                     // must explicitly set "summarized" to receive thinking content.
@@ -1094,16 +1142,13 @@ class ClaudeProvider(
 
                     AppLogger.d("AIService", "启用Claude adaptive thinking, display=summarized")
                 }
-                ThinkingFormat.ENABLED -> {
+                ClaudeThinkingFormat.ENABLED -> {
                     // enabled thinking: thinking.type=enabled + budget_tokens
                     val thinkingObject = JSONObject()
                     thinkingObject.put("type", "enabled")
 
-                    val budgetTokensFromParams = modelParameters
-                        .firstOrNull { it.apiName == "budget_tokens" }
-                        ?.currentValue
-                    val budgetTokensValue = (budgetTokensFromParams as? Number)?.toInt()?.takeIf { it > 0 }
-                        ?: minOf(1024, maxTokensValue ?: DEFAULT_MAX_TOKENS)
+                    val budgetTokensValue =
+                        resolveClaudeThinkingBudgetTokens(modelParameters, maxTokensValue)
                     thinkingObject.put("budget_tokens", budgetTokensValue)
 
                     jsonObject.put("thinking", thinkingObject)
@@ -1120,98 +1165,18 @@ class ClaudeProvider(
         }
         sanitizeImageDataForLogging(logJson)
         AppLogger.d("AIService", "Claude请求体: ${logJson.toString(4)}")
-        return jsonObject.toString().toByteArray(Charsets.UTF_8).toRequestBody(JSON)
+        return BuiltRequestBody(
+            body = jsonObject.toString().toByteArray(Charsets.UTF_8).toRequestBody(JSON),
+            thinkingFormat = appliedThinkingFormat,
+        )
     }
-
-    private fun resolveOfficialAnthropicMaxTokens(): Int? {
-        if (providerType != ApiProviderType.ANTHROPIC) {
-            return null
-        }
-
-        val normalizedModelName = modelName.trim().lowercase()
-        return when {
-            normalizedModelName.startsWith("claude-opus-4-1") -> 32_000
-            normalizedModelName.startsWith("claude-opus-4") -> 32_000
-            normalizedModelName.startsWith("claude-sonnet-4") -> 64_000
-            normalizedModelName.startsWith("claude-3-7-sonnet") -> 64_000
-            normalizedModelName.startsWith("claude-3-5-sonnet") -> 8_192
-            normalizedModelName.startsWith("claude-3-5-haiku") -> 8_192
-            normalizedModelName.startsWith("claude-3-haiku") -> 4_096
-            else -> DEFAULT_MAX_TOKENS
-        }
-    }
-
 
     /**
      * 判断模型是否推荐使用 adaptive thinking 格式。
      * 仅做启发式匹配，覆盖已知官方模型家族和常见中转命名。
      */
     private fun prefersAdaptiveThinking(): Boolean {
-        val name = normalizeClaudeModelName(modelName)
-
-        if (hasClaudeFamilyAtLeast(name, "fable", 5, 0)) return true
-        if (hasClaudeFamilyAtLeast(name, "mythos", 5, 0)) return true
-
-        return hasClaudeFamilyAtLeast(name, "opus", 4, 6) ||
-                hasClaudeFamilyAtLeast(name, "sonnet", 4, 6)
-    }
-
-    private fun normalizeClaudeModelName(value: String): String {
-        return value
-            .trim()
-            .lowercase()
-            .replace(Regex("(?<=[a-z])(?=\\d)|(?<=\\d)(?=[a-z])"), "-")
-            .replace(Regex("[^a-z0-9]+"), "-")
-            .trim('-')
-    }
-
-    private fun hasClaudeFamilyAtLeast(
-        normalizedModelName: String,
-        family: String,
-        minMajor: Int,
-        minMinor: Int
-    ): Boolean {
-        val version = claudeFamilyVersion(normalizedModelName, family) ?: return false
-        val major = version.first
-        val minor = version.second
-        return major > minMajor || major == minMajor && minor >= minMinor
-    }
-
-    private fun claudeFamilyVersion(normalizedModelName: String, family: String): Pair<Int, Int>? {
-        val parts = normalizedModelName.split('-').filter { it.isNotEmpty() }
-        val familyIndex = parts.indexOf(family)
-        if (familyIndex == -1) return null
-
-        val beforeFamily = parts.take(familyIndex)
-            .takeLastWhileDigitParts()
-            .takeLast(2)
-        val beforeFamilyVersion = numericVersion(beforeFamily)
-        if (beforeFamilyVersion != null) return beforeFamilyVersion
-
-        val afterFamily = parts.drop(familyIndex + 1)
-            .takeWhileDigitParts()
-            .take(2)
-        return numericVersion(afterFamily)
-    }
-
-    private fun List<String>.takeLastWhileDigitParts(): List<String> {
-        return asReversed()
-            .takeWhile { it.isVersionPart() }
-            .asReversed()
-    }
-
-    private fun List<String>.takeWhileDigitParts(): List<String> {
-        return takeWhile { it.isVersionPart() }
-    }
-
-    private fun String.isVersionPart(): Boolean {
-        return all(Char::isDigit) && length < 8
-    }
-
-    private fun numericVersion(parts: List<String>): Pair<Int, Int>? {
-        val major = parts.firstOrNull()?.toIntOrNull() ?: return null
-        val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
-        return major to minor
+        return prefersClaudeAdaptiveThinkingModel(modelName)
     }
 
     /**
@@ -1219,25 +1184,23 @@ class ClaudeProvider(
      * 优先返回缓存值（包含回退后的正确结果）；
      * 无缓存时根据模型名启发式推断。
      */
-    private fun getThinkingFormat(): ThinkingFormat {
-        return cachedThinkingFormat
-            ?: if (prefersAdaptiveThinking()) ThinkingFormat.ADAPTIVE
-            else ThinkingFormat.ENABLED
+    private fun getThinkingFormat(): ClaudeThinkingFormat {
+        return ClaudeThinkingFormatState.get(thinkingFormatKey)
+            ?: if (prefersAdaptiveThinking()) ClaudeThinkingFormat.ADAPTIVE
+            else ClaudeThinkingFormat.ENABLED
     }
 
     /**
      * 在检测到 API 返回 thinking type 不兼容的 400 错误后，
      * 翻转当前缓存的 thinking 格式并记录日志。
      */
-    private fun flipThinkingFormat(): ThinkingFormat {
-        val current = getThinkingFormat()
-        val flipped = if (current == ThinkingFormat.ADAPTIVE) ThinkingFormat.ENABLED
-                      else ThinkingFormat.ADAPTIVE
-        cachedThinkingFormat = flipped
+    private fun flipThinkingFormat(failedFormat: ClaudeThinkingFormat): ClaudeThinkingFormat {
+        val flipped =
+            ClaudeThinkingFormatState.transitionAfterFailure(thinkingFormatKey, failedFormat)
         AppLogger.w(
             "AIService",
             "【Claude Thinking 回退】$modelName detected thinking type incompatibility, " +
-            "flipped $current → $flipped (cached for subsequent requests)"
+            "transitioned $failedFormat → $flipped (cached for subsequent requests)"
         )
         return flipped
     }
@@ -1452,8 +1415,8 @@ class ClaudeProvider(
                     "thinking" -> {
                         val thinking = block.optString("thinking", "")
                         if (thinking.isNotEmpty()) {
-                            fullText.append("\n<think>")
-                            fullText.append(thinking)
+                            fullText.append('\n').append(ChatUtils.PROVIDER_REASONING_OPEN_TAG)
+                            fullText.append(ChatUtils.escapeProviderReasoningMarkup(thinking))
                             fullText.append("</think>\n")
                         }
                     }
@@ -1461,7 +1424,7 @@ class ClaudeProvider(
                     }
                     "tool_use" -> {
                         if (enableToolCall) {
-                            val toolName = block.optString("name", "")
+                            val toolName = block.optProviderToolName() ?: ""
                             if (toolName.isNotEmpty()) {
                                 val toolTagName = ChatMarkupRegex.generateRandomToolTagName()
                                 fullText.append("\n<$toolTagName name=\"$toolName\">")
@@ -1509,6 +1472,7 @@ class ClaudeProvider(
                 throw UserCancellationException(context.getString(R.string.openai_error_request_cancelled))
             }
 
+            var attemptedThinkingFormat: ClaudeThinkingFormat? = null
             val call = try {
                 if (retryCount > 0) {
                     AppLogger.d(
@@ -1517,7 +1481,7 @@ class ClaudeProvider(
                     )
                 }
 
-                val requestBody = createRequestBody(
+                val builtRequestBody = createRequestBody(
                     context,
                     chatHistory,
                     modelParameters,
@@ -1526,12 +1490,13 @@ class ClaudeProvider(
                     availableTools,
                     preserveThinkInHistory
                 )
+                attemptedThinkingFormat = builtRequestBody.thinkingFormat
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
                     tokenCacheManager.cachedInputTokenCount,
                     tokenCacheManager.outputTokenCount
                 )
-                val request = createRequest(requestBody)
+                val request = createRequest(builtRequestBody.body)
                 client.newCall(request)
             } catch (e: Exception) {
                 throw e
@@ -1709,7 +1674,7 @@ class ClaudeProvider(
                                         when (contentBlock.optString("type")) {
                                             "tool_use" -> {
                                                 if (enableToolCall) {
-                                                    val toolName = contentBlock.optString("name", "")
+                                                    val toolName = contentBlock.optProviderToolName() ?: ""
                                                     if (toolName.isNotEmpty()) {
                                                         val toolTagName = ChatMarkupRegex.generateRandomToolTagName()
                                                         currentToolTagName = toolTagName
@@ -1741,7 +1706,8 @@ class ClaudeProvider(
                                                 }
                                             }
                                             "thinking" -> {
-                                                val thinkingStartTag = "\n<think>"
+                                                val thinkingStartTag =
+                                                    "\n${ChatUtils.PROVIDER_REASONING_OPEN_TAG}"
                                                 emittedAny = true
                                                 emit(thinkingStartTag)
                                                 receivedContent.append(thinkingStartTag)
@@ -1755,8 +1721,10 @@ class ClaudeProvider(
                                                         tokenCacheManager.cachedInputTokenCount,
                                                         tokenCacheManager.outputTokenCount
                                                     )
-                                                    emit(initialThinking)
-                                                    receivedContent.append(initialThinking)
+                                                    val protectedThinking =
+                                                        ChatUtils.escapeProviderReasoningMarkup(initialThinking)
+                                                    emit(protectedThinking)
+                                                    receivedContent.append(protectedThinking)
                                                 }
                                             }
                                             "redacted_thinking" -> {
@@ -1791,8 +1759,10 @@ class ClaudeProvider(
                                                     tokenCacheManager.cachedInputTokenCount,
                                                     tokenCacheManager.outputTokenCount
                                                 )
-                                                emit(thinking)
-                                                receivedContent.append(thinking)
+                                                val protectedThinking =
+                                                    ChatUtils.escapeProviderReasoningMarkup(thinking)
+                                                emit(protectedThinking)
+                                                receivedContent.append(protectedThinking)
                                             }
                                         } else if (enableToolCall && isInToolCall && currentToolParser != null && deltaType == "input_json_delta") {
                                             val partialJson = delta.optString("partial_json", "")
@@ -1979,8 +1949,14 @@ class ClaudeProvider(
                 emitRollback(requestSavepointId)
 
                 // 检测 thinking type 不兼容错误，自动翻转格式并立即重试
-                if (enableThinking && !thinkingFormatFlipped && isThinkingTypeError(e)) {
-                    flipThinkingFormat()
+                val failedThinkingFormat = attemptedThinkingFormat
+                if (
+                    enableThinking &&
+                        !thinkingFormatFlipped &&
+                        failedThinkingFormat != null &&
+                        isThinkingTypeError(e)
+                ) {
+                    flipThinkingFormat(failedThinkingFormat)
                     thinkingFormatFlipped = true
                     onNonFatalError(
                         context.getString(R.string.provider_error_retry_message,

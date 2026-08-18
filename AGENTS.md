@@ -21,7 +21,7 @@
 - 首次构建先执行 `git submodule update --init --recursive terminal`。
 - 完整 Android 构建需要 README/编译指南列出的 `models.zip`、`subpack.zip`、`jniLibs.zip` 和 `libs.zip` 内容；这些本地依赖不得提交。
 - 原生第三方依赖（MNN、llama.cpp、ncnn、sherpa-ncnn、WAMR、QuickJS、Saba、Bullet3、ufbx、KleidiAI）已固定到具体 commit SHA，锁定清单见 `cmake/NATIVE_DEPENDENCY_LOCK.md`；升级时更新该清单和对应 `CMakeLists.txt`，不要通过 `OPERIT_*_GIT_REF` 命令行参数覆盖（已不再生效）。
-- 根据改动范围运行最小充分验证：默认优先编译，只运行与本次修改直接相关的测试；没有直接相关测试时只做编译检查，小改动无明显回归风险时不额外补测试，已通过的测试不重复运行。不得仅为提高信心主动运行完整 `testDebugUnitTest`；全量测试和耗时的集成/UI 测试仅在用户明确要求、合并或 PR 最终验证、CI，或核心基础设施改动确有必要时运行。单个测试超过 60 秒必须停止并分析原因。
+- 根据改动范围运行最小充分验证：默认优先编译，只运行与本次修改直接相关的测试；没有直接相关测试时只做编译检查，小改动无明显回归风险时不额外补测试，已通过的测试不重复运行。不得仅为提高信心主动运行完整 `testDebugUnitTest`；全量测试和耗时的集成/UI 测试仅在用户明确要求、合并或 PR 最终验证、CI，或核心基础设施改动确有必要时运行。测试超时应覆盖 Gradle 冷启动和增量编译：聚焦 JVM 单测默认设置 10 分钟硬超时，其他任务按预计耗时设置明确上限；若连续 5 分钟没有新日志、CPU/进程活动或输出文件变化，应终止整个进程树并分析原因，不得仅因运行超过 60 秒判定失败。
 - Windows 本地执行 `lintDebug` 或其他会构建原生模块的任务时，SDK 随 CMake 3.22.1 提供的 Ninja 1.10.2 会在 MNN/KleidiAI 中间路径超过 260 字符时报告 `Filename longer than 260 characters`。已验证的首选方案是保留 CMake 3.22.1、使用支持 Windows 长路径的 Ninja 1.12.1+：将 CMake 复制到 SDK 管理目录之外的本机隔离目录，替换副本中的 Ninja，并通过被 Git 忽略的 `local.properties` 的 `cmake.dir` 指向副本；不要直接覆盖 SDK Manager 管理的原版工具。构建后必须从 `build_command_*.bat` 或 `CMakeCache.txt` 核对 Gradle 实际调用了新版 Ninja。若系统未启用 Win32 长路径、无法准备新版 Ninja，或新版工具仍失败，再用 `subst` 将仓库根目录映射为短盘符，并从该盘符根目录重新运行 Gradle。CMake 的 `CMAKE_OBJECT_PATH_MAX` 警告本身不等于构建失败。完整步骤见 `docs/agent/build-guide.md`。
 - 完整 APK 构建、release 构建和原生依赖升级后的验证优先使用 GitHub Actions（Nightly workflow 或手动触发），不要在本地执行完整 `assembleRelease`。本地构建仅用于快速迭代测试（`compileDebugKotlin`、`testDebugUnitTest`、`lintDebug`、`assembleDebug` 等），验证通过后再推送让 CI 做完整构建。
 - 原生依赖 SHA 升级必须先推送 `personal/dev`，由 Nightly 构建验证 ccache 命中率和编译成功后，再考虑合并到 `personal/main`。
@@ -45,6 +45,7 @@
 ## 修改原则
 
 - 修改前阅读相关实现、调用方和现有测试；优先小而完整的修复。
+- 修复 PR review 后，必须由未参与实现的独立 Agent 对最终差异做只读审计；若审计发现可操作问题，继续修复并重新独立审计，直到结论为 CLEAN。完成必要验证且独立审计 CLEAN 后，自动在 GitHub 将本轮已实际修复的对应 review 线程标记为 resolved；不得解决新增、未修复、存在歧义或审计未通过的线程。此规则不自动授权提交、推送或合并。
 - 持久化数据、公开接口、配置格式或已发布行为发生变化时，评估兼容性和迁移影响。未发布的内部方案无需保留无用途的旧路径。
 - 不以静默降级掩盖确定错误；是否需要兼容或恢复路径应由真实用户数据、外部调用方和产品契约决定。
 - 新增用户可见文字使用资源字符串并提供简体中文；`values/`（默认简体中文）和 `values-en/`（英语）为唯一需要维护的文案来源，不新增或同步其他语言。例外：同步上游官方 i18n PR 中已发布的非默认语言翻译时，允许带入并在 PR 说明中标注上游 PR 编号。`MissingTranslation` 检查已在 `personal/main` 的 `app/build.gradle.kts` 中禁用，其他语言的现有翻译由社区自行维护，不作为本仓库门槛。文档只在行为、接口、构建或使用方式变化时更新。

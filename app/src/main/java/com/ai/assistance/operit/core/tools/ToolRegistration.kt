@@ -47,6 +47,11 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         name = PermissionReviewInspectionTool.NAME,
         executor = PermissionReviewInspectionTool::inspect,
     )
+    handler.registerTool(
+        name = ChatTodoTool.NAME,
+        descriptionGenerator = { context.getString(R.string.toolreg_todowrite_desc) },
+        executor = { tool -> ChatTodoTool.execute(context, tool) },
+    )
 
     // Helper function to wrap UI tool execution with visibility changes
     suspend fun executeUiToolWithVisibility(

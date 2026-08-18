@@ -165,29 +165,14 @@ open class OpenRouterProvider(
             return null
         }
 
-        val reasoningBudgets = listOf(null, 1_024, 16_000, 32_000, 64_000)
-        val qualityIndex = qualityLevel.coerceIn(
-            ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
-            ApiPreferences.MAX_THINKING_QUALITY_LEVEL
-        ) - 1
-        val requestedBudget = reasoningBudgets[qualityIndex]
-
-        if (requestedBudget == null) {
-            return null
-        }
-
         val modelMaxTokens =
-            (modelParameters.firstOrNull { it.apiName == "max_tokens" && it.isEnabled }?.currentValue as? Number)
-                ?.toInt()
-                ?.takeIf { it > 1 }
+            ThinkingRequestSemantics.enabledMaxTokens(modelParameters)
                 ?: requestJson.optInt("max_tokens", 0).takeIf { it > 1 }
-
-        if (modelMaxTokens == null) {
-            return requestedBudget
-        }
-
-        val cappedBudget = minOf(requestedBudget, modelMaxTokens - 1)
-        return if (cappedBudget > 0) cappedBudget else null
+        return ThinkingRequestSemantics.defaultBudgetTokens(
+            ApiProviderType.OPENROUTER,
+            qualityLevel,
+            modelMaxTokens,
+        )
     }
 
     companion object {

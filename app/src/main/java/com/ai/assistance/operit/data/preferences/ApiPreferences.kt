@@ -187,9 +187,9 @@ class ApiPreferences private constructor(private val context: Context) {
         const val MAX_THINKING_QUALITY_LEVEL = 5
         const val DEFAULT_THINKING_QUALITY_LEVEL = 2
 
-        // 思考程度档位对应的实际 reasoning_effort 值（唯一事实来源）。
-        // UI 显示标签由此派生（见 ThinkingQualityLabels.kt），provider 发送值也统一使用
-        // thinkingQualityEffort()，保证"UI 显示的档位 = 实际发送给 provider 的思考程度"。
+        // 思考程度档位对应的默认 reasoning_effort 值（唯一事实来源）。
+        // 滑块标签由此派生；直接发送 effort 的 provider 也使用该映射。菜单摘要还会通过
+        // ThinkingRequestSemantics 处理 provider 归一化、token budget 和自定义参数覆盖。
         val THINKING_QUALITY_EFFORTS = listOf("low", "medium", "high", "xhigh", "max")
 
         fun thinkingQualityEffort(level: Int): String {

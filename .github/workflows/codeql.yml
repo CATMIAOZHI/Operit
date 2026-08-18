@@ -1,0 +1,111 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [personal/dev, personal/main]
+  pull_request:
+    branches: [personal/dev, personal/main]
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        # Swift is intentionally omitted: those files are bundled Flutter templates,
+        # not Operit build targets.
+        include:
+          - language: actions
+            build-mode: none
+          - language: c-cpp
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+          # Kotlin requires a traced Android build; CodeQL autobuild lacks the NDK.
+          - language: java-kotlin
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+          - language: rust
+            build-mode: none
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Prepare Android build environment
+        if: matrix.language == 'java-kotlin'
+        uses: ./.github/actions/android-checks
+        with:
+          lane: full
+          java-version: '21'
+          android-build-tools-version: '35.0.0'
+          android-ndk-version: '25.1.8937393'
+          android-cmake-version: '3.22.1'
+          gradle-cache-read-only: 'true'
+          dependency-cache-read-only: 'true'
+
+      - name: Build Java and Kotlin
+        if: matrix.language == 'java-kotlin'
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          chmod +x ./tools/shower/gradlew
+          ./gradlew \
+            :app:compileDebugKotlin \
+            :app:compileDebugJavaWithJavac \
+            --rerun-tasks \
+            --no-build-cache \
+            --stacktrace \
+            --no-daemon \
+            --console=plain
+          ./tools/shower/gradlew \
+            -p tools/shower \
+            :app:compileReleaseKotlin \
+            :app:compileReleaseJavaWithJavac \
+            --rerun-tasks \
+            --no-build-cache \
+            --stacktrace \
+            --no-daemon \
+            --console=plain
+          ./gradlew \
+            -p examples/apktool/runtime_helper \
+            compileJava \
+            --rerun-tasks \
+            --no-build-cache \
+            --stacktrace \
+            --no-daemon \
+            --console=plain
+
+      - name: Analyze source
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        with:
+          category: /language:${{ matrix.language }}

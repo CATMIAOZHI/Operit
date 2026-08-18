@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import com.ai.assistance.operit.core.workflow.advanceWorkflowAuthRestoreGeneration
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.db.ObjectBoxManager
 import com.ai.assistance.operit.data.stats.TokenBaselineImportRunner
@@ -60,6 +61,10 @@ object RawSnapshotBackupManager {
     @Volatile
     private var processRestartRequired = false
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+    /** 测试 seam：恢复提交阶段推进 workflow auth generation 的可替换实现。 */
+    @Volatile
+    internal var restoreGenerationAdvancerForTest: ((Context) -> Long)? = null
 
     @Serializable
     data class Manifest(
@@ -838,6 +843,12 @@ object RawSnapshotBackupManager {
                         replaceDirContents(File(payloadDir, "datastore"), File(context.dataDir, "datastore"))
                         withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.REPLACING_DATABASES) }
                         replaceDirContents(File(payloadDir, "databases"), File(context.dataDir, "databases"))
+
+                        // The signing key intentionally lives outside raw snapshots. Advance a
+                        // no-backup generation after replacement so credentials from the restored
+                        // files cannot become valid again under the preserved same-install key.
+                        restoreGenerationAdvancerForTest?.invoke(context)
+                            ?: advanceWorkflowAuthRestoreGeneration(context)
 
                         withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.FINALIZING) }
                     }

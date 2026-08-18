@@ -226,7 +226,6 @@ public:
             evaluationBuffer_.push_back(c);
             uint32_t emitMask = 0;
 
-            int successful = -1;
             for (int pi = 0; pi < static_cast<int>(plugins_.size()); pi++) {
                 const bool se = plugins_[pi].plugin->processChar(c, atStartOfLine);
                 if (se) {
@@ -235,10 +234,30 @@ public:
             }
             evaluationEmitMask_.push_back(emitMask);
 
+            int blockingTrying = -1;
             for (int pi = 0; pi < static_cast<int>(plugins_.size()); pi++) {
-                if (plugins_[pi].plugin->state() == PluginState::PROCESSING) {
-                    successful = pi;
+                if (plugins_[pi].plugin->state() == PluginState::TRYING &&
+                    plugins_[pi].plugin->blocksCompetingPluginsWhileTrying()) {
+                    blockingTrying = pi;
                     break;
+                }
+            }
+            if (blockingTrying != -1) {
+                // Markdown block syntax inside a quoted, possibly multiline XML attribute is
+                // data, not a competing block opener. Reset competitors while the quote remains
+                // open so none can claim the buffered XML prefix.
+                for (int pi = 0; pi < static_cast<int>(plugins_.size()); pi++) {
+                    if (pi != blockingTrying) plugins_[pi].plugin->reset();
+                }
+            }
+
+            int successful = -1;
+            if (blockingTrying == -1) {
+                for (int pi = 0; pi < static_cast<int>(plugins_.size()); pi++) {
+                    if (plugins_[pi].plugin->state() == PluginState::PROCESSING) {
+                        successful = pi;
+                        break;
+                    }
                 }
             }
 

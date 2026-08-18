@@ -52,6 +52,8 @@ class OpenAIResponsesProvider(
         availableTools: List<ToolPrompt>?,
         preserveThinkInHistory: Boolean
     ): RequestBody {
+        val automaticReasoningRequestParameters =
+            consumeAutomaticReasoningSuppression(modelParameters)
         val requestChatHistory =
             if (enableThinking) {
                 chatHistory
@@ -61,18 +63,20 @@ class OpenAIResponsesProvider(
         val baseRequestBodyJson = super.createRequestBodyInternal(
             context,
             requestChatHistory,
-            modelParameters,
+            automaticReasoningRequestParameters.modelParameters,
             stream,
             availableTools,
             preserveThinkInHistory
         )
         val jsonObject = JSONObject(baseRequestBodyJson)
 
-        applyResponsesReasoningEffort(
-            context = context,
-            requestJson = jsonObject,
-            enableThinking = enableThinking
-        )
+        if (!automaticReasoningRequestParameters.suppressAutomaticReasoning) {
+            applyResponsesReasoningEffort(
+                context = context,
+                requestJson = jsonObject,
+                enableThinking = enableThinking
+            )
+        }
 
         val logJson = JSONObject(jsonObject.toString())
         if (logJson.has("tools")) {
@@ -189,7 +193,10 @@ class OpenAIResponsesProvider(
             return null
         }
 
-        return ApiPreferences.thinkingQualityEffort(qualityLevel)
+        return ThinkingRequestSemantics.defaultReasoningEffort(
+            responsesProviderType,
+            qualityLevel,
+        )
     }
 
     private fun shouldAttachPromptCacheKey(): Boolean {
@@ -461,7 +468,7 @@ object OpenAIResponsesPayloadAdapter {
 
             val convertedFunction = JSONObject().apply {
                 put("type", "function")
-                put("name", function.optString("name", ""))
+                put("name", function.optProviderToolName() ?: "")
                 if (function.has("description")) {
                     put("description", function.get("description"))
                 }
@@ -509,7 +516,7 @@ object OpenAIResponsesPayloadAdapter {
                     for (j in 0 until toolCalls.length()) {
                         val call = toolCalls.optJSONObject(j) ?: continue
                         val function = call.optJSONObject("function") ?: continue
-                        val name = function.optString("name", "")
+                        val name = function.optProviderToolName() ?: ""
                         if (name.isEmpty()) continue
 
                         val callItem = JSONObject().apply {
@@ -726,7 +733,7 @@ object OpenAIResponsesPayloadAdapter {
     }
 
     private fun convertFunctionCallItemToChatToolCall(item: JSONObject): JSONObject? {
-        val name = item.optString("name", "")
+        val name = item.optProviderToolName() ?: ""
         if (name.isEmpty()) return null
 
         val arguments = item.optString("arguments", "{}").ifBlank { "{}" }

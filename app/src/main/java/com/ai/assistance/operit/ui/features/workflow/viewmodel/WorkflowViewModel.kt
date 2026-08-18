@@ -10,6 +10,8 @@ import androidx.lifecycle.viewModelScope
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.core.workflow.NodeExecutionState
+import com.ai.assistance.operit.core.workflow.WorkflowAuthTokenManager
+import com.ai.assistance.operit.core.workflow.WorkflowIntentSecurity
 import com.ai.assistance.operit.data.model.ConditionNode
 import com.ai.assistance.operit.data.model.ConditionOperator
 import com.ai.assistance.operit.data.model.ExecuteNode
@@ -59,7 +61,7 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
     
     var error by mutableStateOf<String?>(null)
         private set
-    
+
     var currentWorkflow by mutableStateOf<Workflow?>(null)
         private set
 
@@ -119,11 +121,13 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
             error = null
 
             val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-            val workflow = buildIntentChatBroadcastTemplateWorkflow(
-                context = context,
-                name = context.getString(R.string.workflow_template_intent, time),
-                description = ""
-            )
+            val workflow = withContext(Dispatchers.IO) {
+                buildIntentChatBroadcastTemplateWorkflow(
+                    context = context,
+                    name = context.getString(R.string.workflow_template_intent, time),
+                    description = ""
+                )
+            }
 
             repository.createWorkflow(workflow).fold(
                 onSuccess = {
@@ -393,6 +397,7 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun buildIntentChatBroadcastTemplateWorkflow(context: Context, name: String, description: String): Workflow {
+        val workflowAuthTokenManager = WorkflowAuthTokenManager(context)
         val triggerId = UUID.randomUUID().toString()
         val startId = UUID.randomUUID().toString()
         val createChatId = UUID.randomUUID().toString()
@@ -407,7 +412,8 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
             name = context.getString(R.string.workflow_trigger_intent),
             triggerType = "intent",
             triggerConfig = mapOf(
-                "action" to "com.ai.assistance.operit.TRIGGER_WORKFLOW"
+                WorkflowIntentSecurity.CONFIG_ACTION to WorkflowIntentSecurity.ACTION_TRIGGER_WORKFLOW,
+                WorkflowIntentSecurity.CONFIG_AUTH_TOKEN to workflowAuthTokenManager.newAuthToken()
             ),
             position = templateNodePosition(0)
         )
@@ -1093,7 +1099,7 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             error = null
 
-            repository.setWorkflowEnabled(workflowId, enabled).fold(
+            repository.setWorkflowEnabled(previousWorkflow, enabled).fold(
                 onSuccess = { savedWorkflow ->
                     replaceWorkflowInState(savedWorkflow)
                     onSuccess()
@@ -1490,7 +1496,9 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
     fun scheduleWorkflow(workflowId: String, onSuccess: () -> Unit = {}, onFailure: (String) -> Unit = {}) {
         viewModelScope.launch {
             try {
-                val success = repository.scheduleWorkflow(workflowId)
+                val success = withContext(Dispatchers.IO) {
+                    repository.scheduleWorkflow(workflowId)
+                }
                 if (success) {
                     loadWorkflows()
                     onSuccess()
@@ -1509,7 +1517,9 @@ class WorkflowViewModel(application: Application) : AndroidViewModel(application
     fun unscheduleWorkflow(workflowId: String, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
             try {
-                repository.unscheduleWorkflow(workflowId)
+                withContext(Dispatchers.IO) {
+                    repository.unscheduleWorkflow(workflowId)
+                }
                 loadWorkflows()
                 onSuccess()
             } catch (e: Exception) {

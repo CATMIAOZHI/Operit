@@ -30,6 +30,23 @@ import org.json.JSONObject
 import org.json.JSONArray
 
 /**
+ * 选择桥接器通信端口：优先本地直连端口（[MCPBridge.BRIDGE_PORT]），
+ * 其次 SSH 转发端口（[MCPBridge.CLIENT_PORT]）；两者都无监听时返回 null，
+ * 表示桥接器当前未运行，调用方应避免对不存在的监听端口做长时间连接等待。
+ */
+internal fun selectBridgePort(
+    primaryAvailable: Lazy<Boolean>,
+    fallbackAvailable: Lazy<Boolean>,
+    primaryPort: Int,
+    fallbackPort: Int,
+): Int? = when {
+    primaryAvailable.value -> primaryPort
+    // 主端口可用时不探测备用端口（短路，避免无谓的连接探测）。
+    fallbackAvailable.value -> fallbackPort
+    else -> null
+}
+
+/**
  * MCPBridge - 用于与TCP桥接器通信的插件类 支持以下命令:
  * - spawn: 启动新的MCP服务
  * - shutdown: 关闭当前MCP服务
@@ -50,6 +67,7 @@ class MCPBridge private constructor(private val context: Context) {
         private const val START_COMMAND_THROTTLE_MS = 4000L
         private const val COMMAND_CONNECTION_KEEP_MS = 3500L
         private const val DETECT_PORT_CACHE_MS = 3500L
+        private const val BRIDGE_DOWN_PROBE_CACHE_MS = 1500L
         private var appContext: Context? = null
 
         private val startBridgeMutex = Mutex()
@@ -86,6 +104,10 @@ class MCPBridge private constructor(private val context: Context) {
         @Volatile
         private var cachedDetectedPortAtMs: Long = 0L
 
+        /** 上次探测“两个端口均无监听”的时间戳，用于短负缓存（见 [detectPort]）。 */
+        @Volatile
+        private var bridgeDownProbeAtMs: Long = 0L
+
         @Volatile
         private var startBridgeDeferred: CompletableDeferred<Boolean>? = null
 
@@ -106,13 +128,18 @@ class MCPBridge private constructor(private val context: Context) {
         
         /**
          * 智能检测可用端口
-         * 优先尝试 8752（本地直连），失败后尝试 8751（SSH转发）
+         * 优先尝试 8752（本地直连），失败后尝试 8751（SSH转发）；
+         * 两个端口都无监听时返回 null。正值按 [DETECT_PORT_CACHE_MS] 缓存，
+         * 负值按 [BRIDGE_DOWN_PROBE_CACHE_MS] 短缓存（[startBridge] 启动前会主动失效）。
          */
-        private suspend fun detectPort(): Int = withContext(Dispatchers.IO) {
+        private suspend fun detectPort(): Int? = withContext(Dispatchers.IO) {
             val nowMs = System.currentTimeMillis()
             val cached = cachedDetectedPort
             if (cached != null && nowMs - cachedDetectedPortAtMs <= DETECT_PORT_CACHE_MS) {
                 return@withContext cached
+            }
+            if (nowMs - bridgeDownProbeAtMs <= BRIDGE_DOWN_PROBE_CACHE_MS) {
+                return@withContext null
             }
 
             return@withContext detectPortMutex.withLock {
@@ -121,22 +148,54 @@ class MCPBridge private constructor(private val context: Context) {
                 if (lockCached != null && lockNowMs - cachedDetectedPortAtMs <= DETECT_PORT_CACHE_MS) {
                     return@withLock lockCached
                 }
+                if (lockNowMs - bridgeDownProbeAtMs <= BRIDGE_DOWN_PROBE_CACHE_MS) {
+                    return@withLock null
+                }
 
-                val detectedPort =
-                    if (isPortAvailable(DEFAULT_HOST, BRIDGE_PORT)) {
-                        AppLogger.d(TAG, "检测到本地环境，使用端口 $BRIDGE_PORT")
-                        BRIDGE_PORT
-                    } else {
-                        AppLogger.d(TAG, "本地连接失败，尝试SSH转发端口 $CLIENT_PORT")
-                        CLIENT_PORT
-                    }
-
-                cachedDetectedPort = detectedPort
-                cachedDetectedPortAtMs = lockNowMs
+                val detectedPort = selectBridgePort(
+                    primaryAvailable = lazy { isPortAvailable(DEFAULT_HOST, BRIDGE_PORT) },
+                    fallbackAvailable = lazy { isPortAvailable(DEFAULT_HOST, CLIENT_PORT) },
+                    primaryPort = BRIDGE_PORT,
+                    fallbackPort = CLIENT_PORT,
+                )
+                if (detectedPort != null) {
+                    AppLogger.d(TAG, "检测到桥接器监听端口 $detectedPort")
+                    cachedDetectedPort = detectedPort
+                    cachedDetectedPortAtMs = lockNowMs
+                } else {
+                    AppLogger.d(TAG, "未检测到桥接器监听端口（$BRIDGE_PORT 与 $CLIENT_PORT 均无监听）")
+                    bridgeDownProbeAtMs = lockNowMs
+                }
                 return@withLock detectedPort
             }
         }
-        
+
+        /**
+        * 桥接器是否至少有端口在监听：不做任何缓存、绕过 mutex 直接探测，
+        * 用于判断“是否存在监听进程”，与命令响应为 null 的原因解耦。
+        */
+        suspend fun isBridgeListenerPresent(): Boolean = withContext(Dispatchers.IO) {
+            isPortAvailable(DEFAULT_HOST, BRIDGE_PORT) ||
+               isPortAvailable(DEFAULT_HOST, CLIENT_PORT)
+        }
+
+        /** 在 [detectPortMutex] 保护下清空端口探测缓存（正/负）。 */
+        private suspend fun invalidateBridgePortCache() {
+            detectPortMutex.withLock {
+                cachedDetectedPort = null
+                cachedDetectedPortAtMs = 0L
+                bridgeDownProbeAtMs = 0L
+            }
+        }
+
+        /** 在 [detectPortMutex] 保护下发布本次启动成功的端口并清除负缓存。 */
+        private suspend fun publishBridgePort(port: Int) {
+            detectPortMutex.withLock {
+                cachedDetectedPort = port
+                cachedDetectedPortAtMs = System.currentTimeMillis()
+                bridgeDownProbeAtMs = 0L
+            }
+        }
         /**
          * 检查端口是否可用（快速检测，无日志污染）
          */
@@ -327,14 +386,13 @@ class MCPBridge private constructor(private val context: Context) {
                         return@withContext deferred.await()
                     }
 
-                    try {
-                        closeCommandConnectionLocked()
-                        PortProcessKiller.killListeners(port)
-                        cachedDetectedPort = null
-                        cachedDetectedPortAtMs = 0L
+                   try {
+                       closeCommandConnectionLocked()
+                       PortProcessKiller.killListeners(port)
+                       invalidateBridgePortCache()
 
-                        // 获取终端管理器
-                        val terminal = Terminal.getInstance(ctx)
+                       // 获取终端管理器
+                       val terminal = Terminal.getInstance(ctx)
                         
                         // 确保已连接到终端服务
                         if (!terminal.isConnected()) {
@@ -393,7 +451,9 @@ class MCPBridge private constructor(private val context: Context) {
                         // 验证桥接器是否成功启动 - 尝试三次
                         var isRunning = false
                         for (i in 1..3) {
-                            val checkResult = getInstance(ctx).listMcpServices()
+                            // 直接探测本次启动的端口，不经过端口探测缓存：避免负缓存掩盖
+                            // 延迟启动的桥接器，也避免 8751 的正缓存遮蔽稍后就绪的 8752。
+                            val checkResult = getInstance(ctx).listMcpServicesOnPort(port)
                             if (checkResult != null && checkResult.optBoolean("success", false)) {
                                 AppLogger.d(TAG, "桥接器成功启动，list响应: $checkResult")
                                 isRunning = true
@@ -404,11 +464,16 @@ class MCPBridge private constructor(private val context: Context) {
                         }
 
                         // 如果三次尝试后仍然无法ping通，检查日志
-                        if (!isRunning) {
-                            AppLogger.e(TAG, "桥接器可能未成功启动。请检查终端会话 'mcp-bridge-daemon' 的输出。")
-                        }
+                       if (!isRunning) {
+                           AppLogger.e(TAG, "桥接器可能未成功启动。请检查终端会话 'mcp-bridge-daemon' 的输出。")
+                       }
+                        if (isRunning) {
+                            // 验证成功后把本次端口发布到探测缓存，避免随后 listMcpServices()
+                            // 命中启动期间的旧缓存（如 8751 正缓存或负缓存）。
+                            publishBridgePort(port)
+                            }
 
-                        deferred.complete(isRunning)
+                       deferred.complete(isRunning)
                         return@withContext isRunning
                     } catch (e: Exception) {
                         AppLogger.e(TAG, "启动桥接器异常", e)
@@ -497,6 +562,15 @@ class MCPBridge private constructor(private val context: Context) {
                     try {
                         // 自动检测端口（如果未指定）
                         val actualPort = port ?: detectPort()
+                        if (actualPort == null) {
+                            // 两个已知端口都无监听：桥接器未运行，直接返回，
+                            // 避免对不存在的监听端口做最长 5 秒的连接超时。
+                            AppLogger.d(
+                                TAG,
+                                "桥接器未运行，跳过命令: ${command.optString("command", "unknown")}",
+                            )
+                            return@withContext null
+                        }
                         val nowMs = System.currentTimeMillis()
                         
                         // Extract command details for better logging
@@ -657,6 +731,11 @@ class MCPBridge private constructor(private val context: Context) {
     // 列出所有注册的MCP服务或查询单个服务
     suspend fun listMcpServices(serviceName: String? = null): JSONObject? {
         return sendCommand(MCPBridgeClient.buildListServicesCommand(serviceName))
+    }
+
+    /** 向指定端口发送 list 命令：用于 [startBridge] 启动验证，绕过端口探测缓存。 */
+    suspend fun listMcpServicesOnPort(port: Int): JSONObject? {
+        return sendCommand(MCPBridgeClient.buildListServicesCommand(), port = port)
     }
 
     // 启动MCP服务

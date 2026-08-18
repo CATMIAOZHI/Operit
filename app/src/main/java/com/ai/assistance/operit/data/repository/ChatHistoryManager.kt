@@ -20,6 +20,8 @@ import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.ChatMessageLocatorPreview
+import com.ai.assistance.operit.data.model.ChatTodoPriority
+import com.ai.assistance.operit.data.model.ChatTodoStatus
 import com.ai.assistance.operit.data.model.CharacterCardChatStats
 import com.ai.assistance.operit.data.model.CharacterGroupChatStats
 import com.ai.assistance.operit.data.model.MessageEntity
@@ -30,6 +32,7 @@ import com.ai.assistance.operit.data.model.OperitArchivedFolder
 import com.ai.assistance.operit.data.model.OperitArchivedMessage
 import com.ai.assistance.operit.data.model.OperitArchivedMessageVariant
 import com.ai.assistance.operit.data.model.OperitArchivedSubagentRun
+import com.ai.assistance.operit.data.model.OperitArchivedTodo
 import com.ai.assistance.operit.data.model.OperitChatArchive
 import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.model.WorkspaceRenameResult
@@ -104,6 +107,9 @@ internal val OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS =
         "archivedAt",
     )
 
+internal val OPERIT_ARCHIVE_CHAT_TODO_SNAPSHOT_COLUMNS =
+    listOf("chatId", "position", "content", "status", "priority")
+
 internal fun remapArchivedParentToolCallIds(
     chat: OperitArchivedChat,
     callIdRemap: Map<String, String>,
@@ -168,6 +174,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private val chatBranchRepository = ChatBranchRepository(database)
     private val messageDao = database.messageDao()
     private val messageVariantDao = database.messageVariantDao()
+    private val chatTodoDao = database.chatTodoDao()
     private val subagentRunDao = database.subagentRunDao()
     private val subagentRunRepository = SubagentRunRepository.getInstance(context)
     private val operitArchiveExportMutex = Mutex()
@@ -210,6 +217,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         val parentChatId: String?,
         val chatKind: String?,
         val hasChatKindField: Boolean,
+        val hasTodosField: Boolean,
         val isFavorite: Boolean?,
     )
 
@@ -540,11 +548,35 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     variants = messageVariants.map(OperitArchivedMessageVariant::fromEntity),
                 )
             }
+        val archivedTodos =
+            snapshot.rawQuery(
+                "SELECT content, status, priority FROM chat_todos " +
+                    "WHERE chatId = ? ORDER BY position",
+                arrayOf(chatEntity.id),
+            ).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) {
+                        add(
+                            OperitArchivedTodo(
+                                content = cursor.getString(cursor.getColumnIndexOrThrow("content")),
+                                status =
+                                    ChatTodoStatus.valueOf(
+                                        cursor.getString(cursor.getColumnIndexOrThrow("status"))
+                                    ),
+                                priority =
+                                    ChatTodoPriority.valueOf(
+                                        cursor.getString(cursor.getColumnIndexOrThrow("priority"))
+                                    ),
+                            )
+                        )
+                    }
+                }
+            }
         val history =
             chatEntity.toChatHistory(emptyList()).copy(
                 folderId = normalizeChatFolderId(chatEntity.folderId),
             )
-        return OperitArchivedChat.fromChatHistory(history, archivedMessages)
+        return OperitArchivedChat.fromChatHistory(history, archivedMessages, archivedTodos)
     }
 
     private fun createOperitArchiveSqliteSnapshot(snapshotFile: File) {
@@ -602,11 +634,21 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         """.trimIndent(),
                     )
                     sqliteDb.execSQL(
+                        """
+                        CREATE TABLE chat_todos AS
+                        SELECT ${OPERIT_ARCHIVE_CHAT_TODO_SNAPSHOT_COLUMNS.joinToString()}
+                        FROM operit_export_source.chat_todos
+                        """.trimIndent(),
+                    )
+                    sqliteDb.execSQL(
                         "CREATE INDEX messages_export_order ON messages(chatId, orderIndex)"
                     )
                     sqliteDb.execSQL(
                         "CREATE INDEX variants_export_order ON " +
                             "message_variants(chatId, messageTimestamp, variantIndex)"
+                    )
+                    sqliteDb.execSQL(
+                        "CREATE INDEX todos_export_order ON chat_todos(chatId, position)"
                     )
                     sqliteDb.setTransactionSuccessful()
                 } finally {
@@ -1101,7 +1143,8 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return importedFolderCount
     }
 
-    private fun validateV5Archive(archive: ScannedArchive): List<OperitArchivedSubagentRun> {
+    private fun validateGraphArchive(archive: ScannedArchive): List<OperitArchivedSubagentRun> {
+        val formatVersion = archive.formatVersion
         val chatsById = archive.chats.associateBy { it.id }
         archive.chats.forEach { chat ->
             val kind =
@@ -1110,17 +1153,17 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         runCatching { ChatKind.valueOf(value) }.getOrNull()
                     }
                 ) {
-                    "Archive v5 chat ${chat.id} has an invalid chatKind"
+                    "Archive v$formatVersion chat ${chat.id} has an invalid chatKind"
                 }
             when (kind) {
                 ChatKind.NORMAL ->
                     require(chat.parentChatId == null) {
-                        "Archive v5 NORMAL chat ${chat.id} cannot have a parent"
+                        "Archive v$formatVersion NORMAL chat ${chat.id} cannot have a parent"
                     }
                 ChatKind.BRANCH,
                 ChatKind.SUBAGENT -> {
                     require(chat.parentChatId != null && chat.parentChatId in chatsById) {
-                        "Archive v5 ${kind.name} chat ${chat.id} has an invalid parent"
+                        "Archive v$formatVersion ${kind.name} chat ${chat.id} has an invalid parent"
                     }
                 }
             }
@@ -1128,37 +1171,37 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
         val runIds = archive.subagentRuns.map { it.id }
         require(runIds.all { it.isNotBlank() } && runIds.distinct().size == runIds.size) {
-            "Archive v5 contains blank or duplicate task IDs"
+            "Archive v$formatVersion contains blank or duplicate task IDs"
         }
         val childIds = archive.subagentRuns.map { it.childChatId }
         require(childIds.distinct().size == childIds.size) {
-            "Archive v5 contains multiple runs for one child chat"
+            "Archive v$formatVersion contains multiple runs for one child chat"
         }
         val parentCallIds =
             archive.subagentRuns.mapNotNull { run ->
                 run.parentToolCallId?.let { callId -> run.parentChatId to callId }
             }
         require(parentCallIds.distinct().size == parentCallIds.size) {
-            "Archive v5 contains duplicate parent tool call IDs within one parent chat"
+            "Archive v$formatVersion contains duplicate parent tool call IDs within one parent chat"
         }
         archive.subagentRuns.forEach { run ->
             val child =
                 requireNotNull(chatsById[run.childChatId]) {
-                    "Archive v5 run ${run.id} references a missing child chat"
+                    "Archive v$formatVersion run ${run.id} references a missing child chat"
                 }
             require(run.parentChatId in chatsById) {
-                "Archive v5 run ${run.id} references a missing parent chat"
+                "Archive v$formatVersion run ${run.id} references a missing parent chat"
             }
             require(
                 child.chatKind == ChatKind.SUBAGENT.name &&
                     child.parentChatId == run.parentChatId
             ) {
-                "Archive v5 run ${run.id} does not match its child relationship"
+                "Archive v$formatVersion run ${run.id} does not match its child relationship"
             }
             require(
                 runCatching { SubagentRunStatus.valueOf(run.status) }.isSuccess
             ) {
-                "Archive v5 run ${run.id} has an invalid status"
+                "Archive v$formatVersion run ${run.id} has an invalid status"
             }
         }
 
@@ -1167,18 +1210,18 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 .filterTo(linkedSetOf()) { it.chatKind == ChatKind.SUBAGENT.name }
                 .mapTo(linkedSetOf()) { it.id }
         require(childIds.toSet() == subagentChildIds) {
-            "Archive v5 contains a Subagent child without exactly one run record"
+            "Archive v$formatVersion contains a Subagent child without exactly one run record"
         }
         return archive.subagentRuns
     }
 
-    private suspend fun importV5Archive(
+    private suspend fun importGraphArchive(
         archive: ScannedArchive,
         archiveFile: File,
         existingIds: MutableSet<String>,
         counters: ImportCounters,
     ): Int {
-        val completeRuns = validateV5Archive(archive)
+        val completeRuns = validateGraphArchive(archive)
         val staged = stageV4Archive(archive)
         val localChatIds = chatDao.getAllChatsDirectly().mapTo(hashSetOf()) { it.id }
         val allocatedChatIds =
@@ -1318,7 +1361,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
             archiveFile = archiveFile,
             existingIds = existingIds,
             counters = counters,
-            formatVersion = 5,
+            formatVersion = archive.formatVersion,
             chatTransform = ::remapChat,
             afterChatsInTransaction = {
                 remappedRuns.forEach { run -> subagentRunDao.insert(run.toEntity()) }
@@ -1391,6 +1434,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                                     )
                                 }
                             }
+                            validateChatTodoSnapshot(
+                                chat.todos.map(OperitArchivedTodo::toChatTodo)
+                            )
                             chats +=
                                 ArchivedChatMetadata(
                                     id = chat.id,
@@ -1408,6 +1454,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                                     parentChatId = chat.parentChatId,
                                     chatKind = chat.chatKind,
                                     hasChatKindField = "chatKind" in fields,
+                                    hasTodosField = "todos" in fields,
                                     isFavorite = chat.isFavorite,
                                 )
                         }
@@ -1458,10 +1505,17 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 "Archive v$resolvedFormatVersion contains a chat without folderId"
             }
         }
-        if (resolvedFormatVersion == 5) {
-            require(subagentRunsPresent) { "Archive v5 is missing subagentRuns" }
+        if (resolvedFormatVersion >= 5) {
+            require(subagentRunsPresent) {
+                "Archive v$resolvedFormatVersion is missing subagentRuns"
+            }
             require(chats.all { it.hasChatKindField }) {
-                "Archive v5 contains a chat without chatKind"
+                "Archive v$resolvedFormatVersion contains a chat without chatKind"
+            }
+        }
+        if (resolvedFormatVersion >= 6) {
+            require(chats.all { it.hasTodosField }) {
+                "Archive v$resolvedFormatVersion contains a chat without todos"
             }
         }
         return ScannedArchive(
@@ -1582,6 +1636,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     saveChatHistoryInternal(
                         history = normalizedHistory,
                         preserveStructure = false,
+                        clearTodosAfterTranscriptReplace = true,
                     )
                 }
                 if (importedIndex % 20 == 0) {
@@ -1613,9 +1668,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
             when (rootToken) {
                 JsonToken.BEGIN_OBJECT -> {
                     val archive = scanOperitArchive(importFile)
-                    if (archive.formatVersion == 5) {
+                    if (archive.formatVersion >= 5) {
                         counters.folderCount =
-                            importV5Archive(
+                            importGraphArchive(
                                 archive = archive,
                                 archiveFile = importFile,
                                 existingIds = existingIds,
@@ -2139,6 +2194,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         archiveFormatVersion: Int? = null,
         archivedFavorite: Boolean? = null,
         preserveStructure: Boolean = true,
+        clearTodosAfterTranscriptReplace: Boolean = false,
     ) {
         chatMutex(history.id).withLock {
             database.withTransaction {
@@ -2149,6 +2205,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     archivedFavorite = archivedFavorite,
                     preserveStructure = preserveStructure,
                 )
+                if (clearTodosAfterTranscriptReplace) {
+                    chatTodoDao.deleteByChatId(history.id)
+                }
             }
         }
         releaseLegacyFolderReservations(listOf(history.folderId))
@@ -2278,6 +2337,18 @@ class ChatHistoryManager private constructor(private val context: Context) {
             archiveFormatVersion = formatVersion,
             archivedFavorite = history.isFavorite,
         )
+        when (ChatArchiveImportPolicy.todoImportMode(formatVersion)) {
+            ChatArchiveImportPolicy.TodoImportMode.CLEAR ->
+                chatTodoDao.deleteByChatId(history.id)
+            ChatArchiveImportPolicy.TodoImportMode.RESTORE -> {
+                val todos = history.todos.map(OperitArchivedTodo::toChatTodo)
+                validateChatTodoSnapshot(todos)
+                chatTodoDao.replaceForChat(
+                    history.id,
+                    history.todos.mapIndexed { index, todo -> todo.toEntity(history.id, index) },
+                )
+            }
+        }
     }
 
     /** 更新聊天锁定状态 */
@@ -2519,6 +2590,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 database.withTransaction {
                     messageVariantDao.deleteVariantsForMessage(chatId, timestamp)
                     messageDao.deleteMessageByTimestamp(chatId, timestamp)
+                    chatTodoDao.deleteByChatId(chatId)
                     chatDao.recalculateLastMessageAt(chatId)
 
                     // Update chat metadata
@@ -2631,6 +2703,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         )
                     }
 
+                    chatTodoDao.deleteByChatId(chatId)
                     chatDao.getChatById(chatId)?.let { chat ->
                         chatDao.updateChatMetadata(
                             chatId = chatId,
@@ -2655,6 +2728,14 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     // 更新现有消息
     suspend fun updateMessage(chatId: String, message: ChatMessage) {
+        updateMessage(chatId, message, clearTodosAfterUpdate = false)
+    }
+
+    suspend fun updateMessage(
+        chatId: String,
+        message: ChatMessage,
+        clearTodosAfterUpdate: Boolean,
+    ) {
         chatMutex(chatId).withLock {
             try {
                 database.withTransaction {
@@ -2684,6 +2765,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                                 message.timestamp,
                                 message.selectedVariantIndex,
                             )
+                            if (clearTodosAfterUpdate) {
+                                chatTodoDao.deleteByChatId(chatId)
+                            }
                             chatDao.getChatById(chatId)?.let { chat ->
                                 chatDao.updateChatMetadata(
                                     chatId = chatId,
@@ -2742,6 +2826,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                                 currentWindowSize = chat.currentWindowSize
                             )
                         }
+                    }
+                    if (clearTodosAfterUpdate) {
+                        chatTodoDao.deleteByChatId(chatId)
                     }
                 }
             } catch (e: Exception) {
@@ -2825,6 +2912,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         )
                 }
                 messageDao.updateSelectedVariantIndex(chatId, messageTimestamp, selectedVariantIndex)
+                chatTodoDao.deleteByChatId(chatId)
+            }
+        }
+    }
+
+    suspend fun clearTodoSnapshot(chatId: String) {
+        chatMutex(chatId).withLock {
+            database.withTransaction {
+                chatTodoDao.deleteByChatId(chatId)
             }
         }
     }
@@ -2845,6 +2941,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 database.withTransaction {
                     messageVariantDao.deleteVariantsFrom(chatId, timestamp)
                     messageDao.deleteMessagesFrom(chatId, timestamp)
+                    chatTodoDao.deleteByChatId(chatId)
                     chatDao.recalculateLastMessageAt(chatId)
                     // 更新聊天元数据时间戳
                     chatDao.getChatById(chatId)?.let { chat ->
@@ -2881,6 +2978,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 database.withTransaction {
                     messageVariantDao.deleteAllVariantsForChat(chatId)
                     messageDao.deleteAllMessagesForChat(chatId)
+                    chatTodoDao.deleteByChatId(chatId)
                     chatDao.recalculateLastMessageAt(chatId)
                     // 更新聊天元数据
                     chatDao.getChatById(chatId)?.let { chat ->
@@ -3736,6 +3834,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     saveChatHistoryInternal(
                         history = normalizedHistory,
                         preserveStructure = false,
+                        clearTodosAfterTranscriptReplace = true,
                     )
                 }
 

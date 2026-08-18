@@ -3,7 +3,12 @@ package com.ai.assistance.operit.data.repository
 import com.ai.assistance.operit.data.model.OperitChatArchive
 
 internal object ChatArchiveImportPolicy {
-    private val supportedVersions = setOf(2, 3, 4, 5)
+    enum class TodoImportMode {
+        CLEAR,
+        RESTORE,
+    }
+
+    private val supportedVersions = setOf(2, 3, 4, 5, 6)
 
     fun validateHeader(archiveType: String, formatVersion: Int) {
         require(archiveType == OperitChatArchive.ARCHIVE_TYPE) {
@@ -21,10 +26,17 @@ internal object ChatArchiveImportPolicy {
     ): Boolean {
         return when (formatVersion) {
             2 -> localFavorite
-            3, 4, 5 -> requireNotNull(archivedFavorite) {
+            3, 4, 5, 6 -> requireNotNull(archivedFavorite) {
                 "Archive v$formatVersion chat is missing isFavorite"
             }
             else -> throw IllegalArgumentException("Unsupported archive version: $formatVersion")
         }
+    }
+
+    fun todoImportMode(formatVersion: Int): TodoImportMode {
+        require(formatVersion in supportedVersions) {
+            "Unsupported archive version: $formatVersion"
+        }
+        return if (formatVersion >= 6) TodoImportMode.RESTORE else TodoImportMode.CLEAR
     }
 }

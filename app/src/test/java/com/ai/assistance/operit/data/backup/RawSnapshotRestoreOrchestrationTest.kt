@@ -90,6 +90,16 @@ class RawSnapshotRestoreOrchestrationTest {
         // P1 终审：Windows JVM 测试统一注入目录 fsync 成功（生产 Android/Linux 支持目录
         // fd fsync；本类不测试 UNSUPPORTED 平台行为，真实探测在 Windows 会恒返回 UNSUPPORTED）
         TokenStatSpool.dirSyncForTest = { TokenStatSpool.DirSyncResult.OK }
+        // JVM 测试不加载 android.util.AtomicFile 真实实现：用临时文件推进 generation，
+        // 保留恢复提交阶段 advance 的副作用语义（文件存在且值递增）。
+        RawSnapshotBackupManager.restoreGenerationAdvancerForTest = { ctx ->
+            val file = File(ctx.noBackupFilesDir, "workflow_auth_restore_generation_v1")
+            file.parentFile?.mkdirs()
+            val current = file.takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull() ?: 0L
+            val next = current + 1L
+            file.writeText(next.toString())
+            next
+        }
         Dispatchers.setMain(UnconfinedTestDispatcher())
     }
 
@@ -103,6 +113,7 @@ class RawSnapshotRestoreOrchestrationTest {
         TokenStatSpool.rejectDrainScheduleForTest = false
         TokenStatSpool.dirSyncForTest = null
         TokenStatSpool.clearPendingStateForTest()
+        RawSnapshotBackupManager.restoreGenerationAdvancerForTest = null
         Dispatchers.resetMain()
         resetProcessRestartRequired()
     }

@@ -4,6 +4,7 @@ import com.ai.assistance.operit.util.LocalDateTimeSerializer
 import java.util.UUID
 import java.time.LocalDateTime
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 data class ChatHistory(
@@ -31,5 +32,9 @@ data class ChatHistory(
     val pinned: Boolean = false,
     val isFavorite: Boolean = false,
     @Serializable(with = LocalDateTimeSerializer::class)
-    val lastMessageAt: LocalDateTime? = null
+    val lastMessageAt: LocalDateTime? = null,
+    /** Room 运行时保留的绝对时间；不进入归档格式。 */
+    @Transient val createdAtEpochMillis: Long? = null,
+    /** Room 运行时保留的绝对时间；不进入归档格式。 */
+    @Transient val lastMessageAtEpochMillis: Long? = null,
 )

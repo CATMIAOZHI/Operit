@@ -111,6 +111,9 @@ import androidx.compose.ui.window.PopupProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.library.MemoryAutoSaveScheduler
+import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSemantics
+import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSummary
+import com.ai.assistance.operit.api.chat.llmprovider.ClaudeThinkingFormatState
 import com.ai.assistance.operit.core.tools.ToolProgressBus
 import com.ai.assistance.operit.data.model.AttachmentInfo
 import com.ai.assistance.operit.data.model.ChatMessage
@@ -119,6 +122,7 @@ import com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.ModelConfigSummary
+import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.FavoriteModelRef
 import com.ai.assistance.operit.data.model.MemorySpace
 import com.ai.assistance.operit.data.model.getModelByIndex
@@ -137,6 +141,7 @@ import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.MemoryAutoSaveCandidateRepository
+import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import com.ai.assistance.operit.ui.common.icons.MaterialIconNameResolver
 import com.ai.assistance.operit.ui.common.animations.SimpleAnimatedVisibility
 import com.ai.assistance.operit.ui.features.chat.components.AttachmentChip
@@ -152,7 +157,8 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.P
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.PendingQueueMessageItem
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ToolPromptManagerDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberMentionVisualTransformation
-import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabel
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingRequestSummaryLabel
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabelRes
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.floating.FloatingMode
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
@@ -367,6 +373,10 @@ fun AgentChatInputSection(
     val configMappingWithIndex by
         functionalConfigManager.functionConfigMappingWithIndexFlow.collectAsState(initial = emptyMap())
     var configSummaries by remember { mutableStateOf<List<ModelConfigSummary>>(emptyList()) }
+    var currentModelParameters by remember {
+        mutableStateOf<List<ModelParameter<*>>>(emptyList())
+    }
+    var currentIsToolPkgProvider by remember { mutableStateOf(false) }
     val favoriteModels by modelConfigManager.favoriteModelsFlow.collectAsState(initial = emptyList())
     val collapsedConfigIds by modelConfigManager.collapsedConfigIdsFlow.collectAsState(initial = emptySet())
     val validFavorites = remember(favoriteModels, configSummaries) {
@@ -402,14 +412,23 @@ fun AgentChatInputSection(
             profileIds.map { profileId -> userPreferencesManager.getMemorySpaceFlow(profileId).first() }
     }
 
-    LaunchedEffect(showModelSelectorPopup.value) {
+    LaunchedEffect(showModelSelectorPopup.value, effectiveConfigMapping.configId) {
         if (showModelSelectorPopup.value) {
             configSummaries = modelConfigManager.getAllConfigSummaries()
+            currentModelParameters =
+                modelConfigManager.getModelParametersForConfig(effectiveConfigMapping.configId)
+            currentIsToolPkgProvider =
+                configSummaries
+                    .find { it.id == effectiveConfigMapping.configId }
+                    ?.apiProviderTypeId
+                    ?.let(ToolPkgAiProviderRegistry::get) != null
         }
     }
 
+    val activeConfigSummary =
+        configSummaries.find { it.id == effectiveConfigMapping.configId }
     val mappedModelName =
-        configSummaries.find { it.id == effectiveConfigMapping.configId }?.let { config ->
+        activeConfigSummary?.let { config ->
             val validIndex = getValidModelIndex(config.modelName, effectiveConfigMapping.modelIndex)
             getModelByIndex(config.modelName, validIndex)
         }
@@ -418,6 +437,31 @@ fun AgentChatInputSection(
             mappedModelName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.not_selected)
         } else {
             mappedModelName?.takeIf { it.isNotBlank() } ?: currentModelName
+        }
+    val claudeThinkingFormats by ClaudeThinkingFormatState.formats.collectAsState()
+    val thinkingRequestSummary =
+        remember(
+            activeConfigSummary,
+            mappedModelName,
+            thinkingQualityLevel,
+            enableThinkingMode,
+            currentModelParameters,
+            currentIsToolPkgProvider,
+            claudeThinkingFormats,
+        ) {
+            activeConfigSummary?.let { config ->
+                ThinkingRequestSemantics.resolve(
+                    providerType = config.apiProviderType,
+                    providerTypeId = config.apiProviderTypeId,
+                    isToolPkgProvider = currentIsToolPkgProvider,
+                    configId = config.id,
+                    apiEndpoint = config.apiEndpoint,
+                    modelName = mappedModelName.orEmpty(),
+                    qualityLevel = thinkingQualityLevel,
+                    modelParameters = currentModelParameters,
+                    enableThinking = enableThinkingMode,
+                )
+            } ?: ThinkingRequestSummary.NotSent
         }
 
     val currentWindowSize by actualViewModel.currentWindowSize.collectAsState()
@@ -1414,6 +1458,7 @@ fun AgentChatInputSection(
                 enableThinkingMode = enableThinkingMode,
                 onToggleThinkingMode = onToggleThinkingMode,
                 thinkingQualityLevel = thinkingQualityLevel,
+                thinkingRequestSummary = thinkingRequestSummary,
                 onThinkingQualityLevelChange = onThinkingQualityLevelChange,
                 enableMaxContextMode = enableMaxContextMode,
                 onToggleEnableMaxContextMode = onToggleEnableMaxContextMode,
@@ -1508,6 +1553,7 @@ private fun AgentModelSelectorPopup(
     enableThinkingMode: Boolean,
     onToggleThinkingMode: () -> Unit,
     thinkingQualityLevel: Int,
+    thinkingRequestSummary: ThinkingRequestSummary,
     onThinkingQualityLevelChange: (Int) -> Unit,
     enableMaxContextMode: Boolean,
     onToggleEnableMaxContextMode: () -> Unit,
@@ -1599,6 +1645,7 @@ private fun AgentModelSelectorPopup(
                         enableThinkingMode = enableThinkingMode,
                         onToggleThinkingMode = onToggleThinkingMode,
                         thinkingQualityLevel = thinkingQualityLevel,
+                        thinkingRequestSummary = thinkingRequestSummary,
                         maxThinkingQualityLevel = maxThinkingQualityLevel,
                         onThinkingQualityLevelChange = { level ->
                             onThinkingQualityLevelChange(
@@ -1710,6 +1757,7 @@ private fun AgentThinkingSettingsItem(
     enableThinkingMode: Boolean,
     onToggleThinkingMode: () -> Unit,
     thinkingQualityLevel: Int,
+    thinkingRequestSummary: ThinkingRequestSummary,
     maxThinkingQualityLevel: Int,
     onThinkingQualityLevelChange: (Int) -> Unit,
     thinkingSlotToggles: List<InputMenuToggleDefinition>,
@@ -1720,11 +1768,7 @@ private fun AgentThinkingSettingsItem(
     onThinkingQualityInfoClick: () -> Unit,
     onToggleInfoClick: (String, String) -> Unit,
 ) {
-    val thinkingTypeText =
-        when {
-            enableThinkingMode -> stringResource(R.string.thinking_type_mode)
-            else -> stringResource(R.string.thinking_type_off)
-        }
+    val thinkingTypeText = thinkingRequestSummaryLabel(thinkingRequestSummary)
 
     Row(
         modifier =
@@ -1861,11 +1905,13 @@ private fun AgentThinkingSliderSettingItem(
             )
             Spacer(modifier = Modifier.weight(1f))
             Text(
-                text = thinkingQualityLevelLabel(
-                    sliderValue.roundToInt().coerceIn(
-                        ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
-                        maxThinkingQualityLevel
-                    )
+                text = stringResource(
+                    thinkingQualityLevelLabelRes(
+                        sliderValue.roundToInt().coerceIn(
+                            ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
+                            maxThinkingQualityLevel,
+                        ),
+                    ),
                 ),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,

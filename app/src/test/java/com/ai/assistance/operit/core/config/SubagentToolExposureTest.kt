@@ -106,6 +106,47 @@ class SubagentToolExposureTest {
         assertEquals(englishParameters.map { it.type }, chineseParameters.map { it.type })
     }
 
+    @Test
+    fun todoIsMainOnlyAndUsesJsonStringSchema() {
+        val englishTodo =
+            SystemToolPrompts.getAIAllCategoriesEn()
+                .flatMap { it.tools }
+                .single { it.name == TODO_TOOL_NAME }
+        val chineseTodo =
+            SystemToolPrompts.getAIAllCategoriesCn()
+                .flatMap { it.tools }
+                .single { it.name == TODO_TOOL_NAME }
+
+        assertEquals(listOf("todos"), englishTodo.parametersStructured.orEmpty().map { it.name })
+        assertEquals(listOf("string"), englishTodo.parametersStructured.orEmpty().map { it.type })
+        assertEquals(
+            englishTodo.parametersStructured.orEmpty().map { it.type },
+            chineseTodo.parametersStructured.orEmpty().map { it.type },
+        )
+        assertEquals(
+            0,
+            SystemToolPrompts.getAIAllCategoriesEn(includeSubagentTools = false)
+                .flatMap { it.tools }
+                .count { it.name == TODO_TOOL_NAME },
+        )
+        assertEquals(
+            0,
+            SystemToolPrompts.getAIAllCategoriesCn(includeSubagentTools = false)
+                .flatMap { it.tools }
+                .count { it.name == TODO_TOOL_NAME },
+        )
+        assertEquals(
+            1,
+            SystemToolPrompts.getManageableToolPrompts(useEnglish = true)
+                .count { it.name == TODO_TOOL_NAME },
+        )
+        assertEquals(
+            1,
+            SystemToolPrompts.getManageableToolPrompts(useEnglish = false)
+                .count { it.name == TODO_TOOL_NAME },
+        )
+    }
+
     private fun assertTaskExactlyOnce(
         categories: List<com.ai.assistance.operit.data.model.SystemToolPromptCategory>,
     ) {
@@ -126,5 +167,6 @@ class SubagentToolExposureTest {
 
     private companion object {
         const val TASK_TOOL_NAME = "task"
+        const val TODO_TOOL_NAME = "todowrite"
     }
 }

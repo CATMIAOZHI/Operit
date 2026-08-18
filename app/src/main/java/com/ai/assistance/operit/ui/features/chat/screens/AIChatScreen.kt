@@ -1748,6 +1748,7 @@ private fun ChatInputBottomBar(
     onShowMemoryFolderDialog: () -> Unit,
     onRequestAutoScrollToBottom: () -> Unit,
 ) {
+    val todos by actualViewModel.currentTodos.collectAsState()
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
@@ -2069,8 +2070,11 @@ private fun ChatInputBottomBar(
         }
     }
 
-    if (inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT) {
-        AgentChatInputSection(
+    Column(modifier = Modifier.fillMaxWidth()) {
+        ChatTodoDock(chatId = currentChatId, todos = todos)
+
+        if (inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT) {
+            AgentChatInputSection(
                 actualViewModel = actualViewModel,
                 userMessage = userMessage,
                 onUserMessageChange = { value -> handleUserMessageChange(value) },
@@ -2158,9 +2162,9 @@ private fun ChatInputBottomBar(
                         sendQueuedItemNow(queueItem, true)
                     }
                 },
-        )
-    } else {
-        ClassicChatInputSection(
+            )
+        } else {
+            ClassicChatInputSection(
                 actualViewModel = actualViewModel,
                 userMessage = userMessage,
                 onUserMessageChange = { value -> handleUserMessageChange(value) },
@@ -2215,7 +2219,8 @@ private fun ChatInputBottomBar(
                         sendQueuedItemNow(queueItem, true)
                     }
                 },
-        )
+            )
+        }
     }
 }
 

@@ -62,9 +62,19 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.mcp.MCPLocalServer
 import com.ai.assistance.operit.data.mcp.MCPRepository
 import com.ai.assistance.operit.data.mcp.plugins.MCPStarter
+import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceConfig
+import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceManager
+import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceRepository
+import com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceState
 import com.ai.assistance.operit.ui.features.startup.components.SmoothLinearProgressIndicator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -80,6 +90,53 @@ enum class PluginStatus {
     SUCCESS, // 加载成功
     FAILED // 加载失败
 }
+
+private const val TERMINAL_SERVICE_ITEM_PREFIX = "terminal-service:"
+private const val TERMINAL_SERVICE_CONFIG_ERROR_ID = "terminal-service:config-error"
+private fun terminalServiceItemId(serviceId: String): String = "$TERMINAL_SERVICE_ITEM_PREFIX$serviceId"
+
+enum class PluginStartupScope {
+    APP_BOOT,
+    MCP_ONLY,
+}
+
+internal fun shouldStartTerminalServices(startupScope: PluginStartupScope): Boolean =
+    startupScope == PluginStartupScope.APP_BOOT
+
+private const val BASE_PLUGIN_LOADING_TIMEOUT_MS = 30_000L
+private const val TERMINAL_SESSION_INITIALIZATION_BUDGET_MS = 30_000L
+private const val TERMINAL_PROCESS_SHUTDOWN_BUDGET_MS = 3_000L
+private const val STARTUP_COMPLETION_GRACE_MS = 5_000L
+
+internal fun combinedStartupLoadingTimeoutMs(
+    enabledServices: List<TerminalStartupServiceConfig>,
+): Long {
+    val terminalBudget = enabledServices.maxOfOrNull { config ->
+        val retryCount = if (config.autoRestart) config.maxRestartAttempts.coerceAtLeast(0) else 0
+        val attemptCount = retryCount + 1L
+        val attemptsBudget = attemptCount * (
+            TERMINAL_SESSION_INITIALIZATION_BUDGET_MS +
+                config.startupTimeoutMs +
+                TERMINAL_PROCESS_SHUTDOWN_BUDGET_MS
+            )
+        val restartDelayBudget = (1..retryCount).sumOf { attempt ->
+            (1_000L * (1L shl (attempt - 1).coerceIn(0, 4))).coerceAtMost(8_000L)
+        }
+        attemptsBudget + restartDelayBudget + STARTUP_COMPLETION_GRACE_MS
+    } ?: 0L
+    return maxOf(BASE_PLUGIN_LOADING_TIMEOUT_MS, terminalBudget)
+}
+
+internal fun shouldReplaceStartupMessageWithSummary(
+    mcpStatus: MCPStarter.PluginInitStatus,
+): Boolean = mcpStatus == MCPStarter.PluginInitStatus.SUCCESS
+
+@Suppress("UNUSED_PARAMETER")
+internal fun shouldInitializeMcpRuntime(
+    enabledPluginCount: Int,
+    pluginDiscoveryError: Throwable?,
+    terminalConfigError: Throwable? = null
+): Boolean = pluginDiscoveryError == null
 
 /** 表示单个插件的加载信息 */
 data class PluginInfo(
@@ -460,6 +517,11 @@ interface SkipLoadingCallback {
  * 用于管理插件加载过程中的各种状态
  */
 class PluginLoadingState {
+    private data class McpStartupResult(
+        val successCount: Int,
+        val totalCount: Int,
+        val status: MCPStarter.PluginInitStatus
+    )
     // 进度值 (0.0f - 1.0f)
     private val _progress = MutableStateFlow(0f)
     val progress: StateFlow<Float> = _progress
@@ -498,10 +560,15 @@ class PluginLoadingState {
     private val _hasTimedOut = MutableStateFlow(false)
     val hasTimedOut: StateFlow<Boolean> = _hasTimedOut
 
-    // 用于取消超时计时器
-    private var timeoutJob: kotlinx.coroutines.Job? = null
+    // Timeout ownership prevents an old batch from publishing after replacement or cancelling
+    // the timer owned by a newer batch.
+    private val timeoutLock = Any()
+    private var nextTimeoutOwner = 0L
+    private var activeTimeoutOwner: Long? = null
+    private var timeoutJob: Job? = null
 
-    private val mcpInitInProgress = AtomicBoolean(false)
+    private val initializationGuard = PluginInitializationGuard()
+    private val orchestrationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var mcpInitJob: Job? = null
 
     // 跳过加载事件回调
@@ -512,7 +579,7 @@ class PluginLoadingState {
 
     // 设置应用上下文
     fun setAppContext(context: Context) {
-        this.appContext = context
+        this.appContext = context.applicationContext
     }
 
     fun toggleExpansion() {
@@ -568,6 +635,36 @@ class PluginLoadingState {
             _plugins.value = plugins
             _pluginsTotal.value = plugins.size
             _pluginsStarted.value = plugins.count { it.status == PluginStatus.SUCCESS }
+        }
+    }
+
+    private fun setStartupItems(
+        pluginIds: List<String>,
+        services: List<TerminalStartupServiceConfig>,
+        terminalConfigError: String?
+    ) {
+        val context = appContext
+        val items = pluginIds.map { id ->
+            val displayName = runCatching {
+                context?.let { MCPLocalServer.getInstance(it).getPluginMetadata(id)?.name }
+            }.getOrNull() ?: id.split("/").lastOrNull() ?: id
+            PluginInfo(id = id, displayName = displayName)
+        } + services.map { service ->
+            PluginInfo(id = terminalServiceItemId(service.id), displayName = service.name)
+        } + listOfNotNull(
+            terminalConfigError?.let { message ->
+                PluginInfo(
+                    id = TERMINAL_SERVICE_CONFIG_ERROR_ID,
+                    displayName = context?.getString(R.string.terminal_startup_title).orEmpty(),
+                    status = PluginStatus.FAILED,
+                    message = message
+                )
+            }
+        )
+        synchronized(pluginStateLock) {
+            _plugins.value = items
+            _pluginsTotal.value = items.size
+            _pluginsStarted.value = 0
         }
     }
 
@@ -674,23 +771,36 @@ class PluginLoadingState {
 
     // 触发跳过操作
     fun skip() {
-        timeoutJob?.cancel()
         hide()
         onSkipCallback?.invoke()
     }
 
     // 启动超时检测
-    fun startTimeoutCheck(timeoutMillis: Long = 30000L, scope: kotlinx.coroutines.CoroutineScope) {
-        timeoutJob?.cancel()
-        timeoutJob =
-                scope.launch {
-                    delay(timeoutMillis)
+    fun startTimeoutCheck(timeoutMillis: Long = 30000L, scope: CoroutineScope): Long {
+        val owner: Long
+        val newJob: Job
+        synchronized(timeoutLock) {
+            owner = ++nextTimeoutOwner
+            timeoutJob?.cancel()
+            newJob = scope.launch(start = CoroutineStart.LAZY) {
+                delay(timeoutMillis)
+                synchronized(timeoutLock) {
+                    if (activeTimeoutOwner != owner) return@launch
                     _hasTimedOut.value = true
                     updateMessage(
-                            appContext?.getString(R.string.plugin_loading_timeout)
-                                    ?: "Loading timeout, you can click \"Skip\" in the top right corner to continue"
+                        appContext?.getString(R.string.plugin_loading_timeout)
+                            ?: "Loading timeout, you can click \"Skip\" in the top right corner to continue"
                     )
+                    activeTimeoutOwner = null
+                    timeoutJob = null
                 }
+            }
+            activeTimeoutOwner = owner
+            timeoutJob = newJob
+            _hasTimedOut.value = false
+        }
+        newJob.start()
+        return owner
     }
 
     /** 显示加载屏幕 */
@@ -702,16 +812,14 @@ class PluginLoadingState {
 
     /** 隐藏加载屏幕 */
     fun hide() {
-        timeoutJob?.cancel()
+        cancelCurrentTimeoutCheck()
         _isVisible.value = false
         // _isExpanded.value = false // 关闭时重置为折叠状态
     }
 
-    /** 重置所有状态 */
-    fun reset() {
-        timeoutJob?.cancel()
+    private fun resetState() {
+        cancelCurrentTimeoutCheck()
         mcpInitJob?.cancel()
-        mcpInitInProgress.set(false)
         _progress.value = 0f
         _message.value = ""
         synchronized(pluginStateLock) {
@@ -725,131 +833,262 @@ class PluginLoadingState {
         _isExpanded.value = false
     }
 
-    // 添加方法来初始化MCP服务器并启动插件
-    fun initializeMCPServer(context: Context, lifecycleScope: kotlinx.coroutines.CoroutineScope) {
-        if (!mcpInitInProgress.compareAndSet(false, true)) {
-            AppLogger.d("PluginLoadingState", "initializeMCPServer already running, skipping")
-            return
+    /** 重置所有状态 */
+    fun reset(): Boolean = initializationGuard.resetIfIdle(::resetState)
+
+    internal fun reserveInitialization(): PluginInitializationGuard.Lease? =
+        initializationGuard.tryStart()
+
+    internal fun snapshot(): PluginLoadingSnapshot = synchronized(pluginStateLock) {
+        PluginLoadingSnapshot(
+            progress = _progress.value,
+            message = _message.value,
+            pluginsStarted = _pluginsStarted.value,
+            pluginsTotal = _pluginsTotal.value,
+            plugins = _plugins.value.map(PluginInfo::copy),
+            pluginLogs = _pluginLogs.value.toMap(),
+        )
+    }
+
+    internal fun snapshotIfActive(
+        lease: PluginInitializationGuard.Lease,
+    ): PluginLoadingSnapshot? = initializationGuard.withActive(lease, ::snapshot)
+
+    private fun cancelCurrentTimeoutCheck() {
+        val jobToCancel = synchronized(timeoutLock) {
+            activeTimeoutOwner = null
+            timeoutJob.also { timeoutJob = null }
         }
+        jobToCancel?.cancel()
+    }
 
-        mcpInitJob = lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                // 更新初始状态
-                updateMessage(context.getString(R.string.plugin_initializing))
-                updateProgress(0.05f)
+    internal fun cancelTimeoutCheck(owner: Long) {
+        val jobToCancel = synchronized(timeoutLock) {
+            if (activeTimeoutOwner != owner) return
+            activeTimeoutOwner = null
+            timeoutJob.also { timeoutJob = null }
+        }
+        jobToCancel?.cancel()
+    }
 
-                // 获取MCPLocalServer实例
-                val mcpLocalServer = MCPLocalServer.getInstance(context)
+    internal fun cancelTimeoutCheckIfOwned(owner: Long?) {
+        if (owner != null) cancelTimeoutCheck(owner)
+    }
 
-                // 更新状态
-                updateMessage(context.getString(R.string.plugin_starting_server))
-                updateProgress(0.1f)
+    // 初始化 MCP 插件；应用启动时还会启动用户配置的终端服务。
+    internal fun initializeMCPServer(
+        context: Context,
+        startupScope: PluginStartupScope,
+        initialTimeoutOwner: Long? = null,
+        resetBeforeStart: Boolean = false,
+        showBeforeStart: Boolean = false,
+        reservedInitializationLease: PluginInitializationGuard.Lease? = null,
+        onFinished: (PluginInitializationCompletion) -> Unit = {},
+    ): PluginInitializationGuard.Lease? {
+        val appContext = context.applicationContext
+        val initializationLease =
+            if (reservedInitializationLease != null) {
+                reservedInitializationLease.takeIf(initializationGuard::isActive)
+            } else {
+                initializationGuard.tryStart()
+            }
+        if (initializationLease == null) {
+            cancelTimeoutCheckIfOwned(initialTimeoutOwner)
+            AppLogger.d("PluginLoadingState", "initializeMCPServer already running, skipping")
+            return null
+        }
+        if (resetBeforeStart) resetState()
+        if (showBeforeStart) show()
 
-                // 服务器配置阶段
-                updateMessage(context.getString(R.string.plugin_configuring_server))
-                updateProgress(0.15f)
-
-                // 服务器启动成功，更新状态
-                updateMessage(context.getString(R.string.plugin_server_success))
-                updateProgress(0.2f)
-
-                // 服务器初始化中
-                updateMessage(context.getString(R.string.plugin_server_initializing))
-                updateProgress(0.25f)
-
-                try {
-                    // 获取MCPRepository实例
-                    val mcpRepository = MCPRepository(context)
-
-                    // 注意：工具注册现在在MCPStarter的验证阶段进行，确保插件真正就绪后才注册工具
-
-                    // 获取已安装的插件列表 (这是一个Set<String>)
-                    updateMessage(context.getString(R.string.plugin_loading_list))
-                    updateProgress(0.28f)
-                    AppLogger.d("PluginLoadingState", "启动前刷新 MCP 配置与插件列表")
-                    mcpRepository.refreshPluginList()
-                    val installedPluginsSet = mcpRepository.installedPluginIds.first()
-
-                    // 显式转换为List<String>
-                    val installedPluginsList = installedPluginsSet.toList()
-
-                    if (installedPluginsSet.isEmpty()) {
-                        // 没有安装的插件，直接进入主界面
-                        AppLogger.d("PluginLoadingState", "没有检测到已安装的插件，直接进入主界面")
-                        updateMessage(context.getString(R.string.plugin_no_plugins))
-                        updateProgress(1.0f)
-
-                        // 立即隐藏插件加载界面
-                        hide()
-                        return@launch
-                    }
-
-                    // 筛选出将要启动的插件（已启用且满足条件的插件）
-                    val pluginsToStart = installedPluginsList.filter { pluginId ->
-                        val isEnabled = mcpLocalServer.isServerEnabled(pluginId)
-                        if (!isEnabled) {
-                            false
-                        } else {
-                            val pluginInfo = mcpRepository.getInstalledPluginInfo(pluginId)
-                            when (pluginInfo?.type) {
-                                "remote" -> true // 远程插件只需启用
-                                else -> true // 本地插件现在会自动部署，所以也包含在内
-                            }
-                        }
-                    }
-
-                    // 设置插件列表，只传入将要启动的插件
-                    updateMessage(
-                            context.getString(R.string.plugin_preparing, pluginsToStart.size)
+        val finishReported = AtomicBoolean(false)
+        fun reportFinished(completed: Boolean, successful: Boolean) {
+            if (finishReported.compareAndSet(false, true)) {
+                onFinished(
+                    PluginInitializationCompletion(
+                        completed = completed,
+                        successful = successful,
+                        snapshot = snapshot(),
                     )
-                    updateProgress(0.32f)
-                    setPlugins(pluginsToStart)
-
-                    // 有安装的插件，使用MCPStarter启动
-                    updateMessage(context.getString(R.string.plugin_checking_env))
-                    updateProgress(0.35f)
-
-                    val mcpStarter = MCPStarter(context)
-                    val mcpLocalServer = MCPLocalServer.getInstance(context)
-
-                    // 创建一个适配器匿名类实现插件启动监听器
-                    updateMessage(context.getString(R.string.plugin_starting_plugins))
-                    updateProgress(0.38f)
-
-                    val progressListener =
-                            createPluginStartProgressListener(
-                                    mcpLocalServer,
-                                    lifecycleScope,
-                                    context
-                            )
-
-                    // 启动所有插件 - MCPStarter会处理各种检查逻辑
-                    mcpStarter.startAllDeployedPlugins(progressListener)
-                } catch (e: Exception) {
-                    // 处理插件加载过程中的异常
-                    AppLogger.e("PluginLoadingState", "加载插件过程中出错", e)
-                    updateMessage(e.message ?: context.getString(R.string.plugin_loading_failed))
-                    updateProgress(1.0f)
-
-                    forceExpanded()
-                }
-            } catch (e: Exception) {
-                AppLogger.e("PluginLoadingState", "启动MCP服务器和插件时出错", e)
-                updateMessage(e.message ?: context.getString(R.string.plugin_other_error))
-                updateProgress(1.0f)
-
-                forceExpanded()
-            } finally {
-                mcpInitInProgress.set(false)
+                )
             }
         }
+        var ownedTimeout = initialTimeoutOwner
+        val initJob = orchestrationScope.launch {
+            var completed = false
+            var successful = false
+            try {
+                updateMessage(appContext.getString(R.string.plugin_initializing))
+                updateProgress(0.05f)
+                val mcpLocalServer = MCPLocalServer.getInstance(appContext)
+                val serviceDiscovery: Result<List<TerminalStartupServiceConfig>> =
+                    if (shouldStartTerminalServices(startupScope)) {
+                        runCatching {
+                            TerminalStartupServiceRepository.getInstance(appContext)
+                                .snapshot()
+                                .filter { it.enabled }
+                        }.onFailure { error ->
+                            AppLogger.e("PluginLoadingState", "读取终端启动服务配置失败", error)
+                        }
+                    } else {
+                        Result.success(emptyList())
+                    }
+                val enabledServices = serviceDiscovery.getOrDefault(emptyList())
+                val terminalConfigError = serviceDiscovery.exceptionOrNull()?.message
+                if (shouldStartTerminalServices(startupScope) && terminalConfigError == null) {
+                    ownedTimeout = startTimeoutCheck(
+                        combinedStartupLoadingTimeoutMs(enabledServices),
+                        orchestrationScope,
+                    )
+                }
+                val mcpRepository = MCPRepository(appContext)
+                val pluginDiscovery = runCatching {
+                    updateMessage(appContext.getString(R.string.plugin_loading_list))
+                    mcpRepository.refreshPluginList()
+                    mcpRepository.installedPluginIds.first().filter { mcpLocalServer.isServerEnabled(it) }
+                }.onFailure { error ->
+                    AppLogger.e("PluginLoadingState", "读取 MCP 插件列表失败", error)
+                }
+                val pluginsToStart = pluginDiscovery.getOrDefault(emptyList())
+                val pluginDiscoveryError = pluginDiscovery.exceptionOrNull()
+
+                setStartupItems(pluginsToStart, enabledServices, terminalConfigError)
+                updateMessage(
+                    appContext.getString(
+                        if (shouldStartTerminalServices(startupScope)) {
+                            R.string.terminal_startup_starting_all
+                        } else {
+                            R.string.plugin_initializing
+                        }
+                    )
+                )
+                updateProgress(0.25f)
+                val serviceDeferred = async {
+                    if (!shouldStartTerminalServices(startupScope) || terminalConfigError != null) {
+                        emptyList()
+                    } else {
+                        TerminalStartupServiceManager.getInstance(appContext).startEnabledServices(
+                            services = enabledServices,
+                            listener = object : TerminalStartupServiceManager.ProgressListener {
+                                override fun onServiceStarting(config: TerminalStartupServiceConfig, index: Int, total: Int) {
+                                    val itemId = terminalServiceItemId(config.id)
+                                    updatePluginStatus(itemId, PluginStatus.LOADING, appContext.getString(R.string.terminal_startup_status_starting))
+                                    appendPluginLog(itemId, appContext.getString(R.string.terminal_startup_start))
+                                }
+
+                                override fun onServiceStatus(config: TerminalStartupServiceConfig, status: com.ai.assistance.operit.data.terminal.startup.TerminalStartupServiceStatus) {
+                                    val itemId = terminalServiceItemId(config.id)
+                                    when (status.state) {
+                                        TerminalStartupServiceState.RUNNING -> setPluginSuccess(itemId, appContext.getString(R.string.terminal_startup_status_running))
+                                        TerminalStartupServiceState.FAILED -> {
+                                            setPluginFailed(itemId, status.message)
+                                            forceExpanded()
+                                        }
+                                        TerminalStartupServiceState.STOPPED -> updatePluginStatus(itemId, PluginStatus.FAILED, status.message)
+                                        TerminalStartupServiceState.STARTING,
+                                        TerminalStartupServiceState.RESTARTING -> updatePluginStatus(itemId, PluginStatus.LOADING, status.message)
+                                    }
+                                }
+
+                                override fun onServiceLog(config: TerminalStartupServiceConfig, message: String) {
+                                    appendPluginLog(terminalServiceItemId(config.id), message)
+                                }
+                            }
+                        )
+                    }
+                }
+
+                val mcpCompletion = CompletableDeferred<McpStartupResult>()
+                if (!shouldInitializeMcpRuntime(
+                        pluginsToStart.size,
+                        pluginDiscoveryError,
+                        serviceDiscovery.exceptionOrNull()
+                    )
+                ) {
+                    updateMessage(
+                        pluginDiscoveryError?.message
+                            ?: appContext.getString(R.string.plugin_other_error)
+                    )
+                    mcpCompletion.complete(McpStartupResult(0, 0, MCPStarter.PluginInitStatus.OTHER_ERROR))
+                } else {
+                    // MCPStarter also removes disabled/stale bridge services and runtime tools.
+                    // It must run even when there are no enabled plugins left to start.
+                    MCPStarter(appContext).startAllDeployedPlugins(
+                        createPluginStartProgressListener(mcpLocalServer, appContext) { success, total, status ->
+                            mcpCompletion.complete(McpStartupResult(success, total, status))
+                        }
+                    )
+                }
+
+                val serviceResults = serviceDeferred.await()
+                val mcpResult = mcpCompletion.await()
+                val serviceSuccesses = serviceResults.count { it.success }
+                val successCount = serviceSuccesses + mcpResult.successCount
+                val terminalConfigFailureCount = if (terminalConfigError != null) 1 else 0
+                val totalCount = serviceResults.size + mcpResult.totalCount + terminalConfigFailureCount
+                val hasFailures = terminalConfigError != null ||
+                    successCount < totalCount ||
+                    mcpResult.status != MCPStarter.PluginInitStatus.SUCCESS
+                cancelTimeoutCheckIfOwned(ownedTimeout)
+                ownedTimeout = null
+                updateProgress(1f)
+                if (shouldReplaceStartupMessageWithSummary(mcpResult.status)) {
+                    updateMessage(
+                        appContext.getString(
+                            if (hasFailures) R.string.terminal_startup_complete_with_failures
+                            else R.string.terminal_startup_complete_success,
+                            successCount,
+                            totalCount
+                        )
+                    )
+                }
+                if (hasFailures) {
+                    forceExpanded()
+                } else {
+                    delay(100L)
+                    if (isVisible.value) hide()
+                }
+                successful = !hasFailures
+                completed = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                AppLogger.e("PluginLoadingState", "启动 MCP 插件和终端服务时出错", e)
+                cancelTimeoutCheckIfOwned(ownedTimeout)
+                ownedTimeout = null
+                updateMessage(e.message ?: appContext.getString(R.string.plugin_other_error))
+                updateProgress(1.0f)
+                forceExpanded()
+                completed = true
+            } finally {
+                cancelTimeoutCheckIfOwned(ownedTimeout)
+                try {
+                    reportFinished(completed, successful)
+                } finally {
+                    initializationGuard.finish(initializationLease)
+                }
+            }
+        }
+        initJob.invokeOnCompletion { cause ->
+            // A cancelled scope can prevent the coroutine body from starting at all, so its
+            // finally block is not guaranteed to release the process-startup lease.
+            if (cause is CancellationException) {
+                cancelTimeoutCheckIfOwned(ownedTimeout)
+                try {
+                    reportFinished(completed = false, successful = false)
+                } finally {
+                    initializationGuard.finish(initializationLease)
+                }
+            }
+        }
+        mcpInitJob = initJob
+        return initializationLease
     }
 
     // 创建插件启动进度监听器
     private fun createPluginStartProgressListener(
             mcpLocalServer: MCPLocalServer,
-            lifecycleScope: kotlinx.coroutines.CoroutineScope,
-            context: Context
+            context: Context,
+            onComplete: (Int, Int, MCPStarter.PluginInitStatus) -> Unit
     ): MCPStarter.PluginStartProgressListener {
         return object : MCPStarter.PluginStartProgressListener {
             override fun onPluginStarting(pluginId: String, index: Int, total: Int) {
@@ -915,6 +1154,9 @@ class PluginLoadingState {
             ) {
                 // 根据初始化状态显示不同的消息
                 when (status) {
+                    MCPStarter.PluginInitStatus.TERMINAL_SERVICE_UNAVAILABLE -> {
+                        updateMessage(context.getString(R.string.plugin_terminal_service_unavailable))
+                    }
                     MCPStarter.PluginInitStatus.NODEJS_MISSING -> {
                         updateMessage(context.getString(R.string.plugin_nodejs_missing))
                     }
@@ -953,19 +1195,11 @@ class PluginLoadingState {
                     }
                 }
 
-                updateProgress(1.0f)
-
                 val hasFailures = successCount < totalCount && totalCount > 0
                 if (status != MCPStarter.PluginInitStatus.SUCCESS || hasFailures) {
                     forceExpanded()
-                } else {
-                    lifecycleScope.launch {
-                        delay(100L)
-                        if (isVisible.value) {
-                            hide()
-                        }
-                    }
                 }
+                onComplete(successCount, totalCount, status)
             }
 
             override fun onAllPluginsVerified(
@@ -974,6 +1208,49 @@ class PluginLoadingState {
                 // 不需要修改这部分
             }
         }
+    }
+}
+
+internal data class PluginLoadingSnapshot(
+    val progress: Float,
+    val message: String,
+    val pluginsStarted: Int,
+    val pluginsTotal: Int,
+    val plugins: List<PluginInfo>,
+    val pluginLogs: Map<String, String>,
+)
+
+internal data class PluginInitializationCompletion(
+    val completed: Boolean,
+    val successful: Boolean,
+    val snapshot: PluginLoadingSnapshot,
+)
+
+internal class PluginInitializationGuard {
+    class Lease internal constructor()
+
+    private var activeLease: Lease? = null
+
+    fun tryStart(): Lease? = synchronized(this) {
+        if (activeLease != null) return@synchronized null
+        Lease().also { activeLease = it }
+    }
+
+    fun finish(lease: Lease) = synchronized(this) {
+        if (activeLease === lease) activeLease = null
+    }
+
+    fun isActive(lease: Lease): Boolean = synchronized(this) { activeLease === lease }
+
+    fun <T> withActive(lease: Lease, block: () -> T): T? = synchronized(this) {
+        if (activeLease !== lease) return@synchronized null
+        block()
+    }
+
+    fun resetIfIdle(reset: () -> Unit): Boolean = synchronized(this) {
+        if (activeLease != null) return@synchronized false
+        reset()
+        true
     }
 }
 

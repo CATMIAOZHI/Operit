@@ -54,6 +54,15 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.hjson.JsonValue
 
+internal fun archivedBuiltInOwnerPackageName(
+    normalizedPackageName: String,
+    owningContainerPackageName: String?,
+    archivedPackageNames: Set<String>,
+): String? {
+    val archiveKey = owningContainerPackageName ?: normalizedPackageName
+    return archiveKey.takeIf(archivedPackageNames::contains)
+}
+
 /**
  * Manages the loading, registration, and handling of tool packages
  *
@@ -72,6 +81,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         private const val PACKAGE_PREFS = "com.ai.assistance.operit.core.tools.PackageManager"
         private const val ENABLED_PACKAGES_KEY = "imported_packages"
         private const val DISABLED_PACKAGES_KEY = "disabled_packages"
+        private const val ARCHIVED_BUILTIN_PACKAGES_KEY = "archived_builtin_packages"
         private const val ACTIVE_PACKAGES_KEY = "active_packages"
         private const val TOOLPKG_SUBPACKAGE_STATES_KEY = "toolpkg_subpackage_states"
         private const val TOOLPKG_EXTENSION = ".toolpkg"
@@ -1622,6 +1632,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
     private fun initializeDefaultPackages() {
         val enabledPackageNames = getEnabledPackageNamesInternal().toMutableSet()
         val disabledPackages = getDisabledPackagesInternal().toSet()
+        val archivedBuiltInPackages = getArchivedBuiltInPackageNamesInternal().toSet()
         var packagesChanged = false
 
         synchronized(initLock) {
@@ -1630,7 +1641,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                     toolPackage.isBuiltIn &&
                     toolPackage.enabledByDefault &&
                     !toolPkgSubpackageByPackageName.containsKey(toolPackage.name) &&
-                    !disabledPackages.contains(toolPackage.name)
+                    !disabledPackages.contains(toolPackage.name) &&
+                    !archivedBuiltInPackages.contains(toolPackage.name)
                 ) {
                     if (enabledPackageNames.add(toolPackage.name)) {
                         packagesChanged = true
@@ -2721,6 +2733,19 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         if (!availablePackages.containsKey(normalizedPackageName)) {
             return "Package not found in available packages: $normalizedPackageName"
         }
+        val archivedOwnerPackageName =
+            archivedBuiltInOwnerPackageName(
+                normalizedPackageName = normalizedPackageName,
+                owningContainerPackageName =
+                    resolveToolPkgSubpackageRuntime(normalizedPackageName)?.containerPackageName,
+                archivedPackageNames = getArchivedBuiltInPackageNamesInternal().toSet(),
+            )
+        if (
+            archivedOwnerPackageName != null &&
+            availablePackages[archivedOwnerPackageName]?.isBuiltIn == true
+        ) {
+            return "Built-in package is archived: $archivedOwnerPackageName"
+        }
 
         val enabledPackageNames = LinkedHashSet(getEnabledPackageNames())
         val subpackageStates = getToolPkgSubpackageStatesInternal().toMutableMap()
@@ -3225,6 +3250,60 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         return getDisabledPackagesInternal()
     }
 
+    fun getArchivedBuiltInPackageNames(): Set<String> {
+        ensureInitialized()
+        return getArchivedBuiltInPackageNamesInternal().toSet()
+    }
+
+    internal fun isArchivedBuiltInPackageOrSubpackage(
+        packageName: String,
+        archivedPackageNames: Set<String>,
+    ): Boolean {
+        ensureInitialized()
+        val normalizedPackageName = normalizePackageName(packageName)
+        val archivedOwnerPackageName =
+            archivedBuiltInOwnerPackageName(
+                normalizedPackageName = normalizedPackageName,
+                owningContainerPackageName =
+                    resolveToolPkgSubpackageRuntime(normalizedPackageName)?.containerPackageName,
+                archivedPackageNames = archivedPackageNames,
+            )
+        return archivedOwnerPackageName != null &&
+            availablePackages[archivedOwnerPackageName]?.isBuiltIn == true
+    }
+
+    fun archiveBuiltInPackage(packageName: String): Boolean {
+        ensureInitialized()
+        val normalizedPackageName = normalizePackageName(packageName)
+        val toolPackage = availablePackages[normalizedPackageName] ?: return false
+        if (!toolPackage.isBuiltIn || toolPkgSubpackageByPackageName.containsKey(normalizedPackageName)) {
+            return false
+        }
+
+        disablePackage(normalizedPackageName)
+        val archivedPackages = LinkedHashSet(getArchivedBuiltInPackageNamesInternal())
+        if (archivedPackages.add(normalizedPackageName)) {
+            saveArchivedBuiltInPackageNames(archivedPackages)
+        }
+        return true
+    }
+
+    fun restoreArchivedBuiltInPackage(packageName: String): Boolean {
+        ensureInitialized()
+        val normalizedPackageName = normalizePackageName(packageName)
+        val toolPackage = availablePackages[normalizedPackageName] ?: return false
+        if (!toolPackage.isBuiltIn || toolPkgSubpackageByPackageName.containsKey(normalizedPackageName)) {
+            return false
+        }
+
+        val archivedPackages = LinkedHashSet(getArchivedBuiltInPackageNamesInternal())
+        if (!archivedPackages.remove(normalizedPackageName)) {
+            return false
+        }
+        saveArchivedBuiltInPackageNames(archivedPackages)
+        return true
+    }
+
     private fun getDisabledPackagesInternal(): List<String> {
         val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
         val packagesJson = prefs.getString(DISABLED_PACKAGES_KEY, "[]")
@@ -3235,6 +3314,30 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             AppLogger.e(TAG, "Error decoding disabled packages", e)
             emptyList()
         }
+    }
+
+    private fun getArchivedBuiltInPackageNamesInternal(): List<String> {
+        val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
+        val packagesJson = prefs.getString(ARCHIVED_BUILTIN_PACKAGES_KEY, "[]")
+        return try {
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString<List<String>>(packagesJson ?: "[]")
+                .map(::normalizePackageName)
+                .filter(String::isNotBlank)
+                .distinct()
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Error decoding archived built-in packages", e)
+            emptyList()
+        }
+    }
+
+    private fun saveArchivedBuiltInPackageNames(packageNames: Collection<String>) {
+        val normalizedPackageNames =
+            packageNames.map(::normalizePackageName).filter(String::isNotBlank).distinct()
+        val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString(ARCHIVED_BUILTIN_PACKAGES_KEY, Json.encodeToString(normalizedPackageNames))
+            .apply()
     }
 
     /** Helper to save disabled packages */

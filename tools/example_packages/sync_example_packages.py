@@ -346,6 +346,11 @@ def _collect_all_example_items(examples_dir: Path) -> list[str]:
     return items
 
 
+def _exclude_expected_incompatible(items: list[str], incompatible_items: list[str]) -> list[str]:
+    incompatible = {_normalize_item(item) for item in incompatible_items}
+    return [item for item in items if _normalize_item(item) not in incompatible]
+
+
 def _find_manifest_file(folder: Path) -> Path | None:
     for file_name in MANIFEST_FILENAMES:
         manifest = folder / file_name
@@ -815,6 +820,7 @@ def main() -> int:
     examples_dir = repo_root / "examples"
     packages_dir = repo_root / "app" / "src" / "main" / "assets" / "packages"
     default_whitelist_file = tools_dir / "packages_whitelist.txt"
+    legacy_incompatible_file = tools_dir / "legacy_incompatible_packages.txt"
     source_roots = [examples_dir, repo_root]
 
     parser = argparse.ArgumentParser(
@@ -831,7 +837,8 @@ def main() -> int:
         help=(
             "Sync mode. "
             "'normal' syncs by whitelist. "
-            "'test' syncs every syncable example from examples/. "
+            "'test' build-checks every syncable example except entries listed in "
+            "legacy_incompatible_packages.txt; it does not prove runtime compatibility. "
             "In both modes, only outputs not planned for this run are deleted."
         ),
     )
@@ -892,6 +899,11 @@ def main() -> int:
     whitelist: list[str]
     if sync_mode == "test":
         whitelist = _collect_all_example_items(examples_dir)
+        if legacy_incompatible_file.exists():
+            legacy_items = _read_whitelist_file(legacy_incompatible_file)
+            whitelist = _exclude_expected_incompatible(whitelist, legacy_items)
+            for item in sorted(legacy_items):
+                print(f"SKIP-EXPECTED-INCOMPATIBLE: {item}")
     elif args.whitelist:
         whitelist = _read_whitelist_file(Path(args.whitelist))
     elif default_whitelist_file.exists():

@@ -109,6 +109,9 @@ class NvidiaAIProvider(
 
         // NIM 文档仅列 low/medium/high；此处沿用与 OpenAI 一致的档位映射（含 xhigh/max 扩展值），
         // 若个别 NIM 部署拒绝扩展值，需要在此按值域做适配。
-        return ApiPreferences.thinkingQualityEffort(qualityLevel)
+        return ThinkingRequestSemantics.defaultReasoningEffort(
+            ApiProviderType.NVIDIA,
+            qualityLevel,
+        )
     }
 }
