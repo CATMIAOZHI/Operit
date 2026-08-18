@@ -644,7 +644,7 @@ class GeminiProvider(
             )
 
             queuedFunctionCalls.forEach { functionCall ->
-                openFunctionCallNames.add(functionCall.optString("name", "").trim())
+                openFunctionCallNames.add(functionCall.optProviderToolName().orEmpty())
             }
             queuedAssistantToolText = null
             queuedAssistantThoughtSignature = null
@@ -1845,7 +1845,7 @@ class GeminiProvider(
 
                 // 处理 functionCall（流式转换为XML）
                 if (functionCall != null && enableToolCall) {
-                    val toolName = functionCall.optString("name", "")
+                    val toolName = functionCall.optProviderToolName() ?: ""
                     if (toolName.isNotEmpty()) {
                         // 工具调用必须在思考模式之外，如果当前在思考中，先关闭
                         if (isInThinkingMode) {

@@ -421,7 +421,7 @@ internal object StructuredToolCallBridge {
         for (i in 0 until toolCalls.length()) {
             val toolCall = toolCalls.optJSONObject(i) ?: continue
             val function = toolCall.optJSONObject("function") ?: continue
-            val name = function.optString("name", "")
+            val name = function.optProviderToolName() ?: ""
             if (name.isBlank()) {
                 continue
             }
@@ -560,12 +560,10 @@ internal object StructuredToolCallBridge {
         val functionObject = raw.optJSONObject("function")
         val functionCallObject = raw.optJSONObject("function_call")
 
-        val name = when {
-            functionObject != null -> functionObject.optString("name", "")
-            raw.optString("name", "").isNotBlank() -> raw.optString("name", "")
-            functionCallObject != null -> functionCallObject.optString("name", "")
-            else -> ""
-        }
+        val name = functionObject.optProviderToolName()
+            ?: raw.optProviderToolName()
+            ?: functionCallObject.optProviderToolName()
+            ?: ""
         if (name.isBlank()) {
             return null
         }
@@ -651,7 +649,7 @@ internal object StructuredToolCallBridge {
                 continue
             }
 
-            val toolName = function.optString("name", "")
+            val toolName = function.optProviderToolName() ?: ""
             if (!toolName.contains(":") || toolName == "package_proxy") {
                 wrappedToolCalls.put(toolCall)
                 continue

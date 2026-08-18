@@ -1364,7 +1364,7 @@ open class OpenAIProvider(
             val function = toolCall.optJSONObject("function") ?: continue
 
             // 流式响应中，name和arguments可能不在同一个delta中
-            val name = function.optString("name", "")
+            val name = function.optProviderToolName() ?: ""
             if (name.isEmpty()) {
                 // 如果没有name，说明这是增量更新，跳过
                 continue
@@ -1667,7 +1667,7 @@ open class OpenAIProvider(
                 continue
             }
 
-            val toolName = function.optString("name", "")
+            val toolName = function.optProviderToolName() ?: ""
             if (!toolName.contains(":") || toolName == "package_proxy") {
                 wrappedToolCalls.put(toolCall)
                 continue
@@ -1907,7 +1907,7 @@ open class OpenAIProvider(
         val accFunction = accumulated.getJSONObject("function")
         
         // 处理工具名
-        val name = deltaFunction.optString("name", "")
+        val name = deltaFunction.optProviderToolName() ?: ""
         if (name.isNotEmpty()) {
             accFunction.put("name", name)
         }
@@ -1949,7 +1949,7 @@ open class OpenAIProvider(
 
     private fun isToolCallCompleteAtSwitch(index: Int, state: StreamingState): Boolean {
         val function = state.accumulatedToolCalls[index]?.optJSONObject("function") ?: return false
-        if (function.optString("name", "").isEmpty()) return false
+        if (function.optProviderToolName().isNullOrEmpty()) return false
         val arguments = function.optString("arguments", "")
         if (arguments.isEmpty()) return false
         return runCatching { JSONObject(arguments) }.isSuccess
@@ -1961,7 +1961,7 @@ open class OpenAIProvider(
         emitter: StreamEmitter,
     ): Boolean {
         val function = state.accumulatedToolCalls[index]?.optJSONObject("function") ?: return false
-        val name = function.optString("name", "")
+        val name = function.optProviderToolName() ?: ""
         if (name.isEmpty()) return false
 
         val arguments = function.optString("arguments", "")
@@ -2288,7 +2288,7 @@ open class OpenAIProvider(
                 closeReasoningBlockIfOpen(state, emitter)
 
                 val functionObj = JSONObject().apply {
-                    val name = item.optString("name", "")
+                    val name = item.optProviderToolName() ?: ""
                     if (name.isNotEmpty()) {
                         put("name", name)
                     }
@@ -2325,7 +2325,7 @@ open class OpenAIProvider(
                     put(
                         "function",
                         JSONObject().apply {
-                            val name = jsonResponse.optString("name", "")
+                            val name = jsonResponse.optProviderToolName() ?: ""
                             if (name.isNotEmpty()) {
                                 put("name", name)
                             }
