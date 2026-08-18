@@ -42,7 +42,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.onSubscription
-import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -144,8 +144,33 @@ internal class DetachableLogForwarder(
     }
 }
 
-internal fun incrementalStartupLogChunk(outputChunk: String, isCompleted: Boolean): String? =
-    outputChunk.takeIf { !isCompleted && it.isNotBlank() }
+internal class StartupLogAccumulator {
+    private val streamedOutput = StringBuilder()
+
+    fun accept(outputChunk: String, isCompleted: Boolean): String? {
+        if (outputChunk.isBlank()) return null
+        if (!isCompleted) {
+            if (streamedOutput.isNotEmpty()) streamedOutput.append('\n')
+            streamedOutput.append(outputChunk)
+            return outputChunk
+        }
+
+        val finalOutput = outputChunk.trim()
+        val seenOutput = streamedOutput.toString().trim()
+        if (seenOutput.isEmpty()) return finalOutput
+        if (finalOutput == seenOutput) return null
+        if (finalOutput.startsWith(seenOutput)) {
+            return finalOutput
+                .removePrefix(seenOutput)
+                .trimStart('\r', '\n')
+                .takeIf { it.isNotBlank() }
+        }
+
+        // The terminal may compact or rewrite progress output before publishing its final
+        // snapshot. Preserve that snapshot rather than hiding the only useful exit diagnostic.
+        return finalOutput
+    }
+}
 
 internal fun processOnlyStartupReadyDelayMs(startupTimeoutMs: Long): Long =
     minOf(PROCESS_START_GRACE_MS, (startupTimeoutMs - HEALTH_POLL_INTERVAL_MS).coerceAtLeast(0L))
@@ -929,6 +954,7 @@ class TerminalStartupServiceManager private constructor(context: Context) {
     ) {
         logJobs.remove(config.id)?.cancel()
         logJobs[config.id] = scope.launch {
+            val accumulator = StartupLogAccumulator()
             terminal.commandEvents
                 .signalCollectorSubscription(collectorReady)
                 .filter { event ->
@@ -937,10 +963,13 @@ class TerminalStartupServiceManager private constructor(context: Context) {
                         isCurrentGeneration(config.id, generation)
                 }
                 // Completion events contain the full final output snapshot, not an increment.
-                // Stop at that event so logs are neither duplicated nor collected forever.
-                .takeWhile { event -> !event.isCompleted }
+                // Include that event, then stop so quick process failures retain their stderr.
+                .transformWhile { event ->
+                    emit(event)
+                    !event.isCompleted
+                }
                 .collect { event ->
-                    incrementalStartupLogChunk(event.outputChunk, event.isCompleted)?.let { chunk ->
+                    accumulator.accept(event.outputChunk, event.isCompleted)?.let { chunk ->
                         appendLog(config.id, chunk, publishImmediately = false)
                         logForwarder.emit(chunk)
                     }
