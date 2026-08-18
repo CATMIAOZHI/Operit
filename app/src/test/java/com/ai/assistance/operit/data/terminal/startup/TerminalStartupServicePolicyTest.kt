@@ -92,10 +92,36 @@ class TerminalStartupServicePolicyTest {
     }
 
     @Test
-    fun `completion snapshots are not appended as incremental service logs`() {
-        assertEquals("line", incrementalStartupLogChunk("line", isCompleted = false))
-        assertEquals(null, incrementalStartupLogChunk("line", isCompleted = true))
-        assertEquals(null, incrementalStartupLogChunk("  ", isCompleted = false))
+    fun `completion snapshots retain only output not already streamed`() {
+        val accumulator = StartupLogAccumulator()
+
+        assertEquals("first", accumulator.accept("first", isCompleted = false))
+        assertEquals("second", accumulator.accept("second", isCompleted = false))
+        assertNull(accumulator.accept("first\nsecond", isCompleted = true))
+    }
+
+    @Test
+    fun `quick exit completion retains its only diagnostic output`() {
+        val accumulator = StartupLogAccumulator()
+
+        assertEquals(
+            "node: fatal startup error",
+            accumulator.accept("node: fatal startup error", isCompleted = true),
+        )
+    }
+
+    @Test
+    fun `completion snapshot appends only a missing diagnostic suffix`() {
+        val accumulator = StartupLogAccumulator()
+
+        assertEquals("started", accumulator.accept("started", isCompleted = false))
+        assertEquals(
+            "terminal exited with code 1",
+            accumulator.accept(
+                "started\nterminal exited with code 1",
+                isCompleted = true,
+            ),
+        )
     }
 
     @Test
