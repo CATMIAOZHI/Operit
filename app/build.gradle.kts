@@ -36,7 +36,7 @@ val verifyScriptExecutionReceiverManifests =
                         "debug",
                         "true",
                         "android.permission.DUMP",
-                        "com.rainy.operitry.dev"
+                        "com.rainy.operitry"
                     ),
                     arrayOf(
                         "clone",
