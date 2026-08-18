@@ -258,6 +258,11 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
     }
 
     deleting?.let { service ->
+        val deleteErrorMessage = stringResource(R.string.terminal_startup_error_delete)
+        val previousProcessTimeoutMessage =
+            stringResource(R.string.terminal_startup_message_previous_process_timeout)
+        val deleteRestoreRuntimeError =
+            stringResource(R.string.terminal_startup_error_delete_restore_runtime)
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text(stringResource(R.string.terminal_startup_delete_title)) },
@@ -287,7 +292,7 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                                                 deletePersisted = { repository.delete(service.id) },
                                             )
                                         ) {
-                                            context.getString(R.string.terminal_startup_error_delete)
+                                            deleteErrorMessage
                                         }
                                     },
                                     restoreRuntime = {
@@ -302,21 +307,17 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                                     },
                                     terminationFailure = {
                                         IllegalStateException(
-                                            context.getString(
-                                                R.string.terminal_startup_message_previous_process_timeout
-                                            )
+                                            previousProcessTimeoutMessage
                                         )
                                     }
                                 )
                             }.onFailure { error ->
                                 snackbar.showSnackbar(
                                     if (error is TerminalStartupRuntimeRestoreException) {
-                                        context.getString(
-                                            R.string.terminal_startup_error_delete_restore_runtime
-                                        )
+                                        deleteRestoreRuntimeError
                                     } else {
                                         error.message?.takeIf { it.isNotBlank() }
-                                            ?: context.getString(R.string.terminal_startup_error_delete)
+                                            ?: deleteErrorMessage
                                     }
                                 )
                             }
@@ -339,6 +340,12 @@ private fun TerminalStartupServiceEditor(
     onSave: (TerminalStartupServiceConfig, Uri?, String?) -> Unit
 ) {
     val context = LocalContext.current
+    val errorNameMessage = stringResource(R.string.terminal_startup_error_name)
+    val errorCommandMessage = stringResource(R.string.terminal_startup_error_command)
+    val errorScriptMessage = stringResource(R.string.terminal_startup_error_script)
+    val errorEnvironmentMessage = stringResource(R.string.terminal_startup_error_environment)
+    val errorPortMessage = stringResource(R.string.terminal_startup_error_port)
+    val errorTimeoutMessage = stringResource(R.string.terminal_startup_error_timeout)
     var name by remember(initial) { mutableStateOf(initial?.name.orEmpty()) }
     var mode by remember(initial) { mutableStateOf(initial?.launchMode ?: TerminalStartupLaunchMode.COMMAND) }
     var command by remember(initial) { mutableStateOf(initial?.command.orEmpty()) }
@@ -412,12 +419,12 @@ private fun TerminalStartupServiceEditor(
                 val port = portText.toIntOrNull()
                 val timeout = timeoutText.toLongOrNull()
                 error = when {
-                    name.isBlank() -> context.getString(R.string.terminal_startup_error_name)
-                    mode == TerminalStartupLaunchMode.COMMAND && command.isBlank() -> context.getString(R.string.terminal_startup_error_command)
-                    mode == TerminalStartupLaunchMode.SCRIPT && selectedUri == null && initial?.scriptPath.isNullOrBlank() -> context.getString(R.string.terminal_startup_error_script)
-                    envError != null -> context.getString(R.string.terminal_startup_error_environment)
-                    portText.isNotBlank() && port !in 1..65535 -> context.getString(R.string.terminal_startup_error_port)
-                    timeout == null || timeout !in 1..300 -> context.getString(R.string.terminal_startup_error_timeout)
+                    name.isBlank() -> errorNameMessage
+                    mode == TerminalStartupLaunchMode.COMMAND && command.isBlank() -> errorCommandMessage
+                    mode == TerminalStartupLaunchMode.SCRIPT && selectedUri == null && initial?.scriptPath.isNullOrBlank() -> errorScriptMessage
+                    envError != null -> errorEnvironmentMessage
+                    portText.isNotBlank() && port !in 1..65535 -> errorPortMessage
+                    timeout == null || timeout !in 1..300 -> errorTimeoutMessage
                     else -> null
                 }
                 if (error == null) {

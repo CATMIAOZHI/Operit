@@ -1132,6 +1132,8 @@ fun PackageManagerScreen(
                         .sortedBy { toolPackage ->
                             toolPackage.displayName.resolve(context).lowercase()
                         }
+                val restoreSuccessMessage = stringResource(R.string.builtin_archive_restore_success)
+                val restoreFailedMessage = stringResource(R.string.builtin_archive_restore_failed)
                 BuiltInArchiveScreen(
                     plugins = archivedPlugins,
                     packages = archivedPackages,
@@ -1145,11 +1147,11 @@ fun PackageManagerScreen(
                                 archivedBuiltInPackageNames =
                                     packageManager.getArchivedBuiltInPackageNames()
                                 snackbarHostState.showSnackbar(
-                                    context.getString(R.string.builtin_archive_restore_success)
+                                    restoreSuccessMessage
                                 )
                             } else {
                                 snackbarHostState.showSnackbar(
-                                    context.getString(R.string.builtin_archive_restore_failed)
+                                    restoreFailedMessage
                                 )
                             }
                         }
@@ -1166,6 +1168,8 @@ fun PackageManagerScreen(
             }
 
             if (showQuickPluginCreatorDialog) {
+                val requirementEmptyMessage =
+                    stringResource(R.string.quick_plugin_creator_requirement_empty)
                 QuickPluginCreatorDialog(
                     requirement = quickPluginRequirement,
                     onRequirementChange = { quickPluginRequirement = it },
@@ -1191,7 +1195,7 @@ fun PackageManagerScreen(
                         if (requirement.isBlank()) {
                             scope.launch {
                                 snackbarHostState.showSnackbar(
-                                    context.getString(R.string.quick_plugin_creator_requirement_empty)
+                                    requirementEmptyMessage
                                 )
                             }
                         } else {
