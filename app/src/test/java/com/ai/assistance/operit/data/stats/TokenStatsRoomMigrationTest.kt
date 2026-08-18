@@ -129,10 +129,10 @@ class TokenStatsRoomMigrationTest {
                 assertTrue("token_stat_baselines", tables.contains("token_stat_baselines"))
 
                 // 迁移可重入（CREATE IF NOT EXISTS）：以驱动变体再跑一次；
-                // Room 打开时已应用 28→29→30，重放 28→29 不改变版本号
+                // Room 打开时已应用 28→29→30→31→32，重放 28→29 不改变版本号
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_28_29.migrate(connection)
-                    assertEquals(31, userVersion(connection))
+                    assertEquals(32, userVersion(connection))
                 }
             } finally {
                 database.close()
@@ -632,7 +632,7 @@ totalInputTokens = 1000L,
                 // 迁移可重入（ALTER 幂等）：以驱动变体再跑一次
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_29_30.migrate(connection)
-                    assertEquals(31, userVersion(connection))
+                    assertEquals(32, userVersion(connection))
                 }
             } finally {
                 database.close()
@@ -672,7 +672,7 @@ totalInputTokens = 1000L,
                 // 迁移可重入（CREATE IF NOT EXISTS）：以驱动变体再跑一次
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_30_31.migrate(connection)
-                    assertEquals(31, userVersion(connection))
+                    assertEquals(32, userVersion(connection))
                 }
             } finally {
                 database.close()

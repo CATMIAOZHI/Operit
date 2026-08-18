@@ -62,6 +62,10 @@ object RawSnapshotBackupManager {
     private var processRestartRequired = false
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
+    /** 测试 seam：恢复提交阶段推进 workflow auth generation 的可替换实现。 */
+    @Volatile
+    internal var restoreGenerationAdvancerForTest: ((Context) -> Long)? = null
+
     @Serializable
     data class Manifest(
         val formatVersion: Int,
@@ -843,7 +847,8 @@ object RawSnapshotBackupManager {
                         // The signing key intentionally lives outside raw snapshots. Advance a
                         // no-backup generation after replacement so credentials from the restored
                         // files cannot become valid again under the preserved same-install key.
-                        advanceWorkflowAuthRestoreGeneration(context)
+                        restoreGenerationAdvancerForTest?.invoke(context)
+                            ?: advanceWorkflowAuthRestoreGeneration(context)
 
                         withContext(Dispatchers.Main) { onProgress?.invoke(RestoreProgress.FINALIZING) }
                     }
