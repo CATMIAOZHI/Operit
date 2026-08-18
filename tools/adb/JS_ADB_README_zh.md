@@ -96,7 +96,7 @@
 
 ## 快速开始
 
-脚本默认连接 `personal/dev` 的 Operit Ry debug 应用 `com.rainy.operitry.dev`。仅当目标 debug 构建使用其他 application ID 时，才需要设置 `OPERIT_APP_PACKAGE`：
+脚本默认连接 `personal/main` 的 Operit Ry debug 应用 `com.rainy.operitry`。仅当目标 debug 构建使用其他 application ID 时，才需要设置 `OPERIT_APP_PACKAGE`：
 
 ```cmd
 set OPERIT_APP_PACKAGE=com.example.operit.debug

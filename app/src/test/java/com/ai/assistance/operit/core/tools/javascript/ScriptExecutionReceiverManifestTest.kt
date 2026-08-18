@@ -76,12 +76,12 @@ class ScriptExecutionReceiverManifestTest {
             val packageAssignments =
                 if (relativePath.endsWith(".bat")) {
                     listOf(
-                        "set \"APP_PACKAGE=com.rainy.operitry.dev\"",
+                        "set \"APP_PACKAGE=com.rainy.operitry\"",
                         "set \"APP_PACKAGE=%OPERIT_APP_PACKAGE%\""
                     )
                 } else {
                     listOf(
-                        "APP_PACKAGE=\"${'$'}{OPERIT_APP_PACKAGE:-com.rainy.operitry.dev}\""
+                        "APP_PACKAGE=\"${'$'}{OPERIT_APP_PACKAGE:-com.rainy.operitry}\""
                     )
                 }
             val storageVariable =

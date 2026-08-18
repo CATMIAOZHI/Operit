@@ -8,7 +8,7 @@ if "%~1"=="" (
     echo Example: %0 example.js @params.json
     echo Example: %0 example.js "{}" .env.local
     echo Note: set OPERIT_RESULT_WAIT_SECONDS to customize result wait, default is 15 seconds
-    echo Note: set OPERIT_APP_PACKAGE to target another debug application ID, default is com.rainy.operitry.dev
+echo Note: set OPERIT_APP_PACKAGE to target another debug application ID, default is com.rainy.operitry
     exit /b 1
 )
 
@@ -84,7 +84,7 @@ endlocal & set "DEVICE_SERIAL=%DEVICE_SERIAL%"
 setlocal DisableDelayedExpansion
 
 if "%OPERIT_APP_PACKAGE%"=="" (
-    set "APP_PACKAGE=com.rainy.operitry.dev"
+set "APP_PACKAGE=com.rainy.operitry"
 ) else (
     set "APP_PACKAGE=%OPERIT_APP_PACKAGE%"
 )

@@ -7,11 +7,11 @@ if [ -z "${1:-}" ]; then
     echo "Example: $0 example.js @params.json"
     echo "Example: $0 example.js '{}' .env.local"
     echo "Note: set OPERIT_RESULT_WAIT_SECONDS to customize result wait, default is 15 seconds"
-    echo "Note: set OPERIT_APP_PACKAGE to target another debug application ID, default is com.rainy.operitry.dev"
+    echo "Note: set OPERIT_APP_PACKAGE to target another debug application ID, default is com.rainy.operitry"
     exit 1
 fi
 
-APP_PACKAGE="${OPERIT_APP_PACKAGE:-com.rainy.operitry.dev}"
+APP_PACKAGE="${OPERIT_APP_PACKAGE:-com.rainy.operitry}"
 RECEIVER_COMPONENT="${APP_PACKAGE}/com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver"
 
 FILE_PATH="$1"

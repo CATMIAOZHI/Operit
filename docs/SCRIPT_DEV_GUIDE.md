@@ -835,7 +835,7 @@ TypeScript 脚本 (`.ts`) 需要被编译成 JavaScript (`.js`)才能被执行�
 
 - **Android SDK (ADB)**: 确保你已经安装了 Android SDK，并且 `adb` 命令在你的系统路径中可用。
 - **安卓设备**: 连接一台开启了“USB调试”功能的安卓设备，并已授权电脑进行调试。
-- **Operit 应用程序**: 确保 Operit Ry 的 debug 应用已经安装并在目标设备上运行。辅助脚本默认连接 `personal/dev` 的 `com.rainy.operitry.dev`，并依赖应用内的 `ScriptExecutionReceiver` 接收来自 ADB 的命令。
+- **Operit 应用程序**: 确保 Operit Ry 的 debug 应用已经安装并在目标设备上运行。辅助脚本默认连接 `personal/main` 的 `com.rainy.operitry`，并依赖应用内的 `ScriptExecutionReceiver` 接收来自 ADB 的命令。
 
 如果目标 debug 构建使用其他 application ID，请先设置 `OPERIT_APP_PACKAGE`：
 

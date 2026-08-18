@@ -84,7 +84,7 @@ If you just want the short answer for "which tool should I use":
 - ADB debugging permission granted on the device
 - The Operit Ry debug application installed on the device
 
-The launchers target the `personal/dev` debug application ID `com.rainy.operitry.dev` by default. Set `OPERIT_APP_PACKAGE` only when targeting another debug application ID:
+The launchers target the `personal/main` debug application ID `com.rainy.operitry` by default. Set `OPERIT_APP_PACKAGE` only when targeting another debug application ID:
 
 ```bash
 OPERIT_APP_PACKAGE=com.example.operit.debug ./execute_js.sh path/to/your/script.js functionName '{}'

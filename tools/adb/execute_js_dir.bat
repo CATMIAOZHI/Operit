@@ -15,7 +15,7 @@ REM - Inline JSON is written into a temp file then pushed to device (avoids quot
 REM - If env_file_path is omitted, tries <suite_dir>\.env.local
 REM - Bundles the entry with esbuild first, so shared local modules work without app-side module loading.
 REM - set OPERIT_RESULT_WAIT_SECONDS to customize result wait, default is 15 seconds
-REM - set OPERIT_APP_PACKAGE to target another debug application ID, default is com.rainy.operitry.dev
+REM - set OPERIT_APP_PACKAGE to target another debug application ID, default is com.rainy.operitry
 
 if "%~1"=="" (
     echo Usage: %0 ^<suite_dir^> [entry_js_rel_path] [function_name] [parameters_JSON^|@params_file] [env_file_path]
@@ -101,7 +101,7 @@ endlocal & set "DEVICE_SERIAL=%DEVICE_SERIAL%" & set "SUITE_DIR=%SUITE_DIR%" & s
 setlocal EnableExtensions DisableDelayedExpansion
 
 if "%OPERIT_APP_PACKAGE%"=="" (
-    set "APP_PACKAGE=com.rainy.operitry.dev"
+set "APP_PACKAGE=com.rainy.operitry"
 ) else (
     set "APP_PACKAGE=%OPERIT_APP_PACKAGE%"
 )
