@@ -27,6 +27,10 @@ import org.json.JSONObject
 internal fun requiresMcpRuntimeInitialization(installedPluginCount: Int): Boolean =
     installedPluginCount > 0
 
+/** 仅当存在需要启动的插件时才启动终端/桥接器；全禁用时只做清理，不启动。 */
+internal fun shouldStartMcpBridge(pluginsToStartCount: Int): Boolean =
+    pluginsToStartCount > 0
+
 internal fun isSuccessfulMcpBridgeResponse(response: JSONObject?): Boolean =
     response?.opt("success") == true
 
@@ -62,6 +66,56 @@ internal fun mcpStartupStatusAfterDisabledCleanup(
     if (cleanupSucceeded) MCPStarter.PluginInitStatus.SUCCESS
     else MCPStarter.PluginInitStatus.BRIDGE_FAILED
 
+/**
+ * 零插件路径的清理结论：没有桥接器监听进程时无需清理（成功）；
+ * 存在监听进程时，只有 reset 明确返回 success=true 才算成功，否则保持 fail-closed。
+ */
+internal fun mcpZeroPluginCleanupSucceeded(
+    resetSucceeded: Boolean,
+    bridgeListenerPresentAfterReset: Boolean,
+): Boolean = resetSucceeded || !bridgeListenerPresentAfterReset
+
+
+/**
+ * 是否需要向桥接器发送注销命令：桥接器可达，且该服务要么已确认在注册表中、
+ * 要么注册表当前不可读（仍按可达桥接器处理，以实际响应为准）。
+ */
+internal fun shouldAttemptMcpBridgeUnregister(
+    bridgeUnreachable: Boolean,
+    serviceRegisteredOrUnknown: Boolean,
+): Boolean = !bridgeUnreachable && serviceRegisteredOrUnknown
+
+/**
+ * 桥是否真的不可达：list 命令无响应 且 无缓存探测也没有任何监听进程。
+ * 若存在监听进程但命令失败，说明桥可达但命令/注册表当前不可用，不应跳过清理。
+ */
+internal fun isBridgeGenuinelyUnreachable(
+    listResponse: JSONObject?,
+    listenerPresent: Boolean,
+): Boolean = listResponse == null && !listenerPresent
+
+/**
+ * 桥接器命令是否产生“显式失败”：收到了响应但 success 非 true。
+ * null（未连接/无监听/连接后无响应）不算显式失败，只由调用方决定是否值得关注。
+ */
+internal fun didMcpBridgeCommandExplicitlyFail(response: JSONObject?): Boolean =
+    response != null && !isSuccessfulMcpBridgeResponse(response)
+
+/**
+ * 禁用插件清理的最终聚合：任一“需要注销却显式失败”、无法解析的插件或未预期异常
+ * 都会使清理失败；其余情况（含桥接器不可达、注册表确认无该服务）判成功。
+ * 注销结果为 null（要求注销但无响应）视为“结果不可验证”，同样判失败。
+ */
+internal fun resolveDisabledCleanupOutcome(
+    hasExplicitUnregisterFailure: Boolean,
+    hasUnverifiedUnregister: Boolean,
+    hasUnresolvedPlugin: Boolean,
+    hasUnexpectedError: Boolean,
+): Boolean =
+    !hasExplicitUnregisterFailure &&
+        !hasUnverifiedUnregister &&
+        !hasUnresolvedPlugin &&
+        !hasUnexpectedError
 /**
  * MCP Plugin Starter
  *
@@ -496,51 +550,58 @@ class MCPStarter(private val context: Context) {
                 mcpRepository.refreshPluginList()
 
                 val allInstalledPlugins = mcpRepository.installedPluginIds.first()
-                if (!requiresMcpRuntimeInitialization(allInstalledPlugins.size)) {
-                    mcpRepository.unregisterAllRuntimeMcpEntries()
-                    // A failed status query cannot prove that no stale bridge process or
-                    // registration remains. Always attempt reset and fail closed.
-                    val cleanupSucceeded = didMcpBridgeCleanupSucceed(MCPBridge.reset(context))
-                    progressListener.onAllPluginsStarted(
-                        0,
-                        0,
-                        if (cleanupSucceeded) PluginInitStatus.SUCCESS
-                        else PluginInitStatus.BRIDGE_FAILED,
+               if (!requiresMcpRuntimeInitialization(allInstalledPlugins.size)) {
+                   mcpRepository.unregisterAllRuntimeMcpEntries()
+                    // Always attempt reset; only an explicit bridge failure (a bridge process is
+                    // actually listening but refuses/incompletes the reset) fails closed. When no
+                    // listener remains after the reset attempt there is nothing stale to clean.
+                    // 先执行 reset、随后再无缓存探测监听，避免前置监听快照留下 TOCTOU 窗口。
+                    val cleanupSucceeded = mcpZeroPluginCleanupSucceeded(
+                        resetSucceeded = didMcpBridgeCleanupSucceed(MCPBridge.reset(context)),
+                        bridgeListenerPresentAfterReset = MCPBridge.isBridgeListenerPresent(),
                     )
-                    return@launch
-                }
+                   progressListener.onAllPluginsStarted(
+                       0,
+                       0,
+                        mcpStartupStatusAfterDisabledCleanup(cleanupSucceeded),
+                   )
+                   return@launch
+               }
 
-                val (pluginsToStart, disabledPlugins) = allInstalledPlugins.partition { pluginId ->
-                    mcpLocalServer.isRuntimeActivationAllowed(pluginId)
-                }
+               val (pluginsToStart, disabledPlugins) = allInstalledPlugins.partition { pluginId ->
+                   mcpLocalServer.isRuntimeActivationAllowed(pluginId)
+               }
 
-                // Runtime tool cleanup is local and must not depend on terminal, pnpm, or bridge
-                // availability. Otherwise disabling the final plugin can leave stale AI tools.
-                if (disabledPlugins.isNotEmpty()) {
-                    runCatching {
-                        mcpRepository.unregisterToolsForPlugins(disabledPlugins)
-                    }.onFailure { e ->
-                        AppLogger.e(TAG, "Failed to unregister runtime MCP tools for disabled plugins", e)
+               // Runtime tool cleanup is local and must not depend on terminal, pnpm, or bridge
+               // availability. Otherwise disabling the final plugin can leave stale AI tools.
+              if (disabledPlugins.isNotEmpty()) {
+                  runCatching {
+                      mcpRepository.unregisterToolsForPlugins(disabledPlugins)
+                  }.onFailure { e ->
+                      AppLogger.e(TAG, "Failed to unregister runtime MCP tools for disabled plugins", e)
+                  }
+              }
+
+
+               // 全部插件均禁用：不启动桥接器，仅清理既有桥接器状态。
+                // 无监听时 bridgeUnreachable=true 自动跳过注销，最终 SUCCESS；
+                // 有监听但注销失败才 BRIDGE_FAILED。
+                if (shouldStartMcpBridge(pluginsToStart.size)) {
+                    if (!isTerminalServiceConnected()) {
+                        AppLogger.e(TAG, "Terminal service is not connected. Please start it first.")
+                        progressListener.onAllPluginsStarted(
+                            0,
+                            0,
+                            PluginInitStatus.TERMINAL_SERVICE_UNAVAILABLE
+                        )
+                        return@launch
                     }
-                }
-
-                // Check if terminal service is available
-                if (!isTerminalServiceConnected()) {
-                    AppLogger.e(TAG, "Terminal service is not connected. Please start it first.")
-                    progressListener.onAllPluginsStarted(
-                        0,
-                        0,
-                        PluginInitStatus.TERMINAL_SERVICE_UNAVAILABLE
-                    )
-                    return@launch
-                }
-
-                // Initialize bridge ONCE, this will also reset existing services
-                if (!initBridge()) {
-                    val status =
-                        if (pnpmInstalled == false) PluginInitStatus.NODEJS_MISSING else PluginInitStatus.BRIDGE_FAILED
-                    progressListener.onAllPluginsStarted(0, 0, status)
-                    return@launch
+                    if (!initBridge()) {
+                        val status =
+                            if (pnpmInstalled == false) PluginInitStatus.NODEJS_MISSING else PluginInitStatus.BRIDGE_FAILED
+                        progressListener.onAllPluginsStarted(0, 0, status)
+                        return@launch
+                    }
                 }
 
                 val bridge = MCPBridge.getInstance(context)
@@ -549,53 +610,88 @@ class MCPStarter(private val context: Context) {
                 val listResponse = bridge.listMcpServices()
                 val registeredServiceNames = decodeRegisteredMcpServiceNames(listResponse)?.toMutableSet()
                 val serviceListAvailable = registeredServiceNames != null
+                // null 响应不直接等价于“桥不可达”：只有无缓存探测确认没有任何监听进程才算不可达；
+                // 存在监听但响应失败时按“注册表未知”处理并在循环中逐个尝试注销。
+                val bridgeUnreachable =
+                    isBridgeGenuinelyUnreachable(
+                        listResponse = listResponse,
+                        listenerPresent = listResponse == null && MCPBridge.isBridgeListenerPresent(),
+                    )
 
                 // Finish disabled-plugin cleanup before reporting startup success. Runtime tools
-                // may still exist even when the bridge currently reports no registered service.
-                var disabledServiceCleanupSucceeded = serviceListAvailable || disabledPlugins.isEmpty()
-                if (disabledPlugins.isNotEmpty()) {
-                    if (!serviceListAvailable) {
-                        AppLogger.e(TAG, "Cannot verify bridge services while cleaning up disabled plugins")
-                    }
-                    for (pluginId in disabledPlugins) {
-                        try {
-                            val pluginInfo = mcpRepository.getInstalledPluginInfo(pluginId)
-                            if (pluginInfo == null) {
-                                disabledServiceCleanupSucceeded = false
-                                AppLogger.e(TAG, "Cannot resolve installed plugin info while cleaning up '$pluginId'")
-                                continue
-                            }
-                            val baseServerName = pluginInfo.name.replace(" ", "_").lowercase()
-                                .ifEmpty { pluginId.split("/").last().lowercase() }
+               // may still exist even when the bridge currently reports no registered service.
+                // Cleanup only fails on an explicit bridge refusal, an unverifiable/botched
+                // unregister, an unresolvable plugin, or an unexpected error; an unreachable
+                // bridge, or a registry that confirms the service is absent, is not a failure.
+                var hasExplicitUnregisterFailure = false
+                var hasUnverifiedUnregister = false
+                var hasUnresolvedPlugin = false
+                var hasUnexpectedError = false
+                if (bridgeUnreachable) {
+                    AppLogger.d(TAG, "桥接器不可达，禁用插件无需桥接注销（本地运行时清理已独立完成）")
+                }
+                if (disabledPlugins.isNotEmpty() && !bridgeUnreachable) {
+                   if (!serviceListAvailable) {
+                       AppLogger.e(TAG, "Cannot verify bridge services while cleaning up disabled plugins")
+                   }
+                   for (pluginId in disabledPlugins) {
+                       try {
+                           val pluginInfo = mcpRepository.getInstalledPluginInfo(pluginId)
+                           if (pluginInfo == null) {
+                                hasUnresolvedPlugin = true
+                               AppLogger.e(TAG, "Cannot resolve installed plugin info while cleaning up '$pluginId'")
+                               continue
+                           }
+                           val baseServerName = pluginInfo.name.replace(" ", "_").lowercase()
+                               .ifEmpty { pluginId.split("/").last().lowercase() }
 
-                            val serviceNameToUnregister = if (pluginInfo.type == "local") {
-                                val pluginConfig = mcpLocalServer.getPluginConfig(pluginId)
-                                extractServerNameFromConfig(pluginConfig) ?: baseServerName
-                            } else {
-                                baseServerName
-                            }
+                           val serviceNameToUnregister = if (pluginInfo.type == "local") {
+                               val pluginConfig = mcpLocalServer.getPluginConfig(pluginId)
+                               extractServerNameFromConfig(pluginConfig) ?: baseServerName
+                           } else {
+                               baseServerName
+                           }
 
-                            if (registeredServiceNames?.contains(serviceNameToUnregister) == true) {
-                                AppLogger.d(TAG, "Unregistering disabled plugin '$pluginId' with service name '$serviceNameToUnregister'")
-                                val unregisterResponse = bridge.unregisterMcpService(serviceNameToUnregister)
-                                if (!recordMcpServiceUnregisterResult(
-                                        registeredServiceNames,
+                            if (shouldAttemptMcpBridgeUnregister(
+                                    bridgeUnreachable = bridgeUnreachable,
+                                    serviceRegisteredOrUnknown =
+                                        registeredServiceNames == null ||
+                                            registeredServiceNames.contains(serviceNameToUnregister),
+                                )
+                            ) {
+                               AppLogger.d(TAG, "Unregistering disabled plugin '$pluginId' with service name '$serviceNameToUnregister'")
+                               val unregisterResponse = bridge.unregisterMcpService(serviceNameToUnregister)
+                                registeredServiceNames?.let { names ->
+                                    recordMcpServiceUnregisterResult(
+                                        names,
                                         serviceNameToUnregister,
                                         unregisterResponse,
                                     )
-                                ) {
-                                    disabledServiceCleanupSucceeded = false
-                                    AppLogger.e(TAG, "Bridge failed to unregister disabled plugin '$pluginId'")
                                 }
-                            }
-                        } catch (e: Exception) {
-                            disabledServiceCleanupSucceeded = false
-                            AppLogger.e(TAG, "Failed to unregister disabled plugin '$pluginId'", e)
-                        }
-                    }
-                }
+                                if (didMcpBridgeCommandExplicitlyFail(unregisterResponse)) {
+                                    hasExplicitUnregisterFailure = true
+                                    AppLogger.e(TAG, "Bridge failed to unregister disabled plugin '$pluginId'")
+                                } else if (unregisterResponse == null) {
+                                    // 明确要求注销却没有任何响应：无法确认服务已被移除，保持 fail-closed。
+                                    hasUnverifiedUnregister = true
+                                    AppLogger.w(TAG, "Unregister for disabled plugin '$pluginId' unverified (no response)")
+                                }
+                           }
+                       } catch (e: Exception) {
+                            hasUnexpectedError = true
+                           AppLogger.e(TAG, "Failed to unregister disabled plugin '$pluginId'", e)
+                       }
+                   }
+               }
+                val disabledServiceCleanupSucceeded =
+                    resolveDisabledCleanupOutcome(
+                        hasExplicitUnregisterFailure = hasExplicitUnregisterFailure,
+                        hasUnverifiedUnregister = hasUnverifiedUnregister,
+                        hasUnresolvedPlugin = hasUnresolvedPlugin,
+                        hasUnexpectedError = hasUnexpectedError,
+                    )
 
-                if (pluginsToStart.isEmpty()) {
+               if (pluginsToStart.isEmpty()) {
                     progressListener.onAllPluginsStarted(
                         0,
                         0,
