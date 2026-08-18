@@ -20,13 +20,99 @@ class MCPStarterPolicyTest {
     }
 
     @Test
-    fun `zero-installed cleanup fails closed when bridge reset is unverifiable`() {
+    fun `reset cleanup requires a successful bridge response`() {
         assertFalse(didMcpBridgeCleanupSucceed(null))
         assertFalse(didMcpBridgeCleanupSucceed(JSONObject().put("success", false)))
         assertFalse(didMcpBridgeCleanupSucceed(JSONObject().put("success", "true")))
         assertFalse(didMcpBridgeCleanupSucceed(JSONObject().put("success", 1)))
         assertFalse(didMcpBridgeCleanupSucceed(JSONObject().put("success", JSONObject.NULL)))
         assertTrue(didMcpBridgeCleanupSucceed(JSONObject().put("success", true)))
+    }
+
+    @Test
+    fun `zero plugin cleanup succeeds only on a successful reset or with no remaining listener`() {
+        assertTrue(
+            mcpZeroPluginCleanupSucceeded(
+                resetSucceeded = true,
+                bridgeListenerPresentAfterReset = true,
+            )
+        )
+        assertTrue(
+            mcpZeroPluginCleanupSucceeded(
+                resetSucceeded = true,
+                bridgeListenerPresentAfterReset = false,
+            )
+        )
+        assertTrue(
+            mcpZeroPluginCleanupSucceeded(
+                resetSucceeded = false,
+                bridgeListenerPresentAfterReset = false,
+            )
+        )
+        assertFalse(
+            mcpZeroPluginCleanupSucceeded(
+                resetSucceeded = false,
+                bridgeListenerPresentAfterReset = true,
+            )
+        )
+    }
+
+    @Test
+    fun `explicit bridge command failure means a received unsuccessful response`() {
+        assertFalse(didMcpBridgeCommandExplicitlyFail(null))
+        assertTrue(didMcpBridgeCommandExplicitlyFail(JSONObject().put("success", false)))
+        assertFalse(didMcpBridgeCommandExplicitlyFail(JSONObject().put("success", true)))
+    }
+
+    @Test
+    fun `disabled cleanup aggregation succeeds unless explicit failure unresolved or exception`() {
+        assertTrue(
+            resolveDisabledCleanupOutcome(
+                hasExplicitUnregisterFailure = false,
+                hasUnverifiedUnregister = false,
+                hasUnresolvedPlugin = false,
+                hasUnexpectedError = false,
+            )
+        )
+        assertFalse(
+            resolveDisabledCleanupOutcome(
+                hasExplicitUnregisterFailure = true,
+                hasUnverifiedUnregister = false,
+                hasUnresolvedPlugin = false,
+                hasUnexpectedError = false,
+            )
+        )
+        assertFalse(
+            resolveDisabledCleanupOutcome(
+                hasExplicitUnregisterFailure = false,
+                hasUnverifiedUnregister = true,
+                hasUnresolvedPlugin = false,
+                hasUnexpectedError = false,
+            )
+        )
+        assertFalse(
+            resolveDisabledCleanupOutcome(
+                hasExplicitUnregisterFailure = false,
+                hasUnverifiedUnregister = false,
+                hasUnresolvedPlugin = true,
+                hasUnexpectedError = false,
+            )
+        )
+        assertFalse(
+            resolveDisabledCleanupOutcome(
+                hasExplicitUnregisterFailure = false,
+                hasUnverifiedUnregister = false,
+                hasUnresolvedPlugin = false,
+                hasUnexpectedError = true,
+            )
+        )
+    }
+
+    @Test
+    fun `bridge unregister is only attempted when the bridge is reachable`() {
+        assertFalse(shouldAttemptMcpBridgeUnregister(bridgeUnreachable = true, serviceRegisteredOrUnknown = true))
+        assertFalse(shouldAttemptMcpBridgeUnregister(bridgeUnreachable = false, serviceRegisteredOrUnknown = false))
+        assertTrue(shouldAttemptMcpBridgeUnregister(bridgeUnreachable = false, serviceRegisteredOrUnknown = true))
     }
 
     @Test
@@ -102,8 +188,22 @@ class MCPStarterPolicyTest {
             decodeRegisteredMcpServiceNames(
                 JSONObject()
                     .put("success", true)
-                    .put("result", JSONObject().put("services", JSONArray().put(1)))
-            )
-        )
+                   .put("result", JSONObject().put("services", JSONArray().put(1)))
+           )
+       )
+   }
+
+    @Test
+    fun `bridge is genuinely unreachable only when list fails and no listener is present`() {
+        assertTrue(isBridgeGenuinelyUnreachable(listResponse = null, listenerPresent = false))
+        assertFalse(isBridgeGenuinelyUnreachable(listResponse = null, listenerPresent = true))
+       assertFalse(isBridgeGenuinelyUnreachable(listResponse = JSONObject().put("success", false), listenerPresent = false))
+       assertFalse(isBridgeGenuinelyUnreachable(listResponse = JSONObject().put("success", true), listenerPresent = true))
+   }
+
+    @Test
+    fun `bridge startup is skipped when no plugin needs to start`() {
+        assertFalse(shouldStartMcpBridge(pluginsToStartCount = 0))
+        assertTrue(shouldStartMcpBridge(pluginsToStartCount = 1))
     }
 }
