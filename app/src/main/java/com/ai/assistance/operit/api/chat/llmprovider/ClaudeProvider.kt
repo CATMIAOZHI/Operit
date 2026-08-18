@@ -1424,7 +1424,7 @@ class ClaudeProvider(
                     }
                     "tool_use" -> {
                         if (enableToolCall) {
-                            val toolName = block.optString("name", "")
+                            val toolName = block.optProviderToolName() ?: ""
                             if (toolName.isNotEmpty()) {
                                 val toolTagName = ChatMarkupRegex.generateRandomToolTagName()
                                 fullText.append("\n<$toolTagName name=\"$toolName\">")
@@ -1674,7 +1674,7 @@ class ClaudeProvider(
                                         when (contentBlock.optString("type")) {
                                             "tool_use" -> {
                                                 if (enableToolCall) {
-                                                    val toolName = contentBlock.optString("name", "")
+                                                    val toolName = contentBlock.optProviderToolName() ?: ""
                                                     if (toolName.isNotEmpty()) {
                                                         val toolTagName = ChatMarkupRegex.generateRandomToolTagName()
                                                         currentToolTagName = toolTagName
