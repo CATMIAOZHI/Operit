@@ -240,7 +240,8 @@ private fun buildFunctionalReasoningParameters(
                 emptyList()
             }
 
-        ApiProviderType.OPENROUTER ->
+        ApiProviderType.OPENROUTER,
+        ApiProviderType.NOUS_PORTAL ->
             listOf(
                 functionalMergedObjectParameter(
                     apiName = "reasoning",
@@ -556,7 +557,8 @@ private fun functionalReasoningApiNames(
 
         ApiProviderType.OPENAI_RESPONSES_GENERIC -> emptySet()
 
-        ApiProviderType.OPENROUTER -> setOf("reasoning")
+        ApiProviderType.OPENROUTER,
+        ApiProviderType.NOUS_PORTAL -> setOf("reasoning")
         ApiProviderType.SILICONFLOW ->
             if (siliconFlowSupportsThinkingBudget(modelName)) {
                 setOf("enable_thinking", "thinking_budget")

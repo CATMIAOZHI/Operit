@@ -306,6 +306,20 @@ class FunctionalReasoningAIServiceTest {
     }
 
     @Test
+    fun nousPortalReceivesTheSelectedEffort() {
+        val request =
+            buildFunctionalReasoningRequest(
+                providerType = ApiProviderType.NOUS_PORTAL,
+                modelName = "nous-portal/model",
+                modelParameters = emptyList(),
+                thinkingQualityLevel = 5,
+            )
+        val reasoning = JSONObject(request.parameterValue("reasoning") as String)
+
+        assertEquals("max", reasoning.getString("effort"))
+    }
+
+    @Test
     fun siliconFlowMapsAllFiveLevelsToBudgets() {
         val low =
             buildFunctionalReasoningRequest(
@@ -1102,6 +1116,28 @@ class FunctionalReasoningAIServiceTest {
             buildFunctionalReasoningRequest(
                 ApiProviderType.OPENROUTER,
                 "openrouter/auto",
+                listOf(
+                    stringParameter(
+                        "reasoning",
+                        "{\"enabled\":false,\"effort\":\"low\",\"max_tokens\":2048,\"exclude\":true}",
+                    )
+                ),
+                5,
+            )
+        val reasoning = JSONObject(request.parameterValue("reasoning") as String)
+
+        assertEquals("max", reasoning.getString("effort"))
+        assertTrue(reasoning.getBoolean("exclude"))
+        assertFalse(reasoning.has("enabled"))
+        assertFalse(reasoning.has("max_tokens"))
+    }
+
+    @Test
+    fun nousPortalEffortPreservesExcludeAndRemovesConflictingControls() {
+        val request =
+            buildFunctionalReasoningRequest(
+                ApiProviderType.NOUS_PORTAL,
+                "nous-portal/model",
                 listOf(
                     stringParameter(
                         "reasoning",
