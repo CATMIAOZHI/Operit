@@ -2124,8 +2124,9 @@ description: one-line summary of what this skill does
     const TOOLPKG_SKIP_FILE_NAMES = new Set([".DS_Store", "Thumbs.db"]);
     let cachedOperitRuntimeTargets = null;
     async function resolve_operit_runtime_targets() {
-        if (cachedOperitRuntimeTargets)
+        if (cachedOperitRuntimeTargets) {
             return cachedOperitRuntimeTargets;
+        }
         const packageSnapshot = await Tools.SoftwareSettings.listSandboxPackages();
         const reportedPackagesPath = normalize_android_path(packageSnapshot?.externalPackagesPath);
         const match = /(?:^|\/)Android\/data\/([^/]+)\/files\/packages\/?$/i.exec(reportedPackagesPath);
@@ -2136,8 +2137,7 @@ description: one-line summary of what this skill does
         cachedOperitRuntimeTargets = {
             appPackage,
             externalPackagesDir: `/sdcard/Android/data/${appPackage}/files/packages`,
-            toolPkgDebugInstallComponent: `${appPackage}/${TOOLPKG_DEBUG_INSTALL_RECEIVER}`,
-            jsTempDir: `/sdcard/Android/data/${appPackage}/js_temp`
+            toolPkgDebugInstallComponent: `${appPackage}/${TOOLPKG_DEBUG_INSTALL_RECEIVER}`
         };
         return cachedOperitRuntimeTargets;
     }
@@ -2818,7 +2818,6 @@ description: one-line summary of what this skill does
         });
         let finalPayload = null;
         try {
-            const runtimeTargets = await resolve_operit_runtime_targets();
             const sourcePath = normalize_android_path(params?.source_path);
             const sourceCode = typeof params?.source_code === "string" ? params.source_code : "";
             const hasInlineCode = sourceCode.trim().length > 0;
@@ -2866,7 +2865,7 @@ description: one-line summary of what this skill does
                 }
             }
             const executionMode = hasInlineCode ? SANDBOX_SCRIPT_EXECUTION_MODE_CODE : SANDBOX_SCRIPT_EXECUTION_MODE_SCRIPT;
-            const scriptIdentityPath = sourcePath || path_join(runtimeTargets.jsTempDir, `${scriptLabel}_${Date.now()}.inline.js`);
+            const scriptIdentityPath = sourcePath || `<inline-code:${scriptLabel}>`;
             logStep(`Execution mode -> ${executionMode}`);
             logStep(`Execution target -> ${scriptIdentityPath}`);
             const executionResult = await Tools.SoftwareSettings.executeSandboxScriptDirect({
