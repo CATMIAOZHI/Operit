@@ -107,7 +107,7 @@
 
 【Sandbox Package：安装与排查】
 1) 沙盒包目录（外部）：
-- Android/data/com.rainy.operitry/files/packages
+- Android/data/<当前应用包名>/files/packages
 2) 内置包：
 - 内置包来自应用内置资源，不在上述外部目录；删除内置包文件不是常规操作，通常只做开关管理。
 3) 导入与删除：
@@ -345,7 +345,7 @@
 
 [Sandbox Package: install and troubleshooting]
 1) External sandbox packages directory:
-- Android/data/com.rainy.operitry/files/packages
+- Android/data/<current application package>/files/packages
 2) Built-in packages:
 - Built-in packages come from app bundled assets, not from the external directory above; usually manage via enable/disable instead of file deletion.
 3) Import and delete:
@@ -2114,16 +2114,11 @@ async function set_sandbox_package_enabled(params?: { package_name?: string; ena
   }
 }
 
-const SANDBOX_EXTERNAL_PACKAGES_DIR = "/sdcard/Android/data/com.rainy.operitry/files/packages";
 const TOOLPKG_DEBUG_INSTALL_ACTION = "com.ai.assistance.operit.DEBUG_INSTALL_TOOLPKG";
-const TOOLPKG_DEBUG_INSTALL_COMPONENT =
-  "com.rainy.operitry/com.ai.assistance.operit.core.tools.packTool.ToolPkgDebugInstallReceiver";
-const SANDBOX_SCRIPT_EXECUTION_ACTION = "com.ai.assistance.operit.EXECUTE_JS";
-const SANDBOX_SCRIPT_EXECUTION_COMPONENT =
-  "com.rainy.operitry/com.ai.assistance.operit.core.tools.javascript.ScriptExecutionReceiver";
 const SANDBOX_SCRIPT_EXECUTION_MODE_SCRIPT = "script";
 const SANDBOX_SCRIPT_EXECUTION_MODE_CODE = "code";
-const SANDBOX_JS_TEMP_DIR = "/sdcard/Android/data/com.rainy.operitry/js_temp";
+const TOOLPKG_DEBUG_INSTALL_RECEIVER =
+  "com.ai.assistance.operit.core.tools.packTool.ToolPkgDebugInstallReceiver";
 const DEFAULT_SANDBOX_REFRESH_TIMEOUT_MS = 1500;
 const DEFAULT_TOOLPKG_INSTALL_WAIT_MS = 1500;
 const DEFAULT_SANDBOX_SCRIPT_WAIT_MS = 15000;
@@ -2134,6 +2129,34 @@ const TOOLPKG_MAIN_PATTERN = /^\s*["']?main["']?\s*:\s*["']([^"']+)["']/m;
 const TOOLPKG_SUBPACKAGE_ID_PATTERN = /^\s*["']?id["']?\s*:\s*["']([^"']+)["']/gm;
 const TOOLPKG_SKIP_DIR_NAMES = new Set([".git", "__pycache__"]);
 const TOOLPKG_SKIP_FILE_NAMES = new Set([".DS_Store", "Thumbs.db"]);
+
+type OperitRuntimeTargets = {
+  appPackage: string;
+  externalPackagesDir: string;
+  toolPkgDebugInstallComponent: string;
+};
+
+let cachedOperitRuntimeTargets: OperitRuntimeTargets | null = null;
+async function resolve_operit_runtime_targets(): Promise<OperitRuntimeTargets> {
+  if (cachedOperitRuntimeTargets) {
+    return cachedOperitRuntimeTargets;
+  }
+  const packageSnapshot = await Tools.SoftwareSettings.listSandboxPackages();
+  const reportedPackagesPath = normalize_android_path(packageSnapshot?.externalPackagesPath);
+  const match = /(?:^|\/)Android\/data\/([^/]+)\/files\/packages\/?$/i.exec(reportedPackagesPath);
+  if (!match) {
+    throw new Error(
+      `Cannot resolve current Operit package from external packages path: ${reportedPackagesPath || "<empty>"}`
+    );
+  }
+  const appPackage = match[1];
+  cachedOperitRuntimeTargets = {
+    appPackage,
+    externalPackagesDir: `/sdcard/Android/data/${appPackage}/files/packages`,
+    toolPkgDebugInstallComponent: `${appPackage}/${TOOLPKG_DEBUG_INSTALL_RECEIVER}`
+  };
+  return cachedOperitRuntimeTargets;
+}
 
 type SandboxPackageEntry = SandboxPackageResultItem;
 type SandboxPackagesPayload = SandboxPackagesResultData;
@@ -2398,9 +2421,13 @@ function parse_js_package_source(sourceText: string, sourcePath: string): JsPack
   };
 }
 
-async function delete_duplicate_external_js_package_files(packageName: string, keepPath: string) {
+async function delete_duplicate_external_js_package_files(
+  packageName: string,
+  keepPath: string,
+  externalPackagesDir: string
+) {
   const removedPaths: string[] = [];
-  const listing = await Tools.Files.list(SANDBOX_EXTERNAL_PACKAGES_DIR, "android");
+  const listing = await Tools.Files.list(externalPackagesDir, "android");
 
   for (const entry of listing?.entries ?? []) {
     const entryName = String(entry?.name ?? "").trim();
@@ -2408,7 +2435,7 @@ async function delete_duplicate_external_js_package_files(packageName: string, k
       continue;
     }
 
-    const candidatePath = path_join(SANDBOX_EXTERNAL_PACKAGES_DIR, entryName);
+    const candidatePath = path_join(externalPackagesDir, entryName);
     if (same_android_path(candidatePath, keepPath)) {
       continue;
     }
@@ -2642,9 +2669,10 @@ async function debug_install_js_package(params?: {
       )}, shouldEnable=${String(shouldEnable)}`
     );
 
-    await ensure_android_directory(SANDBOX_EXTERNAL_PACKAGES_DIR);
+    const runtimeTargets = await resolve_operit_runtime_targets();
+    await ensure_android_directory(runtimeTargets.externalPackagesDir);
     const targetPath = path_join(
-      SANDBOX_EXTERNAL_PACKAGES_DIR,
+      runtimeTargets.externalPackagesDir,
       `${safe_debug_file_stem(packageInfo.packageName, "debug_js_package")}.js`
     );
     logStep(`Target install path -> ${targetPath}`);
@@ -2666,7 +2694,11 @@ async function debug_install_js_package(params?: {
     }
     logStep("Verified installed JS package file exists.");
 
-    const removedDuplicateFiles = await delete_duplicate_external_js_package_files(packageInfo.packageName, targetPath);
+    const removedDuplicateFiles = await delete_duplicate_external_js_package_files(
+      packageInfo.packageName,
+      targetPath,
+      runtimeTargets.externalPackagesDir
+    );
     logStep(`Duplicate cleanup completed -> removed ${removedDuplicateFiles.length} file(s).`);
     const refresh = await refresh_sandbox_packages_until(
       packageInfo.packageName,
@@ -2769,6 +2801,7 @@ async function debug_install_toolpkg(params?: {
   let finalPayload: { success: boolean; message: string; data?: Record<string, unknown> } | null = null;
 
   try {
+    const runtimeTargets = await resolve_operit_runtime_targets();
     const resolvedSource = await resolve_toolpkg_source(params?.source_path ?? "");
     logStep(
       `Resolved ToolPkg source -> kind=${resolvedSource.sourceKind}, packageId=${resolvedSource.packageId}, sourcePath=${resolvedSource.sourcePath}`
@@ -2787,9 +2820,9 @@ async function debug_install_toolpkg(params?: {
       logStep(`Built archive -> ${archivePath}`);
     }
 
-    await ensure_android_directory(SANDBOX_EXTERNAL_PACKAGES_DIR);
+    await ensure_android_directory(runtimeTargets.externalPackagesDir);
     const targetPath = path_join(
-      SANDBOX_EXTERNAL_PACKAGES_DIR,
+      runtimeTargets.externalPackagesDir,
       `${safe_debug_file_stem(resolvedSource.packageId, "toolpkg")}.toolpkg`
     );
     logStep(`Target install path -> ${targetPath}`);
@@ -2817,7 +2850,7 @@ async function debug_install_toolpkg(params?: {
     );
     const broadcastResult = await Tools.System.sendBroadcast({
       action: TOOLPKG_DEBUG_INSTALL_ACTION,
-      component: TOOLPKG_DEBUG_INSTALL_COMPONENT,
+      component: runtimeTargets.toolPkgDebugInstallComponent,
       extras: {
         package_name: resolvedSource.packageId,
         file_path: targetPath,
@@ -3023,7 +3056,7 @@ async function debug_run_sandbox_script(params?: {
 
     const executionMode = hasInlineCode ? SANDBOX_SCRIPT_EXECUTION_MODE_CODE : SANDBOX_SCRIPT_EXECUTION_MODE_SCRIPT;
     const scriptIdentityPath =
-      sourcePath || path_join(SANDBOX_JS_TEMP_DIR, `${scriptLabel}_${Date.now()}.inline.js`);
+      sourcePath || `<inline-code:${scriptLabel}>`;
     logStep(`Execution mode -> ${executionMode}`);
     logStep(`Execution target -> ${scriptIdentityPath}`);
 

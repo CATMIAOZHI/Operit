@@ -16,10 +16,44 @@ from sync_example_packages import (  # noqa: E402
     _exclude_expected_incompatible,
     _manifest_runtime_files,
     _pack_toolpkg_folder,
+    _should_skip_copy,
 )
 
 
 class ToolPkgRuntimeFilesTest(unittest.TestCase):
+    def test_should_skip_copy_requires_matching_destination_content(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.js"
+            destination = Path(directory) / "destination.js"
+            source.write_text("exports.one = 1;\n", encoding="utf-8")
+            destination.write_text("exports.one = 1;\n", encoding="utf-8")
+
+            # Signature matches and destination bytes match source: skip.
+            self.assertTrue(
+                _should_skip_copy(
+                    dry_run=False,
+                    destination=destination,
+                    destination_name="destination.js",
+                    output_state={"destination.js": "stale"},
+                    plan_signature="stale",
+                    source=source,
+                )
+            )
+
+            # Destination was modified externally even though the recorded
+            # signature still matches: must not skip so sync restores it.
+            destination.write_text("exports.one = 2;\n", encoding="utf-8")
+            self.assertFalse(
+                _should_skip_copy(
+                    dry_run=False,
+                    destination=destination,
+                    destination_name="destination.js",
+                    output_state={"destination.js": "stale"},
+                    plan_signature="stale",
+                    source=source,
+                )
+            )
+
     def test_sandboxpackage_installer_is_valid_javascript(self) -> None:
         subprocess.run(
             [
