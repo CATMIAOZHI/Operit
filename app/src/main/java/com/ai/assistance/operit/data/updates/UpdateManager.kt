@@ -203,13 +203,20 @@ class UpdateManager private constructor(private val context: Context) {
                             UpdateStatus.UpToDate
                         }
 
-                    val patch = patchUpdate as? UpdateStatus.PatchAvailable
+                    // patchUpdate 可能是补丁（PatchAvailable）或完整 APK 回退（Available）。
+                    // 两者都是 nightly 渠道可用的更新，统一按 newVersion 与正式渠道比较，
+                    // 避免完整 APK 回退无条件压过更高版本的正式更新。
                     val normal = normalUpdate as? UpdateStatus.Available
-                    if (patch != null && normal != null) {
-                        val finalStatus = if (compareVersions(normal.newVersion, patch.newVersion) >= 0) {
+                    val nightly = when (patchUpdate) {
+                        is UpdateStatus.PatchAvailable -> patchUpdate.newVersion
+                        is UpdateStatus.Available -> patchUpdate.newVersion
+                        else -> null
+                    }
+                    if (nightly != null && normal != null) {
+                        val finalStatus = if (compareVersions(normal.newVersion, nightly) >= 0) {
                             normalUpdate
                         } else {
-                            patchUpdate
+                            patchUpdate!!
                         }
 
                         return@withContext finalStatus
@@ -235,7 +242,7 @@ class UpdateManager private constructor(private val context: Context) {
         val repo = DistributionConfig.NIGHTLY_REPOSITORY
 
         AppLogger.d(TAG, "tryFetchLatestPatchUpdate(): currentVersion=$currentVersion repo=$owner/$repo")
-        val result = api.getRepositoryReleases(owner = owner, repo = repo, page = 1, perPage = 20)
+        val result = api.getAllRepositoryReleases(owner = owner, repo = repo)
 
         result.exceptionOrNull()?.let { e ->
             AppLogger.w(TAG, "tryFetchLatestPatchUpdate(): api getRepositoryReleases failed", e)
@@ -255,7 +262,8 @@ class UpdateManager private constructor(private val context: Context) {
         var bestTargetSha = ""
         var bestFullVersion = ""
         val isPersonalDev = BuildConfig.PERSONAL_DEV_UPDATE_CHANNEL
-        val currentApkSha = if (isPersonalDev) sha256Hex(File(context.applicationInfo.sourceDir)) else ""
+        // 所有渠道的可达性预检都需要当前安装 APK 的 SHA-256 作为链起点。
+        val currentApkSha = sha256Hex(File(context.applicationInfo.sourceDir))
         val patchEdges = mutableMapOf<String, MutableSet<String>>()
 
         for (r in releases) {
@@ -287,17 +295,15 @@ class UpdateManager private constructor(private val context: Context) {
 
             newerThanCurrent += 1
 
-            if (isPersonalDev) {
-                val apkAsset = r.assets.firstOrNull { it.name.endsWith(".apk") }
-                if (apkAsset != null && (bestFull == null || compareVersions(version, bestFullVersion) > 0)) {
-                    bestFullVersion = version
-                    bestFull = UpdateStatus.Available(
-                        newVersion = version,
-                        updateUrl = r.html_url,
-                        releaseNotes = r.body ?: "",
-                        downloadUrl = apkAsset.browser_download_url
-                    )
-                }
+            val apkAsset = r.assets.firstOrNull { it.name.endsWith(".apk") }
+            if (apkAsset != null && (bestFull == null || compareVersions(version, bestFullVersion) > 0)) {
+                bestFullVersion = version
+                bestFull = UpdateStatus.Available(
+                    newVersion = version,
+                    updateUrl = r.html_url,
+                    releaseNotes = r.body ?: "",
+                    downloadUrl = apkAsset.browser_download_url
+                )
             }
 
             val metaAsset =
@@ -347,7 +353,9 @@ class UpdateManager private constructor(private val context: Context) {
         if (best == null) {
             AppLogger.d(TAG, "tryFetchLatestPatchUpdate(): no valid patch candidates")
         }
-        val patchIsReachable = !isPersonalDev || canReachSha(currentApkSha, bestTargetSha, patchEdges)
+        // 所有渠道都做链可达性预检：不可达时回退到完整 APK（bestFull），
+        // 而不是等到安装阶段才让 resolvePatchChain 失败。
+        val patchIsReachable = canReachSha(currentApkSha, bestTargetSha, patchEdges)
         return if (patchIsReachable) best ?: bestFull else bestFull
     }
 
