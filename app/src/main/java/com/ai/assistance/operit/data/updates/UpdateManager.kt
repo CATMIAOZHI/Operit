@@ -10,6 +10,7 @@ import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.data.api.GitHubApiService
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.util.GithubReleaseUtil
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -138,6 +139,9 @@ class UpdateManager private constructor(private val context: Context) {
             val result = checkForUpdatesInternal(currentVersion)
             AppLogger.d(TAG, "checkForUpdates() done: status=${result::class.java.simpleName}")
             _updateStatus.postValue(result)
+        } catch (e: CancellationException) {
+            // 协程取消必须继续向上传播，不能发布成更新检查失败。
+            throw e
         } catch (e: Exception) {
             AppLogger.e(TAG, "Update check failed", e)
             _updateStatus.postValue(UpdateStatus.Error(context.getString(R.string.update_check_failed, e.message)))
@@ -228,6 +232,8 @@ class UpdateManager private constructor(private val context: Context) {
                     val finalStatus = patchUpdate ?: UpdateStatus.Error(context.getString(R.string.update_cannot_fetch_info))
                     finalStatus
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Error checking for updates", e)
                 return@withContext UpdateStatus.Error(context.getString(R.string.update_check_failed, e.message))
@@ -295,8 +301,14 @@ class UpdateManager private constructor(private val context: Context) {
 
             newerThanCurrent += 1
 
+            // 完整 APK 回退必须与当前安装包同 applicationId，否则安装器无法覆盖更新
+            // （例如把 com.rainy.operitry.dev 的 APK 回退给正式版 com.rainy.operitry）。
+            // 不能只依赖 channel 过滤：元数据缺失或异常时 channel 为空，会漏过不匹配包。
             val apkAsset = r.assets.firstOrNull { it.name.endsWith(".apk") }
-            if (apkAsset != null && (bestFull == null || compareVersions(version, bestFullVersion) > 0)) {
+            val apkMatchesPackage = applicationId.isNotBlank() && applicationId == context.packageName
+            if (apkAsset != null && apkMatchesPackage &&
+                (bestFull == null || compareVersions(version, bestFullVersion) > 0)
+            ) {
                 bestFullVersion = version
                 bestFull = UpdateStatus.Available(
                     newVersion = version,
