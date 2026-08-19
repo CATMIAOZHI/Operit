@@ -370,11 +370,9 @@ object PatchUpdateInstaller {
             ?: throw IllegalStateException("Unsupported patch source URL")
 
         val api = GitHubApiService(context)
-        val releases = api.getRepositoryReleases(
+        val releases = api.getAllRepositoryReleases(
             owner = repo.first,
-            repo = repo.second,
-            page = 1,
-            perPage = 100
+            repo = repo.second
         ).getOrElse { e ->
             throw IllegalStateException("Failed to query patch releases: ${e.message ?: e.javaClass.simpleName}")
         }

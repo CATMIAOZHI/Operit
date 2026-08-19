@@ -11,7 +11,9 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.util.GithubReleaseUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.security.MessageDigest
 
 // 更新状态 - 移除下载相关状态
 sealed class UpdateStatus {
@@ -188,13 +190,20 @@ class UpdateManager private constructor(private val context: Context) {
                             UpdateStatus.UpToDate
                         }
 
-                    val patch = patchUpdate as? UpdateStatus.PatchAvailable
+                    // patchUpdate 可能是补丁（PatchAvailable）或完整 APK 回退（Available）。
+                    // 两者都是 nightly 渠道可用的更新，统一按 newVersion 与正式渠道比较，
+                    // 避免完整 APK 回退无条件压过更高版本的正式更新。
                     val normal = normalUpdate as? UpdateStatus.Available
-                    if (patch != null && normal != null) {
-                        val finalStatus = if (compareVersions(normal.newVersion, patch.newVersion) >= 0) {
+                    val nightly = when (patchUpdate) {
+                        is UpdateStatus.PatchAvailable -> patchUpdate.newVersion
+                        is UpdateStatus.Available -> patchUpdate.newVersion
+                        else -> null
+                    }
+                    if (nightly != null && normal != null) {
+                        val finalStatus = if (compareVersions(normal.newVersion, nightly) >= 0) {
                             normalUpdate
                         } else {
-                            patchUpdate
+                            patchUpdate!!
                         }
 
                         return@withContext finalStatus
@@ -220,7 +229,7 @@ class UpdateManager private constructor(private val context: Context) {
         val repo = DistributionConfig.NIGHTLY_REPOSITORY
 
         AppLogger.d(TAG, "tryFetchLatestPatchUpdate(): currentVersion=$currentVersion repo=$owner/$repo")
-        val result = api.getRepositoryReleases(owner = owner, repo = repo, page = 1, perPage = 20)
+        val result = api.getAllRepositoryReleases(owner = owner, repo = repo)
 
         result.exceptionOrNull()?.let { e ->
             AppLogger.w(TAG, "tryFetchLatestPatchUpdate(): api getRepositoryReleases failed", e)
@@ -235,11 +244,17 @@ class UpdateManager private constructor(private val context: Context) {
         var newerThanCurrent = 0
         var withAssets = 0
         var best: UpdateStatus.PatchAvailable? = null
+        var bestFull: UpdateStatus.Available? = null
         var bestVersion = ""
+        var bestFullVersion = ""
+        var bestTargetSha = ""
+        val currentApkSha = sha256Hex(File(context.applicationInfo.sourceDir))
+        val patchEdges = mutableMapOf<String, MutableSet<String>>()
 
         for (r in releases) {
             if (r.draft) continue
 
+            val metadata = runCatching { JSONObject(r.body.orEmpty()) }.getOrNull()
             val tag = r.tag_name
             val version = tag.removePrefix("v")
 
@@ -257,6 +272,17 @@ class UpdateManager private constructor(private val context: Context) {
 
             newerThanCurrent += 1
 
+            val apkAsset = r.assets.firstOrNull { it.name.endsWith(".apk") }
+            if (apkAsset != null && (bestFull == null || compareVersions(version, bestFullVersion) > 0)) {
+                bestFullVersion = version
+                bestFull = UpdateStatus.Available(
+                    newVersion = version,
+                    updateUrl = r.html_url,
+                    releaseNotes = r.body ?: "",
+                    downloadUrl = apkAsset.browser_download_url
+                )
+            }
+
             val metaAsset =
                 r.assets.firstOrNull { it.name.startsWith("patch_") && it.name.endsWith(".json") }
                     ?: r.assets.firstOrNull { it.name.endsWith(".json") }
@@ -272,6 +298,11 @@ class UpdateManager private constructor(private val context: Context) {
             }
 
             withAssets += 1
+            val baseSha = metadata?.optString("baseSha256", "")?.lowercase().orEmpty()
+            val targetSha = metadata?.optString("targetSha256", "")?.lowercase().orEmpty()
+            if (baseSha.isNotBlank() && targetSha.isNotBlank()) {
+                patchEdges.getOrPut(baseSha) { mutableSetOf() } += targetSha
+            }
 
             AppLogger.d(
                 TAG,
@@ -280,6 +311,7 @@ class UpdateManager private constructor(private val context: Context) {
 
             if (best == null || compareVersions(version, bestVersion) > 0) {
                 bestVersion = version
+                bestTargetSha = targetSha
                 best = UpdateStatus.PatchAvailable(
                     newVersion = version,
                     updateUrl = r.html_url,
@@ -298,6 +330,42 @@ class UpdateManager private constructor(private val context: Context) {
         if (best == null) {
             AppLogger.d(TAG, "tryFetchLatestPatchUpdate(): no valid patch candidates")
         }
-        return best
+        // 补丁链可达性预检：当前安装 APK 的 SHA-256 必须能通过补丁边到达目标，
+        // 否则回退到完整 APK（bestFull），避免安装阶段才失败。
+        val patchIsReachable = canReachSha(currentApkSha, bestTargetSha, patchEdges)
+        return if (patchIsReachable) best ?: bestFull else bestFull
+    }
+
+    private fun canReachSha(
+        fromSha: String,
+        targetSha: String,
+        edges: Map<String, Set<String>>
+    ): Boolean {
+        if (fromSha.isBlank() || targetSha.isBlank()) return false
+        val queue = ArrayDeque<String>()
+        val visited = mutableSetOf(fromSha.lowercase())
+        queue.add(fromSha.lowercase())
+        val target = targetSha.lowercase()
+        while (queue.isNotEmpty()) {
+            val current = queue.removeFirst()
+            if (current == target) return true
+            for (next in edges[current].orEmpty()) {
+                if (visited.add(next)) queue.add(next)
+            }
+        }
+        return false
+    }
+
+    private fun sha256Hex(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 }
