@@ -6,13 +6,17 @@ import android.util.AtomicFile
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.workflow.NodeExecutionState
 import com.ai.assistance.operit.core.workflow.WorkflowAuthTokenManager
+import com.ai.assistance.operit.core.workflow.WorkflowExecutionRetryableException
 import com.ai.assistance.operit.core.workflow.WorkflowExecutor
 import com.ai.assistance.operit.core.workflow.WorkflowIntentSecurity
 import com.ai.assistance.operit.core.workflow.WorkflowScheduler
 import com.ai.assistance.operit.data.model.ExecutionStatus
 import com.ai.assistance.operit.data.model.TriggerNode
 import com.ai.assistance.operit.data.model.Workflow
+import com.ai.assistance.operit.data.model.WorkflowExecutionFailureStage
+import com.ai.assistance.operit.data.model.WorkflowExecutionLogEntry
 import com.ai.assistance.operit.data.model.WorkflowExecutionRecord
+import com.ai.assistance.operit.data.model.WorkflowLogLevel
 import com.ai.assistance.operit.data.preferences.LegacyStoragePreferences
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.OperitManagedPaths
@@ -48,6 +52,7 @@ import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import java.util.UUID
 
 internal data class ExternalWorkflowTriggerMatch(
     val workflowId: String,
@@ -1729,6 +1734,7 @@ class WorkflowRepository(private val context: Context) {
 
         val workflowJob = currentCoroutineContext().job
         registerRunningWorkflow(id, workflowJob)
+        var executorEntered = false
 
         try {
             AppLogger.d(TAG, "Triggering workflow: ${workflow.name} (${workflow.id})")
@@ -1739,30 +1745,106 @@ class WorkflowRepository(private val context: Context) {
             updateExecutionStatus(id, ExecutionStatus.RUNNING, System.currentTimeMillis())
 
             val executor = WorkflowExecutor(context)
+            executorEntered = true
             val result = executor.executeWorkflow(workflow, triggerNodeId, triggerExtras, onNodeStateChange)
-            result.executionRecord?.let { saveExecutionRecord(it) }
-
             val executionStatus = if (result.success) ExecutionStatus.SUCCESS else ExecutionStatus.FAILED
-            updateExecutionStatistics(id, executionStatus, result.executionTime)
+            withContext(NonCancellable) {
+                saveExecutionRecord(result.executionRecord)
+                updateExecutionStatistics(id, executionStatus, result.executionTime)
+            }
 
             if (result.success) {
                 Result.success(context.getString(R.string.workflow_execute_success, workflow.name))
             } else {
-                Result.failure(Exception(result.message))
+                Result.failure(
+                    if (result.shouldRetry) {
+                        WorkflowExecutionRetryableException(result.message)
+                    } else {
+                        Exception(result.message)
+                    }
+                )
             }
         } catch (e: CancellationException) {
             AppLogger.d(TAG, "Workflow execution cancelled: $id")
             withContext(NonCancellable) {
-                updateExecutionStatus(id, ExecutionStatus.FAILED, System.currentTimeMillis())
+                runCatching {
+                    persistPreExecutionFailure(
+                        workflow = workflow,
+                        triggerNodeId = triggerNodeId,
+                        failureStage = WorkflowExecutionFailureStage.CANCELLATION,
+                        failureReason = e.toString(),
+                        logLevel = WorkflowLogLevel.WARN
+                    )
+                }.onFailure { persistenceError ->
+                    AppLogger.e(TAG, "Failed to persist workflow cancellation", persistenceError)
+                }
             }
             throw e
         } catch (e: Exception) {
             AppLogger.e(TAG, "Failed to trigger workflow", e)
-            updateExecutionStatus(id, ExecutionStatus.FAILED, System.currentTimeMillis())
-            Result.failure(e)
+            val failureStage =
+                if (executorEntered) {
+                    WorkflowExecutionFailureStage.WORKFLOW_EXECUTION
+                } else {
+                    WorkflowExecutionFailureStage.WORKFLOW_STARTUP
+                }
+            withContext(NonCancellable) {
+                runCatching {
+                    persistPreExecutionFailure(
+                        workflow = workflow,
+                        triggerNodeId = triggerNodeId,
+                        failureStage = failureStage,
+                        failureReason = e.toString(),
+                        logLevel = WorkflowLogLevel.ERROR
+                    )
+                }.onFailure { persistenceError ->
+                    AppLogger.e(TAG, "Failed to persist workflow startup failure", persistenceError)
+                }
+            }
+            Result.failure(
+                if (!executorEntered) {
+                    WorkflowExecutionRetryableException(e.message ?: e.toString()).also {
+                        it.initCause(e)
+                    }
+                } else {
+                    e
+                }
+            )
         } finally {
             unregisterRunningWorkflow(id, workflowJob)
         }
+    }
+
+    private suspend fun persistPreExecutionFailure(
+        workflow: Workflow,
+        triggerNodeId: String?,
+        failureStage: WorkflowExecutionFailureStage,
+        failureReason: String,
+        logLevel: WorkflowLogLevel
+    ) {
+        val now = System.currentTimeMillis()
+        val message =
+            if (failureStage == WorkflowExecutionFailureStage.CANCELLATION) {
+                context.getString(R.string.workflow_log_execution_cancelled_reason, failureReason)
+            } else {
+                context.getString(R.string.workflow_log_startup_failed, failureReason)
+            }
+        val record =
+            WorkflowExecutionRecord(
+                runId = UUID.randomUUID().toString(),
+                workflowId = workflow.id,
+                workflowName = workflow.name,
+                triggerNodeId = triggerNodeId,
+                startedAt = now,
+                finishedAt = now,
+                success = false,
+                message = message,
+                logs = listOf(WorkflowExecutionLogEntry(level = logLevel, message = message)),
+                failureStage = failureStage,
+                failureReason = failureReason
+            )
+        saveExecutionRecord(record)
+        updateExecutionStatistics(workflow.id, ExecutionStatus.FAILED, record.finishedAt)
     }
 
     /**

@@ -9,7 +9,8 @@ import com.ai.assistance.operit.data.repository.PreFingerprintScheduleReplacemen
 import com.ai.assistance.operit.data.repository.WorkflowRepository
 
 internal fun shouldRetryWorkflowWorkerFailure(error: Throwable?): Boolean =
-    error is PreFingerprintScheduleReplacementPendingException
+    error is PreFingerprintScheduleReplacementPendingException ||
+        error is WorkflowExecutionRetryableException
 
 /**
  * WorkManager Worker for executing workflows in the background
@@ -86,6 +87,8 @@ class WorkflowWorker(
                 AppLogger.e(TAG, "Workflow execution failed: ${result.exceptionOrNull()?.message}")
                 Result.failure()
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error executing workflow", e)
             Result.failure()

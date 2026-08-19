@@ -579,7 +579,7 @@ fun StreamMarkdownRenderer(
                             val childIndex = newNode.children.lastIndexOf(childNode)
                             if (childIndex != -1) {
                                 newNode.children[childIndex] = latexChildNode
-                                batchUpdater.requestUpdate()
+                                batchUpdater.requestStructuralUpdate(nodeIndex)
                             }
                         }
 
@@ -590,7 +590,7 @@ fun StreamMarkdownRenderer(
                             val lastIndex = newNode.children.lastIndex
                             if (lastIndex >= 0 && newNode.children[lastIndex] == childNode) {
                                 newNode.children.removeAt(lastIndex)
-                                batchUpdater.requestUpdate()
+                                batchUpdater.requestStructuralUpdate(nodeIndex)
                             }
                         }
                     }
@@ -605,7 +605,7 @@ fun StreamMarkdownRenderer(
                     val latexNode =
                         MarkdownNode(type = MarkdownProcessorType.BLOCK_LATEX, initialContent = latexContent)
                     nodes[nodeIndex] = latexNode
-                    batchUpdater.requestUpdate()
+                    batchUpdater.requestStructuralUpdate(nodeIndex)
                 }
 
                 pendingHtmlBreakCount = 0
@@ -949,6 +949,8 @@ fun StreamMarkdownRenderer(
 
                     // 移除UI更新时间相关日志
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 AppLogger.e(TAG, "【静态渲染】解析Markdown内容出错: ${e.message}", e)
             }
@@ -1154,6 +1156,13 @@ internal class BatchNodeUpdater(
         )
 
     fun requestUpdate() = coordinator.requestUpdate()
+
+    fun requestStructuralUpdate(nodeIndex: Int) {
+        // Type and child-list mutations can preserve content length, so the length-keyed stable
+        // node cache must be invalidated explicitly.
+        conversionCache.remove(nodeIndex)
+        requestUpdate()
+    }
 
     fun appendBlockChunk(node: MarkdownNode, contentChunk: String) {
         node.content + contentChunk

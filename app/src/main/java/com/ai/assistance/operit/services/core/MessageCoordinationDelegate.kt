@@ -380,6 +380,19 @@ class MessageCoordinationDelegate(
         }
     }
 
+    fun trySendUserMessageToExistingChat(
+        promptFunctionType: PromptFunctionType,
+        chatId: String,
+        messageText: String,
+    ): Boolean {
+        if (chatId.isBlank()) return false
+        return sendMessageInternal(
+            promptFunctionType = promptFunctionType,
+            chatIdOverride = chatId,
+            messageTextOverride = messageText,
+        )
+    }
+
     suspend fun regenerateSingleAiMessage(index: Int) {
         val chatId =
             chatHistoryDelegate.currentChatId.value
@@ -525,7 +538,7 @@ class MessageCoordinationDelegate(
         isGroupOrchestrationTurn: Boolean = false,
         groupParticipantNamesText: String? = null,
         turnOptions: ChatTurnOptions = ChatTurnOptions()
-    ) {
+    ): Boolean {
         // 如果不是自动续写，更新当前的 promptFunctionType
         if (!isAutoContinuation && !turnOptions.isSubTask) {
             currentPromptFunctionType = promptFunctionType
@@ -539,7 +552,7 @@ class MessageCoordinationDelegate(
         val chatId = chatIdOverride ?: chatHistoryDelegate.currentChatId.value
         if (chatId == null) {
             uiStateDelegate.showErrorMessage(context.getString(R.string.chat_no_active_conversation))
-            return
+            return false
         }
         if (!isAutoContinuation) {
             cancelPendingAutoContinuation(chatId, restoreIdleIfPendingState = false)
@@ -589,7 +602,7 @@ class MessageCoordinationDelegate(
                     )
                 }
             }
-            return
+            return true
         }
         val currentChat = chatHistoryDelegate.chatHistories.value.find { it.id == chatId }
         val workspacePath = currentChat?.workspace
@@ -645,7 +658,7 @@ class MessageCoordinationDelegate(
             uiStateDelegate.showErrorMessage(
                 e.message ?: context.getString(R.string.role_card_chat_model_binding_parse_failed)
             )
-            return
+            return false
         }
         val resolvedChatModelConfigIdOverride = resolvedOverrides.first
         val resolvedChatModelIndexOverride = resolvedOverrides.second
@@ -717,7 +730,7 @@ class MessageCoordinationDelegate(
         }
 
         // 调用messageProcessingDelegate发送消息，并传递附件信息和工作区路径
-        messageProcessingDelegate.sendUserMessage(
+        val accepted = messageProcessingDelegate.sendUserMessage(
             attachments = currentAttachments,
             chatId = chatId,
             messageTextOverride = effectiveMessageTextOverride,
@@ -750,6 +763,7 @@ class MessageCoordinationDelegate(
             uiBridge.resetAttachmentPanelState()
             uiBridge.clearReplyToMessage()
         }
+        return accepted
     }
 
     private fun shouldRunGroupOrchestration(

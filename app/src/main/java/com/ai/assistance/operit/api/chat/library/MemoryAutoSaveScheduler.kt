@@ -86,7 +86,7 @@ class MemoryAutoSaveScheduler(
         val toolHandler = AIToolHandler.getInstance(context)
         val memoryService =
             EnhancedAIService.getAIServiceForFunction(context, FunctionType.MEMORY)
-        val messageDao = AppDatabase.getDatabase(context).messageDao()
+        val chatContentDao = AppDatabase.getDatabase(context).chatContentDao()
         val nowMs = System.currentTimeMillis()
 
         for (profileId in profileIds) {
@@ -144,7 +144,7 @@ class MemoryAutoSaveScheduler(
                         chatId = chatId,
                         candidates = selectedUserCandidates,
                         repository = repository,
-                        messageDao = messageDao,
+                        chatContentDao = chatContentDao,
                         toolHandler = toolHandler,
                         memoryService = memoryService
                     )
@@ -155,7 +155,7 @@ class MemoryAutoSaveScheduler(
                         chatId = chatId,
                         candidates = automaticCandidates,
                         repository = repository,
-                        messageDao = messageDao,
+                        chatContentDao = chatContentDao,
                         toolHandler = toolHandler,
                         memoryService = memoryService
                     )
@@ -193,7 +193,7 @@ class MemoryAutoSaveScheduler(
         chatId: String,
         candidates: List<MemoryAutoSaveCandidate>,
         repository: MemoryAutoSaveCandidateRepository,
-        messageDao: com.ai.assistance.operit.data.dao.MessageDao,
+        chatContentDao: com.ai.assistance.operit.data.dao.ChatContentDao,
         toolHandler: AIToolHandler,
         memoryService: com.ai.assistance.operit.api.chat.llmprovider.AIService
     ) {
@@ -213,7 +213,7 @@ class MemoryAutoSaveScheduler(
                         withContext(Dispatchers.IO) {
                             candidates
                                 .mapNotNull { candidate ->
-                                    messageDao.getMessageByTimestamp(
+                                    chatContentDao.getMessageByTimestamp(
                                         chatId = chatId,
                                         timestamp = candidate.triggerMessageTimestamp
                                     )?.toChatMessage()
@@ -225,7 +225,7 @@ class MemoryAutoSaveScheduler(
                 } else {
                     val latestTriggerTimestamp = candidates.maxOf { it.triggerMessageTimestamp }
                     withContext(Dispatchers.IO) {
-                        messageDao.getMessagesForChatBeforeTimestampDesc(
+                        chatContentDao.getMessagesForChatBeforeTimestampDesc(
                             chatId = chatId,
                             maxTimestamp = latestTriggerTimestamp,
                             limit = MAX_MESSAGES_PER_BATCH

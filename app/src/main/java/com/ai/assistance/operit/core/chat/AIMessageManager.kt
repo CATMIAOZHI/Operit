@@ -944,7 +944,7 @@ object AIMessageManager {
                 val omitted = (cleanedSegments.size - head.size - tail.size).coerceAtLeast(0)
                 cleanedSegments.clear()
                 cleanedSegments.addAll(head)
-                cleanedSegments.add(Segment(kind = "text", raw = context.getString(R.string.ai_message_omitted_segment, omitted) ) )
+                cleanedSegments.add(Segment(kind = "text", raw = context.getString(R.string.ai_message_omitted_segment, omitted.toString()) ) )
                 cleanedSegments.addAll(tail)
             }
 
@@ -1136,7 +1136,7 @@ object AIMessageManager {
         if (topPackages.isEmpty()) {
             val emptyMessage =
                 if (useEnglish) {
-                    "No package-prefixed tool usage was detected in this summary window, so no package was preheated."
+                    "No activated packages were detected in this summary window."
                 } else {
                     context.getString(R.string.ai_message_package_warmup_empty)
                 }
@@ -1145,7 +1145,7 @@ object AIMessageManager {
 
         val intro =
             if (useEnglish) {
-                "The following high-frequency packages were automatically activated from the summarized tool usage, and their use_package results are attached for the next-turn warmup."
+                "The following activated packages can be used directly."
             } else {
                 context.getString(R.string.ai_message_package_warmup_intro)
             }
@@ -1188,6 +1188,13 @@ object AIMessageManager {
                             )
                         )
                     }
+                    val activatedHint =
+                        if (useEnglish) {
+                            "Activated package: the tool prompt below can be used directly."
+                        } else {
+                            context.getString(R.string.ai_message_package_activated_hint)
+                        }
+                    appendLine("   $activatedHint")
                     appendLine(indentBlock(resultText, "   "))
                     if (index != topPackages.lastIndex) {
                         appendLine()

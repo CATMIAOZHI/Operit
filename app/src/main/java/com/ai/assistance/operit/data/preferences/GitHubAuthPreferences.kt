@@ -13,6 +13,8 @@ import com.ai.assistance.operit.BuildConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.encodeToString
@@ -43,9 +45,8 @@ class GitHubAuthPreferences(private val context: Context) {
     companion object {
         // GitHub OAuth相关配置
         val GITHUB_CLIENT_ID = BuildConfig.GITHUB_CLIENT_ID
-        val GITHUB_CLIENT_SECRET = BuildConfig.GITHUB_CLIENT_SECRET
         const val GITHUB_SCOPE = "notifications,public_repo,user:email,read:user"
-        private const val REQUIRED_AUTH_VERSION = 2
+        private const val REQUIRED_AUTH_VERSION = 3
         private const val GITHUB_REDIRECT_SCHEME = "operitry"
         private const val GITHUB_REDIRECT_HOST = "github-oauth-callback"
         const val GITHUB_REDIRECT_URI = "$GITHUB_REDIRECT_SCHEME://$GITHUB_REDIRECT_HOST"
@@ -61,6 +62,7 @@ class GitHubAuthPreferences(private val context: Context) {
         private val AUTH_VERSION = longPreferencesKey("auth_version")
         private val GRANTED_SCOPE = stringPreferencesKey("granted_scope")
         private val PENDING_OAUTH_STATE = stringPreferencesKey("pending_oauth_state")
+        private val PENDING_OAUTH_CODE_VERIFIER = stringPreferencesKey("pending_oauth_code_verifier")
         
         @Volatile
         private var INSTANCE: GitHubAuthPreferences? = null
@@ -69,13 +71,6 @@ class GitHubAuthPreferences(private val context: Context) {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: GitHubAuthPreferences(context.applicationContext).also { INSTANCE = it }
             }
-        }
-
-        fun createOAuthState(): String {
-            val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-            return (1..32)
-                .map { chars.random() }
-                .joinToString("")
         }
 
         fun isOAuthRedirectUri(uri: Uri?): Boolean {
@@ -87,6 +82,7 @@ class GitHubAuthPreferences(private val context: Context) {
         ignoreUnknownKeys = true
         isLenient = true
     }
+    private val pendingOAuthMutex = Mutex()
 
     private val requiredScopes: Set<String> =
         GITHUB_SCOPE.split(",")
@@ -164,9 +160,15 @@ class GitHubAuthPreferences(private val context: Context) {
             expiresIn?.let {
                 preferences[TOKEN_EXPIRES_AT] = System.currentTimeMillis() + (it * 1000)
             }
+            if (expiresIn == null) {
+                preferences.remove(TOKEN_EXPIRES_AT)
+            }
             
             refreshToken?.let {
                 preferences[REFRESH_TOKEN] = it
+            }
+            if (refreshToken == null) {
+                preferences.remove(REFRESH_TOKEN)
             }
         }
     }
@@ -177,27 +179,6 @@ class GitHubAuthPreferences(private val context: Context) {
     suspend fun updateUserInfo(userInfo: GitHubUser) {
         context.githubAuthDataStore.edit { preferences ->
             preferences[USER_INFO] = json.encodeToString(userInfo)
-        }
-    }
-
-    /**
-     * 更新访问令牌
-     */
-    suspend fun updateAccessToken(
-        accessToken: String,
-        tokenType: String = "bearer",
-        expiresIn: Long? = null,
-        grantedScope: String? = null
-    ) {
-        context.githubAuthDataStore.edit { preferences ->
-            preferences[ACCESS_TOKEN] = accessToken
-            preferences[TOKEN_TYPE] = tokenType
-            preferences[AUTH_VERSION] = REQUIRED_AUTH_VERSION.toLong()
-            preferences[GRANTED_SCOPE] = grantedScope.orEmpty()
-            
-            expiresIn?.let {
-                preferences[TOKEN_EXPIRES_AT] = System.currentTimeMillis() + (it * 1000)
-            }
         }
     }
 
@@ -258,34 +239,28 @@ class GitHubAuthPreferences(private val context: Context) {
         }
     }
 
-    suspend fun setPendingOAuthState(state: String) {
+    suspend fun savePendingOAuthRequest(state: String, codeVerifier: String) {
         context.githubAuthDataStore.edit { preferences ->
             preferences[PENDING_OAUTH_STATE] = state
+            preferences[PENDING_OAUTH_CODE_VERIFIER] = codeVerifier
         }
     }
 
-    suspend fun consumePendingOAuthState(): String? {
-        val preferences = context.githubAuthDataStore.data.first()
-        val state = preferences[PENDING_OAUTH_STATE]
-        context.githubAuthDataStore.edit { mutablePreferences ->
-            mutablePreferences.remove(PENDING_OAUTH_STATE)
+    suspend fun consumePendingOAuthRequest(): PendingGitHubOAuthRequest? =
+        pendingOAuthMutex.withLock {
+            val preferences = context.githubAuthDataStore.data.first()
+            val state = preferences[PENDING_OAUTH_STATE]
+            val codeVerifier = preferences[PENDING_OAUTH_CODE_VERIFIER]
+            context.githubAuthDataStore.edit { mutablePreferences ->
+                mutablePreferences.remove(PENDING_OAUTH_STATE)
+                mutablePreferences.remove(PENDING_OAUTH_CODE_VERIFIER)
+            }
+            if (state == null || codeVerifier == null) {
+                null
+            } else {
+                PendingGitHubOAuthRequest(state, codeVerifier)
+            }
         }
-        return state
-    }
-
-    /**
-     * 生成GitHub OAuth授权URL
-     */
-    fun getAuthorizationUrl(state: String = createOAuthState()): String {
-        return Uri.parse("https://github.com/login/oauth/authorize")
-            .buildUpon()
-            .appendQueryParameter("client_id", GITHUB_CLIENT_ID)
-            .appendQueryParameter("redirect_uri", GITHUB_REDIRECT_URI)
-            .appendQueryParameter("scope", GITHUB_SCOPE)
-            .appendQueryParameter("state", state)
-            .build()
-            .toString()
-    }
 
     /**
      * 获取访问令牌的授权头
@@ -298,4 +273,9 @@ class GitHubAuthPreferences(private val context: Context) {
             null
         }
     }
-} 
+}
+
+data class PendingGitHubOAuthRequest(
+    val state: String,
+    val codeVerifier: String
+)

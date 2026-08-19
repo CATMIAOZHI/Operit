@@ -11,6 +11,14 @@ enum class WorkflowLogLevel {
 }
 
 @Serializable
+enum class WorkflowExecutionFailureStage {
+    WORKFLOW_STARTUP,
+    RUNTIME_INITIALIZATION,
+    WORKFLOW_EXECUTION,
+    CANCELLATION
+}
+
+@Serializable
 data class WorkflowExecutionLogEntry(
     val timestamp: Long = System.currentTimeMillis(),
     val level: WorkflowLogLevel,
@@ -29,5 +37,7 @@ data class WorkflowExecutionRecord(
     val finishedAt: Long = System.currentTimeMillis(),
     val success: Boolean,
     val message: String,
-    val logs: List<WorkflowExecutionLogEntry> = emptyList()
+    val logs: List<WorkflowExecutionLogEntry> = emptyList(),
+    val failureStage: WorkflowExecutionFailureStage? = null,
+    val failureReason: String? = null
 )

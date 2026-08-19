@@ -611,7 +611,8 @@ class MainActivity : ComponentActivity() {
         val intentUri = intent?.data
         if (GitHubAuthPreferences.isOAuthRedirectUri(intentUri)) {
             pendingGitHubAuthUri = intentUri
-            AppLogger.d(TAG, "Received GitHub OAuth redirect: $intentUri")
+            // The URI contains a short-lived authorization code; never copy it into logs.
+            AppLogger.d(TAG, "Received GitHub OAuth redirect")
             return true
         }
         
