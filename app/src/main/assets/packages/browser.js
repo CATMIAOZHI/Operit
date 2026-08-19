@@ -213,7 +213,7 @@ function buildLargeOutputFilename(prefix, extension) {
     return OPERIT_CLEAN_ON_EXIT_DIR + "/browser_" + prefix + "_" + timestamp + "_" + rand + "." + extension;
 }
 async function maybePersistLargeBrowserResponse(result, prefix, extension = "md") {
-    if (typeof result !== "string" || result.length <= MAX_INLINE_BROWSER_TEXT_CHARS) {
+    if (result.length <= MAX_INLINE_BROWSER_TEXT_CHARS) {
         return result;
     }
     await Tools.Files.mkdir(OPERIT_CLEAN_ON_EXIT_DIR, true);

@@ -102,10 +102,15 @@
             ]
         },
         {
-            "name": "update_user_profile",
-            "description": { "zh": "用完整 Markdown 更新 user.md。", "en": "Update user.md with the complete Markdown document." },
+            "name": "update_user_preferences",
+            "description": { "zh": "更新用户偏好信息（至少提供一个字段）。", "en": "Update user preferences (provide at least one field)." },
             "parameters": [
-                { "name": "markdown", "description": { "zh": "必需：user.md 的完整内容", "en": "Required: complete contents of user.md" }, "type": "string", "required": true }
+                { "name": "birth_date", "description": { "zh": "可选：出生日期（Unix 毫秒时间戳）", "en": "Optional: birth date (Unix ms timestamp)" }, "type": "number", "required": false },
+                { "name": "gender", "description": { "zh": "可选：性别", "en": "Optional: gender" }, "type": "string", "required": false },
+                { "name": "personality", "description": { "zh": "可选：性格特征", "en": "Optional: personality" }, "type": "string", "required": false },
+                { "name": "identity", "description": { "zh": "可选：身份/角色", "en": "Optional: identity/role" }, "type": "string", "required": false },
+                { "name": "occupation", "description": { "zh": "可选：职业", "en": "Optional: occupation" }, "type": "string", "required": false },
+                { "name": "ai_style", "description": { "zh": "可选：偏好 AI 交互风格", "en": "Optional: preferred AI interaction style" }, "type": "string", "required": false }
             ]
         }
     ]
@@ -128,7 +133,7 @@ const ExtendedMemoryTools = (function () {
             tags: params.tags,
             callerCardId: resolveCallerCardId(),
         });
-        return { success: typeof result === 'string' && result.length > 0, message: '记忆创建完成', data: result };
+        return { success: result.length > 0, message: '记忆创建完成', data: result };
     }
     async function update_memory(params) {
         const result = await Tools.Memory.update({
@@ -143,14 +148,14 @@ const ExtendedMemoryTools = (function () {
             tags: params.tags,
             callerCardId: resolveCallerCardId(),
         });
-        return { success: typeof result === 'string' && result.length > 0, message: '记忆更新完成', data: result };
+        return { success: result.length > 0, message: '记忆更新完成', data: result };
     }
     async function delete_memory(params) {
         const result = await Tools.Memory.deleteMemory({
             title: params.title,
             callerCardId: resolveCallerCardId(),
         });
-        return { success: typeof result === 'string' && result.length > 0, message: '记忆删除完成', data: result };
+        return { success: result.length > 0, message: '记忆删除完成', data: result };
     }
     async function move_memory(params) {
         const titles = params.titles
@@ -162,7 +167,7 @@ const ExtendedMemoryTools = (function () {
             sourceFolderPath: params.source_folder_path,
             callerCardId: resolveCallerCardId(),
         });
-        return { success: typeof result === 'string' && result.length > 0, message: '记忆移动完成', data: result };
+        return { success: result.length > 0, message: '记忆移动完成', data: result };
     }
     async function link_memories(params) {
         const result = await Tools.Memory.link({
@@ -207,14 +212,24 @@ const ExtendedMemoryTools = (function () {
             linkType: params.link_type,
             callerCardId: resolveCallerCardId(),
         });
-        return { success: typeof result === 'string' ? result.length > 0 : !!result, message: '记忆链接删除完成', data: result };
+        return { success: result.length > 0, message: '记忆链接删除完成', data: result };
     }
-    async function update_user_profile(params) {
-        const result = await toolCall({
-            name: "update_user_profile",
-            params: { markdown: params.markdown },
-        });
-        const success = typeof result === 'string' ? result.length > 0 : !!result;
+    async function update_user_preferences(params) {
+        const toolParams = {};
+        if (params.birth_date !== undefined)
+            toolParams.birth_date = params.birth_date;
+        if (params.gender !== undefined)
+            toolParams.gender = params.gender;
+        if (params.personality !== undefined)
+            toolParams.personality = params.personality;
+        if (params.identity !== undefined)
+            toolParams.identity = params.identity;
+        if (params.occupation !== undefined)
+            toolParams.occupation = params.occupation;
+        if (params.ai_style !== undefined)
+            toolParams.ai_style = params.ai_style;
+        const result = await toolCall({ name: "update_user_preferences", params: toolParams });
+        const success = result.length > 0;
         return { success, message: '用户偏好更新完成', data: result };
     }
     async function wrapToolExecution(func, params) {
@@ -241,7 +256,7 @@ const ExtendedMemoryTools = (function () {
         results.push({ tool: 'query_memory_links', result: { success: null, message: '未测试（只读查询）' } });
         results.push({ tool: 'update_memory_link', result: { success: null, message: '未测试（会修改记忆库链接）' } });
         results.push({ tool: 'delete_memory_link', result: { success: null, message: '未测试（会删除记忆库链接）' } });
-        results.push({ tool: 'update_user_profile', result: { success: null, message: '未测试（会修改 user.md）' } });
+        results.push({ tool: 'update_user_preferences', result: { success: null, message: '未测试（会修改用户偏好）' } });
         complete({
             success: true,
             message: "拓展记忆工具包加载完成（未执行破坏性测试）",
@@ -257,7 +272,7 @@ const ExtendedMemoryTools = (function () {
         query_memory_links: (params) => wrapToolExecution(query_memory_links, params),
         update_memory_link: (params) => wrapToolExecution(update_memory_link, params),
         delete_memory_link: (params) => wrapToolExecution(delete_memory_link, params),
-        update_user_profile: (params) => wrapToolExecution(update_user_profile, params),
+        update_user_preferences: (params) => wrapToolExecution(update_user_preferences, params),
         main,
     };
 })();
@@ -269,5 +284,5 @@ exports.link_memories = ExtendedMemoryTools.link_memories;
 exports.query_memory_links = ExtendedMemoryTools.query_memory_links;
 exports.update_memory_link = ExtendedMemoryTools.update_memory_link;
 exports.delete_memory_link = ExtendedMemoryTools.delete_memory_link;
-exports.update_user_profile = ExtendedMemoryTools.update_user_profile;
+exports.update_user_preferences = ExtendedMemoryTools.update_user_preferences;
 exports.main = ExtendedMemoryTools.main;
