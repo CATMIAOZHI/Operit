@@ -45,8 +45,12 @@ CI 通过 `ci/script/download_android_dependencies.sh` 和 `ci/script/prepare_an
 ```properties
 sdk.dir=<Android SDK 路径>
 GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
+GITHUB_OAUTH_BROKER_BASE_URL=https://<个人控制的 OAuth broker>
 ```
+
+GitHub OAuth 的 `client_secret` 只能配置在 broker 的服务端 secret store 中，不得进入
+`local.properties`、Gradle BuildConfig 或 APK。broker 协议与安全边界见
+`docs/agent/github-oauth-broker.md`。
 
 稳定版签名需要额外配置（仅 `personal/main` release 构建）：
 

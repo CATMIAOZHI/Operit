@@ -253,15 +253,6 @@ class GitHubForgePublishService(
                     payload = payload,
                     existingEntryId = request.publishContext?.entryId
                 ).getOrElse { error ->
-                    resolvedAsset.releaseWasCreated?.let { releaseWasCreated ->
-                        rollbackFailedMarketRegistration(
-                            owner = resolvedAsset.owner,
-                            repo = resolvedAsset.repository,
-                            release = resolvedAsset.release,
-                            releaseWasCreated = releaseWasCreated,
-                            uploadedAsset = resolvedAsset.asset
-                        )
-                    }
                     return@withContext Result.success(
                         PublishAttemptResult.RegistrationFailed(
                             errorMessage = error.message ?: "Failed to register market entry"
@@ -401,20 +392,6 @@ class GitHubForgePublishService(
                 draft = false,
                 prerelease = false
             ).map { release -> EnsuredRelease(release = release, created = false) }
-        }
-    }
-
-    private suspend fun rollbackFailedMarketRegistration(
-        owner: String,
-        repo: String,
-        release: GitHubRelease,
-        releaseWasCreated: Boolean,
-        uploadedAsset: GitHubReleaseAsset
-    ) {
-        if (releaseWasCreated) {
-            githubApiService.deleteRelease(owner, repo, release.id)
-        } else {
-            githubApiService.deleteReleaseAsset(owner, repo, uploadedAsset.id)
         }
     }
 

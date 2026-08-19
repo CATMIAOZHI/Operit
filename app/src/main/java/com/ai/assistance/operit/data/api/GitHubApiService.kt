@@ -28,13 +28,6 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 @Serializable
-data class GitHubAccessTokenResponse(
-    val access_token: String,
-    val token_type: String,
-    val scope: String? = null
-)
-
-@Serializable
 data class GitHubRepository(
     val id: Long,
     val name: String,
@@ -129,7 +122,7 @@ data class GitHubReleaseAsset(
 
 /**
  * GitHub API服务类
- * 提供GitHub OAuth认证、用户信息、仓库操作等功能
+ * 提供GitHub用户信息、仓库操作等功能
  */
 class GitHubApiService(private val context: Context) {
     
@@ -159,7 +152,6 @@ class GitHubApiService(private val context: Context) {
     companion object {
         private const val TAG = "GitHubApiService"
         private const val GITHUB_API_BASE = "https://api.github.com"
-        private const val GITHUB_OAUTH_BASE = "https://github.com/login/oauth"
 
         // 补丁检查与补丁安装之间共享的 release 列表缓存：检查阶段已经翻完全部分页，
         // 用户紧接着点击安装时不应再重复消耗一次全量 API 配额。缓存只保留很短时间，
@@ -174,70 +166,33 @@ class GitHubApiService(private val context: Context) {
     }
     
     /**
-     * 通过授权码获取访问令牌
-     */
-    suspend fun getAccessToken(code: String): Result<GitHubAccessTokenResponse> = withContext(Dispatchers.IO) {
-        try {
-            // GitHub OAuth API 要求使用 application/x-www-form-urlencoded 格式
-            val formBody = FormBody.Builder()
-                .add("client_id", GitHubAuthPreferences.GITHUB_CLIENT_ID)
-                .add("client_secret", GitHubAuthPreferences.GITHUB_CLIENT_SECRET)
-                .add("code", code)
-                .build()
-            
-            val request = Request.Builder()
-                .url("$GITHUB_OAUTH_BASE/access_token")
-                .post(formBody)
-                .addHeader("Accept", "application/json")
-                .build()
-            
-            val response = client.newCall(request).execute()
-            val responseBody = response.body?.string()
-            
-            if (response.isSuccessful && responseBody != null) {
-                try {
-                    val tokenResponse = json.decodeFromString<GitHubAccessTokenResponse>(responseBody)
-                    Result.success(tokenResponse)
-                } catch (e: Exception) {
-                    com.ai.assistance.operit.util.AppLogger.e("GitHubApiService", "Failed to parse token response", e)
-                    Result.failure(Exception("Failed to parse token response: ${e.message}"))
-                }
-            } else {
-                val errorMsg = "HTTP ${response.code}: ${response.message}"
-                com.ai.assistance.operit.util.AppLogger.e("GitHubApiService", errorMsg)
-                Result.failure(Exception(errorMsg))
-            }
-        } catch (e: Exception) {
-            com.ai.assistance.operit.util.AppLogger.e("GitHubApiService", "Exception in getAccessToken", e)
-            Result.failure(e)
-        }
-    }
-    
-    /**
      * 获取当前用户信息
      */
     suspend fun getCurrentUser(): Result<GitHubUser> = withContext(Dispatchers.IO) {
-        try {
-            val authHeader = authPreferences.getAuthorizationHeader()
-                ?: return@withContext Result.failure(Exception("No access token available"))
-            
+        val token = authPreferences.getCurrentAccessToken()
+            ?: return@withContext Result.failure(Exception("No access token available"))
+        getCurrentUserWithToken(token)
+    }
+
+    /** Validates a newly exchanged token before it is persisted as the active session. */
+    suspend fun getCurrentUser(accessToken: String): Result<GitHubUser> = withContext(Dispatchers.IO) {
+        getCurrentUserWithToken(accessToken)
+    }
+
+    private fun getCurrentUserWithToken(accessToken: String): Result<GitHubUser> {
+        return try {
             val request = Request.Builder()
                 .url("$GITHUB_API_BASE/user")
-                .addHeader("Authorization", authHeader)
+                .addHeader("Authorization", "Bearer $accessToken")
                 .build()
-            
-            val response = client.newCall(request).execute()
-            
-            if (response.isSuccessful) {
-                val responseBody = response.body?.string()
-                if (responseBody != null) {
-                    val user = json.decodeFromString<GitHubUser>(responseBody)
-                    Result.success(user)
-                } else {
-                    Result.failure(Exception("Empty response body"))
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return Result.failure(Exception("HTTP ${response.code}: ${response.message}"))
                 }
-            } else {
-                Result.failure(Exception("HTTP ${response.code}: ${response.message}"))
+                val responseBody = response.body?.string()
+                    ?: return Result.failure(Exception("Empty response body"))
+                Result.success(json.decodeFromString<GitHubUser>(responseBody))
             }
         } catch (e: Exception) {
             Result.failure(e)

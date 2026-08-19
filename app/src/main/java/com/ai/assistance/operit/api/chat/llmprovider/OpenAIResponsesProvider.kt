@@ -673,10 +673,8 @@ object OpenAIResponsesPayloadAdapter {
         val payload = JSONObject().apply {
             put("reasoning_id", id)
             put("encrypted_content", encryptedContent)
-            val summaryArray = item.optJSONArray("summary")
-            if (summaryArray != null && summaryArray.length() > 0) {
-                put("summary", JSONArray(summaryArray.toString()))
-            }
+            val summaryArray = item.optJSONArray("summary") ?: JSONArray()
+            put("summary", JSONArray(summaryArray.toString()))
         }
         val payloadBase64 = Base64.encodeToString(payload.toString().toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
         return ChatMarkupRegex.openAiResponsesReasoningMetaTag(payloadBase64)
@@ -724,10 +722,8 @@ object OpenAIResponsesPayloadAdapter {
                 put("type", "reasoning")
                 put("id", reasoningId)
                 put("encrypted_content", encryptedContent)
-                val summary = metadata.optJSONArray("summary")
-                if (summary != null) {
-                    put("summary", JSONArray(summary.toString()))
-                }
+                val summary = metadata.optJSONArray("summary") ?: JSONArray()
+                put("summary", JSONArray(summary.toString()))
             }
         )
     }

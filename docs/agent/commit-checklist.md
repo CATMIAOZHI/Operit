@@ -26,7 +26,8 @@ git diff --cached --stat
 - API Key、Token、Cookie
 - 签名材料（keystore、密码）
 - 个人路径（如 `C:\Users\...`）
-- `local.properties` 中的 `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` 真实值
+- `local.properties` 中的 `GITHUB_CLIENT_ID` / `GITHUB_OAUTH_BROKER_BASE_URL` 真实值
+- broker 服务端的 `GITHUB_CLIENT_SECRET` 或其他部署 secret
 
 ### 3. 检查行尾
 

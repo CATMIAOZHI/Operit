@@ -39,6 +39,7 @@
 - `personal/main` 是 Operit Ry 稳定发行分支，受规则保护；改动必须通过 PR 和必需检查，稳定 APK 与 `v*` Release tag 只从该分支发布。
 - `personal/dev` 是所有新功能的集成与测试分支。新功能必须先进入该分支，构建并实际测试可共存的 debug APK；测试通过后，经用户同意再以只包含通用功能提交的 PR 晋升到 `personal/main`。晋升操作手册见 `docs/agent/dev-to-main-promotion.md`。不得绕过开发版验证直接向稳定分支加入新功能，也不得把开发版专属配置带入晋升 PR。
 - 上游更新先整合进 `personal/dev` 构建并测试，确认不破坏现有功能后再合并到 `personal/main`；不要用上游分支重置或覆盖任一个人分支。
+- 上游正式版本按 GitHub Release 的实际 APK 构建提交分批审查，流程与持久台账格式见 `docs/agent/upstream-release-review.md`；不得把 Release 之后尚未正式发布的 `upstream/main` 提交混入当前批次。
 - `personal/dev` 的 `debug` 变体使用包名 `com.rainy.operitry.dev`、应用名 `Operit Ry Dev` 和 `-dev` 版本后缀，可与官方 Operit 及稳定版同时安装；`app/src/debug/res/` 维护 DEV 角标图标和指向开发包名的快捷方式，修改应用身份时必须同步核对这些资源。
 - `OperitNightlyRelease` 仓库定时拉取 `personal/dev`，使用递增的 `-dev.<build>` 版本和自身 `GITHUB_TOKEN` 发布 `personal-dev` 差分更新；发布链中的 APK 必须保持 `com.rainy.operitry.dev` 包名及与现有开发版相同的固定签名，首次或补丁链不匹配时保留完整 debug APK 回退。签名 Secret 只配置在 Actions 中，不得写入代码或日志。Nightly 构建使用 ccache（`CCACHE_COMPILERCHECK=content`、2G 滚动缓存）加速原生编译，修改 `cmake/operit_git_source.cmake` 或原生依赖 SHA 时需注意对缓存命中率的影响。
 

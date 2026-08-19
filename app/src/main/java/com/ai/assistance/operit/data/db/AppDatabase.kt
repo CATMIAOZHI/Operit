@@ -9,6 +9,7 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.execSQL
 import com.ai.assistance.operit.data.dao.ChatDao
+import com.ai.assistance.operit.data.dao.ChatContentDao
 import com.ai.assistance.operit.data.dao.ChatFolderDao
 import com.ai.assistance.operit.data.dao.ChatTodoDao
 import com.ai.assistance.operit.data.dao.MessageDao
@@ -67,6 +68,8 @@ abstract class AppDatabase : RoomDatabase() {
 
     /** 获取消息DAO */
     abstract fun messageDao(): MessageDao
+
+    abstract fun chatContentDao(): ChatContentDao
 
     abstract fun messageVariantDao(): MessageVariantDao
 

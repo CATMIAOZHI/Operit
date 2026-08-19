@@ -176,9 +176,6 @@ private fun GitHubEmbeddedLoginWebViewDialog(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val coordinator = remember { GitHubOAuthCoordinator(context) }
-    val githubAuth = remember { GitHubAuthPreferences.getInstance(context) }
-    val expectedState = rememberSaveable { GitHubAuthPreferences.createOAuthState() }
-    val authorizationUrl = remember(expectedState) { githubAuth.getAuthorizationUrl(state = expectedState) }
     val webView = remember {
         WebViewConfig.createWebView(context).apply {
             settings.setSupportMultipleWindows(false)
@@ -208,7 +205,6 @@ private fun GitHubEmbeddedLoginWebViewDialog(
                 ): Boolean {
                     if (request?.isForMainFrame != false && handleOAuthRedirect(
                             uri = request?.url,
-                            expectedState = expectedState,
                             coordinator = coordinator,
                             onDismissRequest = onDismissRequest,
                             onLoginSuccess = onLoginSuccess,
@@ -236,7 +232,6 @@ private fun GitHubEmbeddedLoginWebViewDialog(
                     isLoading = true
                     if (handleOAuthRedirect(
                             uri = url?.let(Uri::parse),
-                            expectedState = expectedState,
                             coordinator = coordinator,
                             onDismissRequest = onDismissRequest,
                             onLoginSuccess = onLoginSuccess,
@@ -267,8 +262,17 @@ private fun GitHubEmbeddedLoginWebViewDialog(
         }
     }
 
-    LaunchedEffect(authorizationUrl) {
-        webView.loadUrl(authorizationUrl)
+    LaunchedEffect(Unit) {
+        runCatching { coordinator.createExternalAuthorizationUrl() }
+            .onSuccess(webView::loadUrl)
+            .onFailure { error ->
+                reportFailure(
+                    context.getString(
+                        R.string.main_github_login_error,
+                        error.message.orEmpty()
+                    )
+                )
+            }
     }
 
     Dialog(
@@ -335,7 +339,6 @@ private fun GitHubEmbeddedLoginWebViewDialog(
 
 private fun handleOAuthRedirect(
     uri: Uri?,
-    expectedState: String,
     coordinator: GitHubOAuthCoordinator,
     onDismissRequest: () -> Unit,
     onLoginSuccess: (() -> Unit)?,
@@ -361,7 +364,7 @@ private fun handleOAuthRedirect(
     onStartHandling()
 
     scope.launch {
-        val result = coordinator.completeLoginFromRedirect(uri, expectedState)
+        val result = coordinator.completeLoginFromRedirect(uri)
         result.fold(
             onSuccess = { user ->
                 Toast.makeText(
