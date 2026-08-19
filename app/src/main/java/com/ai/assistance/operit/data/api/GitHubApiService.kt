@@ -456,6 +456,102 @@ class GitHubApiService(private val context: Context) {
         }
     }
 
+    /**
+     * 获取仓库的全部 Releases（自动翻页直到取完）。
+     *
+     * 增量补丁链依赖“能看见完整 release 列表”：GitHub 的 /releases 是分页接口，
+     * 只取第一页会把发布顺序靠后的历史 release（例如被 daily dev 版本挤到后面的
+     * 正式版首跳补丁）漏掉，导致补丁链断链。这里循环翻页直到返回不足一页为止，
+     * 并用最大页数保护异常仓库（例如长期存在大量 release 的仓库）。
+     */
+    suspend fun getAllRepositoryReleases(
+        owner: String,
+        repo: String,
+        perPage: Int = 100
+    ): Result<List<GitHubRelease>> = withContext(Dispatchers.IO) {
+        try {
+            val releases = mutableListOf<GitHubRelease>()
+            val seenIds = mutableSetOf<Long>()
+            var page = 1
+            // GitHub 通过 Link 头给出 rel="last" 总页数，优先用它精确翻到最后一页，
+            // 避免“翻到空页才停”在最后一页恰好满 perPage 时多请求一次空页。
+            // 解析失败时退回按返回不足一页判断，并保留最大页数保护异常仓库。
+            val maxPages = 50
+            var lastPage: Int? = null
+            while (page <= maxPages) {
+                val url = HttpUrl.Builder()
+                    .scheme("https")
+                    .host("api.github.com")
+                    .addPathSegment("repos")
+                    .addPathSegment(owner)
+                    .addPathSegment(repo)
+                    .addPathSegment("releases")
+                    .addQueryParameter("page", page.toString())
+                    .addQueryParameter("per_page", perPage.toString())
+                    .build()
+
+                val requestBuilder = Request.Builder().url(url)
+                authPreferences.getAuthorizationHeader()?.let { authHeader ->
+                    requestBuilder.addHeader("Authorization", authHeader)
+                }
+
+                val response = client.newCall(requestBuilder.build()).execute()
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        Exception("HTTP ${response.code}: ${response.message}")
+                    )
+                }
+                if (lastPage == null) {
+                    lastPage = parseLastPageFromLinkHeader(response.header("Link"))
+                }
+                val responseBody = response.body?.string()
+                if (responseBody.isNullOrBlank()) {
+                    return@withContext Result.failure(Exception("Empty response body"))
+                }
+                val pageReleases = json.decodeFromString<List<GitHubRelease>>(responseBody)
+                if (pageReleases.isEmpty()) {
+                    break
+                }
+                for (release in pageReleases) {
+                    if (seenIds.add(release.id)) {
+                        releases.add(release)
+                    }
+                }
+                if (pageReleases.size < perPage) {
+                    break
+                }
+                if (lastPage != null && page >= lastPage) {
+                    break
+                }
+                page += 1
+            }
+            Result.success(releases)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 从 GitHub API 的 Link 响应头解析 rel="last" 指向的总页数。
+     * 例如 `<https://api.github.com/repositories/123/releases?per_page=100&page=5>; rel="last"` -> 5。
+     * 解析失败返回 null，调用方退回按返回不足一页判断。
+     */
+    private fun parseLastPageFromLinkHeader(linkHeader: String?): Int? {
+        if (linkHeader.isNullOrBlank()) return null
+        for (part in linkHeader.split(",")) {
+            val segments = part.split(";")
+            if (segments.size < 2) continue
+            val urlPart = segments[0].trim()
+            if (!urlPart.startsWith("<") || !urlPart.endsWith(">")) continue
+            val rel = segments.drop(1).map { it.trim() }.firstOrNull { it.startsWith("rel=") } ?: continue
+            if (rel.removePrefix("rel=").trim('"') != "last") continue
+            val url = urlPart.substring(1, urlPart.length - 1)
+            val pageParam = Regex("[?&]page=(\\d+)").find(url)?.groupValues?.get(1) ?: continue
+            return pageParam.toIntOrNull()
+        }
+        return null
+    }
+
     suspend fun createRepository(
         name: String,
         description: String? = null,
