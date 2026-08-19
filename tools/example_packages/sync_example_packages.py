@@ -643,6 +643,24 @@ def _compute_file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _should_skip_copy(
+    *,
+    dry_run: bool,
+    destination: Path,
+    destination_name: str,
+    output_state: dict[str, str],
+    plan_signature: str,
+    source: Path,
+) -> bool:
+    if dry_run:
+        return False
+    if not destination.is_file():
+        return False
+    if output_state.get(destination_name) != plan_signature:
+        return False
+    return _compute_file_sha256(source) == _compute_file_sha256(destination)
+
+
 def _load_hot_reload_state(path: Path) -> dict[str, dict[str, str]]:
     if not path.is_file():
         return {}
@@ -988,7 +1006,15 @@ def main() -> int:
         plan_signature = _compute_plan_signature(repo_root, plan)
 
         if plan.mode == "copy":
-            if not args.dry_run and dest.is_file() and output_state.get(plan.destination_name) == plan_signature:
+            skip_copy = _should_skip_copy(
+                dry_run=args.dry_run,
+                destination=dest,
+                destination_name=plan.destination_name,
+                output_state=output_state,
+                plan_signature=plan_signature,
+                source=plan.source,
+            )
+            if skip_copy:
                 print(f"SKIP-COPY: {plan.source} -> {dest}")
                 continue
             action = "COPY" if not args.dry_run else "DRY-COPY"
