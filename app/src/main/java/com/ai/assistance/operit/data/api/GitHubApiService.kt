@@ -8,6 +8,8 @@ import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -21,6 +23,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.Base64
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 @Serializable
 data class GitHubAccessTokenResponse(
@@ -150,11 +155,22 @@ class GitHubApiService(private val context: Context) {
     }
     
     private val authPreferences = GitHubAuthPreferences.getInstance(context)
-    
+
     companion object {
         private const val TAG = "GitHubApiService"
         private const val GITHUB_API_BASE = "https://api.github.com"
         private const val GITHUB_OAUTH_BASE = "https://github.com/login/oauth"
+
+        // 补丁检查与补丁安装之间共享的 release 列表缓存：检查阶段已经翻完全部分页，
+        // 用户紧接着点击安装时不应再重复消耗一次全量 API 配额。缓存只保留很短时间，
+        // 避免长期持有陈旧列表。
+        private const val RELEASES_CACHE_TTL_MS = 60_000L
+        private val releasesCache = ConcurrentHashMap<String, CachedReleases>()
+
+        private data class CachedReleases(
+            val releases: List<GitHubRelease>,
+            val cachedAt: Long
+        )
     }
     
     /**
@@ -470,9 +486,19 @@ class GitHubApiService(private val context: Context) {
         perPage: Int = 100
     ): Result<List<GitHubRelease>> = withContext(Dispatchers.IO) {
         try {
+            val cacheKey = "$owner/$repo/$perPage"
+            releasesCache[cacheKey]?.let { cached ->
+                if (SystemClock.elapsedRealtime() - cached.cachedAt <= RELEASES_CACHE_TTL_MS) {
+                    return@withContext Result.success(cached.releases)
+                }
+                // 条件删除：避免并发下把另一个协程刚写入的新值删掉。
+                releasesCache.remove(cacheKey, cached)
+            }
+
             val releases = mutableListOf<GitHubRelease>()
             val seenIds = mutableSetOf<Long>()
             var page = 1
+            var finished = false
             // GitHub 通过 Link 头给出 rel="last" 总页数，优先用它精确翻到最后一页，
             // 避免“翻到空页才停”在最后一页恰好满 perPage 时多请求一次空页。
             // 解析失败时退回按返回不足一页判断，并保留最大页数保护异常仓库。
@@ -495,37 +521,50 @@ class GitHubApiService(private val context: Context) {
                     requestBuilder.addHeader("Authorization", authHeader)
                 }
 
-                val response = client.newCall(requestBuilder.build()).execute()
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(
-                        Exception("HTTP ${response.code}: ${response.message}")
-                    )
-                }
-                if (lastPage == null) {
-                    lastPage = parseLastPageFromLinkHeader(response.header("Link"))
-                }
-                val responseBody = response.body?.string()
-                if (responseBody.isNullOrBlank()) {
-                    return@withContext Result.failure(Exception("Empty response body"))
-                }
-                val pageReleases = json.decodeFromString<List<GitHubRelease>>(responseBody)
-                if (pageReleases.isEmpty()) {
-                    break
-                }
-                for (release in pageReleases) {
-                    if (seenIds.add(release.id)) {
-                        releases.add(release)
+                coroutineContext.ensureActive()
+                val call = client.newCall(requestBuilder.build())
+                val pageResponse = executeCancellable(call)
+                pageResponse.use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(
+                            Exception("HTTP ${response.code}: ${response.message}")
+                        )
+                    }
+                    if (lastPage == null) {
+                        lastPage = parseLastPageFromLinkHeader(response.header("Link"))
+                    }
+                    val responseBody = response.body?.string()
+                    if (responseBody.isNullOrBlank()) {
+                        return@withContext Result.failure(Exception("Empty response body"))
+                    }
+                    val pageReleases = json.decodeFromString<List<GitHubRelease>>(responseBody)
+                    if (pageReleases.isEmpty()) {
+                        finished = true
+                        return@use
+                    }
+                    for (release in pageReleases) {
+                        if (seenIds.add(release.id)) {
+                            releases.add(release)
+                        }
+                    }
+                    if (pageReleases.size < perPage) {
+                        finished = true
+                        return@use
+                    }
+                    if (lastPage != null && page >= lastPage) {
+                        finished = true
+                        return@use
                     }
                 }
-                if (pageReleases.size < perPage) {
-                    break
-                }
-                if (lastPage != null && page >= lastPage) {
-                    break
-                }
+                if (finished) break
                 page += 1
             }
+            releasesCache[cacheKey] =
+                CachedReleases(releases = releases, cachedAt = SystemClock.elapsedRealtime())
             Result.success(releases)
+        } catch (e: CancellationException) {
+            // 协程取消必须继续向上传播，不能转成普通网络失败。
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -551,6 +590,35 @@ class GitHubApiService(private val context: Context) {
         }
         return null
     }
+
+    /**
+     * 以可取消的方式执行 OkHttp 请求：协程取消时同步取消底层 Call，
+     * 避免分页循环在用户取消更新后仍继续占用网络。
+     */
+    private suspend fun executeCancellable(call: Call): okhttp3.Response =
+        suspendCancellableCoroutine { continuation ->
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (continuation.isCancelled) return
+                    continuation.resumeWithException(e)
+                }
+
+                override fun onResponse(call: Call, response: okhttp3.Response) {
+                    // resume 的 onCancellation 参数会在协程取消导致值无法交付时回调，
+                    // 此时必须关闭 Response，否则连接会泄漏（isCancelled 预检与 resume
+                    // 之间仍存在竞态窗口，不能只靠预检）。
+                    // resume 的 onCancellation 参数在协程取消导致值无法交付时回调，
+                    // 此时必须关闭 Response，否则连接会泄漏（isCancelled 预检与
+                    // resume 之间仍存在竞态窗口，不能只靠预检）。
+                    continuation.resume(response) {
+                        response.close()
+                    }
+                }
+            })
+            continuation.invokeOnCancellation {
+                call.cancel()
+            }
+        }
 
     suspend fun createRepository(
         name: String,
