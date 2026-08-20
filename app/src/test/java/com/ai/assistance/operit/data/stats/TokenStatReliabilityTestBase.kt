@@ -164,6 +164,36 @@ internal abstract class TokenStatReliabilityTestBase {
     protected suspend fun awaitEvent(id: String) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
         while (database.tokenStatsDao().getEvent(id) == null && System.nanoTime() < deadline) delay(20)
+        assertNotNull("event $id must become visible in Room", database.tokenStatsDao().getEvent(id))
+    }
+
+    /**
+     * Restore isolation is gated on the production active-insert registry, not on
+     * [TokenStatSpool.pendingLatchCountForTest] (set at append) or Room visibility
+     * (set before the registry is cleared). Tests that hang an insert must wait here.
+     */
+    protected suspend fun awaitActiveInsertCount(expected: Int, timeoutMs: Long = 10_000L) {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        while (TokenStatSpool.activeInsertCountForTest() != expected && System.nanoTime() < deadline) {
+            delay(10)
+        }
+        assertEquals(
+            "active insert registry must reach $expected",
+            expected,
+            TokenStatSpool.activeInsertCountForTest(),
+        )
+    }
+
+    /** Waits for the production drain scheduler to finish its current and coalesced rounds. */
+    protected suspend fun awaitDrainIdle(timeoutMs: Long = 10_000L) {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        while ((TokenStatSpool.drainScheduledForTest() || TokenStatSpool.drainRequestPendingForTest()) &&
+            System.nanoTime() < deadline
+        ) {
+            delay(10)
+        }
+        assertFalse("drain worker must become idle", TokenStatSpool.drainScheduledForTest())
+        assertFalse("coalesced drain request must be consumed", TokenStatSpool.drainRequestPendingForTest())
     }
 
     /**

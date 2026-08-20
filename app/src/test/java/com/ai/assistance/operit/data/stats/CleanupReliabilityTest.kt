@@ -586,7 +586,8 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                 TokenStatSpool.segmentRenameForTest = { _, to ->
                     if (to.name.startsWith("quarantine_")) false else null
                 }
-                var calls = 0
+                var rollbackTrashDir: File? = null
+                var rollbackSyncFailureInjected = false
                 try {
                     TokenStatSpool.replay(context)
                     val entryDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
@@ -596,15 +597,26 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                         delay(20)
                     }
                     assertTrue(safeManifestText(manifest)?.contains("sealed_1.jsonl") == true)
+                    awaitDrainIdle()
                     TokenStatSpool.segmentRenameForTest = null
-                    // 阶段 2：manifest 重写失败触发回滚；回滚 move 的目录项 sync（第 7 次：
-                    // 1 次 manifest 严格读取 + 1 次 trash 创建 + 2 次暂存 + 2 次状态写入）
-                    // 失败 → trash 保留 UNCOMMITTED 状态、上层失败，绝不静默（P2）
+                    TokenStatSpool.ackAtomicMoveForTest = { from, to ->
+                        if (to.name == "sealed_1.jsonl" &&
+                            from.parentFile?.name?.startsWith("quarantine_ack_trash_") == true
+                        ) {
+                            rollbackTrashDir = from.parentFile
+                        }
+                        null
+                    }
+                    // 阶段 2：manifest 重写失败触发回滚；只在证据已移回原路径、正在同步
+                    // 本轮 trash 目录时注入失败。该状态就是生产回滚边界，不依赖此前 sync 次数。
                     TokenStatSpool.metadataWriteErrorForTest = { it.name == manifest.name }
-                    TokenStatSpool.dirSyncForTest = {
-                        calls += 1
-                        if (calls == 7) TokenStatSpool.DirSyncResult.FAILED
-                        else TokenStatSpool.DirSyncResult.OK
+                    TokenStatSpool.dirSyncForTest = { syncDir ->
+                        if (syncDir == rollbackTrashDir && !rollbackSyncFailureInjected) {
+                            rollbackSyncFailureInjected = true
+                            TokenStatSpool.DirSyncResult.FAILED
+                        } else {
+                            TokenStatSpool.DirSyncResult.OK
+                        }
                     }
                     try {
                         TokenStatSpool.acknowledgeAndDeleteQuarantine(context, setOf("sealed_1.jsonl"))
@@ -612,6 +624,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                     } catch (e: IOException) {
                         assertTrue("ack must report the manifest failure", e.message!!.contains("manifest"))
                     }
+                    assertTrue("rollback trash-directory sync failure must be injected", rollbackSyncFailureInjected)
                     val trashDirs = spool.listFiles().orEmpty()
                         .filter { it.isDirectory && it.name.startsWith("quarantine_ack_trash_") }
                     assertEquals("uncommitted trash must be retained after a not-durable rollback", 1, trashDirs.size)
@@ -657,6 +670,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                     assertEquals(0, database.tokenStatsDao().countEvents())
                 } finally {
                     TokenStatSpool.segmentRenameForTest = null
+                    TokenStatSpool.ackAtomicMoveForTest = null
                     TokenStatSpool.metadataWriteErrorForTest = null
                     TokenStatSpool.dirSyncForTest = null
                 }
@@ -2456,11 +2470,17 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                 val ev2 = File(spool, "quarantine_ord_b_sealed_2.jsonl").apply { writeText(body2) }
                 val ev3 = File(spool, "quarantine_ord_c_sealed_3.jsonl").apply { writeText(body3) }
                 // ev1/ev2 成功 stage；ev3 stage 失败触发回滚。回滚时 ev2 移回失败（留在 trash），
-                // ev1 移回成功但目录项 sync 失败（第 7 次）——此时再写 UNCOMMITTED 状态时
+                // ev1 移回成功但 trash 目录项 sync 失败——此时再写 UNCOMMITTED 状态时
                 // ev1 已不在 trash，mapping 身份必须从实际所在位置（original）捕获（P2 终审），
                 // 绝不能从已移走的 target 盲读（会得到 0 字节/空哈希甚至写失败）
-                var calls = 0
+                var rollbackTrashDir: File? = null
+                var rollbackSyncFailureInjected = false
                 TokenStatSpool.ackAtomicMoveForTest = { from, to ->
+                    if (to.name == ev1.name &&
+                        from.parentFile?.name?.startsWith("quarantine_ack_trash_") == true
+                    ) {
+                        rollbackTrashDir = from.parentFile
+                    }
                     when {
                         to.name == ev3.name -> false
                         to.name == ev2.name && from.parentFile?.name?.startsWith("quarantine_ack_trash_") == true ->
@@ -2468,11 +2488,13 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                         else -> null
                     }
                 }
-                TokenStatSpool.dirSyncForTest = {
-                    calls += 1
-                    // 1 trash 创建；2-5 stage；6-7 回滚 ev1 的双目录 sync（第 7 次失败）
-                    if (calls == 7) TokenStatSpool.DirSyncResult.FAILED
-                    else TokenStatSpool.DirSyncResult.OK
+                TokenStatSpool.dirSyncForTest = { syncDir ->
+                    if (syncDir == rollbackTrashDir && !rollbackSyncFailureInjected) {
+                        rollbackSyncFailureInjected = true
+                        TokenStatSpool.DirSyncResult.FAILED
+                    } else {
+                        TokenStatSpool.DirSyncResult.OK
+                    }
                 }
                 try {
                     try {
@@ -2483,6 +2505,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                         fail("ack must report the staging failure")
                     } catch (e: IOException) {
                     }
+                    assertTrue("rollback trash-directory sync failure must be injected", rollbackSyncFailureInjected)
                     val trashDirs = spool.listFiles().orEmpty()
                         .filter { it.isDirectory && it.name.startsWith("quarantine_ack_trash_") }
                     assertEquals("uncommitted trash must be retained", 1, trashDirs.size)
