@@ -229,6 +229,16 @@ class TokenTrackingAIServiceTest {
         }
     }
 
+    private suspend fun awaitRecordedEvent(timeoutMs: Long = 10_000L): com.ai.assistance.operit.data.model.TokenStatEventEntity {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        while (database.tokenStatsDao().getAllEvents().isEmpty() && System.nanoTime() < deadline) {
+            delay(20)
+        }
+        val events = database.tokenStatsDao().getAllEvents()
+        assertTrue("recorded event must become visible in Room", events.isNotEmpty())
+        return events[0]
+    }
+
     /** 等待 spool 专属 worker 线程全部终止；超时即失败（测试结束必须无遗留线程）。 */
     private fun awaitNoSpoolWorkerThreads() {
         fun live(): List<String> =
@@ -637,16 +647,20 @@ class TokenTrackingAIServiceTest {
                 }
             }
         var timeout: TimeoutCancellationException? = null
+        // Request admission/identity preparation is not part of the behavior under test and can
+        // exceed 100 ms on a cold CI worker. Start the timeout at the stream-collection boundary,
+        // after the tracked stream has been prepared, so cancellation always reaches the provider.
+        val trackedStream = tracked(fake).sendMessage(context = context)
         try {
             withTimeout(100) {
-                tracked(fake).sendMessage(context = context).collect { }
+                trackedStream.collect { }
             }
             fail("withTimeout must fire")
         } catch (e: TimeoutCancellationException) {
             timeout = e
         }
         assertNotNull(timeout)
-        val event = database.tokenStatsDao().getAllEvents()[0]
+        val event = awaitRecordedEvent()
         // coroutine 超时（CancellationException 子类）必须记为 TIMEOUT 而非 CANCELLED
         assertEquals(TokenStatStatus.TIMEOUT.name, event.status)
         assertEquals(800L, event.uncachedInputTokens)
