@@ -438,6 +438,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         // Setup additional components
         setupPermissionSystemCollection()
         setupAttachmentDelegateToastCollection()
+        viewModelScope.launch {
+            chatHistories.collect { histories ->
+                pendingMessageQueueStore.syncExistingChatIds(histories.mapTo(mutableSetOf()) { it.id })
+            }
+        }
 
         // 初始化语音服务
         initializeVoiceService()
@@ -782,8 +787,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun clearCurrentChat() {
-        chatHistoryDelegate.clearCurrentChat { deleted ->
+        chatHistoryDelegate.clearCurrentChat { deleted, deletedChatId ->
             if (deleted) {
+                deletedChatId?.let(pendingMessageQueueStore::removeChat)
                 uiStateDelegate.showToast(context.getString(R.string.chat_cleared))
             } else {
                 uiStateDelegate.showToast(context.getString(R.string.chat_locked_cannot_delete))
@@ -1532,8 +1538,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun trySendQueuedTextMessage(
         text: String,
         chatId: String,
+        chatGeneration: Long,
         promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT,
     ): Boolean {
+        if (!pendingMessageQueueStore.isCurrentGeneration(chatId, chatGeneration)) return false
         if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
         if (isChatBusy(chatId)) return false
         hideMentionSuggestionPanel()
@@ -1578,6 +1586,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         pendingMessageQueueStore.restore(chatId, message)
     }
 
+    fun isPendingQueueItemCurrent(chatId: String, message: PendingQueueMessageItem): Boolean =
+        pendingMessageQueueStore.isCurrentGeneration(chatId, message.chatGeneration)
+
     fun setPendingQueueExpanded(chatId: String, expanded: Boolean) {
         pendingMessageQueueStore.setExpanded(chatId, expanded)
     }
@@ -1588,8 +1599,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun takeNextPendingQueueAutoDequeue(chatId: String): PendingQueueMessageItem? =
         pendingMessageQueueStore.takeNextAutoDequeue(chatId)
 
-    fun suppressNextPendingQueueAutoDequeue(chatId: String) {
+    fun cancelPendingQueueTarget(chatId: String, chatGeneration: Long): Boolean {
+        if (!pendingMessageQueueStore.isCurrentGeneration(chatId, chatGeneration)) return false
         pendingMessageQueueStore.suppressNextAutoDequeue(chatId)
+        cancelMessage(chatId)
+        return true
     }
 
     fun isPendingQueueTargetBusy(chatId: String): Boolean = isChatBusy(chatId)

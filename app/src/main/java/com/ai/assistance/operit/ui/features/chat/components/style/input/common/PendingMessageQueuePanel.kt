@@ -36,7 +36,8 @@ import com.ai.assistance.operit.R
 
 data class PendingQueueMessageItem(
     val id: Long,
-    val text: String
+    val text: String,
+    internal val chatGeneration: Long = 0L,
 )
 
 @Composable

@@ -6,9 +6,11 @@ import androidx.room.Query
 import androidx.room.Transaction
 import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.MessageVariantEntity
+import java.io.ByteArrayOutputStream
 
-// SQLite LENGTH/SUBSTR count characters, and this bound keeps every returned text row well below CursorWindow size.
-private const val CONTENT_CHUNK_CHARACTER_COUNT = 65_536
+// Read UTF-8 as BLOB chunks: SQLite text LENGTH/SUBSTR stop at embedded U+0000, while byte chunks
+// preserve the complete value and still keep every returned row well below CursorWindow size.
+private const val CONTENT_CHUNK_BYTE_COUNT = 65_536
 
 private const val MESSAGE_CONTENT_ROW_QUERY =
     """
@@ -16,7 +18,7 @@ private const val MESSAGE_CONTENT_ROW_QUERY =
         messageId,
         chatId,
         sender,
-        SUBSTR(content, 1, $CONTENT_CHUNK_CHARACTER_COUNT) AS content,
+        '' AS content,
         timestamp,
         orderIndex,
         roleName,
@@ -32,7 +34,8 @@ private const val MESSAGE_CONTENT_ROW_QUERY =
         completedAt,
         displayMode,
         isFavorite,
-        LENGTH(content) AS contentCharacterCount
+        SUBSTR(CAST(content AS BLOB), 1, $CONTENT_CHUNK_BYTE_COUNT) AS contentChunkBytes,
+        LENGTH(CAST(content AS BLOB)) AS contentByteCount
     FROM messages
     """
 
@@ -43,7 +46,7 @@ private const val MESSAGE_VARIANT_CONTENT_ROW_QUERY =
         chatId,
         messageTimestamp,
         variantIndex,
-        SUBSTR(content, 1, $CONTENT_CHUNK_CHARACTER_COUNT) AS content,
+        '' AS content,
         roleName,
         provider,
         modelName,
@@ -54,18 +57,21 @@ private const val MESSAGE_VARIANT_CONTENT_ROW_QUERY =
         outputDurationMs,
         waitDurationMs,
         completedAt,
-        LENGTH(content) AS contentCharacterCount
+        SUBSTR(CAST(content AS BLOB), 1, $CONTENT_CHUNK_BYTE_COUNT) AS contentChunkBytes,
+        LENGTH(CAST(content AS BLOB)) AS contentByteCount
     FROM message_variants
     """
 
 data class MessageContentRow(
     @Embedded val message: MessageEntity,
-    val contentCharacterCount: Long,
+    val contentChunkBytes: ByteArray,
+    val contentByteCount: Long,
 )
 
 data class MessageVariantContentRow(
     @Embedded val variant: MessageVariantEntity,
-    val contentCharacterCount: Long,
+    val contentChunkBytes: ByteArray,
+    val contentByteCount: Long,
 )
 
 /** Reads message text in bounded rows so a single large message cannot overflow CursorWindow. */
@@ -184,14 +190,14 @@ abstract class ChatContentDao {
     ): MessageContentRow?
 
     @Query(
-        "SELECT SUBSTR(content, :startCharacter, :characterCount)" +
+        "SELECT SUBSTR(CAST(content AS BLOB), :startByte, :byteCount)" +
             " FROM messages WHERE messageId = :messageId"
     )
     protected abstract suspend fun queryMessageContentChunk(
         messageId: Long,
-        startCharacter: Long,
-        characterCount: Int,
-    ): String?
+        startByte: Long,
+        byteCount: Int,
+    ): ByteArray?
 
     @Query(
         MESSAGE_VARIANT_CONTENT_ROW_QUERY +
@@ -231,14 +237,14 @@ abstract class ChatContentDao {
     ): MessageVariantContentRow?
 
     @Query(
-        "SELECT SUBSTR(content, :startCharacter, :characterCount)" +
+        "SELECT SUBSTR(CAST(content AS BLOB), :startByte, :byteCount)" +
             " FROM message_variants WHERE variantId = :variantId"
     )
     protected abstract suspend fun queryMessageVariantContentChunk(
         variantId: Long,
-        startCharacter: Long,
-        characterCount: Int,
-    ): String?
+        startByte: Long,
+        byteCount: Int,
+    ): ByteArray?
 
     @Transaction
     open suspend fun getMessagesForChat(chatId: String): List<MessageEntity> =
@@ -363,30 +369,16 @@ abstract class ChatContentDao {
         rows.map { materializeMessage(it) }
 
     private suspend fun materializeMessage(row: MessageContentRow): MessageEntity {
-        if (row.contentCharacterCount <= CONTENT_CHUNK_CHARACTER_COUNT) {
-            return row.message
+        val messageId = row.message.messageId
+        val content = materializeUtf8Content(
+            initialChunk = row.contentChunkBytes,
+            contentByteCount = row.contentByteCount,
+            missingMessage = "Message disappeared while reading content: messageId=$messageId",
+            truncatedMessage = "Message content ended before its recorded length: messageId=$messageId",
+        ) { startByte ->
+            queryMessageContentChunk(messageId, startByte, CONTENT_CHUNK_BYTE_COUNT)
         }
-
-        val content = StringBuilder(row.message.content)
-        var startCharacter = CONTENT_CHUNK_CHARACTER_COUNT.toLong() + 1L
-        while (startCharacter <= row.contentCharacterCount) {
-            val chunk =
-                checkNotNull(
-                    queryMessageContentChunk(
-                        row.message.messageId,
-                        startCharacter,
-                        CONTENT_CHUNK_CHARACTER_COUNT,
-                    )
-                ) {
-                    "Message disappeared while reading content: messageId=${row.message.messageId}"
-                }
-            check(chunk.isNotEmpty()) {
-                "Message content ended before its recorded length: messageId=${row.message.messageId}"
-            }
-            content.append(chunk)
-            startCharacter += CONTENT_CHUNK_CHARACTER_COUNT
-        }
-        return row.message.copy(content = content.toString())
+        return row.message.copy(content = content)
     }
 
     private suspend fun materializeVariants(
@@ -394,29 +386,39 @@ abstract class ChatContentDao {
     ): List<MessageVariantEntity> = rows.map { materializeVariant(it) }
 
     private suspend fun materializeVariant(row: MessageVariantContentRow): MessageVariantEntity {
-        if (row.contentCharacterCount <= CONTENT_CHUNK_CHARACTER_COUNT) {
-            return row.variant
+        val variantId = row.variant.variantId
+        val content = materializeUtf8Content(
+            initialChunk = row.contentChunkBytes,
+            contentByteCount = row.contentByteCount,
+            missingMessage = "Message variant disappeared while reading content: variantId=$variantId",
+            truncatedMessage = "Message variant content ended before its recorded length: variantId=$variantId",
+        ) { startByte ->
+            queryMessageVariantContentChunk(variantId, startByte, CONTENT_CHUNK_BYTE_COUNT)
+        }
+        return row.variant.copy(content = content)
+    }
+
+    private suspend fun materializeUtf8Content(
+        initialChunk: ByteArray,
+        contentByteCount: Long,
+        missingMessage: String,
+        truncatedMessage: String,
+        readChunk: suspend (startByte: Long) -> ByteArray?,
+    ): String {
+        if (contentByteCount <= initialChunk.size.toLong()) {
+            return initialChunk.toString(Charsets.UTF_8)
         }
 
-        val content = StringBuilder(row.variant.content)
-        var startCharacter = CONTENT_CHUNK_CHARACTER_COUNT.toLong() + 1L
-        while (startCharacter <= row.contentCharacterCount) {
-            val chunk =
-                checkNotNull(
-                    queryMessageVariantContentChunk(
-                        row.variant.variantId,
-                        startCharacter,
-                        CONTENT_CHUNK_CHARACTER_COUNT,
-                    )
-                ) {
-                    "Message variant disappeared while reading content: variantId=${row.variant.variantId}"
-                }
-            check(chunk.isNotEmpty()) {
-                "Message variant content ended before its recorded length: variantId=${row.variant.variantId}"
-            }
-            content.append(chunk)
-            startCharacter += CONTENT_CHUNK_CHARACTER_COUNT
+        val content = ByteArrayOutputStream(initialChunk.size * 2)
+        content.write(initialChunk)
+        var startByte = initialChunk.size.toLong() + 1L
+        while (startByte <= contentByteCount) {
+            val chunk = checkNotNull(readChunk(startByte)) { missingMessage }
+            check(chunk.isNotEmpty()) { truncatedMessage }
+            content.write(chunk)
+            startByte += chunk.size
         }
-        return row.variant.copy(content = content.toString())
+        check(content.size().toLong() == contentByteCount) { truncatedMessage }
+        return content.toByteArray().toString(Charsets.UTF_8)
     }
 }

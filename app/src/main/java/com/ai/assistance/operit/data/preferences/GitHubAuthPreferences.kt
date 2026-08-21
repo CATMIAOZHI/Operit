@@ -10,8 +10,13 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.ai.assistance.operit.BuildConfig
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -22,6 +27,38 @@ import kotlinx.serialization.json.Json
 
 private val Context.githubAuthDataStore: DataStore<Preferences> by
     preferencesDataStore(name = "github_auth_preferences")
+
+internal const val GITHUB_SESSION_EXPIRY_RECHECK_INTERVAL_MILLIS = 30_000L
+
+internal fun isGitHubAuthSessionUsable(
+    isLoggedIn: Boolean,
+    authVersionCurrent: Boolean,
+    scopesCurrent: Boolean,
+    expiresAtMillis: Long?,
+    nowMillis: Long,
+): Boolean =
+    isLoggedIn &&
+        authVersionCurrent &&
+        scopesCurrent &&
+        (expiresAtMillis == null || nowMillis < expiresAtMillis)
+
+internal fun githubSessionClockSignalFlow(
+    expiresAtMillis: Long,
+    nowMillis: () -> Long = System::currentTimeMillis,
+    waitFor: suspend (Long) -> Unit = { delay(it) },
+): Flow<Unit> = flow {
+    while (true) {
+        val now = nowMillis()
+        val waitMillis =
+            if (now < expiresAtMillis) {
+                minOf(expiresAtMillis - now, GITHUB_SESSION_EXPIRY_RECHECK_INTERVAL_MILLIS)
+            } else {
+                GITHUB_SESSION_EXPIRY_RECHECK_INTERVAL_MILLIS
+            }
+        waitFor(waitMillis)
+        emit(Unit)
+    }
+}
 
 @Serializable
 data class GitHubUser(
@@ -99,24 +136,47 @@ class GitHubAuthPreferences(private val context: Context) {
             .orEmpty()
     }
 
-    private fun isAuthSessionCurrent(preferences: Preferences): Boolean {
+    private fun isAuthSessionCurrent(
+        preferences: Preferences,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean {
         val grantedScopes = parseScopeSet(preferences[GRANTED_SCOPE])
         val authVersion = preferences[AUTH_VERSION] ?: 0L
-        return authVersion >= REQUIRED_AUTH_VERSION && grantedScopes.containsAll(requiredScopes)
+        return isGitHubAuthSessionUsable(
+            isLoggedIn = preferences[IS_LOGGED_IN] ?: false,
+            authVersionCurrent = authVersion >= REQUIRED_AUTH_VERSION,
+            scopesCurrent = grantedScopes.containsAll(requiredScopes),
+            expiresAtMillis = preferences[TOKEN_EXPIRES_AT],
+            nowMillis = nowMillis,
+        )
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val sessionAwarePreferencesFlow: Flow<Preferences> =
+        context.githubAuthDataStore.data.flatMapLatest { preferences ->
+            flow {
+                emit(preferences)
+                val expiresAt = preferences[TOKEN_EXPIRES_AT]
+                if (expiresAt != null) {
+                    githubSessionClockSignalFlow(expiresAt).collect {
+                        emit(preferences)
+                    }
+                }
+            }
+        }
+
     // 登录状态Flow
-    val isLoggedInFlow: Flow<Boolean> = context.githubAuthDataStore.data.map { preferences ->
-        (preferences[IS_LOGGED_IN] ?: false) && isAuthSessionCurrent(preferences)
+    val isLoggedInFlow: Flow<Boolean> = sessionAwarePreferencesFlow.map { preferences ->
+        isAuthSessionCurrent(preferences)
     }
 
     // 访问令牌Flow
-    val accessTokenFlow: Flow<String?> = context.githubAuthDataStore.data.map { preferences ->
+    val accessTokenFlow: Flow<String?> = sessionAwarePreferencesFlow.map { preferences ->
         if (isAuthSessionCurrent(preferences)) preferences[ACCESS_TOKEN] else null
     }
 
     // 用户信息Flow
-    val userInfoFlow: Flow<GitHubUser?> = context.githubAuthDataStore.data.map { preferences ->
+    val userInfoFlow: Flow<GitHubUser?> = sessionAwarePreferencesFlow.map { preferences ->
         if (!isAuthSessionCurrent(preferences)) {
             return@map null
         }
@@ -227,7 +287,7 @@ class GitHubAuthPreferences(private val context: Context) {
      */
     suspend fun isLoggedIn(): Boolean {
         val preferences = context.githubAuthDataStore.data.first()
-        return (preferences[IS_LOGGED_IN] ?: false) && isAuthSessionCurrent(preferences)
+        return isAuthSessionCurrent(preferences)
     }
 
     /**
