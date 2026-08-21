@@ -240,26 +240,37 @@ class GitHubAuthPreferences(private val context: Context) {
     }
 
     suspend fun savePendingOAuthRequest(state: String, codeVerifier: String) {
-        context.githubAuthDataStore.edit { preferences ->
-            preferences[PENDING_OAUTH_STATE] = state
-            preferences[PENDING_OAUTH_CODE_VERIFIER] = codeVerifier
+        pendingOAuthMutex.withLock {
+            context.githubAuthDataStore.edit { preferences ->
+                preferences[PENDING_OAUTH_STATE] = state
+                preferences[PENDING_OAUTH_CODE_VERIFIER] = codeVerifier
+            }
         }
     }
 
-    suspend fun consumePendingOAuthRequest(): PendingGitHubOAuthRequest? =
+    internal suspend fun consumePendingOAuthRequest(
+        returnedState: String,
+    ): PendingGitHubOAuthRequestConsumption =
         pendingOAuthMutex.withLock {
             val preferences = context.githubAuthDataStore.data.first()
             val state = preferences[PENDING_OAUTH_STATE]
             val codeVerifier = preferences[PENDING_OAUTH_CODE_VERIFIER]
-            context.githubAuthDataStore.edit { mutablePreferences ->
-                mutablePreferences.remove(PENDING_OAUTH_STATE)
-                mutablePreferences.remove(PENDING_OAUTH_CODE_VERIFIER)
+            val consumption = evaluatePendingOAuthRequestConsumption(
+                pendingState = state,
+                codeVerifier = codeVerifier,
+                returnedState = returnedState,
+            )
+            if (
+                consumption is PendingGitHubOAuthRequestConsumption.Consumed ||
+                    consumption is PendingGitHubOAuthRequestConsumption.Missing &&
+                        (state != null || codeVerifier != null)
+            ) {
+                context.githubAuthDataStore.edit { mutablePreferences ->
+                    mutablePreferences.remove(PENDING_OAUTH_STATE)
+                    mutablePreferences.remove(PENDING_OAUTH_CODE_VERIFIER)
+                }
             }
-            if (state == null || codeVerifier == null) {
-                null
-            } else {
-                PendingGitHubOAuthRequest(state, codeVerifier)
-            }
+            consumption
         }
 
     /**
@@ -279,3 +290,27 @@ data class PendingGitHubOAuthRequest(
     val state: String,
     val codeVerifier: String
 )
+
+internal sealed interface PendingGitHubOAuthRequestConsumption {
+    data class Consumed(val request: PendingGitHubOAuthRequest) :
+        PendingGitHubOAuthRequestConsumption
+
+    data object Missing : PendingGitHubOAuthRequestConsumption
+    data object StateMismatch : PendingGitHubOAuthRequestConsumption
+}
+
+internal fun evaluatePendingOAuthRequestConsumption(
+    pendingState: String?,
+    codeVerifier: String?,
+    returnedState: String,
+): PendingGitHubOAuthRequestConsumption {
+    if (pendingState == null || codeVerifier == null) {
+        return PendingGitHubOAuthRequestConsumption.Missing
+    }
+    if (pendingState != returnedState) {
+        return PendingGitHubOAuthRequestConsumption.StateMismatch
+    }
+    return PendingGitHubOAuthRequestConsumption.Consumed(
+        PendingGitHubOAuthRequest(pendingState, codeVerifier)
+    )
+}
