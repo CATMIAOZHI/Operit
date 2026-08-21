@@ -95,6 +95,33 @@ class OpenAIResponsesStreamingTest {
     }
 
     @Test
+    fun chatCompletionsReasoningOnlyEof_closesThinkingEnvelope() = runBlocking {
+        val sseBody =
+            listOf(
+                """data: {"choices":[{"delta":{"reasoning_content":"reasoning only"},"finish_reason":null}]}""",
+                """data: {"choices":[{"delta":{},"finish_reason":"stop"}]}""",
+            ).joinToString(separator = "\n\n", postfix = "\n\n")
+        val provider =
+            OpenAIProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "test-model",
+                client = clientForSse(sseBody),
+                enableToolCall = true,
+            )
+
+        withoutAndroidLogging {
+            val output = collectResponse(provider, Mockito.mock(Context::class.java))
+
+            assertEquals(
+                "${ChatUtils.PROVIDER_REASONING_OPEN_TAG}reasoning only</think>",
+                output,
+            )
+            assertEquals("reasoning only", ChatUtils.extractThinkingContent(output).second)
+        }
+    }
+
+    @Test
     fun chatCompletionsMixedReasoningAndToolDelta_keepsToolOutsideThinking() = runBlocking {
         val sseBody =
             listOf(
