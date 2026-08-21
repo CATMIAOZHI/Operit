@@ -17,14 +17,25 @@ internal data class PendingMessageQueueState(
 internal class PendingMessageQueueStore {
     private val lock = Any()
     private val nextMessageId = AtomicLong(1L)
+    private val chatGenerations = mutableMapOf<String, Long>()
+    private val inactiveChatIds = mutableSetOf<String>()
+    private var lastExistingChatIds: Set<String> = emptySet()
     private val _states = MutableStateFlow<Map<String, PendingMessageQueueState>>(emptyMap())
     val states: StateFlow<Map<String, PendingMessageQueueState>> = _states.asStateFlow()
 
     fun enqueue(chatId: String, text: String, isQueueBlocked: Boolean) {
         synchronized(lock) {
+            if (chatId in inactiveChatIds) return
+            val generation = chatGenerations[chatId] ?: 0L
             updateState(chatId) { state ->
                 state.copy(
-                    messages = state.messages + PendingQueueMessageItem(nextMessageId.getAndIncrement(), text),
+                    messages =
+                        state.messages +
+                            PendingQueueMessageItem(
+                                id = nextMessageId.getAndIncrement(),
+                                text = text,
+                                chatGeneration = generation,
+                            ),
                     isExpanded = true,
                     wasBlocked = isQueueBlocked,
                 )
@@ -43,6 +54,8 @@ internal class PendingMessageQueueStore {
 
     fun restore(chatId: String, message: PendingQueueMessageItem) {
         synchronized(lock) {
+            if (chatId in inactiveChatIds) return
+            if (message.chatGeneration != (chatGenerations[chatId] ?: 0L)) return
             updateState(chatId) { state ->
                 if (state.messages.any { it.id == message.id }) state
                 else state.copy(messages = listOf(message) + state.messages)
@@ -92,14 +105,32 @@ internal class PendingMessageQueueStore {
 
     fun removeChat(chatId: String) {
         synchronized(lock) {
+            chatGenerations[chatId] = (chatGenerations[chatId] ?: 0L) + 1L
+            inactiveChatIds += chatId
             if (chatId in _states.value) _states.value = _states.value - chatId
         }
+    }
+
+    /** Reactivates a deleted ID only after the chat list observes an absent -> present transition. */
+    fun syncExistingChatIds(existingChatIds: Set<String>) {
+        synchronized(lock) {
+            val reintroducedChatIds = existingChatIds - lastExistingChatIds
+            inactiveChatIds.removeAll(reintroducedChatIds)
+            lastExistingChatIds = existingChatIds.toSet()
+        }
+    }
+
+    fun isChatInactive(chatId: String): Boolean = synchronized(lock) { chatId in inactiveChatIds }
+
+    fun isCurrentGeneration(chatId: String, generation: Long): Boolean = synchronized(lock) {
+        chatId !in inactiveChatIds && generation == (chatGenerations[chatId] ?: 0L)
     }
 
     private fun updateState(
         chatId: String,
         transform: (PendingMessageQueueState) -> PendingMessageQueueState,
     ) {
+        if (chatId in inactiveChatIds) return
         val updated = _states.value.toMutableMap()
         updated[chatId] = transform(updated[chatId] ?: PendingMessageQueueState())
         _states.value = updated

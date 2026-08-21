@@ -1319,17 +1319,17 @@ class ChatHistoryDelegate(
     }
 
     /** 清空当前聊天 */
-    fun clearCurrentChat(onResult: (Boolean) -> Unit = {}) {
+    fun clearCurrentChat(onResult: (deleted: Boolean, deletedChatId: String?) -> Unit = { _, _ -> }) {
         coroutineScope.launch {
             val chatId = _currentChatId.value
             if (chatId == null) {
                 createNewChat()
-                onResult(false)
+                onResult(false, null)
                 return@launch
             }
 
             if (!chatHistoryManager.canDeleteChatHistory(chatId)) {
-                onResult(false)
+                onResult(false, chatId)
                 return@launch
             }
             prepareChatForDestructiveMutation(chatId)
@@ -1340,7 +1340,7 @@ class ChatHistoryDelegate(
                 } else {
                     chatHistoryManager.deleteChatHistory(chatId)
                 }
-            onResult(deleted)
+            onResult(deleted, chatId)
         }
     }
 

@@ -76,6 +76,45 @@ class ChatContentDaoTest {
         )
     }
 
+    @Test
+    fun `embedded NUL and split UTF-8 content are materialized without truncation`() = runBlocking {
+        val chatId = "nul-content-chat"
+        val timestamp = 5678L
+        val messageContent = "m".repeat(65_535) + "你\u0000message-tail"
+        val variantContent = "v".repeat(65_534) + "🙂\u0000variant-tail"
+
+        database.chatDao().insertChat(ChatEntity(id = chatId, title = "NUL content"))
+        database.messageDao().insertMessage(
+            MessageEntity(
+                chatId = chatId,
+                sender = "ai",
+                content = messageContent,
+                timestamp = timestamp,
+                orderIndex = 0,
+            )
+        )
+        database.messageVariantDao().insertVariant(
+            MessageVariantEntity(
+                chatId = chatId,
+                messageTimestamp = timestamp,
+                variantIndex = 1,
+                content = variantContent,
+            )
+        )
+
+        val contentDao = database.chatContentDao()
+        assertEquals(messageContent, contentDao.getMessagesForChat(chatId).single().content)
+        assertEquals(messageContent, contentDao.getMessageByTimestamp(chatId, timestamp)?.content)
+        assertEquals(
+            variantContent,
+            contentDao.getVariantsForMessages(chatId, listOf(timestamp)).single().content,
+        )
+        assertEquals(
+            variantContent,
+            contentDao.getVariantForMessage(chatId, timestamp, 1)?.content,
+        )
+    }
+
     private fun buildLargeContent(label: String): String =
         buildString {
             append("$label-start|")

@@ -1919,6 +1919,10 @@ private fun ChatInputBottomBar(
                                 chatId = queueChatId,
                             )
                         )
+                    if (!actualViewModel.isPendingQueueItemCurrent(queueChatId, item)) {
+                        queueItemResolved = true
+                        return@launch
+                    }
                     when (submitDecision.action) {
                         ChatInputSubmitActions.BLOCK -> {
                             restorePendingQueueItem(queueChatId, item)
@@ -1937,18 +1941,35 @@ private fun ChatInputBottomBar(
                         cancelCurrentConversation &&
                             actualViewModel.isPendingQueueTargetBusy(queueChatId)
                     ) {
-                        actualViewModel.suppressNextPendingQueueAutoDequeue(queueChatId)
-                        actualViewModel.cancelMessage(queueChatId)
+                        if (
+                            !actualViewModel.cancelPendingQueueTarget(
+                                queueChatId,
+                                item.chatGeneration,
+                            )
+                        ) {
+                            queueItemResolved = true
+                            return@launch
+                        }
                         if (!actualViewModel.awaitPendingQueueTargetIdle(queueChatId)) {
                             restorePendingQueueItem(queueChatId, item)
                             queueItemResolved = true
                             actualViewModel.showToast(context.getString(R.string.chat_queue_send_deferred))
                             return@launch
                         }
+                        if (!actualViewModel.isPendingQueueItemCurrent(queueChatId, item)) {
+                            queueItemResolved = true
+                            return@launch
+                        }
                     }
 
                     focusManager.clearFocus()
-                    if (!actualViewModel.trySendQueuedTextMessage(finalText, chatId = queueChatId)) {
+                    if (
+                        !actualViewModel.trySendQueuedTextMessage(
+                            finalText,
+                            chatId = queueChatId,
+                            chatGeneration = item.chatGeneration,
+                        )
+                    ) {
                         restorePendingQueueItem(queueChatId, item)
                         queueItemResolved = true
                         actualViewModel.showToast(context.getString(R.string.chat_queue_send_deferred))
