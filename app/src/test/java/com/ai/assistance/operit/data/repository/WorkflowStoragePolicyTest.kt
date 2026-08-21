@@ -202,6 +202,9 @@ class WorkflowStoragePolicyTest {
         ))
         assertTrue(shouldDeferClaimedScheduleRebuild(claim.workflow, allowClaimedMigration = false))
         assertFalse(shouldDeferClaimedScheduleRebuild(claim.workflow, allowClaimedMigration = true))
+        assertTrue(shouldRetainPreFingerprintClaimForRetry(
+            WorkflowExecutionRetryableException("runtime initialization")
+        ))
 
         val resumed = claimPreFingerprintSchedule(
             claim.workflow,
@@ -336,6 +339,11 @@ class WorkflowStoragePolicyTest {
         ))
         assertFalse(shouldRetryWorkflowWorkerFailure(IllegalStateException("execution failed")))
         assertFalse(shouldRetryWorkflowWorkerFailure(null))
+        assertFalse(shouldRetainPreFingerprintClaimForRetry(
+            PreFingerprintScheduleReplacementPendingException("workflow")
+        ))
+        assertFalse(shouldRetainPreFingerprintClaimForRetry(IllegalStateException("execution failed")))
+        assertFalse(shouldRetainPreFingerprintClaimForRetry(null))
     }
 
     @Test

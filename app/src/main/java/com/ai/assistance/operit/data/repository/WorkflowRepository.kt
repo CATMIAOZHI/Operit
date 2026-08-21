@@ -280,6 +280,9 @@ internal data class PreFingerprintScheduleClaim(
 internal class PreFingerprintScheduleReplacementPendingException(workflowId: String) :
     Exception("Trusted replacement schedule is still pending for workflow: $workflowId")
 
+internal fun shouldRetainPreFingerprintClaimForRetry(error: Throwable?): Boolean =
+    error is WorkflowExecutionRetryableException
+
 internal fun claimPreFingerprintSchedule(
     workflow: Workflow,
     triggerNodeId: String,
@@ -1581,6 +1584,11 @@ class WorkflowRepository(private val context: Context) {
             }
         } else {
             Result.success("Pre-fingerprint workflow execution already completed")
+        }
+        if (shouldRetainPreFingerprintClaimForRetry(result.exceptionOrNull())) {
+            // No workflow node ran, so keep CLAIMED. The same legacy WorkRequest can retry the
+            // initialization after backoff without losing eligibility or installing a replacement.
+            return result
         }
         if (claim.installReplacement) {
             if (claim.executeWorkflow) {

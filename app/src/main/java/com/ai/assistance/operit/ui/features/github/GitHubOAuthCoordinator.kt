@@ -5,6 +5,7 @@ import android.net.Uri
 import com.ai.assistance.operit.data.api.GitHubApiService
 import com.ai.assistance.operit.data.api.GitHubOAuthBrokerService
 import com.ai.assistance.operit.data.preferences.GitHubAuthPreferences
+import com.ai.assistance.operit.data.preferences.PendingGitHubOAuthRequestConsumption
 import com.ai.assistance.operit.data.preferences.GitHubUser
 
 class GitHubOAuthCoordinator(context: Context) {
@@ -35,11 +36,18 @@ class GitHubOAuthCoordinator(context: Context) {
             return Result.failure(IllegalArgumentException("Unsupported OAuth redirect URI"))
         }
 
-        val pendingRequest = githubAuth.consumePendingOAuthRequest()
-            ?: return Result.failure(IllegalStateException("Missing pending OAuth request"))
         val returnedState = uri.getQueryParameter("state")
-        if (returnedState.isNullOrBlank() || returnedState != pendingRequest.state) {
+        if (returnedState.isNullOrBlank()) {
             return Result.failure(IllegalStateException("OAuth state mismatch"))
+        }
+        val pendingRequest = when (
+            val consumption = githubAuth.consumePendingOAuthRequest(returnedState)
+        ) {
+            is PendingGitHubOAuthRequestConsumption.Consumed -> consumption.request
+            PendingGitHubOAuthRequestConsumption.Missing ->
+                return Result.failure(IllegalStateException("Missing pending OAuth request"))
+            PendingGitHubOAuthRequestConsumption.StateMismatch ->
+                return Result.failure(IllegalStateException("OAuth state mismatch"))
         }
 
         val error = uri.getQueryParameter("error")
