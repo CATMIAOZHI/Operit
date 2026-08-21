@@ -72,7 +72,10 @@ internal class SpoolConcurrencyTest : TokenStatReliabilityTestBase() {
     fun `interrupt ignoring insert never locks spool and restore barrier stays clean`() = runBlocking {
         Mockito.mockStatic(AppLogger::class.java).use {
             val previousInsert = TokenStatSpool.insertTimeoutMs
+            val previousQuiesce = TokenStatSpool.exclusiveQuiesceTimeoutMs
+            val release = CountDownLatch(1)
             TokenStatSpool.insertTimeoutMs = 100
+            TokenStatSpool.exclusiveQuiesceTimeoutMs = 150
             try {
                 val spoolDir = File(root, TokenStatSpool.SPOOL_DIR_NAME)
                 spoolDir.mkdirs()
@@ -80,15 +83,14 @@ internal class SpoolConcurrencyTest : TokenStatReliabilityTestBase() {
                 val lineA = line(request("evt-hung-a"))
                 val lineB = line(request("evt-hung-b"))
                 val realDao = database.tokenStatsDao()
-                val release = CountDownLatch(1)
                 val blockingDao = mock<TokenStatsDao>()
                 whenever(blockingDao.insertIdentityIfAbsent(any())).thenAnswer { invocation ->
                     // SQLite 忽略中断：cancel(true) 无法终止；释放后委托真实 DAO 完成
                     gateIgnoringInterrupts(release)
                     runBlocking { realDao.insertIdentityIfAbsent(invocation.getArgument(0)) }
                 }
-                whenever(blockingDao.upsertDisplayModel(any())).thenAnswer { invocation ->
-                    runBlocking { realDao.upsertDisplayModel(invocation.getArgument(0)) }
+                whenever(blockingDao.insertDisplayModelIfAbsent(any())).thenAnswer { invocation ->
+                    runBlocking { realDao.insertDisplayModelIfAbsent(invocation.getArgument(0)) }
                 }
                 whenever(blockingDao.insertEventIfNotResetCovered(any())).thenAnswer { invocation ->
                     runBlocking { realDao.insertEventIfNotResetCovered(invocation.getArgument(0)) }
@@ -99,11 +101,7 @@ internal class SpoolConcurrencyTest : TokenStatReliabilityTestBase() {
 
                 // append A durable；drain 启动后 insert 挂起（忽略中断）
                 assertTrue(TokenStatSpool.append(context, lineA, "evt-hung-a"))
-                val latchDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-                while (TokenStatSpool.pendingLatchCountForTest() == 0 && System.nanoTime() < latchDeadline) {
-                    delay(10)
-                }
-                assertEquals(1, TokenStatSpool.pendingLatchCountForTest())
+                awaitActiveInsertCount(1)
 
                 // 硬上限（insertTimeoutMs）之后：锁必须已释放，append 不再被阻塞
                 val startedSecond = System.nanoTime()
@@ -126,11 +124,7 @@ internal class SpoolConcurrencyTest : TokenStatReliabilityTestBase() {
 
                 // 模拟重启前必须释放并确认旧 insert 线程终止：释放门闩 → registry 真正清空
                 release.countDown()
-                val registryDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-                while (TokenStatSpool.activeInsertCountForTest() != 0 && System.nanoTime() < registryDeadline) {
-                    delay(10)
-                }
-                assertEquals(0, TokenStatSpool.activeInsertCountForTest())
+                awaitActiveInsertCount(0)
 
                 // 丢弃已完成的旧 worker（shutdown 后线程真实终止），再模拟进程重启；
                 // 被卡任务由新排空重放幂等完成（失败的 restore 从未替换数据库）
@@ -169,9 +163,11 @@ internal class SpoolConcurrencyTest : TokenStatReliabilityTestBase() {
                 assertEquals(1, database.tokenStatsDao().countEvents())
                 assertEquals("evt-post-restore", database.tokenStatsDao().getAllEvents().single().eventId)
             } finally {
+                release.countDown()
                 TokenStatsLedger.databaseProvider = { database }
                 TokenStatSpool.resetExecutorsForTest()
                 TokenStatSpool.insertTimeoutMs = previousInsert
+                TokenStatSpool.exclusiveQuiesceTimeoutMs = previousQuiesce
             }
         }
     }
@@ -180,12 +176,12 @@ internal class SpoolConcurrencyTest : TokenStatReliabilityTestBase() {
     fun `database preparation timeouts stay single flight with bounded threads`() = runBlocking {
         Mockito.mockStatic(AppLogger::class.java).use {
             val previousPrepare = TokenStatSpool.prepareTimeoutMs
+            val release = CountDownLatch(1)
             TokenStatSpool.prepareTimeoutMs = 50
             try {
                 val spool = File(root, TokenStatSpool.SPOOL_DIR_NAME).apply { mkdirs() }
                 File(spool, "sealed_1.jsonl").writeText(line(request("evt-db-prep-hang")) + "\n")
                 // 数据库准备挂起且忽略中断（可释放）：每次 drain 循环都必须单飞复用同一任务
-                val release = CountDownLatch(1)
                 TokenStatsLedger.databaseProvider = {
                     gateIgnoringInterrupts(release)
                     database
@@ -214,6 +210,7 @@ internal class SpoolConcurrencyTest : TokenStatReliabilityTestBase() {
                 awaitEvent("evt-db-prep-hang")
                 assertEquals(1, database.tokenStatsDao().countEvents())
             } finally {
+                release.countDown()
                 TokenStatsLedger.databaseProvider = { database }
                 TokenStatSpool.resetExecutorsForTest()
                 TokenStatSpool.prepareTimeoutMs = previousPrepare

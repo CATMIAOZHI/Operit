@@ -110,6 +110,7 @@ internal class RestoreReliabilityTest : TokenStatReliabilityTestBase() {
             Mockito.mockStatic(AppLogger::class.java).use {
                 val previousInsert = TokenStatSpool.insertTimeoutMs
                 val previousQuiesce = TokenStatSpool.exclusiveQuiesceTimeoutMs
+                val release = CountDownLatch(1)
                 TokenStatSpool.insertTimeoutMs = 100
                 TokenStatSpool.exclusiveQuiesceTimeoutMs = 150
                 try {
@@ -121,7 +122,6 @@ internal class RestoreReliabilityTest : TokenStatReliabilityTestBase() {
                     // （模拟 SQLite 已持有连接、忽略中断的旧 insert），释放后委托真实 DAO
                     val realDao = database.tokenStatsDao()
                     val entered = CountDownLatch(1)
-                    val release = CountDownLatch(1)
                     val blockingDao = mock<TokenStatsDao>()
                     whenever(blockingDao.insertIdentityIfAbsent(any())).thenAnswer { invocation ->
                         entered.countDown()
@@ -134,8 +134,8 @@ internal class RestoreReliabilityTest : TokenStatReliabilityTestBase() {
                         }
                         runBlocking { realDao.insertIdentityIfAbsent(invocation.getArgument(0)) }
                     }
-                    whenever(blockingDao.upsertDisplayModel(any())).thenAnswer { invocation ->
-                        runBlocking { realDao.upsertDisplayModel(invocation.getArgument(0)) }
+                    whenever(blockingDao.insertDisplayModelIfAbsent(any())).thenAnswer { invocation ->
+                        runBlocking { realDao.insertDisplayModelIfAbsent(invocation.getArgument(0)) }
                     }
                     whenever(blockingDao.insertEventIfNotResetCovered(any())).thenAnswer { invocation ->
                         runBlocking { realDao.insertEventIfNotResetCovered(invocation.getArgument(0)) }
@@ -178,7 +178,7 @@ internal class RestoreReliabilityTest : TokenStatReliabilityTestBase() {
                     release.countDown()
                     awaitEvent("evt-live-a")
                     assertEquals(1, database.tokenStatsDao().countEvents())
-                    assertEquals(0, TokenStatSpool.activeInsertCountForTest())
+                    awaitActiveInsertCount(0)
 
                     TokenStatSpool.withExclusiveSnapshotAccess(
                         context,
@@ -200,6 +200,7 @@ internal class RestoreReliabilityTest : TokenStatReliabilityTestBase() {
                         }
                     assertEquals("restored database must pass integrity check", "ok", integrity)
                 } finally {
+                    release.countDown()
                     TokenStatsLedger.databaseProvider = { database }
                     TokenStatSpool.resetExecutorsForTest()
                     TokenStatSpool.insertTimeoutMs = previousInsert
