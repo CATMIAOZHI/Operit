@@ -110,6 +110,43 @@ internal val OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS =
 internal val OPERIT_ARCHIVE_CHAT_TODO_SNAPSHOT_COLUMNS =
     listOf("chatId", "position", "content", "status", "priority")
 
+internal const val OPERIT_ARCHIVE_CONTENT_CHUNK_BYTE_COUNT = 65_536
+internal const val OPERIT_ARCHIVE_CONTENT_INITIAL_PROJECTION =
+    "SUBSTR(CAST(content AS BLOB), 1, $OPERIT_ARCHIVE_CONTENT_CHUNK_BYTE_COUNT) " +
+        "AS contentChunkBytes, LENGTH(CAST(content AS BLOB)) AS contentByteCount"
+internal const val OPERIT_ARCHIVE_CONTENT_CHUNK_EXPRESSION =
+    "SUBSTR(CAST(content AS BLOB), ?, ?)"
+
+internal fun materializeOperitArchiveUtf8Content(
+    initialChunk: ByteArray,
+    contentByteCount: Long,
+    entityDescription: String,
+    readChunk: (startByte: Long, byteCount: Int) -> ByteArray?,
+): String {
+    if (contentByteCount <= initialChunk.size.toLong()) {
+        return initialChunk.toString(StandardCharsets.UTF_8)
+    }
+
+    val content = ByteArrayOutputStream(initialChunk.size * 2)
+    content.write(initialChunk)
+    var startByte = initialChunk.size.toLong() + 1L
+    while (startByte <= contentByteCount) {
+        val chunk =
+            checkNotNull(readChunk(startByte, OPERIT_ARCHIVE_CONTENT_CHUNK_BYTE_COUNT)) {
+                "Archived chat row disappeared while reading content: $entityDescription"
+            }
+        check(chunk.isNotEmpty()) {
+            "Archived chat content ended before its recorded length: $entityDescription"
+        }
+        content.write(chunk)
+        startByte += chunk.size
+    }
+    check(content.size().toLong() == contentByteCount) {
+        "Archived chat content length changed while reading: $entityDescription"
+    }
+    return content.toByteArray().toString(StandardCharsets.UTF_8)
+}
+
 internal fun remapArchivedParentToolCallIds(
     chat: OperitArchivedChat,
     callIdRemap: Map<String, String>,
@@ -151,7 +188,6 @@ class ChatHistoryManager private constructor(private val context: Context) {
     companion object {
         private const val TAG = "ChatHistoryManager"
         private const val LOCATOR_PREVIEW_CHAR_COUNT = 48
-        private const val ARCHIVE_CONTENT_CHUNK_CHARACTER_COUNT = 65_536
 
         @Volatile
         private var INSTANCE: ChatHistoryManager? = null
@@ -453,34 +489,28 @@ class ChatHistoryManager private constructor(private val context: Context) {
         )
 
     private fun SQLiteDatabase.materializeSnapshotContent(
-        prefix: String,
-        contentCharacterCount: Long,
+        initialChunk: ByteArray,
+        contentByteCount: Long,
         entityId: Long,
         chunkQuery: String,
-    ): String {
-        if (contentCharacterCount <= ARCHIVE_CONTENT_CHUNK_CHARACTER_COUNT) return prefix
-
-        val content = StringBuilder(prefix)
-        var startCharacter = ARCHIVE_CONTENT_CHUNK_CHARACTER_COUNT.toLong() + 1L
-        while (startCharacter <= contentCharacterCount) {
-            val chunk =
+    ): String =
+        materializeOperitArchiveUtf8Content(
+            initialChunk = initialChunk,
+            contentByteCount = contentByteCount,
+            entityDescription = "entityId=$entityId",
+        ) { startByte, byteCount ->
                 rawQuery(
                     chunkQuery,
                     arrayOf(
-                        startCharacter.toString(),
-                        ARCHIVE_CONTENT_CHUNK_CHARACTER_COUNT.toString(),
+                        startByte.toString(),
+                        byteCount.toString(),
                         entityId.toString(),
                     ),
                 ).use { cursor ->
                     check(cursor.moveToFirst()) { "Archived chat row disappeared while reading content" }
-                    cursor.getString(0)
+                    cursor.getBlob(0)
                 }
-            check(chunk.isNotEmpty()) { "Archived chat content ended before its recorded length" }
-            content.append(chunk)
-            startCharacter += ARCHIVE_CONTENT_CHUNK_CHARACTER_COUNT
         }
-        return content.toString()
-    }
 
     private fun Cursor.toSnapshotMessageEntity(snapshot: SQLiteDatabase): MessageEntity {
         val messageId = getLong(getColumnIndexOrThrow("messageId"))
@@ -490,10 +520,12 @@ class ChatHistoryManager private constructor(private val context: Context) {
             sender = getString(getColumnIndexOrThrow("sender")),
             content =
                 snapshot.materializeSnapshotContent(
-                    prefix = getString(getColumnIndexOrThrow("content")),
-                    contentCharacterCount = getLong(getColumnIndexOrThrow("contentCharacterCount")),
+                    initialChunk = getBlob(getColumnIndexOrThrow("contentChunkBytes")),
+                    contentByteCount = getLong(getColumnIndexOrThrow("contentByteCount")),
                     entityId = messageId,
-                    chunkQuery = "SELECT SUBSTR(content, ?, ?) FROM messages WHERE messageId = ?",
+                    chunkQuery =
+                        "SELECT $OPERIT_ARCHIVE_CONTENT_CHUNK_EXPRESSION " +
+                            "FROM messages WHERE messageId = ?",
                 ),
             timestamp = getLong(getColumnIndexOrThrow("timestamp")),
             orderIndex = getInt(getColumnIndexOrThrow("orderIndex")),
@@ -522,10 +554,12 @@ class ChatHistoryManager private constructor(private val context: Context) {
             variantIndex = getInt(getColumnIndexOrThrow("variantIndex")),
             content =
                 snapshot.materializeSnapshotContent(
-                    prefix = getString(getColumnIndexOrThrow("content")),
-                    contentCharacterCount = getLong(getColumnIndexOrThrow("contentCharacterCount")),
+                    initialChunk = getBlob(getColumnIndexOrThrow("contentChunkBytes")),
+                    contentByteCount = getLong(getColumnIndexOrThrow("contentByteCount")),
                     entityId = variantId,
-                    chunkQuery = "SELECT SUBSTR(content, ?, ?) FROM message_variants WHERE variantId = ?",
+                    chunkQuery =
+                        "SELECT $OPERIT_ARCHIVE_CONTENT_CHUNK_EXPRESSION " +
+                            "FROM message_variants WHERE variantId = ?",
                 ),
             roleName = getString(getColumnIndexOrThrow("roleName")),
             provider = getString(getColumnIndexOrThrow("provider")),
@@ -571,11 +605,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
             snapshot.rawQuery(
                 """
                 SELECT messageId, chatId, sender,
-                    SUBSTR(content, 1, $ARCHIVE_CONTENT_CHUNK_CHARACTER_COUNT) AS content,
+                    $OPERIT_ARCHIVE_CONTENT_INITIAL_PROJECTION,
                     timestamp, orderIndex, roleName, selectedVariantIndex, provider, modelName,
                     inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs,
-                    waitDurationMs, completedAt, displayMode, isFavorite,
-                    LENGTH(content) AS contentCharacterCount
+                    waitDurationMs, completedAt, displayMode, isFavorite
                 FROM messages WHERE chatId = ? ORDER BY orderIndex
                 """.trimIndent(),
                 arrayOf(chatEntity.id),
@@ -588,10 +621,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
             snapshot.rawQuery(
                 """
                 SELECT variantId, chatId, messageTimestamp, variantIndex,
-                    SUBSTR(content, 1, $ARCHIVE_CONTENT_CHUNK_CHARACTER_COUNT) AS content,
+                    $OPERIT_ARCHIVE_CONTENT_INITIAL_PROJECTION,
                     roleName, provider, modelName, inputTokens, outputTokens, cachedInputTokens,
-                    sentAt, outputDurationMs, waitDurationMs, completedAt,
-                    LENGTH(content) AS contentCharacterCount
+                    sentAt, outputDurationMs, waitDurationMs, completedAt
                 FROM message_variants
                 WHERE chatId = ? ORDER BY messageTimestamp, variantIndex
                 """.trimIndent(),
