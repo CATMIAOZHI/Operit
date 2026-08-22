@@ -10,9 +10,16 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.ai.assistance.operit.BuildConfig
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.encodeToString
@@ -20,6 +27,38 @@ import kotlinx.serialization.json.Json
 
 private val Context.githubAuthDataStore: DataStore<Preferences> by
     preferencesDataStore(name = "github_auth_preferences")
+
+internal const val GITHUB_SESSION_EXPIRY_RECHECK_INTERVAL_MILLIS = 30_000L
+
+internal fun isGitHubAuthSessionUsable(
+    isLoggedIn: Boolean,
+    authVersionCurrent: Boolean,
+    scopesCurrent: Boolean,
+    expiresAtMillis: Long?,
+    nowMillis: Long,
+): Boolean =
+    isLoggedIn &&
+        authVersionCurrent &&
+        scopesCurrent &&
+        (expiresAtMillis == null || nowMillis < expiresAtMillis)
+
+internal fun githubSessionClockSignalFlow(
+    expiresAtMillis: Long,
+    nowMillis: () -> Long = System::currentTimeMillis,
+    waitFor: suspend (Long) -> Unit = { delay(it) },
+): Flow<Unit> = flow {
+    while (true) {
+        val now = nowMillis()
+        val waitMillis =
+            if (now < expiresAtMillis) {
+                minOf(expiresAtMillis - now, GITHUB_SESSION_EXPIRY_RECHECK_INTERVAL_MILLIS)
+            } else {
+                GITHUB_SESSION_EXPIRY_RECHECK_INTERVAL_MILLIS
+            }
+        waitFor(waitMillis)
+        emit(Unit)
+    }
+}
 
 @Serializable
 data class GitHubUser(
@@ -43,9 +82,8 @@ class GitHubAuthPreferences(private val context: Context) {
     companion object {
         // GitHub OAuth相关配置
         val GITHUB_CLIENT_ID = BuildConfig.GITHUB_CLIENT_ID
-        val GITHUB_CLIENT_SECRET = BuildConfig.GITHUB_CLIENT_SECRET
         const val GITHUB_SCOPE = "notifications,public_repo,user:email,read:user"
-        private const val REQUIRED_AUTH_VERSION = 2
+        private const val REQUIRED_AUTH_VERSION = 3
         private const val GITHUB_REDIRECT_SCHEME = "operitry"
         private const val GITHUB_REDIRECT_HOST = "github-oauth-callback"
         const val GITHUB_REDIRECT_URI = "$GITHUB_REDIRECT_SCHEME://$GITHUB_REDIRECT_HOST"
@@ -61,6 +99,7 @@ class GitHubAuthPreferences(private val context: Context) {
         private val AUTH_VERSION = longPreferencesKey("auth_version")
         private val GRANTED_SCOPE = stringPreferencesKey("granted_scope")
         private val PENDING_OAUTH_STATE = stringPreferencesKey("pending_oauth_state")
+        private val PENDING_OAUTH_CODE_VERIFIER = stringPreferencesKey("pending_oauth_code_verifier")
         
         @Volatile
         private var INSTANCE: GitHubAuthPreferences? = null
@@ -69,13 +108,6 @@ class GitHubAuthPreferences(private val context: Context) {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: GitHubAuthPreferences(context.applicationContext).also { INSTANCE = it }
             }
-        }
-
-        fun createOAuthState(): String {
-            val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-            return (1..32)
-                .map { chars.random() }
-                .joinToString("")
         }
 
         fun isOAuthRedirectUri(uri: Uri?): Boolean {
@@ -87,6 +119,7 @@ class GitHubAuthPreferences(private val context: Context) {
         ignoreUnknownKeys = true
         isLenient = true
     }
+    private val pendingOAuthMutex = Mutex()
 
     private val requiredScopes: Set<String> =
         GITHUB_SCOPE.split(",")
@@ -103,24 +136,47 @@ class GitHubAuthPreferences(private val context: Context) {
             .orEmpty()
     }
 
-    private fun isAuthSessionCurrent(preferences: Preferences): Boolean {
+    private fun isAuthSessionCurrent(
+        preferences: Preferences,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean {
         val grantedScopes = parseScopeSet(preferences[GRANTED_SCOPE])
         val authVersion = preferences[AUTH_VERSION] ?: 0L
-        return authVersion >= REQUIRED_AUTH_VERSION && grantedScopes.containsAll(requiredScopes)
+        return isGitHubAuthSessionUsable(
+            isLoggedIn = preferences[IS_LOGGED_IN] ?: false,
+            authVersionCurrent = authVersion >= REQUIRED_AUTH_VERSION,
+            scopesCurrent = grantedScopes.containsAll(requiredScopes),
+            expiresAtMillis = preferences[TOKEN_EXPIRES_AT],
+            nowMillis = nowMillis,
+        )
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val sessionAwarePreferencesFlow: Flow<Preferences> =
+        context.githubAuthDataStore.data.flatMapLatest { preferences ->
+            flow {
+                emit(preferences)
+                val expiresAt = preferences[TOKEN_EXPIRES_AT]
+                if (expiresAt != null) {
+                    githubSessionClockSignalFlow(expiresAt).collect {
+                        emit(preferences)
+                    }
+                }
+            }
+        }
+
     // 登录状态Flow
-    val isLoggedInFlow: Flow<Boolean> = context.githubAuthDataStore.data.map { preferences ->
-        (preferences[IS_LOGGED_IN] ?: false) && isAuthSessionCurrent(preferences)
+    val isLoggedInFlow: Flow<Boolean> = sessionAwarePreferencesFlow.map { preferences ->
+        isAuthSessionCurrent(preferences)
     }
 
     // 访问令牌Flow
-    val accessTokenFlow: Flow<String?> = context.githubAuthDataStore.data.map { preferences ->
+    val accessTokenFlow: Flow<String?> = sessionAwarePreferencesFlow.map { preferences ->
         if (isAuthSessionCurrent(preferences)) preferences[ACCESS_TOKEN] else null
     }
 
     // 用户信息Flow
-    val userInfoFlow: Flow<GitHubUser?> = context.githubAuthDataStore.data.map { preferences ->
+    val userInfoFlow: Flow<GitHubUser?> = sessionAwarePreferencesFlow.map { preferences ->
         if (!isAuthSessionCurrent(preferences)) {
             return@map null
         }
@@ -164,9 +220,15 @@ class GitHubAuthPreferences(private val context: Context) {
             expiresIn?.let {
                 preferences[TOKEN_EXPIRES_AT] = System.currentTimeMillis() + (it * 1000)
             }
+            if (expiresIn == null) {
+                preferences.remove(TOKEN_EXPIRES_AT)
+            }
             
             refreshToken?.let {
                 preferences[REFRESH_TOKEN] = it
+            }
+            if (refreshToken == null) {
+                preferences.remove(REFRESH_TOKEN)
             }
         }
     }
@@ -177,27 +239,6 @@ class GitHubAuthPreferences(private val context: Context) {
     suspend fun updateUserInfo(userInfo: GitHubUser) {
         context.githubAuthDataStore.edit { preferences ->
             preferences[USER_INFO] = json.encodeToString(userInfo)
-        }
-    }
-
-    /**
-     * 更新访问令牌
-     */
-    suspend fun updateAccessToken(
-        accessToken: String,
-        tokenType: String = "bearer",
-        expiresIn: Long? = null,
-        grantedScope: String? = null
-    ) {
-        context.githubAuthDataStore.edit { preferences ->
-            preferences[ACCESS_TOKEN] = accessToken
-            preferences[TOKEN_TYPE] = tokenType
-            preferences[AUTH_VERSION] = REQUIRED_AUTH_VERSION.toLong()
-            preferences[GRANTED_SCOPE] = grantedScope.orEmpty()
-            
-            expiresIn?.let {
-                preferences[TOKEN_EXPIRES_AT] = System.currentTimeMillis() + (it * 1000)
-            }
         }
     }
 
@@ -246,7 +287,7 @@ class GitHubAuthPreferences(private val context: Context) {
      */
     suspend fun isLoggedIn(): Boolean {
         val preferences = context.githubAuthDataStore.data.first()
-        return (preferences[IS_LOGGED_IN] ?: false) && isAuthSessionCurrent(preferences)
+        return isAuthSessionCurrent(preferences)
     }
 
     /**
@@ -258,34 +299,39 @@ class GitHubAuthPreferences(private val context: Context) {
         }
     }
 
-    suspend fun setPendingOAuthState(state: String) {
-        context.githubAuthDataStore.edit { preferences ->
-            preferences[PENDING_OAUTH_STATE] = state
+    suspend fun savePendingOAuthRequest(state: String, codeVerifier: String) {
+        pendingOAuthMutex.withLock {
+            context.githubAuthDataStore.edit { preferences ->
+                preferences[PENDING_OAUTH_STATE] = state
+                preferences[PENDING_OAUTH_CODE_VERIFIER] = codeVerifier
+            }
         }
     }
 
-    suspend fun consumePendingOAuthState(): String? {
-        val preferences = context.githubAuthDataStore.data.first()
-        val state = preferences[PENDING_OAUTH_STATE]
-        context.githubAuthDataStore.edit { mutablePreferences ->
-            mutablePreferences.remove(PENDING_OAUTH_STATE)
+    internal suspend fun consumePendingOAuthRequest(
+        returnedState: String,
+    ): PendingGitHubOAuthRequestConsumption =
+        pendingOAuthMutex.withLock {
+            val preferences = context.githubAuthDataStore.data.first()
+            val state = preferences[PENDING_OAUTH_STATE]
+            val codeVerifier = preferences[PENDING_OAUTH_CODE_VERIFIER]
+            val consumption = evaluatePendingOAuthRequestConsumption(
+                pendingState = state,
+                codeVerifier = codeVerifier,
+                returnedState = returnedState,
+            )
+            if (
+                consumption is PendingGitHubOAuthRequestConsumption.Consumed ||
+                    consumption is PendingGitHubOAuthRequestConsumption.Missing &&
+                        (state != null || codeVerifier != null)
+            ) {
+                context.githubAuthDataStore.edit { mutablePreferences ->
+                    mutablePreferences.remove(PENDING_OAUTH_STATE)
+                    mutablePreferences.remove(PENDING_OAUTH_CODE_VERIFIER)
+                }
+            }
+            consumption
         }
-        return state
-    }
-
-    /**
-     * 生成GitHub OAuth授权URL
-     */
-    fun getAuthorizationUrl(state: String = createOAuthState()): String {
-        return Uri.parse("https://github.com/login/oauth/authorize")
-            .buildUpon()
-            .appendQueryParameter("client_id", GITHUB_CLIENT_ID)
-            .appendQueryParameter("redirect_uri", GITHUB_REDIRECT_URI)
-            .appendQueryParameter("scope", GITHUB_SCOPE)
-            .appendQueryParameter("state", state)
-            .build()
-            .toString()
-    }
 
     /**
      * 获取访问令牌的授权头
@@ -298,4 +344,33 @@ class GitHubAuthPreferences(private val context: Context) {
             null
         }
     }
-} 
+}
+
+data class PendingGitHubOAuthRequest(
+    val state: String,
+    val codeVerifier: String
+)
+
+internal sealed interface PendingGitHubOAuthRequestConsumption {
+    data class Consumed(val request: PendingGitHubOAuthRequest) :
+        PendingGitHubOAuthRequestConsumption
+
+    data object Missing : PendingGitHubOAuthRequestConsumption
+    data object StateMismatch : PendingGitHubOAuthRequestConsumption
+}
+
+internal fun evaluatePendingOAuthRequestConsumption(
+    pendingState: String?,
+    codeVerifier: String?,
+    returnedState: String,
+): PendingGitHubOAuthRequestConsumption {
+    if (pendingState == null || codeVerifier == null) {
+        return PendingGitHubOAuthRequestConsumption.Missing
+    }
+    if (pendingState != returnedState) {
+        return PendingGitHubOAuthRequestConsumption.StateMismatch
+    }
+    return PendingGitHubOAuthRequestConsumption.Consumed(
+        PendingGitHubOAuthRequest(pendingState, codeVerifier)
+    )
+}

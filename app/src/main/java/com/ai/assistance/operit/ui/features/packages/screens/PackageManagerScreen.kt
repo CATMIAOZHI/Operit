@@ -899,6 +899,7 @@ fun PackageManagerScreen(
                                             }
 
                                         importedPackages.value = updatedImported
+                                        visibleImportedPackages.value = updatedImported.toList()
                                     } catch (e: Exception) {
                                         AppLogger.e(
                                             "PackageManagerScreen",

@@ -8,6 +8,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import com.ai.assistance.operit.core.workflow.WorkflowScheduler
+import com.ai.assistance.operit.core.workflow.WorkflowExecutionRetryableException
 import com.ai.assistance.operit.core.workflow.WorkflowScheduleWorkInfo
 import com.ai.assistance.operit.core.workflow.isActiveWorkflowScheduleState
 import com.ai.assistance.operit.core.workflow.isActiveMatchingWorkflowSchedule
@@ -201,6 +202,9 @@ class WorkflowStoragePolicyTest {
         ))
         assertTrue(shouldDeferClaimedScheduleRebuild(claim.workflow, allowClaimedMigration = false))
         assertFalse(shouldDeferClaimedScheduleRebuild(claim.workflow, allowClaimedMigration = true))
+        assertTrue(shouldRetainPreFingerprintClaimForRetry(
+            WorkflowExecutionRetryableException("runtime initialization")
+        ))
 
         val resumed = claimPreFingerprintSchedule(
             claim.workflow,
@@ -326,12 +330,20 @@ class WorkflowStoragePolicyTest {
     }
 
     @Test
-    fun workerRetriesOnlyPendingTrustedScheduleReplacement() {
+    fun workerRetriesOnlyExplicitlyRetryableFailures() {
         assertTrue(shouldRetryWorkflowWorkerFailure(
             PreFingerprintScheduleReplacementPendingException("workflow")
         ))
+        assertTrue(shouldRetryWorkflowWorkerFailure(
+            WorkflowExecutionRetryableException("runtime initialization")
+        ))
         assertFalse(shouldRetryWorkflowWorkerFailure(IllegalStateException("execution failed")))
         assertFalse(shouldRetryWorkflowWorkerFailure(null))
+        assertFalse(shouldRetainPreFingerprintClaimForRetry(
+            PreFingerprintScheduleReplacementPendingException("workflow")
+        ))
+        assertFalse(shouldRetainPreFingerprintClaimForRetry(IllegalStateException("execution failed")))
+        assertFalse(shouldRetainPreFingerprintClaimForRetry(null))
     }
 
     @Test

@@ -216,6 +216,12 @@
     <string name="workflow_execution_log_node_title">节点日志：%1$s</string>
     <string name="workflow_execution_log_empty">暂无执行日志</string>
     <string name="workflow_execution_log_empty_for_node">该节点暂无执行日志：%1$s</string>
+    <string name="workflow_execution_log_failure_stage">失败阶段：%1$s</string>
+    <string name="workflow_execution_log_failure_reason">异常原文：%1$s</string>
+    <string name="workflow_execution_failure_stage_startup">工作流启动</string>
+    <string name="workflow_execution_failure_stage_runtime_initialization">运行环境初始化</string>
+    <string name="workflow_execution_failure_stage_execution">工作流执行</string>
+    <string name="workflow_execution_failure_stage_cancellation">执行取消</string>
     <string name="workflow_edit_dialog_title">编辑工作流</string>
     <string name="workflow_enabled_label">启用工作流</string>
     <string name="workflow_disabled">已禁用</string>
@@ -3137,6 +3143,7 @@
     <string name="chat_pending_queue_title">待发送队列（%1$d）</string>
     <string name="chat_queue_add_message">加入发送队列</string>
     <string name="chat_queue_added">已加入发送队列</string>
+    <string name="chat_queue_send_deferred">目标对话仍在处理中，队列消息已保留</string>
     <string name="chat_use_default_config_continue">使用默认配置继续</string>
     <string name="chat_default_config_incomplete">默认配置不完整，请填写必要信息</string>
     <string name="chat_locked_cannot_delete">该聊天已锁定，无法删除</string>
@@ -7383,6 +7390,9 @@
     <string name="workflow_unknown_error">未知错误</string>
     <string name="workflow_in_list_type_mismatch">IN 列表类型不匹配：同时包含数字和非数字 right=\'%1$s\'</string>
     <string name="workflow_log_start_execution">开始执行工作流: %1$s (%2$s)</string>
+    <string name="workflow_log_runtime_initialization_failed">工作流运行环境初始化失败：%1$s</string>
+    <string name="workflow_log_startup_failed">工作流启动失败：%1$s</string>
+    <string name="workflow_log_execution_cancelled_reason">工作流执行已取消：%1$s</string>
     <string name="workflow_log_no_trigger_node">工作流没有触发节点</string>
     <string name="workflow_log_trigger_node_not_exist">指定的触发节点不存在: %1$s</string>
     <string name="workflow_log_scheduled_trigger">定时触发: 只执行指定触发节点 %1$s</string>
@@ -7583,9 +7593,10 @@
     <string name="ai_message_result_suffix">]</string>
     <string name="ai_message_result_omitted">[结果: %1$s 已省略]</string>
     <string name="ai_message_result_omitted_with_status">[结果: %1$s %2$s 已省略]</string>
-    <string name="ai_message_package_warmup_title">【工具包预热】</string>
-    <string name="ai_message_package_warmup_empty">本次摘要范围内未检测到包工具调用，因此未进行工具包预热。</string>
-    <string name="ai_message_package_warmup_intro">以下根据本次摘要范围内的工具使用频次，自动激活了最高频的工具包，并附上 use_package 的返回结果，供下一轮预热。</string>
+    <string name="ai_message_package_warmup_title">【已激活包】</string>
+    <string name="ai_message_package_warmup_empty">本次摘要范围内未检测到已激活包。</string>
+    <string name="ai_message_package_warmup_intro">以下已激活包可以直接使用。</string>
+    <string name="ai_message_package_activated_hint">已激活包：以下工具提示可以直接使用。</string>
     <string name="ai_message_use_package_failed">use_package 调用失败: %1$s</string>
     <string name="ai_message_use_package_empty">use_package 返回为空。</string>
     <string name="ai_message_package_warmup_item">%1$d. 包 %2$s（命中 %3$d 次）</string>

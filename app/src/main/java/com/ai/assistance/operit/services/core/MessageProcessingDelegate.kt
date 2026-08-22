@@ -688,7 +688,7 @@ class MessageProcessingDelegate(
             isGroupOrchestrationTurn: Boolean = false,
             groupParticipantNamesText: String? = null,
             turnOptions: ChatTurnOptions = ChatTurnOptions()
-    ) {
+    ): Boolean {
         val rawMessageText = messageTextOverride ?: _userMessage.value.text
         fun rejectRegisteredTurn(error: String) {
             turnOptions.turnId?.let { turnId ->
@@ -708,7 +708,7 @@ class MessageProcessingDelegate(
                 "sendUserMessage忽略: 空消息且无附件, chatId=$chatId, autoContinuation=$isAutoContinuation"
             )
             rejectRegisteredTurn("Message was empty")
-            return
+            return false
         }
         val chatRuntime = runtimeFor(chatId)
         if (chatRuntime.isLoading.value) {
@@ -717,7 +717,7 @@ class MessageProcessingDelegate(
                 "sendUserMessage忽略: chat正在处理中, chatId=$chatId, roleCardId=$roleCardId, override=${!messageTextOverride.isNullOrBlank()}, suppressUserMessageInHistory=$suppressUserMessageInHistory"
             )
             rejectRegisteredTurn("Chat is already processing another turn")
-            return
+            return false
         }
 
         val originalMessageText = rawMessageText.trim()
@@ -1684,6 +1684,7 @@ class MessageProcessingDelegate(
                 )
             )
         }
+        return true
     }
 
     suspend fun regenerateAiMessageVariant(

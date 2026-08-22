@@ -30,6 +30,7 @@ internal class ChatBranchRepository(
     private val chatDao = database.chatDao()
     private val messageDao = database.messageDao()
     private val messageVariantDao = database.messageVariantDao()
+    private val chatContentDao = database.chatContentDao()
     private val subagentRunDao = database.subagentRunDao()
     private val chatTodoDao = database.chatTodoDao()
 
@@ -85,7 +86,7 @@ internal class ChatBranchRepository(
             extractPersistedToolCallIds(
                 buildList {
                     addAll(
-                        messageDao
+                        chatContentDao
                             .getMessagesForChatInRangeAsc(
                                 chatId = sourceParentChatId,
                                 afterTimestampExclusive = null,
@@ -95,7 +96,7 @@ internal class ChatBranchRepository(
                             .map { it.content }
                     )
                     addAll(
-                        messageVariantDao
+                        chatContentDao
                             .getVariantsForChat(sourceParentChatId)
                             .asSequence()
                             .filter {
@@ -161,13 +162,13 @@ internal class ChatBranchRepository(
         taskIdRemap: Map<String, String>,
     ) {
         if (taskIdRemap.isEmpty()) return
-        messageDao.getMessagesForChat(targetChatId).forEach { message ->
+        chatContentDao.getMessagesForChat(targetChatId).forEach { message ->
             val content = remapPersistedTaskIds(message.content, taskIdRemap)
             if (content != message.content) {
                 messageDao.updateMessage(message.copy(content = content))
             }
         }
-        messageVariantDao.getVariantsForChat(targetChatId).forEach { variant ->
+        chatContentDao.getVariantsForChat(targetChatId).forEach { variant ->
             val content = remapPersistedTaskIds(variant.content, taskIdRemap)
             if (content != variant.content) {
                 messageVariantDao.updateVariant(variant.copy(content = content))

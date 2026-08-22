@@ -8,7 +8,7 @@ console.log('Bridge process started. Loading modules...');
 
 import * as net from 'net';
 import { fork } from 'child_process';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -1312,7 +1312,7 @@ class McpBridge {
 
                             // 确保命令有ID
                             if (!command.id) {
-                                command.id = uuidv4();
+                                command.id = randomUUID();
                             }
 
                             // 处理命令
@@ -1465,4 +1465,4 @@ if (require.main === module) {
 }
 
 // Export bridge class for use by other modules
-export default McpBridge; 
+export default McpBridge;
