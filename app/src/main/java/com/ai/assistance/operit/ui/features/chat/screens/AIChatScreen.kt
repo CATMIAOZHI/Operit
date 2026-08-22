@@ -2024,12 +2024,13 @@ private fun ChatInputBottomBar(
         actualViewModel.showToast(context.getString(R.string.chat_queue_added))
     }
 
+    val pleaseCreateNewChatMessage = stringResource(R.string.chat_please_create_new_chat)
     val sendMessage: () -> Unit = {
         coroutineScope.launch {
             if (currentChatId.isNullOrBlank()) {
                 Toast.makeText(
                     context,
-                    context.getString(R.string.chat_please_create_new_chat),
+                    pleaseCreateNewChatMessage,
                     Toast.LENGTH_SHORT,
                 ).show()
                 return@launch

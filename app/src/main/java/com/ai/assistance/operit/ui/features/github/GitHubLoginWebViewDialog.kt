@@ -47,6 +47,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -173,6 +174,7 @@ private fun GitHubEmbeddedLoginWebViewDialog(
     onLoginSuccess: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val coordinator = remember { GitHubOAuthCoordinator(context) }
@@ -267,7 +269,7 @@ private fun GitHubEmbeddedLoginWebViewDialog(
             .onSuccess(webView::loadUrl)
             .onFailure { error ->
                 reportFailure(
-                    context.getString(
+                    resources.getString(
                         R.string.main_github_login_error,
                         error.message.orEmpty()
                     )
