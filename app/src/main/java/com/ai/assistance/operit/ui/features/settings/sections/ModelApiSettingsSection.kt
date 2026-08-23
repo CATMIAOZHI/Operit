@@ -52,7 +52,10 @@ import com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
+import com.ai.assistance.operit.data.model.ModelMultimodalCapabilities
 import com.ai.assistance.operit.data.model.ModelOption
+import com.ai.assistance.operit.data.model.getModelList
+import com.ai.assistance.operit.data.model.multimodalCapabilitiesForModel
 import com.ai.assistance.operit.data.model.normalizeProviderId
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
@@ -126,8 +129,15 @@ fun ModelApiSettingsSection(
     var llamaContextSizeInput by remember(config.id) { mutableStateOf(config.llamaContextSize.toString()) }
     var llamaGpuLayersInput by remember(config.id) { mutableStateOf(config.llamaGpuLayers.toString()) }
 
-    // 图片处理配置状态
+    // 多模态处理配置状态
     var enableDirectImageProcessingInput by remember(config.id) { mutableStateOf(config.enableDirectImageProcessing) }
+    var modelMultimodalCapabilitiesInput by remember(config.id) {
+        mutableStateOf(
+            getModelList(config.modelName).associateWith { modelName ->
+                config.multimodalCapabilitiesForModel(modelName)
+            }
+        )
+    }
 
     var enableDirectAudioProcessingInput by remember(config.id) { mutableStateOf(config.enableDirectAudioProcessing) }
 
@@ -158,6 +168,7 @@ fun ModelApiSettingsSection(
         val enableDirectImageProcessing: Boolean,
         val enableDirectAudioProcessing: Boolean,
         val enableDirectVideoProcessing: Boolean,
+        val modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities>,
         val enableGoogleSearch: Boolean,
         val enableClaude1hPromptCache: Boolean,
         val enableToolCall: Boolean,
@@ -182,6 +193,7 @@ fun ModelApiSettingsSection(
                     enableDirectImageProcessing = state.enableDirectImageProcessing,
                     enableDirectAudioProcessing = state.enableDirectAudioProcessing,
                     enableDirectVideoProcessing = state.enableDirectVideoProcessing,
+                    modelMultimodalCapabilities = state.modelMultimodalCapabilities,
                     enableGoogleSearch = state.enableGoogleSearch,
                     enableClaude1hPromptCache = state.enableClaude1hPromptCache,
                     enableToolCall = state.enableToolCall,
@@ -195,6 +207,7 @@ fun ModelApiSettingsSection(
     }
 
     fun buildAutoSaveState(): ApiAutoSaveState {
+        val configuredModelNames = getModelList(modelNameInput)
         return ApiAutoSaveState(
             apiEndpoint = apiEndpointInput,
             apiKey = apiKeyInput,
@@ -209,6 +222,11 @@ fun ModelApiSettingsSection(
             enableDirectImageProcessing = enableDirectImageProcessingInput,
             enableDirectAudioProcessing = enableDirectAudioProcessingInput,
             enableDirectVideoProcessing = enableDirectVideoProcessingInput,
+            modelMultimodalCapabilities =
+                configuredModelNames.associateWith { modelName ->
+                    modelMultimodalCapabilitiesInput[modelName]
+                        ?: ModelMultimodalCapabilities()
+                },
             enableGoogleSearch = enableGoogleSearchInput,
             enableClaude1hPromptCache = enableClaude1hPromptCacheInput,
             enableToolCall = enableToolCallInput,
@@ -392,6 +410,8 @@ fun ModelApiSettingsSection(
                                 enableDirectImageProcessing = enableDirectImageProcessingInput,
                                 enableDirectAudioProcessing = enableDirectAudioProcessingInput,
                                 enableDirectVideoProcessing = enableDirectVideoProcessingInput,
+                                modelMultimodalCapabilities =
+                                    modelMultimodalCapabilitiesInput,
                                 enableGoogleSearch = enableGoogleSearchInput,
                                 enableClaude1hPromptCache = enableClaude1hPromptCacheInput,
                                 enableToolCall = enableToolCallInput
@@ -723,25 +743,67 @@ fun ModelApiSettingsSection(
                     }
             )
 
-            SettingsSwitchRow(
-                title = stringResource(R.string.enable_direct_image_processing),
-                subtitle = stringResource(R.string.enable_direct_image_processing_desc),
-                checked = enableDirectImageProcessingInput,
-                onCheckedChange = { enableDirectImageProcessingInput = it }
-            )
-
-            SettingsSwitchRow(
-                title = stringResource(R.string.enable_direct_audio_processing),
-                subtitle = stringResource(R.string.enable_direct_audio_processing_desc),
-                checked = enableDirectAudioProcessingInput,
-                onCheckedChange = { enableDirectAudioProcessingInput = it }
-            )
-            SettingsSwitchRow(
-                title = stringResource(R.string.enable_direct_video_processing),
-                subtitle = stringResource(R.string.enable_direct_video_processing_desc),
-                checked = enableDirectVideoProcessingInput,
-                onCheckedChange = { enableDirectVideoProcessingInput = it }
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsInfoBanner(
+                    text = stringResource(R.string.model_multimodal_capabilities_desc)
+                )
+                val configuredModels = getModelList(modelNameInput)
+                if (configuredModels.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.model_multimodal_capabilities_no_models),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    )
+                } else {
+                    configuredModels.forEachIndexed { index, modelName ->
+                        val capabilities =
+                            modelMultimodalCapabilitiesInput[modelName]
+                                ?: ModelMultimodalCapabilities()
+                        Column {
+                            Text(
+                                text = modelName,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            )
+                            SettingsSwitchRow(
+                                title = stringResource(R.string.enable_direct_image_processing),
+                                subtitle = stringResource(R.string.enable_direct_image_processing_desc),
+                                checked = capabilities.image,
+                                onCheckedChange = { enabled ->
+                                    modelMultimodalCapabilitiesInput =
+                                        modelMultimodalCapabilitiesInput +
+                                            (modelName to capabilities.copy(image = enabled))
+                                },
+                            )
+                            SettingsSwitchRow(
+                                title = stringResource(R.string.enable_direct_audio_processing),
+                                subtitle = stringResource(R.string.enable_direct_audio_processing_desc),
+                                checked = capabilities.audio,
+                                onCheckedChange = { enabled ->
+                                    modelMultimodalCapabilitiesInput =
+                                        modelMultimodalCapabilitiesInput +
+                                            (modelName to capabilities.copy(audio = enabled))
+                                },
+                            )
+                            SettingsSwitchRow(
+                                title = stringResource(R.string.enable_direct_video_processing),
+                                subtitle = stringResource(R.string.enable_direct_video_processing_desc),
+                                checked = capabilities.video,
+                                onCheckedChange = { enabled ->
+                                    modelMultimodalCapabilitiesInput =
+                                        modelMultimodalCapabilitiesInput +
+                                            (modelName to capabilities.copy(video = enabled))
+                                },
+                            )
+                        }
+                        if (index < configuredModels.lastIndex) {
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp))
+                        }
+                    }
+                }
+            }
             
             // Google Search Grounding 开关 (仅Gemini支持)
             if (selectedApiProvider == ApiProviderType.GOOGLE ||

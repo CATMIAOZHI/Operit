@@ -22,11 +22,136 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito
 
 class ProviderReasoningBoundaryTest {
+    @Test
+    fun claudeVisionDisabled_omitsHistoricalImageLinks() = runBlocking {
+        var capturedRequest: JSONObject? = null
+        val provider =
+            ClaudeProvider(
+                apiEndpoint = "https://example.test/v1/messages",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "text-only",
+                client =
+                    clientForBody(
+                        body =
+                            """{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1},"stop_reason":"end_turn"}""",
+                        mediaType = "application/json",
+                        onRequest = { capturedRequest = it },
+                    ),
+                supportsVision = false,
+            )
+
+        withoutAndroidLogging {
+            provider
+                .sendMessage(
+                    context = Mockito.mock(Context::class.java),
+                    chatHistory =
+                        listOf(
+                            PromptTurn(
+                                PromptTurnKind.USER,
+                                "<link type=\"image\" id=\"missing\"></link> hello",
+                            )
+                        ),
+                    modelParameters = emptyList(),
+                    stream = false,
+                    enableRetry = false,
+                ).collect {}
+        }
+
+        val content =
+            capturedRequest!!
+                .getJSONArray("messages")
+                .getJSONObject(0)
+                .getJSONArray("content")
+        assertFalse((0 until content.length()).any { content.getJSONObject(it).optString("type") == "image" })
+        assertTrue((0 until content.length()).any { content.getJSONObject(it).optString("text").contains("hello") })
+    }
+
+    @Test
+    fun geminiVisionDisabled_omitsHistoricalImageLinks() = runBlocking {
+        var capturedRequest: JSONObject? = null
+        val provider =
+            GeminiProvider(
+                apiEndpoint = "https://example.test/v1/models/text-only:generateContent",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "text-only",
+                client =
+                    clientForBody(
+                        body =
+                            """{"candidates":[{"content":{"parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1}}""",
+                        mediaType = "application/json",
+                        onRequest = { capturedRequest = it },
+                    ),
+                supportsVision = false,
+            )
+        val context =
+            Mockito.mock(Context::class.java) { invocation ->
+                if (invocation.method.name == "getString") {
+                    "test"
+                } else {
+                    Mockito.RETURNS_DEFAULTS.answer(invocation)
+                }
+            }
+
+        withoutAndroidLogging {
+            provider
+                .sendMessage(
+                    context = context,
+                    chatHistory =
+                        listOf(
+                            PromptTurn(
+                                PromptTurnKind.USER,
+                                "<link type=\"image\" id=\"missing\"></link>",
+                            )
+                        ),
+                    modelParameters = emptyList(),
+                    stream = false,
+                    enableRetry = false,
+                ).collect {}
+        }
+
+        val parts =
+            capturedRequest!!
+                .getJSONArray("contents")
+                .getJSONObject(0)
+                .getJSONArray("parts")
+        assertFalse((0 until parts.length()).any { parts.getJSONObject(it).has("inline_data") })
+        assertTrue(parts.length() > 0)
+        assertTrue(
+            (0 until parts.length()).any {
+                parts.getJSONObject(it).optString("text").contains("Unsupported media omitted")
+            }
+        )
+    }
+
+    @Test
+    fun geminiMediaCapabilities_filterAudioAndVideoIndependently() {
+        val audio = MediaLink("audio", "audio-id", "audio-data", "audio/mpeg")
+        val video = MediaLink("video", "video-id", "video-data", "video/mp4")
+
+        assertEquals(
+            listOf(audio),
+            filterGeminiMediaLinks(
+                links = listOf(audio, video),
+                supportsAudio = true,
+                supportsVideo = false,
+            ),
+        )
+        assertEquals(
+            listOf(video),
+            filterGeminiMediaLinks(
+                links = listOf(audio, video),
+                supportsAudio = false,
+                supportsVideo = true,
+            ),
+        )
+    }
+
     @Test
     fun openAiCompatibleProviderPreservesExplicitReasoningEffortWhenThinkingIsOff() = runBlocking {
         val provider =

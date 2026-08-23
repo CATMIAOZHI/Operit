@@ -11,6 +11,7 @@ import com.ai.assistance.operit.core.config.FunctionalPrompts
 import com.ai.assistance.operit.api.chat.enhance.MultiServiceManager
 import com.ai.assistance.operit.api.chat.llmprovider.AIService
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.ModelMultimodalCapabilities
 import com.ai.assistance.operit.data.model.CharacterCard
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.PromptFunctionType
@@ -21,6 +22,8 @@ import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.CharacterCardChatModelBindingMode
 import com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode
 import com.ai.assistance.operit.data.model.ActivePrompt
+import com.ai.assistance.operit.data.model.multimodalCapabilitiesForModel
+import com.ai.assistance.operit.data.model.unionMultimodalCapabilities
 import com.ai.assistance.operit.core.tools.ToolProgressBus
 import com.ai.assistance.operit.ui.features.chat.viewmodel.UiStateDelegate
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
@@ -105,6 +108,8 @@ class MessageCoordinationDelegate(
     private val characterGroupCardManager = CharacterGroupCardManager.getInstance(context)
     private val activePromptManager = ActivePromptManager.getInstance(context)
     private val displayPreferencesManager = DisplayPreferencesManager.getInstance(context)
+    private val modelConfigManager = ModelConfigManager(context)
+    private val functionalConfigManager = FunctionalConfigManager(context)
     private val plannerServiceManager = MultiServiceManager(context)
     private data class PendingAutoContinuationRequest(
         val chatId: String,
@@ -841,6 +846,17 @@ class MessageCoordinationDelegate(
         val workspaceEnv = currentChat?.workspaceEnv
         val attachments = attachmentDelegate.attachments.value
         val replyToMessage = uiBridge.getReplyToMessage()
+        val memberCardsById = orderedMembers
+            .associate { member ->
+                member.characterCardId to
+                    runCatching {
+                        characterCardManager.getCharacterCard(member.characterCardId)
+                    }.getOrNull()
+            }
+            .filterValues { it != null }
+            .mapValues { it.value!! }
+        val groupMultimodalCapabilities =
+            resolveGroupMultimodalCapabilities(memberCardsById.values)
 
         val isFirstMessage = !chatHistoryDelegate.hasUserMessage(chatId)
         val titleFallback = if (isFirstMessage) {
@@ -858,6 +874,7 @@ class MessageCoordinationDelegate(
                 workspacePath = workspacePath,
                 workspaceEnv = workspaceEnv,
                 replyToMessage = replyToMessage,
+                multimodalCapabilities = groupMultimodalCapabilities,
                 chatId = chatId
             )
         val userMessage = ChatMessage(
@@ -882,12 +899,6 @@ class MessageCoordinationDelegate(
         }
 
         var userMessageInsertedForCurrentUserTurn = true
-        val memberCardsById = orderedMembers
-            .associate { member ->
-                member.characterCardId to runCatching { characterCardManager.getCharacterCard(member.characterCardId) }.getOrNull()
-            }
-            .filterValues { it != null }
-            .mapValues { it.value!! }
         val groupParticipantNamesText = buildGroupParticipantNamesText(
             members = orderedMembers,
             memberCardsById = memberCardsById
@@ -1416,8 +1427,40 @@ class MessageCoordinationDelegate(
         }
     }
 
-    private fun resolveRoleCardChatModelOverrides(roleCardId: String): Pair<String?, Int?> {
-        val roleCard = runBlocking { characterCardManager.getCharacterCardFlow(roleCardId).first() }
+    private suspend fun resolveGroupMultimodalCapabilities(
+        memberCards: Collection<CharacterCard>,
+    ): ModelMultimodalCapabilities {
+        functionalConfigManager.initializeIfNeeded()
+        modelConfigManager.initializeIfNeeded()
+        val defaultMapping =
+            functionalConfigManager.getConfigMappingForFunction(FunctionType.CHAT)
+        return memberCards
+            .map { roleCard ->
+                val (configIdOverride, modelIndexOverride) =
+                    resolveRoleCardChatModelOverrides(roleCard)
+                Pair(
+                    configIdOverride ?: defaultMapping.configId,
+                    modelIndexOverride ?: defaultMapping.modelIndex,
+                )
+            }
+            .distinct()
+            .mapNotNull { (configId, modelIndex) ->
+                runCatching {
+                    modelConfigManager
+                        .getModelConfigFlow(configId)
+                        .first()
+                        .multimodalCapabilitiesForModel(modelIndex)
+                }.onFailure { error ->
+                    AppLogger.w(
+                        TAG,
+                        "读取群聊成员多模态能力失败: configId=$configId, modelIndex=$modelIndex, error=${error.message}",
+                    )
+                }.getOrNull()
+            }
+            .unionMultimodalCapabilities()
+    }
+
+    private fun resolveRoleCardChatModelOverrides(roleCard: CharacterCard): Pair<String?, Int?> {
         val bindingMode = CharacterCardChatModelBindingMode.normalize(roleCard.chatModelBindingMode)
         return if (
             bindingMode == CharacterCardChatModelBindingMode.FIXED_CONFIG &&
@@ -1427,6 +1470,11 @@ class MessageCoordinationDelegate(
         } else {
             Pair(null, null)
         }
+    }
+
+    private fun resolveRoleCardChatModelOverrides(roleCardId: String): Pair<String?, Int?> {
+        val roleCard = runBlocking { characterCardManager.getCharacterCardFlow(roleCardId).first() }
+        return resolveRoleCardChatModelOverrides(roleCard)
     }
 
     private fun resolveRoleCardMemoryProfileOverride(roleCardId: String): String? {
@@ -2024,8 +2072,6 @@ class MessageCoordinationDelegate(
     /** 从当前聊天绑定的模型配置中读取自定义总结规则 */
     suspend fun readSummaryCustomRules(): String? {
         return try {
-            val functionalConfigManager = FunctionalConfigManager(context)
-            val modelConfigManager = ModelConfigManager(context)
             functionalConfigManager.initializeIfNeeded()
             modelConfigManager.initializeIfNeeded()
             val functionMappings = functionalConfigManager.functionConfigMappingWithIndexFlow.first()

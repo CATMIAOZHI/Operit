@@ -356,6 +356,7 @@ object AIServiceFactory {
                     httpClient,
                     customHeaders,
                     providerType,
+                    supportsVision,
                     enableToolCall,
                     config.enableClaude1hPromptCache,
                     config.id,
@@ -365,14 +366,17 @@ object AIServiceFactory {
             ApiProviderType.GOOGLE,
             ApiProviderType.GEMINI_GENERIC ->
                 GeminiProvider(
-                    config.apiEndpoint,
-                    apiKeyProvider,
-                    config.modelName,
-                    httpClient,
-                    customHeaders,
-                    providerType,
-                    config.enableGoogleSearch,
-                    enableToolCall
+                    apiEndpoint = config.apiEndpoint,
+                    apiKeyProvider = apiKeyProvider,
+                    modelName = config.modelName,
+                    client = httpClient,
+                    customHeaders = customHeaders,
+                    providerType = providerType,
+                    enableGoogleSearch = config.enableGoogleSearch,
+                    supportsVision = supportsVision,
+                    supportsAudio = supportsAudio,
+                    supportsVideo = supportsVideo,
+                    enableToolCall = enableToolCall,
                 )
 
             // LM Studio使用OpenAI兼容格式

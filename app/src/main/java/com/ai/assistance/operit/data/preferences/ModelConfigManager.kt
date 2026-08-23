@@ -13,6 +13,7 @@ import com.ai.assistance.operit.data.model.CustomParameterData
 import com.ai.assistance.operit.data.model.FavoriteModelRef
 import com.ai.assistance.operit.data.model.ModelConfigBackup
 import com.ai.assistance.operit.data.model.ModelConfigData
+import com.ai.assistance.operit.data.model.ModelMultimodalCapabilities
 import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.mergeCollapsedConfigIds
 import com.ai.assistance.operit.data.model.ModelParameter
@@ -24,6 +25,10 @@ import com.ai.assistance.operit.data.model.ApiKeyInfo
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.normalizeProviderId
 import com.ai.assistance.operit.data.model.normalizeConfigOrder
+import com.ai.assistance.operit.data.model.withModelNames
+import com.ai.assistance.operit.data.model.withDirectAudioProcessingForAllModels
+import com.ai.assistance.operit.data.model.withDirectImageProcessingForAllModels
+import com.ai.assistance.operit.data.model.withDirectVideoProcessingForAllModels
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -485,7 +490,7 @@ class ModelConfigManager(private val context: Context) {
             modelName: String
     ): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(apiKey = apiKey, apiEndpoint = apiEndpoint, modelName = modelName)
+            it.withModelNames(modelName).copy(apiKey = apiKey, apiEndpoint = apiEndpoint)
         }
     }
 
@@ -499,10 +504,9 @@ class ModelConfigManager(private val context: Context) {
             apiProviderTypeId: String = apiProviderType.name
     ): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(
+            it.withModelNames(modelName).copy(
                     apiKey = apiKey,
                     apiEndpoint = apiEndpoint,
-                    modelName = modelName,
                     apiProviderType = apiProviderType,
                     apiProviderTypeId = apiProviderTypeId
             )
@@ -521,10 +525,9 @@ class ModelConfigManager(private val context: Context) {
             mnnThreadCount: Int
     ): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(
+            it.withModelNames(modelName).copy(
                     apiKey = apiKey,
                     apiEndpoint = apiEndpoint,
-                    modelName = modelName,
                     apiProviderType = apiProviderType,
                     apiProviderTypeId = apiProviderTypeId,
                     mnnForwardType = mnnForwardType,
@@ -548,6 +551,7 @@ class ModelConfigManager(private val context: Context) {
             enableDirectImageProcessing: Boolean,
             enableDirectAudioProcessing: Boolean,
             enableDirectVideoProcessing: Boolean,
+            modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities>,
             enableGoogleSearch: Boolean,
             enableClaude1hPromptCache: Boolean,
             enableToolCall: Boolean
@@ -567,6 +571,7 @@ class ModelConfigManager(private val context: Context) {
                     enableDirectImageProcessing = enableDirectImageProcessing,
                     enableDirectAudioProcessing = enableDirectAudioProcessing,
                     enableDirectVideoProcessing = enableDirectVideoProcessing,
+                    modelMultimodalCapabilities = modelMultimodalCapabilities,
                     enableGoogleSearch = enableGoogleSearch,
                     enableClaude1hPromptCache = enableClaude1hPromptCache,
                     enableToolCall = enableToolCall
@@ -680,19 +685,19 @@ class ModelConfigManager(private val context: Context) {
     // 更新图片直接处理配置
     suspend fun updateDirectImageProcessing(configId: String, enableDirectImageProcessing: Boolean): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(enableDirectImageProcessing = enableDirectImageProcessing)
+            it.withDirectImageProcessingForAllModels(enableDirectImageProcessing)
         }
     }
 
     suspend fun updateDirectAudioProcessing(configId: String, enableDirectAudioProcessing: Boolean): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(enableDirectAudioProcessing = enableDirectAudioProcessing)
+            it.withDirectAudioProcessingForAllModels(enableDirectAudioProcessing)
         }
     }
 
     suspend fun updateDirectVideoProcessing(configId: String, enableDirectVideoProcessing: Boolean): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(enableDirectVideoProcessing = enableDirectVideoProcessing)
+            it.withDirectVideoProcessingForAllModels(enableDirectVideoProcessing)
         }
     }
 

@@ -90,6 +90,7 @@ class ClaudeProvider(
     private val client: OkHttpClient,
     private val customHeaders: Map<String, String> = emptyMap(),
     private val providerType: ApiProviderType = ApiProviderType.ANTHROPIC,
+    private val supportsVision: Boolean = true,
     private val enableToolCall: Boolean = false, // 是否启用Tool Call接口（预留，Claude有原生tool支持）
     private val enableClaude1hPromptCache: Boolean = false,
     private val configId: String = "",
@@ -539,21 +540,23 @@ class ClaudeProvider(
         
         // 检查是否包含图片链接
         if (MediaLinkParser.hasImageLinks(textAfterMediaRemoval)) {
-            val imageLinks = MediaLinkParser.extractImageLinks(textAfterMediaRemoval)
             val textWithoutLinks = MediaLinkParser.removeImageLinks(textAfterMediaRemoval).trim()
-            
-            // 添加图片
-            imageLinks.forEach { link ->
-                contentArray.put(JSONObject().apply {
-                    put("type", "image")
-                    put("source", JSONObject().apply {
-                        put("type", "base64")
-                        put("media_type", link.mimeType)
-                        put("data", link.base64Data)
+
+            if (supportsVision) {
+                MediaLinkParser.extractImageLinks(textAfterMediaRemoval).forEach { link ->
+                    contentArray.put(JSONObject().apply {
+                        put("type", "image")
+                        put("source", JSONObject().apply {
+                            put("type", "base64")
+                            put("media_type", link.mimeType)
+                            put("data", link.base64Data)
+                        })
                     })
-                })
+                }
+            } else {
+                AppLogger.d("AIService", "当前Claude模型未启用识图，图片链接已省略")
             }
-            
+
             // 添加文本（如果有）
             appendTextContentBlock(contentArray, textWithoutLinks)
         } else {
