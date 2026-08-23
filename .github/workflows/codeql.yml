@@ -69,7 +69,7 @@ jobs:
           java-version: '21'
           android-build-tools-version: '35.0.0'
           android-ndk-version: '25.1.8937393'
-          android-cmake-version: '3.22.1'
+          android-cmake-version: '3.31.6'
           gradle-cache-read-only: 'true'
           dependency-cache-read-only: 'true'
 

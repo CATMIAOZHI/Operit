@@ -19,7 +19,7 @@ inputs:
   android-cmake-version:
     description: 'Android CMake version (full lane only)'
     required: false
-    default: '3.22.1'
+    default: '3.31.6'
   manual-deps-dir:
     description: 'Directory for manual Android dependencies'
     required: false

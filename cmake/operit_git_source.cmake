@@ -54,10 +54,10 @@ function(operit_resolve_git_ref out_var repository git_ref)
     set(${out_var} "${resolved_sha}" PARENT_SCOPE)
 endfunction()
 
-function(operit_github_archive_url out_var repository resolved_sha)
+function(operit_github_archive_url out_var repository resolved_sha archive_format)
     set(repository_without_suffix "${repository}")
     string(REGEX REPLACE "\\.git$" "" repository_without_suffix "${repository_without_suffix}")
-    string(REGEX REPLACE "^https://github.com/([^/]+)/(.+)$" "https://github.com/\\1/\\2/archive/${resolved_sha}.tar.gz" archive_url "${repository_without_suffix}")
+    string(REGEX REPLACE "^https://github.com/([^/]+)/(.+)$" "https://github.com/\\1/\\2/archive/${resolved_sha}.${archive_format}" archive_url "${repository_without_suffix}")
 
     if("${archive_url}" STREQUAL "${repository_without_suffix}")
         message(FATAL_ERROR "Only GitHub archive sources are supported by operit_github_archive_url: ${repository}")
@@ -67,9 +67,17 @@ function(operit_github_archive_url out_var repository resolved_sha)
 endfunction()
 
 function(operit_declare_git_source dependency_name repository git_ref)
+    cmake_parse_arguments(PARSE_ARGV 3 OPERIT "" "ARCHIVE_FORMAT" "")
+
+    if("${OPERIT_ARCHIVE_FORMAT}" STREQUAL "")
+        set(OPERIT_ARCHIVE_FORMAT "tar.gz")
+    elseif(NOT "${OPERIT_ARCHIVE_FORMAT}" STREQUAL "tar.gz" AND NOT "${OPERIT_ARCHIVE_FORMAT}" STREQUAL "zip")
+        message(FATAL_ERROR "Unsupported GitHub archive format '${OPERIT_ARCHIVE_FORMAT}' for ${dependency_name}")
+    endif()
+
     operit_git_ref_var(ref_var "${dependency_name}" "${git_ref}")
     operit_resolve_git_ref(resolved_sha "${repository}" "${${ref_var}}")
-    operit_github_archive_url(archive_url "${repository}" "${resolved_sha}")
+    operit_github_archive_url(archive_url "${repository}" "${resolved_sha}" "${OPERIT_ARCHIVE_FORMAT}")
     operit_normalize_source_token(source_token "${dependency_name}-${resolved_sha}")
 
     set(deps_root "${CMAKE_SOURCE_DIR}/.cxx/operit_deps")
@@ -79,9 +87,10 @@ function(operit_declare_git_source dependency_name repository git_ref)
     FetchContent_Declare(
         ${dependency_name}
         URL "${archive_url}"
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         SOURCE_DIR "${source_dir}"
         BINARY_DIR "${binary_dir}"
-        ${ARGN}
+        ${OPERIT_UNPARSED_ARGUMENTS}
     )
 endfunction()
 

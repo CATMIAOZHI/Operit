@@ -10,6 +10,9 @@ operit_prepare_git_source(
     saba
     "https://github.com/benikabocha/saba.git"
     "29b8efa8b31c8e746f9a88020fb0ad9dcdcf3332"
+    # CMake 3.31's Windows tar extractor fails on Saba's Japanese filenames.
+    # The ZIP for the same pinned commit preserves those paths correctly.
+    ARCHIVE_FORMAT zip
 )
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
