@@ -72,7 +72,7 @@ git diff --cached --check
 - 改动 `cmake/operit_git_source.cmake` 时：注意对 ccache 命中率的影响
 - 升级原生依赖 SHA 时：更新 `cmake/NATIVE_DEPENDENCY_LOCK.md`，一次只升一个依赖
 - 不要通过 `OPERIT_*_GIT_REF` 命令行参数覆盖（已不再生效）
-- Windows 从仓库原始长路径验证原生构建时：确认 `LongPathsEnabled=1`、Ninja 为 1.12.1+，并从 AGP 生成的 `build_command_*.bat` 或 `CMakeCache.txt` 核对实际工具路径；不满足时按构建手册使用 `subst` 回退
+- Windows 从仓库原始长路径验证原生构建时：确认 `LongPathsEnabled=1`、CMake 为 3.31.6、Ninja 为 1.12.1，并从 AGP 生成的 `build_command_*.bat` 或 `CMakeCache.txt` 核对实际工具路径；不满足时按构建手册使用 `subst` 回退
 
 ### Web Chat / ToolPkg 改动
 

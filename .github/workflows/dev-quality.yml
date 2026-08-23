@@ -15,6 +15,7 @@ permissions:
 env:
   JAVA_VERSION: '21'
   ANDROID_BUILD_TOOLS_VERSION: '35.0.0'
+  ANDROID_CMAKE_VERSION: '3.31.6'
   MANUAL_DEPS_DIR: manual-deps
 
 jobs:
@@ -68,7 +69,8 @@ jobs:
             "platform-tools" \
             "platforms;android-34" \
             "platforms;android-36" \
-            "build-tools;$ANDROID_BUILD_TOOLS_VERSION"
+            "build-tools;$ANDROID_BUILD_TOOLS_VERSION" \
+            "cmake;$ANDROID_CMAKE_VERSION"
 
       - name: Configure secret-free Android build
         shell: bash
