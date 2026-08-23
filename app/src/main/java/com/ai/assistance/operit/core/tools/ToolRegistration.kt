@@ -25,6 +25,17 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal fun <T> runBlockingIoPreservingToolRuntimeContext(
+    block: suspend () -> T,
+): T {
+    val runtimeContext = ToolExecutionManager.currentToolRuntimeContext()
+    return runBlocking(
+        Dispatchers.IO + ToolExecutionManager.toolRuntimeContextElement(runtimeContext)
+    ) {
+        block()
+    }
+}
+
 /**
  * This file contains all tool registrations centralized for easier maintenance and integration It
  * extracts the registerTools logic from AIToolHandler into a dedicated file
@@ -1779,7 +1790,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_read_file_desc, path, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.readFile(tool) } }
+            executor = { tool ->
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.readFile(tool) }
+            }
     )
 
     // 按行号范围读取文件内容
@@ -1813,7 +1826,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_read_file_full_desc, path, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.readFileFull(tool) } }
+            executor = { tool ->
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.readFileFull(tool) }
+            }
     )
 
     // 读取二进制文件内容（Base64编码）

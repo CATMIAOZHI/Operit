@@ -4080,7 +4080,7 @@
     <string name="select">Select</string>
     <string name="default_config_model_restriction">When using default configuration, only deepseek-v4-flash model can be used</string>
     <string name="enable_direct_image_processing">Model supports vision</string>
-    <string name="enable_direct_image_processing_desc">When enabled, images will be sent directly to the AI for processing instead of using OCR tools to read them</string>
+    <string name="enable_direct_image_processing_desc">When enabled, images requested through read_file are given to the current model; attaching an image does not send its contents automatically</string>
     <string name="enable_direct_audio_processing">Model supports audio</string>
     <string name="enable_direct_audio_processing_desc">When enabled, audio will be sent directly to the AI for processing instead of returning tool-based transcription/description</string>
     <string name="enable_direct_video_processing">Model supports video</string>
@@ -8381,7 +8381,8 @@
     <string name="skill_publish_name_empty">Skill name cannot be empty.</string>
     <string name="skill_publish_check_name_conflict_failed">Failed to check for Skill name conflict: %1$s</string>
     <string name="skill_publish_name_taken_message">There is already a plugin named「%1$s」in the Skill marketplace. Please choose a different name.</string>
-    <string name="ai_message_image_attached_multimodal_notice">Image content has been attached as multimodal input with this message. Do not call file reading tools to read this path.</string>
+    <string name="ai_message_image_attached_multimodal_notice">Image content has been attached as multimodal input with this message.</string>
+    <string name="ai_message_image_attached_on_demand_notice">The image content has not been read. Call read_file with the path in id when you need to inspect it.</string>
     <string name="ai_message_result_prefix">[Result: </string>
     <string name="ai_message_result_suffix">]</string>
     <string name="ai_message_package_warmup_title">【Activated Packages】</string>

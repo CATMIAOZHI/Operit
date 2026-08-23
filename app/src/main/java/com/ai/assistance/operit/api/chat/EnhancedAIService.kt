@@ -91,6 +91,16 @@ import com.ai.assistance.operit.data.model.ToolParameterSchema
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.LocaleUtils
 
+@Suppress("UNUSED_PARAMETER")
+internal fun resolveImageRecognitionAvailability(
+    isSubTask: Boolean,
+    hasConfiguredBackend: Boolean,
+): Boolean {
+    // IMAGE_RECOGNITION is a bounded function-model request, not a nested agent turn. Subagents
+    // therefore use the same fallback as the root chat when their own model cannot see images.
+    return hasConfiguredBackend
+}
+
 /**
  * Enhanced AI service that provides advanced conversational capabilities by integrating various
  * components like tool execution, conversation management, user preferences, and problem library.
@@ -2269,6 +2279,11 @@ class EnhancedAIService private constructor(private val context: Context) {
                 chatModelIndexOverride
             )
             val config = modelSnapshot.config
+            val imageRecognitionModelAvailable =
+                resolveImageRecognitionAvailability(
+                    isSubTask = isSubTask,
+                    hasConfiguredBackend = multiServiceManager.hasImageRecognitionConfigured(),
+                )
             val toolOutputCountingCollector =
                 object : StreamCollector<String> {
                     override suspend fun emit(value: String) {
@@ -2295,6 +2310,8 @@ class EnhancedAIService private constructor(private val context: Context) {
                 conversationLabel = conversationLabel,
                 parentModelConfigId = modelSnapshot.config.id,
                 parentModelIndex = modelSnapshot.lease.modelIndex,
+                parentModelSupportsVision = config.enableDirectImageProcessing,
+                imageRecognitionModelAvailable = imageRecognitionModelAvailable,
                 liveAssistantContent = liveAssistantContent,
                 workspacePath = context.workspacePath,
                 workspaceEnv = context.workspaceEnv,
@@ -2870,9 +2887,13 @@ class EnhancedAIService private constructor(private val context: Context) {
             dispatchToolPromptComposeHooks: (PromptHookContext) -> PromptHookContext =
                 PromptHookRegistry::dispatchToolPromptComposeHooks
     ): List<PromptTurn> {
-        // Check if backend image recognition service is configured (for intent-based vision)
-        // For subtasks, always disable backend image recognition (only support OCR)
-        val hasImageRecognition = if (isSubTask) false else multiServiceManager.hasImageRecognitionConfigured()
+        // Check if the bounded image-recognition function model is available. This fallback also
+        // applies to subtask chat models that do not support images themselves.
+        val hasImageRecognition =
+            resolveImageRecognitionAvailability(
+                isSubTask = isSubTask,
+                hasConfiguredBackend = multiServiceManager.hasImageRecognitionConfigured(),
+            )
         val hasAudioRecognition = if (isSubTask) false else multiServiceManager.hasAudioRecognitionConfigured()
         val hasVideoRecognition = if (isSubTask) false else multiServiceManager.hasVideoRecognitionConfigured()
 

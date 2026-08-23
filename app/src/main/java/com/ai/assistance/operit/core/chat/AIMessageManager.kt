@@ -28,7 +28,6 @@ import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.process.WorkspaceAttachmentProcessor
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.process.WorkspaceChangeTracker
-import com.ai.assistance.operit.util.ImagePoolManager
 import com.ai.assistance.operit.util.MediaPoolManager
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.ChatMarkupRegex
@@ -111,7 +110,6 @@ object AIMessageManager {
      * @param workspacePath 工作区路径。
      * @param workspaceEnv 工作区环境标签。
      * @param replyToMessage 回复消息。
-     * @param enableDirectImageProcessing 是否将图片附件转换为link标签（用于直接图片处理）。
      * @param enableDirectAudioProcessing 是否将音频附件转换为link标签（用于直接音频处理）。
      * @param enableDirectVideoProcessing 是否将视频附件转换为link标签（用于直接视频处理）。
      * @return 格式化后的完整消息字符串。
@@ -124,7 +122,6 @@ object AIMessageManager {
         workspacePath: String? = null,
         workspaceEnv: String? = null,
         replyToMessage: ChatMessage? = null,
-        enableDirectImageProcessing: Boolean = false,
         enableDirectAudioProcessing: Boolean = false,
         enableDirectVideoProcessing: Boolean = false,
         chatId: String? = null,
@@ -206,39 +203,12 @@ object AIMessageManager {
         val attachmentTagsStartTime = messageTimingNow()
         val attachmentTags = if (attachments.isNotEmpty()) {
             attachments.joinToString(" ") { attachment ->
-                // 如果启用直接图片处理且附件是图片，转换为link标签
-                if (enableDirectImageProcessing && attachment.mimeType.startsWith("image/", ignoreCase = true)) {
-                    try {
-                        val imageId = ImagePoolManager.addImage(attachment.filePath)
-                        val attributes = buildString {
-                            append("id=\"${attachment.filePath}\" ")
-                            append("filename=\"${attachment.fileName}\" ")
-                            append("type=\"${attachment.mimeType}\"")
-                            if (attachment.fileSize > 0) {
-                                append(" size=\"${attachment.fileSize}\"")
-                            }
-                        }
-                        val attachedContent = buildString {
-                            append(context.getString(R.string.ai_message_image_attached_multimodal_notice))
-                            if (attachment.content.isNotBlank()) {
-                                append("\n")
-                                append(attachment.content)
-                            }
-                        }
-                        "${MediaLinkBuilder.image(context, imageId)} <attachment $attributes>$attachedContent</attachment>"
-                    } catch (e: Exception) {
-                        AppLogger.e(TAG, "添加图片到池失败: ${attachment.filePath}", e)
-                        // 失败时回退到普通附件格式
-                        val attributes = buildString {
-                            append("id=\"${attachment.filePath}\" ")
-                            append("filename=\"${attachment.fileName}\" ")
-                            append("type=\"${attachment.mimeType}\"")
-                            if (attachment.fileSize > 0) {
-                                append(" size=\"${attachment.fileSize}\"")
-                            }
-                        }
-                        "<attachment $attributes>${attachment.content}</attachment>"
-                    }
+                // 图片只作为可寻址附件进入消息；模型需要查看时必须显式调用 read_file。
+                if (attachment.mimeType.startsWith("image/", ignoreCase = true)) {
+                    buildOnDemandImageAttachmentTag(
+                        attachment = attachment,
+                        readInstruction = context.getString(R.string.ai_message_image_attached_on_demand_notice)
+                    )
                 } else if (enableDirectAudioProcessing && attachment.mimeType.startsWith("audio/", ignoreCase = true)) {
                     try {
                         val audioId = MediaPoolManager.addMedia(attachment.filePath, attachment.mimeType)
@@ -294,7 +264,7 @@ object AIMessageManager {
         logMessageTiming(
             stage = "buildUserMessageContent.attachmentTags",
             startTimeMs = attachmentTagsStartTime,
-            details = "attachments=${attachments.size}, length=${attachmentTags.length}, directImage=$enableDirectImageProcessing, directAudio=$enableDirectAudioProcessing, directVideo=$enableDirectVideoProcessing"
+            details = "attachments=${attachments.size}, length=${attachmentTags.length}, imageMode=onDemand, directAudio=$enableDirectAudioProcessing, directVideo=$enableDirectVideoProcessing"
         )
 
         // 4. 组合最终消息
@@ -307,6 +277,29 @@ object AIMessageManager {
             details = "messageLength=${processedMessageText.length}, finalLength=${finalMessageContent.length}, attachments=${attachments.size}"
         )
         return finalMessageContent
+    }
+
+    internal fun buildOnDemandImageAttachmentTag(
+        attachment: AttachmentInfo,
+        readInstruction: String,
+    ): String {
+        val attributes = buildString {
+            append("id=\"${attachment.filePath}\" ")
+            append("filename=\"${attachment.fileName}\" ")
+            append("type=\"${attachment.mimeType}\"")
+            if (attachment.fileSize > 0) {
+                append(" size=\"${attachment.fileSize}\"")
+            }
+        }
+        val safeInlineContent = MediaLinkParser.removeImageLinks(attachment.content).trim()
+        val attachedContent = buildString {
+            append(readInstruction)
+            if (safeInlineContent.isNotBlank()) {
+                append("\n")
+                append(safeInlineContent)
+            }
+        }
+        return "<attachment $attributes>$attachedContent</attachment>"
     }
 
     /**
