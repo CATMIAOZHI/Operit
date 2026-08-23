@@ -45,12 +45,11 @@ object ModelListFetcher {
 
     // 使用更长的超时时间
     private val client =
-            UnsafeModelSsl.apply(
-                    OkHttpClient.Builder()
-                            .connectTimeout(30, TimeUnit.SECONDS)
-                            .readTimeout(30, TimeUnit.SECONDS)
-                            .writeTimeout(30, TimeUnit.SECONDS)
-            ).build()
+            OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .writeTimeout(30, TimeUnit.SECONDS)
+                    .build()
 
     /**
      * 从API端点URL派生出模型列表URL
