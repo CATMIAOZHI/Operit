@@ -69,6 +69,19 @@ internal fun buildGeminiThinkingConfig(
     }
 }
 
+internal fun filterGeminiMediaLinks(
+    links: List<MediaLink>,
+    supportsAudio: Boolean,
+    supportsVideo: Boolean,
+): List<MediaLink> =
+    links.filter { link ->
+        when (link.type) {
+            "audio" -> supportsAudio
+            "video" -> supportsVideo
+            else -> false
+        }
+    }
+
 /** Google Gemini API的实现 支持标准Gemini接口流式传输 */
 class GeminiProvider(
     private val apiEndpoint: String,
@@ -78,6 +91,9 @@ class GeminiProvider(
     private val customHeaders: Map<String, String> = emptyMap(),
     private val providerType: ApiProviderType = ApiProviderType.GOOGLE,
     private val enableGoogleSearch: Boolean = false,
+    private val supportsVision: Boolean = true,
+    private val supportsAudio: Boolean = true,
+    private val supportsVideo: Boolean = true,
     private val enableToolCall: Boolean = false // 是否启用Tool Call接口（预留，Gemini有原生tool支持）
 ) : AIService {
     companion object {
@@ -467,9 +483,7 @@ class GeminiProvider(
         return schema
     }
     
-    /**
-     * 构建包含文本和图片的parts数组
-     */
+    /** 构建包含文本和已启用多模态输入的 parts 数组。 */
     private fun buildPartsArray(text: String): JSONArray {
         val partsArray = JSONArray()
 
@@ -477,8 +491,26 @@ class GeminiProvider(
         val hasMedia = MediaLinkParser.hasMediaLinks(text)
 
         if (hasImages || hasMedia) {
-            val imageLinks = if (hasImages) MediaLinkParser.extractImageLinks(text) else emptyList()
-            val mediaLinks = if (hasMedia) MediaLinkParser.extractMediaLinks(text) else emptyList()
+            val imageLinks =
+                if (hasImages && supportsVision) {
+                    MediaLinkParser.extractImageLinks(text)
+                } else {
+                    emptyList()
+                }
+            val allMediaLinks =
+                if (hasMedia) MediaLinkParser.extractMediaLinks(text) else emptyList()
+            val mediaLinks =
+                filterGeminiMediaLinks(allMediaLinks, supportsAudio, supportsVideo)
+
+            if (hasImages && !supportsVision) {
+                AppLogger.d(TAG, "当前Gemini模型未启用识图，图片链接已省略")
+            }
+            if (allMediaLinks.any { it.type == "audio" } && !supportsAudio) {
+                AppLogger.d(TAG, "当前Gemini模型未启用音频输入，音频链接已省略")
+            }
+            if (allMediaLinks.any { it.type == "video" } && !supportsVideo) {
+                AppLogger.d(TAG, "当前Gemini模型未启用视频输入，视频链接已省略")
+            }
 
             var textWithoutLinks = text
             if (hasImages) {
@@ -514,6 +546,13 @@ class GeminiProvider(
                 partsArray.put(JSONObject().apply {
                     put("text", textWithoutLinks)
                 })
+            }
+            if (partsArray.length() == 0) {
+                partsArray.put(
+                    JSONObject().apply {
+                        put("text", "[Unsupported media omitted for current model]")
+                    }
+                )
             }
         } else {
             // 纯文本消息

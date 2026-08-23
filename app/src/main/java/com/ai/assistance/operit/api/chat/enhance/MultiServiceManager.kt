@@ -11,8 +11,10 @@ import com.ai.assistance.operit.api.chat.llmprovider.withFunctionalReasoning
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.forSelectedModel
 import com.ai.assistance.operit.data.model.getModelByIndex
 import com.ai.assistance.operit.data.model.getValidModelIndex
+import com.ai.assistance.operit.data.model.multimodalCapabilitiesForModel
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import kotlinx.coroutines.flow.first
@@ -140,8 +142,7 @@ class MultiServiceManager(private val context: Context) {
         val config = modelConfigManager.getModelConfigFlow(configMapping.configId).first()
 
         val actualModelIndex = getValidModelIndex(config.modelName, configMapping.modelIndex)
-        val selectedModelConfig =
-            config.copy(modelName = getModelByIndex(config.modelName, actualModelIndex))
+        val selectedModelConfig = config.forSelectedModel(actualModelIndex)
         val baseService = createServiceFromConfig(config, actualModelIndex)
         val service =
             if (functionType == FunctionType.CHAT) {
@@ -154,7 +155,7 @@ class MultiServiceManager(private val context: Context) {
             }
         val managedService = ManagedService(
             service = service,
-            modelConfig = config,
+            modelConfig = selectedModelConfig,
             modelIndex = actualModelIndex,
         )
         serviceInstances[functionType] = managedService
@@ -180,7 +181,7 @@ class MultiServiceManager(private val context: Context) {
         val service = createServiceFromConfig(config, actualModelIndex)
         val managedService = ManagedService(
             service = service,
-            modelConfig = config,
+            modelConfig = config.forSelectedModel(actualModelIndex),
             modelIndex = actualModelIndex,
         )
         customServiceInstances[cacheKey] = managedService
@@ -333,7 +334,7 @@ class MultiServiceManager(private val context: Context) {
         val selectedModelName = getModelByIndex(config.modelName, actualIndex)
         
         // 创建一个临时配置，使用选中的模型名称
-        val configWithSelectedModel = config.copy(modelName = selectedModelName)
+        val configWithSelectedModel = config.forSelectedModel(actualIndex)
         
         AppLogger.d(TAG, "创建服务: 原始模型='${config.modelName}', 选中模型='$selectedModelName' (请求索引=$modelIndex, 实际索引=$actualIndex)")
 
@@ -398,7 +399,10 @@ class MultiServiceManager(private val context: Context) {
     suspend fun getModelConfigForFunction(functionType: FunctionType): ModelConfigData {
         ensureInitialized()
         val configMapping = functionalConfigManager.getConfigMappingForFunction(functionType)
-        return modelConfigManager.getModelConfigFlow(configMapping.configId).first()
+        return modelConfigManager
+            .getModelConfigFlow(configMapping.configId)
+            .first()
+            .forSelectedModel(configMapping.modelIndex)
     }
 
     /** 获取指定配置ID的模型配置 */
@@ -425,21 +429,21 @@ class MultiServiceManager(private val context: Context) {
         val config = modelConfigManager.getModelConfigFlow(configMapping.configId).first()
         
         // 检查模型配置是否启用了直接图片处理
-        return config.enableDirectImageProcessing
+        return config.multimodalCapabilitiesForModel(configMapping.modelIndex).image
     }
 
     suspend fun hasAudioRecognitionConfigured(): Boolean {
         ensureInitialized()
         val configMapping = functionalConfigManager.getConfigMappingForFunction(FunctionType.AUDIO_RECOGNITION)
         val config = modelConfigManager.getModelConfigFlow(configMapping.configId).first()
-        return config.enableDirectAudioProcessing
+        return config.multimodalCapabilitiesForModel(configMapping.modelIndex).audio
     }
 
     suspend fun hasVideoRecognitionConfigured(): Boolean {
         ensureInitialized()
         val configMapping = functionalConfigManager.getConfigMappingForFunction(FunctionType.VIDEO_RECOGNITION)
         val config = modelConfigManager.getModelConfigFlow(configMapping.configId).first()
-        return config.enableDirectVideoProcessing
+        return config.multimodalCapabilitiesForModel(configMapping.modelIndex).video
     }
 
 }

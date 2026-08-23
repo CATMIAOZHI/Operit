@@ -80,6 +80,24 @@ object ModelConfigDefaults {
         const val DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD = 16
 }
 
+/** 单个模型可直接接收的多模态输入类型。 */
+@Serializable
+data class ModelMultimodalCapabilities(
+        val image: Boolean = false,
+        val audio: Boolean = false,
+        val video: Boolean = false,
+)
+
+/** 合并多个接收方的能力，用于需要先持久化一份共享用户消息的场景。 */
+fun Iterable<ModelMultimodalCapabilities>.unionMultimodalCapabilities(): ModelMultimodalCapabilities =
+    fold(ModelMultimodalCapabilities()) { result, capabilities ->
+        ModelMultimodalCapabilities(
+            image = result.image || capabilities.image,
+            audio = result.audio || capabilities.audio,
+            video = result.video || capabilities.video,
+        )
+    }
+
 /** 表示完整的模型配置，包括API设置和模型参数 */
 @Serializable
 data class ModelConfigData(
@@ -155,12 +173,11 @@ data class ModelConfigData(
         val llamaKvUnified: Boolean = true, // 单并发聊天默认开启统一KV缓存
         val llamaOffloadKqv: Boolean = false, // 仅在启用GPU层时有意义
 
-        // 图片处理配置
+        // 旧版配置级多模态开关；没有单模型配置时继续作为兼容回退值
         val enableDirectImageProcessing: Boolean = false, // 是否启用直接图片处理
-
-        // 音频/视频处理配置
         val enableDirectAudioProcessing: Boolean = false, // 是否启用直接音频处理
         val enableDirectVideoProcessing: Boolean = false, // 是否启用直接视频处理
+        val modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities> = emptyMap(),
 
         // Gemini特定配置
         val enableGoogleSearch: Boolean = false, // 是否启用Google Search Grounding (仅Gemini支持)
@@ -216,6 +233,106 @@ fun getValidModelIndex(modelName: String, requestedIndex: Int): Int {
         0 // 索引越界时使用第一个
     }
 }
+
+/**
+ * 返回指定模型的有效多模态能力。
+ *
+ * 完全没有单模型配置时继承旧的三个配置级开关，确保已有配置升级后行为不变。
+ * 一旦进入单模型配置模式，未明确配置的新模型三项能力均默认关闭。
+ */
+fun ModelConfigData.multimodalCapabilitiesForModel(modelName: String): ModelMultimodalCapabilities {
+    val normalizedModelName = modelName.trim()
+    return modelMultimodalCapabilities[normalizedModelName]
+        ?: if (modelMultimodalCapabilities.isEmpty()) {
+            ModelMultimodalCapabilities(
+                image = enableDirectImageProcessing,
+                audio = enableDirectAudioProcessing,
+                video = enableDirectVideoProcessing,
+            )
+        } else {
+            ModelMultimodalCapabilities()
+        }
+}
+
+/** 返回模型列表中指定位置的有效多模态能力。 */
+fun ModelConfigData.multimodalCapabilitiesForModel(modelIndex: Int): ModelMultimodalCapabilities {
+    val actualModelIndex = getValidModelIndex(modelName, modelIndex)
+    return multimodalCapabilitiesForModel(getModelByIndex(modelName, actualModelIndex))
+}
+
+fun ModelConfigData.isDirectImageProcessingEnabledForModel(modelIndex: Int): Boolean =
+    multimodalCapabilitiesForModel(modelIndex).image
+
+fun ModelConfigData.isDirectAudioProcessingEnabledForModel(modelIndex: Int): Boolean =
+    multimodalCapabilitiesForModel(modelIndex).audio
+
+fun ModelConfigData.isDirectVideoProcessingEnabledForModel(modelIndex: Int): Boolean =
+    multimodalCapabilitiesForModel(modelIndex).video
+
+/**
+ * 生成只包含所选模型的运行时配置，并把模型级多模态设置折叠到现有能力字段中。
+ */
+fun ModelConfigData.forSelectedModel(modelIndex: Int): ModelConfigData {
+    val actualModelIndex = getValidModelIndex(modelName, modelIndex)
+    val selectedModelName = getModelByIndex(modelName, actualModelIndex)
+    val capabilities = multimodalCapabilitiesForModel(selectedModelName)
+    return copy(
+        modelName = selectedModelName,
+        enableDirectImageProcessing = capabilities.image,
+        enableDirectAudioProcessing = capabilities.audio,
+        enableDirectVideoProcessing = capabilities.video,
+    )
+}
+
+/** 更新模型列表，并让新增模型的图片、音频、视频能力默认关闭。 */
+fun ModelConfigData.withModelNames(updatedModelNames: String): ModelConfigData {
+    val existingModelNames = getModelList(modelName).toSet()
+    val updatedCapabilities =
+        getModelList(updatedModelNames).associateWith { updatedModelName ->
+            if (updatedModelName in existingModelNames) {
+                multimodalCapabilitiesForModel(updatedModelName)
+            } else {
+                ModelMultimodalCapabilities()
+            }
+        }
+    return copy(
+        modelName = updatedModelNames,
+        modelMultimodalCapabilities = updatedCapabilities,
+    )
+}
+
+private fun ModelConfigData.updateAllModelMultimodalCapabilities(
+    transform: (ModelMultimodalCapabilities) -> ModelMultimodalCapabilities,
+): Map<String, ModelMultimodalCapabilities> {
+    if (modelMultimodalCapabilities.isEmpty()) return emptyMap()
+    return getModelList(modelName).associateWith { modelName ->
+        transform(multimodalCapabilitiesForModel(modelName))
+    }
+}
+
+/** 兼容旧调用方：把配置级图片开关应用到当前配置内的全部模型。 */
+fun ModelConfigData.withDirectImageProcessingForAllModels(enabled: Boolean): ModelConfigData =
+    copy(
+        enableDirectImageProcessing = enabled,
+        modelMultimodalCapabilities =
+            updateAllModelMultimodalCapabilities { it.copy(image = enabled) },
+    )
+
+/** 兼容旧调用方：把配置级音频开关应用到当前配置内的全部模型。 */
+fun ModelConfigData.withDirectAudioProcessingForAllModels(enabled: Boolean): ModelConfigData =
+    copy(
+        enableDirectAudioProcessing = enabled,
+        modelMultimodalCapabilities =
+            updateAllModelMultimodalCapabilities { it.copy(audio = enabled) },
+    )
+
+/** 兼容旧调用方：把配置级视频开关应用到当前配置内的全部模型。 */
+fun ModelConfigData.withDirectVideoProcessingForAllModels(enabled: Boolean): ModelConfigData =
+    copy(
+        enableDirectVideoProcessing = enabled,
+        modelMultimodalCapabilities =
+            updateAllModelMultimodalCapabilities { it.copy(video = enabled) },
+    )
 
 /** 规范化 provider ID：trim + 小写 */
 fun normalizeProviderId(providerTypeId: String): String =

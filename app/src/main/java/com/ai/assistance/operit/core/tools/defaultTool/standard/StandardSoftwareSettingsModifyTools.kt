@@ -47,6 +47,10 @@ import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.model.getModelByIndex
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.getValidModelIndex
+import com.ai.assistance.operit.data.model.withDirectAudioProcessingForAllModels
+import com.ai.assistance.operit.data.model.withDirectImageProcessingForAllModels
+import com.ai.assistance.operit.data.model.withDirectVideoProcessingForAllModels
+import com.ai.assistance.operit.data.model.withModelNames
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.FunctionConfigMapping
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
@@ -1668,7 +1672,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
 
         applyString("api_key") { config, value -> config.copy(apiKey = value) }
         applyString("api_endpoint") { config, value -> config.copy(apiEndpoint = value) }
-        applyString("model_name") { config, value -> config.copy(modelName = value) }
+        applyString("model_name") { config, value -> config.withModelNames(value) }
         getParameterValue(tool, "api_provider_type")?.let { raw ->
             val providerTypeId = raw.trim()
             if (providerTypeId.isEmpty()) {
@@ -1766,13 +1770,13 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
         }
 
         applyBoolean("enable_direct_image_processing") { config, value ->
-            config.copy(enableDirectImageProcessing = value)
+            config.withDirectImageProcessingForAllModels(value)
         }
         applyBoolean("enable_direct_audio_processing") { config, value ->
-            config.copy(enableDirectAudioProcessing = value)
+            config.withDirectAudioProcessingForAllModels(value)
         }
         applyBoolean("enable_direct_video_processing") { config, value ->
-            config.copy(enableDirectVideoProcessing = value)
+            config.withDirectVideoProcessingForAllModels(value)
         }
         applyBoolean("enable_google_search") { config, value -> config.copy(enableGoogleSearch = value) }
         applyBoolean("enable_claude_1h_prompt_cache") { config, value ->

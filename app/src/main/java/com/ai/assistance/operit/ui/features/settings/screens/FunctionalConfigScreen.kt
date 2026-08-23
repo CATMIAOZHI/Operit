@@ -32,9 +32,11 @@ import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.core.chat.hooks.toPromptTurns
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelConfigSummary
+import com.ai.assistance.operit.data.model.forSelectedModel
 import com.ai.assistance.operit.data.model.getModelByIndex
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.getValidModelIndex
+import com.ai.assistance.operit.data.model.multimodalCapabilitiesForModel
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.FunctionConfigMapping
@@ -316,7 +318,7 @@ fun FunctionConfigCard(
     val permissionReviewerTestSuccessTemplate =
         stringResource(R.string.functional_config_permission_reviewer_test_success)
 
-    LaunchedEffect(functionType, currentConfig?.id) {
+    LaunchedEffect(functionType, currentConfig?.id, currentModelIndex) {
         mediaSupportWarningResId = null
         if (
             functionType != FunctionType.IMAGE_RECOGNITION &&
@@ -333,10 +335,12 @@ fun FunctionConfigCard(
             return@LaunchedEffect
         }
 
+        val multimodalCapabilities =
+            fullConfig.multimodalCapabilitiesForModel(currentModelIndex)
         val isSupported = when (functionType) {
-            FunctionType.IMAGE_RECOGNITION -> fullConfig.enableDirectImageProcessing
-            FunctionType.AUDIO_RECOGNITION -> fullConfig.enableDirectAudioProcessing
-            FunctionType.VIDEO_RECOGNITION -> fullConfig.enableDirectVideoProcessing
+            FunctionType.IMAGE_RECOGNITION -> multimodalCapabilities.image
+            FunctionType.AUDIO_RECOGNITION -> multimodalCapabilities.audio
+            FunctionType.VIDEO_RECOGNITION -> multimodalCapabilities.video
             else -> true
         }
 
@@ -510,8 +514,8 @@ fun FunctionConfigCard(
 
                                             // 根据 modelIndex 选择具体的模型
                                             val actualIndex = getValidModelIndex(fullConfig.modelName, currentModelIndex)
-                                            val selectedModelName = getModelByIndex(fullConfig.modelName, actualIndex)
-                                            val configWithSelectedModel = fullConfig.copy(modelName = selectedModelName)
+                                            val configWithSelectedModel =
+                                                fullConfig.forSelectedModel(actualIndex)
 
                                             val baseService =
                                                     AIServiceFactory.createService(

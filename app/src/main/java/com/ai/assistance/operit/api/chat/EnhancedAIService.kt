@@ -37,6 +37,7 @@ import com.ai.assistance.operit.data.model.ToolInvocation
 import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.forSelectedModel
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.ExternalHttpApiPreferences
@@ -669,7 +670,9 @@ class EnhancedAIService private constructor(private val context: Context) {
         ensureInitialized()
         val overrideConfigId = chatModelConfigIdOverride?.takeIf { it.isNotBlank() }
         return if (functionType == FunctionType.CHAT && overrideConfigId != null) {
-            multiServiceManager.getModelConfigForConfig(overrideConfigId)
+            multiServiceManager
+                .getModelConfigForConfig(overrideConfigId)
+                .forSelectedModel((chatModelIndexOverride ?: 0).coerceAtLeast(0))
         } else {
             multiServiceManager.getModelConfigForFunction(functionType)
         }
