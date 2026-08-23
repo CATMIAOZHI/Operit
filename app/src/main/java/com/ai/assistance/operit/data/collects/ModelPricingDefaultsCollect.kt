@@ -1,6 +1,8 @@
 package com.ai.assistance.operit.data.collects
 
 import com.ai.assistance.operit.data.model.BillingMode
+import com.ai.assistance.operit.data.pricing.PricingCatalogDocument
+import com.ai.assistance.operit.data.pricing.PricingCatalogJson
 
 enum class PricingCurrency(
     val code: String,
@@ -16,10 +18,41 @@ data class ModelPricingDefaults(
     val outputPricePerMillion: Double,
     val cachedInputPricePerMillion: Double,
     val pricePerRequest: Double,
-    val currency: PricingCurrency
+    val currency: PricingCurrency,
+    /** True when the source explicitly knows all prices needed by the billing mode. */
+    val known: Boolean = false,
+    /** Nullable because most legacy/default rows do not publish cache-write pricing. */
+    val cacheWritePricePerMillion: Double? = null,
+    /** Per-field presence preserves catalog null versus an explicit zero without breaking legacy callers. */
+    val hasInputPrice: Boolean = known || inputPricePerMillion > 0.0,
+    val hasCachedInputPrice: Boolean = known || cachedInputPricePerMillion > 0.0,
+    val hasOutputPrice: Boolean = known || outputPricePerMillion > 0.0,
+    val hasPricePerRequest: Boolean = known || pricePerRequest > 0.0,
 )
 
 object DefaultModelPricingCollect {
+    private data class CatalogIndex(
+        val exact: Map<String, ModelPricingDefaults> = emptyMap(),
+        val aliases: Map<String, ModelPricingDefaults> = emptyMap(),
+    )
+
+    @Volatile
+    private var activeCatalog = CatalogIndex()
+
+    /** Installs an already validated immutable snapshot; never performs I/O. */
+    fun installCatalog(document: PricingCatalogDocument) {
+        val exact = HashMap<String, ModelPricingDefaults>(document.entries.size)
+        val aliases = HashMap<String, ModelPricingDefaults>()
+        document.entries.forEach { entry ->
+            val defaults = PricingCatalogJson.entryToDefaults(entry)
+            val provider = PricingCatalogJson.normalize(entry.provider)
+            exact["$provider:${PricingCatalogJson.normalize(entry.model)}"] = defaults
+            entry.aliases.forEach { alias ->
+                aliases["$provider:${PricingCatalogJson.normalize(alias)}"] = defaults
+            }
+        }
+        activeCatalog = CatalogIndex(exact = exact.toMap(), aliases = aliases.toMap())
+    }
     private val domesticProviders = setOf(
         "DEEPSEEK",
         "BAIDU",
@@ -69,7 +102,8 @@ object DefaultModelPricingCollect {
             outputPricePerMillion = outputPricePerMillion,
             cachedInputPricePerMillion = cachedInputPricePerMillion,
             pricePerRequest = pricePerRequest,
-            currency = currency
+            currency = currency,
+            known = true,
         )
     }
 
@@ -83,7 +117,8 @@ object DefaultModelPricingCollect {
             outputPricePerMillion = 0.0,
             cachedInputPricePerMillion = 0.0,
             pricePerRequest = pricePerRequest,
-            currency = currency
+            currency = currency,
+            known = true,
         )
     }
 
@@ -142,14 +177,9 @@ object DefaultModelPricingCollect {
     }
 
     private val scrapedModelDefaults: Map<String, ModelPricingDefaults> by lazy {
-        scrapedPricingRows.associate { "${it.provider}:${it.model}" to it.defaults }
-    }
-
-    private val scrapedModelNameFallbacks: Map<String, List<ModelPricingDefaults>> by lazy {
-        scrapedPricingRows.groupBy(
-            keySelector = { it.model.lowercase() },
-            valueTransform = { it.defaults }
-        )
+        scrapedPricingRows.associate {
+            "${PricingCatalogJson.normalize(it.provider)}:${PricingCatalogJson.normalize(it.model)}" to it.defaults
+        }
     }
 
     private val providerFallbacks = mapOf(
@@ -202,27 +232,18 @@ object DefaultModelPricingCollect {
     }
 
     fun getDefaultPricing(providerModel: String): ModelPricingDefaults {
-        val normalized = providerModel.trim().lowercase()
-        scrapedModelDefaults[normalized]?.let { return it }
-
-        val (provider, model) = splitProviderModel(providerModel)
-
-        if (model.isNotBlank()) {
-            val modelCandidates = scrapedModelNameFallbacks[model.lowercase()]
-            if (!modelCandidates.isNullOrEmpty()) {
-                val preferredCurrency = if (isDomesticProvider(provider)) {
-                    PricingCurrency.CNY
-                } else {
-                    PricingCurrency.USD
-                }
-
-                modelCandidates.firstOrNull { it.currency == preferredCurrency }?.let {
-                    return it
-                }
-
-                return modelCandidates.first()
+        val normalized = PricingCatalogJson.normalize(providerModel)
+        val catalog = activeCatalog
+        catalog.exact[normalized]?.let { return it }
+        val (activeProvider, activeModel) = splitProviderModel(providerModel)
+        if (activeModel.isNotBlank()) {
+            catalog.aliases["${PricingCatalogJson.normalize(activeProvider)}:${PricingCatalogJson.normalize(activeModel)}"]?.let {
+                return it
             }
         }
+        scrapedModelDefaults[normalized]?.let { return it }
+
+        val (provider, _) = splitProviderModel(providerModel)
 
         return providerFallbacks[provider]
             ?: if (isDomesticProvider(provider)) {
