@@ -110,7 +110,7 @@ class TokenPriceResolverTest {
     }
 
     @Test
-    fun `override cached price falls back to input price`() {
+    fun `blank cached override inherits lower layer`() {
         val providerModel =
             overrideRow(
                 "PROVIDER_MODEL",
@@ -123,7 +123,7 @@ class TokenPriceResolverTest {
 
         val resolved = resolve(overrides = listOf(providerModel))
 
-        assertEquals(3.0, resolved.cachedInputPricePerMillion!!, 1e-9)
+        assertEquals(0.5, resolved.cachedInputPricePerMillion!!, 1e-9)
     }
 
     @Test

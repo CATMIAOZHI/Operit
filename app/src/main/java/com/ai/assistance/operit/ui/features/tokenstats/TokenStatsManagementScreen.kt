@@ -61,13 +61,21 @@ import com.ai.assistance.operit.data.collects.PricingCurrency
 import com.ai.assistance.operit.data.model.BillingMode
 import com.ai.assistance.operit.data.model.PriceOverrideScope
 import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
+import com.ai.assistance.operit.data.pricing.ModelPricingCatalogRepository
+import com.ai.assistance.operit.data.pricing.PricingCatalogSource
+import com.ai.assistance.operit.data.pricing.PricingCatalogState
 import com.ai.assistance.operit.data.stats.TokenStatsGroupModelInfo
 import com.ai.assistance.operit.data.stats.TokenStatsGroupMemberInfo
 import com.ai.assistance.operit.data.stats.LegacyPriceSettings
 import com.ai.assistance.operit.data.stats.TokenStatsPriceOverrideDraft
 import com.ai.assistance.operit.data.stats.TokenStatsSettingsManager
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 
 private enum class ManagementTab { GROUPS, PRICING }
+private enum class PricingFilter { ALL, MISSING, CUSTOM }
 
 private data class PricingEditor(
     val existing: TokenStatPriceOverrideEntity?,
@@ -80,6 +88,7 @@ fun TokenStatsManagementScreen(initialPricingTab: Boolean = false) {
     val viewModel: TokenStatsManagementViewModel =
         viewModel(factory = TokenStatsManagementViewModel.Factory(context))
     val state by viewModel.state.collectAsState()
+    val catalogState by ModelPricingCatalogRepository.status.collectAsState()
     var selectedTab by rememberSaveable {
         mutableStateOf(if (initialPricingTab) ManagementTab.PRICING else ManagementTab.GROUPS)
     }
@@ -125,9 +134,11 @@ fun TokenStatsManagementScreen(initialPricingTab: Boolean = false) {
                 else -> PricingManagementTab(
                     models = state.pricingModels,
                     overrides = state.overrides,
+                    catalogState = catalogState,
                     onSave = viewModel::savePriceOverride,
                     onResetConfig = viewModel::resetPrice,
                     onRestoreBuiltIn = viewModel::restoreBuiltInPrice,
+                    onRefreshCatalog = { ModelPricingCatalogRepository.refresh(force = true) },
                 )
             }
         }
@@ -171,6 +182,12 @@ private fun GroupManagementTab(
             value = query,
             onValueChange = { query = it },
             placeholder = stringResource(R.string.token_stats_group_search_hint),
+        )
+        Text(
+            text = stringResource(R.string.token_stats_group_display_only_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = TokenStatsCardMuted,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         )
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -384,30 +401,48 @@ private fun GroupMemberRow(
 private fun PricingManagementTab(
     models: List<TokenStatsPricingModelOption>,
     overrides: List<TokenStatPriceOverrideEntity>,
+    catalogState: PricingCatalogState?,
     onSave: (TokenStatPriceOverrideEntity?, TokenStatsPriceOverrideDraft) -> Unit,
     onResetConfig: (TokenStatPriceOverrideEntity) -> Unit,
     onRestoreBuiltIn: (TokenStatPriceOverrideEntity?, String?) -> Unit,
+    onRefreshCatalog: () -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var selectedProvider by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedFilter by rememberSaveable { mutableStateOf(PricingFilter.ALL) }
     var editor by remember { mutableStateOf<PricingEditor?>(null) }
     var resetConfigTarget by remember { mutableStateOf<TokenStatPriceOverrideEntity?>(null) }
     var restoreBuiltInTarget by remember {
         mutableStateOf<Pair<TokenStatPriceOverrideEntity?, String?>?>(null)
     }
     val providers = remember(models) { models.map { it.provider }.distinct().sorted() }
-    val visible = remember(models, query, selectedProvider) {
+    val visible = remember(
+        models,
+        overrides,
+        query,
+        selectedProvider,
+        selectedFilter,
+        catalogState?.revision,
+    ) {
         models.filter { option ->
             (selectedProvider == null || option.provider == selectedProvider) &&
                 (query.isBlank() || option.model.contains(query, true) ||
                     option.provider.contains(query, true) ||
                     option.configs.any {
                         it.name.contains(query, true) || it.endpoint.contains(query, true)
-                    })
+                    }) &&
+                when (selectedFilter) {
+                    PricingFilter.ALL -> true
+                    PricingFilter.MISSING -> !priceDraftIsComplete(providerDraftFor(option, overrides))
+                    PricingFilter.CUSTOM -> option.legacyPricing != null || overrides.any {
+                        it.provider.equals(option.provider, true) && it.model.equals(option.model, true)
+                    }
+                }
         }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        PricingCatalogStatusCard(catalogState, onRefreshCatalog)
         SearchField(
             value = query,
             onValueChange = { query = it },
@@ -418,6 +453,28 @@ private fun PricingManagementTab(
             selected = selectedProvider,
             onSelect = { selectedProvider = it },
         )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            PricingFilter.entries.forEach { filter ->
+                FilterChip(
+                    selected = selectedFilter == filter,
+                    onClick = { selectedFilter = filter },
+                    label = {
+                        Text(
+                            stringResource(
+                                when (filter) {
+                                    PricingFilter.ALL -> R.string.token_stats_pricing_filter_all
+                                    PricingFilter.MISSING -> R.string.token_stats_pricing_filter_missing
+                                    PricingFilter.CUSTOM -> R.string.token_stats_pricing_filter_custom
+                                }
+                            )
+                        )
+                    },
+                )
+            }
+        }
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -496,9 +553,7 @@ private fun PricingModelCard(
         it.scope == PriceOverrideScope.PROVIDER_MODEL.name &&
             it.provider.equals(option.provider, true) && it.model.equals(option.model, true)
     }
-    val providerDraft = providerOverride?.toDraft()
-        ?: option.legacyPricing?.let { legacyDraft(option.provider, option.model, it) }
-        ?: builtinDraft(option.provider, option.model)
+    val providerDraft = providerDraftFor(option, overrides)
     val providerSourceRes = when {
         providerOverride != null -> R.string.token_stats_pricing_source_override
         option.legacyPricing != null -> R.string.token_stats_pricing_source_legacy
@@ -562,10 +617,13 @@ private fun PricingModelCard(
                             it.provider.equals(option.provider, true) &&
                             it.model.equals(option.model, true) && it.configId == config.id
                     }
-                    val draft = configOverride?.toDraft() ?: providerDraft.copy(
+                    val configTarget = providerDraft.copy(
                         scope = PriceOverrideScope.CONFIG,
                         configId = config.id,
                     )
+                    val draft = configOverride?.toDraft()?.let {
+                        mergePricingDraft(configTarget, it)
+                    } ?: configTarget
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         shape = MaterialTheme.shapes.medium,
@@ -740,10 +798,12 @@ private fun builtinDraft(provider: String, model: String): TokenStatsPriceOverri
         configId = null,
         billingMode = defaults.billingMode,
         currency = defaults.currency,
-        inputPricePerMillion = defaults.inputPricePerMillion,
-        cachedInputPricePerMillion = defaults.cachedInputPricePerMillion,
-        outputPricePerMillion = defaults.outputPricePerMillion,
-        pricePerRequest = defaults.pricePerRequest,
+        inputPricePerMillion = defaults.inputPricePerMillion.takeIf { defaults.hasInputPrice },
+        cachedInputPricePerMillion = defaults.cachedInputPricePerMillion
+            .takeIf { defaults.hasCachedInputPrice },
+        cacheWritePricePerMillion = defaults.cacheWritePricePerMillion,
+        outputPricePerMillion = defaults.outputPricePerMillion.takeIf { defaults.hasOutputPrice },
+        pricePerRequest = defaults.pricePerRequest.takeIf { defaults.hasPricePerRequest },
     )
 }
 
@@ -759,8 +819,8 @@ private fun pricingEditorForMember(
         it.scope == PriceOverrideScope.PROVIDER_MODEL.name &&
             it.provider.equals(member.provider, true) && it.model.equals(member.model, true)
     }
-    val inherited = providerOverride?.toDraft()
-        ?: option?.legacyPricing?.let { legacyDraft(member.provider, member.model, it) }
+    val inherited = option?.let { providerDraftFor(it, overrides) }
+        ?: providerOverride?.toDraft()
         ?: builtinDraft(member.provider, member.model)
     val scope = if (member.configId.isBlank()) {
         PriceOverrideScope.PROVIDER_MODEL
@@ -796,13 +856,133 @@ private fun legacyDraft(
         configId = null,
         billingMode = billingMode,
         currency = defaults.currency,
-        inputPricePerMillion = legacy.inputPricePerMillion ?: defaults.inputPricePerMillion,
+        inputPricePerMillion = legacy.inputPricePerMillion
+            ?: defaults.inputPricePerMillion.takeIf { defaults.hasInputPrice },
         cachedInputPricePerMillion = legacy.cachedInputPricePerMillion
-            ?: defaults.cachedInputPricePerMillion,
-        outputPricePerMillion = legacy.outputPricePerMillion ?: defaults.outputPricePerMillion,
-        pricePerRequest = legacy.pricePerRequest ?: defaults.pricePerRequest,
+            ?: defaults.cachedInputPricePerMillion.takeIf { defaults.hasCachedInputPrice },
+        cacheWritePricePerMillion = defaults.cacheWritePricePerMillion,
+        outputPricePerMillion = legacy.outputPricePerMillion
+            ?: defaults.outputPricePerMillion.takeIf { defaults.hasOutputPrice },
+        pricePerRequest = legacy.pricePerRequest
+            ?: defaults.pricePerRequest.takeIf { defaults.hasPricePerRequest },
     )
 }
+
+private fun providerDraftFor(
+    option: TokenStatsPricingModelOption,
+    overrides: List<TokenStatPriceOverrideEntity>,
+): TokenStatsPriceOverrideDraft {
+    val base = option.legacyPricing?.let { legacyDraft(option.provider, option.model, it) }
+        ?: builtinDraft(option.provider, option.model)
+    val override = overrides.firstOrNull {
+        it.scope == PriceOverrideScope.PROVIDER_MODEL.name &&
+            it.provider.equals(option.provider, true) && it.model.equals(option.model, true)
+    } ?: return base
+    return mergePricingDraft(base, override.toDraft())
+}
+
+internal fun mergePricingDraft(
+    base: TokenStatsPriceOverrideDraft,
+    overlay: TokenStatsPriceOverrideDraft,
+): TokenStatsPriceOverrideDraft {
+    if (base.billingMode != overlay.billingMode) return overlay
+    return if (overlay.billingMode == BillingMode.COUNT) {
+        overlay.copy(pricePerRequest = overlay.pricePerRequest ?: base.pricePerRequest)
+    } else {
+        overlay.copy(
+            inputPricePerMillion = overlay.inputPricePerMillion ?: base.inputPricePerMillion,
+            cachedInputPricePerMillion = overlay.cachedInputPricePerMillion
+                ?: base.cachedInputPricePerMillion,
+            cacheWritePricePerMillion = overlay.cacheWritePricePerMillion
+                ?: base.cacheWritePricePerMillion,
+            outputPricePerMillion = overlay.outputPricePerMillion ?: base.outputPricePerMillion,
+        )
+    }
+}
+
+@Composable
+private fun PricingCatalogStatusCard(
+    state: PricingCatalogState?,
+    onRefresh: () -> Unit,
+) {
+    TokenStatsWhiteCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.token_stats_pricing_catalog_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = stringResource(
+                            if (state == null) {
+                                R.string.token_stats_pricing_catalog_loading
+                            } else if (state.source == PricingCatalogSource.CACHED_REMOTE) {
+                                R.string.token_stats_pricing_catalog_remote
+                            } else {
+                                R.string.token_stats_pricing_catalog_bundled
+                            }
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LocalTokenStatsColors.current.chartAccent,
+                    )
+                }
+                if (state == null || state.refreshing) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    TextButton(onClick = onRefresh) {
+                        Text(stringResource(R.string.token_stats_pricing_catalog_refresh))
+                    }
+                }
+            }
+            state?.let { loaded ->
+                Text(
+                    text = stringResource(
+                        R.string.token_stats_pricing_catalog_revision,
+                        loaded.revision,
+                        loaded.generatedAt.substringBefore('T'),
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TokenStatsCardMuted,
+                )
+                Text(
+                    text = loaded.lastCheckedAt?.let {
+                        stringResource(
+                            R.string.token_stats_pricing_catalog_checked,
+                            formatCatalogCheckedAt(it),
+                        )
+                    } ?: stringResource(R.string.token_stats_pricing_catalog_not_checked),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TokenStatsCardMuted,
+                )
+                loaded.lastError?.let { error ->
+                    Text(
+                        text = stringResource(R.string.token_stats_pricing_catalog_refresh_failed, error),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatCatalogCheckedAt(epochMillis: Long): String =
+    DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
+        .format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))
+
+private fun priceDraftIsComplete(draft: TokenStatsPriceOverrideDraft): Boolean =
+    if (draft.billingMode == BillingMode.COUNT) {
+        draft.pricePerRequest != null
+    } else {
+        draft.inputPricePerMillion != null &&
+            (draft.cachedInputPricePerMillion ?: draft.inputPricePerMillion) != null &&
+            draft.outputPricePerMillion != null
+    }
 
 private fun TokenStatPriceOverrideEntity.toDraft() = TokenStatsPriceOverrideDraft(
     scope = PriceOverrideScope.fromNameOrNull(scope) ?: PriceOverrideScope.PROVIDER_MODEL,

@@ -43,6 +43,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.collects.DefaultModelPricingCollect
+import com.ai.assistance.operit.data.collects.ModelPricingDefaults
 import com.ai.assistance.operit.data.collects.PricingCurrency
 import com.ai.assistance.operit.data.model.BillingMode
 import com.ai.assistance.operit.data.model.PriceOverrideScope
@@ -226,22 +227,13 @@ internal fun PriceOverrideDialog(
         existing?.let { BillingMode.fromString(it.billingMode) }
             ?: initialDraft?.billingMode
             ?: BillingMode.TOKEN
-    var scope by remember(existing, initialDraft) {
-        mutableStateOf(
-            existing?.let { PriceOverrideScope.fromNameOrNull(it.scope) }
-                ?: initialDraft?.scope
-                ?: PriceOverrideScope.PROVIDER_MODEL
-        )
-    }
-    var provider by remember(existing, initialDraft) {
-        mutableStateOf(existing?.provider ?: initialDraft?.provider.orEmpty())
-    }
-    var model by remember(existing, initialDraft) {
-        mutableStateOf(existing?.model ?: initialDraft?.model.orEmpty())
-    }
-    var configId by remember(existing, initialDraft) {
-        mutableStateOf(existing?.configId ?: initialDraft?.configId.orEmpty())
-    }
+    val scope =
+        existing?.let { PriceOverrideScope.fromNameOrNull(it.scope) }
+            ?: initialDraft?.scope
+            ?: PriceOverrideScope.PROVIDER_MODEL
+    val provider = existing?.provider ?: initialDraft?.provider.orEmpty()
+    val model = existing?.model ?: initialDraft?.model.orEmpty()
+    val configId = existing?.configId ?: initialDraft?.configId.orEmpty()
     var billingMode by remember(existing, initialDraft) {
         mutableStateOf(
             storedBillingMode
@@ -258,7 +250,7 @@ internal fun PriceOverrideDialog(
         mutableStateOf(
             formatEditablePrice(
                 if (storedBillingMode == BillingMode.TOKEN) {
-                    existing?.inputPricePerMillion ?: initialDraft?.inputPricePerMillion
+                    existing?.inputPricePerMillion
                 } else null
             )
         )
@@ -267,7 +259,7 @@ internal fun PriceOverrideDialog(
         mutableStateOf(
             formatEditablePrice(
                 if (storedBillingMode == BillingMode.TOKEN) {
-                    existing?.cachedInputPricePerMillion ?: initialDraft?.cachedInputPricePerMillion
+                    existing?.cachedInputPricePerMillion
                 } else null
             )
         )
@@ -276,7 +268,7 @@ internal fun PriceOverrideDialog(
         mutableStateOf(
             formatEditablePrice(
                 if (storedBillingMode == BillingMode.TOKEN) {
-                    existing?.cacheWritePricePerMillion ?: initialDraft?.cacheWritePricePerMillion
+                    existing?.cacheWritePricePerMillion
                 } else null
             )
         )
@@ -285,7 +277,7 @@ internal fun PriceOverrideDialog(
         mutableStateOf(
             formatEditablePrice(
                 if (storedBillingMode == BillingMode.TOKEN) {
-                    existing?.outputPricePerMillion ?: initialDraft?.outputPricePerMillion
+                    existing?.outputPricePerMillion
                 } else null
             )
         )
@@ -294,17 +286,19 @@ internal fun PriceOverrideDialog(
         mutableStateOf(
             formatEditablePrice(
                 if (storedBillingMode == BillingMode.COUNT) {
-                    existing?.pricePerRequest ?: initialDraft?.pricePerRequest
+                    existing?.pricePerRequest
                 } else null
             )
         )
     }
     var inlineError by remember { mutableStateOf<String?>(null) }
+    var showAdvanced by remember(existing, initialDraft) {
+        mutableStateOf(
+            existing?.cachedInputPricePerMillion != null ||
+                existing?.cacheWritePricePerMillion != null
+        )
+    }
     val pricingInvalidText = stringResource(R.string.token_stats_pricing_invalid)
-    // P1-7：编辑已有覆盖时业务键（scope/provider/model/configId）只读，
-    // 只允许修改价格/币种/计费方式，防止键被改掉产生第二行或误覆盖。
-    val editing = existing != null
-    val targetLocked = editing || initialDraft != null
 
     val priceFields =
         if (billingMode == BillingMode.TOKEN) {
@@ -330,8 +324,7 @@ internal fun PriceOverrideDialog(
         title = {
             Text(
                 stringResource(
-                    if (existing == null) R.string.token_stats_pricing_add
-                    else R.string.token_stats_pricing_edit
+                    R.string.token_stats_pricing_custom_title
                 )
             )
         },
@@ -340,49 +333,26 @@ internal fun PriceOverrideDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = scope == PriceOverrideScope.PROVIDER_MODEL,
-                        onClick = { if (!targetLocked) scope = PriceOverrideScope.PROVIDER_MODEL },
-                        enabled = !targetLocked,
-                        label = { Text(stringResource(R.string.token_stats_pricing_scope_provider)) },
-                        modifier = Modifier.weight(1f),
-                    )
-                    FilterChip(
-                        selected = scope == PriceOverrideScope.CONFIG,
-                        onClick = { if (!targetLocked) scope = PriceOverrideScope.CONFIG },
-                        enabled = !targetLocked,
-                        label = { Text(stringResource(R.string.token_stats_pricing_scope_config)) },
-                        modifier = Modifier.weight(1f),
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(model, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = provider,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-
-                OutlinedTextField(
-                    value = provider,
-                    onValueChange = { if (!targetLocked) provider = it },
-                    label = { Text(stringResource(R.string.token_stats_pricing_provider_label)) },
-                    singleLine = true,
-                    enabled = !targetLocked,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = model,
-                    onValueChange = { if (!targetLocked) model = it },
-                    label = { Text(stringResource(R.string.token_stats_pricing_model_label)) },
-                    singleLine = true,
-                    enabled = !targetLocked,
-                    modifier = Modifier.fillMaxWidth(),
-                )
                 if (scope == PriceOverrideScope.CONFIG) {
-                    OutlinedTextField(
-                        value = configId,
-                        onValueChange = { if (!targetLocked) configId = it },
-                        label = { Text(stringResource(R.string.token_stats_pricing_config_label)) },
-                        singleLine = true,
-                        enabled = !targetLocked,
-                        modifier = Modifier.fillMaxWidth(),
+                    Text(
+                        text = stringResource(R.string.token_stats_pricing_config_target, configId),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                Text(
+                    text = stringResource(R.string.token_stats_pricing_inherit_empty_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
@@ -446,20 +416,30 @@ internal fun PriceOverrideDialog(
                         onChange = { inputPrice = it },
                     )
                     PriceField(
-                        label = stringResource(R.string.token_stats_pricing_cached),
-                        value = cachedInputPrice,
-                        onChange = { cachedInputPrice = it },
-                    )
-                    PriceField(
-                        label = stringResource(R.string.token_stats_pricing_cache_write),
-                        value = cacheWritePrice,
-                        onChange = { cacheWritePrice = it },
-                    )
-                    PriceField(
                         label = stringResource(R.string.token_stats_pricing_output),
                         value = outputPrice,
                         onChange = { outputPrice = it },
                     )
+                    TextButton(onClick = { showAdvanced = !showAdvanced }) {
+                        Text(
+                            stringResource(
+                                if (showAdvanced) R.string.token_stats_pricing_advanced_hide
+                                else R.string.token_stats_pricing_advanced_show
+                            )
+                        )
+                    }
+                    if (showAdvanced) {
+                        PriceField(
+                            label = stringResource(R.string.token_stats_pricing_cached),
+                            value = cachedInputPrice,
+                            onChange = { cachedInputPrice = it },
+                        )
+                        PriceField(
+                            label = stringResource(R.string.token_stats_pricing_cache_write),
+                            value = cacheWritePrice,
+                            onChange = { cacheWritePrice = it },
+                        )
+                    }
                 } else {
                     PriceField(
                         label = stringResource(R.string.token_stats_pricing_per_request),
@@ -468,7 +448,7 @@ internal fun PriceOverrideDialog(
                     )
                 }
 
-                builtinReference?.let { defaults ->
+                builtinReference?.takeIf { it.hasAutomaticReferenceFor(billingMode) }?.let { defaults ->
                     val referenceText =
                         if (billingMode == BillingMode.COUNT) {
                             "${defaults.currency.symbol}${defaults.pricePerRequest}/${stringResource(R.string.settings_billing_mode_count)}"
@@ -570,6 +550,9 @@ private fun formatEditablePrice(value: Double?): String =
     value?.let {
         String.format(Locale.US, "%.6f", it).trimEnd('0').trimEnd('.')
     } ?: ""
+
+internal fun ModelPricingDefaults.hasAutomaticReferenceFor(mode: BillingMode): Boolean =
+    billingMode == mode && known
 
 // ==== 分组管理（别名/合并） ====
 
