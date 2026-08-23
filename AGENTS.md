@@ -20,6 +20,7 @@
 - 所有可能长期运行的命令必须设置硬超时。达到超时后立即终止本次命令的整个进程树并输出已保存的日志，禁止无限等待。
 - 首次构建先执行 `git submodule update --init --recursive terminal`。
 - 完整 Android 构建需要 README/编译指南列出的 `models.zip`、`subpack.zip`、`jniLibs.zip` 和 `libs.zip` 内容；这些本地依赖不得提交。
+- 隔离 worktree 不会继承被忽略的本机构建输入（如 `local.properties`、`app/libs` 本地依赖）或子模块状态。构建前先补齐并初始化，且不得提交；若仅 worktree 报缺依赖，先检查这些输入，不要改源码。
 - 原生第三方依赖（MNN、llama.cpp、ncnn、sherpa-ncnn、WAMR、QuickJS、Saba、Bullet3、ufbx、KleidiAI）已固定到具体 commit SHA，锁定清单见 `cmake/NATIVE_DEPENDENCY_LOCK.md`；升级时更新该清单和对应 `CMakeLists.txt`，不要通过 `OPERIT_*_GIT_REF` 命令行参数覆盖（已不再生效）。
 - 根据改动范围运行最小充分验证：默认优先编译，只运行与本次修改直接相关的测试；没有直接相关测试时只做编译检查，小改动无明显回归风险时不额外补测试，已通过的测试不重复运行。不得仅为提高信心主动运行完整 `testDebugUnitTest`；全量测试和耗时的集成/UI 测试仅在用户明确要求、合并或 PR 最终验证、CI，或核心基础设施改动确有必要时运行。测试超时应覆盖 Gradle 冷启动和增量编译：聚焦 JVM 单测默认设置 10 分钟硬超时，其他任务按预计耗时设置明确上限；若连续 5 分钟没有新日志、CPU/进程活动或输出文件变化，应终止整个进程树并分析原因，不得仅因运行超过 60 秒判定失败。
 - Windows 本地执行 `lintDebug` 或其他会构建原生模块的任务时，SDK 随 CMake 3.22.1 提供的 Ninja 1.10.2 会在 MNN/KleidiAI 中间路径超过 260 字符时报告 `Filename longer than 260 characters`。已验证的首选方案是保留 CMake 3.22.1、使用支持 Windows 长路径的 Ninja 1.12.1+：将 CMake 复制到 SDK 管理目录之外的本机隔离目录，替换副本中的 Ninja，并通过被 Git 忽略的 `local.properties` 的 `cmake.dir` 指向副本；不要直接覆盖 SDK Manager 管理的原版工具。构建后必须从 `build_command_*.bat` 或 `CMakeCache.txt` 核对 Gradle 实际调用了新版 Ninja。若系统未启用 Win32 长路径、无法准备新版 Ninja，或新版工具仍失败，再用 `subst` 将仓库根目录映射为短盘符，并从该盘符根目录重新运行 Gradle。CMake 的 `CMAKE_OBJECT_PATH_MAX` 警告本身不等于构建失败。完整步骤见 `docs/agent/build-guide.md`。
