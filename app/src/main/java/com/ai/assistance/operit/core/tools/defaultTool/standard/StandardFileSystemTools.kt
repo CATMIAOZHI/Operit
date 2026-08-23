@@ -62,6 +62,7 @@ import android.content.Intent
 import androidx.core.content.FileProvider
 import android.webkit.MimeTypeMap
 import com.ai.assistance.operit.api.chat.enhance.FileBindingService
+import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.config.FunctionalPrompts
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
@@ -75,6 +76,57 @@ import com.ai.assistance.operit.util.ripgrep.NativeRipgrep
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicInteger
 
+internal enum class ImageReadRoute {
+    CURRENT_MODEL,
+    IMAGE_RECOGNITION_MODEL,
+    OCR,
+}
+
+internal val IMAGE_READ_EXTENSIONS =
+    setOf("jpg", "jpeg", "jpe", "jfif", "png", "gif", "bmp", "webp", "heic", "heif", "avif", "ico")
+
+private const val SNIFFED_IMAGE_FILE_TYPE = "__sniffed_image__"
+
+internal fun hasRecognizedImageHeader(header: ByteArray): Boolean {
+    fun matches(offset: Int, vararg expected: Int): Boolean =
+        header.size >= offset + expected.size &&
+            expected.indices.all { index -> (header[offset + index].toInt() and 0xff) == expected[index] }
+
+    val isJpeg = matches(0, 0xff, 0xd8, 0xff)
+    val isPng = matches(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+    val isGif = matches(0, 0x47, 0x49, 0x46, 0x38, 0x37, 0x61) ||
+        matches(0, 0x47, 0x49, 0x46, 0x38, 0x39, 0x61)
+    val isBmp = matches(0, 0x42, 0x4d)
+    val isWebp = matches(0, 0x52, 0x49, 0x46, 0x46) && matches(8, 0x57, 0x45, 0x42, 0x50)
+    val isIco = matches(0, 0x00, 0x00, 0x01, 0x00)
+    val isIsoImage =
+        matches(4, 0x66, 0x74, 0x79, 0x70) &&
+            listOf("avif", "avis", "heic", "heix", "hevc", "hevx", "mif1", "msf1").any { brand ->
+                brand.indices.all { index ->
+                    header.size > 8 + index && header[8 + index].toInt() == brand[index].code
+                }
+            }
+
+    return isJpeg || isPng || isGif || isBmp || isWebp || isIco || isIsoImage
+}
+
+internal fun resolveImageReadRoute(
+    hasRuntimeContext: Boolean,
+    parentModelSupportsVision: Boolean,
+    imageRecognitionModelAvailable: Boolean,
+    explicitDirectImage: Boolean,
+    hasIntent: Boolean,
+): ImageReadRoute {
+    return when {
+        parentModelSupportsVision -> ImageReadRoute.CURRENT_MODEL
+        hasRuntimeContext && imageRecognitionModelAvailable -> ImageReadRoute.IMAGE_RECOGNITION_MODEL
+        hasRuntimeContext -> ImageReadRoute.OCR
+        explicitDirectImage -> ImageReadRoute.CURRENT_MODEL
+        hasIntent -> ImageReadRoute.IMAGE_RECOGNITION_MODEL
+        else -> ImageReadRoute.OCR
+    }
+}
+
 /**
  * Collection of file system operation tools for the AI assistant These tools use Java File APIs for
  * file operations
@@ -83,14 +135,13 @@ open class StandardFileSystemTools(protected val context: Context) {
     companion object {
         protected const val TAG = "FileSystemTools"
         // 特殊文件类型扩展名列表（需要特殊处理提取文本的文件类型）
-        protected val SPECIAL_FILE_EXTENSIONS = listOf(
-            "doc", "docx",      // Word documents
-            "pdf",              // PDF documents
-            "jpg", "jpeg",      // Image files
-            "png", "gif", "bmp",
-            "mp3", "wav", "m4a", "aac", "flac", "ogg", "opus",
-            "mp4", "mkv", "mov", "webm", "avi", "m4v"
-        )
+        protected val SPECIAL_FILE_EXTENSIONS =
+            listOf("doc", "docx", "pdf") +
+                IMAGE_READ_EXTENSIONS +
+                listOf(
+                    "mp3", "wav", "m4a", "aac", "flac", "ogg", "opus",
+                    "mp4", "mkv", "mov", "webm", "avi", "m4v",
+                )
     }
 
     // ApiPreferences 实例，用于动态获取配置
@@ -830,6 +881,19 @@ open class StandardFileSystemTools(protected val context: Context) {
         return fileExtension.lowercase() in SPECIAL_FILE_EXTENSIONS
     }
 
+    private fun resolveSpecialFileType(file: File): String? {
+        val extension = file.extension.lowercase()
+        if (isSpecialFileType(extension)) return extension
+
+        val header = ByteArray(16)
+        val bytesRead = FileInputStream(file).use { input -> input.read(header) }
+        return if (bytesRead > 0 && hasRecognizedImageHeader(header.copyOf(bytesRead))) {
+            SNIFFED_IMAGE_FILE_TYPE
+        } else {
+            null
+        }
+    }
+
     /** 统计文件总行数 */
     protected fun countFileLines(file: File): Int {
         var totalLines = 0
@@ -1076,25 +1140,35 @@ open class StandardFileSystemTools(protected val context: Context) {
                 }
             }
 
-            "jpg", "jpeg", "png", "gif", "bmp" -> {
-                // 获取可选的intent参数和direct_image参数
+            in IMAGE_READ_EXTENSIONS, SNIFFED_IMAGE_FILE_TYPE -> {
                 val intent = tool.parameters.find { it.name == "intent" }?.value
                 val directImage = tool.parameters.find { it.name == "direct_image" }?.value?.toBoolean() ?: false
+                val runtimeContext = ToolExecutionManager.currentToolRuntimeContext()
+                val route =
+                    resolveImageReadRoute(
+                        hasRuntimeContext = runtimeContext != null,
+                        parentModelSupportsVision = runtimeContext?.parentModelSupportsVision == true,
+                        imageRecognitionModelAvailable = runtimeContext?.imageRecognitionModelAvailable == true,
+                        explicitDirectImage = directImage,
+                        hasIntent = !intent.isNullOrBlank(),
+                    )
 
                 AppLogger.d(
                     TAG,
-                    "Detected image file, intent=${intent ?: "无"}, direct_image=$directImage"
+                    "Detected image file, intent=${intent ?: "无"}, route=$route"
                 )
 
-                // 情况1：direct_image 为 true，直接返回图片链接，供支持识图的聊天模型自己查看
-                if (directImage) {
+                // The parent model capability is captured at the tool-call boundary. A vision
+                // model receives the image in the next model hop without eagerly attaching it to
+                // the user's original message.
+                if (route == ImageReadRoute.CURRENT_MODEL) {
                     try {
                         val imageId = ImagePoolManager.addImage(path)
                         if (imageId == "error") {
-                            AppLogger.e(TAG, "Failed to register image for direct_image, falling back to intent/OCR: $path")
+                            AppLogger.e(TAG, "Failed to register image for the current model, falling back: $path")
                         } else {
                             val link = "<link type=\"image\" id=\"$imageId\"></link>"
-                            AppLogger.d(TAG, "Generated image link for direct_image: $link")
+                            AppLogger.d(TAG, "Generated on-demand image link for current model: $link")
                             return ToolResult(
                                 toolName = tool.name,
                                 success = true,
@@ -1107,19 +1181,23 @@ open class StandardFileSystemTools(protected val context: Context) {
                             )
                         }
                     } catch (e: Exception) {
-                        AppLogger.e(TAG, "Error generating direct image link, falling back to intent/OCR", e)
+                        AppLogger.e(TAG, "Error generating image link for current model, falling back", e)
                     }
-                    // 如果生成图片链接失败，则继续走下面的 intent/OCR 逻辑
                 }
 
-                // 情况2：提供了 intent，使用后端识图模型
-                if (!intent.isNullOrBlank()) {
+                val shouldUseImageRecognitionModel =
+                    route == ImageReadRoute.IMAGE_RECOGNITION_MODEL ||
+                        (route == ImageReadRoute.CURRENT_MODEL &&
+                            (runtimeContext?.imageRecognitionModelAvailable == true ||
+                                (runtimeContext == null && !intent.isNullOrBlank())))
+
+                // Non-vision chat models delegate to the configured IMAGE_RECOGNITION model. The
+                // intent is optional; without it the recognition service uses its default prompt.
+                if (shouldUseImageRecognitionModel) {
                     try {
                         val enhancedService =
                             com.ai.assistance.operit.api.chat.EnhancedAIService.getInstance(context)
-                        val analysisResult = kotlinx.coroutines.runBlocking {
-                            enhancedService.analyzeImageWithIntent(path, intent)
-                        }
+                        val analysisResult = enhancedService.analyzeImageWithIntent(path, intent)
 
                         return ToolResult(
                             toolName = tool.name,
@@ -1133,11 +1211,10 @@ open class StandardFileSystemTools(protected val context: Context) {
                         )
                     } catch (e: Exception) {
                         AppLogger.e(TAG, "识图模型调用失败，回退到OCR", e)
-                        // 回退到默认OCR处理
                     }
                 }
 
-                // 情况3：默认OCR处理
+                // No compatible vision route is available, or the selected route failed.
                 try {
                     val bitmap = withContext(Dispatchers.IO) {
                         android.graphics.BitmapFactory.decodeFile(path)
@@ -1457,8 +1534,6 @@ open class StandardFileSystemTools(protected val context: Context) {
                 )
             }
 
-            val fileExt = file.extension.lowercase()
-            
             // 如果启用了 text_only 模式，检查文件是否为文本
             if (textOnly) {
                 // 读取文件前 512 字节进行判断
@@ -1472,9 +1547,10 @@ open class StandardFileSystemTools(protected val context: Context) {
                 }
             }
 
-            // 尝试特殊文件处理
-            if (isSpecialFileType(fileExt)) {
-                val specialReadResult = handleSpecialFileRead(tool, path, fileExt)
+            // 尝试特殊文件处理。图片同时检查文件头，避免无扩展名或被重命名的附件漏过。
+            val specialFileType = resolveSpecialFileType(file)
+            if (specialFileType != null) {
+                val specialReadResult = handleSpecialFileRead(tool, path, specialFileType)
                 if (specialReadResult != null) {
                     return specialReadResult
                 }
@@ -1612,10 +1688,8 @@ open class StandardFileSystemTools(protected val context: Context) {
                 )
             }
 
-            val fileExt = file.extension.lowercase()
-
             // For special types, full read then truncate text is the only way.
-            if (isSpecialFileType(fileExt)) {
+            if (resolveSpecialFileType(file) != null) {
                 val fullResult = readFileFull(tool)
                 if (!fullResult.success) return fullResult
 
@@ -1735,8 +1809,9 @@ open class StandardFileSystemTools(protected val context: Context) {
                 val inMemoryLines: List<String>?
                 val totalLines: Int
 
-                if (isSpecialFileType(file.extension)) {
-                    val specialResult = handleSpecialFileRead(tool, path, file.extension.lowercase())
+                val specialFileType = resolveSpecialFileType(file)
+                if (specialFileType != null) {
+                    val specialResult = handleSpecialFileRead(tool, path, specialFileType)
                     if (specialResult != null && !specialResult.success) return@withContext specialResult
 
                     if (specialResult != null) {

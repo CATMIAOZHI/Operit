@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ThreadContextElement
 import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -153,6 +154,8 @@ object ToolExecutionManager {
         val workspaceEnv: String? = null,
         val parentModelConfigId: String? = null,
         val parentModelIndex: Int? = null,
+        val parentModelSupportsVision: Boolean = false,
+        val imageRecognitionModelAvailable: Boolean = false,
         val isSubagent: Boolean = false,
         val callId: String? = null,
         val invocationIndex: Int? = null,
@@ -407,6 +410,11 @@ object ToolExecutionManager {
 
     internal fun currentToolRuntimeContext(): ToolRuntimeContext? =
         toolRuntimeContextThreadLocal.get()
+
+    internal fun toolRuntimeContextElement(
+        runtimeContext: ToolRuntimeContext? = currentToolRuntimeContext(),
+    ): ThreadContextElement<ToolRuntimeContext?> =
+        toolRuntimeContextThreadLocal.asContextElement(runtimeContext)
 
     private fun addPackageContextParamIfMissing(
         params: MutableList<ToolParameter>,
@@ -991,6 +999,8 @@ object ToolExecutionManager {
         workspaceEnv: String? = null,
         parentModelConfigId: String? = null,
         parentModelIndex: Int? = null,
+        parentModelSupportsVision: Boolean = false,
+        imageRecognitionModelAvailable: Boolean = false,
         liveAssistantContent: String? = null,
         isSubagent: Boolean = false,
         subagentToolLoopGuard: SubagentToolLoopGuard? = null,
@@ -1055,6 +1065,8 @@ object ToolExecutionManager {
                         workspaceEnv = workspaceEnv,
                         parentModelConfigId = parentModelConfigId,
                         parentModelIndex = parentModelIndex,
+                        parentModelSupportsVision = parentModelSupportsVision,
+                        imageRecognitionModelAvailable = imageRecognitionModelAvailable,
                         liveAssistantContent = liveAssistantContent,
                         isSubagent = true,
                         subagentToolLoopGuard = subagentToolLoopGuard,
@@ -1076,6 +1088,8 @@ object ToolExecutionManager {
                         workspaceEnv = workspaceEnv,
                         parentModelConfigId = parentModelConfigId,
                         parentModelIndex = parentModelIndex,
+                        parentModelSupportsVision = parentModelSupportsVision,
+                        imageRecognitionModelAvailable = imageRecognitionModelAvailable,
                         liveAssistantContent = liveAssistantContent,
                         isSubagent = true,
                         subagentToolLoopGuard = subagentToolLoopGuard,
@@ -1184,6 +1198,8 @@ object ToolExecutionManager {
                 workspaceEnv = workspaceEnv,
                 parentModelConfigId = parentModelConfigId,
                 parentModelIndex = parentModelIndex,
+                parentModelSupportsVision = parentModelSupportsVision,
+                imageRecognitionModelAvailable = imageRecognitionModelAvailable,
                 isSubagent = isSubagent,
                 timingScopeId = timingScopeId,
                 batchSize = boundInvocations.size.coerceAtLeast(1),
@@ -1733,7 +1749,7 @@ object ToolExecutionManager {
         val toolName = invocation.tool.name
         val displayToolName = resolveDisplayToolName(invocation.tool)
 
-        return withContext(toolRuntimeContextThreadLocal.asContextElement(runtimeContext)) {
+        return withContext(toolRuntimeContextElement(runtimeContext)) {
             var startedAtElapsedMs: Long? = null
             val collectedResults = BoundedToolResultAccumulator()
             // Parallel group members run with a deferred result sink and publish later from the

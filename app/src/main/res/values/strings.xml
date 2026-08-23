@@ -4033,7 +4033,7 @@
     <string name="select">选择</string>
     <string name="default_config_model_restriction">使用默认配置时，只能使用deepseek-v4-flash模型</string>
     <string name="enable_direct_image_processing">模型支持识图</string>
-    <string name="enable_direct_image_processing_desc">启用后，图片将直接发送给AI处理，而不是让AI通过OCR工具读取</string>
+    <string name="enable_direct_image_processing_desc">启用后，AI 调用 read_file 读取图片时会交给当前模型；用户附加图片时不会自动发送图片内容</string>
     <string name="enable_direct_audio_processing">模型支持音频解析</string>
     <string name="enable_direct_audio_processing_desc">启用后，音频将直接发送给AI处理，而不是通过工具返回文本转写/描述</string>
     <string name="enable_direct_video_processing">模型支持视频解析</string>
@@ -7588,7 +7588,8 @@
     <string name="ai_message_tool_start">[工具: %1$s]</string>
     <string name="ai_message_success">成功</string>
     <string name="ai_message_failure">失败</string>
-    <string name="ai_message_image_attached_multimodal_notice">图片内容已作为多模态输入随本消息附着，勿调用文件读取工具读取该路径。</string>
+    <string name="ai_message_image_attached_multimodal_notice">图片内容已作为多模态输入随本消息附着。</string>
+    <string name="ai_message_image_attached_on_demand_notice">图片内容尚未读取；需要查看时，请调用 read_file 并使用 id 中的路径。</string>
     <string name="ai_message_result_prefix">[结果: </string>
     <string name="ai_message_result_suffix">]</string>
     <string name="ai_message_result_omitted">[结果: %1$s 已省略]</string>

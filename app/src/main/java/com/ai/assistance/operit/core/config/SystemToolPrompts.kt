@@ -238,7 +238,7 @@ object SystemToolPrompts {
             ),
             ToolPrompt(
                 name = "read_file",
-                description = "Read the content of a file. For image files (jpg, jpeg, png, gif, bmp), it automatically extracts text using OCR.",
+                description = "Read file content. Images are loaded on demand: the current model receives the image when it supports vision; otherwise a configured image-recognition model is used, with OCR as fallback.",
                 parametersStructured = listOf(
                     ToolParameterSchema(
                         name = "path",
@@ -255,13 +255,7 @@ object SystemToolPrompts {
                     ToolParameterSchema(
                         name = "intent",
                         type = "string",
-                        description = "optional, your question about the media/file (used for backend recognition)",
-                        required = false
-                    ),
-                    ToolParameterSchema(
-                        name = "direct_image",
-                        type = "boolean",
-                        description = "optional, when true: return an <link type=\"image\"> tag for models that support vision",
+                        description = "optional, the question or focus for a backend media-recognition model",
                         required = false
                     ),
                     ToolParameterSchema(
@@ -390,7 +384,7 @@ object SystemToolPrompts {
             ),
             ToolPrompt(
                 name = "read_file",
-                description = "读取文件内容。对于图片文件(jpg, jpeg, png, gif, bmp)，自动使用OCR提取文本。",
+                description = "读取文件内容。图片按需加载：当前模型支持视觉时直接交给当前模型，否则调用已配置的识图模型，均不可用时回退OCR。",
                 parametersStructured = listOf(
                     ToolParameterSchema(name = "path", type = "string", description = "文件路径", required = true),
                     ToolParameterSchema(
@@ -402,13 +396,7 @@ object SystemToolPrompts {
                     ToolParameterSchema(
                         name = "intent",
                         type = "string",
-                        description = "可选，用户对媒体/文件的问题（用于后端识别模型）",
-                        required = false
-                    ),
-                    ToolParameterSchema(
-                        name = "direct_image",
-                        type = "boolean",
-                        description = "可选，为true时：返回<link type=\"image\">标签供支持识图的模型直接查看",
+                        description = "可选，交给后端媒体识别模型的问题或关注点",
                         required = false
                     ),
                     ToolParameterSchema(
@@ -655,7 +643,6 @@ object SystemToolPrompts {
 
                 val filteredParams = (tool.parametersStructured ?: emptyList()).filter { param ->
                     when (param.name) {
-                        "direct_image" -> false
                         "direct_audio" -> false
                         "direct_video" -> false
                         "intent" -> shouldExposeIntent
@@ -664,10 +651,12 @@ object SystemToolPrompts {
                 }
 
                 val adjustedDescription =
-                    if (shouldExposeIntent) {
-                        "Read the content of a file. For media files, you can also provide an 'intent' parameter to use a backend recognition model for analysis."
-                    } else {
-                        tool.description
+                    when {
+                        chatModelHasDirectImage ->
+                            "Read file content. Images are loaded only when this tool is called and are then sent to the current vision-capable model."
+                        hasBackendImageRecognition ->
+                            "Read file content. Images are loaded only when this tool is called and are analyzed by the configured image-recognition model; use 'intent' to specify the question or focus."
+                        else -> tool.description
                     }
 
                 tool.copy(
@@ -739,7 +728,6 @@ object SystemToolPrompts {
 
                 val filteredParams = (tool.parametersStructured ?: emptyList()).filter { param ->
                     when (param.name) {
-                        "direct_image" -> false
                         "direct_audio" -> false
                         "direct_video" -> false
                         "intent" -> shouldExposeIntent
@@ -748,10 +736,12 @@ object SystemToolPrompts {
                 }
 
                 val adjustedDescription =
-                    if (shouldExposeIntent) {
-                        "读取文件内容。对于媒体文件，你也可以提供 intent 参数，使用后端识别模型进行分析。"
-                    } else {
-                        tool.description
+                    when {
+                        chatModelHasDirectImage ->
+                            "读取文件内容。图片仅在调用此工具时加载，随后直接交给当前支持视觉的模型。"
+                        hasBackendImageRecognition ->
+                            "读取文件内容。图片仅在调用此工具时加载，随后由已配置的识图模型分析；可用 intent 指定问题或关注点。"
+                        else -> tool.description
                     }
 
                 tool.copy(

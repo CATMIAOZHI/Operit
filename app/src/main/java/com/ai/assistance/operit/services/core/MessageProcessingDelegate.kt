@@ -292,7 +292,6 @@ class MessageProcessingDelegate(
         val totalStartTime = messageTimingNow()
         val configId = functionalConfigManager.getConfigIdForFunction(FunctionType.CHAT)
         val currentModelConfig = modelConfigManager.getModelConfigFlow(configId).first()
-        val enableDirectImageProcessing = currentModelConfig.enableDirectImageProcessing
         val enableDirectAudioProcessing = currentModelConfig.enableDirectAudioProcessing
         val enableDirectVideoProcessing = currentModelConfig.enableDirectVideoProcessing
 
@@ -303,7 +302,6 @@ class MessageProcessingDelegate(
             workspacePath = workspacePath,
             workspaceEnv = workspaceEnv,
             replyToMessage = replyToMessage,
-            enableDirectImageProcessing = enableDirectImageProcessing,
             enableDirectAudioProcessing = enableDirectAudioProcessing,
             enableDirectVideoProcessing = enableDirectVideoProcessing,
             chatId = chatId
@@ -763,10 +761,9 @@ class MessageProcessingDelegate(
                 ?: functionalConfigManager.getConfigIdForFunction(FunctionType.CHAT)
             val loadModelConfigStartTime = messageTimingNow()
             val currentModelConfig = modelConfigManager.getModelConfigFlow(configId).first()
-            val enableDirectImageProcessing = currentModelConfig.enableDirectImageProcessing
             val enableDirectAudioProcessing = currentModelConfig.enableDirectAudioProcessing
             val enableDirectVideoProcessing = currentModelConfig.enableDirectVideoProcessing
-            AppLogger.d(TAG, "直接图片处理状态: $enableDirectImageProcessing (配置ID: $configId)")
+            AppLogger.d(TAG, "图片附件按需读取 (配置ID: $configId)")
             logMessageTiming(
                 stage = "delegate.loadModelConfig",
                 startTimeMs = loadModelConfigStartTime,
@@ -783,7 +780,6 @@ class MessageProcessingDelegate(
                 workspacePath = workspacePath,
                 workspaceEnv = workspaceEnv,
                 replyToMessage = replyToMessage,
-                enableDirectImageProcessing = enableDirectImageProcessing,
                 enableDirectAudioProcessing = enableDirectAudioProcessing,
                 enableDirectVideoProcessing = enableDirectVideoProcessing,
                 chatId = chatId,
