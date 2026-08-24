@@ -1002,11 +1002,11 @@ fun AboutScreen(
                         icon = Icons.Default.Email,
                         iconTint = MaterialTheme.colorScheme.primary,
                         title = stringResource(id = R.string.contact),
-                        subtitleText = stringResource(id = R.string.about_contact),
+                        subtitleText = DistributionConfig.ISSUES_URL,
                         onClick = {
                             val intent = Intent(
                                 Intent.ACTION_VIEW,
-                                Uri.parse(DistributionConfig.UPSTREAM_PROJECT_URL)
+                                Uri.parse(DistributionConfig.ISSUES_URL)
                             ).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
