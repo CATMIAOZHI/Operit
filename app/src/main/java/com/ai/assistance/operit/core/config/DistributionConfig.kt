@@ -6,6 +6,7 @@ object DistributionConfig {
     const val NIGHTLY_REPOSITORY = "OperitNightlyRelease"
 
     const val PROJECT_URL = "https://github.com/CATMIAOZHI/Operit"
+    const val ISSUES_URL = "$PROJECT_URL/issues"
     const val UPSTREAM_PROJECT_URL = "https://github.com/AAswordman/Operit"
     const val HELP_URL = "https://github.com/CATMIAOZHI/Operit/tree/personal/main"
     const val SCRIPT_GUIDE_URL =
