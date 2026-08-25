@@ -2,6 +2,7 @@ package com.ai.assistance.operit.data.pricing
 
 import android.content.Context
 import android.util.AtomicFile
+import com.ai.assistance.operit.BuildConfig
 import com.ai.assistance.operit.data.collects.DefaultModelPricingCollect
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -48,11 +49,14 @@ class PricingCatalogRepository(
     private val context: Context,
     private val httpClient: OkHttpClient = defaultHttpClient(),
     private val nowMillis: () -> Long = { System.currentTimeMillis() },
-    private val remoteUrl: String = REMOTE_URL,
+    private val remoteUrl: String = defaultRemoteUrl(),
 ) {
     companion object {
-        const val REMOTE_URL =
+        const val MAIN_REMOTE_URL =
             "https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/main/" +
+                "app/src/main/assets/pricing/model_pricing_v1.json"
+        const val DEV_REMOTE_URL =
+            "https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/dev/" +
                 "app/src/main/assets/pricing/model_pricing_v1.json"
         const val TTL_MILLIS = 24L * 60L * 60L * 1000L
         const val MAX_RESPONSE_BYTES = 1024 * 1024
@@ -66,6 +70,12 @@ class PricingCatalogRepository(
             .writeTimeout(10, TimeUnit.SECONDS)
             .callTimeout(10, TimeUnit.SECONDS)
             .build()
+
+        internal fun remoteUrlFor(personalDev: Boolean): String =
+            if (personalDev) DEV_REMOTE_URL else MAIN_REMOTE_URL
+
+        private fun defaultRemoteUrl(): String =
+            remoteUrlFor(BuildConfig.PERSONAL_DEV_UPDATE_CHANNEL)
     }
 
     private val lock = Mutex()
