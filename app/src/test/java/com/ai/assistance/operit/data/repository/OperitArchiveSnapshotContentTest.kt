@@ -16,9 +16,11 @@ class OperitArchiveSnapshotContentTest {
             val variantContent = "v".repeat(65_534) + "🙂\u0000variant-tail"
             insertContent(connection, 1L, messageContent)
             insertContent(connection, 2L, variantContent)
+            insertContent(connection, 3L, "")
 
             assertEquals(messageContent, readContent(connection, 1L))
             assertEquals(variantContent, readContent(connection, 2L))
+            assertEquals("", readContent(connection, 3L))
         }
     }
 

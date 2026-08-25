@@ -115,6 +115,43 @@ class ChatContentDaoTest {
         )
     }
 
+    @Test
+    fun `empty message and variant content remain readable`() = runBlocking {
+        val chatId = "empty-content-chat"
+        val timestamp = 9012L
+
+        database.chatDao().insertChat(ChatEntity(id = chatId, title = "Empty content"))
+        database.messageDao().insertMessage(
+            MessageEntity(
+                chatId = chatId,
+                sender = "ai",
+                content = "",
+                timestamp = timestamp,
+                orderIndex = 0,
+            )
+        )
+        database.messageVariantDao().insertVariant(
+            MessageVariantEntity(
+                chatId = chatId,
+                messageTimestamp = timestamp,
+                variantIndex = 1,
+                content = "",
+            )
+        )
+
+        val contentDao = database.chatContentDao()
+        assertEquals("", contentDao.getMessagesForChat(chatId).single().content)
+        assertEquals("", contentDao.getMessageByTimestamp(chatId, timestamp)?.content)
+        assertEquals(
+            "",
+            contentDao.getVariantsForMessages(chatId, listOf(timestamp)).single().content,
+        )
+        assertEquals(
+            "",
+            contentDao.getVariantForMessage(chatId, timestamp, 1)?.content,
+        )
+    }
+
     private fun buildLargeContent(label: String): String =
         buildString {
             append("$label-start|")

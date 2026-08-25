@@ -34,7 +34,10 @@ private const val MESSAGE_CONTENT_ROW_QUERY =
         completedAt,
         displayMode,
         isFavorite,
-        SUBSTR(CAST(content AS BLOB), 1, $CONTENT_CHUNK_BYTE_COUNT) AS contentChunkBytes,
+        COALESCE(
+            SUBSTR(CAST(content AS BLOB), 1, $CONTENT_CHUNK_BYTE_COUNT),
+            X''
+        ) AS contentChunkBytes,
         LENGTH(CAST(content AS BLOB)) AS contentByteCount
     FROM messages
     """
@@ -57,7 +60,10 @@ private const val MESSAGE_VARIANT_CONTENT_ROW_QUERY =
         outputDurationMs,
         waitDurationMs,
         completedAt,
-        SUBSTR(CAST(content AS BLOB), 1, $CONTENT_CHUNK_BYTE_COUNT) AS contentChunkBytes,
+        COALESCE(
+            SUBSTR(CAST(content AS BLOB), 1, $CONTENT_CHUNK_BYTE_COUNT),
+            X''
+        ) AS contentChunkBytes,
         LENGTH(CAST(content AS BLOB)) AS contentByteCount
     FROM message_variants
     """
