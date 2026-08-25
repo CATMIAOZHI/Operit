@@ -401,6 +401,13 @@
             </intent-filter>
         </receiver>
 
+        <provider
+            android:name=".features.reading.ReadingCompanionAnnotationProvider"
+            android:authorities="${applicationId}.readingCompanionAnnotations"
+            android:enabled="true"
+            android:exported="true"
+            tools:ignore="ExportedContentProvider" />
+
         <service
             android:name=".services.UIDebuggerService"
             android:enabled="true"

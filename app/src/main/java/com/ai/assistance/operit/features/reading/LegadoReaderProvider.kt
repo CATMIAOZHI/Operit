@@ -133,6 +133,51 @@ class LegadoReaderProvider(
         )
     }
 
+    override suspend fun getAnnotationChapterContent(
+        bookId: String,
+        chapterIndex: Int,
+    ): AnnotationChapterContent = withContext(Dispatchers.IO) {
+        val data = query(
+            path = "book/annotationContent/query",
+            parameters = mapOf(
+                "url" to bookId,
+                "index" to chapterIndex.toString(),
+            ),
+        ) as? JSONObject ?: throw invalidResponse("Legado AI 段评章节响应不是对象")
+        if (
+            data.optString("bookUrl") != bookId ||
+            data.optInt("chapterIndex", -1) != chapterIndex
+        ) {
+            throw invalidResponse("Legado AI 段评章节身份不一致")
+        }
+        val contractHash = data.optString("contractHash").takeIf(String::isNotBlank)
+            ?: throw invalidResponse("Legado AI 段评章节缺少段落契约")
+        val paragraphArray = data.optJSONArray("paragraphs")
+            ?: throw invalidResponse("Legado AI 段评章节缺少段落")
+        val paragraphs = buildList {
+            repeat(paragraphArray.length()) { index ->
+                val paragraph = paragraphArray.optJSONObject(index)
+                    ?: throw invalidResponse("Legado AI 段评段落格式错误")
+                val reviewId = paragraph.optInt("reviewId", -1)
+                if (reviewId != index + 1) {
+                    throw invalidResponse("Legado AI 段评段落编号不连续")
+                }
+                add(paragraph.optString("text"))
+            }
+        }
+        if (paragraphs.isEmpty()) {
+            throw invalidResponse("Legado AI 段评章节正文为空")
+        }
+        AnnotationChapterContent(
+            bookId = bookId,
+            chapterIndex = chapterIndex,
+            chapterTitle = data.optString("chapterTitle"),
+            content = paragraphs.joinToString("\n"),
+            contractHash = contractHash,
+            capturedAt = data.optLong("capturedAt", System.currentTimeMillis()),
+        )
+    }
+
     private fun query(
         path: String,
         parameters: Map<String, String> = emptyMap(),

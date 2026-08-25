@@ -592,6 +592,7 @@ class ReadingCompanionService private constructor(
     companion object {
         const val TOOLPKG_ID = "com.operit.reading_companion"
         const val SUBPACKAGE_NAME = "reading_companion"
+        const val AUTO_COMMENTARY_SUBPACKAGE_NAME = "reading_companion_auto_commentary"
         private const val INDEX_WORK_NAME = "reading_companion_incremental_index"
         private const val SEARCH_MODEL_STEP_TIMEOUT_MS = 8_000L
 

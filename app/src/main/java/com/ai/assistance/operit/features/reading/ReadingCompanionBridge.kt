@@ -27,7 +27,10 @@ object ReadingCompanionBridge {
         runtime: ToolExecutionManager.ToolRuntimeContext?,
     ): String {
         return try {
-            require(callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME) {
+            require(
+                callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME ||
+                    callerPackageName == ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME
+            ) {
                 "阅读伴侣原生桥仅允许对应工具包调用"
             }
             val packageManager = PackageManager.getInstance(
@@ -36,7 +39,7 @@ object ReadingCompanionBridge {
             )
             require(
                 packageManager.isPackageEnabled(ReadingCompanionService.TOOLPKG_ID) &&
-                    packageManager.isPackageEnabled(ReadingCompanionService.SUBPACKAGE_NAME)
+                    packageManager.isPackageEnabled(callerPackageName)
             ) { "AI 阅读伴侣工具包当前未启用" }
             val parameters = parametersJson
                 .takeIf(String::isNotBlank)
@@ -85,6 +88,17 @@ object ReadingCompanionBridge {
                         content = parameters.optString("content"),
                         chapterIndex = parameters.optNullableInt("chapter_index"),
                     )
+                    "auto_commentary_status" ->
+                        ReadingCompanionAutoCommentary.getInstance(context).status()
+                    "regenerate_next_chapter_comments" -> {
+                        require(
+                            callerPackageName ==
+                                ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME
+                        ) { "该操作仅允许自动段评子包调用" }
+                        ReadingCompanionAutoCommentary.getInstance(context)
+                            .generateNextChapter(force = true)
+                            .toJson()
+                    }
                     else -> throw IllegalArgumentException("未知的伴读操作：$action")
                 }
             }
@@ -142,6 +156,14 @@ object ReadingCompanionBridge {
             "backgroundWorkScheduled",
             remainingCompletedChapters > 0 || remainingKnowledgeChapters > 0,
         )
+    }
+
+    private fun AutoCommentaryGenerationResult.toJson(): JSONObject = JSONObject().apply {
+        put("bookId", bookId)
+        put("chapterIndex", chapterIndex)
+        put("chapterNumber", chapterIndex?.plus(1))
+        put("status", status)
+        put("commentCount", commentCount)
     }
 
     private fun JSONObject.optNullableInt(name: String): Int? =
