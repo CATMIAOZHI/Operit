@@ -57,6 +57,11 @@ object ReadingCompanionBridge {
                     "get_current_book" -> service.currentBook().toJson()
                     "get_context" -> service.currentContext(
                         parameters.optInt("max_characters", 2600),
+                        runtime?.callerCardId,
+                    )
+                    "get_recent_comments" -> service.recentCompanionComments(
+                        limit = parameters.optInt("limit", 20).coerceIn(1, 50),
+                        callerRoleCardId = runtime?.callerCardId,
                     )
                     "search" -> service.search(
                         parameters.optString("query").trim(),
@@ -90,13 +95,21 @@ object ReadingCompanionBridge {
                     )
                     "auto_commentary_status" ->
                         ReadingCompanionAutoCommentary.getInstance(context).status()
+                    "auto_commentary_history" ->
+                        ReadingCompanionAutoCommentary.getInstance(context).history(
+                            parameters.optInt("limit", 10).coerceIn(1, 50),
+                        )
                     "regenerate_next_chapter_comments" -> {
                         require(
                             callerPackageName ==
                                 ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME
                         ) { "该操作仅允许自动段评子包调用" }
                         ReadingCompanionAutoCommentary.getInstance(context)
-                            .generateNextChapter(force = true)
+                            .generateNextChapter(
+                                force = true,
+                                runtime = runtime,
+                                trigger = ReadingCompanionAutoCommentary.TRIGGER_MANUAL,
+                            )
                             .toJson()
                     }
                     else -> throw IllegalArgumentException("未知的伴读操作：$action")
@@ -114,7 +127,7 @@ object ReadingCompanionBridge {
         } catch (error: Throwable) {
             AppLogger.e(TAG, "Reading companion bridge failed: $action", error)
             val message = when (error) {
-                is ReaderProviderException,
+                is ReaderProviderException -> safeReadingCompanionError(error)
                 is IllegalArgumentException,
                 is IllegalStateException -> error.message.orEmpty()
                 else -> "伴读操作失败，请确认 Legado 已安装并打开过目标书籍"
@@ -159,11 +172,24 @@ object ReadingCompanionBridge {
     }
 
     private fun AutoCommentaryGenerationResult.toJson(): JSONObject = JSONObject().apply {
-        put("bookId", bookId)
         put("chapterIndex", chapterIndex)
         put("chapterNumber", chapterIndex?.plus(1))
         put("status", status)
         put("commentCount", commentCount)
+        put("runId", runId)
+        execution?.let { model ->
+            put(
+                "execution",
+                JSONObject()
+                    .put("roleCardId", model.roleCardId)
+                    .put("roleCardName", model.roleCardName)
+                    .put("modelConfigId", model.configId)
+                    .put("modelConfigName", model.configName)
+                    .put("modelIndex", model.modelIndex)
+                    .put("provider", model.provider)
+                    .put("model", model.model),
+            )
+        }
     }
 
     private fun JSONObject.optNullableInt(name: String): Int? =

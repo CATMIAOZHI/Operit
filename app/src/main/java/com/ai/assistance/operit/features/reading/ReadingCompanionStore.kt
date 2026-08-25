@@ -64,6 +64,10 @@ data class AutoCommentChapter(
     val chapterIndex: Int,
     val chapterTitle: String,
     val contentHash: String,
+    val roleCardId: String?,
+    val roleCardName: String?,
+    val generationRunId: Long?,
+    val generationPolicyVersion: Int,
     val status: String,
     val updatedAt: Long,
 )
@@ -75,8 +79,48 @@ data class AutoCommentRecord(
     val paragraphIndex: Int,
     val text: String,
     val kind: String,
+    val roleCardId: String? = null,
+    val roleCardName: String? = null,
     val evidenceJson: String,
     val createdAt: Long = 0,
+)
+
+data class AutoCommentPersona(
+    val bookId: String,
+    val roleCardId: String,
+    val roleCardName: String,
+    val updatedAt: Long,
+)
+
+enum class AutoCommentGenerationClaimStatus {
+    CLAIMED,
+    CACHED,
+    ALREADY_GENERATING,
+}
+
+data class AutoCommentGenerationClaim(
+    val status: AutoCommentGenerationClaimStatus,
+    val commentCount: Int = 0,
+)
+
+data class AutoCommentRun(
+    val id: Long,
+    val bookId: String?,
+    val chapterIndex: Int?,
+    val chapterTitle: String?,
+    val trigger: String,
+    val status: String,
+    val roleCardId: String?,
+    val roleCardName: String?,
+    val modelConfigId: String?,
+    val modelConfigName: String?,
+    val modelIndex: Int?,
+    val provider: String?,
+    val model: String?,
+    val commentCount: Int,
+    val errorMessage: String?,
+    val startedAt: Long,
+    val finishedAt: Long?,
 )
 
 internal fun ReadingSearchHit.matchesCharacterIdentity(query: String): Boolean =
@@ -227,6 +271,45 @@ class ReadingCompanionStore(context: Context) :
         if (oldVersion < 3) {
             createAutoCommentTables(db)
         }
+        if (oldVersion < 4) {
+            createAutoCommentRunTable(db)
+        } else if (oldVersion < 5) {
+            migrateAutoCommentRunTableToWorkerAttempts(db)
+        }
+        if (oldVersion in 3..5) {
+            db.execSQL("ALTER TABLE auto_comment_chapters ADD COLUMN role_card_id TEXT")
+            db.execSQL("ALTER TABLE auto_comment_chapters ADD COLUMN role_card_name TEXT")
+            db.execSQL("ALTER TABLE auto_comments ADD COLUMN role_card_id TEXT")
+            db.execSQL("ALTER TABLE auto_comments ADD COLUMN role_card_name TEXT")
+        }
+        if (oldVersion < 6) {
+            createAutoCommentPersonaTable(db)
+        }
+        if (oldVersion < 7) {
+            db.delete(
+                "auto_comments",
+                "role_card_id IS NULL OR TRIM(role_card_id) = '' OR " +
+                    "role_card_name IS NULL OR TRIM(role_card_name) = ''",
+                null,
+            )
+            db.delete(
+                "auto_comment_chapters",
+                "role_card_id IS NULL OR TRIM(role_card_id) = '' OR " +
+                    "role_card_name IS NULL OR TRIM(role_card_name) = ''",
+                null,
+            )
+        }
+        if (oldVersion in 3..7) {
+            db.execSQL(
+                "ALTER TABLE auto_comment_chapters ADD COLUMN generation_run_id INTEGER"
+            )
+        }
+        if (oldVersion in 3..8) {
+            db.execSQL(
+                "ALTER TABLE auto_comment_chapters " +
+                    "ADD COLUMN generation_policy_version INTEGER NOT NULL DEFAULT 1"
+            )
+        }
     }
 
     private fun createCoreTables(db: SQLiteDatabase) {
@@ -351,6 +434,10 @@ class ReadingCompanionStore(context: Context) :
                 chapter_index INTEGER NOT NULL,
                 chapter_title TEXT NOT NULL,
                 content_hash TEXT NOT NULL,
+                role_card_id TEXT,
+                role_card_name TEXT,
+                generation_run_id INTEGER,
+                generation_policy_version INTEGER NOT NULL,
                 status TEXT NOT NULL,
                 updated_at INTEGER NOT NULL,
                 PRIMARY KEY (book_id, chapter_index),
@@ -367,6 +454,8 @@ class ReadingCompanionStore(context: Context) :
                 paragraph_index INTEGER NOT NULL,
                 comment_text TEXT NOT NULL,
                 comment_kind TEXT NOT NULL,
+                role_card_id TEXT,
+                role_card_name TEXT,
                 evidence_json TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 FOREIGN KEY (book_id, chapter_index)
@@ -381,6 +470,76 @@ class ReadingCompanionStore(context: Context) :
             ON auto_comments(book_id, chapter_index, paragraph_index)
             """.trimIndent()
         )
+        createAutoCommentRunTable(db)
+        createAutoCommentPersonaTable(db)
+    }
+
+    private fun createAutoCommentPersonaTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS auto_comment_personas (
+                book_id TEXT PRIMARY KEY NOT NULL,
+                role_card_id TEXT NOT NULL,
+                role_card_name TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+    }
+
+    private fun createAutoCommentRunTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS auto_comment_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id TEXT,
+                chapter_index INTEGER,
+                chapter_title TEXT,
+                trigger_source TEXT NOT NULL,
+                status TEXT NOT NULL,
+                role_card_id TEXT,
+                role_card_name TEXT,
+                model_config_id TEXT,
+                model_config_name TEXT,
+                model_index INTEGER,
+                provider TEXT,
+                model TEXT,
+                comment_count INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                started_at INTEGER NOT NULL,
+                finished_at INTEGER,
+                FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS auto_comment_runs_started
+            ON auto_comment_runs(started_at DESC)
+            """.trimIndent()
+        )
+    }
+
+    private fun migrateAutoCommentRunTableToWorkerAttempts(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE auto_comment_runs RENAME TO auto_comment_runs_v4")
+        db.execSQL("DROP INDEX IF EXISTS auto_comment_runs_started")
+        createAutoCommentRunTable(db)
+        db.execSQL(
+            """
+            INSERT INTO auto_comment_runs (
+                id, book_id, chapter_index, chapter_title, trigger_source, status,
+                role_card_id, role_card_name, model_config_id, model_config_name,
+                model_index, provider, model, comment_count, error_message, started_at, finished_at
+            )
+            SELECT
+                id, book_id, chapter_index, chapter_title, trigger_source, status,
+                role_card_id, role_card_name, model_config_id, model_config_name,
+                model_index, provider, model, comment_count, error_message, started_at, finished_at
+            FROM auto_comment_runs_v4
+            """.trimIndent()
+        )
+        db.execSQL("DROP TABLE auto_comment_runs_v4")
     }
 
     @Synchronized
@@ -517,14 +676,25 @@ class ReadingCompanionStore(context: Context) :
     fun getAutoCommentChapter(
         bookId: String,
         chapterIndex: Int,
+    ): AutoCommentChapter? =
+        getAutoCommentChapter(readableDatabase, bookId, chapterIndex)
+
+    private fun getAutoCommentChapter(
+        db: SQLiteDatabase,
+        bookId: String,
+        chapterIndex: Int,
     ): AutoCommentChapter? {
-        readableDatabase.query(
+        db.query(
             "auto_comment_chapters",
             arrayOf(
                 "book_id",
                 "chapter_index",
                 "chapter_title",
                 "content_hash",
+                "role_card_id",
+                "role_card_name",
+                "generation_run_id",
+                "generation_policy_version",
                 "status",
                 "updated_at",
             ),
@@ -541,52 +711,66 @@ class ReadingCompanionStore(context: Context) :
                 chapterIndex = cursor.getInt(1),
                 chapterTitle = cursor.getString(2),
                 contentHash = cursor.getString(3),
-                status = cursor.getString(4),
-                updatedAt = cursor.getLong(5),
+                roleCardId = if (cursor.isNull(4)) null else cursor.getString(4),
+                roleCardName = if (cursor.isNull(5)) null else cursor.getString(5),
+                generationRunId = if (cursor.isNull(6)) null else cursor.getLong(6),
+                generationPolicyVersion = cursor.getInt(7),
+                status = cursor.getString(8),
+                updatedAt = cursor.getLong(9),
             )
         }
     }
 
     @Synchronized
-    fun markAutoCommentGeneration(
+    fun tryClaimAutoCommentGeneration(
         bookId: String,
         chapterIndex: Int,
         chapterTitle: String,
         contentHash: String,
-        status: String,
-    ) {
-        writableDatabase.insertWithOnConflict(
-            "auto_comment_chapters",
-            null,
-            ContentValues().apply {
-                put("book_id", bookId)
-                put("chapter_index", chapterIndex)
-                put("chapter_title", chapterTitle)
-                put("content_hash", contentHash)
-                put("status", status)
-                put("updated_at", System.currentTimeMillis())
-            },
-            SQLiteDatabase.CONFLICT_REPLACE,
-        )
-    }
-
-    @Synchronized
-    fun replaceAutoComments(
-        bookId: String,
-        chapterIndex: Int,
-        chapterTitle: String,
-        contentHash: String,
-        comments: List<AutoCommentRecord>,
-    ) {
+        roleCardId: String,
+        roleCardName: String,
+        generationRunId: Long,
+        force: Boolean,
+        staleAfterMs: Long,
+    ): AutoCommentGenerationClaim {
         val db = writableDatabase
-        val createdAt = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
-            db.delete(
-                "auto_comments",
-                "book_id = ? AND chapter_index = ?",
-                arrayOf(bookId, chapterIndex.toString()),
-            )
+            val existing = getAutoCommentChapter(db, bookId, chapterIndex)
+            val sameIdentity =
+                existing?.contentHash == contentHash &&
+                    existing.roleCardId == roleCardId &&
+                    existing.roleCardName == roleCardName &&
+                    existing.generationPolicyVersion ==
+                        AutoCommentSupport.GENERATION_POLICY_VERSION
+            if (
+                sameIdentity &&
+                existing.status == AUTO_COMMENT_STATUS_GENERATING &&
+                now - existing.updatedAt < staleAfterMs
+            ) {
+                db.setTransactionSuccessful()
+                return AutoCommentGenerationClaim(
+                    status = AutoCommentGenerationClaimStatus.ALREADY_GENERATING,
+                )
+            }
+            if (!force && sameIdentity && existing.status == AUTO_COMMENT_STATUS_READY) {
+                val commentCount = db.rawQuery(
+                    """
+                    SELECT COUNT(*)
+                    FROM auto_comments
+                    WHERE book_id = ? AND chapter_index = ?
+                    """.trimIndent(),
+                    arrayOf(bookId, chapterIndex.toString()),
+                ).use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getInt(0) else 0
+                }
+                db.setTransactionSuccessful()
+                return AutoCommentGenerationClaim(
+                    status = AutoCommentGenerationClaimStatus.CACHED,
+                    commentCount = commentCount,
+                )
+            }
             db.insertWithOnConflict(
                 "auto_comment_chapters",
                 null,
@@ -595,11 +779,183 @@ class ReadingCompanionStore(context: Context) :
                     put("chapter_index", chapterIndex)
                     put("chapter_title", chapterTitle)
                     put("content_hash", contentHash)
-                    put("status", AUTO_COMMENT_STATUS_READY)
-                    put("updated_at", createdAt)
+                    put("role_card_id", roleCardId)
+                    put("role_card_name", roleCardName)
+                    put("generation_run_id", generationRunId)
+                    put(
+                        "generation_policy_version",
+                        AutoCommentSupport.GENERATION_POLICY_VERSION,
+                    )
+                    put("status", AUTO_COMMENT_STATUS_GENERATING)
+                    put("updated_at", now)
                 },
                 SQLiteDatabase.CONFLICT_REPLACE,
             )
+            db.setTransactionSuccessful()
+            return AutoCommentGenerationClaim(
+                status = AutoCommentGenerationClaimStatus.CLAIMED,
+            )
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    @Synchronized
+    fun markAutoCommentGenerationFailedIfOwned(
+        bookId: String,
+        chapterIndex: Int,
+        generationRunId: Long,
+    ): Boolean {
+        return writableDatabase.update(
+            "auto_comment_chapters",
+            ContentValues().apply {
+                put("status", AUTO_COMMENT_STATUS_FAILED)
+                put("updated_at", System.currentTimeMillis())
+            },
+            "book_id = ? AND chapter_index = ? AND generation_run_id = ? AND status = ?",
+            arrayOf(
+                bookId,
+                chapterIndex.toString(),
+                generationRunId.toString(),
+                AUTO_COMMENT_STATUS_GENERATING,
+            ),
+        ) > 0
+    }
+
+    @Synchronized
+    fun setAutoCommentPersona(
+        bookId: String,
+        roleCardId: String,
+        roleCardName: String,
+    ): AutoCommentPersona {
+        val normalizedBookId = bookId.trim()
+        val normalizedRoleCardId = roleCardId.trim()
+        val normalizedRoleCardName = roleCardName.trim()
+        require(normalizedBookId.isNotBlank()) { "bookId is required" }
+        require(normalizedRoleCardId.isNotBlank()) { "roleCardId is required" }
+        require(normalizedRoleCardName.isNotBlank()) { "roleCardName is required" }
+        val updatedAt = System.currentTimeMillis()
+        writableDatabase.insertWithOnConflict(
+            "auto_comment_personas",
+            null,
+            ContentValues().apply {
+                put("book_id", normalizedBookId)
+                put("role_card_id", normalizedRoleCardId)
+                put("role_card_name", normalizedRoleCardName)
+                put("updated_at", updatedAt)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+        return AutoCommentPersona(
+            bookId = normalizedBookId,
+            roleCardId = normalizedRoleCardId,
+            roleCardName = normalizedRoleCardName,
+            updatedAt = updatedAt,
+        )
+    }
+
+    @Synchronized
+    fun getAutoCommentPersona(bookId: String): AutoCommentPersona? {
+        readableDatabase.query(
+            "auto_comment_personas",
+            arrayOf("book_id", "role_card_id", "role_card_name", "updated_at"),
+            "book_id = ?",
+            arrayOf(bookId),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            return AutoCommentPersona(
+                bookId = cursor.getString(0),
+                roleCardId = cursor.getString(1),
+                roleCardName = cursor.getString(2),
+                updatedAt = cursor.getLong(3),
+            )
+        }
+    }
+
+    @Synchronized
+    fun updateAutoCommentPersonaNameIfRoleMatches(
+        bookId: String,
+        roleCardId: String,
+        roleCardName: String,
+    ): Boolean {
+        return writableDatabase.update(
+            "auto_comment_personas",
+            ContentValues().apply {
+                put("role_card_name", roleCardName)
+                put("updated_at", System.currentTimeMillis())
+            },
+            "book_id = ? AND role_card_id = ?",
+            arrayOf(bookId, roleCardId),
+        ) > 0
+    }
+
+    @Synchronized
+    fun replaceAutoComments(
+        bookId: String,
+        chapterIndex: Int,
+        chapterTitle: String,
+        contentHash: String,
+        roleCardId: String,
+        roleCardName: String,
+        generationRunId: Long,
+        comments: List<AutoCommentRecord>,
+    ): Boolean {
+        val db = writableDatabase
+        val createdAt = System.currentTimeMillis()
+        var replaced = false
+        db.beginTransaction()
+        try {
+            val ownsGeneration = db.query(
+                "auto_comment_chapters",
+                arrayOf("generation_run_id"),
+                "book_id = ? AND chapter_index = ? AND generation_run_id = ? AND status = ?",
+                arrayOf(
+                    bookId,
+                    chapterIndex.toString(),
+                    generationRunId.toString(),
+                    AUTO_COMMENT_STATUS_GENERATING,
+                ),
+                null,
+                null,
+                null,
+                "1",
+            ).use { cursor -> cursor.moveToFirst() }
+            if (!ownsGeneration) {
+                db.setTransactionSuccessful()
+                return false
+            }
+            db.delete(
+                "auto_comments",
+                "book_id = ? AND chapter_index = ?",
+                arrayOf(bookId, chapterIndex.toString()),
+            )
+            val updated = db.update(
+                "auto_comment_chapters",
+                ContentValues().apply {
+                    put("chapter_title", chapterTitle)
+                    put("content_hash", contentHash)
+                    put("role_card_id", roleCardId)
+                    put("role_card_name", roleCardName)
+                    put("generation_run_id", generationRunId)
+                    put(
+                        "generation_policy_version",
+                        AutoCommentSupport.GENERATION_POLICY_VERSION,
+                    )
+                    put("status", AUTO_COMMENT_STATUS_READY)
+                    put("updated_at", createdAt)
+                },
+                "book_id = ? AND chapter_index = ? AND generation_run_id = ?",
+                arrayOf(
+                    bookId,
+                    chapterIndex.toString(),
+                    generationRunId.toString(),
+                ),
+            )
+            check(updated == 1) { "段评生成所有权已变化" }
             comments.forEach { comment ->
                 db.insertOrThrow(
                     "auto_comments",
@@ -610,15 +966,21 @@ class ReadingCompanionStore(context: Context) :
                         put("paragraph_index", comment.paragraphIndex)
                         put("comment_text", comment.text)
                         put("comment_kind", comment.kind)
+                        if (comment.roleCardId == null) putNull("role_card_id")
+                        else put("role_card_id", comment.roleCardId)
+                        if (comment.roleCardName == null) putNull("role_card_name")
+                        else put("role_card_name", comment.roleCardName)
                         put("evidence_json", comment.evidenceJson)
                         put("created_at", createdAt)
                     },
                 )
             }
+            replaced = true
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
+        return replaced
     }
 
     @Synchronized
@@ -646,6 +1008,8 @@ class ReadingCompanionStore(context: Context) :
                 "paragraph_index",
                 "comment_text",
                 "comment_kind",
+                "role_card_id",
+                "role_card_name",
                 "evidence_json",
                 "created_at",
             ),
@@ -663,12 +1027,264 @@ class ReadingCompanionStore(context: Context) :
                     paragraphIndex = cursor.getInt(3),
                     text = cursor.getString(4),
                     kind = cursor.getString(5),
-                    evidenceJson = cursor.getString(6),
-                    createdAt = cursor.getLong(7),
+                    roleCardId = if (cursor.isNull(6)) null else cursor.getString(6),
+                    roleCardName = if (cursor.isNull(7)) null else cursor.getString(7),
+                    evidenceJson = cursor.getString(8),
+                    createdAt = cursor.getLong(9),
                 )
             }
         }
         return result
+    }
+
+    @Synchronized
+    fun getRecentUnlockedAutoComments(
+        bookId: String,
+        currentChapterIndex: Int,
+        currentUnlockedParagraph: Int,
+        roleCardId: String?,
+        limit: Int,
+    ): List<AutoCommentRecord> {
+        val normalizedRoleCardId = roleCardId?.trim()?.takeIf(String::isNotBlank)
+            ?: return emptyList()
+        val selection = buildString {
+            append(
+                "auto_comments.book_id = ? AND " +
+                    "(auto_comments.chapter_index < ? OR " +
+                    "(auto_comments.chapter_index = ? AND auto_comments.paragraph_index <= ?))"
+            )
+            append(" AND auto_comments.role_card_id = ?")
+            append(
+                " AND EXISTS (" +
+                    "SELECT 1 FROM auto_comment_chapters chapter " +
+                    "WHERE chapter.book_id = auto_comments.book_id " +
+                    "AND chapter.chapter_index = auto_comments.chapter_index " +
+                    "AND chapter.status = ? " +
+                    "AND chapter.generation_policy_version = ?)"
+            )
+        }
+        val selectionArgs = buildList {
+            add(bookId)
+            add(currentChapterIndex.toString())
+            add(currentChapterIndex.toString())
+            add(currentUnlockedParagraph.coerceAtLeast(0).toString())
+            add(normalizedRoleCardId)
+            add(AUTO_COMMENT_STATUS_READY)
+            add(AutoCommentSupport.GENERATION_POLICY_VERSION.toString())
+        }.toTypedArray()
+        val result = mutableListOf<AutoCommentRecord>()
+        readableDatabase.query(
+            "auto_comments",
+            arrayOf(
+                "id",
+                "book_id",
+                "chapter_index",
+                "paragraph_index",
+                "comment_text",
+                "comment_kind",
+                "role_card_id",
+                "role_card_name",
+                "evidence_json",
+                "created_at",
+            ),
+            selection,
+            selectionArgs,
+            null,
+            null,
+            "chapter_index DESC, paragraph_index DESC, id DESC",
+            limit.coerceIn(1, 50).toString(),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += AutoCommentRecord(
+                    id = cursor.getLong(0),
+                    bookId = cursor.getString(1),
+                    chapterIndex = cursor.getInt(2),
+                    paragraphIndex = cursor.getInt(3),
+                    text = cursor.getString(4),
+                    kind = cursor.getString(5),
+                    roleCardId = if (cursor.isNull(6)) null else cursor.getString(6),
+                    roleCardName = if (cursor.isNull(7)) null else cursor.getString(7),
+                    evidenceJson = cursor.getString(8),
+                    createdAt = cursor.getLong(9),
+                )
+            }
+        }
+        return result
+    }
+
+    @Synchronized
+    fun startAutoCommentRun(
+        trigger: String,
+    ): Long {
+        return writableDatabase.insertOrThrow(
+            "auto_comment_runs",
+            null,
+            ContentValues().apply {
+                put("trigger_source", trigger)
+                put("status", AUTO_COMMENT_RUN_STATUS_GENERATING)
+                put("comment_count", 0)
+                put("started_at", System.currentTimeMillis())
+            },
+        )
+    }
+
+    @Synchronized
+    fun updateAutoCommentRunTarget(
+        runId: Long,
+        bookId: String,
+        chapterIndex: Int? = null,
+        chapterTitle: String? = null,
+    ) {
+        writableDatabase.update(
+            "auto_comment_runs",
+            ContentValues().apply {
+                put("book_id", bookId)
+                if (chapterIndex == null) putNull("chapter_index")
+                else put("chapter_index", chapterIndex)
+                if (chapterTitle == null) putNull("chapter_title")
+                else put("chapter_title", chapterTitle)
+            },
+            "id = ?",
+            arrayOf(runId.toString()),
+        )
+    }
+
+    @Synchronized
+    fun updateAutoCommentRunExecution(
+        runId: Long,
+        execution: AutoCommentModelExecution,
+    ) {
+        writableDatabase.update(
+            "auto_comment_runs",
+            ContentValues().apply {
+                put("role_card_id", execution.roleCardId)
+                put("role_card_name", execution.roleCardName)
+                put("model_config_id", execution.configId)
+                put("model_config_name", execution.configName)
+                put("model_index", execution.modelIndex)
+                put("provider", execution.provider)
+                put("model", execution.model)
+            },
+            "id = ?",
+            arrayOf(runId.toString()),
+        )
+    }
+
+    @Synchronized
+    fun finishAutoCommentRun(
+        runId: Long,
+        status: String,
+        commentCount: Int = 0,
+        errorMessage: String? = null,
+    ) {
+        val db = writableDatabase
+        db.update(
+            "auto_comment_runs",
+            ContentValues().apply {
+                put("status", status)
+                put("comment_count", commentCount.coerceAtLeast(0))
+                if (errorMessage == null) putNull("error_message")
+                else put("error_message", errorMessage)
+                put("finished_at", System.currentTimeMillis())
+            },
+            "id = ?",
+            arrayOf(runId.toString()),
+        )
+        pruneAutoCommentRuns(db)
+    }
+
+    @Synchronized
+    fun getRecentAutoCommentRuns(limit: Int = 10): List<AutoCommentRun> {
+        val result = mutableListOf<AutoCommentRun>()
+        readableDatabase.query(
+            "auto_comment_runs",
+            arrayOf(
+                "id",
+                "book_id",
+                "chapter_index",
+                "chapter_title",
+                "trigger_source",
+                "status",
+                "role_card_id",
+                "role_card_name",
+                "model_config_id",
+                "model_config_name",
+                "model_index",
+                "provider",
+                "model",
+                "comment_count",
+                "error_message",
+                "started_at",
+                "finished_at",
+            ),
+            null,
+            null,
+            null,
+            null,
+            "started_at DESC, id DESC",
+            limit.coerceIn(1, 50).toString(),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += AutoCommentRun(
+                    id = cursor.getLong(0),
+                    bookId = if (cursor.isNull(1)) null else cursor.getString(1),
+                    chapterIndex = if (cursor.isNull(2)) null else cursor.getInt(2),
+                    chapterTitle = if (cursor.isNull(3)) null else cursor.getString(3),
+                    trigger = cursor.getString(4),
+                    status = cursor.getString(5),
+                    roleCardId = if (cursor.isNull(6)) null else cursor.getString(6),
+                    roleCardName = if (cursor.isNull(7)) null else cursor.getString(7),
+                    modelConfigId = if (cursor.isNull(8)) null else cursor.getString(8),
+                    modelConfigName = if (cursor.isNull(9)) null else cursor.getString(9),
+                    modelIndex = if (cursor.isNull(10)) null else cursor.getInt(10),
+                    provider = if (cursor.isNull(11)) null else cursor.getString(11),
+                    model = if (cursor.isNull(12)) null else cursor.getString(12),
+                    commentCount = cursor.getInt(13),
+                    errorMessage = if (cursor.isNull(14)) null else cursor.getString(14),
+                    startedAt = cursor.getLong(15),
+                    finishedAt = if (cursor.isNull(16)) null else cursor.getLong(16),
+                )
+            }
+        }
+        return result
+    }
+
+    @Synchronized
+    fun interruptStaleAutoCommentRuns(staleBefore: Long): Int {
+        val db = writableDatabase
+        val updated = db.update(
+            "auto_comment_runs",
+            ContentValues().apply {
+                put("status", AUTO_COMMENT_RUN_STATUS_INTERRUPTED)
+                put("error_message", "interrupted")
+                put("finished_at", System.currentTimeMillis())
+            },
+            "status = ? AND started_at < ?",
+            arrayOf(
+                AUTO_COMMENT_RUN_STATUS_GENERATING,
+                staleBefore.toString(),
+            ),
+        )
+        pruneAutoCommentRuns(db)
+        return updated
+    }
+
+    private fun pruneAutoCommentRuns(db: SQLiteDatabase) {
+        db.delete(
+            "auto_comment_runs",
+            """
+            status != ? AND id NOT IN (
+                SELECT id
+                FROM auto_comment_runs
+                ORDER BY started_at DESC, id DESC
+                LIMIT ?
+            )
+            """.trimIndent(),
+            arrayOf(
+                AUTO_COMMENT_RUN_STATUS_GENERATING,
+                AUTO_COMMENT_RUN_RETENTION.toString(),
+            ),
+        )
     }
 
     @Synchronized
@@ -1310,10 +1926,17 @@ class ReadingCompanionStore(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "reading_companion.db"
-        private const val DATABASE_VERSION = 3
+        private const val DATABASE_VERSION = 9
         private const val SELECTED_BOOK_KEY = "selected_book_id"
         const val AUTO_COMMENT_STATUS_GENERATING = "generating"
         const val AUTO_COMMENT_STATUS_READY = "ready"
         const val AUTO_COMMENT_STATUS_FAILED = "failed"
+        const val AUTO_COMMENT_RUN_STATUS_GENERATING = "generating"
+        const val AUTO_COMMENT_RUN_STATUS_GENERATED = "generated"
+        const val AUTO_COMMENT_RUN_STATUS_FAILED = "failed"
+        const val AUTO_COMMENT_RUN_STATUS_CANCELLED = "cancelled"
+        const val AUTO_COMMENT_RUN_STATUS_SUPERSEDED = "superseded"
+        const val AUTO_COMMENT_RUN_STATUS_INTERRUPTED = "interrupted"
+        private const val AUTO_COMMENT_RUN_RETENTION = 50
     }
 }

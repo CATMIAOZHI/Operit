@@ -760,6 +760,18 @@ class ModelConfigManager(private val context: Context) {
      */
     suspend fun getModelParametersForConfig(configId: String): List<ModelParameter<*>> {
         val config = getModelConfigFlow(configId).first()
+        return getModelParametersForConfigSnapshot(config)
+    }
+
+    /**
+     * 从已经读取的配置快照构造完整模型参数列表。
+     *
+     * 调用方需要让服务、模型配置与请求参数严格对应时，应使用创建服务时的同一份快照，
+     * 避免再次读取 DataStore 后混入更新中的参数。
+     */
+    fun getModelParametersForConfigSnapshot(
+        config: ModelConfigData,
+    ): List<ModelParameter<*>> {
         val parameters = mutableListOf<ModelParameter<*>>()
 
         // 映射标准参数

@@ -855,6 +855,7 @@ internal fun TokenStatCategory.labelRes(): Int =
         TokenStatCategory.TITLE -> R.string.token_stats_category_title
         TokenStatCategory.MEMORY -> R.string.token_stats_category_memory
         TokenStatCategory.CHARACTER_GENERATION -> R.string.token_stats_category_character
+        TokenStatCategory.READING_COMPANION -> R.string.token_stats_category_reading_companion
         TokenStatCategory.CONNECTION_TEST -> R.string.token_stats_category_connection_test
         TokenStatCategory.OTHER -> R.string.token_stats_category_other
     }

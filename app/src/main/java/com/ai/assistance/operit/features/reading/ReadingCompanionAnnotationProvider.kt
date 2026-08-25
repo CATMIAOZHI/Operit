@@ -100,6 +100,7 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
             ?: return success(JSONObject().put("enabled", true).put("ready", false))
         if (
             chapter.status != ReadingCompanionStore.AUTO_COMMENT_STATUS_READY ||
+            chapter.generationPolicyVersion != AutoCommentSupport.GENERATION_POLICY_VERSION ||
             (expectedHash != null && expectedHash != chapter.contentHash)
         ) {
             return success(
@@ -110,6 +111,9 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
             )
         }
         val grouped = store.getAutoComments(bookId, chapterIndex)
+            .filter { comment ->
+                !comment.roleCardId.isNullOrBlank() && !comment.roleCardName.isNullOrBlank()
+            }
             .groupBy(AutoCommentRecord::paragraphIndex)
         return success(
             JSONObject()
@@ -141,11 +145,15 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
             ?: return success(JSONObject().put("ready", false).put("comments", JSONArray()))
         if (
             chapter.status != ReadingCompanionStore.AUTO_COMMENT_STATUS_READY ||
+            chapter.generationPolicyVersion != AutoCommentSupport.GENERATION_POLICY_VERSION ||
             (expectedHash != null && expectedHash != chapter.contentHash)
         ) {
             return success(JSONObject().put("ready", false).put("comments", JSONArray()))
         }
         val comments = store.getAutoComments(bookId, chapterIndex, paragraphIndex)
+            .filter { comment ->
+                !comment.roleCardId.isNullOrBlank() && !comment.roleCardName.isNullOrBlank()
+            }
         return success(
             JSONObject()
                 .put("ready", true)
@@ -156,7 +164,7 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
                             put(
                                 JSONObject()
                                     .put("id", comment.id)
-                                    .put("name", "AI 伴读")
+                                    .put("name", comment.roleCardName)
                                     .put("badges", JSONArray().put("AI"))
                                     .put("content", comment.text)
                                     .put("kind", comment.kind)

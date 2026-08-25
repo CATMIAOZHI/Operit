@@ -11,6 +11,7 @@ enum class TokenStatCategory {
     TITLE,
     MEMORY,
     CHARACTER_GENERATION,
+    READING_COMPANION,
     CONNECTION_TEST,
     OTHER;
 

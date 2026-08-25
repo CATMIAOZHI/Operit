@@ -233,6 +233,7 @@ outputTokens = 20L,
                 TokenStatCategory.TITLE,
                 TokenStatCategory.MEMORY,
                 TokenStatCategory.CHARACTER_GENERATION,
+                TokenStatCategory.READING_COMPANION,
                 TokenStatCategory.CONNECTION_TEST,
                 TokenStatCategory.OTHER,
             )

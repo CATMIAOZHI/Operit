@@ -3601,6 +3601,7 @@
     <string name="token_stats_category_title">标题</string>
     <string name="token_stats_category_memory">记忆</string>
     <string name="token_stats_category_character">角色生成</string>
+    <string name="token_stats_category_reading_companion">AI 阅读伴侣</string>
     <string name="token_stats_category_connection_test">连接测试</string>
     <string name="token_stats_category_other">其他</string>
     <string name="token_stats_status_completed">完成</string>

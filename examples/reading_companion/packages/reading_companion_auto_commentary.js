@@ -6,8 +6,8 @@
     "en": "AI Auto Commentary"
   },
   "description": {
-    "zh": "隔离预读下一章并预生成按段落解锁的真人式短评。未读正文和未解锁段评不会进入普通问答工具。",
-    "en": "Privately pre-generates reader-like comments for exactly one next chapter. Unread text and locked comments never enter ordinary chat tools."
+    "zh": "使用当前书籍所选角色卡，隔离读取下一章及最近最多 8 章、总计最多 4.8 万字的前情，生成少而精、按段落解锁的个性段评；Legado 将角色卡名字显示为作者。过程中会产生模型 Token 消耗，未读正文和未解锁段评不会进入伴读问答。",
+    "en": "Uses the selected per-book character card, the next chapter, and up to 8 recent chapters of private context (48,000 characters total) to pre-generate sparse in-character comments. Legado shows the card name as author. This spends model tokens, while unread text and locked comments stay out of companion chat."
   },
   "category": "AI Reading Companion",
   "enabledByDefault": false,
@@ -15,10 +15,28 @@
     {
       "name": "auto_commentary_status",
       "description": {
-        "zh": "查看自动段评是否启用及当前生成策略，不返回未读段评正文。",
-        "en": "Show whether auto commentary is enabled and its generation policy without exposing unread comments."
+        "zh": "查看自动段评是否启用、角色卡/模型选择策略及最近一次任务，不返回未读段评正文。",
+        "en": "Show whether auto commentary is enabled, its role/model policy, and the latest run without exposing unread comments."
       },
       "parameters": []
+    },
+    {
+      "name": "auto_commentary_history",
+      "description": {
+        "zh": "查看最近的后台段评执行历史，包括状态、脱敏失败原因、实际角色卡和模型；不返回书源地址、未读章名、正文或段评。",
+        "en": "Show recent commentary run history with status, sanitized error, actual role card, and model, without source URLs, unread titles, text, or comments."
+      },
+      "parameters": [
+        {
+          "name": "limit",
+          "description": {
+            "zh": "返回条数，1 到 50，默认 10。",
+            "en": "Number of runs to return, 1 to 50; defaults to 10."
+          },
+          "type": "number",
+          "required": false
+        }
+      ]
     },
     {
       "name": "regenerate_next_chapter_comments",
@@ -32,7 +50,7 @@
 }
 */
 
-function invokeNative(action) {
+function invokeNative(action, parameters = {}) {
   const root =
     typeof globalThis !== "undefined"
       ? globalThis
@@ -79,14 +97,14 @@ function invokeNative(action) {
       callId,
       callbackId,
       String(action || ""),
-      "{}",
+      JSON.stringify(parameters || {}),
     );
   });
 }
 
-async function run(action) {
+async function run(action, parameters = {}) {
   try {
-    complete({ success: true, data: await invokeNative(action) });
+    complete({ success: true, data: await invokeNative(action, parameters) });
   } catch (error) {
     complete({
       success: false,
@@ -96,5 +114,7 @@ async function run(action) {
 }
 
 exports.auto_commentary_status = () => run("auto_commentary_status");
+exports.auto_commentary_history = (params = {}) =>
+  run("auto_commentary_history", { limit: params.limit });
 exports.regenerate_next_chapter_comments = () =>
   run("regenerate_next_chapter_comments");

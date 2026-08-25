@@ -53,8 +53,8 @@
     {
       "name": "get_context",
       "description": {
-        "zh": "获取当前阅读位置之前的安全正文。用户想交流、吐槽“这段”或刚发生的剧情时使用。",
-        "en": "Get safe text immediately before the current reading position for reactions or discussion."
+        "zh": "获取当前阅读位置之前的安全正文，以及该角色已经写过且已解锁的当前章段评。用户想交流、吐槽“这段”或刚发生的剧情时使用。",
+        "en": "Get safe text before the current reading position plus this character's unlocked comments in the current chapter."
       },
       "parameters": [
         {
@@ -63,6 +63,22 @@
           "type": "number",
           "required": false,
           "default": 2600
+        }
+      ]
+    },
+    {
+      "name": "get_recent_comments",
+      "description": {
+        "zh": "读取当前角色自己已经写过、且用户已阅读解锁的近期段评。用户询问“你刚才怎么评价”“你之前写过什么段评”时使用。",
+        "en": "Read this character's own recent comments that the user has already unlocked by reading."
+      },
+      "parameters": [
+        {
+          "name": "limit",
+          "description": { "zh": "返回 1 到 50 条，默认 20", "en": "Return 1 to 50 comments; defaults to 20" },
+          "type": "number",
+          "required": false,
+          "default": 20
         }
       ]
     },
@@ -272,6 +288,7 @@ exports.list_books = (params) => run("list_books", params);
 exports.select_book = (params) => run("select_book", params);
 exports.get_current_book = (params) => run("get_current_book", params);
 exports.get_context = (params) => run("get_context", params);
+exports.get_recent_comments = (params) => run("get_recent_comments", params);
 exports.search = (params) => run("search", params);
 exports.get_chapter_summary = (params) => run("get_chapter_summary", params);
 exports.get_character = (params) => run("get_character", params);

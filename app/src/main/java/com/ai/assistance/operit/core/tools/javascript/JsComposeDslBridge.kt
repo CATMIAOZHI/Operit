@@ -682,6 +682,110 @@ internal fun buildComposeDslContextBridgeDefinition(): String {
                         ]);
                         return Promise.resolve();
                     },
+                    activateReadingCompanionChat: function(chatId) {
+                        var normalizedChatId = String(chatId || '').trim();
+                        if (!normalizedChatId) {
+                            return Promise.reject(createUserFacingError('chatId is required'));
+                        }
+                        var result = invokeNative(
+                            'activateReadingCompanionChat',
+                            [normalizedChatId]
+                        );
+                        if (result === undefined || result === null) {
+                            return Promise.reject(
+                                createUserFacingError(
+                                    'activateReadingCompanionChat is unavailable'
+                                )
+                            );
+                        }
+                        try {
+                            return Promise.resolve(
+                                unwrapNativeResult(
+                                    result,
+                                    'activateReadingCompanionChat failed'
+                                )
+                            );
+                        } catch (error) {
+                            return Promise.reject(error);
+                        }
+                    },
+                    getReadingCompanionCommentaryCharacter: function(bookId) {
+                        var normalizedBookId = String(bookId || '').trim();
+                        if (!normalizedBookId) {
+                            return Promise.reject(createUserFacingError('bookId is required'));
+                        }
+                        var result = invokeNative(
+                            'getReadingCompanionCommentaryCharacter',
+                            [normalizedBookId]
+                        );
+                        if (result === undefined || result === null) {
+                            return Promise.reject(
+                                createUserFacingError(
+                                    'getReadingCompanionCommentaryCharacter is unavailable'
+                                )
+                            );
+                        }
+                        try {
+                            return Promise.resolve(
+                                unwrapNativeResult(
+                                    result,
+                                    'getReadingCompanionCommentaryCharacter failed'
+                                )
+                            );
+                        } catch (error) {
+                            return Promise.reject(error);
+                        }
+                    },
+                    setReadingCompanionCommentaryCharacter: function(options) {
+                        var payload =
+                            options && typeof options === 'object' ? options : {};
+                        var result = invokeNative(
+                            'setReadingCompanionCommentaryCharacter',
+                            [JSON.stringify(payload)]
+                        );
+                        if (result === undefined || result === null) {
+                            return Promise.reject(
+                                createUserFacingError(
+                                    'setReadingCompanionCommentaryCharacter is unavailable'
+                                )
+                            );
+                        }
+                        try {
+                            return Promise.resolve(
+                                unwrapNativeResult(
+                                    result,
+                                    'setReadingCompanionCommentaryCharacter failed'
+                                )
+                            );
+                        } catch (error) {
+                            return Promise.reject(error);
+                        }
+                    },
+                    createReadingCompanionChat: function(options) {
+                        var payload =
+                            options && typeof options === 'object' ? options : {};
+                        var result = invokeNative(
+                            'createReadingCompanionChat',
+                            [JSON.stringify(payload)]
+                        );
+                        if (result === undefined || result === null) {
+                            return Promise.reject(
+                                createUserFacingError(
+                                    'createReadingCompanionChat is unavailable'
+                                )
+                            );
+                        }
+                        try {
+                            return Promise.resolve(
+                                unwrapNativeResult(
+                                    result,
+                                    'createReadingCompanionChat failed'
+                                )
+                            );
+                        } catch (error) {
+                            return Promise.reject(error);
+                        }
+                    },
                     listRoutes: function() {
                         var json = invokeNative('listRoutes', []);
                         if (typeof json !== 'string' || !json.trim()) {
