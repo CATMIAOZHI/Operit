@@ -9,6 +9,11 @@
     <!-- The workflow HMAC key is installation-bound. This also excludes the backup-eligible
          SharedPreferences file used by prerelease builds before the key moved to noBackup. -->
     <exclude domain="sharedpref" path="workflow_auth_tokens.xml"/>
+    <!-- Contains copyrighted reading excerpts. Keep it installation-local. -->
+    <exclude domain="database" path="reading_companion.db"/>
+    <exclude domain="database" path="reading_companion.db-journal"/>
+    <exclude domain="database" path="reading_companion.db-shm"/>
+    <exclude domain="database" path="reading_companion.db-wal"/>
     <!--
    <include domain="sharedpref" path="."/>
    <exclude domain="sharedpref" path="device.xml"/>
