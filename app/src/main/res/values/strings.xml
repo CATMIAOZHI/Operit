@@ -8636,4 +8636,9 @@
     <string name="terminal_startup_error_delete">无法删除启动服务。</string>
     <string name="terminal_startup_error_delete_restore_runtime">无法删除启动服务，且未能恢复其运行状态。</string>
     <string name="terminal_startup_error_remove_files">无法移除启动服务文件。</string>
+    <string name="reading_companion_tool_current_book">获取当前 Legado 书籍和安全阅读进度</string>
+    <string name="reading_companion_tool_context">获取当前阅读位置之前的安全正文</string>
+    <string name="reading_companion_tool_search">搜索已经阅读过的小说正文</string>
+    <string name="reading_companion_tool_refresh">刷新阅读进度并增量建立本地索引</string>
+    <string name="reading_companion_error_generic">AI 阅读伴侣暂时无法完成该操作</string>
 </resources>
