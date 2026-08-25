@@ -34,6 +34,15 @@ data class ReadableChapterContent(
     val capturedAt: Long,
 )
 
+data class AnnotationChapterContent(
+    val bookId: String,
+    val chapterIndex: Int,
+    val chapterTitle: String,
+    val content: String,
+    val contractHash: String,
+    val capturedAt: Long,
+)
+
 interface ReaderProvider {
     suspend fun getBooks(): List<ReaderBook>
 
@@ -45,6 +54,17 @@ interface ReaderProvider {
         bookId: String,
         chapterIndex: Int,
     ): ReadableChapterContent
+
+    /**
+     * Reads a complete chapter only for the isolated auto-comment generator.
+     *
+     * Implementations must not route this content into ordinary search, summaries, memories, or
+     * user-visible tools. The caller is responsible for limiting access to the next chapter only.
+     */
+    suspend fun getAnnotationChapterContent(
+        bookId: String,
+        chapterIndex: Int,
+    ): AnnotationChapterContent
 }
 
 internal object SpoilerGuard {

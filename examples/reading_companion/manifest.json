@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.reading_companion",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "main": "main.js",
   "display_name": {
     "zh": "AI 阅读伴侣",
@@ -24,6 +24,19 @@
       "description": {
         "zh": "读取当前进度、回顾已读剧情、生成摘要、查询人物并保存读者笔记或预测。",
         "en": "Reads current progress, recalls read plot, builds summaries, finds characters, and stores reader notes or predictions."
+      }
+    },
+    {
+      "id": "reading_companion_auto_commentary",
+      "entry": "packages/reading_companion_auto_commentary.js",
+      "enabled_by_default": false,
+      "display_name": {
+        "zh": "AI 自动段评",
+        "en": "AI Auto Commentary"
+      },
+      "description": {
+        "zh": "预读且只预读下一章，一次生成真人式段评，并通过 Legado 原生段评入口按段落展示。开启即表示允许隔离生成器读取下一章。",
+        "en": "Prefetches exactly one next chapter, generates reader-like paragraph comments in one request, and reveals them through Legado's native review UI."
       }
     }
   ]

@@ -59,6 +59,26 @@ data class ReaderMemory(
     val createdAt: Long,
 )
 
+data class AutoCommentChapter(
+    val bookId: String,
+    val chapterIndex: Int,
+    val chapterTitle: String,
+    val contentHash: String,
+    val status: String,
+    val updatedAt: Long,
+)
+
+data class AutoCommentRecord(
+    val id: Long = 0,
+    val bookId: String,
+    val chapterIndex: Int,
+    val paragraphIndex: Int,
+    val text: String,
+    val kind: String,
+    val evidenceJson: String,
+    val createdAt: Long = 0,
+)
+
 internal fun ReadingSearchHit.matchesCharacterIdentity(query: String): Boolean =
     entityName.equals(query, ignoreCase = true) ||
         text.substringBefore('：').contains(query, ignoreCase = true)
@@ -195,6 +215,7 @@ class ReadingCompanionStore(context: Context) :
     override fun onCreate(db: SQLiteDatabase) {
         createCoreTables(db)
         createKnowledgeTables(db)
+        createAutoCommentTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -202,6 +223,9 @@ class ReadingCompanionStore(context: Context) :
             // Version 1 already exists on development devices. Keep its indexed text and only add
             // the knowledge, memory, and selection tables introduced by the ToolPkg version.
             createKnowledgeTables(db)
+        }
+        if (oldVersion < 3) {
+            createAutoCommentTables(db)
         }
     }
 
@@ -319,6 +343,46 @@ class ReadingCompanionStore(context: Context) :
         )
     }
 
+    private fun createAutoCommentTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS auto_comment_chapters (
+                book_id TEXT NOT NULL,
+                chapter_index INTEGER NOT NULL,
+                chapter_title TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                status TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (book_id, chapter_index),
+                FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS auto_comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id TEXT NOT NULL,
+                chapter_index INTEGER NOT NULL,
+                paragraph_index INTEGER NOT NULL,
+                comment_text TEXT NOT NULL,
+                comment_kind TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (book_id, chapter_index)
+                    REFERENCES auto_comment_chapters(book_id, chapter_index)
+                    ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS auto_comments_chapter_paragraph
+            ON auto_comments(book_id, chapter_index, paragraph_index)
+            """.trimIndent()
+        )
+    }
+
     @Synchronized
     fun updateBook(state: ReadingState) {
         val values = ContentValues().apply {
@@ -398,6 +462,11 @@ class ReadingCompanionStore(context: Context) :
                 "book_id = ? AND chapter_index > ?",
                 arrayOf(state.book.id, state.chapterIndex.toString()),
             )
+            db.delete(
+                "auto_comment_chapters",
+                "book_id = ? AND chapter_index > ?",
+                arrayOf(state.book.id, (state.chapterIndex + 1).toString()),
+            )
             val bodyPosition = state.bodyPosition
             if (bodyPosition == null) {
                 deleteChapter(db, state.book.id, state.chapterIndex)
@@ -442,6 +511,164 @@ class ReadingCompanionStore(context: Context) :
         } finally {
             db.endTransaction()
         }
+    }
+
+    @Synchronized
+    fun getAutoCommentChapter(
+        bookId: String,
+        chapterIndex: Int,
+    ): AutoCommentChapter? {
+        readableDatabase.query(
+            "auto_comment_chapters",
+            arrayOf(
+                "book_id",
+                "chapter_index",
+                "chapter_title",
+                "content_hash",
+                "status",
+                "updated_at",
+            ),
+            "book_id = ? AND chapter_index = ?",
+            arrayOf(bookId, chapterIndex.toString()),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            return AutoCommentChapter(
+                bookId = cursor.getString(0),
+                chapterIndex = cursor.getInt(1),
+                chapterTitle = cursor.getString(2),
+                contentHash = cursor.getString(3),
+                status = cursor.getString(4),
+                updatedAt = cursor.getLong(5),
+            )
+        }
+    }
+
+    @Synchronized
+    fun markAutoCommentGeneration(
+        bookId: String,
+        chapterIndex: Int,
+        chapterTitle: String,
+        contentHash: String,
+        status: String,
+    ) {
+        writableDatabase.insertWithOnConflict(
+            "auto_comment_chapters",
+            null,
+            ContentValues().apply {
+                put("book_id", bookId)
+                put("chapter_index", chapterIndex)
+                put("chapter_title", chapterTitle)
+                put("content_hash", contentHash)
+                put("status", status)
+                put("updated_at", System.currentTimeMillis())
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
+    @Synchronized
+    fun replaceAutoComments(
+        bookId: String,
+        chapterIndex: Int,
+        chapterTitle: String,
+        contentHash: String,
+        comments: List<AutoCommentRecord>,
+    ) {
+        val db = writableDatabase
+        val createdAt = System.currentTimeMillis()
+        db.beginTransaction()
+        try {
+            db.delete(
+                "auto_comments",
+                "book_id = ? AND chapter_index = ?",
+                arrayOf(bookId, chapterIndex.toString()),
+            )
+            db.insertWithOnConflict(
+                "auto_comment_chapters",
+                null,
+                ContentValues().apply {
+                    put("book_id", bookId)
+                    put("chapter_index", chapterIndex)
+                    put("chapter_title", chapterTitle)
+                    put("content_hash", contentHash)
+                    put("status", AUTO_COMMENT_STATUS_READY)
+                    put("updated_at", createdAt)
+                },
+                SQLiteDatabase.CONFLICT_REPLACE,
+            )
+            comments.forEach { comment ->
+                db.insertOrThrow(
+                    "auto_comments",
+                    null,
+                    ContentValues().apply {
+                        put("book_id", bookId)
+                        put("chapter_index", chapterIndex)
+                        put("paragraph_index", comment.paragraphIndex)
+                        put("comment_text", comment.text)
+                        put("comment_kind", comment.kind)
+                        put("evidence_json", comment.evidenceJson)
+                        put("created_at", createdAt)
+                    },
+                )
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    @Synchronized
+    fun getAutoComments(
+        bookId: String,
+        chapterIndex: Int,
+        paragraphIndex: Int? = null,
+    ): List<AutoCommentRecord> {
+        val result = mutableListOf<AutoCommentRecord>()
+        val selection = buildString {
+            append("book_id = ? AND chapter_index = ?")
+            if (paragraphIndex != null) append(" AND paragraph_index = ?")
+        }
+        val selectionArgs = buildList {
+            add(bookId)
+            add(chapterIndex.toString())
+            paragraphIndex?.let { add(it.toString()) }
+        }.toTypedArray()
+        readableDatabase.query(
+            "auto_comments",
+            arrayOf(
+                "id",
+                "book_id",
+                "chapter_index",
+                "paragraph_index",
+                "comment_text",
+                "comment_kind",
+                "evidence_json",
+                "created_at",
+            ),
+            selection,
+            selectionArgs,
+            null,
+            null,
+            "paragraph_index ASC, id ASC",
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += AutoCommentRecord(
+                    id = cursor.getLong(0),
+                    bookId = cursor.getString(1),
+                    chapterIndex = cursor.getInt(2),
+                    paragraphIndex = cursor.getInt(3),
+                    text = cursor.getString(4),
+                    kind = cursor.getString(5),
+                    evidenceJson = cursor.getString(6),
+                    createdAt = cursor.getLong(7),
+                )
+            }
+        }
+        return result
     }
 
     @Synchronized
@@ -1083,7 +1310,10 @@ class ReadingCompanionStore(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "reading_companion.db"
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 3
         private const val SELECTED_BOOK_KEY = "selected_book_id"
+        const val AUTO_COMMENT_STATUS_GENERATING = "generating"
+        const val AUTO_COMMENT_STATUS_READY = "ready"
+        const val AUTO_COMMENT_STATUS_FAILED = "failed"
     }
 }
