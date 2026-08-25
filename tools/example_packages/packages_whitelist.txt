@@ -36,3 +36,4 @@ remote_operit
 worldbook
 thinking_guidance
 plan_mode
+reading_companion

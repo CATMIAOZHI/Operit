@@ -129,7 +129,9 @@ internal class ToolPkgManager(
                 executionEngines.computeIfAbsent(normalizedKey) {
                     ExecutionEngineEntry(
                         containerPackageName = normalizedContainer,
-                        engine = createExecutionEngine()
+                        engine = createExecutionEngine().also {
+                            it.bindToolPkgContainer(normalizedContainer)
+                        }
                     )
                 }
             check(entry.containerPackageName == normalizedContainer) {

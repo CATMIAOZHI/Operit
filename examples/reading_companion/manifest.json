@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.reading_companion",
+  "version": "0.2.0",
+  "main": "main.js",
+  "display_name": {
+    "zh": "AI 阅读伴侣",
+    "en": "AI Reading Companion"
+  },
+  "description": {
+    "zh": "连接 Legado，在严格已读边界内陪聊、吐槽剧情、回顾前文，并维护章节摘要、人物事件索引和读者记忆。",
+    "en": "Connects to Legado for spoiler-safe conversation, plot reactions, recall, chapter knowledge, and reader memories."
+  },
+  "enabled_by_default": false,
+  "subpackages": [
+    {
+      "id": "reading_companion",
+      "entry": "packages/reading_companion.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "阅读伴侣工具",
+        "en": "Reading Companion Tools"
+      },
+      "description": {
+        "zh": "读取当前进度、回顾已读剧情、生成摘要、查询人物并保存读者笔记或预测。",
+        "en": "Reads current progress, recalls read plot, builds summaries, finds characters, and stores reader notes or predictions."
+      }
+    }
+  ]
+}

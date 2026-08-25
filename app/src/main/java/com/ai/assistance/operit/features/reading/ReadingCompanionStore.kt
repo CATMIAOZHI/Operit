@@ -17,7 +17,51 @@ data class ReadingSearchHit(
     val endPosition: Int,
     val text: String,
     val score: Int,
+    val source: String = "full_text",
+    val entityName: String? = null,
 )
+
+data class ChapterKnowledge(
+    val summary: String,
+    val characters: List<ChapterCharacter>,
+    val events: List<String>,
+    val locations: List<String>,
+    val items: List<String>,
+    val relationshipChanges: List<String>,
+    val possibleForeshadowing: List<String>,
+    val keywords: List<String>,
+)
+
+data class ChapterCharacter(
+    val name: String,
+    val aliases: List<String>,
+    val facts: List<String>,
+)
+
+data class StoredChapterKnowledge(
+    val bookId: String,
+    val chapterIndex: Int,
+    val chapterTitle: String,
+    val sourceEndPosition: Int,
+    val isComplete: Boolean,
+    val summary: String,
+    val structuredJson: String,
+    val keywords: String,
+    val updatedAt: Long,
+)
+
+data class ReaderMemory(
+    val id: Long,
+    val bookId: String,
+    val chapterIndex: Int,
+    val type: String,
+    val content: String,
+    val createdAt: Long,
+)
+
+internal fun ReadingSearchHit.matchesCharacterIdentity(query: String): Boolean =
+    entityName.equals(query, ignoreCase = true) ||
+        text.substringBefore('：').contains(query, ignoreCase = true)
 
 internal object ReadingTextIndexSupport {
     private const val CHUNK_SIZE = 1800
@@ -131,10 +175,11 @@ class ReadingCompanionStore(context: Context) :
         DATABASE_VERSION,
     ) {
 
-    private data class IndexedChapter(
+    data class IndexedChapter(
         val title: String,
         val contentHash: String,
         val indexedUntil: Int,
+        val isComplete: Boolean,
     )
 
     private data class StoredChunk(
@@ -148,9 +193,22 @@ class ReadingCompanionStore(context: Context) :
     }
 
     override fun onCreate(db: SQLiteDatabase) {
+        createCoreTables(db)
+        createKnowledgeTables(db)
+    }
+
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            // Version 1 already exists on development devices. Keep its indexed text and only add
+            // the knowledge, memory, and selection tables introduced by the ToolPkg version.
+            createKnowledgeTables(db)
+        }
+    }
+
+    private fun createCoreTables(db: SQLiteDatabase) {
         db.execSQL(
             """
-            CREATE TABLE books (
+            CREATE TABLE IF NOT EXISTS books (
                 book_id TEXT PRIMARY KEY NOT NULL,
                 name TEXT NOT NULL,
                 author TEXT NOT NULL,
@@ -162,7 +220,7 @@ class ReadingCompanionStore(context: Context) :
         )
         db.execSQL(
             """
-            CREATE TABLE chapters (
+            CREATE TABLE IF NOT EXISTS chapters (
                 book_id TEXT NOT NULL,
                 chapter_index INTEGER NOT NULL,
                 chapter_title TEXT NOT NULL,
@@ -177,7 +235,7 @@ class ReadingCompanionStore(context: Context) :
         )
         db.execSQL(
             """
-            CREATE VIRTUAL TABLE text_chunks USING fts4(
+            CREATE VIRTUAL TABLE IF NOT EXISTS text_chunks USING fts4(
                 book_id,
                 chapter_index,
                 chapter_title,
@@ -191,13 +249,74 @@ class ReadingCompanionStore(context: Context) :
         )
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion != newVersion) {
-            db.execSQL("DROP TABLE IF EXISTS text_chunks")
-            db.execSQL("DROP TABLE IF EXISTS chapters")
-            db.execSQL("DROP TABLE IF EXISTS books")
-            onCreate(db)
-        }
+    private fun createKnowledgeTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS chapter_knowledge (
+                book_id TEXT NOT NULL,
+                chapter_index INTEGER NOT NULL,
+                chapter_title TEXT NOT NULL,
+                source_end_pos INTEGER NOT NULL,
+                is_complete INTEGER NOT NULL,
+                content_hash TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                structured_json TEXT NOT NULL,
+                keywords TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (book_id, chapter_index),
+                FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts4(
+                book_id,
+                chapter_index,
+                chapter_title,
+                source_end_pos,
+                kind,
+                entity_name,
+                text,
+                search_terms,
+                tokenize=unicode61
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS reader_memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id TEXT NOT NULL,
+                chapter_index INTEGER NOT NULL,
+                memory_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS reader_memories_fts USING fts4(
+                memory_id,
+                book_id,
+                chapter_index,
+                memory_type,
+                content,
+                search_terms,
+                tokenize=unicode61
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS reading_settings (
+                setting_key TEXT PRIMARY KEY NOT NULL,
+                setting_value TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
     }
 
     @Synchronized
@@ -207,27 +326,52 @@ class ReadingCompanionStore(context: Context) :
             put("name", state.book.name)
             put("author", state.book.author)
             put("last_read_chapter", state.chapterIndex)
-            if (state.bodyPosition == null) {
-                putNull("last_read_position")
-            } else {
-                put("last_read_position", state.bodyPosition)
-            }
+            if (state.bodyPosition == null) putNull("last_read_position")
+            else put("last_read_position", state.bodyPosition)
             put("updated_at", state.capturedAt)
         }
         val db = writableDatabase
         db.insertWithOnConflict("books", null, values, SQLiteDatabase.CONFLICT_IGNORE)
-        db.update(
-            "books",
-            values,
-            "book_id = ?",
-            arrayOf(state.book.id),
+        db.update("books", values, "book_id = ?", arrayOf(state.book.id))
+    }
+
+    @Synchronized
+    fun setSelectedBookId(bookId: String?) {
+        val db = writableDatabase
+        if (bookId.isNullOrBlank()) {
+            db.delete("reading_settings", "setting_key = ?", arrayOf(SELECTED_BOOK_KEY))
+            return
+        }
+        db.insertWithOnConflict(
+            "reading_settings",
+            null,
+            ContentValues().apply {
+                put("setting_key", SELECTED_BOOK_KEY)
+                put("setting_value", bookId)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
         )
     }
 
+    @Synchronized
+    fun getSelectedBookId(): String? {
+        readableDatabase.query(
+            "reading_settings",
+            arrayOf("setting_value"),
+            "setting_key = ?",
+            arrayOf(SELECTED_BOOK_KEY),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor ->
+            return if (cursor.moveToFirst()) cursor.getString(0).takeIf(String::isNotBlank) else null
+        }
+    }
+
     /**
-     * Removes future data and trims a regressed current chapter before any new content is loaded.
-     * A forward-only refresh preserves existing current chunks so replaceChapter can extend only
-     * the tail instead of rebuilding the whole safe prefix.
+     * Removes novel-derived data beyond the latest observed boundary. Reader memories are kept:
+     * they are explicitly user-authored and are independently boundary-filtered on retrieval.
      */
     @Synchronized
     fun prepareForState(state: ReadingState) {
@@ -237,6 +381,16 @@ class ReadingCompanionStore(context: Context) :
             db.delete(
                 "text_chunks",
                 "book_id = ? AND CAST(chapter_index AS INTEGER) > ?",
+                arrayOf(state.book.id, state.chapterIndex.toString()),
+            )
+            db.delete(
+                "knowledge_fts",
+                "book_id = ? AND CAST(chapter_index AS INTEGER) > ?",
+                arrayOf(state.book.id, state.chapterIndex.toString()),
+            )
+            db.delete(
+                "chapter_knowledge",
+                "book_id = ? AND chapter_index > ?",
                 arrayOf(state.book.id, state.chapterIndex.toString()),
             )
             db.delete(
@@ -254,17 +408,24 @@ class ReadingCompanionStore(context: Context) :
                     book_id = ? AND CAST(chapter_index AS INTEGER) = ?
                     AND CAST(end_pos AS INTEGER) > ?
                     """.trimIndent(),
-                    arrayOf(
-                        state.book.id,
-                        state.chapterIndex.toString(),
-                        bodyPosition.toString(),
-                    ),
+                    arrayOf(state.book.id, state.chapterIndex.toString(), bodyPosition.toString()),
                 )
-                val indexedUntil = getIndexedChapter(
-                    db,
-                    state.book.id,
-                    state.chapterIndex,
-                )?.indexedUntil
+                val indexedUntil = getIndexedChapter(db, state.book.id, state.chapterIndex)?.indexedUntil
+                val unsafeKnowledge = db.delete(
+                    "knowledge_fts",
+                    """
+                    book_id = ? AND CAST(chapter_index AS INTEGER) = ?
+                    AND CAST(source_end_pos AS INTEGER) > ?
+                    """.trimIndent(),
+                    arrayOf(state.book.id, state.chapterIndex.toString(), bodyPosition.toString()),
+                )
+                if (unsafeKnowledge > 0) {
+                    db.delete(
+                        "chapter_knowledge",
+                        "book_id = ? AND chapter_index = ?",
+                        arrayOf(state.book.id, state.chapterIndex.toString()),
+                    )
+                }
                 if (removedChunks > 0 || (indexedUntil != null && indexedUntil > bodyPosition)) {
                     deleteChapter(db, state.book.id, state.chapterIndex)
                 } else {
@@ -284,20 +445,12 @@ class ReadingCompanionStore(context: Context) :
     }
 
     @Synchronized
-    fun isCompleteChapterIndexed(bookId: String, chapterIndex: Int): Boolean {
-        readableDatabase.query(
-            "chapters",
-            arrayOf("is_complete"),
-            "book_id = ? AND chapter_index = ?",
-            arrayOf(bookId, chapterIndex.toString()),
-            null,
-            null,
-            null,
-            "1",
-        ).use { cursor ->
-            return cursor.moveToFirst() && cursor.getInt(0) == 1
-        }
-    }
+    fun isCompleteChapterIndexed(bookId: String, chapterIndex: Int): Boolean =
+        getIndexedChapter(readableDatabase, bookId, chapterIndex)?.isComplete == true
+
+    @Synchronized
+    fun getIndexedChapter(bookId: String, chapterIndex: Int): IndexedChapter? =
+        getIndexedChapter(readableDatabase, bookId, chapterIndex)
 
     @Synchronized
     fun replaceChapter(content: ReadableChapterContent) {
@@ -337,37 +490,40 @@ class ReadingCompanionStore(context: Context) :
                         rebuildFrom.toString(),
                     ),
                 )
-            }
-            val chunks = if (unchanged) {
-                emptyList()
-            } else {
-                ReadingTextIndexSupport.chunkFrom(content.content, rebuildFrom)
-            }
-            chunks.forEach { chunk ->
-                val values = ContentValues().apply {
-                    put("book_id", content.bookId)
-                    put("chapter_index", content.chapterIndex)
-                    put("chapter_title", content.chapterTitle)
-                    put("start_pos", chunk.start)
-                    put("end_pos", chunk.end)
-                    put("text", chunk.text)
-                    put("search_terms", ReadingTextIndexSupport.buildSearchTerms(chunk.text))
+                val knowledgeHash = getKnowledgeContentHash(db, content.bookId, content.chapterIndex)
+                if (knowledgeHash != null && knowledgeHash != contentHash) {
+                    deleteKnowledge(db, content.bookId, content.chapterIndex)
                 }
-                db.insertOrThrow("text_chunks", null, values)
             }
-            val chapterValues = ContentValues().apply {
-                put("book_id", content.bookId)
-                put("chapter_index", content.chapterIndex)
-                put("chapter_title", content.chapterTitle)
-                put("content_hash", contentHash)
-                put("indexed_until", content.readableUntil)
-                put("is_complete", if (content.isComplete) 1 else 0)
-                put("updated_at", content.capturedAt)
+            val chunks = if (unchanged) emptyList()
+            else ReadingTextIndexSupport.chunkFrom(content.content, rebuildFrom)
+            chunks.forEach { chunk ->
+                db.insertOrThrow(
+                    "text_chunks",
+                    null,
+                    ContentValues().apply {
+                        put("book_id", content.bookId)
+                        put("chapter_index", content.chapterIndex)
+                        put("chapter_title", content.chapterTitle)
+                        put("start_pos", chunk.start)
+                        put("end_pos", chunk.end)
+                        put("text", chunk.text)
+                        put("search_terms", ReadingTextIndexSupport.buildSearchTerms(chunk.text))
+                    },
+                )
             }
             db.insertWithOnConflict(
                 "chapters",
                 null,
-                chapterValues,
+                ContentValues().apply {
+                    put("book_id", content.bookId)
+                    put("chapter_index", content.chapterIndex)
+                    put("chapter_title", content.chapterTitle)
+                    put("content_hash", contentHash)
+                    put("indexed_until", content.readableUntil)
+                    put("is_complete", if (content.isComplete) 1 else 0)
+                    put("updated_at", content.capturedAt)
+                },
                 SQLiteDatabase.CONFLICT_REPLACE,
             )
             db.setTransactionSuccessful()
@@ -376,14 +532,112 @@ class ReadingCompanionStore(context: Context) :
         }
     }
 
-    private fun getIndexedChapter(
-        db: SQLiteDatabase,
-        bookId: String,
-        chapterIndex: Int,
-    ): IndexedChapter? {
-        db.query(
-            "chapters",
-            arrayOf("chapter_title", "content_hash", "indexed_until"),
+    @Synchronized
+    fun storeKnowledge(
+        content: ReadableChapterContent,
+        knowledge: ChapterKnowledge,
+        structuredJson: String,
+    ) {
+        val db = writableDatabase
+        val contentHash = ReadingTextIndexSupport.sha256(content.content)
+        val indexed = getIndexedChapter(db, content.bookId, content.chapterIndex)
+        require(
+            indexed?.contentHash == contentHash &&
+                indexed.indexedUntil == content.readableUntil
+        ) { "章节正文在生成摘要期间发生变化" }
+        db.beginTransaction()
+        try {
+            deleteKnowledge(db, content.bookId, content.chapterIndex)
+            db.insertOrThrow(
+                "chapter_knowledge",
+                null,
+                ContentValues().apply {
+                    put("book_id", content.bookId)
+                    put("chapter_index", content.chapterIndex)
+                    put("chapter_title", content.chapterTitle)
+                    put("source_end_pos", content.readableUntil)
+                    put("is_complete", if (content.isComplete) 1 else 0)
+                    put("content_hash", contentHash)
+                    put("summary", knowledge.summary)
+                    put("structured_json", structuredJson)
+                    put("keywords", knowledge.keywords.joinToString(" "))
+                    put("updated_at", System.currentTimeMillis())
+                },
+            )
+            insertKnowledgeFts(
+                db = db,
+                content = content,
+                kind = "summary",
+                entityName = "",
+                text = buildString {
+                    append(knowledge.summary)
+                    if (knowledge.events.isNotEmpty()) {
+                        append("\n事件：")
+                        append(knowledge.events.joinToString("；"))
+                    }
+                },
+                extraTerms = knowledge.keywords,
+            )
+            knowledge.characters.forEach { character ->
+                insertKnowledgeFts(
+                    db = db,
+                    content = content,
+                    kind = "character",
+                    entityName = character.name,
+                    text = buildString {
+                        append(character.name)
+                        if (character.aliases.isNotEmpty()) {
+                            append("（")
+                            append(character.aliases.joinToString("、"))
+                            append("）")
+                        }
+                        if (character.facts.isNotEmpty()) {
+                            append("：")
+                            append(character.facts.joinToString("；"))
+                        }
+                    },
+                    extraTerms = character.aliases + knowledge.keywords,
+                )
+            }
+            listOf(
+                "event" to knowledge.events,
+                "location" to knowledge.locations,
+                "item" to knowledge.items,
+                "relationship" to knowledge.relationshipChanges,
+                "foreshadowing" to knowledge.possibleForeshadowing,
+            ).forEach { (kind, values) ->
+                values.forEach { value ->
+                    insertKnowledgeFts(
+                        db = db,
+                        content = content,
+                        kind = kind,
+                        entityName = "",
+                        text = value,
+                        extraTerms = knowledge.keywords,
+                    )
+                }
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    @Synchronized
+    fun getChapterKnowledge(bookId: String, chapterIndex: Int): StoredChapterKnowledge? {
+        readableDatabase.query(
+            "chapter_knowledge",
+            arrayOf(
+                "book_id",
+                "chapter_index",
+                "chapter_title",
+                "source_end_pos",
+                "is_complete",
+                "summary",
+                "structured_json",
+                "keywords",
+                "updated_at",
+            ),
             "book_id = ? AND chapter_index = ?",
             arrayOf(bookId, chapterIndex.toString()),
             null,
@@ -392,59 +646,113 @@ class ReadingCompanionStore(context: Context) :
             "1",
         ).use { cursor ->
             if (!cursor.moveToFirst()) return null
-            return IndexedChapter(
-                title = cursor.getString(0),
-                contentHash = cursor.getString(1),
-                indexedUntil = cursor.getInt(2),
+            return StoredChapterKnowledge(
+                bookId = cursor.getString(0),
+                chapterIndex = cursor.getInt(1),
+                chapterTitle = cursor.getString(2),
+                sourceEndPosition = cursor.getInt(3),
+                isComplete = cursor.getInt(4) == 1,
+                summary = cursor.getString(5),
+                structuredJson = cursor.getString(6),
+                keywords = cursor.getString(7),
+                updatedAt = cursor.getLong(8),
             )
         }
     }
 
-    private fun getStoredChunks(
-        db: SQLiteDatabase,
+    @Synchronized
+    fun getRecentKnowledge(
         bookId: String,
-        chapterIndex: Int,
-    ): List<StoredChunk> {
-        val chunks = mutableListOf<StoredChunk>()
-        db.query(
-            "text_chunks",
-            arrayOf("start_pos", "end_pos", "text"),
-            "book_id = ? AND CAST(chapter_index AS INTEGER) = ?",
-            arrayOf(bookId, chapterIndex.toString()),
+        throughChapterIndex: Int,
+        limit: Int,
+    ): List<StoredChapterKnowledge> {
+        val result = mutableListOf<StoredChapterKnowledge>()
+        readableDatabase.query(
+            "chapter_knowledge",
+            arrayOf(
+                "book_id",
+                "chapter_index",
+                "chapter_title",
+                "source_end_pos",
+                "is_complete",
+                "summary",
+                "structured_json",
+                "keywords",
+                "updated_at",
+            ),
+            "book_id = ? AND chapter_index <= ?",
+            arrayOf(bookId, throughChapterIndex.toString()),
             null,
             null,
-            "CAST(start_pos AS INTEGER) ASC",
+            "chapter_index DESC",
+            limit.coerceIn(1, 20).toString(),
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                chunks += StoredChunk(
-                    start = cursor.getInt(0),
-                    end = cursor.getInt(1),
-                    text = cursor.getString(2),
+                result += StoredChapterKnowledge(
+                    bookId = cursor.getString(0),
+                    chapterIndex = cursor.getInt(1),
+                    chapterTitle = cursor.getString(2),
+                    sourceEndPosition = cursor.getInt(3),
+                    isComplete = cursor.getInt(4) == 1,
+                    summary = cursor.getString(5),
+                    structuredJson = cursor.getString(6),
+                    keywords = cursor.getString(7),
+                    updatedAt = cursor.getLong(8),
                 )
             }
         }
-        return chunks
-    }
-
-    private fun deleteChapter(
-        db: SQLiteDatabase,
-        bookId: String,
-        chapterIndex: Int,
-    ) {
-        db.delete(
-            "text_chunks",
-            "book_id = ? AND CAST(chapter_index AS INTEGER) = ?",
-            arrayOf(bookId, chapterIndex.toString()),
-        )
-        db.delete(
-            "chapters",
-            "book_id = ? AND chapter_index = ?",
-            arrayOf(bookId, chapterIndex.toString()),
-        )
+        return result
     }
 
     @Synchronized
-    fun search(
+    fun missingKnowledgeChapterIndices(
+        bookId: String,
+        throughChapterIndexExclusive: Int,
+        limit: Int,
+    ): List<Int> {
+        if (limit <= 0) return emptyList()
+        val result = mutableListOf<Int>()
+        readableDatabase.rawQuery(
+            """
+            SELECT c.chapter_index
+            FROM chapters c
+            LEFT JOIN chapter_knowledge k
+              ON k.book_id = c.book_id AND k.chapter_index = c.chapter_index
+            WHERE c.book_id = ? AND c.is_complete = 1
+              AND c.chapter_index < ? AND k.chapter_index IS NULL
+            ORDER BY c.chapter_index DESC
+            LIMIT ?
+            """.trimIndent(),
+            arrayOf(
+                bookId,
+                throughChapterIndexExclusive.toString(),
+                limit.coerceIn(1, 50).toString(),
+            ),
+        ).use { cursor ->
+            while (cursor.moveToNext()) result += cursor.getInt(0)
+        }
+        return result
+    }
+
+    @Synchronized
+    fun countMissingKnowledge(bookId: String, throughChapterIndexExclusive: Int): Int {
+        readableDatabase.rawQuery(
+            """
+            SELECT COUNT(*)
+            FROM chapters c
+            LEFT JOIN chapter_knowledge k
+              ON k.book_id = c.book_id AND k.chapter_index = c.chapter_index
+            WHERE c.book_id = ? AND c.is_complete = 1
+              AND c.chapter_index < ? AND k.chapter_index IS NULL
+            """.trimIndent(),
+            arrayOf(bookId, throughChapterIndexExclusive.toString()),
+        ).use { cursor ->
+            return if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
+    }
+
+    @Synchronized
+    fun searchText(
         bookId: String,
         terms: List<String>,
         limit: Int = 40,
@@ -465,7 +773,7 @@ class ReadingCompanionStore(context: Context) :
                 val text = cursor.getString(6)
                 val title = cursor.getString(3)
                 hits += ReadingSearchHit(
-                    id = cursor.getLong(0),
+                    id = cursor.getLong(0) * 2,
                     bookId = cursor.getString(1),
                     chapterIndex = cursor.getInt(2),
                     chapterTitle = title,
@@ -476,15 +784,306 @@ class ReadingCompanionStore(context: Context) :
                 )
             }
         }
-        return hits.sortedWith(
-            compareByDescending<ReadingSearchHit> { it.score }
-                .thenBy { it.chapterIndex }
-                .thenBy { it.startPosition }
+        return sortHits(hits)
+    }
+
+    @Synchronized
+    fun searchKnowledge(
+        bookId: String,
+        terms: List<String>,
+        summaryOnly: Boolean,
+        limit: Int = 30,
+    ): List<ReadingSearchHit> {
+        val expression = ReadingTextIndexSupport.buildFtsExpression(terms)
+        if (expression.isBlank()) return emptyList()
+        val comparison = if (summaryOnly) "kind = 'summary'" else "kind != 'summary'"
+        val hits = mutableListOf<ReadingSearchHit>()
+        readableDatabase.rawQuery(
+            """
+            SELECT rowid, book_id, chapter_index, chapter_title, source_end_pos,
+                   kind, entity_name, text
+            FROM knowledge_fts
+            WHERE knowledge_fts MATCH ? AND book_id = ? AND $comparison
+            LIMIT ?
+            """.trimIndent(),
+            arrayOf(expression, bookId, limit.coerceIn(1, 100).toString()),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val text = cursor.getString(7)
+                val title = cursor.getString(3)
+                val kind = cursor.getString(5)
+                hits += ReadingSearchHit(
+                    id = cursor.getLong(0) * 2 + 1,
+                    bookId = cursor.getString(1),
+                    chapterIndex = cursor.getInt(2),
+                    chapterTitle = title,
+                    startPosition = 0,
+                    endPosition = cursor.getInt(4),
+                    text = text,
+                    score = ReadingTextIndexSupport.score(text, title, terms) +
+                        if (kind == "character") 16 else 8,
+                    source = if (kind == "summary") "chapter_summary" else "structured_$kind",
+                    entityName = cursor.getString(6).takeIf(String::isNotBlank),
+                )
+            }
+        }
+        return sortHits(hits)
+    }
+
+    @Synchronized
+    fun getCharacterEvidence(
+        bookId: String,
+        name: String,
+        limit: Int,
+    ): List<ReadingSearchHit> {
+        val terms = ReadingTextIndexSupport.extractQueryTerms(name)
+        val ftsHits = searchKnowledge(bookId, terms, summaryOnly = false, limit = limit * 3)
+            .filter { it.source == "structured_character" }
+        val identityMatches = ftsHits.filter { it.matchesCharacterIdentity(name) }
+        if (identityMatches.isNotEmpty()) return identityMatches.take(limit)
+        val hits = mutableListOf<ReadingSearchHit>()
+        readableDatabase.rawQuery(
+            """
+            SELECT rowid, book_id, chapter_index, chapter_title, source_end_pos,
+                   entity_name, text
+            FROM knowledge_fts
+            WHERE book_id = ? AND kind = 'character' AND entity_name LIKE ?
+            ORDER BY CAST(chapter_index AS INTEGER) DESC
+            LIMIT ?
+            """.trimIndent(),
+            arrayOf(bookId, "%${name.replace("%", "\\%").replace("_", "\\_")}%", limit.toString()),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                hits += ReadingSearchHit(
+                    id = cursor.getLong(0) * 2 + 1,
+                    bookId = cursor.getString(1),
+                    chapterIndex = cursor.getInt(2),
+                    chapterTitle = cursor.getString(3),
+                    startPosition = 0,
+                    endPosition = cursor.getInt(4),
+                    text = cursor.getString(6),
+                    score = 1,
+                    source = "structured_character",
+                    entityName = cursor.getString(5),
+                )
+            }
+        }
+        return hits
+    }
+
+    @Synchronized
+    fun addMemory(
+        bookId: String,
+        chapterIndex: Int,
+        type: String,
+        content: String,
+    ): ReaderMemory {
+        val createdAt = System.currentTimeMillis()
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val id = db.insertOrThrow(
+                "reader_memories",
+                null,
+                ContentValues().apply {
+                    put("book_id", bookId)
+                    put("chapter_index", chapterIndex)
+                    put("memory_type", type)
+                    put("content", content)
+                    put("created_at", createdAt)
+                },
+            )
+            db.insertOrThrow(
+                "reader_memories_fts",
+                null,
+                ContentValues().apply {
+                    put("memory_id", id)
+                    put("book_id", bookId)
+                    put("chapter_index", chapterIndex)
+                    put("memory_type", type)
+                    put("content", content)
+                    put("search_terms", ReadingTextIndexSupport.buildSearchTerms("$type $content"))
+                },
+            )
+            db.setTransactionSuccessful()
+            return ReaderMemory(id, bookId, chapterIndex, type, content, createdAt)
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    @Synchronized
+    fun searchMemories(
+        bookId: String,
+        terms: List<String>,
+        throughChapterIndex: Int,
+        limit: Int,
+    ): List<ReaderMemory> {
+        val expression = ReadingTextIndexSupport.buildFtsExpression(terms)
+        if (expression.isBlank()) return emptyList()
+        val result = mutableListOf<ReaderMemory>()
+        readableDatabase.rawQuery(
+            """
+            SELECT m.id, m.book_id, m.chapter_index, m.memory_type, m.content, m.created_at
+            FROM reader_memories_fts f
+            JOIN reader_memories m ON m.id = CAST(f.memory_id AS INTEGER)
+            WHERE reader_memories_fts MATCH ? AND f.book_id = ?
+              AND CAST(f.chapter_index AS INTEGER) <= ?
+            ORDER BY m.created_at DESC
+            LIMIT ?
+            """.trimIndent(),
+            arrayOf(
+                expression,
+                bookId,
+                throughChapterIndex.toString(),
+                limit.coerceIn(1, 50).toString(),
+            ),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += ReaderMemory(
+                    id = cursor.getLong(0),
+                    bookId = cursor.getString(1),
+                    chapterIndex = cursor.getInt(2),
+                    type = cursor.getString(3),
+                    content = cursor.getString(4),
+                    createdAt = cursor.getLong(5),
+                )
+            }
+        }
+        return result
+    }
+
+    private fun getIndexedChapter(
+        db: SQLiteDatabase,
+        bookId: String,
+        chapterIndex: Int,
+    ): IndexedChapter? {
+        db.query(
+            "chapters",
+            arrayOf("chapter_title", "content_hash", "indexed_until", "is_complete"),
+            "book_id = ? AND chapter_index = ?",
+            arrayOf(bookId, chapterIndex.toString()),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            return IndexedChapter(
+                title = cursor.getString(0),
+                contentHash = cursor.getString(1),
+                indexedUntil = cursor.getInt(2),
+                isComplete = cursor.getInt(3) == 1,
+            )
+        }
+    }
+
+    private fun getStoredChunks(
+        db: SQLiteDatabase,
+        bookId: String,
+        chapterIndex: Int,
+    ): List<StoredChunk> {
+        val chunks = mutableListOf<StoredChunk>()
+        db.query(
+            "text_chunks",
+            arrayOf("start_pos", "end_pos", "text"),
+            "book_id = ? AND CAST(chapter_index AS INTEGER) = ?",
+            arrayOf(bookId, chapterIndex.toString()),
+            null,
+            null,
+            "CAST(start_pos AS INTEGER) ASC",
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                chunks += StoredChunk(cursor.getInt(0), cursor.getInt(1), cursor.getString(2))
+            }
+        }
+        return chunks
+    }
+
+    private fun getKnowledgeContentHash(
+        db: SQLiteDatabase,
+        bookId: String,
+        chapterIndex: Int,
+    ): String? {
+        db.query(
+            "chapter_knowledge",
+            arrayOf("content_hash"),
+            "book_id = ? AND chapter_index = ?",
+            arrayOf(bookId, chapterIndex.toString()),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor -> return if (cursor.moveToFirst()) cursor.getString(0) else null }
+    }
+
+    private fun insertKnowledgeFts(
+        db: SQLiteDatabase,
+        content: ReadableChapterContent,
+        kind: String,
+        entityName: String,
+        text: String,
+        extraTerms: List<String>,
+    ) {
+        if (text.isBlank()) return
+        db.insertOrThrow(
+            "knowledge_fts",
+            null,
+            ContentValues().apply {
+                put("book_id", content.bookId)
+                put("chapter_index", content.chapterIndex)
+                put("chapter_title", content.chapterTitle)
+                put("source_end_pos", content.readableUntil)
+                put("kind", kind)
+                put("entity_name", entityName)
+                put("text", text)
+                put(
+                    "search_terms",
+                    ReadingTextIndexSupport.buildSearchTerms(
+                        "$entityName $text ${extraTerms.joinToString(" ")}"
+                    ),
+                )
+            },
         )
     }
 
+    private fun deleteKnowledge(db: SQLiteDatabase, bookId: String, chapterIndex: Int) {
+        db.delete(
+            "knowledge_fts",
+            "book_id = ? AND CAST(chapter_index AS INTEGER) = ?",
+            arrayOf(bookId, chapterIndex.toString()),
+        )
+        db.delete(
+            "chapter_knowledge",
+            "book_id = ? AND chapter_index = ?",
+            arrayOf(bookId, chapterIndex.toString()),
+        )
+    }
+
+    private fun deleteChapter(db: SQLiteDatabase, bookId: String, chapterIndex: Int) {
+        db.delete(
+            "text_chunks",
+            "book_id = ? AND CAST(chapter_index AS INTEGER) = ?",
+            arrayOf(bookId, chapterIndex.toString()),
+        )
+        deleteKnowledge(db, bookId, chapterIndex)
+        db.delete(
+            "chapters",
+            "book_id = ? AND chapter_index = ?",
+            arrayOf(bookId, chapterIndex.toString()),
+        )
+    }
+
+    private fun sortHits(hits: List<ReadingSearchHit>): List<ReadingSearchHit> =
+        hits.sortedWith(
+            compareByDescending<ReadingSearchHit> { it.score }
+                .thenByDescending { it.chapterIndex }
+                .thenBy { it.startPosition }
+        )
+
     companion object {
         private const val DATABASE_NAME = "reading_companion.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 2
+        private const val SELECTED_BOOK_KEY = "selected_book_id"
     }
 }
