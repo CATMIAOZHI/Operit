@@ -8655,9 +8655,4 @@
     <string name="terminal_startup_error_delete">Unable to delete the startup service.</string>
     <string name="terminal_startup_error_delete_restore_runtime">Unable to delete the startup service or restore its runtime.</string>
     <string name="terminal_startup_error_remove_files">Unable to remove the startup service files.</string>
-    <string name="reading_companion_tool_current_book">Get the current Legado book and safe reading progress</string>
-    <string name="reading_companion_tool_context">Get safe text before the current reading position</string>
-    <string name="reading_companion_tool_search">Search only previously read novel text</string>
-    <string name="reading_companion_tool_refresh">Refresh reading progress and incrementally build the local index</string>
-    <string name="reading_companion_error_generic">The AI Reading Companion could not complete this operation</string>
 </resources>

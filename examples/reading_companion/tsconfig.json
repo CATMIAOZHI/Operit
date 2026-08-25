@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "commonjs",
+    "outDir": "./dist",
+    "allowJs": true,
+    "checkJs": false,
+    "noEmitOnError": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "./main.js",
+    "./packages/**/*.js"
+  ],
+  "exclude": [
+    "./dist",
+    "./node_modules"
+  ]
+}

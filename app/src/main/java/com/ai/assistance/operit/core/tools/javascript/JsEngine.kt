@@ -7,11 +7,14 @@ import android.util.Base64
 import android.webkit.JavascriptInterface
 import androidx.annotation.Keep
 import androidx.core.content.ContextCompat
+import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_EVENT_MESSAGE_PROCESSING
+import com.ai.assistance.operit.features.reading.ReadingCompanionBridge
+import com.ai.assistance.operit.features.reading.ReadingCompanionService
 import com.ai.assistance.operit.ui.main.navigation.AppRouteDiscoveryGateway
 import com.ai.assistance.operit.ui.main.navigation.AppRouterGateway
 import com.ai.assistance.operit.ui.main.navigation.RouteEntrySource
@@ -30,9 +33,14 @@ import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -71,11 +79,16 @@ class JsEngine(private val context: Context) {
     }
     private val quickJsDispatcher = quickJsExecutor.asCoroutineDispatcher()
     private val engineScope = CoroutineScope(SupervisorJob() + quickJsDispatcher)
+    private val nativeBridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val readingCompanionBridgeJobs = ConcurrentHashMap<String, Job>()
     private val quickJsInitLock = Any()
     private val destroyed = AtomicBoolean(false)
 
     @Volatile
     private var quickJs: OperitQuickJsEngine? = null
+
+    @Volatile
+    private var boundToolPkgContainerName: String? = null
 
     private data class ExecutionSession(
         val callId: String,
@@ -84,6 +97,8 @@ class JsEngine(private val context: Context) {
         val dispatchIntermediateOnMain: Boolean,
         val envOverrides: Map<String, String>,
         val packageChatId: String?,
+        val packageName: String?,
+        val toolRuntimeContext: ToolExecutionManager.ToolRuntimeContext?,
         val toolPkgLogSnapshot: JsToolPkgExecutionContext.LogSnapshot,
         val executionListener: JsExecutionListener?
     )
@@ -103,6 +118,18 @@ class JsEngine(private val context: Context) {
 
     private val toolPkgExecutionContext = JsToolPkgExecutionContext()
     private val toolPkgRegistrationSession = JsToolPkgRegistrationSession()
+
+    internal fun bindToolPkgContainer(containerPackageName: String) {
+        val normalized = containerPackageName.trim()
+        require(normalized.isNotBlank()) { "ToolPkg execution container is required" }
+        synchronized(this) {
+            val current = boundToolPkgContainerName
+            check(current == null || current == normalized) {
+                "JsEngine is already bound to ToolPkg container '$current'"
+            }
+            boundToolPkgContainerName = normalized
+        }
+    }
 
     private fun canScheduleQuickJsWork(): Boolean {
         return !destroyed.get() && !quickJsExecutor.isShutdown && !quickJsExecutor.isTerminated
@@ -313,6 +340,12 @@ class JsEngine(private val context: Context) {
                     ?.toString()
                     ?.trim()
                     ?.ifBlank { null },
+            packageName =
+                params["__operit_package_name"]
+                    ?.toString()
+                    ?.trim()
+                    ?.ifBlank { null },
+            toolRuntimeContext = ToolExecutionManager.currentToolRuntimeContext(),
             toolPkgLogSnapshot = toolPkgExecutionContext.capture(script, functionName, params),
             executionListener = executionListener
         )
@@ -323,7 +356,9 @@ class JsEngine(private val context: Context) {
     }
 
     private fun removeExecutionSession(callId: String): ExecutionSession? {
-        return activeExecutionSessions.remove(callId.trim())
+        val normalizedCallId = callId.trim()
+        readingCompanionBridgeJobs.remove(normalizedCallId)?.cancel()
+        return activeExecutionSessions.remove(normalizedCallId)
     }
 
     private fun clearPendingJsBridgeCallbacks(reason: String) {
@@ -416,6 +451,7 @@ class JsEngine(private val context: Context) {
         val sessions = activeExecutionSessions.values.toList()
         activeExecutionSessions.clear()
         sessions.forEach { session ->
+            readingCompanionBridgeJobs.remove(session.callId)?.cancel()
             if (!session.future.isDone) {
                 session.future.complete(buildJsExecutionErrorPayload(reason))
             }
@@ -1456,6 +1492,67 @@ class JsEngine(private val context: Context) {
                 key = key,
                 envOverrides = session?.envOverrides ?: emptyMap()
             )
+        }
+
+        /** Asynchronous host capability available only to the enabled Reading Companion ToolPkg. */
+        @JavascriptInterface
+        fun executeReadingCompanionAsync(
+            callId: String,
+            callbackId: String,
+            action: String,
+            parametersJson: String,
+        ) {
+            val normalizedCallId = callId.trim()
+            val session =
+                resolveExecutionSession(normalizedCallId)?.takeIf {
+                    it.packageName == ReadingCompanionService.SUBPACKAGE_NAME &&
+                        boundToolPkgContainerName == ReadingCompanionService.TOOLPKG_ID
+                }
+            if (session == null) {
+                sendToolPkgIpcResult(
+                    callbackId = callbackId,
+                    result = "Reading Companion bridge is only available to its ToolPkg",
+                    isError = true,
+                )
+                return
+            }
+
+            val job = nativeBridgeScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    val result = ReadingCompanionBridge.execute(
+                        context = context,
+                        callerPackageName = session.packageName.orEmpty(),
+                        action = action,
+                        parametersJson = parametersJson,
+                        runtime = session.toolRuntimeContext,
+                    )
+                    if (resolveExecutionSession(normalizedCallId) === session) {
+                        sendToolPkgIpcResult(
+                            callbackId = callbackId,
+                            result = result,
+                            isError = false,
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    if (resolveExecutionSession(normalizedCallId) === session) {
+                        sendToolPkgIpcResult(
+                            callbackId = callbackId,
+                            result = interrupted.message ?: "Reading Companion operation interrupted",
+                            isError = true,
+                        )
+                    }
+                    throw CancellationException("Reading Companion operation interrupted").apply {
+                        initCause(interrupted)
+                    }
+                } finally {
+                    readingCompanionBridgeJobs.remove(normalizedCallId, coroutineContext[Job])
+                }
+            }
+            readingCompanionBridgeJobs.put(normalizedCallId, job)?.cancel()
+            job.start()
         }
 
         @JavascriptInterface
@@ -2578,6 +2675,7 @@ class JsEngine(private val context: Context) {
         try {
             // 确保任何挂起的回调被完成
             drainExecutionSessions("Engine destroyed")
+            nativeBridgeScope.cancel()
             clearPendingJsBridgeCallbacks("java bridge callback canceled: Engine destroyed")
             toolCallInterface.detachJavaBridgeLifecycle()
 

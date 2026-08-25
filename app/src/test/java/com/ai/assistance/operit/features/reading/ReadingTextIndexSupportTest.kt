@@ -54,4 +54,24 @@ class ReadingTextIndexSupportTest {
             ),
         )
     }
+
+    @Test
+    fun `character identity match ignores other profiles that only mention the query in facts`() {
+        fun hit(entityName: String, text: String) = ReadingSearchHit(
+            id = 1,
+            bookId = "book",
+            chapterIndex = 0,
+            chapterTitle = "chapter",
+            startPosition = 0,
+            endPosition = 10,
+            text = text,
+            score = 1,
+            source = "structured_character",
+            entityName = entityName,
+        )
+
+        assertTrue(hit("林夏", "林夏：旧书店店主").matchesCharacterIdentity("林夏"))
+        assertTrue(hit("林遥", "林遥（小林）：找到信").matchesCharacterIdentity("小林"))
+        assertTrue(!hit("黑猫", "黑猫：始终注视林夏").matchesCharacterIdentity("林夏"))
+    }
 }
