@@ -26,6 +26,18 @@ import org.mockito.kotlin.whenever
 
 class PricingCatalogRepositoryTest {
     @Test
+    fun `dev and stable builds use their matching catalog branches`() {
+        assertEquals(
+            PricingCatalogRepository.DEV_REMOTE_URL,
+            PricingCatalogRepository.remoteUrlFor(personalDev = true),
+        )
+        assertEquals(
+            PricingCatalogRepository.MAIN_REMOTE_URL,
+            PricingCatalogRepository.remoteUrlFor(personalDev = false),
+        )
+    }
+
+    @Test
     fun `concurrent forced refreshes share one active job and request`() {
         val tempDir = Files.createTempDirectory("pricing-catalog-test").toFile()
         val context = mock<Context>()
