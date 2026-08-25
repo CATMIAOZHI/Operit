@@ -10,7 +10,8 @@
   },
   "include": [
     "./main.js",
-    "./packages/**/*.js"
+    "./packages/**/*.js",
+    "./ui/**/*.js"
   ],
   "exclude": [
     "./dist",

@@ -609,6 +609,30 @@ class EnhancedAIService private constructor(private val context: Context) {
     }
 
     /**
+     * Pins the service, selected model configuration, and parameters to one request snapshot.
+     *
+     * Callers that invoke a provider directly must close the returned lease after the stream
+     * finishes. This avoids mixing a refreshed service with parameters resolved from a different
+     * configuration.
+     */
+    suspend fun acquireAIServiceLeaseForFunction(
+        functionType: FunctionType,
+        chatModelConfigIdOverride: String? = null,
+        chatModelIndexOverride: Int? = null,
+    ): MultiServiceManager.ServiceLease {
+        ensureInitialized()
+        val overrideConfigId = chatModelConfigIdOverride?.takeIf { it.isNotBlank() }
+        return if (functionType == FunctionType.CHAT && overrideConfigId != null) {
+            multiServiceManager.acquireServiceForConfig(
+                configId = overrideConfigId,
+                modelIndex = (chatModelIndexOverride ?: 0).coerceAtLeast(0),
+            )
+        } else {
+            multiServiceManager.acquireServiceForFunction(functionType)
+        }
+    }
+
+    /**
      * 获取指定功能类型的provider和model信息
      * @param functionType 功能类型
      * @return Pair<provider, modelName>，例如 Pair("DEEPSEEK", "deepseek-chat")

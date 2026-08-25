@@ -88,11 +88,36 @@ class ReadingCompanionService private constructor(
 
     suspend fun currentBook(): ReadingState = selectedReadingState()
 
-    suspend fun currentContext(maxCharacters: Int = 2600): JSONObject {
+    suspend fun currentContext(
+        maxCharacters: Int = 2600,
+        callerRoleCardId: String? = null,
+    ): JSONObject {
         val state = selectedReadingState()
         val content = provider.getReadableChapterContent(state.book.id, state.chapterIndex)
         val safeEnd = content.readableUntil.coerceIn(0, content.content.length)
         val start = (safeEnd - maxCharacters.coerceIn(400, 6000)).coerceAtLeast(0)
+        val unlockedParagraphIndex =
+            AutoCommentSupport.unlockedParagraphIndex(content.content, content.isComplete)
+        val roleCardId = callerRoleCardId?.trim()?.takeIf(String::isNotBlank)
+        val commentChapter = store.getAutoCommentChapter(
+            bookId = state.book.id,
+            chapterIndex = state.chapterIndex,
+        )
+        val hasCurrentCommentPolicy =
+            commentChapter?.status == ReadingCompanionStore.AUTO_COMMENT_STATUS_READY &&
+                commentChapter.generationPolicyVersion ==
+                AutoCommentSupport.GENERATION_POLICY_VERSION
+        val companionComments =
+            if (roleCardId == null || !hasCurrentCommentPolicy) {
+                emptyList()
+            } else {
+                store.getAutoComments(state.book.id, state.chapterIndex)
+                    .asSequence()
+                    .filter { comment -> comment.paragraphIndex <= unlockedParagraphIndex }
+                    .filter { comment -> comment.roleCardId == roleCardId }
+                    .toList()
+                    .takeLast(12)
+            }
         return JSONObject().apply {
             put("book", state.book.name)
             put("author", state.book.author)
@@ -102,8 +127,43 @@ class ReadingCompanionService private constructor(
             put("startPos", start)
             put("endPos", safeEnd)
             put("text", content.content.substring(start, safeEnd))
+            put(
+                "companionComments",
+                JSONArray().apply {
+                    companionComments.forEach { comment -> put(comment.toCompanionCommentJson()) }
+                },
+            )
             put("capturedAt", content.capturedAt)
             put("boundary", "read_prefix_only")
+        }
+    }
+
+    suspend fun recentCompanionComments(
+        limit: Int,
+        callerRoleCardId: String?,
+    ): JSONObject {
+        val state = selectedReadingState()
+        val content = provider.getReadableChapterContent(state.book.id, state.chapterIndex)
+        val unlockedParagraphIndex =
+            AutoCommentSupport.unlockedParagraphIndex(content.content, content.isComplete)
+        val roleCardId = callerRoleCardId?.trim()?.takeIf(String::isNotBlank)
+        val comments = store.getRecentUnlockedAutoComments(
+            bookId = state.book.id,
+            currentChapterIndex = state.chapterIndex,
+            currentUnlockedParagraph = unlockedParagraphIndex,
+            roleCardId = roleCardId,
+            limit = limit,
+        )
+        return JSONObject().apply {
+            put("book", state.book.name)
+            put("roleCardId", roleCardId)
+            put("boundary", "unlocked_comments_only")
+            put(
+                "comments",
+                JSONArray().apply {
+                    comments.forEach { comment -> put(comment.toCompanionCommentJson()) }
+                },
+            )
         }
     }
 
@@ -587,6 +647,17 @@ class ReadingCompanionService private constructor(
         put("startPos", hit.startPosition)
         put("endPos", hit.endPosition)
         put("text", hit.text)
+    }
+
+    private fun AutoCommentRecord.toCompanionCommentJson(): JSONObject = JSONObject().apply {
+        put("authorRoleCardId", roleCardId)
+        put("authorName", roleCardName)
+        put("chapterIndex", chapterIndex)
+        put("chapterNumber", chapterIndex + 1)
+        put("paragraphIndex", paragraphIndex)
+        put("text", text)
+        put("kind", kind)
+        put("createdAt", createdAt)
     }
 
     companion object {

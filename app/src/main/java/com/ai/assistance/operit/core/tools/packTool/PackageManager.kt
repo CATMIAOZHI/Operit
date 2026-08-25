@@ -35,6 +35,7 @@ import com.ai.assistance.operit.data.preferences.androidPermissionPreferences
 import com.ai.assistance.operit.data.model.PackageToolPromptCategory
 import com.ai.assistance.operit.data.model.ToolPrompt
 import com.ai.assistance.operit.data.model.ToolResult
+import com.ai.assistance.operit.features.reading.ReadingCompanionAutoCommentary
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.WorkspaceConfig
 import com.ai.assistance.operit.widget.ToolPkgDesktopWidgetHost
 import com.ai.assistance.operit.util.OperitPaths
@@ -3472,6 +3473,10 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             addToDisabledIfDefaultEnabled(normalizedPackageName)
             deleteToolPkgCacheDir(normalizedPackageName)
             destroyToolPkgExecutionEngines(normalizedPackageName)
+            ReadingCompanionAutoCommentary.cancelIfDisabledPackage(
+                context = context,
+                packageName = normalizedPackageName,
+            )
 
             return if (packageWasRemoved) {
                 "Successfully disabled toolpkg container: $normalizedPackageName"
@@ -3487,6 +3492,10 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
 
             saveEnabledPackageNames(currentPackages.toList())
             saveToolPkgSubpackageStates(subpackageStates)
+            ReadingCompanionAutoCommentary.cancelIfDisabledPackage(
+                context = context,
+                packageName = normalizedPackageName,
+            )
 
             return if (packageWasRemoved) {
                 "Successfully disabled toolpkg subpackage: $normalizedPackageName"

@@ -11,33 +11,35 @@ data class AutoCommentDraft(
     val evidenceQuote: String,
 )
 
+data class AutoCommentContextChapter(
+    val chapterIndex: Int,
+    val chapterTitle: String,
+    val content: String,
+    val excerptFromEnd: Boolean,
+)
+
 internal object AutoCommentSupport {
     private val paragraphIdPattern = Regex("""^p(\d{1,6})$""", RegexOption.IGNORE_CASE)
-    private val inferencePattern = Regex(
-        """其实|原来|果然|说明|因为|终于|真相|伏笔|注定|将会|会被|要死|完了|幕后|身份|凶手|背叛|骗[了着]?|早就""",
-    )
-    private val pureReactionPattern = Regex(
-        """^(?:卧槽|我靠|牛逼|好家伙|笑死|绷不住了|绝了|妙啊|爽|啊|哈哈+|呜呜+|离谱|逆天|草|艹|666|啧|嘶|哦豁|哇|哎哟)[！!？?…~。]*$""",
-    )
-    private val analyticalKinds = setOf(
-        "analysis",
-        "callback",
-        "foreshadowing",
-        "prediction",
-        "character",
-        "plot",
-        "explanation",
-    )
-    private val lowRiskKinds = setOf("reaction", "banter")
 
     fun paragraphs(content: String): List<String> =
         content.split('\n').map(String::trimEnd)
 
-    fun targetCount(characterCount: Int): Int = when {
-        characterCount < 2_000 -> 5
-        characterCount < 4_000 -> 9
-        characterCount < 7_000 -> 14
-        else -> 16
+    fun unlockedParagraphIndex(content: String, isComplete: Boolean): Int {
+        if (content.isBlank()) return 0
+        val paragraphs = content.split('\n')
+        val fullyReadParagraphs =
+            if (isComplete || content.endsWith('\n')) {
+                paragraphs
+            } else {
+                paragraphs.dropLast(1)
+            }
+        return fullyReadParagraphs.indexOfLast(String::isNotBlank) + 1
+    }
+
+    fun targetCount(content: String): Int {
+        val readableCharacters = content.count { character -> !character.isWhitespace() }
+        return ((readableCharacters + CHARACTERS_PER_COMMENT - 1) / CHARACTERS_PER_COMMENT)
+            .coerceIn(MIN_COMMENTS, MAX_COMMENTS)
     }
 
     fun labeledParagraphs(paragraphs: List<String>): String =
@@ -47,6 +49,68 @@ internal object AutoCommentSupport {
 
     fun labeledParagraph(index: Int, text: String): String =
         """<p id="${paragraphId(index)}">${escapeXml(text)}</p>"""
+
+    fun selectPreviousContext(
+        chaptersNearestFirst: List<AnnotationChapterContent>,
+        maximumCharacters: Int = MAX_PREVIOUS_CONTEXT_CHARS,
+    ): List<AutoCommentContextChapter> {
+        var remaining = maximumCharacters.coerceAtLeast(0)
+        val selectedNearestFirst = mutableListOf<AutoCommentContextChapter>()
+        for (chapter in chaptersNearestFirst.take(MAX_PREVIOUS_CONTEXT_CHAPTERS)) {
+            if (remaining == 0) break
+            val fullContent = chapter.content.trim()
+            if (fullContent.isBlank()) continue
+            val includedContent = if (fullContent.length <= remaining) {
+                fullContent
+            } else {
+                fullContent.takeLast(remaining)
+            }
+            selectedNearestFirst += AutoCommentContextChapter(
+                chapterIndex = chapter.chapterIndex,
+                chapterTitle = chapter.chapterTitle,
+                content = includedContent,
+                excerptFromEnd = includedContent.length < fullContent.length,
+            )
+            remaining -= includedContent.length
+        }
+        return selectedNearestFirst.asReversed()
+    }
+
+    fun trimPreviousContext(
+        chaptersChronological: List<AutoCommentContextChapter>,
+        maximumCharacters: Int,
+    ): List<AutoCommentContextChapter> {
+        var remaining = maximumCharacters.coerceAtLeast(0)
+        val selectedNearestFirst = mutableListOf<AutoCommentContextChapter>()
+        for (chapter in chaptersChronological.asReversed()) {
+            if (remaining == 0) break
+            val content = chapter.content.trim()
+            if (content.isBlank()) continue
+            val includedContent = if (content.length <= remaining) {
+                content
+            } else {
+                content.takeLast(remaining)
+            }
+            selectedNearestFirst += chapter.copy(
+                content = includedContent,
+                excerptFromEnd = chapter.excerptFromEnd || includedContent.length < content.length,
+            )
+            remaining -= includedContent.length
+        }
+        return selectedNearestFirst.asReversed()
+    }
+
+    fun labeledPreviousContext(chapters: List<AutoCommentContextChapter>): String =
+        chapters.joinToString("\n") { chapter ->
+            """
+            <previous_chapter>
+            <chapter_number>${chapter.chapterIndex + 1}</chapter_number>
+            <chapter_title>${escapeXml(chapter.chapterTitle)}</chapter_title>
+            <excerpt_from_end>${chapter.excerptFromEnd}</excerpt_from_end>
+            <content>${escapeXml(chapter.content)}</content>
+            </previous_chapter>
+            """.trimIndent()
+        }
 
     fun parseAndValidate(
         rawJson: String,
@@ -105,15 +169,6 @@ internal object AutoCommentSupport {
             .take(maximumComments.coerceIn(1, MAX_COMMENTS))
     }
 
-    fun isHighRisk(comment: AutoCommentDraft): Boolean {
-        if (comment.kind in analyticalKinds) return true
-        if (comment.evidenceIndices.size > 1) return true
-        if (comment.text.length > LOW_RISK_MAX_LENGTH) return true
-        if (inferencePattern.containsMatchIn(comment.text)) return true
-        if (comment.kind !in lowRiskKinds) return true
-        return !pureReactionPattern.matches(comment.text)
-    }
-
     fun evidenceJson(comment: AutoCommentDraft): String = JSONObject().apply {
         put("paragraphs", JSONArray(comment.evidenceIndices))
         put("quote", comment.evidenceQuote)
@@ -138,10 +193,15 @@ internal object AutoCommentSupport {
         .replace("<", "&lt;")
         .replace(">", "&gt;")
 
-    private const val LOW_RISK_MAX_LENGTH = 18
-    private const val MAX_COMMENT_LENGTH = 120
+    const val GENERATION_POLICY_VERSION = 3
+    const val MAX_PREVIOUS_CONTEXT_CHAPTERS = 8
+    const val MAX_PREVIOUS_CONTEXT_CHARS = 48_000
+
+    private const val CHARACTERS_PER_COMMENT = 1600
+    private const val MIN_COMMENTS = 2
+    private const val MAX_COMMENT_LENGTH = 80
     private const val MAX_QUOTE_LENGTH = 120
     private const val MAX_KIND_LENGTH = 32
     private const val MAX_EVIDENCE_IDS = 8
-    private const val MAX_COMMENTS = 16
+    private const val MAX_COMMENTS = 6
 }

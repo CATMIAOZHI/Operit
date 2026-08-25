@@ -59,7 +59,8 @@ interface ReaderProvider {
      * Reads a complete chapter only for the isolated auto-comment generator.
      *
      * Implementations must not route this content into ordinary search, summaries, memories, or
-     * user-visible tools. The caller is responsible for limiting access to the next chapter only.
+     * user-visible tools. The caller may read the next chapter plus bounded earlier chapters as
+     * private story context, but must never read beyond the next chapter.
      */
     suspend fun getAnnotationChapterContent(
         bookId: String,
