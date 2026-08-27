@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.reading_companion",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "main": "main.js",
   "display_name": {
     "zh": "AI 阅读伴侣",
     "en": "AI Reading Companion"
   },
   "description": {
-    "zh": "连接 Legado，在严格已读边界内陪聊、吐槽剧情、回顾前文，并维护章节摘要、人物事件索引和读者记忆。",
-    "en": "Connects to Legado for spoiler-safe conversation, plot reactions, recall, chapter knowledge, and reader memories."
+    "zh": "连接 Legado；开启后任意普通对话谈到阅读即可安全调用伴读工具，并维护章节摘要、人物事件索引和读者记忆。",
+    "en": "Connects to Legado so any ordinary chat can use spoiler-safe reading tools when the topic is reading, with chapter knowledge and reader memories."
   },
   "enabled_by_default": false,
   "subpackages": [

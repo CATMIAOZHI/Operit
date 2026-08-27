@@ -53,16 +53,16 @@
     {
       "name": "get_context",
       "description": {
-        "zh": "获取当前阅读位置之前的安全正文，以及该角色已经写过且已解锁的当前章段评。用户想交流、吐槽“这段”或刚发生的剧情时使用。",
-        "en": "Get safe text before the current reading position plus this character's unlocked comments in the current chapter."
+        "zh": "获取严格已读边界内的对话上下文：当前章安全正文、最近最多 8 章前文、已有摘要/结构化知识、读者记忆，以及该角色已解锁的 AI 段评。用户想交流、吐槽“这段”或刚发生的剧情时使用。",
+        "en": "Get spoiler-safe conversation context: current-chapter text, up to 8 recent read chapters, existing summaries/structured knowledge, reader memories, and this character's unlocked AI comments."
       },
       "parameters": [
         {
           "name": "max_characters",
-          "description": { "zh": "返回 400 到 6000 字，默认 2600", "en": "Return 400 to 6000 characters, default 2600" },
+          "description": { "zh": "完整工具结果的序列化字符预算，32000 到 96000，默认且最低 32000；超出时硬裁剪", "en": "Serialized complete-result budget, 32000 to 96000; defaults to and never goes below 32000, with hard trimming for overflow" },
           "type": "number",
           "required": false,
-          "default": 2600
+          "default": 32000
         }
       ]
     },
@@ -170,6 +170,42 @@
           "type": "number",
           "required": false,
           "default": 1
+        }
+      ]
+    },
+    {
+      "name": "auto_commentary_history",
+      "description": {
+        "zh": "查看自动段评任务历史；单次详情会显示已生成段评全文、段落锚点、类型、作者和安全调用链，但不会返回未读正文或密钥。",
+        "en": "Show auto-commentary history; run details include generated comment text, paragraph anchors, type, author, and a safe operation trace, never unread text or secrets."
+      },
+      "parameters": [
+        {
+          "name": "limit",
+          "description": {
+            "zh": "返回条数，1 到 50，默认 10。",
+            "en": "Number of runs, 1 to 50; defaults to 10."
+          },
+          "type": "number",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "auto_commentary_run_detail",
+      "description": {
+        "zh": "查看单次自动段评任务的段评全文、章节/段落锚点、类型、作者和阶段/实际调用链；不返回未读正文或密钥。",
+        "en": "Show one auto-commentary run's generated text, chapter/paragraph anchors, type, author, and stage/operation trace without unread text or secrets."
+      },
+      "parameters": [
+        {
+          "name": "runId",
+          "description": {
+            "zh": "历史列表中的任务 ID。",
+            "en": "Run ID from the history list."
+          },
+          "type": "number",
+          "required": true
         }
       ]
     },
@@ -295,3 +331,7 @@ exports.get_character = (params) => run("get_character", params);
 exports.get_recent_summaries = (params) => run("get_recent_summaries", params);
 exports.refresh_progress = (params) => run("refresh_progress", params);
 exports.add_memory = (params) => run("add_memory", params);
+exports.auto_commentary_history = (params = {}) =>
+  run("auto_commentary_history", { limit: params.limit });
+exports.auto_commentary_run_detail = (params = {}) =>
+  run("auto_commentary_run_detail", { runId: params.runId });
