@@ -96,6 +96,7 @@ enum class AutoCommentGenerationClaimStatus {
     CLAIMED,
     CACHED,
     ALREADY_GENERATING,
+    RUN_INTERRUPTED,
 }
 
 data class AutoCommentGenerationClaim(
@@ -1065,6 +1066,28 @@ class ReadingCompanionStore(context: Context) :
         val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
+            // 已中断的 run 不再参与任何 claim/缓存决策：先验证 run 仍为 generating，
+            // 防止被 stale 清理标记 interrupted 的协程重新取得所有权或返回与 DB 不一致
+            // 的 cached/already_generating 结果。
+            val runStillGenerating = db.query(
+                "auto_comment_runs",
+                arrayOf("id"),
+                "id = ? AND status = ?",
+                arrayOf(
+                    generationRunId.toString(),
+                    AUTO_COMMENT_RUN_STATUS_GENERATING,
+                ),
+                null,
+                null,
+                null,
+                "1",
+            ).use { cursor -> cursor.moveToFirst() }
+            if (!runStillGenerating) {
+                db.setTransactionSuccessful()
+                return AutoCommentGenerationClaim(
+                    status = AutoCommentGenerationClaimStatus.RUN_INTERRUPTED,
+                )
+            }
             val existing = getAutoCommentChapter(db, bookId, chapterIndex)
             val sameIdentity =
                 existing?.contentHash == contentHash &&
@@ -1996,6 +2019,46 @@ class ReadingCompanionStore(context: Context) :
         return result
     }
 
+    /**
+     * 是否存在仍在进行的自动段评生成。
+     *
+     * claim 表是并发权威信号：真正在生成的 run 一定持有 claim，且 finish/失败时会删除。
+     * 这里同时 JOIN auto_comment_runs 确认 run 状态仍为 generating，避免过期 claim 残留
+     * 导致误报；并兜底覆盖 startAutoCommentRun 创建 run 到 tryClaimAutoCommentGeneration
+     * 写入 claim 之间的极小窗口（run 已生成但 claim 尚未写入）。
+     */
+    @Synchronized
+    fun hasActiveAutoCommentGeneration(staleAfterMs: Long): Boolean {
+        val staleBefore = System.currentTimeMillis() - staleAfterMs
+        val claimActive = readableDatabase.rawQuery(
+            """
+            SELECT 1
+            FROM auto_comment_generation_claims
+            JOIN auto_comment_runs ON auto_comment_runs.id = auto_comment_generation_claims.run_id
+            WHERE auto_comment_generation_claims.updated_at > ?
+              AND auto_comment_runs.status = ?
+            LIMIT 1
+            """.trimIndent(),
+            arrayOf(staleBefore.toString(), AUTO_COMMENT_RUN_STATUS_GENERATING),
+        ).use { cursor ->
+            cursor.moveToFirst()
+        }
+        if (claimActive) return true
+        // 兜底：run 已创建但 claim 尚未写入（或已释放但 run 尚未收尾）的极小窗口。
+        return readableDatabase.query(
+            "auto_comment_runs",
+            arrayOf("id"),
+            "status = ? AND started_at >= ?",
+            arrayOf(AUTO_COMMENT_RUN_STATUS_GENERATING, staleBefore.toString()),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor ->
+            cursor.moveToFirst()
+        }
+    }
+
     @Synchronized
     fun interruptStaleAutoCommentRuns(staleBefore: Long): Int {
         val db = writableDatabase
@@ -2006,9 +2069,16 @@ class ReadingCompanionStore(context: Context) :
             db.query(
                 "auto_comment_runs",
                 arrayOf("id"),
-                "status = ? AND started_at < ?",
+                """
+                status = ? AND started_at < ? AND id NOT IN (
+                    SELECT run_id
+                    FROM auto_comment_generation_claims
+                    WHERE updated_at > ?
+                )
+                """.trimIndent(),
                 arrayOf(
                     AUTO_COMMENT_RUN_STATUS_GENERATING,
+                    staleBefore.toString(),
                     staleBefore.toString(),
                 ),
                 null,
@@ -2038,9 +2108,16 @@ class ReadingCompanionStore(context: Context) :
                     put("error_message", "interrupted")
                     put("finished_at", finishedAt)
                 },
-                "status = ? AND started_at < ?",
+                """
+                status = ? AND started_at < ? AND id NOT IN (
+                    SELECT run_id
+                    FROM auto_comment_generation_claims
+                    WHERE updated_at > ?
+                )
+                """.trimIndent(),
                 arrayOf(
                     AUTO_COMMENT_RUN_STATUS_GENERATING,
+                    staleBefore.toString(),
                     staleBefore.toString(),
                 ),
             )

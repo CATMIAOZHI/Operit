@@ -224,6 +224,25 @@ internal object AutoCommentSupport {
         return comments
     }
 
+    /**
+     * 手动入队前判断是否已有生成中的任务。
+     *
+     * 只看“最近一条 run”会漏报并发：后启动的任务 B 在 claim 阶段发现任务 A 仍持有
+     * claim 后会立刻以 already_generating 结束，按 started_at 排序反而排在仍运行的 A
+     * 前面，导致后续入队把“已有任务生成中”误判成可入队。这里把判定收敛为纯函数，
+     * 任何证据（最新 run 状态 + 是否存在未过期 claim/生成中 run）都由调用方提供，
+     * 便于在纯 JVM 测试中覆盖该并发顺序。
+     */
+    fun shouldRejectManualEnqueue(
+        latestRunStatus: String?,
+        activeGenerationRunning: Boolean,
+    ): Boolean {
+        if (latestRunStatus == ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATING) {
+            return true
+        }
+        return activeGenerationRunning
+    }
+
     fun paragraphId(index: Int): String = "p${index.toString().padStart(4, '0')}"
 
     private fun parseEvidence(array: JSONArray?): List<Int> {

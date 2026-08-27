@@ -42,6 +42,42 @@ class AutoCommentSupportTest {
     }
 
     @Test
+    fun `manual enqueue rejects when latest run is still generating`() {
+        assertEquals(
+            true,
+            AutoCommentSupport.shouldRejectManualEnqueue(
+                latestRunStatus = ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATING,
+                activeGenerationRunning = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `manual enqueue rejects when latest run finished but an active generation still runs`() {
+        // 并发顺序：任务 A 仍在生成并持有 claim；任务 B 更晚启动，在 claim 阶段发现
+        // A 占用后立刻以 already_generating 结束，按 started_at 排序排在 A 前面。
+        // 只检查最新 run（已结束的 B）会漏报，必须同时检查是否存在活动生成。
+        assertEquals(
+            true,
+            AutoCommentSupport.shouldRejectManualEnqueue(
+                latestRunStatus = "already_generating",
+                activeGenerationRunning = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `manual enqueue allows when no generation is active`() {
+        assertEquals(
+            false,
+            AutoCommentSupport.shouldRejectManualEnqueue(
+                latestRunStatus = ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATED,
+                activeGenerationRunning = false,
+            ),
+        )
+    }
+
+    @Test
     fun `malformed anchors and late evidence are filtered out`() {
         val paragraphs = listOf("第一段", "第二段", "第三段真相")
         val json =
