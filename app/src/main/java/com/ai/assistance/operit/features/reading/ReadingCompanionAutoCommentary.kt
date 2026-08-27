@@ -230,6 +230,16 @@ class ReadingCompanionAutoCommentary private constructor(
                     runId = runId,
                 )
             }
+            AutoCommentGenerationClaimStatus.RUN_INTERRUPTED -> {
+                // run 已被 stale 清理标记为 interrupted，阻止已中断协程重新取得所有权。
+                return AutoCommentaryGenerationResult(
+                    bookId = initialState.book.id,
+                    chapterIndex = nextChapterIndex,
+                    status = STATUS_INTERRUPTED,
+                    commentCount = 0,
+                    runId = runId,
+                )
+            }
             AutoCommentGenerationClaimStatus.CLAIMED -> Unit
         }
         return try {
@@ -874,6 +884,7 @@ class ReadingCompanionAutoCommentary private constructor(
         private const val STATUS_ALREADY_GENERATING = "already_generating"
         private const val STATUS_NO_NEXT_CHAPTER = "no_next_chapter"
         private const val STATUS_SUPERSEDED = "superseded"
+        private const val STATUS_INTERRUPTED = "interrupted"
         private const val STATUS_NO_VALID_COMMENTS = "no_valid_comments"
         const val ALREADY_GENERATING_QUEUED_AT = -1L
         const val TRIGGER_BACKGROUND = "background"
@@ -950,10 +961,17 @@ class ReadingCompanionAutoCommentary private constructor(
          */
         fun enqueueManual(context: Context): Long {
             val store = ReadingCompanionStore(context.applicationContext)
+            store.interruptStaleAutoCommentRuns(
+                staleBefore = System.currentTimeMillis() - GENERATING_STALE_AFTER_MS,
+            )
             val latestRun = store.getRecentAutoCommentRuns(1).firstOrNull()
             if (
-                latestRun != null &&
-                latestRun.status == ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATING
+                AutoCommentSupport.shouldRejectManualEnqueue(
+                    latestRunStatus = latestRun?.status,
+                    activeGenerationRunning = store.hasActiveAutoCommentGeneration(
+                        GENERATING_STALE_AFTER_MS,
+                    ),
+                )
             ) {
                 return ALREADY_GENERATING_QUEUED_AT
             }
