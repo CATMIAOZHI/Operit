@@ -1,7 +1,7 @@
 const TOOL_PACKAGE = "reading_companion";
 const AUTO_COMMENTARY_PACKAGE = "reading_companion_auto_commentary";
-const COMPANION_CHAT_MAP_ENV_KEY =
-  "OPERIT_READING_COMPANION_CHAT_MAP_V1";
+const HISTORY_ROUTE =
+  "toolpkg:com.operit.reading_companion:ui:reading_companion_history";
 
 function useStateValue(ctx, key, initialValue) {
   const pair = ctx.useState(key, initialValue);
@@ -67,30 +67,6 @@ function unwrapToolResult(value) {
   return current;
 }
 
-function readChatMap(ctx) {
-  const raw = String(ctx.getEnv(COMPANION_CHAT_MAP_ENV_KEY) || "").trim();
-  if (!raw) {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-    const clean = {};
-    Object.keys(parsed).forEach((bookId) => {
-      const normalizedBookId = String(bookId || "").trim();
-      const normalizedChatId = String(parsed[bookId] || "").trim();
-      if (normalizedBookId && normalizedChatId) {
-        clean[normalizedBookId] = normalizedChatId;
-      }
-    });
-    return clean;
-  } catch (_error) {
-    return {};
-  }
-}
-
 async function resolveToolName(ctx, packageName, toolName) {
   if (ctx.resolveToolName) {
     const resolved = await ctx.resolveToolName({
@@ -133,18 +109,35 @@ function getText(useEnglish) {
     return {
       title: "AI Reading Companion",
       description:
-        "A dedicated chat for each Legado book, with plot reactions, recall, and optional AI paragraph commentary.",
+        "Use Legado reading tools in any ordinary chat, with plot reactions, recall, and optional AI paragraph commentary.",
       basicTitle: "Reading companion",
-      basicOn: "Connected to Legado and available in companion chats.",
-      basicOff: "Turn this on before starting a companion chat.",
+      basicOn: "Connected to Legado and available in ordinary chats when the topic is reading.",
+      basicOff: "Turn this on before asking an ordinary chat about a Legado book.",
       autoTitle: "AI auto commentary",
       autoOn:
-        "On. After progress changes, next-chapter commentary is queued in about 20 seconds. Private context is capped at 8 chapters / 48,000 characters and trimmed to the selected model window.",
+        "On. The selected character pre-generates comments for the next chapter. See the current setup below.",
       autoOff:
-        "Off. Enabling permits an isolated generator to read the next chapter and bounded prior context, dynamically trimmed to the selected model window, and spend model tokens.",
+        "Off. Turn on to pre-generate next-chapter comments; this reads bounded private text and spends model tokens.",
+      configTitle: "Current commentary setup",
+      configCharacter: "Writer",
+      configModel: "Model",
+      configTrigger:
+        "Trigger · about 20 seconds after reading progress changes, or manually below",
+      configReading:
+        "Reads · the complete next chapter plus up to 8 recent chapters / 48,000 characters, trimmed to the model window",
+      configDensity:
+        "Density · usually 0–3 comments; hard limit 6; silence is allowed",
+      configDelivery:
+        "Delivery · saved to Legado in advance and revealed only when the anchored paragraph is reached",
+      modelSourceCaller: "calling ordinary chat model",
+      modelSourceCharacter: "model fixed by the character card",
+      modelSourceGlobal: "global dialogue model",
+      modelSourceUnknown: "resolved when generation starts",
+      changeModelHint:
+        "Change the model in the character card binding or the global Dialogue model mapping.",
       personaTitle: "Commentary character",
       personaHint:
-        "This character writes the comments, appears as their author in Legado, and uses the same dedicated companion chat.",
+        "This character writes the comments and appears as their author in Legado. It does not change any chat character.",
       personaSelect: "Select a character card",
       personaLoading: "Loading character cards…",
       personaNoCards: "No character cards are available.",
@@ -160,14 +153,33 @@ function getText(useEnglish) {
       chapterPrefix: "Chapter",
       preciseProgress: "Precise reading position available",
       chapterProgress: "Only chapter-level progress is available",
-      start: "Continue companion chat",
-      create: "Start companion chat",
-      preparing: "Preparing your dedicated chat…",
+      history: "View all records",
       refresh: "Refresh status",
       manage: "Open package management",
       regenerate: "Generate next-chapter comments now",
       regenerating: "Generating comments with the selected model…",
       latestRun: "Latest commentary task",
+      flowTitle: "Generation flow",
+      flowStages: {
+        reading_target: "Read current position and target chapter",
+        preparing_context: "Prepare bounded prior context",
+        resolving_model: "Resolve character card and model",
+        waiting_model: "Send request and wait for the model",
+        validating_response: "Validate anchors and comment format",
+        saving_comments: "Save comments and notify Legado",
+        completed: "Ready in Legado",
+      },
+      triggerManual: "Manual",
+      triggerBackground: "After reading progress",
+      durationLabel: "Duration",
+      seconds: "s",
+      inputLabel: "estimated input",
+      targetLabel: "target chapter",
+      contextLabel: "prior context",
+      characters: "characters",
+      contextWindowLabel: "model window",
+      tokens: "tokens",
+      stageTimeoutHint: "Timed out during: ",
       noRun: "No commentary task has run yet.",
       comments: "comments",
       noNext: "The current book has no next chapter.",
@@ -205,31 +217,40 @@ function getText(useEnglish) {
       disableStateMismatch: "The package did not turn off.",
       regenerateFailed: "Could not generate next-chapter comments: ",
       loadFailed: "Status check failed: ",
-      prepareFailed: "Could not open the companion chat: ",
       readyNotice: "Status refreshed.",
       generatedNotice: "The next chapter commentary task finished.",
-      chatTitlePrefix: "Reading · ",
-      existingChat: "A separate chat is reused for this book.",
-      newChat: "A separate chat will be created for this book.",
       hint:
-        "Disabling the ToolPkg removes this sidebar entry. Ordinary chats do not receive the reading-companion prompt.",
+        "Enable the ToolPkg, then use any ordinary chat. Reading guidance appears only when the conversation is about books or reading; other chats are unchanged.",
     };
   }
   return {
     title: "AI 阅读伴侣",
     description:
-      "每本 Legado 书籍都有独立会话，可交流吐槽、回顾前文，并按需开启 AI 自动段评。",
+      "开启后，任意普通对话都可在谈到阅读时调用 Legado 伴读工具，并按需开启 AI 自动段评。",
     basicTitle: "阅读伴侣",
-    basicOn: "已连接工具能力，仅在专属伴读会话中生效。",
-    basicOff: "开始伴读前需要先开启。",
+    basicOn: "已连接工具能力；普通对话谈到阅读时即可使用。",
+    basicOff: "请先开启，再在普通对话中询问 Legado 书籍。",
     autoTitle: "AI 自动段评",
     autoOn:
-      "已开启。阅读进度变化后约 20 秒排队生成下一章段评；隔离前情上限为最近 8 章、4.8 万字，实际按所选模型窗口裁剪。",
+      "已开启。所选角色会预生成下一章段评；详细规则见下方“当前段评设置”。",
     autoOff:
-      "已关闭。开启即表示允许隔离生成器读取下一章及有限前情；实际前情按所选模型窗口裁剪，并产生模型 Token 消耗。",
+      "已关闭。开启后会读取有限的未读内容并产生模型 Token 消耗。",
+    configTitle: "当前段评设置",
+    configCharacter: "作者",
+    configModel: "模型",
+    configTrigger: "触发 · 阅读进度变化约 20 秒后自动生成，也可在下方手动生成",
+    configReading:
+      "读取 · 下一章全文 + 最近最多 8 章/4.8 万字前情，实际按模型窗口裁剪",
+    configDensity: "频率 · 普通章节通常 0～3 条，硬上限 6 条，允许完全沉默",
+    configDelivery: "展示 · 提前写入 Legado，读到对应段落时才显示",
+    modelSourceCaller: "发起本次调用的普通对话模型",
+    modelSourceCharacter: "角色卡固定模型",
+    modelSourceGlobal: "全局“对话”模型",
+    modelSourceUnknown: "生成时解析",
+    changeModelHint: "需要换模型时，请修改角色卡的模型绑定或全局“对话”模型映射。",
     personaTitle: "段评角色",
     personaHint:
-      "由这个角色写段评；Legado 会把角色卡名字显示为段评作者，专属伴读会话也使用同一角色。",
+      "由这个角色写段评；Legado 会把角色卡名字显示为段评作者，不会修改任何聊天角色。",
     personaSelect: "选择一个角色卡",
     personaLoading: "正在加载角色卡…",
     personaNoCards: "当前没有可用的角色卡。",
@@ -244,14 +265,33 @@ function getText(useEnglish) {
     chapterPrefix: "第",
     preciseProgress: "已获取精确阅读位置",
     chapterProgress: "当前只能获取章节级进度",
-    start: "继续伴读",
-    create: "开始伴读",
-    preparing: "正在准备专属伴读会话…",
+    history: "查看全部记录",
     refresh: "刷新状态",
     manage: "打开包管理",
     regenerate: "立即生成下一章段评",
     regenerating: "正在使用所选模型生成段评…",
     latestRun: "最近一次段评任务",
+    flowTitle: "生成流程",
+    flowStages: {
+      reading_target: "读取当前进度与目标章节",
+      preparing_context: "整理有限前情",
+      resolving_model: "解析角色卡与模型",
+      waiting_model: "发送请求并等待模型",
+      validating_response: "校验段落锚点与格式",
+      saving_comments: "保存段评并通知 Legado",
+      completed: "已可在 Legado 中显示",
+    },
+    triggerManual: "手动触发",
+    triggerBackground: "阅读进度触发",
+    durationLabel: "耗时",
+    seconds: "秒",
+    inputLabel: "预估输入",
+    targetLabel: "目标章",
+    contextLabel: "前情",
+    characters: "字",
+    contextWindowLabel: "模型窗口",
+    tokens: "Token",
+    stageTimeoutHint: "超时发生阶段：",
     noRun: "还没有执行过段评任务。",
     comments: "条段评",
     noNext: "当前书籍已经没有下一章。",
@@ -262,6 +302,7 @@ function getText(useEnglish) {
     cancelled: "已取消",
     failed: "失败",
     superseded: "阅读状态已变化，已跳过",
+    noValidComments: "模型未返回有效段评",
     runErrors: {
       model_timeout: "模型调用超时。",
       model_context_too_small:
@@ -274,28 +315,26 @@ function getText(useEnglish) {
       legado_unsafe_position: "阅读位置不可安全读取。",
       legado_invalid_response: "Legado 返回数据无效。",
       invalid_model_response: "模型返回的段评数据无效。",
+      no_valid_comments: "模型返回内容，但没有有效段评被接受。",
       role_not_selected: "请先为当前书籍选择段评角色。",
       role_unavailable: "所选段评角色已不存在，请重新选择。",
+      already_generating: "已有段评任务正在生成中，请等待完成后再试。",
       cancelled: "任务被系统或用户取消。",
       interrupted: "任务进程中断。",
       unknown_error: "任务因未知原因失败。",
     },
     queuedHint:
-      "后台历史保存在本机 reading_companion.db；这里不会显示未读正文或尚未解锁的段评内容。",
+      "后台历史保存在本机 reading_companion.db；详情可显示已生成段评全文与安全调用链，未读正文仍不会显示。",
     enableBasicFailed: "切换阅读伴侣失败：",
     enableAutoFailed: "切换自动段评失败：",
     enableStateMismatch: "工具包未能开启。",
     disableStateMismatch: "工具包未能关闭。",
     regenerateFailed: "生成下一章段评失败：",
     loadFailed: "状态检查失败：",
-    prepareFailed: "打开伴读会话失败：",
     readyNotice: "状态已刷新。",
     generatedNotice: "下一章段评任务已完成。",
-    chatTitlePrefix: "伴读 · ",
-    existingChat: "这本书会复用已有的独立伴读会话。",
-    newChat: "这本书会创建一个独立伴读会话。",
     hint:
-      "关闭整个工具包后，侧栏入口会消失；普通聊天不会注入伴读提示词。",
+      "开启工具包后，请在任意普通对话中继续使用；只有谈到书籍/阅读时才会引导伴读工具，其他聊天不受影响。",
   };
 }
 
@@ -311,6 +350,7 @@ function statusLabel(text, status) {
     failed: text.failed,
     superseded: text.superseded,
     no_next_chapter: text.noNext,
+    no_valid_comments: text.noValidComments,
     already_generating: text.generating,
   };
   return labels[normalized] || normalized || text.noRun;
@@ -330,6 +370,7 @@ function statusColor(status) {
   }
   if (
     normalized === "failed" ||
+    normalized === "no_valid_comments" ||
     normalized === "interrupted" ||
     normalized === "cancelled" ||
     normalized === "superseded"
@@ -339,7 +380,7 @@ function statusColor(status) {
   return "onSurfaceVariant";
 }
 
-function autoCommentErrorLabel(text, error) {
+function autoCommentErrorLabel(text, error, stage) {
   const raw = String(error || "").trim();
   const legacyCodes = {
     "模型调用超时": "model_timeout",
@@ -351,12 +392,93 @@ function autoCommentErrorLabel(text, error) {
     "阅读位置不可安全读取": "legado_unsafe_position",
     "Legado 返回数据无效": "legado_invalid_response",
     "模型返回格式无效": "invalid_model_response",
+    "模型返回内容，但没有有效段评被接受": "no_valid_comments",
     "任务被系统或用户取消": "cancelled",
     "任务进程中断": "interrupted",
     "未知错误": "unknown_error",
   };
   const code = legacyCodes[raw] || raw;
-  return text.runErrors[code] || text.runErrors.unknown_error;
+  const message = text.runErrors[code] || text.runErrors.unknown_error;
+  const normalizedStage = String(stage || "").trim();
+  return code === "model_timeout" && text.flowStages[normalizedStage]
+    ? `${message} ${text.stageTimeoutHint}${text.flowStages[normalizedStage]}`
+    : message;
+}
+
+function modelSourceLabel(text, source) {
+  const labels = {
+    caller_chat: text.modelSourceCaller,
+    character_card: text.modelSourceCharacter,
+    global_chat: text.modelSourceGlobal,
+  };
+  return labels[String(source || "").trim()] || text.modelSourceUnknown;
+}
+
+function runTriggerLabel(text, trigger) {
+  return String(trigger || "").trim() === "manual"
+    ? text.triggerManual
+    : text.triggerBackground;
+}
+
+function formatDuration(text, durationMs) {
+  const milliseconds = Number(durationMs || 0);
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) {
+    return "";
+  }
+  return `${Math.max(0.1, milliseconds / 1000).toFixed(
+    milliseconds >= 10000 ? 0 : 1,
+  )}${text.seconds}`;
+}
+
+function generationFlowRows(ctx, text, colors, run) {
+  if (!run || !run.stage || run.stage === "starting") {
+    return [];
+  }
+  const stages = Object.keys(text.flowStages);
+  const currentStage = String(run.stage || "").trim();
+  const currentIndex = Math.max(0, stages.indexOf(currentStage));
+  const status = String(run.status || "").trim().toLowerCase();
+  const succeeded =
+    status === "generated" ||
+    status === "cached" ||
+    status === "no_next_chapter";
+  const failed =
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted" ||
+    status === "superseded";
+  return stages.map((stage, index) => {
+    const complete = succeeded || index < currentIndex;
+    const current = !succeeded && index === currentIndex;
+    const marker = complete ? "✓" : current ? (failed ? "!" : "●") : "○";
+    const color = complete
+      ? colors.primary
+      : current && failed
+        ? colors.error
+        : current
+          ? colors.tertiary
+          : colors.onSurfaceVariant;
+    return ctx.UI.Row(
+      {
+        fillMaxWidth: true,
+        spacing: 8,
+        verticalAlignment: "center",
+      },
+      [
+        ctx.UI.Text({
+          text: marker,
+          color,
+          fontWeight: current ? "bold" : "normal",
+        }),
+        ctx.UI.Text({
+          text: text.flowStages[stage],
+          style: "bodySmall",
+          color,
+          fontWeight: current ? "medium" : "normal",
+        }),
+      ],
+    );
+  });
 }
 
 function settingRow(ctx, title, subtitle, checked, enabled, onCheckedChange) {
@@ -401,6 +523,7 @@ function readingCompanionEntryScreen(ctx) {
   const autoEnabledState = useStateValue(ctx, "autoEnabled", false);
   const readingState = useStateValue(ctx, "readingState", null);
   const autoStatusState = useStateValue(ctx, "autoStatus", null);
+  const historyState = useStateValue(ctx, "history", null);
   const selectedPersonaState = useStateValue(ctx, "selectedPersona", null);
   const availableCardsState = useStateValue(ctx, "availableCards", []);
   const showCardPickerState = useStateValue(ctx, "showCardPicker", false);
@@ -423,6 +546,7 @@ function readingCompanionEntryScreen(ctx) {
       autoEnabledState.set(autoEnabled);
       readingState.set(null);
       autoStatusState.set(null);
+      historyState.set(null);
       selectedPersonaState.set(null);
 
       const errors = [];
@@ -445,6 +569,18 @@ function readingCompanionEntryScreen(ctx) {
               await ctx.getReadingCompanionCommentaryCharacter(bookId),
             );
           }
+        } catch (error) {
+          errors.push(toErrorText(error));
+        }
+        try {
+          historyState.set(
+            await callPackageTool(
+              ctx,
+              TOOL_PACKAGE,
+              "auto_commentary_history",
+              { limit: 10 },
+            ),
+          );
         } catch (error) {
           errors.push(toErrorText(error));
         }
@@ -561,12 +697,9 @@ function readingCompanionEntryScreen(ctx) {
         throw new Error("Commentary character selection is unavailable");
       }
       const bookId = String(book.bookId || "").trim();
-      const chatMap = readChatMap(ctx);
-      const chatId = String(chatMap[bookId] || "").trim();
       const selected = await ctx.setReadingCompanionCommentaryCharacter({
         bookId,
         roleCardId: String(card.id).trim(),
-        chatId,
       });
       selectedPersonaState.set(selected);
       showCardPickerState.set(false);
@@ -633,94 +766,6 @@ function readingCompanionEntryScreen(ctx) {
     }
   };
 
-  const prepareCompanionChat = async () => {
-    const book = readingState.value;
-    const roleCardId = String(
-      selectedPersonaState.value &&
-        selectedPersonaState.value.roleCardId ||
-        "",
-    ).trim();
-    if (
-      busyState.value ||
-      !book ||
-      !String(book.bookId || "").trim()
-    ) {
-      return;
-    }
-    if (!roleCardId) {
-      errorState.set(text.personaRequired);
-      return;
-    }
-    busyState.set(true);
-    busyLabelState.set(text.preparing);
-    noticeState.set("");
-    errorState.set("");
-    try {
-      const bookId = String(book.bookId).trim();
-      const chatMap = readChatMap(ctx);
-      let chatId = String(chatMap[bookId] || "").trim();
-      let chatActivated = false;
-      if (chatId) {
-        try {
-          if (!ctx.setReadingCompanionCommentaryCharacter) {
-            throw new Error("Commentary character selection is unavailable");
-          }
-          await ctx.setReadingCompanionCommentaryCharacter({
-            bookId,
-            roleCardId,
-            chatId,
-          });
-          if (!ctx.activateReadingCompanionChat) {
-            throw new Error("Companion chat activation is unavailable");
-          }
-          await ctx.activateReadingCompanionChat(chatId);
-          chatActivated = true;
-        } catch (_error) {
-          delete chatMap[bookId];
-          chatId = "";
-        }
-      }
-      if (!chatId) {
-        if (!ctx.createReadingCompanionChat) {
-          throw new Error("Companion chat creation is unavailable");
-        }
-        const created = await ctx.createReadingCompanionChat({
-          title: `${text.chatTitlePrefix}${String(book.book || "").trim()}`,
-          characterCardId: roleCardId,
-        });
-        chatId = String(
-          (created && (created.chatId || created.chat_id)) || "",
-        ).trim();
-        if (!chatId) {
-          throw new Error("The new chat did not return a chat ID");
-        }
-      }
-
-      if (!ctx.activateReadingCompanionChat) {
-        throw new Error("Companion chat activation is unavailable");
-      }
-      if (!ctx.setReadingCompanionCommentaryCharacter) {
-        throw new Error("Commentary character selection is unavailable");
-      }
-      await ctx.setReadingCompanionCommentaryCharacter({
-        bookId,
-        roleCardId,
-        chatId,
-      });
-      if (!chatActivated) {
-        await ctx.activateReadingCompanionChat(chatId);
-      }
-      chatMap[bookId] = chatId;
-      await ctx.setEnv(COMPANION_CHAT_MAP_ENV_KEY, JSON.stringify(chatMap));
-      await ctx.navigate("native.ai_chat");
-    } catch (error) {
-      errorState.set(`${text.prepareFailed}${toErrorText(error)}`);
-    } finally {
-      busyState.set(false);
-      busyLabelState.set("");
-    }
-  };
-
   const regenerateComments = async () => {
     if (busyState.value || !autoEnabledState.value) {
       return;
@@ -740,14 +785,68 @@ function readingCompanionEntryScreen(ctx) {
     noticeState.set("");
     errorState.set("");
     try {
-      await callPackageTool(
+      const queued = await callPackageTool(
         ctx,
         AUTO_COMMENTARY_PACKAGE,
-        "regenerate_next_chapter_comments",
+        "queue_regenerate_next_chapter_comments",
         {},
       );
-      noticeState.set(text.generatedNotice);
-      await loadDashboard(false);
+      if (queued && String(queued.status || "").trim() === "already_generating") {
+        errorState.set(
+          `${text.regenerateFailed}${text.runErrors.already_generating}`,
+        );
+        busyState.set(false);
+        busyLabelState.set("");
+        return;
+      }
+      const queuedAt = Number(queued && queued.queuedAt || Date.now());
+      let completedRun = null;
+      for (let attempt = 0; attempt < 190; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        const status = await callPackageTool(
+          ctx,
+          AUTO_COMMENTARY_PACKAGE,
+          "auto_commentary_status",
+          {},
+        );
+        autoStatusState.set(status);
+        const run =
+          status && status.latestRun && typeof status.latestRun === "object"
+            ? status.latestRun
+            : null;
+        const isThisRequest =
+          !!run &&
+          String(run.trigger || "").trim() === "manual" &&
+          Number(run.startedAt || 0) >= queuedAt - 2000;
+        const runStatus = String(run && run.status || "").trim().toLowerCase();
+        if (
+          isThisRequest &&
+          runStatus !== "generating" &&
+          runStatus !== "running"
+        ) {
+          completedRun = run;
+          break;
+        }
+      }
+      if (!completedRun) {
+        throw new Error(text.runErrors.model_timeout);
+      }
+      const completedStatus = String(completedRun.status || "").toLowerCase();
+      if (
+        completedStatus === "generated" ||
+        completedStatus === "cached" ||
+        completedStatus === "no_next_chapter"
+      ) {
+        noticeState.set(text.generatedNotice);
+      } else {
+        errorState.set(
+          `${text.regenerateFailed}${autoCommentErrorLabel(
+            text,
+            completedRun.error,
+            completedRun.stage,
+          )}`,
+        );
+      }
     } catch (error) {
       errorState.set(`${text.regenerateFailed}${toErrorText(error)}`);
     } finally {
@@ -756,17 +855,33 @@ function readingCompanionEntryScreen(ctx) {
     }
   };
 
+  const openHistory = async () => {
+    if (!basicEnabledState.value) {
+      return;
+    }
+    await Promise.resolve(ctx.navigate(HISTORY_ROUTE));
+  };
+
   const book = readingState.value;
-  const chatMap = readChatMap(ctx);
-  const hasExistingChat =
-    !!book &&
-    !!String(book.bookId || "").trim() &&
-    !!String(chatMap[String(book.bookId).trim()] || "").trim();
-  const latestRun =
+  const latestRunFromStatus =
     autoStatusState.value &&
     autoStatusState.value.latestRun &&
     typeof autoStatusState.value.latestRun === "object"
       ? autoStatusState.value.latestRun
+      : null;
+  const latestRunFromHistory =
+    historyState.value &&
+    Array.isArray(historyState.value.runs) &&
+    historyState.value.runs.length > 0 &&
+    typeof historyState.value.runs[0] === "object"
+      ? historyState.value.runs[0]
+      : null;
+  const latestRun = latestRunFromStatus || latestRunFromHistory;
+  const commentaryConfiguration =
+    autoStatusState.value &&
+    autoStatusState.value.configuration &&
+    typeof autoStatusState.value.configuration === "object"
+      ? autoStatusState.value.configuration
       : null;
   const selectedRoleCardId = String(
     selectedPersonaState.value &&
@@ -901,11 +1016,6 @@ function readingCompanionEntryScreen(ctx) {
             text: book.preciseCurrentPositionAvailable
               ? text.preciseProgress
               : text.chapterProgress,
-            style: "bodySmall",
-            color: colors.onPrimaryContainer,
-          }),
-          ctx.UI.Text({
-            text: hasExistingChat ? text.existingChat : text.newChat,
             style: "bodySmall",
             color: colors.onPrimaryContainer,
           }),
@@ -1084,7 +1194,74 @@ function readingCompanionEntryScreen(ctx) {
     );
   }
 
-  if (autoEnabledState.value) {
+  if (autoEnabledState.value && book) {
+    const configuredModel = commentaryConfiguration
+      ? `${modelSourceLabel(
+          text,
+          commentaryConfiguration.modelSource,
+        )} · ${String(commentaryConfiguration.modelConfigName || "")} / ${String(
+          commentaryConfiguration.model || "",
+        )}`
+      : text.modelSourceUnknown;
+    children.push(
+      ctx.UI.Card(
+        {
+          fillMaxWidth: true,
+          containerColor: colors.secondaryContainer,
+        },
+        ctx.UI.Column({ fillMaxWidth: true, padding: 16, spacing: 8 }, [
+          ctx.UI.Text({
+            text: text.configTitle,
+            style: "titleMedium",
+            color: colors.onSecondaryContainer,
+          }),
+          ctx.UI.Text({
+            text: `${text.configCharacter} · ${
+              selectedRoleCardName || text.personaSelect
+            }`,
+            style: "bodyMedium",
+            color: colors.onSecondaryContainer,
+          }),
+          ctx.UI.Text({
+            text: `${text.configModel} · ${configuredModel}`,
+            style: "bodyMedium",
+            color: colors.onSecondaryContainer,
+          }),
+          ctx.UI.Text({
+            text: text.configTrigger,
+            style: "bodySmall",
+            color: colors.onSecondaryContainer,
+          }),
+          ctx.UI.Text({
+            text: text.configReading,
+            style: "bodySmall",
+            color: colors.onSecondaryContainer,
+          }),
+          ctx.UI.Text({
+            text: text.configDensity,
+            style: "bodySmall",
+            color: colors.onSecondaryContainer,
+          }),
+          ctx.UI.Text({
+            text: text.configDelivery,
+            style: "bodySmall",
+            color: colors.onSecondaryContainer,
+          }),
+          ctx.UI.Text({
+            text: text.changeModelHint,
+            style: "labelSmall",
+            color: colors.onSecondaryContainer,
+          }),
+        ]),
+      ),
+    );
+  }
+
+  if (autoEnabledState.value || latestRun) {
+    const flowRows = generationFlowRows(ctx, text, colors, latestRun);
+    const durationText = latestRun
+      ? formatDuration(text, latestRun.durationMs)
+      : "";
     children.push(
       ctx.UI.Card(
         {
@@ -1112,28 +1289,91 @@ function readingCompanionEntryScreen(ctx) {
           }),
           latestRun && latestRun.roleCardName
             ? ctx.UI.Text({
-                text: `${String(latestRun.roleCardName)} · ${String(
+                text: `${text.configCharacter} · ${String(
+                  latestRun.roleCardName,
+                )}\n${text.configModel} · ${String(
                   latestRun.modelConfigName ||
                     latestRun.model ||
                     latestRun.provider ||
                     "",
-                )}`,
+                )}${
+                  latestRun.model &&
+                  latestRun.model !== latestRun.modelConfigName
+                    ? ` / ${String(latestRun.model)}`
+                    : ""
+                }`,
+                style: "bodySmall",
+                color: colors.onSurfaceVariant,
+              })
+            : ctx.UI.Spacer({ height: 0 }),
+          latestRun
+            ? ctx.UI.Text({
+                text: `${runTriggerLabel(text, latestRun.trigger)}${
+                  durationText ? ` · ${text.durationLabel} ${durationText}` : ""
+                }`,
+                style: "bodySmall",
+                color: colors.onSurfaceVariant,
+              })
+            : ctx.UI.Spacer({ height: 0 }),
+          latestRun && Number(latestRun.targetCharacterCount || 0) > 0
+            ? ctx.UI.Text({
+                text: `${text.targetLabel} ${Number(
+                  latestRun.targetCharacterCount,
+                )} ${text.characters} · ${text.contextLabel} ${Number(
+                  latestRun.contextChapterCount || 0,
+                )} 章 / ${Number(
+                  latestRun.contextCharacterCount || 0,
+                )} ${text.characters}`,
+                style: "bodySmall",
+                color: colors.onSurfaceVariant,
+              })
+            : ctx.UI.Spacer({ height: 0 }),
+          latestRun && Number(latestRun.estimatedInputTokens || 0) > 0
+            ? ctx.UI.Text({
+                text: `${text.inputLabel} ${Number(
+                  latestRun.estimatedInputTokens,
+                )} ${text.tokens} · ${text.contextWindowLabel} ${Number(
+                  latestRun.contextWindowTokens || 0,
+                )} ${text.tokens}`,
                 style: "bodySmall",
                 color: colors.onSurfaceVariant,
               })
             : ctx.UI.Spacer({ height: 0 }),
           latestRun && latestRun.error
             ? ctx.UI.Text({
-                text: autoCommentErrorLabel(text, latestRun.error),
+                text: autoCommentErrorLabel(
+                  text,
+                  latestRun.error,
+                  latestRun.stage,
+                ),
                 style: "bodySmall",
                 color: colors.error,
               })
             : ctx.UI.Spacer({ height: 0 }),
+          flowRows.length > 0
+            ? ctx.UI.Text({
+                text: text.flowTitle,
+                style: "labelLarge",
+                color: colors.onSurface,
+              })
+            : ctx.UI.Spacer({ height: 0 }),
+          ...flowRows,
           ctx.UI.Text({
             text: text.queuedHint,
             style: "bodySmall",
             color: colors.onSurfaceVariant,
           }),
+          ctx.UI.OutlinedButton(
+            {
+              fillMaxWidth: true,
+              enabled: !busyState.value,
+              onClick: openHistory,
+            },
+            [
+              ctx.UI.Icon({ name: "History", size: 18 }),
+              ctx.UI.Text({ text: text.history }),
+            ],
+          ),
         ]),
       ),
     );
@@ -1196,26 +1436,6 @@ function readingCompanionEntryScreen(ctx) {
       ),
     );
   }
-
-  children.push(
-    ctx.UI.Button(
-      {
-        fillMaxWidth: true,
-        enabled:
-          !!book &&
-          basicEnabledState.value &&
-          !loadingState.value &&
-          !busyState.value,
-        onClick: prepareCompanionChat,
-      },
-      [
-        ctx.UI.Icon({ name: "Chat", size: 20 }),
-        ctx.UI.Text({
-          text: hasExistingChat ? text.start : text.create,
-        }),
-      ],
-    ),
-  );
 
   if (autoEnabledState.value) {
     children.push(
@@ -1285,4 +1505,3 @@ function readingCompanionEntryScreen(ctx) {
 
 exports.default = readingCompanionEntryScreen;
 exports.unwrapToolResult = unwrapToolResult;
-exports.readChatMap = readChatMap;

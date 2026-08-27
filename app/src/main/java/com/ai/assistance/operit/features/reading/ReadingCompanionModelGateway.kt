@@ -12,6 +12,7 @@ import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.PromptFunctionType
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
+import com.ai.assistance.operit.data.stats.ProviderUsageSnapshot
 import com.ai.assistance.operit.data.stats.TokenStatCategory
 import com.ai.assistance.operit.util.ChatUtils
 import kotlinx.coroutines.TimeoutCancellationException
@@ -37,6 +38,7 @@ data class AutoCommentModelExecution(
     val configId: String,
     val configName: String,
     val modelIndex: Int,
+    val modelSource: String = "global_chat",
     val provider: String,
     val model: String,
     val roleCardId: String?,
@@ -46,6 +48,26 @@ data class AutoCommentModelExecution(
 data class GeneratedAutoComments(
     val comments: List<AutoCommentDraft>,
     val execution: AutoCommentModelExecution,
+    val usage: ProviderUsageSnapshot? = null,
+)
+
+data class AutoCommentPromptMetrics(
+    val previousContextChapterCount: Int,
+    val previousContextCharacterCount: Int,
+    val contextWindowTokens: Int,
+    val estimatedInputTokens: Int,
+)
+
+data class AutoCommentConfigurationPreview(
+    val roleCardId: String,
+    val roleCardName: String,
+    val modelSource: String,
+    val modelConfigId: String,
+    val modelConfigName: String,
+    val modelIndex: Int,
+    val provider: String,
+    val model: String,
+    val contextWindowTokens: Int,
 )
 
 data class ResolvedAutoCommentRole(
@@ -267,6 +289,8 @@ class ReadingCompanionModelGateway(
         roleCardId: String,
         runtime: ToolExecutionManager.ToolRuntimeContext?,
         onExecutionResolved: suspend (AutoCommentModelExecution) -> Unit = {},
+        onPromptPrepared: suspend (AutoCommentPromptMetrics) -> Unit = {},
+        onModelResponseReceived: suspend (ProviderUsageSnapshot?) -> Unit = {},
     ): GeneratedAutoComments {
         val paragraphs = AutoCommentSupport.paragraphs(content.content)
         require(paragraphs.any(String::isNotBlank)) { "下一章正文为空，无法生成段评" }
@@ -288,8 +312,11 @@ class ReadingCompanionModelGateway(
                             contextWindowTokens = contextWindowTokens,
                         )
                     },
+                    onPromptPrepared = onPromptPrepared,
+                    onModelResponseReceived = onModelResponseReceived,
                     configIdOverride = requestContext.modelConfigId,
                     modelIndexOverride = requestContext.modelIndex,
+                    modelSource = requestContext.modelSource,
                     systemPrompt = systemPrompt,
                     transformExecution = { execution ->
                         execution.copy(
@@ -311,6 +338,7 @@ class ReadingCompanionModelGateway(
         return GeneratedAutoComments(
             comments = candidates,
             execution = call.execution,
+            usage = call.usage,
         )
     }
 
@@ -327,9 +355,12 @@ class ReadingCompanionModelGateway(
 
     private suspend fun executeModelCall(
         prompt: String? = null,
-        promptFactory: ((contextWindowTokens: Int) -> String)? = null,
+        promptFactory: ((contextWindowTokens: Int) -> PreparedAutoCommentPrompt)? = null,
+        onPromptPrepared: suspend (AutoCommentPromptMetrics) -> Unit = {},
+        onModelResponseReceived: suspend (ProviderUsageSnapshot?) -> Unit = {},
         configIdOverride: String?,
         modelIndexOverride: Int?,
+        modelSource: String? = null,
         systemPrompt: String,
         transformExecution: (AutoCommentModelExecution) -> AutoCommentModelExecution = { it },
         onExecutionResolved: suspend (AutoCommentModelExecution) -> Unit = {},
@@ -347,6 +378,7 @@ class ReadingCompanionModelGateway(
                     configId = lease.modelConfig.id,
                     configName = lease.modelConfig.name,
                     modelIndex = lease.modelIndex,
+                    modelSource = modelSource ?: "global_chat",
                     provider = provider,
                     model = model,
                     roleCardId = null,
@@ -354,10 +386,15 @@ class ReadingCompanionModelGateway(
                 ),
             )
             onExecutionResolved(execution)
-            val resolvedPrompt = promptFactory?.invoke(
+            val preparedPrompt = promptFactory?.invoke(
                 effectiveContextWindowTokens(lease.modelConfig),
-            ) ?: requireNotNull(prompt)
+            )
+            if (preparedPrompt != null) {
+                onPromptPrepared(preparedPrompt.metrics)
+            }
+            val resolvedPrompt = preparedPrompt?.prompt ?: requireNotNull(prompt)
             val output = StringBuilder()
+            var latestUsage: ProviderUsageSnapshot? = null
             lease.service.sendMessage(
                 context = appContext,
                 chatHistory = listOf(
@@ -372,12 +409,19 @@ class ReadingCompanionModelGateway(
                 stream = false,
                 availableTools = emptyList(),
                 preserveThinkInHistory = false,
+                onUsageReported = { usage, _ ->
+                    if (usage.hasKnownFields()) {
+                        latestUsage = mergeUsageSnapshot(latestUsage, usage)
+                    }
+                },
                 enableRetry = false,
                 statsCategory = TokenStatCategory.READING_COMPANION,
             ).collect { chunk -> output.append(chunk) }
+            onModelResponseReceived(latestUsage)
             ModelCallResult(
                 output = output.toString(),
                 execution = execution,
+                usage = latestUsage,
             )
         } finally {
             lease.close()
@@ -390,7 +434,7 @@ class ReadingCompanionModelGateway(
         targetCount: Int,
         previousContext: List<AutoCommentContextChapter>,
         contextWindowTokens: Int,
-    ): String {
+    ): PreparedAutoCommentPrompt {
         val outputTokenReserve = minOf(
             OUTPUT_TOKEN_RESERVE,
             (contextWindowTokens / 4).coerceAtLeast(MIN_OUTPUT_TOKEN_RESERVE),
@@ -421,6 +465,7 @@ class ReadingCompanionModelGateway(
         }
 
         var bestPrompt = promptWithoutPreviousContext
+        var bestContext = emptyList<AutoCommentContextChapter>()
         var low = 1
         var high = previousContext.sumOf { chapter -> chapter.content.length }
             .coerceAtMost(AutoCommentSupport.MAX_PREVIOUS_CONTEXT_CHARS)
@@ -429,12 +474,43 @@ class ReadingCompanionModelGateway(
             val candidate = render(middle)
             if (estimatedRequestTokens(candidate) <= inputBudget) {
                 bestPrompt = candidate
+                bestContext = AutoCommentSupport.trimPreviousContext(
+                    chaptersChronological = previousContext,
+                    maximumCharacters = middle,
+                )
                 low = middle + 1
             } else {
                 high = middle - 1
             }
         }
-        return bestPrompt
+        return PreparedAutoCommentPrompt(
+            prompt = bestPrompt,
+            metrics = AutoCommentPromptMetrics(
+                previousContextChapterCount = bestContext.size,
+                previousContextCharacterCount =
+                    bestContext.sumOf { chapter -> chapter.content.length },
+                contextWindowTokens = contextWindowTokens,
+                estimatedInputTokens = estimatedRequestTokens(bestPrompt),
+            ),
+        )
+    }
+
+    private fun mergeUsageSnapshot(
+        previous: ProviderUsageSnapshot?,
+        latest: ProviderUsageSnapshot,
+    ): ProviderUsageSnapshot {
+        if (previous == null || latest.completeSnapshot) return latest
+        return latest.copy(
+            uncachedInputTokens = latest.uncachedInputTokens ?: previous.uncachedInputTokens,
+            cachedInputTokens = latest.cachedInputTokens ?: previous.cachedInputTokens,
+            cacheWriteTokens = latest.cacheWriteTokens ?: previous.cacheWriteTokens,
+            totalInputTokens = latest.totalInputTokens ?: previous.totalInputTokens,
+            outputTokens = latest.outputTokens ?: previous.outputTokens,
+            reasoningTokens = latest.reasoningTokens ?: previous.reasoningTokens,
+            reasoningIncludedInOutput =
+                latest.reasoningIncludedInOutput ?: previous.reasoningIncludedInOutput,
+            completeSnapshot = false,
+        )
     }
 
     private fun renderAutoCommentPrompt(
@@ -537,6 +613,35 @@ class ReadingCompanionModelGateway(
         )
     }
 
+    suspend fun previewAutoCommentConfiguration(
+        roleCardId: String,
+    ): AutoCommentConfigurationPreview {
+        val requestContext = resolveAutoCommentRequestContext(
+            roleCardId = roleCardId,
+            runtime = null,
+        )
+        val host = EnhancedAIService.getChatInstance(appContext, INTERNAL_CHAT_ID)
+        val config = host.getModelConfigForFunction(
+            functionType = FunctionType.CHAT,
+            chatModelConfigIdOverride = requestContext.modelConfigId,
+            chatModelIndexOverride = requestContext.modelIndex,
+        )
+        val providerType =
+            ApiProviderType.fromProviderTypeId(config.apiProviderTypeId)
+                ?: config.apiProviderType
+        return AutoCommentConfigurationPreview(
+            roleCardId = requestContext.roleCardId,
+            roleCardName = requestContext.roleCardName,
+            modelSource = requestContext.modelSource,
+            modelConfigId = config.id,
+            modelConfigName = config.name,
+            modelIndex = requestContext.modelIndex ?: 0,
+            provider = providerType.name,
+            model = config.modelName,
+            contextWindowTokens = effectiveContextWindowTokens(config),
+        )
+    }
+
     private suspend fun resolveAutoCommentRequestContext(
         roleCardId: String,
         runtime: ToolExecutionManager.ToolRuntimeContext?,
@@ -564,6 +669,11 @@ class ReadingCompanionModelGateway(
                 runtimeConfigId != null -> (runtime?.parentModelIndex ?: 0).coerceAtLeast(0)
                 usesFixedRoleModel -> roleCard.chatModelIndex.coerceAtLeast(0)
                 else -> null
+            },
+            modelSource = when {
+                runtimeConfigId != null -> MODEL_SOURCE_CALLER_CHAT
+                usesFixedRoleModel -> MODEL_SOURCE_CHARACTER_CARD
+                else -> MODEL_SOURCE_GLOBAL_CHAT
             },
         )
     }
@@ -604,11 +714,18 @@ class ReadingCompanionModelGateway(
             val rolePrompt: String,
             val modelConfigId: String?,
             val modelIndex: Int?,
+            val modelSource: String,
+        )
+
+        data class PreparedAutoCommentPrompt(
+            val prompt: String,
+            val metrics: AutoCommentPromptMetrics,
         )
 
         data class ModelCallResult(
             val output: String,
             val execution: AutoCommentModelExecution,
+            val usage: ProviderUsageSnapshot?,
         )
 
         const val INTERNAL_CHAT_ID = "__reading_companion_internal__"
@@ -622,5 +739,8 @@ class ReadingCompanionModelGateway(
         const val MIN_CONTEXT_WINDOW_TOKENS = 2_048
         const val CONSERVATIVE_MNN_CONTEXT_WINDOW_TOKENS = 2_048
         const val MAX_CONTEXT_WINDOW_TOKENS = 2_000_000
+        const val MODEL_SOURCE_CALLER_CHAT = "caller_chat"
+        const val MODEL_SOURCE_CHARACTER_CARD = "character_card"
+        const val MODEL_SOURCE_GLOBAL_CHAT = "global_chat"
     }
 }

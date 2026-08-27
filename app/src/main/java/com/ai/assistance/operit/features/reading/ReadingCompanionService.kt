@@ -89,53 +89,406 @@ class ReadingCompanionService private constructor(
     suspend fun currentBook(): ReadingState = selectedReadingState()
 
     suspend fun currentContext(
-        maxCharacters: Int = 2600,
+        maxCharacters: Int = DEFAULT_CONTEXT_CHARACTERS,
         callerRoleCardId: String? = null,
     ): JSONObject {
         val state = selectedReadingState()
+        synchronizeBoundary(state)
         val content = provider.getReadableChapterContent(state.book.id, state.chapterIndex)
         val safeEnd = content.readableUntil.coerceIn(0, content.content.length)
-        val start = (safeEnd - maxCharacters.coerceIn(400, 6000)).coerceAtLeast(0)
+        val requestedCharacters = maxCharacters.coerceIn(
+            MIN_CONTEXT_CHARACTERS,
+            MAX_CONTEXT_CHARACTERS,
+        )
+        // Reserve a bounded part of the requested budget for compact summaries, reader memories,
+        // and the companion's own comments. The remaining budget is used for novel prose.
+        val supplementalBudget = minOf(
+            MAX_SUPPLEMENTAL_CONTEXT_CHARACTERS,
+            requestedCharacters / 4,
+        )
+        val envelopeBudget = minOf(
+            MAX_CONTEXT_ENVELOPE_CHARACTERS,
+            requestedCharacters / 8,
+        )
+        val novelTextBudget =
+            (requestedCharacters - supplementalBudget - envelopeBudget).coerceAtLeast(0)
+        val currentTextBudget = minOf(CURRENT_CHAPTER_MAX_CHARACTERS, novelTextBudget)
+        val start = (safeEnd - currentTextBudget).coerceAtLeast(0)
+        val currentText = content.content.substring(start, safeEnd)
+        val previousTextBudget = (novelTextBudget - currentText.length).coerceAtLeast(0)
+        val previousChapters = loadPreviousContext(
+            state = state,
+            maximumCharacters = previousTextBudget,
+        )
+
+        // Re-read the boundary after provider calls. If the reader moved backwards or switched
+        // books during assembly, fail closed instead of returning a mixed or unsafe context.
+        val latestState = selectedReadingState(state.book.id)
+        failIfBoundaryChanged(state, latestState)
+        synchronizeBoundary(latestState)
+
+        val completeTextChapterIndices = buildSet {
+            if (start == 0) add(content.chapterIndex)
+            previousChapters
+                .filterNot(AutoCommentContextChapter::excerptFromEnd)
+                .forEach { add(it.chapterIndex) }
+        }
+        val knowledge = store.getRecentKnowledge(
+            bookId = state.book.id,
+            throughChapterIndex = latestState.chapterIndex,
+            limit = MAX_CONTEXT_CHAPTERS,
+        ).filter { stored ->
+            SpoilerGuard.isPositionAllowed(
+                stored.chapterIndex,
+                0,
+                stored.sourceEndPosition,
+                latestState,
+            )
+        }
+        val contextSummaries = knowledge.mapNotNull { stored ->
+            val summary = stored.summary.trim()
+            if (summary.isBlank()) return@mapNotNull null
+            JSONObject().apply {
+                put("chapterIndex", stored.chapterIndex)
+                put("chapterNumber", stored.chapterIndex + 1)
+                put("chapterTitle", stored.chapterTitle)
+                put("sourceEndPos", stored.sourceEndPosition)
+                put("completeChapter", stored.isComplete)
+                // A full prose excerpt already carries the chapter text. Keep structured facts,
+                // while omitting a duplicate prose summary for that chapter.
+                if (stored.chapterIndex !in completeTextChapterIndices) {
+                    put("summary", summary)
+                }
+                put(
+                    "summaryOmittedBecauseTextIncluded",
+                    stored.chapterIndex in completeTextChapterIndices,
+                )
+                put("knowledge", compactKnowledgeJson(stored.structuredJson))
+            }
+        }.distinctBy { summary ->
+            "${summary.optInt("chapterIndex")}:${summary.optString("summary")}:" +
+                summary.optJSONObject("knowledge")?.toString().orEmpty()
+        }
+
+        val readerMemories = store.getRecentMemories(
+            bookId = state.book.id,
+            throughChapterIndex = latestState.chapterIndex,
+            limit = MAX_CONTEXT_READER_MEMORIES,
+        ).filter { memory ->
+            memory.chapterIndex <= latestState.chapterIndex
+        }
         val unlockedParagraphIndex =
             AutoCommentSupport.unlockedParagraphIndex(content.content, content.isComplete)
         val roleCardId = callerRoleCardId?.trim()?.takeIf(String::isNotBlank)
-        val commentChapter = store.getAutoCommentChapter(
-            bookId = state.book.id,
-            chapterIndex = state.chapterIndex,
-        )
-        val hasCurrentCommentPolicy =
-            commentChapter?.status == ReadingCompanionStore.AUTO_COMMENT_STATUS_READY &&
-                commentChapter.generationPolicyVersion ==
-                AutoCommentSupport.GENERATION_POLICY_VERSION
         val companionComments =
-            if (roleCardId == null || !hasCurrentCommentPolicy) {
+            if (roleCardId == null) {
                 emptyList()
             } else {
-                store.getAutoComments(state.book.id, state.chapterIndex)
-                    .asSequence()
-                    .filter { comment -> comment.paragraphIndex <= unlockedParagraphIndex }
-                    .filter { comment -> comment.roleCardId == roleCardId }
-                    .toList()
-                    .takeLast(12)
+                store.getRecentUnlockedAutoComments(
+                    bookId = state.book.id,
+                    currentChapterIndex = latestState.chapterIndex,
+                    currentUnlockedParagraph = unlockedParagraphIndex,
+                    roleCardId = roleCardId,
+                    limit = MAX_CONTEXT_COMPANION_COMMENTS,
+                )
             }
-        return JSONObject().apply {
-            put("book", state.book.name)
-            put("author", state.book.author)
+
+        val boundedSummaries = boundContextJson(
+            entries = contextSummaries,
+            maximumCharacters = supplementalBudget * SUMMARY_BUDGET_FRACTION / 100,
+        ) { entry, remaining ->
+            entry.put(
+                "summary",
+                entry.optString("summary").take(remaining.coerceAtLeast(0)),
+            )
+        }
+        val boundedMemories = boundContextMemories(
+            memories = readerMemories,
+            maximumCharacters = supplementalBudget * MEMORY_BUDGET_FRACTION / 100,
+        )
+        val boundedComments = boundContextComments(
+            comments = companionComments,
+            maximumCharacters = supplementalBudget * COMMENT_BUDGET_FRACTION / 100,
+        )
+        val metadataCharacters =
+            boundedSummaries.sumOf { it.toString().length } +
+                boundedMemories.sumOf { it.content.length } +
+                boundedComments.sumOf { it.text.length }
+        val novelCharacters =
+            currentText.length + previousChapters.sumOf { it.content.length }
+        val totalCharacters = novelCharacters + metadataCharacters
+        val returnState = selectedReadingState(state.book.id)
+        failIfBoundaryChanged(latestState, returnState)
+        synchronizeBoundary(returnState)
+
+        val result = JSONObject().apply {
+            put("book", returnState.book.name)
+            put("author", returnState.book.author)
             put("chapterIndex", content.chapterIndex)
             put("chapterNumber", content.chapterIndex + 1)
             put("chapterTitle", content.chapterTitle)
             put("startPos", start)
             put("endPos", safeEnd)
-            put("text", content.content.substring(start, safeEnd))
+            put("text", currentText)
+            put(
+                "previousChapters",
+                JSONArray().apply {
+                    previousChapters.forEach { chapter ->
+                        put(
+                            JSONObject()
+                                .put("chapterIndex", chapter.chapterIndex)
+                                .put("chapterNumber", chapter.chapterIndex + 1)
+                                .put("chapterTitle", chapter.chapterTitle)
+                                .put("text", chapter.content)
+                                .put("excerptFromEnd", chapter.excerptFromEnd),
+                        )
+                    }
+                },
+            )
+            put(
+                "summaries",
+                JSONArray().apply { boundedSummaries.forEach(::put) },
+            )
+            put(
+                "readerMemories",
+                JSONArray().apply {
+                    boundedMemories.forEach { memory ->
+                        put(
+                            JSONObject()
+                                .put("id", memory.id)
+                                .put("chapterIndex", memory.chapterIndex)
+                                .put("chapterNumber", memory.chapterIndex + 1)
+                                .put("type", memory.type)
+                                .put("content", memory.content)
+                                .put("createdAt", memory.createdAt)
+                                .put("source", "reader_memory")
+                                .put("isNovelFact", false),
+                        )
+                    }
+                },
+            )
             put(
                 "companionComments",
                 JSONArray().apply {
-                    companionComments.forEach { comment -> put(comment.toCompanionCommentJson()) }
+                    boundedComments.forEach { comment ->
+                        put(
+                            comment.toCompanionCommentJson().apply {
+                                put("source", "companion_comment")
+                                put("isAiMemory", true)
+                            },
+                        )
+                    }
                 },
             )
+            put(
+                "memoryNotice",
+                "readerMemories are reader-authored notes, reactions, questions, or predictions; " +
+                    "they are not confirmed novel facts",
+            )
+            put(
+                "companionMemoryNotice",
+                "companionComments are this role's own unlocked AI commentary, not novel facts",
+            )
+            put("requestedCharacterBudget", requestedCharacters)
+            put("contextCharacterCount", totalCharacters)
+            put("novelCharacterCount", novelCharacters)
+            put("metadataCharacterCount", metadataCharacters)
+            put("previousChapterCount", previousChapters.size)
+            put("summaryCount", boundedSummaries.size)
+            put("readerMemoryCount", boundedMemories.size)
+            put("companionCommentCount", boundedComments.size)
             put("capturedAt", content.capturedAt)
             put("boundary", "read_prefix_only")
         }
+        return enforceSerializedContextBudget(result, requestedCharacters)
+    }
+
+    private suspend fun loadPreviousContext(
+        state: ReadingState,
+        maximumCharacters: Int,
+    ): List<AutoCommentContextChapter> {
+        if (maximumCharacters <= 0 || state.chapterIndex <= 0) return emptyList()
+        val chaptersNearestFirst = buildList {
+            val firstChapter = maxOf(0, state.chapterIndex - MAX_CONTEXT_CHAPTERS)
+            for (chapterIndex in (state.chapterIndex - 1) downTo firstChapter) {
+                val chapter = try {
+                    provider.getReadableChapterContent(state.book.id, chapterIndex)
+                } catch (_: ReaderProviderException) {
+                    continue
+                }
+                // The provider is expected to enforce this identity and boundary itself. Keep a
+                // second local check here so a malformed provider response cannot enter context.
+                if (
+                    chapter.bookId != state.book.id ||
+                    chapter.chapterIndex != chapterIndex ||
+                    !chapter.isComplete
+                ) {
+                    continue
+                }
+                val safeEnd = chapter.readableUntil.coerceIn(0, chapter.content.length)
+                val safeText = chapter.content.substring(0, safeEnd)
+                if (safeText.isBlank()) continue
+                add(
+                    AnnotationChapterContent(
+                        bookId = chapter.bookId,
+                        chapterIndex = chapter.chapterIndex,
+                        chapterTitle = chapter.chapterTitle,
+                        content = safeText,
+                        contractHash = "",
+                        capturedAt = chapter.capturedAt,
+                    ),
+                )
+            }
+        }
+        return AutoCommentSupport.selectPreviousContext(
+            chaptersNearestFirst = chaptersNearestFirst,
+            maximumCharacters = maximumCharacters,
+        )
+    }
+
+    private fun compactKnowledgeJson(rawJson: String): JSONObject {
+        val knowledge = runCatching { JSONObject(rawJson) }.getOrElse { JSONObject() }
+        // The summary is carried in its own field so the structured object does not repeat prose.
+        knowledge.remove("summary")
+        return knowledge
+    }
+
+    private fun boundContextJson(
+        entries: List<JSONObject>,
+        maximumCharacters: Int,
+        trim: (JSONObject, Int) -> Unit,
+    ): List<JSONObject> {
+        var remaining = maximumCharacters.coerceAtLeast(0)
+        if (remaining == 0) return emptyList()
+        val bounded = mutableListOf<JSONObject>()
+        entries.forEach { original ->
+            if (remaining <= 0) return@forEach
+            val entry = JSONObject(original.toString())
+            val serializedLength = entry.toString().length
+            if (serializedLength <= remaining) {
+                bounded += entry
+                remaining -= serializedLength
+                return@forEach
+            }
+            trim(entry, remaining)
+            val trimmedLength = entry.toString().length
+            if (trimmedLength <= remaining && trimmedLength > 0) {
+                bounded += entry
+                remaining -= trimmedLength
+            }
+        }
+        return bounded
+    }
+
+    private fun boundContextMemories(
+        memories: List<ReaderMemory>,
+        maximumCharacters: Int,
+    ): List<ReaderMemory> {
+        var remaining = maximumCharacters.coerceAtLeast(0)
+        if (remaining == 0) return emptyList()
+        val bounded = mutableListOf<ReaderMemory>()
+        memories.forEach { memory ->
+            if (remaining <= 0) return@forEach
+            val content = memory.content.take(remaining)
+            if (content.isBlank()) return@forEach
+            bounded += memory.copy(content = content)
+            remaining -= content.length
+        }
+        return bounded
+    }
+
+    private fun boundContextComments(
+        comments: List<AutoCommentRecord>,
+        maximumCharacters: Int,
+    ): List<AutoCommentRecord> {
+        var remaining = maximumCharacters.coerceAtLeast(0)
+        if (remaining == 0) return emptyList()
+        val bounded = mutableListOf<AutoCommentRecord>()
+        comments.forEach { comment ->
+            if (remaining <= 0) return@forEach
+            val text = comment.text.take(remaining)
+            if (text.isBlank()) return@forEach
+            bounded += comment.copy(text = text)
+            remaining -= text.length
+        }
+        return bounded
+    }
+
+    private fun enforceSerializedContextBudget(
+        payload: JSONObject,
+        maximumCharacters: Int,
+    ): JSONObject {
+        fun refreshCounts() {
+            val previous = payload.optJSONArray("previousChapters") ?: JSONArray()
+            val summaries = payload.optJSONArray("summaries") ?: JSONArray()
+            val memories = payload.optJSONArray("readerMemories") ?: JSONArray()
+            val comments = payload.optJSONArray("companionComments") ?: JSONArray()
+            val novelCharacters =
+                payload.optString("text").length +
+                    (0 until previous.length()).sumOf { index ->
+                        previous.optJSONObject(index)?.optString("text").orEmpty().length
+                    }
+            val metadataCharacters =
+                summaries.toString().length +
+                    memories.toString().length +
+                    comments.toString().length
+            payload.put("novelCharacterCount", novelCharacters)
+            payload.put("metadataCharacterCount", metadataCharacters)
+            payload.put("previousChapterCount", previous.length())
+            payload.put("summaryCount", summaries.length())
+            payload.put("readerMemoryCount", memories.length())
+            payload.put("companionCommentCount", comments.length())
+            payload.put("contextCharacterCount", 0)
+            repeat(3) {
+                payload.put("contextCharacterCount", payload.toString().length)
+            }
+        }
+
+        fun currentLength(): Int {
+            refreshCounts()
+            return payload.toString().length
+        }
+
+        var serializedLength = currentLength()
+        val optionalArrays = listOf("summaries", "readerMemories", "companionComments")
+        optionalArrays.forEach { key ->
+            val array = payload.optJSONArray(key) ?: return@forEach
+            while (serializedLength > maximumCharacters && array.length() > 0) {
+                array.remove(array.length() - 1)
+                serializedLength = currentLength()
+            }
+        }
+
+        val previous = payload.optJSONArray("previousChapters") ?: JSONArray()
+        while (serializedLength > maximumCharacters && previous.length() > 0) {
+            val oldest = previous.optJSONObject(0)
+            val text = oldest?.optString("text").orEmpty()
+            val overage = (serializedLength - maximumCharacters).coerceAtLeast(1)
+            if (oldest != null && text.length > 256) {
+                val removeCount = minOf(text.length - 128, overage + 64)
+                oldest.put("text", text.drop(removeCount))
+                oldest.put("excerptFromEnd", true)
+            } else {
+                previous.remove(0)
+            }
+            serializedLength = currentLength()
+        }
+
+        while (serializedLength > maximumCharacters) {
+            val text = payload.optString("text")
+            if (text.length <= 128) break
+            val overage = (serializedLength - maximumCharacters).coerceAtLeast(1)
+            val removeCount = minOf(text.length - 128, overage + 64)
+            payload.put("text", text.drop(removeCount))
+            payload.put("startPos", payload.optInt("startPos") + removeCount)
+            serializedLength = currentLength()
+        }
+        if (serializedLength > maximumCharacters) {
+            payload.remove("memoryNotice")
+            payload.remove("companionMemoryNotice")
+            currentLength()
+        }
+        return payload
     }
 
     suspend fun recentCompanionComments(
@@ -599,6 +952,20 @@ class ReadingCompanionService private constructor(
         )
     }
 
+    private fun failIfBoundaryChanged(previous: ReadingState, latest: ReadingState) {
+        val unchanged =
+            previous.book.id == latest.book.id &&
+                previous.chapterIndex == latest.chapterIndex &&
+                previous.layoutPosition == latest.layoutPosition &&
+                previous.bodyPosition == latest.bodyPosition
+        if (unchanged) return
+        synchronizeBoundary(latest)
+        throw ReaderProviderException(
+            ReaderProviderException.Reason.UNSAFE_POSITION,
+            "阅读进度在上下文组装期间发生变化，请重试",
+        )
+    }
+
     fun scheduleBackgroundIndex() {
         WorkManager.getInstance(appContext).enqueueUniqueWork(
             INDEX_WORK_NAME,
@@ -664,6 +1031,18 @@ class ReadingCompanionService private constructor(
         const val TOOLPKG_ID = "com.operit.reading_companion"
         const val SUBPACKAGE_NAME = "reading_companion"
         const val AUTO_COMMENTARY_SUBPACKAGE_NAME = "reading_companion_auto_commentary"
+        private const val DEFAULT_CONTEXT_CHARACTERS = 32_000
+        private const val MIN_CONTEXT_CHARACTERS = 32_000
+        private const val MAX_CONTEXT_CHARACTERS = 96_000
+        private const val CURRENT_CHAPTER_MAX_CHARACTERS = 6_000
+        private const val MAX_SUPPLEMENTAL_CONTEXT_CHARACTERS = 8_000
+        private const val MAX_CONTEXT_ENVELOPE_CHARACTERS = 4_000
+        private const val MAX_CONTEXT_CHAPTERS = 8
+        private const val MAX_CONTEXT_READER_MEMORIES = 24
+        private const val MAX_CONTEXT_COMPANION_COMMENTS = 24
+        private const val SUMMARY_BUDGET_FRACTION = 50
+        private const val MEMORY_BUDGET_FRACTION = 30
+        private const val COMMENT_BUDGET_FRACTION = 20
         private const val INDEX_WORK_NAME = "reading_companion_incremental_index"
         private const val SEARCH_MODEL_STEP_TIMEOUT_MS = 8_000L
 
