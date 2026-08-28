@@ -4102,8 +4102,12 @@
     <string name="default_config_model_restriction">When using default configuration, only deepseek-v4-flash model can be used</string>
     <string name="enable_direct_image_processing">Model supports vision</string>
     <string name="enable_direct_image_processing_desc">When enabled, images requested through read_file are given to the current model; attaching an image does not send its contents automatically</string>
-    <string name="model_multimodal_capabilities_desc">Configure image, audio, and video input separately for each model. Enable only the types that the model actually supports to avoid request errors.</string>
+    <string name="model_multimodal_capabilities_desc">Pick a model first, then configure its image, audio, and video input separately. Enable only the types the model actually supports to avoid request errors.</string>
     <string name="model_multimodal_capabilities_no_models">Add a model to configure its image, audio, and video capabilities</string>
+    <string name="model_multimodal_select_model">Select model</string>
+    <string name="model_multimodal_select_model_title">Choose a model to configure</string>
+    <string name="model_multimodal_search_models">Search models</string>
+    <string name="model_multimodal_no_models_found">No models to configure</string>
     <string name="enable_direct_audio_processing">Model supports audio</string>
     <string name="enable_direct_audio_processing_desc">When enabled, audio will be sent directly to the AI for processing instead of returning tool-based transcription/description</string>
     <string name="enable_direct_video_processing">Model supports video</string>

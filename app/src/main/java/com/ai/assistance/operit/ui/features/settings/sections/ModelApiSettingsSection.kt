@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Api
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
@@ -137,6 +138,10 @@ fun ModelApiSettingsSection(
                 config.multimodalCapabilitiesForModel(modelName)
             }
         )
+    }
+    var showMultimodalModelPicker by remember { mutableStateOf(false) }
+    var selectedMultimodalModel by remember(config.id) {
+        mutableStateOf(getModelList(config.modelName).firstOrNull().orEmpty())
     }
 
     var enableDirectAudioProcessingInput by remember(config.id) { mutableStateOf(config.enableDirectAudioProcessing) }
@@ -743,11 +748,24 @@ fun ModelApiSettingsSection(
                     }
             )
 
+            val configuredModels = getModelList(modelNameInput)
+            val activeModel =
+                configuredModels.firstOrNull()?.let { firstModel ->
+                    selectedMultimodalModel
+                        .takeIf { it in configuredModels }
+                        ?: firstModel
+                }.orEmpty()
+            // 配置的模型列表变化后，保持当前选择；若失效则回退到第一个模型
+            LaunchedEffect(configuredModels) {
+                if (selectedMultimodalModel !in configuredModels) {
+                    selectedMultimodalModel = configuredModels.firstOrNull().orEmpty()
+                }
+            }
+
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingsInfoBanner(
                     text = stringResource(R.string.model_multimodal_capabilities_desc)
                 )
-                val configuredModels = getModelList(modelNameInput)
                 if (configuredModels.isEmpty()) {
                     Text(
                         text = stringResource(R.string.model_multimodal_capabilities_no_models),
@@ -756,17 +774,19 @@ fun ModelApiSettingsSection(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                     )
                 } else {
-                    configuredModels.forEachIndexed { index, modelName ->
+                    // 选择器：先选择一个模型，再配置它的能力
+                    SettingsSelectorRow(
+                        title = stringResource(R.string.model_multimodal_select_model),
+                        subtitle = stringResource(R.string.select),
+                        value = activeModel,
+                        onClick = { showMultimodalModelPicker = true }
+                    )
+
+                    activeModel.takeIf { it.isNotEmpty() }?.let { modelName ->
                         val capabilities =
                             modelMultimodalCapabilitiesInput[modelName]
                                 ?: ModelMultimodalCapabilities()
                         Column {
-                            Text(
-                                text = modelName,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                            )
                             SettingsSwitchRow(
                                 title = stringResource(R.string.enable_direct_image_processing),
                                 subtitle = stringResource(R.string.enable_direct_image_processing_desc),
@@ -798,8 +818,162 @@ fun ModelApiSettingsSection(
                                 },
                             )
                         }
-                        if (index < configuredModels.lastIndex) {
-                            HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp))
+                    }
+                }
+            }
+
+            // 多模态配置模型选择对话框
+            if (showMultimodalModelPicker) {
+                val pickerModels = getModelList(modelNameInput)
+                var pickerSearch by remember { mutableStateOf("") }
+                val filteredPickerModels =
+                    remember(pickerSearch, pickerModels) {
+                        if (pickerSearch.isEmpty()) pickerModels
+                        else
+                            pickerModels.filter {
+                                it.contains(pickerSearch, ignoreCase = true)
+                            }
+                    }
+                Dialog(onDismissRequest = { showMultimodalModelPicker = false }) {
+                    Surface(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            tonalElevation = 6.dp,
+                            shadowElevation = 8.dp
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = stringResource(R.string.model_multimodal_select_model_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(bottom = 12.dp)
+                            )
+
+                            OutlinedTextField(
+                                value = pickerSearch,
+                                onValueChange = { pickerSearch = it },
+                                placeholder = {
+                                    Text(
+                                        stringResource(R.string.model_multimodal_search_models),
+                                        fontSize = 14.sp
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Search,
+                                        contentDescription =
+                                            stringResource(R.string.model_multimodal_search_models),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                },
+                                trailingIcon = {
+                                    if (pickerSearch.isNotEmpty()) {
+                                        IconButton(
+                                            onClick = { pickerSearch = "" },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Clear,
+                                                contentDescription = stringResource(R.string.clear),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                singleLine = true,
+                                modifier =
+                                    Modifier.fillMaxWidth().padding(bottom = 12.dp).height(48.dp),
+                                colors =
+                                    OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                                        focusedLeadingIconColor = MaterialTheme.colorScheme.primary,
+                                        unfocusedLeadingIconColor =
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                    ),
+                                textStyle = TextStyle(fontSize = 14.sp)
+                            )
+
+                            if (filteredPickerModels.isEmpty()) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().height(160.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.model_multimodal_no_models_found),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            } else {
+                                androidx.compose.foundation.lazy.LazyColumn(
+                                    modifier = Modifier.fillMaxWidth().weight(1f)
+                                ) {
+                                    items(filteredPickerModels.size) { index ->
+                                        val modelName = filteredPickerModels[index]
+                                        val isSelected = modelName == activeModel
+                                        Row(
+                                            modifier =
+                                                Modifier.fillMaxWidth()
+                                                    .clickable {
+                                                        selectedMultimodalModel = modelName
+                                                        showMultimodalModelPicker = false
+                                                    }
+                                                    .background(
+                                                        if (isSelected)
+                                                            MaterialTheme.colorScheme.primaryContainer
+                                                                .copy(alpha = 0.5f)
+                                                        else MaterialTheme.colorScheme.surface
+                                                    )
+                                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = modelName,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight =
+                                                    if (isSelected) FontWeight.SemiBold
+                                                    else FontWeight.Normal,
+                                                color =
+                                                    if (isSelected)
+                                                        MaterialTheme.colorScheme.primary
+                                                    else MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
+                                        if (index < filteredPickerModels.lastIndex) {
+                                            HorizontalDivider(
+                                                thickness = 0.5.dp,
+                                                color =
+                                                    MaterialTheme.colorScheme.outlineVariant.copy(
+                                                        alpha = 0.5f
+                                                    ),
+                                                modifier = Modifier.padding(horizontal = 12.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                            ) {
+                                FilledTonalButton(
+                                    onClick = { showMultimodalModelPicker = false },
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Text(stringResource(R.string.close), fontSize = 14.sp)
+                                }
+                            }
                         }
                     }
                 }
