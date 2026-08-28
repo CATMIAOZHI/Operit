@@ -3,6 +3,7 @@ package com.ai.assistance.operit.api.chat
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import com.ai.assistance.operit.api.chat.protocol.ExecutableToolProtocolParser
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.api.chat.enhance.ConversationMarkupManager
@@ -49,10 +50,8 @@ import com.ai.assistance.operit.util.stream.TextStreamEvent
 import com.ai.assistance.operit.util.stream.TextStreamEventCarrier
 import com.ai.assistance.operit.util.stream.TextStreamEventType
 import com.ai.assistance.operit.util.stream.TextStreamRevisionTracker
-import com.ai.assistance.operit.util.stream.withEventChannel
-import com.ai.assistance.operit.util.stream.plugins.StreamXmlPlugin
-import com.ai.assistance.operit.util.stream.splitBy
 import com.ai.assistance.operit.util.stream.stream
+import com.ai.assistance.operit.util.stream.withEventChannel
 import com.ai.assistance.operit.R
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -1419,113 +1418,6 @@ class EnhancedAIService private constructor(private val context: Context) {
         return wrappedStream.withEventChannel(eventChannel)
     }
 
-    /**
-     * 使用流处理技术增强工具调用检测能力 这个方法通过流式XML解析来辅助识别工具调用，比单纯依赖正则表达式更可靠
-     * @param content 需要检测工具调用的内容
-     * @return 经过增强检测的内容，可能会修复格式问题
-     */
-    private suspend fun enhanceToolDetection(content: String): String {
-        try {
-            // 检查内容是否包含可能的工具调用标记
-            if (!ChatMarkupRegex.containsToolTag(content)) {
-                return content
-            }
-
-            // 创建字符流以应用流处理，使用 stream() 替代 asCharStream()
-            val charStream = content.stream()
-
-            // 使用XML插件来拆分流
-            val plugins = listOf(StreamXmlPlugin())
-
-            // 保存增强后的内容
-            val enhancedContent = StringBuilder()
-
-            // 追踪是否发现了工具标签
-            var foundToolTag = false
-
-            // 处理拆分的结果
-            charStream.splitBy(plugins).collect { group ->
-                when (val tag = group.tag) {
-                    // 匹配到XML标签
-                    is StreamXmlPlugin -> {
-                        val xmlContent = StringBuilder()
-                        group.stream.collect { char -> xmlContent.append(char) }
-
-                        val xml = xmlContent.toString()
-                        // 检查是否是工具标签
-                        val tagName = ChatMarkupRegex.extractOpeningTagName(xml)
-                        if (ChatMarkupRegex.isToolTagName(tagName) && tagName != null && isToolXmlBlock(xml, tagName)) {
-                            foundToolTag = true
-                            // 格式标准化，使其符合工具调用的正则表达式预期格式
-                            val normalizedXml = normalizeToolXml(xml)
-                            enhancedContent.append(normalizedXml)
-                            AppLogger.d(TAG, "工具调用XML被增强流处理检测到并标准化")
-                        } else {
-                            // 保留其他XML标签
-                            enhancedContent.append(xml)
-                        }
-                    }
-                    // 纯文本内容
-                    null -> {
-                        val textContent = StringBuilder()
-                        group.stream.collect { char -> textContent.append(char) }
-                        enhancedContent.append(textContent.toString())
-                    }
-                    // 添加必要的else分支
-                    else -> {
-                        val textContent = StringBuilder()
-                        group.stream.collect { char -> textContent.append(char) }
-                        enhancedContent.append(textContent.toString())
-                        AppLogger.w(TAG, "未知标签类型: ${tag::class.java.simpleName}")
-                    }
-                }
-            }
-
-            // 如果找到了工具标签，返回增强的内容；否则返回原始内容
-            return if (foundToolTag) {
-                AppLogger.d(TAG, "增强的XML工具检测完成")
-                enhancedContent.toString()
-            } else {
-                content
-            }
-        } catch (e: Exception) {
-            // 如果流处理失败，返回原始内容并记录错误
-            AppLogger.e(TAG, "增强工具检测失败: ${e.message}", e)
-            return content
-        }
-    }
-
-    /**
-     * 规范化工具XML以符合正则表达式预期
-     * @param xml 原始XML文本
-     * @return 标准化后的XML
-     */
-    private fun normalizeToolXml(xml: String): String {
-        var result = xml.trim()
-        val toolTagName = ChatMarkupRegex.extractOpeningTagName(result)
-
-        // 确保工具名称格式正确
-        if (ChatMarkupRegex.isToolTagName(toolTagName) && toolTagName != null) {
-            result = result.replace(
-                Regex("<${Regex.escape(toolTagName)}\\s+name\\s*=", RegexOption.IGNORE_CASE),
-                "<$toolTagName name="
-            )
-        }
-
-        // 确保参数格式正确
-        result = result.replace(Regex("<param\\s+name\\s*="), "<param name=")
-
-        return result
-    }
-
-    private fun isToolXmlBlock(xml: String, tagName: String): Boolean {
-        val trimmed = xml.trim()
-        if (trimmed.endsWith("/>")) {
-            return true
-        }
-        return trimmed.contains("</$tagName>")
-    }
-
     private data class TruncatedToolRoundRecovery(
         val repairedContent: String,
         val appendedSuffix: String,
@@ -1534,50 +1426,24 @@ class EnhancedAIService private constructor(private val context: Context) {
     )
 
     private suspend fun detectAndRepairTruncatedToolRound(content: String): TruncatedToolRoundRecovery? {
-        if (!content.contains("<tool", ignoreCase = true)) {
-            return null
-        }
+        val inspection = ExecutableToolProtocolParser.inspectTruncation(content)
+        val candidate = inspection.truncatedTool ?: return null
+        val fragment = candidate.fragment
+        val tagName = candidate.tagName
 
-        val completeToolBlocks = ChatMarkupRegex.toolCallPattern.findAll(content).toList()
-        val openToolPattern =
-            Regex(
-                "<(${ChatMarkupRegex.TOOL_TAG_NAME_REGEX_SOURCE})\\b[^>]*",
-                setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        val appendedSuffix =
+            ExecutableToolProtocolParser.buildTruncatedToolRepairSuffix(
+                fragment = fragment,
+                fallbackTagName = tagName,
             )
-
-        val candidate = openToolPattern.findAll(content).lastOrNull { match ->
-            completeToolBlocks.none { block ->
-                match.range.first >= block.range.first && match.range.last <= block.range.last
-            }
-        } ?: return null
-
-        val fragment = content.substring(candidate.range.first)
-        if (!Regex("\\bname\\s*=\\s*\"", RegexOption.IGNORE_CASE).containsMatchIn(fragment)) {
-            return null
-        }
-
-        val tagName =
-            (ChatMarkupRegex.extractOpeningTagName(fragment) ?: candidate.groupValues.getOrNull(1))
-                ?.takeIf { ChatMarkupRegex.isToolTagName(it) }
-                ?: ChatMarkupRegex.generateRandomToolTagName()
-
-        if (Regex("</${Regex.escape(tagName)}\\s*>", RegexOption.IGNORE_CASE).containsMatchIn(fragment)) {
-            return null
-        }
-
-        val appendedSuffix = buildTruncatedToolRepairSuffix(fragment, tagName)
         if (appendedSuffix.isEmpty()) {
             return null
         }
         val repairedContent = content + appendedSuffix
         val invalidatedToolNames =
             buildList {
-                ChatMarkupRegex.toolCallPattern.findAll(content)
-                    .mapNotNull { match ->
-                        match.groupValues.getOrNull(2)?.trim()?.takeIf { it.isNotEmpty() }
-                    }
-                    .forEach { add(it) }
-                extractXmlAttributeValue(fragment, "name")
+                inspection.completeToolNames.forEach { add(it) }
+                ExecutableToolProtocolParser.extractAttributeValue(fragment, "name")
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() }
                     ?.let { add(it) }
@@ -1592,215 +1458,6 @@ class EnhancedAIService private constructor(private val context: Context) {
             invalidatedInvocationCount =
                 ToolExecutionManager.countDisplayedToolInvocations(repairedContent),
         )
-    }
-
-    private fun buildTruncatedToolRepairSuffix(fragment: String, fallbackTagName: String): String {
-        val toolTagName =
-            fallbackTagName.takeIf { ChatMarkupRegex.isToolTagName(it) }
-                ?: ChatMarkupRegex.generateRandomToolTagName()
-
-        val openingTagEnd = fragment.indexOf('>')
-        if (openingTagEnd < 0) {
-            return completePartialOpenTag(fragment, toolTagName, defaultNameValue = "truncated_tool_call") +
-                "</$toolTagName>"
-        }
-
-        val body = fragment.substring(openingTagEnd + 1)
-        val completeTagPattern =
-            Regex("</?([A-Za-z][A-Za-z0-9_]*)\\b[^>]*>", RegexOption.IGNORE_CASE)
-        var openParamCount = 0
-
-        completeTagPattern.findAll(body).forEach { match ->
-            val tagText = match.value
-            val tagName = match.groupValues[1]
-            val isClosing = tagText.startsWith("</")
-
-            when {
-                tagName.equals("param", ignoreCase = true) -> {
-                    if (isClosing) {
-                        if (openParamCount > 0) {
-                            openParamCount--
-                        }
-                    } else if (!tagText.endsWith("/>")) {
-                        openParamCount++
-                    }
-                }
-
-                tagName.equals(toolTagName, ignoreCase = true) && isClosing -> {
-                    return ""
-                }
-            }
-        }
-
-        val suffix = StringBuilder()
-        val trailingPartialTag = extractTrailingPartialTag(fragment)
-        var toolClosedBySuffix = false
-
-        if (trailingPartialTag != null) {
-            when {
-                isPartialClosingTagFor(trailingPartialTag, "param") -> {
-                    suffix.append(completePartialClosingTag(trailingPartialTag, "param"))
-                    if (openParamCount > 0) {
-                        openParamCount--
-                    }
-                }
-
-                isPartialOpeningTagFor(trailingPartialTag, "param") -> {
-                    val completedTagNameSuffix = completePartialTagName(trailingPartialTag, "param")
-                    suffix.append(
-                        completePartialOpenTag(
-                            trailingPartialTag + completedTagNameSuffix,
-                            "param",
-                            defaultNameValue = "_truncated_fragment"
-                        )
-                    )
-                    suffix.insert(0, completedTagNameSuffix)
-                    openParamCount++
-                }
-
-                isPartialClosingTagFor(trailingPartialTag, toolTagName) -> {
-                    suffix.append(completePartialClosingTag(trailingPartialTag, toolTagName))
-                    toolClosedBySuffix = true
-                }
-
-                isPartialOpeningTagFor(trailingPartialTag, toolTagName) -> {
-                    val completedTagNameSuffix =
-                        completePartialTagName(trailingPartialTag, toolTagName)
-                    suffix.append(
-                        completePartialOpenTag(
-                            trailingPartialTag + completedTagNameSuffix,
-                            toolTagName,
-                            defaultNameValue = "truncated_tool_call"
-                        )
-                    )
-                    suffix.insert(0, completedTagNameSuffix)
-                }
-
-                trailingPartialTag == "<" -> {
-                    suffix.append("!-- truncated -->")
-                }
-            }
-        }
-
-        repeat(openParamCount) {
-            suffix.append("</param>")
-        }
-        if (!toolClosedBySuffix) {
-            suffix.append("</$toolTagName>")
-        }
-        return suffix.toString()
-    }
-
-    private fun extractXmlAttributeValue(source: String, attributeName: String): String? {
-        val pattern =
-            Regex(
-                "\\b${Regex.escape(attributeName)}\\s*=\\s*\"([^\"]*)\"",
-                RegexOption.IGNORE_CASE
-            )
-        return pattern.find(source)?.groupValues?.getOrNull(1)
-    }
-
-    private fun extractTrailingPartialTag(fragment: String): String? {
-        val lastOpen = fragment.lastIndexOf('<')
-        val lastClose = fragment.lastIndexOf('>')
-        if (lastOpen <= lastClose) {
-            return null
-        }
-        return fragment.substring(lastOpen)
-    }
-
-    private fun completePartialOpenTag(
-        partialTag: String,
-        tagName: String,
-        defaultNameValue: String
-    ): String {
-        val suffix = StringBuilder()
-        val normalizedPartial = partialTag.lowercase()
-        val normalizedTagName = tagName.lowercase()
-        val tagPrefix = "<$normalizedTagName"
-        val attrValueOpenPattern = Regex("\\bname\\s*=\\s*\"[^\"]*$", RegexOption.IGNORE_CASE)
-        val attrEqPattern = Regex("\\bname\\s*=\\s*$", RegexOption.IGNORE_CASE)
-        val defaultAttrPattern =
-            Regex("^<${Regex.escape(tagName)}\\s*$", RegexOption.IGNORE_CASE)
-        val partialNamePatterns =
-            listOf(
-                Regex("\\bn$", RegexOption.IGNORE_CASE) to "ame=\"\"",
-                Regex("\\bna$", RegexOption.IGNORE_CASE) to "me=\"\"",
-                Regex("\\bnam$", RegexOption.IGNORE_CASE) to "e=\"\"",
-                Regex("\\bname$", RegexOption.IGNORE_CASE) to "=\"\""
-            )
-        val partialNameCompletion =
-            partialNamePatterns.firstOrNull { it.first.containsMatchIn(partialTag) }?.second
-
-        when {
-            attrValueOpenPattern.containsMatchIn(partialTag) -> suffix.append("\"")
-            attrEqPattern.containsMatchIn(partialTag) -> suffix.append("\"\"")
-            partialNameCompletion != null -> suffix.append(partialNameCompletion)
-            normalizedPartial == tagPrefix || defaultAttrPattern.matches(partialTag) -> {
-                suffix.append(" name=\"")
-                suffix.append(defaultNameValue)
-                suffix.append("\"")
-            }
-        }
-
-        if (((partialTag.length + suffix.length) > 0) &&
-            ((partialTag + suffix.toString()).count { it == '"' } % 2 != 0)
-        ) {
-            suffix.append("\"")
-        }
-        if (!(partialTag + suffix.toString()).endsWith(">")) {
-            suffix.append(">")
-        }
-        return suffix.toString()
-    }
-
-    private fun isPartialOpeningTagFor(partialTag: String, tagName: String): Boolean {
-        if (!partialTag.startsWith("<") || partialTag.startsWith("</")) {
-            return false
-        }
-        val currentName = Regex("^<([A-Za-z_]*)", RegexOption.IGNORE_CASE)
-            .find(partialTag)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.lowercase()
-            ?: return false
-        if (currentName.isEmpty()) {
-            return false
-        }
-        return tagName.lowercase().startsWith(currentName)
-    }
-
-    private fun isPartialClosingTagFor(partialTag: String, tagName: String): Boolean {
-        if (!partialTag.startsWith("</")) {
-            return false
-        }
-        val currentName = Regex("^</([A-Za-z_]*)", RegexOption.IGNORE_CASE)
-            .find(partialTag)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.lowercase()
-            ?: return false
-        if (currentName.isEmpty()) {
-            return false
-        }
-        return tagName.lowercase().startsWith(currentName)
-    }
-
-    private fun completePartialTagName(partialTag: String, tagName: String): String {
-        val currentName = Regex("^</?([A-Za-z_]*)", RegexOption.IGNORE_CASE)
-            .find(partialTag)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.lowercase()
-            .orEmpty()
-        return tagName.substring(currentName.length.coerceAtMost(tagName.length))
-    }
-
-    private fun completePartialClosingTag(partialTag: String, tagName: String): String {
-        return buildString {
-            append(completePartialTagName(partialTag, tagName))
-            append(">")
-        }
     }
 
     /** 在处理完流后调用，使用增强的工具检测功能 */
@@ -1928,10 +1585,8 @@ class EnhancedAIService private constructor(private val context: Context) {
                 return
             }
 
-            // 使用增强的工具检测功能处理内容
-            val enhancedContent = enhanceToolDetection(content)
             val truncatedToolRecovery = detectAndRepairTruncatedToolRound(content)
-            val finalContent = truncatedToolRecovery?.repairedContent ?: enhancedContent
+            val finalContent = truncatedToolRecovery?.repairedContent ?: content
 
             // 截断修复仅追加缺失后缀，不撤回已经发出的内容
             if (truncatedToolRecovery != null) {
