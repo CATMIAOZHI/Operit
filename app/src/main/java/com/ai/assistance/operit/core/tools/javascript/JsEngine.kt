@@ -13,10 +13,7 @@ import com.ai.assistance.operit.core.chat.messageTimingNow
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_EVENT_MESSAGE_PROCESSING
-import com.ai.assistance.operit.data.model.ActivePrompt
-import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
-import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.features.reading.ReadingCompanionBridge
 import com.ai.assistance.operit.features.reading.ReadingCompanionAutoCommentary
 import com.ai.assistance.operit.features.reading.ReadingCompanionService
@@ -1759,45 +1756,6 @@ class JsEngine(private val context: Context) {
             )
         }
 
-        /**
-         * Selects an existing chat for the main UI.
-         *
-         * This bridge is intentionally limited to a ToolPkg-bound engine. ToolPkg pages can
-         * already create and inspect chats through host tools; this closes the real navigation
-         * path by synchronizing the selected chat before navigating to native.ai_chat.
-         */
-        @JavascriptInterface
-        fun activateReadingCompanionChat(chatId: String): String {
-            return try {
-                check(boundToolPkgContainerName == ReadingCompanionService.TOOLPKG_ID) {
-                    "Reading Companion chat activation is only available to its ToolPkg UI"
-                }
-                val normalizedChatId = chatId.trim()
-                require(normalizedChatId.isNotBlank()) { "chatId is required" }
-                val chatHistoryManager = ChatHistoryManager.getInstance(context.applicationContext)
-                runBlocking(Dispatchers.IO) {
-                    require(chatHistoryManager.chatExists(normalizedChatId)) {
-                        "Chat does not exist"
-                    }
-                    chatHistoryManager.setCurrentChatId(normalizedChatId)
-                }
-                JSONObject()
-                    .put("success", true)
-                    .put("data", JSONObject().put("chatId", normalizedChatId))
-                    .toString()
-            } catch (error: Throwable) {
-                JSONObject()
-                    .put("success", false)
-                    .put(
-                        "message",
-                        error.message?.trim().orEmpty().ifBlank {
-                            "Failed to activate chat"
-                        },
-                    )
-                    .toString()
-            }
-        }
-
         @JavascriptInterface
         fun getReadingCompanionCommentaryCharacter(bookId: String): String {
             return try {
@@ -1844,7 +1802,6 @@ class JsEngine(private val context: Context) {
                     ?: JSONObject()
                 val bookId = options.optString("bookId").trim()
                 val roleCardId = options.optString("roleCardId").trim()
-                val chatId = options.optString("chatId").trim().takeIf(String::isNotBlank)
                 require(bookId.isNotBlank()) { "bookId is required" }
                 require(roleCardId.isNotBlank()) { "roleCardId is required" }
                 val (persona, roleChanged) =
@@ -1872,14 +1829,6 @@ class JsEngine(private val context: Context) {
                                         previous?.roleCardName != roleCard.name
                                 )
                             }
-                        chatId?.let { targetChatId ->
-                            ChatHistoryManager.getInstance(context.applicationContext)
-                                .updateChatCharacterBinding(
-                                    chatId = targetChatId,
-                                    characterCardName = roleCard.name,
-                                    characterGroupId = null,
-                                )
-                        }
                         stored to changed
                     }
                 if (
@@ -1909,84 +1858,6 @@ class JsEngine(private val context: Context) {
                         "message",
                         error.message?.trim().orEmpty().ifBlank {
                             "Failed to select commentary character"
-                        },
-                    )
-                    .toString()
-            }
-        }
-
-        /**
-         * Creates and selects a persistent main chat without depending on FloatingChatService.
-         *
-         * A selected commentary card wins; callers without one retain the active card/group
-         * fallback used by older ToolPkg pages.
-         */
-        @JavascriptInterface
-        fun createReadingCompanionChat(optionsJson: String): String {
-            return try {
-                check(boundToolPkgContainerName == ReadingCompanionService.TOOLPKG_ID) {
-                    "Reading Companion chat creation is only available to its ToolPkg UI"
-                }
-                val options = optionsJson.takeIf(String::isNotBlank)?.let(::JSONObject)
-                    ?: JSONObject()
-                val requestedTitle = options.optString("title").trim().takeIf(String::isNotBlank)
-                val requestedRoleCardId =
-                    options.optString("characterCardId").trim().takeIf(String::isNotBlank)
-                val chatId =
-                    runBlocking(Dispatchers.IO) {
-                        val characterCardName: String?
-                        val characterGroupId: String?
-                        if (requestedRoleCardId != null) {
-                            val cardManager =
-                                CharacterCardManager.getInstance(context.applicationContext)
-                            cardManager.initializeIfNeeded()
-                            val roleCard = cardManager.getAllCharacterCards()
-                                .firstOrNull { card -> card.id == requestedRoleCardId }
-                                ?: error("所选角色卡已不存在，请重新选择")
-                            characterCardName = roleCard.name
-                            characterGroupId = null
-                        } else {
-                            val activePrompt =
-                                ActivePromptManager.getInstance(context.applicationContext)
-                                    .getActivePrompt()
-                            when (activePrompt) {
-                                is ActivePrompt.CharacterCard -> {
-                                    characterCardName =
-                                        CharacterCardManager.getInstance(context.applicationContext)
-                                            .getCharacterCard(activePrompt.id)
-                                            .name
-                                    characterGroupId = null
-                                }
-                                is ActivePrompt.CharacterGroup -> {
-                                    characterCardName = null
-                                    characterGroupId = activePrompt.id
-                                }
-                            }
-                        }
-                        val chatHistoryManager =
-                            ChatHistoryManager.getInstance(context.applicationContext)
-                        val chat =
-                            chatHistoryManager.createNewChat(
-                                characterCardName = characterCardName,
-                                characterGroupId = characterGroupId,
-                                setAsCurrentChat = true,
-                            )
-                        requestedTitle?.let { title ->
-                            chatHistoryManager.updateChatTitle(chat.id, title)
-                        }
-                        chat.id
-                    }
-                JSONObject()
-                    .put("success", true)
-                    .put("data", JSONObject().put("chatId", chatId))
-                    .toString()
-            } catch (error: Throwable) {
-                JSONObject()
-                    .put("success", false)
-                    .put(
-                        "message",
-                        error.message?.trim().orEmpty().ifBlank {
-                            "Failed to create chat"
                         },
                     )
                     .toString()

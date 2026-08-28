@@ -18,6 +18,44 @@ data class AutoCommentContextChapter(
     val excerptFromEnd: Boolean,
 )
 
+internal object AutoCommentRunStages {
+    const val STARTING = "starting"
+    const val READING_TARGET = "reading_target"
+    const val PREPARING_CONTEXT = "preparing_context"
+    const val RESOLVING_MODEL = "resolving_model"
+    const val WAITING_MODEL = "waiting_model"
+    const val VALIDATING_RESPONSE = "validating_response"
+    const val SAVING_COMMENTS = "saving_comments"
+    const val COMPLETED = "completed"
+
+    val ordered = listOf(
+        READING_TARGET,
+        PREPARING_CONTEXT,
+        RESOLVING_MODEL,
+        WAITING_MODEL,
+        VALIDATING_RESPONSE,
+        SAVING_COMMENTS,
+        COMPLETED,
+    )
+}
+
+/**
+ * Keeps the read-only annotation surface independent from the optional generator switch.
+ *
+ * This is deliberately a pure policy so the distinction is regression-tested without requiring
+ * Android PackageManager state: the parent ToolPkg controls whether stored comments are exposed,
+ * while the auto-commentary subpackage controls only new generation.
+ */
+internal object AutoCommentSurfacePolicy {
+    fun canReadStoredComments(readingCompanionEnabled: Boolean): Boolean =
+        readingCompanionEnabled
+
+    fun canGenerate(
+        readingCompanionEnabled: Boolean,
+        autoCommentaryEnabled: Boolean,
+    ): Boolean = readingCompanionEnabled && autoCommentaryEnabled
+}
+
 internal object AutoCommentSupport {
     private val paragraphIdPattern = Regex("""^p(\d{1,6})$""", RegexOption.IGNORE_CASE)
 
@@ -173,6 +211,37 @@ internal object AutoCommentSupport {
         put("paragraphs", JSONArray(comment.evidenceIndices))
         put("quote", comment.evidenceQuote)
     }.toString()
+
+    /**
+     * 发布段评前的最后一道防线：空列表绝不能替换已发布的旧缓存，
+     * 否则一次“模型返回但全部被校验过滤”的运行会清空已有段评。
+     * 任何调用方（包括未来的新入口）都必须先经过这里。
+     */
+    fun requireReplacementComments(comments: List<AutoCommentRecord>): List<AutoCommentRecord> {
+        require(comments.isNotEmpty()) {
+            "replaceAutoComments 拒绝空列表，避免清空已发布段评"
+        }
+        return comments
+    }
+
+    /**
+     * 手动入队前判断是否已有生成中的任务。
+     *
+     * 只看“最近一条 run”会漏报并发：后启动的任务 B 在 claim 阶段发现任务 A 仍持有
+     * claim 后会立刻以 already_generating 结束，按 started_at 排序反而排在仍运行的 A
+     * 前面，导致后续入队把“已有任务生成中”误判成可入队。这里把判定收敛为纯函数，
+     * 任何证据（最新 run 状态 + 是否存在未过期 claim/生成中 run）都由调用方提供，
+     * 便于在纯 JVM 测试中覆盖该并发顺序。
+     */
+    fun shouldRejectManualEnqueue(
+        latestRunStatus: String?,
+        activeGenerationRunning: Boolean,
+    ): Boolean {
+        if (latestRunStatus == ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATING) {
+            return true
+        }
+        return activeGenerationRunning
+    }
 
     fun paragraphId(index: Int): String = "p${index.toString().padStart(4, '0')}"
 

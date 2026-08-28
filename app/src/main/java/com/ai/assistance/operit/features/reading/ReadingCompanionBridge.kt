@@ -56,7 +56,7 @@ object ReadingCompanionBridge {
                     }
                     "get_current_book" -> service.currentBook().toJson()
                     "get_context" -> service.currentContext(
-                        parameters.optInt("max_characters", 2600),
+                        parameters.optInt("max_characters", 32_000),
                         runtime?.callerCardId,
                     )
                     "get_recent_comments" -> service.recentCompanionComments(
@@ -99,6 +99,37 @@ object ReadingCompanionBridge {
                         ReadingCompanionAutoCommentary.getInstance(context).history(
                             parameters.optInt("limit", 10).coerceIn(1, 50),
                         )
+                    "auto_commentary_run_detail" ->
+                        ReadingCompanionAutoCommentary.getInstance(context).detail(
+                            parameters.optLong("runId", -1L),
+                        )
+                    "queue_regenerate_next_chapter_comments" -> {
+                        require(
+                            callerPackageName ==
+                                ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME
+                        ) { "该操作仅允许自动段评子包调用" }
+                        val queuedAt =
+                            ReadingCompanionAutoCommentary.enqueueManual(context)
+                        val alreadyGenerating =
+                            queuedAt == ReadingCompanionAutoCommentary.ALREADY_GENERATING_QUEUED_AT
+                        JSONObject()
+                            .put(
+                                "queuedAt",
+                                if (alreadyGenerating) {
+                                    JSONObject.NULL
+                                } else {
+                                    queuedAt
+                                },
+                            )
+                            .put(
+                                "status",
+                                if (alreadyGenerating) {
+                                    "already_generating"
+                                } else {
+                                    "queued"
+                                },
+                            )
+                    }
                     "regenerate_next_chapter_comments" -> {
                         require(
                             callerPackageName ==
@@ -186,6 +217,7 @@ object ReadingCompanionBridge {
                     .put("modelConfigId", model.configId)
                     .put("modelConfigName", model.configName)
                     .put("modelIndex", model.modelIndex)
+                    .put("modelSource", model.modelSource)
                     .put("provider", model.provider)
                     .put("model", model.model),
             )

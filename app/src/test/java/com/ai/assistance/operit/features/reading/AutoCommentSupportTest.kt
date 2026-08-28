@@ -1,9 +1,127 @@
 package com.ai.assistance.operit.features.reading
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class AutoCommentSupportTest {
+
+    @Test
+    fun `replacement refuses empty list so published comments survive`() {
+        val oldComments = listOf(
+            AutoCommentRecord(
+                bookId = "book",
+                chapterIndex = 1,
+                paragraphIndex = 5,
+                text = "坏了",
+                kind = "reaction",
+                roleCardId = "rainy",
+                roleCardName = "Rainy",
+                evidenceJson = """{"paragraphs":[5],"quote":""}""",
+            ),
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            AutoCommentSupport.requireReplacementComments(emptyList())
+        }
+
+        assertEquals(oldComments, AutoCommentSupport.requireReplacementComments(oldComments))
+    }
+
+    @Test
+    fun `empty model output never passes validation`() {
+        val paragraphs = listOf("第一段", "第二段", "第三段")
+
+        val comments = AutoCommentSupport.parseAndValidate(
+            rawJson = """{"comments":[]}""",
+            paragraphs = paragraphs,
+            maximumComments = 6,
+        )
+
+        assertEquals(0, comments.size)
+    }
+
+    @Test
+    fun `manual enqueue rejects when latest run is still generating`() {
+        assertEquals(
+            true,
+            AutoCommentSupport.shouldRejectManualEnqueue(
+                latestRunStatus = ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATING,
+                activeGenerationRunning = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `manual enqueue rejects when latest run finished but an active generation still runs`() {
+        // 并发顺序：任务 A 仍在生成并持有 claim；任务 B 更晚启动，在 claim 阶段发现
+        // A 占用后立刻以 already_generating 结束，按 started_at 排序排在 A 前面。
+        // 只检查最新 run（已结束的 B）会漏报，必须同时检查是否存在活动生成。
+        assertEquals(
+            true,
+            AutoCommentSupport.shouldRejectManualEnqueue(
+                latestRunStatus = "already_generating",
+                activeGenerationRunning = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `manual enqueue allows when no generation is active`() {
+        assertEquals(
+            false,
+            AutoCommentSupport.shouldRejectManualEnqueue(
+                latestRunStatus = ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATED,
+                activeGenerationRunning = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `malformed anchors and late evidence are filtered out`() {
+        val paragraphs = listOf("第一段", "第二段", "第三段真相")
+        val json =
+            """
+            {
+              "comments": [
+                {
+                  "anchorId": "p0001",
+                  "evidenceIds": ["p0001"],
+                  "evidenceQuote": "第一段",
+                  "text": "好",
+                  "kind": "reaction"
+                },
+                {
+                  "anchorId": "p0099",
+                  "evidenceIds": ["p0099"],
+                  "evidenceQuote": "",
+                  "text": "越界",
+                  "kind": "reaction"
+                },
+                {
+                  "anchorId": "p0002",
+                  "evidenceIds": ["p0003"],
+                  "evidenceQuote": "真相",
+                  "text": "提前挂载",
+                  "kind": "analysis"
+                },
+                {
+                  "anchorId": "p0003",
+                  "evidenceIds": ["p0003"],
+                  "evidenceQuote": "不存在",
+                  "text": "引文不匹配",
+                  "kind": "reaction"
+                }
+              ]
+            }
+            """.trimIndent()
+
+        val comments = AutoCommentSupport.parseAndValidate(json, paragraphs, 6)
+
+        assertEquals(1, comments.size)
+        assertEquals(1, comments.single().paragraphIndex)
+        assertEquals("好", comments.single().text)
+    }
 
     @Test
     fun `comment ceiling grows gradually and ignores whitespace`() {
@@ -47,6 +165,19 @@ class AutoCommentSupportTest {
         assertEquals("456", selected.first().content)
         assertEquals(true, selected.first().excerptFromEnd)
         assertEquals("4444", selected.last().content)
+    }
+
+    @Test
+    fun `context keeps at most eight nearest previous chapters`() {
+        val selected = AutoCommentSupport.selectPreviousContext(
+            chaptersNearestFirst = (0..9).reversed().map { index ->
+                annotationChapter(index = index, title = "第${index + 1}章", content = "正文$index")
+            },
+            maximumCharacters = 32_000,
+        )
+
+        assertEquals(8, selected.size)
+        assertEquals((2..9).toList(), selected.map(AutoCommentContextChapter::chapterIndex))
     }
 
     @Test
@@ -152,6 +283,36 @@ class AutoCommentSupportTest {
         assertEquals(
             "model_context_too_small",
             safeReadingCompanionError(AutoCommentContextTooSmallException()),
+        )
+    }
+
+    @Test
+    fun `stored comments stay readable when only auto generation is disabled`() {
+        assertEquals(
+            true,
+            AutoCommentSurfacePolicy.canReadStoredComments(readingCompanionEnabled = true),
+        )
+        assertEquals(
+            false,
+            AutoCommentSurfacePolicy.canGenerate(
+                readingCompanionEnabled = true,
+                autoCommentaryEnabled = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `disabling the parent package hides the annotation surface`() {
+        assertEquals(
+            false,
+            AutoCommentSurfacePolicy.canReadStoredComments(readingCompanionEnabled = false),
+        )
+        assertEquals(
+            false,
+            AutoCommentSurfacePolicy.canGenerate(
+                readingCompanionEnabled = false,
+                autoCommentaryEnabled = true,
+            ),
         )
     }
 

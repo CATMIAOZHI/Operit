@@ -20,7 +20,9 @@ import org.json.JSONObject
  * Read-only paragraph-comment surface consumed by Legado.
  *
  * The provider exposes generated comments only. It never exposes the prefetched unread chapter
- * text, and it returns an empty result as soon as the ToolPkg subpackage is disabled.
+ * text. Disabling the optional auto-commentary subpackage stops future generation but does not
+ * hide comments that were already generated; disabling the parent Reading Companion ToolPkg
+ * removes this read surface entirely.
  */
 class ReadingCompanionAnnotationProvider : ContentProvider() {
     private lateinit var store: ReadingCompanionStore
@@ -46,7 +48,7 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
     ): Cursor {
         enforceLegadoCaller()
         val result = try {
-            if (!ReadingCompanionAutoCommentary.isEnabled(requireNotNull(context))) {
+            if (!ReadingCompanionAutoCommentary.isBasePackageEnabled(requireNotNull(context))) {
                 success(JSONObject().put("enabled", false).put("ready", false))
             } else {
                 when (matcher.match(uri)) {
