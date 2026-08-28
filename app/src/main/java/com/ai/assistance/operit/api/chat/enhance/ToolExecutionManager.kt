@@ -3,6 +3,7 @@ package com.ai.assistance.operit.api.chat.enhance
 import android.content.Context
 import android.os.SystemClock
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.api.chat.protocol.ExecutableToolProtocolParser
 import com.ai.assistance.operit.core.agent.SubagentToolPolicy
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.AIToolHandler
@@ -35,7 +36,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
-import com.ai.assistance.operit.ui.common.displays.MessageContentParser
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
 import com.ai.assistance.operit.ui.permissions.PermissionReviewCircuitBreaker
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
@@ -43,12 +43,7 @@ import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
 import com.ai.assistance.operit.ui.permissions.ToolPermissionDecision
 import com.ai.assistance.operit.ui.permissions.ToolPermissionDenialSource
 import com.ai.assistance.operit.ui.permissions.resolveApprovalDecisionWithPermanentOverride
-import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.ChatUtils
-import com.ai.assistance.operit.util.markdown.NestedMarkdownProcessor
-import com.ai.assistance.operit.util.stream.plugins.StreamXmlPlugin
-import com.ai.assistance.operit.util.stream.splitBy
-import com.ai.assistance.operit.util.stream.stream
 import com.ai.assistance.operit.util.LocaleUtils
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
@@ -76,20 +71,6 @@ object ToolExecutionManager {
     private data class ExactToolInstruction(
         val name: String,
         val orderedParameters: List<Pair<String, String>>,
-    )
-
-    private data class ToolInvocationCandidate(
-        val toolMatch: MatchResult,
-        val startBoundaryIndex: Int,
-        val endBoundaryIndex: Int,
-        val parameters: List<ToolParameterCandidate>,
-    )
-
-    private data class ToolParameterCandidate(
-        val name: String,
-        val rawValue: String,
-        val startBoundaryIndex: Int,
-        val endBoundaryIndex: Int,
     )
 
     /**
@@ -266,18 +247,7 @@ object ToolExecutionManager {
     }
 
     internal suspend fun countDisplayedToolInvocations(content: String): Int {
-        var invocationCount = 0
-        content.stream().splitBy(NestedMarkdownProcessor.getBlockPlugins()).collect { group ->
-            val blockContent = StringBuilder()
-            group.stream.collect { chunk -> blockContent.append(chunk) }
-            val blockText = blockContent.toString()
-            if (group.tag is StreamXmlPlugin &&
-                ChatMarkupRegex.isToolCall(blockText)
-            ) {
-                invocationCount += 1
-            }
-        }
-        return invocationCount
+        return ExecutableToolProtocolParser.countCompleteToolInvocations(content)
     }
 
     private fun resolveToolTarget(tool: AITool): ResolvedToolTarget {
@@ -691,157 +661,13 @@ object ToolExecutionManager {
      * @return 检测到的工具调用列表。
      */
     suspend fun extractToolInvocations(response: String): List<ToolInvocation> {
-        val invocations = mutableListOf<ToolInvocation>()
-        val candidates = mutableListOf<ToolInvocationCandidate>()
-        val candidateBoundaries = mutableListOf<Int>()
-        val protectedParameterRanges = mutableListOf<Int>()
-        val displayScanContent = StringBuilder(response.length)
-        val charStream = response.stream()
-        val plugins = NestedMarkdownProcessor.getBlockPlugins()
-
-        charStream.splitBy(plugins).collect { group ->
-            val chunkContent = StringBuilder()
-            group.stream.collect { chunk -> chunkContent.append(chunk) }
-            val chunkString = chunkContent.toString()
-
-            if (chunkString.isEmpty()) return@collect
-
-            if (group.tag is StreamXmlPlugin) {
-                ChatMarkupRegex.matchToolCall(chunkString)?.let { toolMatch ->
-                    val candidateText = toolMatch.value
-                    val candidateOffsetInChunk = chunkString.indexOf(candidateText)
-                    if (candidateOffsetInChunk > 0) {
-                        displayScanContent.append(chunkString, 0, candidateOffsetInChunk)
-                    }
-                    val candidateScanStart = displayScanContent.length
-                    val startBoundaryIndex = candidateBoundaries.size
-                    candidateBoundaries.add(candidateScanStart)
-                    val toolBodyGroup = toolMatch.groups[3]
-                    val parameterCandidates =
-                        if (toolBodyGroup == null) {
-                            emptyList()
-                        } else {
-                            MessageContentParser.toolParamPattern.findAll(toolBodyGroup.value)
-                                .map { parameter ->
-                                    val parameterStart =
-                                        candidateScanStart +
-                                            toolBodyGroup.range.first +
-                                            parameter.range.first
-                                    val parameterEnd =
-                                        candidateScanStart +
-                                            toolBodyGroup.range.first +
-                                            parameter.range.last +
-                                            1
-                                    protectedParameterRanges.add(parameterStart)
-                                    protectedParameterRanges.add(parameterEnd)
-                                    val parameterStartBoundaryIndex = candidateBoundaries.size
-                                    candidateBoundaries.add(parameterStart)
-                                    val parameterEndBoundaryIndex = candidateBoundaries.size
-                                    candidateBoundaries.add(parameterEnd)
-                                    ToolParameterCandidate(
-                                        name = parameter.groupValues[1],
-                                        rawValue = parameter.groupValues[2],
-                                        startBoundaryIndex = parameterStartBoundaryIndex,
-                                        endBoundaryIndex = parameterEndBoundaryIndex,
-                                    )
-                                }
-                                .toList()
-                        }
-                    displayScanContent.append(candidateText)
-                    val endBoundaryIndex = candidateBoundaries.size
-                    candidateBoundaries.add(displayScanContent.length)
-                    candidates.add(
-                        ToolInvocationCandidate(
-                            toolMatch = toolMatch,
-                            startBoundaryIndex = startBoundaryIndex,
-                            endBoundaryIndex = endBoundaryIndex,
-                            parameters = parameterCandidates,
-                        )
-                    )
-                    val candidateEndInChunk = candidateOffsetInChunk + candidateText.length
-                    if (candidateEndInChunk < chunkString.length) {
-                        displayScanContent.append(chunkString, candidateEndInChunk, chunkString.length)
-                    }
-                    return@collect
-                }
-            }
-
-            // Keep every non-executable group in the same global display-only state machine.
-            // This deliberately includes fenced examples and non-line-start pseudo XML: they are
-            // not executable contexts, so their parameter-looking text must not receive protection.
-            displayScanContent.append(chunkString)
-        }
-
-        val visibleCandidateBoundaries =
-            ChatUtils.displayOnlyBoundaryVisibility(
-                displayScanContent.toString(),
-                candidateBoundaries.toIntArray(),
-                protectedParameterRanges.toIntArray(),
-            )
-        candidates.forEach { candidate ->
-            if (!visibleCandidateBoundaries[candidate.startBoundaryIndex] ||
-                !visibleCandidateBoundaries[candidate.endBoundaryIndex]
-            ) {
-                return@forEach
-            }
-
-            val toolMatch = candidate.toolMatch
-            val toolName = toolMatch.groupValues.getOrNull(2) ?: return@forEach
-            val parameters =
-                candidate.parameters.mapNotNull { parameter ->
-                    if (!visibleCandidateBoundaries[parameter.startBoundaryIndex] ||
-                        !visibleCandidateBoundaries[parameter.endBoundaryIndex]
-                    ) {
-                        null
-                    } else {
-                        ToolParameter(parameter.name, unescapeXml(parameter.rawValue))
-                    }
-                }
-
-            val tool = AITool(name = toolName, parameters = parameters)
-            invocations.add(
-                ToolInvocation(
-                    tool = tool,
-                    rawText = toolMatch.value,
-                    responseLocation = toolMatch.range,
-                )
-            )
-        }
+        val invocations = ExecutableToolProtocolParser.parse(response)
 
         AppLogger.d(
             TAG,
             "Found ${invocations.size} tool invocations: ${invocations.map { resolveDisplayToolName(it.tool) }}"
         )
         return invocations
-    }
-
-    /**
-     * Unescapes XML special characters
-     * @param input The XML escaped string
-     * @return Unescaped string
-     */
-    private fun unescapeXml(input: String): String {
-        var result = input
-
-        // 处理 CDATA 标记
-        if (result.startsWith("<![CDATA[") && result.endsWith("]]>")) {
-            result = result.substring(9, result.length - 3)
-        }
-
-        // 即使没有完整的 CDATA 标记，也尝试清理末尾的 ]]> 和开头的 <![CDATA[
-        if (result.endsWith("]]>")) {
-            result = result.substring(0, result.length - 3)
-        }
-
-        if (result.startsWith("<![CDATA[")) {
-            result = result.substring(9)
-        }
-
-        return result.replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&amp;", "&")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
     }
 
     /**
