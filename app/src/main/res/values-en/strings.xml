@@ -4108,6 +4108,14 @@
     <string name="model_multimodal_select_model_title">Choose a model to configure</string>
     <string name="model_multimodal_search_models">Search models</string>
     <string name="model_multimodal_no_models_found">No models to configure</string>
+    <string name="model_multimodal_auto_sync">Sync this configuration</string>
+    <string name="model_multimodal_auto_sync_all_matched">Configured %1$d models from the official model catalog</string>
+    <string name="model_multimodal_auto_sync_partially_matched">Configured %1$d models; %2$d could not be matched uniquely and kept their existing settings</string>
+    <string name="model_multimodal_auto_sync_none_matched">No official models could be matched uniquely; existing settings were not changed</string>
+    <string name="model_multimodal_auto_sync_failed">Could not read the local model catalog; existing settings were not changed</string>
+    <string name="model_multimodal_catalog_refresh">Refresh local model catalog</string>
+    <string name="model_multimodal_catalog_refresh_success">Updated the local catalog with %1$d official models</string>
+    <string name="model_multimodal_catalog_refresh_failed">Could not refresh from the Operit repository; the previous local catalog was kept</string>
     <string name="enable_direct_audio_processing">Model supports audio</string>
     <string name="enable_direct_audio_processing_desc">When enabled, audio will be sent directly to the AI for processing instead of returning tool-based transcription/description</string>
     <string name="enable_direct_video_processing">Model supports video</string>

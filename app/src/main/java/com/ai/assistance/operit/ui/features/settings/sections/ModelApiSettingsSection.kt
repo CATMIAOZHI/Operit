@@ -55,6 +55,7 @@ import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelMultimodalCapabilities
 import com.ai.assistance.operit.data.model.ModelOption
+import com.ai.assistance.operit.data.model.OfficialModelCapabilitiesRepository
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.multimodalCapabilitiesForModel
 import com.ai.assistance.operit.data.model.normalizeProviderId
@@ -65,8 +66,10 @@ import com.ai.assistance.operit.ui.features.settings.DebouncedModelConfigAutoSav
 import com.ai.assistance.operit.ui.features.settings.ModelConfigSaveCoordinator
 import com.ai.assistance.operit.ui.features.settings.RegisterModelConfigSaveAction
 import com.ai.assistance.operit.util.LocationUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
@@ -147,6 +150,19 @@ fun ModelApiSettingsSection(
     var enableDirectAudioProcessingInput by remember(config.id) { mutableStateOf(config.enableDirectAudioProcessing) }
 
     var enableDirectVideoProcessingInput by remember(config.id) { mutableStateOf(config.enableDirectVideoProcessing) }
+    val officialModelCapabilitiesRepository =
+        remember(context.applicationContext) {
+            OfficialModelCapabilitiesRepository(context.applicationContext)
+        }
+    var isSyncingMultimodalCapabilities by remember(config.id) { mutableStateOf(false) }
+    var isRefreshingMultimodalCatalog by remember(config.id) { mutableStateOf(false) }
+    var multimodalSyncJob by remember(config.id) { mutableStateOf<Job?>(null) }
+
+    DisposableEffect(config.id) {
+        onDispose {
+            multimodalSyncJob?.cancel()
+        }
+    }
     
     // Google Search Grounding 配置状态 (仅Gemini)
     var enableGoogleSearchInput by remember(config.id) { mutableStateOf(config.enableGoogleSearch) }
@@ -438,6 +454,76 @@ fun ModelApiSettingsSection(
                     apiEndpointInput,
                     selectedApiProvider ?: ApiProviderType.OPENAI_GENERIC
                 )
+        }
+    }
+
+    fun syncOfficialModelCapabilities() {
+        if (isSyncingMultimodalCapabilities || isRefreshingMultimodalCatalog) return
+        val configuredModelNames = getModelList(modelNameInput)
+        if (configuredModelNames.isEmpty()) return
+        isSyncingMultimodalCapabilities = true
+        multimodalSyncJob = scope.launch {
+            try {
+                val catalog = officialModelCapabilitiesRepository.loadCatalog()
+                val matchedCapabilities = catalog.matchAll(configuredModelNames)
+                val unmatchedCount = configuredModelNames.size - matchedCapabilities.size
+
+                if (matchedCapabilities.isNotEmpty()) {
+                    modelMultimodalCapabilitiesInput =
+                        modelMultimodalCapabilitiesInput + matchedCapabilities
+                }
+                showNotification(
+                    when {
+                        matchedCapabilities.isEmpty() ->
+                            context.getString(R.string.model_multimodal_auto_sync_none_matched)
+                        unmatchedCount == 0 ->
+                            context.getString(
+                                R.string.model_multimodal_auto_sync_all_matched,
+                                matchedCapabilities.size,
+                            )
+                        else ->
+                            context.getString(
+                                R.string.model_multimodal_auto_sync_partially_matched,
+                                matchedCapabilities.size,
+                                unmatchedCount,
+                            )
+                    }
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "同步官方模型多模态能力失败: ${e.message}", e)
+                showNotification(context.getString(R.string.model_multimodal_auto_sync_failed))
+            } finally {
+                isSyncingMultimodalCapabilities = false
+                multimodalSyncJob = null
+            }
+        }
+    }
+
+    fun refreshOfficialModelCapabilitiesCatalog() {
+        if (isSyncingMultimodalCapabilities || isRefreshingMultimodalCatalog) return
+        isRefreshingMultimodalCatalog = true
+        multimodalSyncJob = scope.launch {
+            try {
+                val catalog = officialModelCapabilitiesRepository.refreshCatalog()
+                showNotification(
+                    context.getString(
+                        R.string.model_multimodal_catalog_refresh_success,
+                        catalog.models.size,
+                    )
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "刷新本地模型能力目录失败: ${e.message}", e)
+                showNotification(
+                    context.getString(R.string.model_multimodal_catalog_refresh_failed)
+                )
+            } finally {
+                isRefreshingMultimodalCatalog = false
+                multimodalSyncJob = null
+            }
         }
     }
     // 移除了强制锁定模型名称的逻辑，允许用户自由修改
@@ -766,6 +852,51 @@ fun ModelApiSettingsSection(
                 SettingsInfoBanner(
                     text = stringResource(R.string.model_multimodal_capabilities_desc)
                 )
+                OutlinedButton(
+                    onClick = { syncOfficialModelCapabilities() },
+                    enabled =
+                        configuredModels.isNotEmpty() &&
+                            !isSyncingMultimodalCapabilities &&
+                            !isRefreshingMultimodalCatalog,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (isSyncingMultimodalCapabilities) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.model_multimodal_auto_sync))
+                }
+                TextButton(
+                    onClick = { refreshOfficialModelCapabilitiesCatalog() },
+                    enabled =
+                        !isSyncingMultimodalCapabilities &&
+                            !isRefreshingMultimodalCatalog,
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    if (isRefreshingMultimodalCatalog) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.model_multimodal_catalog_refresh))
+                }
                 if (configuredModels.isEmpty()) {
                     Text(
                         text = stringResource(R.string.model_multimodal_capabilities_no_models),

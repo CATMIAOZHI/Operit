@@ -4061,6 +4061,14 @@
     <string name="model_multimodal_select_model_title">选择要配置的模型</string>
     <string name="model_multimodal_search_models">搜索模型</string>
     <string name="model_multimodal_no_models_found">没有可配置的模型</string>
+    <string name="model_multimodal_auto_sync">自动同步当前配置</string>
+    <string name="model_multimodal_auto_sync_all_matched">已根据官方模型目录配置 %1$d 个模型</string>
+    <string name="model_multimodal_auto_sync_partially_matched">已配置 %1$d 个模型；另有 %2$d 个模型无法唯一匹配，已保留原设置</string>
+    <string name="model_multimodal_auto_sync_none_matched">没有可唯一匹配的官方模型，现有设置未修改</string>
+    <string name="model_multimodal_auto_sync_failed">读取本地模型目录失败，现有设置未修改</string>
+    <string name="model_multimodal_catalog_refresh">刷新本地模型目录</string>
+    <string name="model_multimodal_catalog_refresh_success">本地模型目录已更新，共 %1$d 个官方模型</string>
+    <string name="model_multimodal_catalog_refresh_failed">从 Operit 仓库刷新失败，已保留原本地目录</string>
     <string name="enable_direct_audio_processing">模型支持音频解析</string>
     <string name="enable_direct_audio_processing_desc">启用后，音频将直接发送给AI处理，而不是通过工具返回文本转写/描述</string>
     <string name="enable_direct_video_processing">模型支持视频解析</string>
