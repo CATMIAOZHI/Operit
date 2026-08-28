@@ -1169,6 +1169,9 @@ fun ModelApiSettingsSection(
                     shadowElevation = 8.dp
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    val refreshUnknownErrorText = stringResource(R.string.unknown_error)
+                    val refreshModelsListFailedText = stringResource(R.string.refresh_models_list_failed)
+                    val refreshModelsFailedText = stringResource(R.string.refresh_models_failed)
                     // 标题栏
                     Row(
                             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -1191,14 +1194,14 @@ fun ModelApiSettingsSection(
                                                 if (result.isSuccess) {
                                                     modelsList = result.getOrThrow()
                                                 } else {
-                                                    val errorMsg = result.exceptionOrNull()?.message ?: context.getString(R.string.unknown_error)
-                                                    modelLoadError = context.getString(R.string.refresh_models_list_failed, errorMsg)
-                                                    showNotification(modelLoadError ?: context.getString(R.string.refresh_models_failed))
+                                                    val errorMsg = result.exceptionOrNull()?.message ?: refreshUnknownErrorText
+                                                    modelLoadError = refreshModelsListFailedText.format(errorMsg)
+                                                    showNotification(modelLoadError ?: refreshModelsFailedText)
                                                 }
                                             } catch (e: Exception) {
-                                                val errorMsg = e.message ?: context.getString(R.string.unknown_error)
-                                                modelLoadError = context.getString(R.string.refresh_models_list_failed, errorMsg)
-                                                showNotification(modelLoadError ?: context.getString(R.string.refresh_models_failed))
+                                                val errorMsg = e.message ?: refreshUnknownErrorText
+                                                modelLoadError = refreshModelsListFailedText.format(errorMsg)
+                                                showNotification(modelLoadError ?: refreshModelsFailedText)
                                             } finally {
                                                 isLoadingModels = false
                                             }
