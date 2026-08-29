@@ -10,6 +10,11 @@ import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.AIToolHookDecision
 import com.ai.assistance.operit.core.tools.JsPackageToolExecutorMarker
 import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
+import com.ai.assistance.operit.features.reading.ReadingCompanionCallVerdict
+import com.ai.assistance.operit.features.reading.ReadingCompanionLoopException
+import com.ai.assistance.operit.features.reading.ReadingCompanionSubagentSessionRegistry
+import com.ai.assistance.operit.features.reading.ReadingCompanionSubagentTools
+import com.ai.assistance.operit.features.reading.normalizeReadingCompanionToolCall
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.ToolExecutor
 import com.ai.assistance.operit.core.tools.ToolExecutionLimits
@@ -569,7 +574,12 @@ object ToolExecutionManager {
         toolExposureMode: ToolExposureMode
     ): ToolResult? {
         val toolName = invocation.tool.name.trim()
-        if (toolName in PermissionReviewInternalTools.names) return null
+        if (
+            toolName in PermissionReviewInternalTools.names ||
+                toolName in ReadingCompanionSubagentTools.CAPABILITY_BOUND_NAMES
+        ) {
+            return null
+        }
         val useEnglish = isEnglishLanguage(context)
         val errorMessage =
             when {
@@ -733,11 +743,15 @@ object ToolExecutionManager {
         deferCircuitBreaker: Boolean = false,
         liveAssistantContent: String? = null,
     ): ToolPermissionCheckResult {
-        if (invocation.tool.name in PermissionReviewInternalTools.names) {
+        if (
+            invocation.tool.name in PermissionReviewInternalTools.names ||
+                invocation.tool.name in ReadingCompanionSubagentTools.CAPABILITY_BOUND_NAMES
+        ) {
             toolHandler.notifyToolPermissionChecked(
                 invocation.tool,
                 granted = true,
-                reason = "Capability-bound internal permission-review tool",
+                reason =
+                    "Capability-bound internal tool (permission review or reading commentary audit)",
             )
             return ToolPermissionCheckResult(ToolPermissionDecision.Allowed, null)
         }
@@ -863,7 +877,23 @@ object ToolExecutionManager {
         // { "x": 1 } would otherwise be mistaken for identical instructions and trigger a
         // review on the third distinct call.
         val rawInvocations = invocations
-        if (isSubagent && subagentToolLoopGuard != null && rawInvocations.size > 1) {
+        // Reading commentary audit runs are non-interactive: a background run has no UI at all,
+        // and a conversation-path audit must never pause for an approval dialog. The registry
+        // lookup is O(1) and only matches live audit child chats, so ordinary subagents and
+        // normal chats are untouched.
+        val readingCompanionSession =
+            if (isSubagent) {
+                ReadingCompanionSubagentSessionRegistry.sessionForChildChat(callerChatId)
+            } else {
+                null
+            }
+        val readingCompanionLoopGuard = readingCompanionSession?.loopGuard
+        if (
+            readingCompanionLoopGuard == null &&
+                isSubagent &&
+                subagentToolLoopGuard != null &&
+                rawInvocations.size > 1
+        ) {
             val firstReviewIndex =
                 subagentToolLoopGuard.firstReviewIndex(
                     tools = rawInvocations.map { it.tool },
@@ -937,7 +967,61 @@ object ToolExecutionManager {
 
         val loopApprovedInvocations =
             java.util.IdentityHashMap<ToolInvocation, Boolean>()
-        if (isSubagent && subagentToolLoopGuard != null) {
+        if (readingCompanionLoopGuard != null) {
+            // 模型轮次边界 heartbeat（每批工具调用 = 一个可观测模型轮次；工具级心跳已由
+            // ReadingCompanionSubagentTools 每次执行前后完成）。claim 被抢占/释放立即停止：
+            // affected != 1 即 claim_lost，绝不续跑。阅读侧 model_round_count 按此可观测
+            // 边界递增；主库 modelRoundCount 在同一模型轮次边界原子递增（终审 WARNING-1：
+            // 两库计数一致）。
+            val readingSession = readingCompanionSession
+            if (readingSession != null) {
+                if (
+                    !readingSession.backend.heartbeatClaimIfOwned(
+                        readingSession.bookId,
+                        readingSession.chapterIndex,
+                        readingSession.runId,
+                    )
+                ) {
+                    readingSession.stop("claim_lost")
+                    throw ReadingCompanionLoopException(
+                        runId = readingSession.runId,
+                        reason = "claim_lost",
+                        message =
+                            "Reading companion audit subagent lost its claim before a " +
+                                "model round; generation stopped.",
+                    )
+                }
+                readingSession.backend.incrementRunModelRound(readingSession.runId)
+                // 主库 subagent_runs.modelRoundCount 在同一模型轮次边界原子递增，与阅读侧
+                // model_round_count 保持一致的审计计数（终审 WARNING-1）；计数失败绝不影响
+                // 本轮工具执行。
+                callerChatId?.let { chatId ->
+                    runCatching {
+                        com.ai.assistance.operit.data.repository.SubagentRunRepository
+                            .getInstance(context.applicationContext)
+                            .incrementModelRoundCountByChildChatId(chatId)
+                    }
+                }
+            }
+            // 非交互护栏：同一工具 + 规范化参数连续 3 次直接抛错终止本轮，绝不弹确认框。
+            rawInvocations.forEach { invocation ->
+                val rawTool = invocation.tool
+                if (
+                    readingCompanionLoopGuard.recordCall(
+                        toolName = rawTool.name,
+                        normalizedArguments = normalizeReadingCompanionToolCall(rawTool),
+                    ) == ReadingCompanionCallVerdict.LOOP_DETECTED
+                ) {
+                    throw ReadingCompanionLoopException(
+                        runId = readingCompanionLoopGuard.runId,
+                        reason = "loop_detected",
+                        message =
+                            "Reading companion audit subagent repeated the same tool call " +
+                                "3 times: ${rawTool.name}",
+                    )
+                }
+            }
+        } else if (isSubagent && subagentToolLoopGuard != null) {
             val permissionSystem = toolHandler.getToolPermissionSystem()
             val rawToolsByIndex = rawInvocations.map { it.tool }
             for ((index, invocation) in boundInvocations.withIndex()) {

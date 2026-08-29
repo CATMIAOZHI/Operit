@@ -135,13 +135,48 @@ object ReadingCompanionBridge {
                             callerPackageName ==
                                 ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME
                         ) { "该操作仅允许自动段评子包调用" }
+                        val callerChatId = runtime?.callerChatId?.takeIf(String::isNotBlank)
+                        // 对话内（包含插件自身聊天）走 conversation；无调用聊天或来自隐藏审计根
+                        // 聊天则回退手动路径。JS 传入的 parentChatId 一律不被信任。
+                        val conversation =
+                            callerChatId != null &&
+                                !isReadingCompanionAuditRootChat(context, callerChatId)
                         ReadingCompanionAutoCommentary.getInstance(context)
                             .generateNextChapter(
                                 force = true,
                                 runtime = runtime,
-                                trigger = ReadingCompanionAutoCommentary.TRIGGER_MANUAL,
+                                trigger =
+                                    if (conversation) {
+                                        ReadingCompanionAutoCommentary.TRIGGER_CONVERSATION
+                                    } else {
+                                        ReadingCompanionAutoCommentary.TRIGGER_MANUAL
+                                    },
                             )
                             .toJson()
+                    }
+                    "request_next_chapter_comments" -> {
+                        require(
+                            callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                        ) { "该操作仅允许阅读伴侣主包调用" }
+                        require(
+                            !runtime?.callerChatId.isNullOrBlank()
+                        ) { "对话内段评生成需要当前聊天上下文" }
+                        ReadingCompanionAutoCommentary.getInstance(context)
+                            .generateNextChapter(
+                                force = true,
+                                runtime = runtime,
+                                trigger = ReadingCompanionAutoCommentary.TRIGGER_CONVERSATION,
+                            )
+                            .toJson()
+                    }
+                    "list_audit_chats" -> {
+                        require(
+                            callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                        ) { "该操作仅允许阅读伴侣主包调用" }
+                        ReadingCompanionAutoCommentary.getInstance(context).listAuditChats(
+                            parameters.optString("bookId").trim()
+                                .takeIf(String::isNotBlank),
+                        )
                     }
                     else -> throw IllegalArgumentException("未知的伴读操作：$action")
                 }
@@ -226,4 +261,18 @@ object ReadingCompanionBridge {
 
     private fun JSONObject.optNullableInt(name: String): Int? =
         if (!has(name) || isNull(name)) null else getInt(name)
+
+    private suspend fun isReadingCompanionAuditRootChat(
+        context: Context,
+        chatId: String,
+    ): Boolean =
+        runCatching {
+                com.ai.assistance.operit.data.db.AppDatabase
+                    .getDatabase(context.applicationContext)
+                    .chatDao()
+                    .getChatById(chatId)
+                    ?.let { chat -> ReadingCompanionAudit.isPermanentHiddenReason(chat.hiddenReason) }
+                    ?: false
+            }
+            .getOrDefault(false)
 }

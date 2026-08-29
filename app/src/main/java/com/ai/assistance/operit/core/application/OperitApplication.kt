@@ -397,6 +397,17 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                     "Marked $reconciledRuns unfinished Subagent runs as INTERRUPTED after restart",
                 )
             }
+            runCatching {
+                com.ai.assistance.operit.features.reading.ReadingCompanionStore(
+                    applicationContext
+                ).reconcileAfterProcessStart(now = startTime)
+            }.onFailure { error ->
+                AppLogger.w(
+                    TAG,
+                    "Reading companion reconciliation failed after restart",
+                    error,
+                )
+            }
             AppLogger.d(TAG, "【启动计时】数据库预加载完成（异步） - ${System.currentTimeMillis() - dbStartTime}ms")
         }
 

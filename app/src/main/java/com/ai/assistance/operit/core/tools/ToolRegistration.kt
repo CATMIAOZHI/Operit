@@ -3,6 +3,7 @@ package com.ai.assistance.operit.core.tools
 import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.features.reading.ReadingCompanionSubagentTools
 import com.ai.assistance.operit.ui.permissions.ToolPermissionDecision
 import com.ai.assistance.operit.core.tools.climode.CliToolModeSupport
 import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
@@ -58,6 +59,16 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         name = PermissionReviewInspectionTool.NAME,
         executor = PermissionReviewInspectionTool::inspect,
     )
+    // Hidden control-plane tools for the Reading Companion commentary audit subagent. They are
+    // never added to ordinary chat tool prompts; isolated audit turns expose exactly these six
+    // via isolatedToolPrompts. The executor resolves the run context from callerChatId and
+    // ignores model-supplied book/chapter values.
+    ReadingCompanionSubagentTools.TOOL_NAMES.forEach { toolName ->
+        handler.registerTool(
+            name = toolName,
+            executor = ReadingCompanionSubagentTools::execute,
+        )
+    }
     handler.registerTool(
         name = ChatTodoTool.NAME,
         descriptionGenerator = { context.getString(R.string.toolreg_todowrite_desc) },

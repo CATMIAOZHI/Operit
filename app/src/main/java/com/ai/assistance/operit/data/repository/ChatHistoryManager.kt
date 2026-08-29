@@ -87,6 +87,13 @@ private val Context.currentChatIdDataStore by preferencesDataStore(name = "curre
 internal fun normalizeChatFolderId(folderId: String?): String? =
     folderId.takeUnless { it == SYSTEM_UNGROUPED_FOLDER_ID }
 
+/**
+ * 阅读伴侣审计聊天永久隐藏前缀。hiddenReason 以该前缀开头的聊天只能查看/删除，
+ * 任何路径都禁止取消隐藏（见 [ChatHistoryManager.setChatHidden] 与 merge 保留规则）。
+ */
+internal const val READING_COMPANION_PERMANENT_HIDDEN_REASON_PREFIX =
+    "READING_COMPANION_AUDIT_"
+
 internal val OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS =
     listOf(
         "id",
@@ -104,6 +111,9 @@ internal val OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS =
         "modelConfigIdSnapshot",
         "modelIndexSnapshot",
         "toolInvocationCount",
+        "externalOwnerType",
+        "externalOwnerId",
+        "modelRoundCount",
         "archivedAt",
     )
 
@@ -487,6 +497,8 @@ class ChatHistoryManager private constructor(private val context: Context) {
             pinned = getInt(getColumnIndexOrThrow("pinned")) != 0,
             isFavorite = getInt(getColumnIndexOrThrow("isFavorite")) != 0,
             lastMessageAt = longOrNull("lastMessageAt"),
+            isHidden = getInt(getColumnIndexOrThrow("isHidden")) != 0,
+            hiddenReason = stringOrNull("hiddenReason"),
         )
 
     private fun SQLiteDatabase.materializeSnapshotContent(
@@ -595,6 +607,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     if (isNull(index)) null else getInt(index)
                 },
             toolInvocationCount = getInt(getColumnIndexOrThrow("toolInvocationCount")),
+            externalOwnerType = stringOrNull("externalOwnerType"),
+            externalOwnerId = stringOrNull("externalOwnerId"),
+            modelRoundCount = getInt(getColumnIndexOrThrow("modelRoundCount")),
             archivedAt = longOrNull("archivedAt"),
         )
 
@@ -693,7 +708,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens,
                                currentWindowSize, `group`, folderId, displayOrder, workspace,
                                workspaceEnv, parentChatId, chatKind, characterCardName, characterGroupId,
-                               locked, pinned, isFavorite, lastMessageAt
+                               locked, pinned, isFavorite, lastMessageAt, isHidden, hiddenReason
                         FROM operit_export_source.chats
                         """.trimIndent(),
                     )
@@ -1909,6 +1924,17 @@ class ChatHistoryManager private constructor(private val context: Context) {
             SharingStarted.Lazily,
             emptyList()
         )
+
+    /** 隐藏聊天（隐藏入口专用，含阅读伴侣审计聊天）。 */
+    val hiddenChatHistoriesFlow =
+        chatDao
+            .observeHiddenChats()
+            .toHistoryFlow()
+            .stateIn(
+                historyFlowScope,
+                SharingStarted.Lazily,
+                emptyList(),
+            )
 
     val chatFoldersFlow =
         chatFolderDao
@@ -3297,6 +3323,61 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return newHistory
     }
 
+    /**
+     * 创建一个隐藏的普通顶层聊天（chatKind=NORMAL、parentChatId=null、isHidden=true）。
+     *
+     * 阅读伴侣审计父聊天（每书一个 hiddenReason=READING_COMPANION_AUDIT_ROOT:<bookId>）
+     * 使用本入口创建；隐藏聊天不进入普通列表/统计，只能通过隐藏入口查看与删除。
+     */
+    suspend fun createHiddenNormalChat(title: String, hiddenReason: String): ChatHistory {
+        require(hiddenReason.isNotBlank()) { "hiddenReason is required for hidden chats" }
+        val now = System.currentTimeMillis()
+        val entity =
+            ChatEntity(
+                title = title,
+                createdAt = now,
+                updatedAt = now,
+                displayOrder = -now,
+                chatKind = ChatKind.NORMAL.name,
+                isHidden = true,
+                hiddenReason = hiddenReason,
+            )
+        chatDao.insertChat(entity)
+        return entity.toChatHistory().copy(folderId = normalizeChatFolderId(entity.folderId))
+    }
+
+    /**
+     * 切换聊天隐藏状态。hiddenReason 以 [READING_COMPANION_PERMANENT_HIDDEN_REASON_PREFIX]
+     * 开头的审计聊天永久隐藏，禁止 hidden=false（只能查看/删除）。
+     */
+    suspend fun setChatHidden(
+        chatId: String,
+        hidden: Boolean,
+        hiddenReason: String? = null,
+    ): Boolean {
+        val before = chatDao.getChatById(chatId) ?: return false
+        val effectiveReason = before.hiddenReason ?: hiddenReason
+        if (
+            !hidden &&
+            effectiveReason?.startsWith(READING_COMPANION_PERMANENT_HIDDEN_REASON_PREFIX) == true
+        ) {
+            throw IllegalStateException(
+                "Reading companion audit chats are permanently hidden and cannot be unhidden"
+            )
+        }
+        if (hidden && hiddenReason.isNullOrBlank()) {
+            throw IllegalArgumentException("hiddenReason is required when hiding a chat")
+        }
+        chatDao.updateChat(
+            before.copy(
+                isHidden = hidden,
+                hiddenReason = if (hidden) hiddenReason else null,
+                updatedAt = System.currentTimeMillis(),
+            )
+        )
+        return true
+    }
+
     suspend fun createFolderWithInitialChat(
         parentFolderId: String?,
         folderName: String,
@@ -4601,6 +4682,10 @@ internal fun mergePersistedChatEntity(
         // UI snapshot and must not undo a completed structural move.
         folderId = if (preserveStructure) existing.folderId else incoming.folderId,
         displayOrder = if (preserveStructure) existing.displayOrder else incoming.displayOrder,
+        // Hiding state is repository-owned: a legacy archive without the flag must never
+        // unhide an existing hidden chat (audit chats are permanently hidden).
+        isHidden = existing.isHidden,
+        hiddenReason = existing.hiddenReason,
     )
 
 data class ChatImportResult(

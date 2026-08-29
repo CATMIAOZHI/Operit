@@ -31,6 +31,10 @@ data class ChatHistory(
     val locked: Boolean = false,
     val pinned: Boolean = false,
     val isFavorite: Boolean = false,
+    /** 隐藏聊天不进入普通列表/统计，仅供隐藏入口与按 ID 打开使用。 */
+    val isHidden: Boolean = false,
+    /** 隐藏原因；以 READING_COMPANION_AUDIT_ 开头的聊天永久隐藏，不可取消。 */
+    val hiddenReason: String? = null,
     @Serializable(with = LocalDateTimeSerializer::class)
     val lastMessageAt: LocalDateTime? = null,
     /** Room 运行时保留的绝对时间；不进入归档格式。 */

@@ -73,6 +73,8 @@ data class OperitArchivedChat(
     val locked: Boolean = false,
     val pinned: Boolean = false,
     val isFavorite: Boolean? = null,
+    val isHidden: Boolean = false,
+    val hiddenReason: String? = null,
 ) {
     fun toChatHistory(resolvedFavorite: Boolean, folderId: String? = this.folderId): ChatHistory {
         return ChatHistory(
@@ -101,6 +103,8 @@ data class OperitArchivedChat(
             locked = locked,
             pinned = pinned,
             isFavorite = resolvedFavorite,
+            isHidden = isHidden,
+            hiddenReason = hiddenReason,
         )
     }
 
@@ -132,6 +136,8 @@ data class OperitArchivedChat(
                 locked = history.locked,
                 pinned = history.pinned,
                 isFavorite = history.isFavorite,
+                isHidden = history.isHidden,
+                hiddenReason = history.hiddenReason,
             )
         }
     }
@@ -177,6 +183,9 @@ data class OperitArchivedSubagentRun(
     val modelConfigIdSnapshot: String? = null,
     val modelIndexSnapshot: Int? = null,
     val toolInvocationCount: Int = 0,
+    val externalOwnerType: String? = null,
+    val externalOwnerId: String? = null,
+    val modelRoundCount: Int = 0,
     val archivedAt: Long? = null,
 ) {
     fun toEntity(): SubagentRunEntity =
@@ -196,6 +205,9 @@ data class OperitArchivedSubagentRun(
             modelConfigIdSnapshot = modelConfigIdSnapshot,
             modelIndexSnapshot = modelIndexSnapshot,
             toolInvocationCount = toolInvocationCount,
+            externalOwnerType = externalOwnerType,
+            externalOwnerId = externalOwnerId,
+            modelRoundCount = modelRoundCount,
             archivedAt = archivedAt,
         )
 
@@ -217,6 +229,9 @@ data class OperitArchivedSubagentRun(
                 modelConfigIdSnapshot = entity.modelConfigIdSnapshot,
                 modelIndexSnapshot = entity.modelIndexSnapshot,
                 toolInvocationCount = entity.toolInvocationCount,
+                externalOwnerType = entity.externalOwnerType,
+                externalOwnerId = entity.externalOwnerId,
+                modelRoundCount = entity.modelRoundCount,
                 archivedAt = entity.archivedAt,
             )
     }

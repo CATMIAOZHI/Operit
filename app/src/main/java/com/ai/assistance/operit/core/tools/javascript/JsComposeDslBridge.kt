@@ -709,6 +709,31 @@ internal fun buildComposeDslContextBridgeDefinition(): String {
                             return Promise.reject(error);
                         }
                     },
+                    openReadingAuditChat: function(runId) {
+                        var normalizedRunId = String(runId || '').trim();
+                        if (!normalizedRunId) {
+                            return Promise.reject(createUserFacingError('runId is required'));
+                        }
+                        var result = invokeNative(
+                            'openReadingAuditChat',
+                            [normalizedRunId]
+                        );
+                        if (result === undefined || result === null) {
+                            return Promise.reject(
+                                createUserFacingError('openReadingAuditChat is unavailable')
+                            );
+                        }
+                        try {
+                            return Promise.resolve(
+                                unwrapNativeResult(
+                                    result,
+                                    'openReadingAuditChat failed'
+                                )
+                            );
+                        } catch (error) {
+                            return Promise.reject(error);
+                        }
+                    },
                     setReadingCompanionCommentaryCharacter: function(options) {
                         var payload =
                             options && typeof options === 'object' ? options : {};

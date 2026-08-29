@@ -126,6 +126,7 @@ function detailScreen(ctx) {
   const [loading, setLoading] = ctx.useState("detailLoading", true);
   const [error, setError] = ctx.useState("detailError", "");
   const [detail, setDetail] = ctx.useState("detailValue", null);
+  const [auditNotice, setAuditNotice] = ctx.useState("detailAuditNotice", "");
   const runId = Number(ctx.getEnv(RUN_ID_ENV_KEY) || 0);
 
   const load = async () => {
@@ -149,6 +150,20 @@ function detailScreen(ctx) {
 
   const backToHistory = async () => {
     await Promise.resolve(ctx.navigate(HISTORY_ROUTE));
+  };
+
+  const openAuditChat = async () => {
+    if (!ctx.openReadingAuditChat) {
+      setAuditNotice(english ? "Opening the audit chat is unavailable." : "无法打开审计对话。");
+      return;
+    }
+    setAuditNotice("");
+    try {
+      await ctx.openReadingAuditChat(runId);
+      setAuditNotice(english ? "Audit chat opened in the main conversation." : "已在主对话打开审计聊天。");
+    } catch (openError) {
+      setAuditNotice(toErrorText(openError));
+    }
   };
 
   const title = english ? "Commentary run detail" : "段评任务详情";
@@ -543,6 +558,56 @@ function detailScreen(ctx) {
         ),
       );
     }
+
+    if (run) {
+      children.push(
+        UI.Card({ fillMaxWidth: true, containerColor: colors.surface },
+          UI.Column({ fillMaxWidth: true, padding: 16, spacing: 8 }, [
+            UI.Text({
+              text: english ? "Audit chat" : "审计对话",
+              style: "titleMedium",
+              color: colors.onSurface,
+            }),
+            UI.Text({
+              text: (english
+                ? `mode: ${String(run.executionMode || "direct")}`
+                : `模式：${String(run.executionMode || "direct")}`),
+              style: "bodySmall",
+              color: colors.onSurfaceVariant,
+            }),
+            UI.Text({
+              text: [
+                String(run.parentChatId || "").trim(),
+                String(run.childChatId || "").trim(),
+                String(run.subagentRunId || "").trim(),
+              ].filter(Boolean).join(" · ") ||
+                (english ? "No linked chat ids." : "没有关联的聊天 id。"),
+              style: "bodySmall",
+              color: colors.onSurfaceVariant,
+            }),
+            run.childChatId
+              ? UI.Button(
+                  {
+                    fillMaxWidth: true,
+                    onClick: openAuditChat,
+                  },
+                  [
+                    UI.Icon({ name: "History", size: 18 }),
+                    UI.Text({ text: english ? "Open subagent chat" : "打开子代理对话" }),
+                  ],
+                )
+              : null,
+            auditNotice
+              ? UI.Text({
+                  text: auditNotice,
+                  style: "bodySmall",
+                  color: colors.onSurfaceVariant,
+                })
+              : null,
+          ].filter(Boolean)),
+        ),
+      );
+    }
   }
 
   children.push(
@@ -550,16 +615,6 @@ function detailScreen(ctx) {
       { fillMaxWidth: true, onClick: backToHistory },
       UI.Text({ text: english ? "Back to history" : "返回历史" }),
     ),
-  );
-  children.push(
-    UI.Text({
-      text: english
-        ? "Generated comment text, paragraph anchors, safe evidence, and the real operation trace are shown here. Unread chapter text is never exposed."
-        : "这里展示已生成段评全文、段落锚点、安全证据和真实调用链；未读章节正文不会暴露。",
-      style: "bodySmall",
-      color: colors.onSurfaceVariant,
-      padding: 4,
-    }),
   );
 
   return UI.Box(

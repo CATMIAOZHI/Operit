@@ -28,6 +28,7 @@ import com.ai.assistance.operit.ui.common.NavItem
 import com.ai.assistance.operit.ui.features.about.screens.AboutScreen
 import com.ai.assistance.operit.ui.features.assistant.screens.AssistantConfigScreen
 import com.ai.assistance.operit.ui.features.chat.screens.AIChatScreen
+import com.ai.assistance.operit.ui.features.chat.screens.HiddenChatsScreen
 import com.ai.assistance.operit.ui.features.demo.screens.ShizukuDemoScreen
 import com.ai.assistance.operit.ui.features.help.screens.HelpScreen
 import com.ai.assistance.operit.ui.features.memory.screens.MemoryScreen
@@ -170,6 +171,26 @@ sealed class Screen(
                     onError = onError,
                     onGestureConsumed = onGestureConsumed
             )
+        }
+    }
+
+    /**
+     * 隐藏聊天列表（阅读伴侣审计等隐藏入口专用）。无侧栏入口：仅能通过
+     * ChatHistorySelector 的“隐藏聊天”入口与路由 native.hidden_chats 进入；
+     * 只能查看/删除，审计聊天不可取消隐藏。
+     */
+    data object HiddenChats : Screen(titleRes = R.string.hidden_chats_title) {
+        @Composable
+        override fun Content(
+                navController: NavController,
+                navigateTo: ScreenNavigationHandler,
+                onGoBack: () -> Unit,
+                hasBackgroundImage: Boolean,
+                onLoading: (Boolean) -> Unit,
+                onError: (String) -> Unit,
+                onGestureConsumed: (Boolean) -> Unit
+        ) {
+            HiddenChatsScreen()
         }
     }
 
