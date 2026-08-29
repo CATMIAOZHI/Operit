@@ -613,6 +613,21 @@ class ReadingCompanionModelGateway(
         )
     }
 
+    /**
+     * 解析角色卡完整 CHAT 人设（与旧单发路径同源：CharacterCardManager.combinePrompts(CHAT)）。
+     *
+     * 段评审计 subagent 用它在任务 prompt 与 get_constraints 中携带完整人设
+     * （性格、口吻、设定，而非仅角色名）；角色卡不存在或未初始化时抛
+     * [AutoCommentRoleUnavailableException]，与旧路径语义一致。
+     */
+    suspend fun resolveAutoCommentRolePrompt(roleCardId: String): String {
+        resolveAutoCommentRole(roleCardId)
+        return characterCardManager.combinePrompts(
+            characterCardId = roleCardId.trim(),
+            promptFunctionType = PromptFunctionType.CHAT,
+        )
+    }
+
     suspend fun previewAutoCommentConfiguration(
         roleCardId: String,
     ): AutoCommentConfigurationPreview {
@@ -650,10 +665,7 @@ class ReadingCompanionModelGateway(
         val roleCard = characterCardManager.getAllCharacterCards()
             .firstOrNull { card -> card.id == resolvedRole.id }
             ?: throw AutoCommentRoleUnavailableException()
-        val rolePrompt = characterCardManager.combinePrompts(
-            characterCardId = resolvedRole.id,
-            promptFunctionType = PromptFunctionType.CHAT,
-        )
+        val rolePrompt = resolveAutoCommentRolePrompt(resolvedRole.id)
         val runtimeConfigId = runtime?.parentModelConfigId?.trim()?.takeIf(String::isNotBlank)
         val usesFixedRoleModel =
             CharacterCardChatModelBindingMode.normalize(roleCard.chatModelBindingMode) ==

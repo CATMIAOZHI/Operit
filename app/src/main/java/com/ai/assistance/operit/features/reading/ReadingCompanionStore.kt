@@ -139,6 +139,20 @@ data class AutoCommentRun(
     val actualReasoningTokens: Long? = null,
     val actualUsageSource: String? = null,
     val actualUsageComplete: Boolean? = null,
+    /** 执行模式：direct（旧单发）或 subagent（阅读伴侣审计对话）。 */
+    val executionMode: String = AUTO_COMMENT_RUN_EXECUTION_MODE_DIRECT,
+    /** 弱关联：审计父聊天（后台/插件为隐藏根；对话内为用户聊天）。 */
+    val parentChatId: String? = null,
+    /** 弱关联：主库 subagent_runs.id。 */
+    val subagentRunId: String? = null,
+    /** 弱关联：subagent 子聊天 id（transcript 所在）。 */
+    val childChatId: String? = null,
+    /** 已执行的模型轮次计数（审计展示；不是总量上限）。 */
+    val modelRoundCount: Int = 0,
+    /** 已执行工具调用次数（审计展示）。 */
+    val toolInvocationCount: Int = 0,
+    /** 谱系：因进程重启恢复而创建的新 run 指向旧 run id；只作谱系，不续写。 */
+    val restartedFromRunId: Long? = null,
 )
 
 data class AutoCommentRunStageEvent(
@@ -184,6 +198,102 @@ data class AutoCommentRunTraceEvent(
 ) {
     val durationMs: Long
         get() = ((finishedAt ?: System.currentTimeMillis()) - startedAt).coerceAtLeast(0)
+}
+
+/** 主库侧 subagent run 的弱关联摘要（reconciliation 对账用）。 */
+data class ReadingCompanionSubagentRunLink(
+    val subagentRunId: String,
+    val parentChatId: String? = null,
+    val childChatId: String? = null,
+)
+
+/** 主库侧仍活跃的阅读所有者 subagent run（reconciliation 反方向对账用）。 */
+data class ReadingCompanionMainOwnerRef(
+    val subagentRunId: String,
+    val readingRunId: Long,
+)
+
+/** 阅读库侧有弱关联的 run 摘要（reconciliation 正向对账用）。 */
+data class ReadingCompanionRunLinkRef(
+    val runId: Long,
+    val status: String,
+    val parentChatId: String? = null,
+    val subagentRunId: String? = null,
+    val childChatId: String? = null,
+)
+
+/** 跨库弱关联对账结果。 */
+data class ReadingCompanionReconcileOutcome(
+    val relinkedRuns: Int = 0,
+    val interruptedReadingRuns: Int = 0,
+    val interruptedSubagentRuns: Int = 0,
+)
+
+/**
+ * 跨库弱关联对账编排（纯函数；生产 [ReadingCompanionStore.reconcileWithChatGraph] 与
+ * JVM 单测共用同一实现，避免测试验证的是测试自带的副本）。
+ *
+ * 正向（阅读侧已有链接）：主库 run 不存在 => 阅读侧仍活跃的 run 标 interrupted、
+ * 释放 claim；主库 run 存在但缺 child_chat_id => 用主库 child 补链；child 聊天已不存在
+ * => interrupted。反向（主库仍活跃的阅读所有者 run）：阅读侧 run 不存在 =>
+ * 经 [interruptSubagentRun] 回调把主库 run 标 interrupted。
+ *
+ * 对账只 interrupt + 释放 claim + 补链；绝不删除 transcript。
+ */
+internal suspend fun runReadingCompanionReconcile(
+    linkedRuns: List<ReadingCompanionRunLinkRef>,
+    activeMainOwners: List<ReadingCompanionMainOwnerRef>,
+    lookupSubagentRun: suspend (subagentRunId: String) -> ReadingCompanionSubagentRunLink?,
+    chatExists: suspend (chatId: String) -> Boolean,
+    relinkChildChat: (runId: Long, parentChatId: String?, childChatId: String) -> Unit,
+    interruptReadingRun: (runId: Long, errorMessage: String) -> Boolean,
+    readingRunExists: (runId: Long) -> Boolean,
+    interruptSubagentRun: suspend (subagentRunId: String) -> Boolean,
+): ReadingCompanionReconcileOutcome {
+    var relinkedRuns = 0
+    var interruptedReadingRuns = 0
+    for (ref in linkedRuns) {
+        val link = ref.subagentRunId?.let { id -> lookupSubagentRun(id) }
+        if (link == null) {
+            if (
+                ref.status == ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATING &&
+                interruptReadingRun(ref.runId, "orphaned_subagent_run")
+            ) {
+                interruptedReadingRuns++
+            }
+            continue
+        }
+        var childChatId = ref.childChatId
+        if (childChatId == null && link.childChatId != null) {
+            relinkChildChat(
+                ref.runId,
+                ref.parentChatId ?: link.parentChatId,
+                link.childChatId,
+            )
+            childChatId = link.childChatId
+            relinkedRuns++
+        }
+        if (
+            childChatId != null &&
+            ref.status == ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATING &&
+            !chatExists(childChatId)
+        ) {
+            if (interruptReadingRun(ref.runId, "missing_child_chat")) {
+                interruptedReadingRuns++
+            }
+        }
+    }
+    var interruptedSubagentRuns = 0
+    for (owner in activeMainOwners) {
+        if (!readingRunExists(owner.readingRunId) && interruptSubagentRun(owner.subagentRunId)) {
+            interruptedSubagentRuns++
+        }
+    }
+    return ReadingCompanionReconcileOutcome(
+        relinkedRuns = relinkedRuns,
+        interruptedReadingRuns = interruptedReadingRuns,
+        interruptedSubagentRuns = interruptedSubagentRuns,
+    )
 }
 
 internal fun ReadingSearchHit.matchesCharacterIdentity(query: String): Boolean =
@@ -294,6 +404,57 @@ internal object ReadingTextIndexSupport {
     }
 }
 
+/**
+ * v13 新增的子代理执行列（名称 → 定义）。单一事实来源：
+ * 新装库 `createAutoCommentRunTable` 用同一份定义建列，v12→v13 升级
+ * `onUpgrade` 用 [addColumnIfMissing] 逐列 ALTER，保证两路径永久一致。
+ *
+ * 全部为纯新增，旧行以默认值无损升级（execution_mode='direct' 兼容旧单发路径）。
+ */
+internal val AUTO_COMMENT_RUN_V13_SUBAGENT_COLUMN_DEFINITIONS: List<Pair<String, String>> =
+    listOf(
+        "execution_mode" to "TEXT NOT NULL DEFAULT '$AUTO_COMMENT_RUN_EXECUTION_MODE_DIRECT'",
+        "parent_chat_id" to "TEXT",
+        "subagent_run_id" to "TEXT",
+        "child_chat_id" to "TEXT",
+        "model_round_count" to "INTEGER NOT NULL DEFAULT 0",
+        "tool_invocation_count" to "INTEGER NOT NULL DEFAULT 0",
+        "restarted_from_run_id" to "INTEGER",
+    )
+
+/**
+ * claim 归属判定 WHERE（heartbeat 与 JVM 心跳测试共用同一来源）。
+ *
+ * 只有 claim owner（book+chapter+runId 全匹配）能刷新 updated_at；affected != 1 即
+ * claim 已被抢占/释放/丢失，调用方必须立即停止生成（claim_lost）。
+ */
+internal const val READING_CLAIM_OWNER_WHERE_SQL =
+    "book_id = ? AND chapter_index = ? AND run_id = ?"
+
+/**
+ * “claim 仍未过期”子查询（stale 清扫与 JVM 心跳测试共用同一来源）。
+ *
+ * 心跳只是刷新 claims.updated_at（不是 run.stage_updated_at）；清扫窗口内 claim 仍新鲜的
+ * run 不会被 5 分钟 stale 误杀。
+ */
+internal const val READING_CLAIMS_NOT_STALE_SUBQUERY_SQL =
+    "(SELECT run_id FROM auto_comment_generation_claims WHERE updated_at > ?)"
+
+/** 段评生成执行模式：单发（v13 前兼容值）。 */
+const val AUTO_COMMENT_RUN_EXECUTION_MODE_DIRECT = "direct"
+
+/** 段评生成执行模式：对话内 subagent（审计形态）。 */
+const val AUTO_COMMENT_RUN_EXECUTION_MODE_SUBAGENT = "subagent"
+
+/** 主库 subagent_runs.externalOwnerType 的阅读伴侣取值（跨库弱关联）。 */
+const val READING_COMPANION_SUBAGENT_OWNER_TYPE = "reading_companion_run"
+
+/** 阅读伴侣每书审计根聊天 hiddenReason 前缀（root:<bookId>）。 */
+const val READING_COMPANION_HIDDEN_ROOT_REASON_PREFIX = "READING_COMPANION_AUDIT_ROOT:"
+
+/** 阅读伴侣每次 run 隐藏子聊天 hiddenReason 前缀（run:<runId>）。 */
+const val READING_COMPANION_HIDDEN_RUN_REASON_PREFIX = "READING_COMPANION_AUDIT_RUN:"
+
 class ReadingCompanionStore(context: Context) :
     SQLiteOpenHelper(
         context.applicationContext,
@@ -301,6 +462,17 @@ class ReadingCompanionStore(context: Context) :
         null,
         DATABASE_VERSION,
     ) {
+
+    private val appContext = context.applicationContext
+
+    /**
+     * 剪枝（保留 generating 行 + 最近 50）删掉的旧 run 的弱关联聊天挂账。
+     *
+     * pruneAutoCommentRuns 在 @Synchronized 的 SQLite 事务内只收集不删除；真正的主库
+     * 子树删除由 [flushPrunedRunChatCleanup] 在挂起语境统一排空（ChatHistoryManager 是
+     * 挂起 API，不能在事务内调用）。队列有独立锁，避免与数据库锁互相嵌套。
+     */
+    private val prunedRunChatQueue = ArrayDeque<PrunedRunChatRef>()
 
     data class IndexedChapter(
         val title: String,
@@ -468,6 +640,9 @@ class ReadingCompanionStore(context: Context) :
                   )
                 """.trimIndent()
             )
+        }
+        if (oldVersion < 13) {
+            ensureAutoCommentRunSubagentColumns(db)
         }
     }
 
@@ -679,6 +854,7 @@ class ReadingCompanionStore(context: Context) :
                 actual_reasoning_tokens INTEGER,
                 actual_usage_source TEXT,
                 actual_usage_complete INTEGER,
+                ${AUTO_COMMENT_RUN_V13_SUBAGENT_COLUMN_DEFINITIONS.joinToString(",\n                ") { (name, definition) -> "$name $definition" }},
                 comment_count INTEGER NOT NULL DEFAULT 0,
                 error_message TEXT,
                 started_at INTEGER NOT NULL,
@@ -761,6 +937,18 @@ class ReadingCompanionStore(context: Context) :
             column = "actual_usage_complete",
             definition = "INTEGER",
         )
+    }
+
+    /** v13：子代理执行列（幂等 ALTER；与 createAutoCommentRunTable 同一事实来源）。 */
+    private fun ensureAutoCommentRunSubagentColumns(db: SQLiteDatabase) {
+        AUTO_COMMENT_RUN_V13_SUBAGENT_COLUMN_DEFINITIONS.forEach { (name, definition) ->
+            addColumnIfMissing(
+                db,
+                table = "auto_comment_runs",
+                column = name,
+                definition = definition,
+            )
+        }
     }
 
     private fun addColumnIfMissing(
@@ -1515,6 +1703,8 @@ class ReadingCompanionStore(context: Context) :
     @Synchronized
     fun startAutoCommentRun(
         trigger: String,
+        executionMode: String = AUTO_COMMENT_RUN_EXECUTION_MODE_DIRECT,
+        restartedFromRunId: Long? = null,
     ): Long {
         val now = System.currentTimeMillis()
         val db = writableDatabase
@@ -1525,6 +1715,11 @@ class ReadingCompanionStore(context: Context) :
                 null,
                 ContentValues().apply {
                     put("trigger_source", trigger)
+                    put("execution_mode", executionMode)
+                    // 进程重启恢复语义：新 run 只作谱系记录旧 run id，绝不续写旧 child。
+                    if (restartedFromRunId != null) {
+                        put("restarted_from_run_id", restartedFromRunId)
+                    }
                     put("status", AUTO_COMMENT_RUN_STATUS_GENERATING)
                     put("stage", AutoCommentRunStages.STARTING)
                     put("stage_updated_at", now)
@@ -1694,6 +1889,299 @@ class ReadingCompanionStore(context: Context) :
         )
     }
 
+    /**
+     * 建立 run 与主库 subagent 执行的弱关联（reading 侧字段）。
+     *
+     * 无跨库 FK；主库侧 externalOwnerType/externalOwnerId 由
+     * [ReadingCompanionSubagentCoordinator]（阶段 2 起）经 SubagentRunRepository 写入。
+     */
+    @Synchronized
+    fun linkSubagentExecution(
+        runId: Long,
+        parentChatId: String?,
+        subagentRunId: String,
+        childChatId: String,
+    ) {
+        writableDatabase.update(
+            "auto_comment_runs",
+            ContentValues().apply {
+                if (parentChatId == null) putNull("parent_chat_id")
+                else put("parent_chat_id", parentChatId)
+                put("subagent_run_id", subagentRunId)
+                put("child_chat_id", childChatId)
+            },
+            "id = ?",
+            arrayOf(runId.toString()),
+        )
+    }
+
+    /**
+     * claim 心跳：刷新 claims.updated_at（stale 窗口误杀防护）。
+     *
+     * 只允许 claim owner 刷新；affected != 1 => claim 已被抢占/释放/丢失，返回 false，
+     * 调用方必须立即停止生成（claim_lost）。
+     */
+    @Synchronized
+    fun heartbeatClaimIfOwned(
+        bookId: String,
+        chapterIndex: Int,
+        runId: Long,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean =
+        writableDatabase.update(
+            "auto_comment_generation_claims",
+            ContentValues().apply { put("updated_at", now) },
+            READING_CLAIM_OWNER_WHERE_SQL,
+            arrayOf(bookId, chapterIndex.toString(), runId.toString()),
+        ) == 1
+
+    @Synchronized
+    fun incrementRunModelRound(runId: Long): Boolean =
+        writableDatabase.execSQL(
+            """
+            UPDATE auto_comment_runs
+            SET model_round_count = model_round_count + 1
+            WHERE id = ?
+            """.trimIndent(),
+            arrayOf<Any>(runId),
+        ).let { true }
+
+    @Synchronized
+    fun incrementRunToolInvocation(runId: Long): Boolean =
+        writableDatabase.execSQL(
+            """
+            UPDATE auto_comment_runs
+            SET tool_invocation_count = tool_invocation_count + 1
+            WHERE id = ?
+            """.trimIndent(),
+            arrayOf<Any>(runId),
+        ).let { true }
+
+    /**
+     * 把阅读侧 run 标为 interrupted 并释放其 claim（transcript 保留，不删除）。
+     * 用于：进程重启恢复、跨库对账发现目标不存在、claim_lost。
+     */
+    @Synchronized
+    fun markRunInterrupted(
+        runId: Long,
+        errorMessage: String = "interrupted",
+    ): Boolean {
+        val db = writableDatabase
+        val finishedAt = System.currentTimeMillis()
+        db.beginTransaction()
+        return try {
+            db.delete(
+                "auto_comment_generation_claims",
+                "run_id = ?",
+                arrayOf(runId.toString()),
+            )
+            db.update(
+                "auto_comment_run_stage_events",
+                ContentValues().apply { put("finished_at", finishedAt) },
+                "run_id = ? AND finished_at IS NULL",
+                arrayOf(runId.toString()),
+            )
+            val updated =
+                db.update(
+                    "auto_comment_runs",
+                    ContentValues().apply {
+                        put("status", AUTO_COMMENT_RUN_STATUS_INTERRUPTED)
+                        put("error_message", errorMessage)
+                        put("finished_at", finishedAt)
+                    },
+                    "id = ? AND status = ?",
+                    arrayOf(runId.toString(), AUTO_COMMENT_RUN_STATUS_GENERATING),
+                )
+            db.setTransactionSuccessful()
+            updated > 0
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** 阅读库侧全部带弱关联的 run（reconciliation 正向输入）。 */
+    @Synchronized
+    fun getSubagentLinkedRuns(): List<ReadingCompanionRunLinkRef> =
+        readableDatabase.query(
+            "auto_comment_runs",
+            arrayOf("id", "status", "parent_chat_id", "subagent_run_id", "child_chat_id"),
+            "subagent_run_id IS NOT NULL",
+            null,
+            null,
+            null,
+            "started_at ASC, id ASC",
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        ReadingCompanionRunLinkRef(
+                            runId = cursor.getLong(0),
+                            status = cursor.getString(1),
+                            parentChatId =
+                                if (cursor.isNull(2)) null else cursor.getString(2),
+                            subagentRunId =
+                                if (cursor.isNull(3)) null else cursor.getString(3),
+                            childChatId =
+                                if (cursor.isNull(4)) null else cursor.getString(4),
+                        )
+                    )
+                }
+            }
+        }
+
+    /**
+     * 跨库弱关联对账（唯一一致性机制；无跨库 FK）。编排逻辑见
+     * [runReadingCompanionReconcile]（生产与 JVM 单测共用同一实现）。
+     */
+    suspend fun reconcileWithChatGraph(
+        lookupSubagentRun: suspend (subagentRunId: String) -> ReadingCompanionSubagentRunLink?,
+        chatExists: suspend (chatId: String) -> Boolean,
+        interruptSubagentRun: suspend (subagentRunId: String) -> Boolean,
+        activeMainOwners: List<ReadingCompanionMainOwnerRef>,
+    ): ReadingCompanionReconcileOutcome =
+        runReadingCompanionReconcile(
+            linkedRuns = getSubagentLinkedRuns(),
+            activeMainOwners = activeMainOwners,
+            lookupSubagentRun = lookupSubagentRun,
+            chatExists = chatExists,
+            relinkChildChat = { runId, parentChatId, childChatId ->
+                writableDatabase.update(
+                    "auto_comment_runs",
+                    ContentValues().apply {
+                        put("child_chat_id", childChatId)
+                        if (parentChatId != null) {
+                            put("parent_chat_id", parentChatId)
+                        }
+                    },
+                    "id = ?",
+                    arrayOf(runId.toString()),
+                )
+            },
+            interruptReadingRun = { runId, errorMessage ->
+                markRunInterrupted(runId, errorMessage)
+            },
+            readingRunExists = { runId ->
+                readableDatabase.query(
+                    "auto_comment_runs",
+                    arrayOf("id"),
+                    "id = ?",
+                    arrayOf(runId.toString()),
+                    null,
+                    null,
+                    null,
+                    "1",
+                ).use { it.moveToFirst() }
+            },
+            interruptSubagentRun = interruptSubagentRun,
+        )
+
+    /**
+     * 进程启动对账（与 SubagentRunRepository.reconcileIncompleteRuns 对称）。
+     *
+     * 1. 重启后没有存活协程：把所有 started_at 早于进程启动时刻的 generating run 标
+     *    interrupted 并释放 claim（旧单发/旧 subagent run 都不续写）。
+     * 2. 与主库 chat 图双向对账（补链/打断孤儿；链接列写出前为惰性空转）。
+     */
+    suspend fun reconcileAfterProcessStart(now: Long): ReadingCompanionReconcileOutcome {
+        interruptStaleAutoCommentRuns(staleBefore = now)
+        val outcome = reconcileCrossDatabase()
+        // 剪枝挂账的重建式兜底（幂等）：启动对账用临时 Store 实例触发 prune 后，即使挂账
+        // 队列随实例丢弃/进程退出而丢失，也能从 reading.db 现状重建并子树删除隐藏 child/
+        // 空根。只 interrupt + 清理孤儿聊天，绝不续跑或删除 transcript。
+        try {
+            runOrphanChatCleanup()
+        } catch (error: Throwable) {
+            com.ai.assistance.operit.util.AppLogger.w(
+                "ReadingCompanion",
+                "Startup orphan chat cleanup failed: ${error.message}",
+                error,
+            )
+        }
+        return outcome
+    }
+
+    /**
+     * 进程内轻量对账（Worker 开头/启动阶段之后调用）：只做跨库 chat 图对账
+     * （补链/打断孤儿），**不做**“重启清扫”（interruptStaleAutoCommentRuns(staleBefore=now)）。
+     *
+     * 清扫只在真实进程启动时执行一次（[reconcileAfterProcessStart]），否则 Worker 开头的清扫
+     * 会把同一进程内正在 heartbeat 的手动/对话内生成误杀（它们的 claim.updated_at 必然早于
+     * “现在”）。对账只 interrupt + 释放 claim + 补链，绝不删除 transcript。
+     */
+    suspend fun reconcileCrossDatabase(): ReadingCompanionReconcileOutcome {
+        val subagentRepository =
+            com.ai.assistance.operit.data.repository.SubagentRunRepository
+                .getInstance(appContext)
+        val chatDao =
+            com.ai.assistance.operit.data.db.AppDatabase
+                .getDatabase(appContext)
+                .chatDao()
+        return try {
+            reconcileWithChatGraph(
+                lookupSubagentRun = { subagentRunId ->
+                    try {
+                        subagentRepository.getById(subagentRunId)
+                    } catch (_: Throwable) {
+                        null
+                    }
+                        ?.let {
+                            ReadingCompanionSubagentRunLink(
+                                subagentRunId = it.id,
+                                parentChatId = it.parentChatId,
+                                childChatId = it.childChatId,
+                            )
+                        }
+                },
+                chatExists = { chatId ->
+                    try {
+                        chatDao.getChatById(chatId) != null
+                    } catch (_: Throwable) {
+                        false
+                    }
+                },
+                interruptSubagentRun = { subagentRunId ->
+                    try {
+                        subagentRepository.updateStatus(
+                            taskId = subagentRunId,
+                            status = com.ai.assistance.operit.data.model.SubagentRunStatus.INTERRUPTED,
+                            error =
+                                "Reading companion run was reconciled as missing after restart.",
+                        )
+                    } catch (_: Throwable) {
+                        false
+                    }
+                },
+                activeMainOwners = activeReadingOwnersOnMain(subagentRepository),
+            )
+        } catch (_: Throwable) {
+            ReadingCompanionReconcileOutcome()
+        }
+    }
+
+    private suspend fun activeReadingOwnersOnMain(
+        subagentRepository: com.ai.assistance.operit.data.repository.SubagentRunRepository,
+    ): List<ReadingCompanionMainOwnerRef> {
+        val activeStatuses =
+            listOf(
+                com.ai.assistance.operit.data.model.SubagentRunStatus.CREATED.name,
+                com.ai.assistance.operit.data.model.SubagentRunStatus.QUEUED.name,
+                com.ai.assistance.operit.data.model.SubagentRunStatus.RUNNING.name,
+            )
+        return subagentRepository
+            .getByExternalOwnerType(READING_COMPANION_SUBAGENT_OWNER_TYPE)
+            .filter { it.status in activeStatuses }
+            .mapNotNull { run ->
+                run.externalOwnerId
+                    ?.toLongOrNull()
+                    ?.let { readingRunId ->
+                        ReadingCompanionMainOwnerRef(
+                            subagentRunId = run.id,
+                            readingRunId = readingRunId,
+                        )
+                    }
+            }
+    }
+
     @Synchronized
     fun recordAutoCommentRunTrace(
         runId: Long,
@@ -1846,6 +2334,13 @@ class ReadingCompanionStore(context: Context) :
                 "auto_comment_runs.error_message",
                 "auto_comment_runs.started_at",
                 "auto_comment_runs.finished_at",
+                "auto_comment_runs.execution_mode",
+                "auto_comment_runs.parent_chat_id",
+                "auto_comment_runs.subagent_run_id",
+                "auto_comment_runs.child_chat_id",
+                "auto_comment_runs.model_round_count",
+                "auto_comment_runs.tool_invocation_count",
+                "auto_comment_runs.restarted_from_run_id",
             ),
             null,
             null,
@@ -1901,6 +2396,14 @@ class ReadingCompanionStore(context: Context) :
                     errorMessage = if (cursor.isNull(30)) null else cursor.getString(30),
                     startedAt = cursor.getLong(31),
                     finishedAt = if (cursor.isNull(32)) null else cursor.getLong(32),
+                    executionMode = cursor.getString(33),
+                    parentChatId = if (cursor.isNull(34)) null else cursor.getString(34),
+                    subagentRunId = if (cursor.isNull(35)) null else cursor.getString(35),
+                    childChatId = if (cursor.isNull(36)) null else cursor.getString(36),
+                    modelRoundCount = cursor.getInt(37),
+                    toolInvocationCount = cursor.getInt(38),
+                    restartedFromRunId =
+                        if (cursor.isNull(39)) null else cursor.getLong(39),
                 )
             }
         }
@@ -2071,9 +2574,7 @@ class ReadingCompanionStore(context: Context) :
                 arrayOf("id"),
                 """
                 status = ? AND started_at < ? AND id NOT IN (
-                    SELECT run_id
-                    FROM auto_comment_generation_claims
-                    WHERE updated_at > ?
+                    $READING_CLAIMS_NOT_STALE_SUBQUERY_SQL
                 )
                 """.trimIndent(),
                 arrayOf(
@@ -2110,9 +2611,7 @@ class ReadingCompanionStore(context: Context) :
                 },
                 """
                 status = ? AND started_at < ? AND id NOT IN (
-                    SELECT run_id
-                    FROM auto_comment_generation_claims
-                    WHERE updated_at > ?
+                    $READING_CLAIMS_NOT_STALE_SUBQUERY_SQL
                 )
                 """.trimIndent(),
                 arrayOf(
@@ -2129,9 +2628,14 @@ class ReadingCompanionStore(context: Context) :
         }
     }
 
+    /**
+     * 剪枝旧 run（保留 generating 行 + 最近 [AUTO_COMMENT_RUN_RETENTION]）。
+     *
+     * 删除**前**先收集被删 run 的 child_chat_id/book_id 挂账；主库 hidden child 与隐藏根的
+     * 子树删除由 [flushPrunedRunChatCleanup] 在挂起语境执行（施工图阶段 4 prune 联动）。
+     */
     private fun pruneAutoCommentRuns(db: SQLiteDatabase) {
-        db.delete(
-            "auto_comment_runs",
+        val selection =
             """
             status != ? AND id NOT IN (
                 SELECT id
@@ -2139,12 +2643,144 @@ class ReadingCompanionStore(context: Context) :
                 ORDER BY started_at DESC, id DESC
                 LIMIT ?
             )
-            """.trimIndent(),
+            """.trimIndent()
+        val selectionArgs =
             arrayOf(
                 AUTO_COMMENT_RUN_STATUS_GENERATING,
                 AUTO_COMMENT_RUN_RETENTION.toString(),
-            ),
-        )
+            )
+        val prunedRefs =
+            db.query(
+                "auto_comment_runs",
+                arrayOf("id", "book_id", "child_chat_id"),
+                selection,
+                selectionArgs,
+                null,
+                null,
+                null,
+            ).use { cursor ->
+                val refs = mutableListOf<PrunedRunChatRef>()
+                while (cursor.moveToNext()) {
+                    val childChatId =
+                        if (cursor.isNull(2)) null else cursor.getString(2)
+                    if (childChatId.isNullOrBlank()) continue
+                    refs +=
+                        PrunedRunChatRef(
+                            childChatId = childChatId,
+                            bookId = if (cursor.isNull(1)) null else cursor.getString(1),
+                        )
+                }
+                refs
+            }
+        db.delete("auto_comment_runs", selection, selectionArgs)
+        if (prunedRefs.isNotEmpty()) {
+            synchronized(prunedRunChatQueue) {
+                prunedRunChatQueue.addAll(prunedRefs)
+            }
+        }
+    }
+
+    /** 排空剪枝挂账（事务外调用；生产由 [flushPrunedRunChatCleanup] 驱动）。 */
+    private fun drainPrunedRunChatRefs(): List<PrunedRunChatRef> =
+        synchronized(prunedRunChatQueue) {
+            val drained = prunedRunChatQueue.toList()
+            prunedRunChatQueue.clear()
+            drained
+        }
+
+    /**
+     * 剪枝联动：把挂账的 hidden 审计 child / 空根同步到主库聊天删除（子树删除）。
+     *
+     * 只删 hidden 审计 child；isHidden=false 的对话内 child 绝不删；某书隐藏根下已无剩余
+     * hidden child 才删该根。任何一次都不会回退到单发段评生成。
+     */
+    suspend fun flushPrunedRunChatCleanup(): PruneCleanupOutcome {
+        val pending = drainPrunedRunChatRefs()
+        if (pending.isEmpty()) {
+            return PruneCleanupOutcome(deletedChildChatIds = emptyList(), deletedRootChatIds = emptyList())
+        }
+        val chatDao =
+            com.ai.assistance.operit.data.db.AppDatabase
+                .getDatabase(appContext)
+                .chatDao()
+        val chatHistoryManager =
+            com.ai.assistance.operit.data.repository.ChatHistoryManager
+                .getInstance(appContext)
+        val cleanup =
+            ReadingCompanionPruneCleanup(
+                listHiddenChats = { chatDao.getHiddenChatsDirectly() },
+                deleteChat = { chatId ->
+                    try {
+                        chatHistoryManager.deleteChatHistory(chatId)
+                    } catch (error: Throwable) {
+                        com.ai.assistance.operit.util.AppLogger.w(
+                            "ReadingCompanion",
+                            "Prune chat cleanup delete failed for $chatId: ${error.message}",
+                            error,
+                        )
+                        false
+                    }
+                },
+            )
+        val outcome = cleanup.run(pending)
+        if (outcome.deletedChildChatIds.isNotEmpty() || outcome.deletedRootChatIds.isNotEmpty()) {
+            val message =
+                "Prune chat cleanup: children=${outcome.deletedChildChatIds.size} " +
+                    "roots=${outcome.deletedRootChatIds.size}"
+            com.ai.assistance.operit.util.AppLogger.i(
+                "ReadingCompanion",
+                message,
+            )
+        }
+        return outcome
+    }
+
+    /**
+     * 幂等孤儿重建清理（阶段 4 终审 BLOCKING-3）：从数据库现状重建被剪 run 的 hidden
+     * 审计 child / 空根并子树删除，不依赖本次进程内任何挂账队列。
+     *
+     * 由以下入口统一排空：进程启动对账（[reconcileAfterProcessStart]）、两个 Worker 开头、
+     * status/history/detail（[settleInterruptedRuns]）、生成结束 finally。删除仍走
+     * ChatHistoryManager 子树删除；isHidden=false 的对话内 child 绝不删。
+     */
+    suspend fun runOrphanChatCleanup(): PruneCleanupOutcome {
+        val chatDao =
+            com.ai.assistance.operit.data.db.AppDatabase
+                .getDatabase(appContext)
+                .chatDao()
+        val chatHistoryManager =
+            com.ai.assistance.operit.data.repository.ChatHistoryManager
+                .getInstance(appContext)
+        val cleanup =
+            ReadingCompanionOrphanChatCleanup(
+                listHiddenChats = { chatDao.getHiddenChatsDirectly() },
+                runExists = { runId -> getAutoCommentRun(runId) != null },
+                deleteChat = { chatId ->
+                    try {
+                        chatHistoryManager.deleteChatHistory(chatId)
+                    } catch (error: Throwable) {
+                        com.ai.assistance.operit.util.AppLogger.w(
+                            "ReadingCompanion",
+                            "Orphan chat cleanup delete failed for $chatId: ${error.message}",
+                            error,
+                        )
+                        false
+                    }
+                },
+            )
+        return try {
+            cleanup.run()
+        } catch (error: Throwable) {
+            com.ai.assistance.operit.util.AppLogger.w(
+                "ReadingCompanion",
+                "Orphan chat cleanup failed: ${error.message}",
+                error,
+            )
+            PruneCleanupOutcome(
+                deletedChildChatIds = emptyList(),
+                deletedRootChatIds = emptyList(),
+            )
+        }
     }
 
     @Synchronized
@@ -2824,7 +3460,7 @@ class ReadingCompanionStore(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "reading_companion.db"
-        private const val DATABASE_VERSION = 12
+        internal const val DATABASE_VERSION = 13
         private const val SELECTED_BOOK_KEY = "selected_book_id"
         const val AUTO_COMMENT_STATUS_GENERATING = "generating"
         const val AUTO_COMMENT_STATUS_READY = "ready"

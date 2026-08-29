@@ -18,13 +18,13 @@ interface ChatDao {
     fun getAllChats(): Flow<List<ChatEntity>>
 
     @Query(
-        "SELECT * FROM chats WHERE chatKind != 'SUBAGENT' " +
+        "SELECT * FROM chats WHERE chatKind != 'SUBAGENT' AND isHidden = 0 " +
             "ORDER BY pinned DESC, displayOrder ASC"
     )
     fun getVisibleChats(): Flow<List<ChatEntity>>
 
     /** 获取聊天总数 */
-    @Query("SELECT COUNT(*) FROM chats WHERE chatKind != 'SUBAGENT'")
+    @Query("SELECT COUNT(*) FROM chats WHERE chatKind != 'SUBAGENT' AND isHidden = 0")
     suspend fun getTotalChatCount(): Int
 
     /** 获取所有聊天（挂起函数版本） */
@@ -33,7 +33,7 @@ interface ChatDao {
 
     /** 获取所有聊天，按真实最后消息时间排列；空聊天回退到创建时间。 */
     @Query(
-        "SELECT * FROM chats WHERE chatKind != 'SUBAGENT' " +
+        "SELECT * FROM chats WHERE chatKind != 'SUBAGENT' AND isHidden = 0 " +
             "ORDER BY COALESCE(lastMessageAt, createdAt) DESC, createdAt DESC, id ASC"
     )
     fun getRecentChats(): Flow<List<ChatEntity>>
@@ -181,6 +181,7 @@ interface ChatDao {
     /** 获取所有没有父对话的对话（即主对话） */
     @Query(
         "SELECT * FROM chats WHERE parentChatId IS NULL AND chatKind != 'SUBAGENT' " +
+            "AND isHidden = 0 " +
             "ORDER BY pinned DESC, displayOrder ASC"
     )
     suspend fun getMainChats(): List<ChatEntity>
@@ -188,20 +189,21 @@ interface ChatDao {
     /** 获取所有没有父对话的对话（Flow版本） */
     @Query(
         "SELECT * FROM chats WHERE parentChatId IS NULL AND chatKind != 'SUBAGENT' " +
+            "AND isHidden = 0 " +
             "ORDER BY pinned DESC, displayOrder ASC"
     )
     fun getMainChatsFlow(): Flow<List<ChatEntity>>
 
     /** 根据角色卡名称过滤聊天（非默认角色卡：只显示该角色卡名称的对话） */
-    @Query("SELECT * FROM chats WHERE chatKind != 'SUBAGENT' AND characterCardName = :characterCardName AND characterGroupId IS NULL ORDER BY pinned DESC, displayOrder ASC")
+    @Query("SELECT * FROM chats WHERE chatKind != 'SUBAGENT' AND isHidden = 0 AND characterCardName = :characterCardName AND characterGroupId IS NULL ORDER BY pinned DESC, displayOrder ASC")
     fun getChatsByCharacterCard(characterCardName: String): Flow<List<ChatEntity>>
 
     /** 根据群组ID过滤聊天 */
-    @Query("SELECT * FROM chats WHERE chatKind != 'SUBAGENT' AND characterGroupId = :characterGroupId ORDER BY pinned DESC, displayOrder ASC")
+    @Query("SELECT * FROM chats WHERE chatKind != 'SUBAGENT' AND isHidden = 0 AND characterGroupId = :characterGroupId ORDER BY pinned DESC, displayOrder ASC")
     fun getChatsByCharacterGroupId(characterGroupId: String): Flow<List<ChatEntity>>
 
     /** 根据角色卡名称过滤聊天（默认角色卡：显示该角色卡名称的对话 + 所有characterCardName为null的对话） */
-    @Query("SELECT * FROM chats WHERE chatKind != 'SUBAGENT' AND (characterCardName = :characterCardName OR (characterCardName IS NULL AND characterGroupId IS NULL)) ORDER BY pinned DESC, displayOrder ASC")
+    @Query("SELECT * FROM chats WHERE chatKind != 'SUBAGENT' AND isHidden = 0 AND (characterCardName = :characterCardName OR (characterCardName IS NULL AND characterGroupId IS NULL)) ORDER BY pinned DESC, displayOrder ASC")
     fun getChatsByCharacterCardOrNull(characterCardName: String): Flow<List<ChatEntity>>
 
     /** 批量清理绑定特定角色卡名称的对话（将characterCardName设为null） */
@@ -291,7 +293,7 @@ interface ChatDao {
             FROM messages
             GROUP BY chatId
         ) mc ON c.id = mc.chatId
-        WHERE c.characterGroupId IS NULL AND c.chatKind != 'SUBAGENT'
+        WHERE c.characterGroupId IS NULL AND c.chatKind != 'SUBAGENT' AND c.isHidden = 0
         GROUP BY c.characterCardName
         """
     )
@@ -310,9 +312,30 @@ interface ChatDao {
             FROM messages
             GROUP BY chatId
         ) mc ON c.id = mc.chatId
-        WHERE c.characterCardName IS NULL AND c.chatKind != 'SUBAGENT'
+        WHERE c.characterCardName IS NULL AND c.chatKind != 'SUBAGENT' AND c.isHidden = 0
         GROUP BY c.characterGroupId
         """
     )
     fun getCharacterGroupChatStats(): Flow<List<CharacterGroupChatStats>>
+
+    /** 获取全部隐藏聊天（隐藏入口专用）。 */
+    @Query(
+        "SELECT * FROM chats WHERE isHidden = 1 " +
+            "ORDER BY pinned DESC, displayOrder ASC"
+    )
+    fun observeHiddenChats(): Flow<List<ChatEntity>>
+
+    /** 获取隐藏原因以指定前缀开头的隐藏聊天（阅读伴侣审计聊天列表专用）。 */
+    @Query(
+        "SELECT * FROM chats WHERE isHidden = 1 AND hiddenReason LIKE :reasonPrefix || '%' " +
+            "ORDER BY pinned DESC, displayOrder ASC"
+    )
+    fun observeHiddenChatsByReasonPrefix(reasonPrefix: String): Flow<List<ChatEntity>>
+
+    /** 获取全部隐藏聊天（挂起函数版本，隐藏入口与删除联动用）。 */
+    @Query(
+        "SELECT * FROM chats WHERE isHidden = 1 " +
+            "ORDER BY pinned DESC, displayOrder ASC"
+    )
+    suspend fun getHiddenChatsDirectly(): List<ChatEntity>
 }

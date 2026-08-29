@@ -8668,4 +8668,13 @@
     <string name="terminal_startup_error_delete">Unable to delete the startup service.</string>
     <string name="terminal_startup_error_delete_restore_runtime">Unable to delete the startup service or restore its runtime.</string>
     <string name="terminal_startup_error_remove_files">Unable to remove the startup service files.</string>
+    <string name="hidden_chats_title">Hidden chats</string>
+    <string name="hidden_chats_empty">No hidden chats.</string>
+    <string name="hidden_chats_permanently_hidden_note">Audit chats are permanently hidden and can only be viewed or deleted.</string>
+    <string name="hidden_chats_delete_confirm_title">Delete hidden chat</string>
+    <string name="hidden_chats_delete_confirm_message">Delete the hidden chat “%1$s” and all of its content? This cannot be undone.</string>
+    <string name="open_audit_chat">Open subagent chat</string>
+    <string name="open_audit_chat_failed">Could not open the audit chat: %1$s</string>
+    <string name="reading_companion_loop_detected">The commentary subagent detected a repeated call loop; generation stopped.</string>
+    <string name="reading_companion_no_progress">The commentary subagent made no effective progress; generation stopped.</string>
 </resources>

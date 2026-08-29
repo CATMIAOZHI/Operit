@@ -79,6 +79,7 @@ import com.ai.assistance.operit.ui.features.chat.webview.MentionSuggestionPanel
 import com.ai.assistance.operit.ui.features.chat.webview.computer.ComputerScreen
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.main.LocalTopBarActions
+import com.ai.assistance.operit.ui.main.navigation.AppRouterGateway
 import com.ai.assistance.operit.ui.main.PendingChatDraftHandler
 import com.ai.assistance.operit.ui.main.components.LocalAppBarContentColor
 import com.ai.assistance.operit.ui.main.screens.GestureStateHolder
@@ -580,7 +581,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         false
     )
     val visibleAllChatHistories = remember(chatHistories) {
-        chatHistories.filter { it.chatKind != ChatKind.SUBAGENT.name }
+        chatHistories.filter {
+            it.chatKind != ChatKind.SUBAGENT.name && !it.isHidden
+        }
     }
     val localizedUserRoleName = stringResource(R.string.message_role_user)
     val displayedChatHistory =
@@ -1400,6 +1403,15 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                     currentChatId = currentChatId ?: "",
                                     showChatHistorySelector = showChatHistorySelector,
                                     historyListState = historyListState,
+                                    onOpenHiddenChats = {
+                                        AppRouterGateway.navigate(
+                                            routeId = "native.hidden_chats",
+                                            args = emptyMap(),
+                                            source =
+                                                com.ai.assistance.operit.ui.main.navigation
+                                                    .RouteEntrySource.SCRIPT,
+                                        )
+                                    },
                                     onChatScreenGestureConsumed = onChatScreenGestureConsumedChange,
                                     searchQuery = chatHistorySearchQuery,
                                     onSearchQueryChange = actualViewModel::onChatHistorySearchQueryChange,

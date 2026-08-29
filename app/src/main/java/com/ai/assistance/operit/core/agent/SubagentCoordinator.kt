@@ -65,6 +65,22 @@ data class SubagentTaskRequest(
     val promptHooksEnabled: Boolean = true,
     /** Actual model lease held by a running parent Subagent, for reviewer-only reentrancy. */
     val reentrantParentModelConfigId: String? = null,
+    /**
+     * Optional hidden-child flags for internal reading-companion audit runs.
+     *
+     * The reading coordinator must not pre-create its own run/child: runTask(taskId=null)
+     * creates the one and only executed run here, so the hidden marking, the cross-database
+     * weak link (externalOwnerType/Id) and tool-session registration all have to ride on the
+     * run actually created by this coordinator. All fields default to the previous behavior
+     * (visible child, no owner link, no hook), so ordinary task-tool and reviewer callers
+     * are untouched.
+     */
+    val childHidden: Boolean = false,
+    val childHiddenReason: String? = null,
+    val externalOwnerType: String? = null,
+    val externalOwnerId: String? = null,
+    /** Invoked right after this coordinator creates the executing run/child (suspend-safe). */
+    val onRunCreated: (suspend (SubagentRunEntity) -> Unit)? = null,
 )
 
 internal fun SubagentTaskRequest.toChatTurnOptions(
@@ -361,8 +377,15 @@ class SubagentCoordinator private constructor(context: Context) {
                     agentConfigSnapshot = profileJson.encodeToString(profile),
                     modelConfigIdSnapshot = effectiveModelConfigId,
                     modelIndexSnapshot = effectiveModelIndex,
+                    childHidden = request.childHidden,
+                    childHiddenReason = request.childHiddenReason,
+                    externalOwnerType = request.externalOwnerType,
+                    externalOwnerId = request.externalOwnerId,
                 )
             )
+        // Reading-companion audit sessions are registered against the child chat that actually
+        // executes the turn; the reading coordinator links its reading.db run via this hook.
+        request.onRunCreated?.invoke(created.run)
         return ResolvedRun(run = created.run, profile = profile)
     }
 

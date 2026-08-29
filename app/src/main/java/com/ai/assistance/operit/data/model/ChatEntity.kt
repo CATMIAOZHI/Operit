@@ -16,6 +16,7 @@ import java.util.UUID
         Index(value = ["folderId"]),
         Index(value = ["chatKind"]),
         Index(value = ["parentChatId", "chatKind"]),
+        Index(value = ["isHidden"]),
     ],
     foreignKeys = [
         ForeignKey(
@@ -48,7 +49,11 @@ data class ChatEntity(
         val locked: Boolean = false,
         val pinned: Boolean = false,
         val isFavorite: Boolean = false,
-        val lastMessageAt: Long? = null
+        val lastMessageAt: Long? = null,
+        /** 隐藏聊天不进入普通列表/统计，仅供隐藏入口与按 ID 打开使用。 */
+        val isHidden: Boolean = false,
+        /** 隐藏原因；以 READING_COMPANION_AUDIT_ 开头的聊天永久隐藏，不可取消。 */
+        val hiddenReason: String? = null,
 ) {
     /** 转换为ChatHistory对象（供UI层使用） */
     fun toChatHistory(messages: List<ChatMessage>): ChatHistory {
@@ -88,6 +93,8 @@ data class ChatEntity(
                 pinned = pinned,
                 isFavorite = isFavorite,
                 lastMessageAt = lastMessageAt,
+                isHidden = isHidden,
+                hiddenReason = hiddenReason,
                 createdAtEpochMillis = this.createdAt,
                 lastMessageAtEpochMillis = this.lastMessageAt,
         )
@@ -128,6 +135,8 @@ data class ChatEntity(
                     locked = chatHistory.locked,
                     pinned = chatHistory.pinned,
                     isFavorite = chatHistory.isFavorite,
+                    isHidden = chatHistory.isHidden,
+                    hiddenReason = chatHistory.hiddenReason,
                     lastMessageAt =
                             chatHistory.lastMessageAt?.let {
                                 chatHistory.lastMessageAtEpochMillis

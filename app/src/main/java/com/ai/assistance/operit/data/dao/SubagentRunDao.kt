@@ -73,6 +73,36 @@ interface SubagentRunDao {
     )
     suspend fun incrementToolInvocationCountByChildChatId(childChatId: String): Int
 
+    @Query(
+        """
+        UPDATE subagent_runs
+        SET modelRoundCount = modelRoundCount + 1
+        WHERE childChatId = :childChatId
+        """
+    )
+    suspend fun incrementModelRoundCountByChildChatId(childChatId: String): Int
+
+    @Query(
+        "SELECT * FROM subagent_runs WHERE externalOwnerType = :ownerType " +
+            "AND externalOwnerId = :ownerId ORDER BY createdAt ASC, id ASC"
+    )
+    suspend fun getByExternalOwner(ownerType: String, ownerId: String): List<SubagentRunEntity>
+
+    @Query(
+        "SELECT * FROM subagent_runs WHERE externalOwnerType = :ownerType " +
+            "ORDER BY createdAt ASC, id ASC"
+    )
+    suspend fun getByExternalOwnerType(ownerType: String): List<SubagentRunEntity>
+
+    @Query(
+        """
+        UPDATE subagent_runs
+        SET externalOwnerType = NULL, externalOwnerId = NULL
+        WHERE externalOwnerType = :ownerType AND externalOwnerId = :ownerId
+        """
+    )
+    suspend fun clearExternalOwner(ownerType: String, ownerId: String): Int
+
     @Query("UPDATE subagent_runs SET archivedAt = :archivedAt WHERE id = :taskId")
     suspend fun updateArchivedAt(taskId: String, archivedAt: Long?): Int
 

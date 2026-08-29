@@ -8649,4 +8649,13 @@
     <string name="terminal_startup_error_delete">无法删除启动服务。</string>
     <string name="terminal_startup_error_delete_restore_runtime">无法删除启动服务，且未能恢复其运行状态。</string>
     <string name="terminal_startup_error_remove_files">无法移除启动服务文件。</string>
+    <string name="hidden_chats_title">隐藏聊天</string>
+    <string name="hidden_chats_empty">没有隐藏聊天。</string>
+    <string name="hidden_chats_permanently_hidden_note">审计类隐藏聊天不可取消隐藏，只能查看或删除。</string>
+    <string name="hidden_chats_delete_confirm_title">删除隐藏聊天</string>
+    <string name="hidden_chats_delete_confirm_message">确定要删除隐藏聊天“%1$s”及其全部对话内容吗？此操作不可恢复。</string>
+    <string name="open_audit_chat">打开子代理对话</string>
+    <string name="open_audit_chat_failed">无法打开审计对话：%1$s</string>
+    <string name="reading_companion_loop_detected">段评子代理检测到重复调用循环，本次生成已停止。</string>
+    <string name="reading_companion_no_progress">段评子代理未检测到有效进展，本次生成已停止。</string>
 </resources>

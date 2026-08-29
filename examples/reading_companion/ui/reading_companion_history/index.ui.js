@@ -51,9 +51,6 @@ function historyScreen(ctx) {
   const empty = english ? "No commentary task records yet." : "还没有段评任务记录。";
   const errorTitle = english ? "Could not load history" : "加载历史失败";
   const refresh = english ? "Refresh" : "刷新";
-  const safeHint = english
-    ? "Only task metadata is shown here. Unread chapter text and locked comments are never displayed."
-    : "这里只显示任务元数据，不展示未读正文或尚未解锁的段评。";
 
   const children = [];
   if (loading) {
@@ -164,15 +161,6 @@ function historyScreen(ctx) {
       );
     });
   }
-
-  children.push(
-    UI.Text({
-      text: safeHint,
-      style: "bodySmall",
-      color: colors.onSurfaceVariant,
-      padding: 4,
-    }),
-  );
 
   return UI.Box(
     {

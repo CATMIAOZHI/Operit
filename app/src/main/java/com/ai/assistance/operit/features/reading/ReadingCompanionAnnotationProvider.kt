@@ -19,8 +19,8 @@ import org.json.JSONObject
 /**
  * Read-only paragraph-comment surface consumed by Legado.
  *
- * The provider exposes generated comments only. It never exposes the prefetched unread chapter
- * text. Disabling the optional auto-commentary subpackage stops future generation but does not
+ * The provider exposes generated comments only; it does not serve raw chapter text. Disabling
+ * the optional auto-commentary subpackage stops future generation but does not
  * hide comments that were already generated; disabling the parent Reading Companion ToolPkg
  * removes this read surface entirely.
  */

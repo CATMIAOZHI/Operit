@@ -58,16 +58,24 @@ class ReadingCompanionAutoCommentary private constructor(
     private val provider: ReaderProvider = LegadoReaderProvider(appContext)
     private val store = ReadingCompanionStore(appContext)
     private val modelGateway = ReadingCompanionModelGateway(appContext)
+    private val subagentCoordinator = ReadingCompanionSubagentCoordinator.getInstance(appContext)
 
     suspend fun generateNextChapter(
         force: Boolean = false,
         runtime: ToolExecutionManager.ToolRuntimeContext? = null,
         trigger: String = TRIGGER_BACKGROUND,
+        restartedFromRunId: Long? = null,
     ): AutoCommentaryGenerationResult {
         store.interruptStaleAutoCommentRuns(
             staleBefore = System.currentTimeMillis() - GENERATING_STALE_AFTER_MS,
         )
-        val runId = store.startAutoCommentRun(trigger = trigger)
+        // 阶段 3 起三条路径（后台/手动/对话内）全部走专用 subagent 执行器。
+        val runId =
+            store.startAutoCommentRun(
+                trigger = trigger,
+                executionMode = AUTO_COMMENT_RUN_EXECUTION_MODE_SUBAGENT,
+                restartedFromRunId = restartedFromRunId,
+            )
         return try {
             generateNextChapterInRun(
                 runId = runId,
@@ -76,11 +84,22 @@ class ReadingCompanionAutoCommentary private constructor(
                 trigger = trigger,
             )
         } catch (cancelled: CancellationException) {
-            store.finishAutoCommentRun(
+            // 进程/Worker 停止：标 interrupted + 释放 claim；child transcript 保留（不删除），
+            // 重启后由对账放行下一次全新 run。
+            val now = System.currentTimeMillis()
+            store.recordAutoCommentRunTrace(
                 runId = runId,
-                status = ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_CANCELLED,
-                errorMessage = "cancelled",
+                operation = "generation_cancelled",
+                status = "interrupted",
+                startedAt = now,
+                finishedAt = now,
+                metadataJson =
+                    JSONObject()
+                        .put("trigger", trigger)
+                        .put("reason", "cancelled")
+                        .toString(),
             )
+            store.markRunInterrupted(runId = runId, errorMessage = "cancelled")
             throw cancelled
         } catch (error: Throwable) {
             store.finishAutoCommentRun(
@@ -89,6 +108,12 @@ class ReadingCompanionAutoCommentary private constructor(
                 errorMessage = safeReadingCompanionError(error),
             )
             throw error
+        } finally {
+            // 剪枝联动：把被删旧 run 的 hidden audit child / 空根同步到主库子树删除
+            // （fail-safe：排空本身异常不掩盖生成结果）。
+            runCatching { store.flushPrunedRunChatCleanup() }
+            // 挂账队列丢失兜底：从 reading.db 现状重建（见 Store.runOrphanChatCleanup）。
+            runCatching { store.runOrphanChatCleanup() }
         }
     }
 
@@ -259,70 +284,17 @@ class ReadingCompanionAutoCommentary private constructor(
                 )
             }
             store.updateAutoCommentRunStage(runId, AutoCommentRunStages.RESOLVING_MODEL)
-            var resolvedExecution: AutoCommentModelExecution? = null
-            var observedUsage: ProviderUsageSnapshot? = null
-            val modelTraceStartedAt = System.currentTimeMillis()
-            val generated = try {
-                modelGateway.generateAutoComments(
+            val generated =
+                generateViaSubagent(
+                    runId = runId,
+                    trigger = trigger,
+                    runtime = runtime,
+                    initialState = initialState,
+                    nextChapterIndex = nextChapterIndex,
                     content = content,
                     previousContext = previousContext,
-                    roleCardId = persona.roleCardId,
-                    runtime = runtime,
-                    onExecutionResolved = { execution ->
-                        resolvedExecution = execution
-                        store.updateAutoCommentRunExecution(runId, execution)
-                    },
-                    onPromptPrepared = { metrics ->
-                        store.updateAutoCommentRunPromptMetrics(
-                            runId = runId,
-                            targetCharacterCount =
-                                content.content.count { character -> !character.isWhitespace() },
-                            metrics = metrics,
-                        )
-                        store.updateAutoCommentRunStage(
-                            runId,
-                            AutoCommentRunStages.WAITING_MODEL,
-                        )
-                    },
-                    onModelResponseReceived = { usage ->
-                        observedUsage = usage
-                        if (usage != null) {
-                            store.updateAutoCommentRunUsage(runId, usage)
-                        }
-                        store.updateAutoCommentRunStage(
-                            runId,
-                            AutoCommentRunStages.VALIDATING_RESPONSE,
-                        )
-                    },
+                    persona = persona,
                 )
-            } catch (error: Throwable) {
-                store.recordAutoCommentRunTrace(
-                    runId = runId,
-                    operation = "model_direct_call",
-                    status = "failed",
-                    startedAt = modelTraceStartedAt,
-                    finishedAt = System.currentTimeMillis(),
-                    metadataJson = modelTraceMetadata(
-                        execution = resolvedExecution,
-                        usage = observedUsage,
-                        estimatedInputTokens = store.getAutoCommentRun(runId)?.estimatedInputTokens,
-                        error = safeReadingCompanionError(error),
-                    ).toString(),
-                )
-                throw error
-            }
-            store.recordAutoCommentRunTrace(
-                runId = runId,
-                operation = "model_direct_call",
-                status = "completed",
-                startedAt = modelTraceStartedAt,
-                finishedAt = System.currentTimeMillis(),
-                metadataJson = modelTraceMetadata(
-                    execution = generated.execution,
-                    usage = generated.usage ?: observedUsage,
-                    estimatedInputTokens = store.getAutoCommentRun(runId)?.estimatedInputTokens,
-                ).toString(),
-            )
             store.updateAutoCommentRunStage(runId, AutoCommentRunStages.SAVING_COMMENTS)
             if (trigger == TRIGGER_BACKGROUND && !isEnabled(appContext)) {
                 throw CancellationException("AI 自动段评已关闭")
@@ -387,7 +359,7 @@ class ReadingCompanionAutoCommentary private constructor(
                         .put("commentCount", 0)
                         .put(
                             "reason",
-                            "模型返回内容，但没有有效段评被接受（解析/校验过滤后为空）",
+                            "没有有效段评被接受（解析/校验过滤后为空，或审计子代理弃权/未提交）",
                         )
                         .toString(),
                 )
@@ -400,7 +372,7 @@ class ReadingCompanionAutoCommentary private constructor(
                     runId = runId,
                     status = ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_NO_VALID_COMMENTS,
                     commentCount = 0,
-                    errorMessage = "模型返回内容，但没有有效段评被接受",
+                    errorMessage = "没有有效段评被接受",
                 )
                 return AutoCommentaryGenerationResult(
                     bookId = initialState.book.id,
@@ -518,6 +490,106 @@ class ReadingCompanionAutoCommentary private constructor(
             )
             throw error
         }
+    }
+
+    private fun usesSubagentExecution(trigger: String): Boolean =
+        trigger == TRIGGER_BACKGROUND ||
+            trigger == TRIGGER_MANUAL ||
+            trigger == TRIGGER_CONVERSATION
+
+    /**
+     * 手动/对话内路径：走专用 subagent 执行器（完整 transcript、6 个专用工具、非交互护栏）。
+     *
+     * 只负责产生候选；提交底线（claim owner -> 重读进度/角色 -> 校验仍是下一章 ->
+     * replaceAutoComments）由调用方原样保留，空候选/弃权走 no_valid_comments，绝不覆盖旧段评。
+     */
+    private suspend fun generateViaSubagent(
+        runId: Long,
+        trigger: String,
+        runtime: ToolExecutionManager.ToolRuntimeContext?,
+        initialState: ReadingState,
+        nextChapterIndex: Int,
+        content: AnnotationChapterContent,
+        previousContext: List<AutoCommentContextChapter>,
+        persona: AutoCommentPersona,
+    ): GeneratedAutoComments {
+        val modelTraceStartedAt = System.currentTimeMillis()
+        val outcome =
+            try {
+                store.updateAutoCommentRunStage(runId, AutoCommentRunStages.WAITING_MODEL)
+                // 完整人设与旧单发路径同源（combinePrompts(CHAT)），随任务 prompt 与
+                // get_constraints 进入子代理上下文，而不是只给角色名。
+                val rolePrompt = modelGateway.resolveAutoCommentRolePrompt(persona.roleCardId)
+                subagentCoordinator.runGeneration(
+                    runId = runId,
+                    trigger = trigger,
+                    runtime = runtime,
+                    bookId = initialState.book.id,
+                    bookName = initialState.book.name,
+                    chapterIndex = nextChapterIndex,
+                    chapterTitle = content.chapterTitle,
+                    contentHash = content.contractHash,
+                    persona = persona,
+                    rolePrompt = rolePrompt,
+                    targetContent = content.content,
+                    previousContext = previousContext,
+                )
+            } catch (error: Throwable) {
+                store.recordAutoCommentRunTrace(
+                    runId = runId,
+                    operation = "model_subagent_turn",
+                    status = "failed",
+                    startedAt = modelTraceStartedAt,
+                    finishedAt = System.currentTimeMillis(),
+                    metadataJson = JSONObject()
+                        .put("trigger", trigger)
+                        .put("error", safeReadingCompanionError(error))
+                        .toString(),
+                )
+                throw error
+            }
+        store.updateAutoCommentRunExecution(runId, outcome.execution)
+        store.updateAutoCommentRunPromptMetrics(
+            runId = runId,
+            targetCharacterCount =
+                content.content.count { character -> !character.isWhitespace() },
+            metrics =
+                AutoCommentPromptMetrics(
+                    previousContextChapterCount = previousContext.size,
+                    previousContextCharacterCount =
+                        previousContext.sumOf { it.content.trim().length },
+                    contextWindowTokens = 0,
+                    estimatedInputTokens =
+                        (
+                            content.content.trim().length +
+                                previousContext.sumOf { it.content.trim().length }
+                            ) / 2,
+                ),
+        )
+        store.updateAutoCommentRunStage(runId, AutoCommentRunStages.VALIDATING_RESPONSE)
+        store.recordAutoCommentRunTrace(
+            runId = runId,
+            operation = "model_subagent_turn",
+            status = "completed",
+            startedAt = modelTraceStartedAt,
+            finishedAt = System.currentTimeMillis(),
+            metadataJson = modelTraceMetadata(
+                execution = outcome.execution,
+                usage = null,
+                estimatedInputTokens = store.getAutoCommentRun(runId)?.estimatedInputTokens,
+            )
+                .put("trigger", trigger)
+                .put("subagentRunId", outcome.subagentRunId)
+                .put("childChatId", outcome.childChatId)
+                .put("candidateCount", outcome.comments.size)
+                .put("abstained", outcome.abstained)
+                .toString(),
+        )
+        return GeneratedAutoComments(
+            comments = outcome.comments,
+            execution = outcome.execution,
+            usage = null,
+        )
     }
 
     private suspend fun loadPreviousCommentaryContext(
@@ -644,7 +716,7 @@ class ReadingCompanionAutoCommentary private constructor(
         }
     }
 
-    fun history(limit: Int = 10): JSONObject {
+    suspend fun history(limit: Int = 10): JSONObject {
         settleInterruptedRuns()
         return JSONObject().apply {
             put(
@@ -662,7 +734,7 @@ class ReadingCompanionAutoCommentary private constructor(
         }
     }
 
-    fun detail(runId: Long): JSONObject {
+    suspend fun detail(runId: Long): JSONObject {
         require(runId > 0) { "runId is required" }
         settleInterruptedRuns()
         val run = store.getAutoCommentRun(runId)
@@ -707,6 +779,71 @@ class ReadingCompanionAutoCommentary private constructor(
                 },
             )
         }
+    }
+
+    /**
+     * 列出审计隐藏聊天（hiddenReason 为 READING_COMPANION_AUDIT_ 前缀），按书分组返回
+     * 根与 run 子聊天摘要；只含摘要字段，不含任何正文。对话内（isHidden=false）child
+     * 不在此列。bookId 为空时列出全部书。
+     */
+    suspend fun listAuditChats(bookId: String? = null): JSONObject {
+        val hiddenChats =
+            com.ai.assistance.operit.data.db.AppDatabase
+                .getDatabase(appContext)
+                .chatDao()
+                .getHiddenChatsDirectly()
+        val rootPrefix = ReadingCompanionAudit.HIDDEN_ROOT_PREFIX
+        val runPrefix = ReadingCompanionAudit.HIDDEN_RUN_PREFIX
+        val groups = LinkedHashMap<String, JSONObject>()
+        hiddenChats
+            .filter { chat -> chat.hiddenReason?.startsWith(rootPrefix) == true }
+            .forEach { root ->
+                val groupBookId = root.hiddenReason.orEmpty().removePrefix(rootPrefix)
+                if (bookId != null && groupBookId != bookId) return@forEach
+                groups[groupBookId] =
+                    JSONObject()
+                        .put("bookId", groupBookId)
+                        .put("bookName", JSONObject.NULL)
+                        .put(
+                            "root",
+                            JSONObject()
+                                .put("chatId", root.id)
+                                .put("title", root.title),
+                        )
+                        .put("chats", JSONArray())
+            }
+        hiddenChats
+            .filter { chat -> chat.hiddenReason?.startsWith(runPrefix) == true }
+            .forEach { child ->
+                val runId =
+                    child.hiddenReason.orEmpty().removePrefix(runPrefix).toLongOrNull()
+                        ?: return@forEach
+                val run = store.getAutoCommentRun(runId) ?: return@forEach
+                val childBookId = run.bookId
+                if (bookId != null && childBookId != bookId) return@forEach
+                val group =
+                    groups.getOrPut(childBookId.orEmpty()) {
+                        JSONObject()
+                            .put("bookId", childBookId)
+                            .put("bookName", run.bookName)
+                            .put("root", JSONObject.NULL)
+                            .put("chats", JSONArray())
+                    }
+                if (!group.has("bookName") || group.isNull("bookName")) {
+                    group.put("bookName", run.bookName)
+                }
+                group
+                    .getJSONArray("chats")
+                    .put(
+                        JSONObject()
+                            .put("chatId", child.id)
+                            .put("title", child.title)
+                            .put("runId", runId)
+                            .put("status", run.status)
+                            .put("trigger", run.trigger),
+                    )
+            }
+        return JSONObject().put("groups", JSONArray(groups.values.toList()))
     }
 
     suspend fun hasCaughtUp(result: AutoCommentaryGenerationResult): Boolean {
@@ -809,6 +946,10 @@ class ReadingCompanionAutoCommentary private constructor(
             "durationMs",
             ((finishedAt ?: System.currentTimeMillis()) - startedAt).coerceAtLeast(0),
         )
+        put("executionMode", executionMode)
+        put("parentChatId", parentChatId)
+        put("childChatId", childChatId)
+        put("subagentRunId", subagentRunId)
     }
 
     private fun AutoCommentRunStageEvent.toJson(): JSONObject = JSONObject().apply {
@@ -867,10 +1008,14 @@ class ReadingCompanionAutoCommentary private constructor(
         put("contextWindowTokens", contextWindowTokens)
     }
 
-    private fun settleInterruptedRuns() {
+    private suspend fun settleInterruptedRuns() {
         store.interruptStaleAutoCommentRuns(
             staleBefore = System.currentTimeMillis() - GENERATING_STALE_AFTER_MS,
         )
+        // 剪枝联动与 status/history/detail 同一入口排空（fail-safe）。
+        runCatching { store.flushPrunedRunChatCleanup() }
+        // 挂账队列丢失兜底：从 reading.db 现状重建（见 Store.runOrphanChatCleanup）。
+        runCatching { store.runOrphanChatCleanup() }
     }
 
     companion object {
@@ -889,6 +1034,7 @@ class ReadingCompanionAutoCommentary private constructor(
         const val ALREADY_GENERATING_QUEUED_AT = -1L
         const val TRIGGER_BACKGROUND = "background"
         const val TRIGGER_MANUAL = "manual"
+        const val TRIGGER_CONVERSATION = ReadingCompanionAudit.TRIGGER_CONVERSATION
 
         @Volatile
         private var instance: ReadingCompanionAutoCommentary? = null
@@ -1011,6 +1157,12 @@ class ReadingCompanionManualAutoCommentWorker(
             return Result.success()
         }
         return try {
+            // 手动/后台共用：Worker 开头先做跨库对账（只 interrupt 孤儿 + 补链，不做重启式
+            // 清扫，避免误杀同一进程内正在 heartbeat 的其他生成）。
+            val store = ReadingCompanionStore(applicationContext)
+            store.reconcileCrossDatabase()
+            // 剪枝挂账队列丢失兜底：从 reading.db 现状重建（见 Store.runOrphanChatCleanup）。
+            runCatching { store.runOrphanChatCleanup() }
             ReadingCompanionAutoCommentary.getInstance(applicationContext)
                 .generateNextChapter(
                     force = true,
@@ -1034,13 +1186,30 @@ class ReadingCompanionAutoCommentWorker(
             return Result.success()
         }
         return try {
+            val store = ReadingCompanionStore(applicationContext)
+            // Worker 开头跨库对账（只 interrupt 孤儿 + 补链，不清扫；进程重启语义由启动时的
+            // reconcileAfterProcessStart 负责，这里不再重复清扫，避免误杀并发中的对话内 run）。
+            store.reconcileCrossDatabase()
+            // 剪枝挂账队列丢失兜底：从 reading.db 现状重建（见 Store.runOrphanChatCleanup）。
+            runCatching { store.runOrphanChatCleanup() }
+            // 恢复谱系：本次后台任务是上一次被中断 run 的重启，restarted_from_run_id 只作
+            // 谱系记录，绝不续写旧 child（第二、三次追更迭代不重复标注旧 run）。
+            val restartedFromRunId =
+                store
+                    .getRecentAutoCommentRuns(READING_RECENT_RUN_SCAN)
+                    .firstOrNull {
+                        it.status ==
+                            ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_INTERRUPTED
+                    }
+                    ?.id
             val commentary = ReadingCompanionAutoCommentary.getInstance(applicationContext)
-            repeat(MAX_CATCH_UP_GENERATIONS) {
+            repeat(MAX_CATCH_UP_GENERATIONS) { index ->
                 if (!ReadingCompanionAutoCommentary.isEnabled(applicationContext)) {
                     return Result.success()
                 }
                 val generated = commentary.generateNextChapter(
                     trigger = ReadingCompanionAutoCommentary.TRIGGER_BACKGROUND,
+                    restartedFromRunId = if (index == 0) restartedFromRunId else null,
                 )
                 if (commentary.shouldStopWithoutCatchUp(generated)) return Result.success()
                 if (commentary.hasCaughtUp(generated)) return Result.success()
@@ -1059,5 +1228,7 @@ class ReadingCompanionAutoCommentWorker(
 
     private companion object {
         const val MAX_CATCH_UP_GENERATIONS = 3
+        /** 谱系扫描窗口（与 prune 保留量一致即可，只取最近一条 interrupted）。 */
+        const val READING_RECENT_RUN_SCAN = 10
     }
 }

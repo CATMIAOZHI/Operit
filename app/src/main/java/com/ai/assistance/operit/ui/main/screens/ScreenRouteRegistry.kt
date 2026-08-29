@@ -382,6 +382,13 @@ object ScreenRouteRegistry {
                 entryId = "hidden.chat_history_settings",
                 screen = Screen.ChatHistorySettings,
                 launchNavItem = NavItem.ChatHistorySettings
+            ),
+            // 隐藏聊天：surface=null 无可见入口；只作为可导航路由（native.hidden_chats），
+            // 由 ChatHistorySelector 的“隐藏聊天”入口与其他受限路径进入。
+            hostEntryDefinition(
+                entryId = "main.hidden_chats",
+                screen = Screen.HiddenChats,
+                titleResId = R.string.hidden_chats_title,
             )
         )
 

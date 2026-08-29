@@ -2,18 +2,24 @@ package com.ai.assistance.operit.core.tools.javascript
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Handler
 import android.os.Looper
 import android.util.Base64
 import android.webkit.JavascriptInterface
 import androidx.annotation.Keep
 import androidx.core.content.ContextCompat
+import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
+import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_EVENT_MESSAGE_PROCESSING
+import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
+import com.ai.assistance.operit.data.repository.SubagentRunRepository
+import com.ai.assistance.operit.features.reading.ReadingCompanionAudit
 import com.ai.assistance.operit.features.reading.ReadingCompanionBridge
 import com.ai.assistance.operit.features.reading.ReadingCompanionAutoCommentary
 import com.ai.assistance.operit.features.reading.ReadingCompanionService
@@ -1786,6 +1792,110 @@ class JsEngine(private val context: Context) {
                         "message",
                         error.message?.trim().orEmpty().ifBlank {
                             "Failed to load commentary character"
+                        },
+                    )
+                    .toString()
+            }
+        }
+
+        /**
+         * 受限宿主动作：按 reading run 打开其审计子代理对话（仅 Reading Companion ToolPkg
+         * UI 可用）。链路：runId -> child_chat_id（Store）-> ChatDao 实体；通过后才允许
+         * 打开——隐藏路径要求 hiddenReason 为 READING_COMPANION_AUDIT_ 前缀；对话内路径
+         * 要求 child 的 subagent run 与本 run 弱关联匹配。通过后主线程 switchChat(childId)
+         * + 路由 native.ai_chat。任何失败返回 JSON error 且不 switch；不信任 JS 传入 chatId。
+         */
+        @JavascriptInterface
+        fun openReadingAuditChat(runIdJson: String): String {
+            return try {
+                check(boundToolPkgContainerName == ReadingCompanionService.TOOLPKG_ID) {
+                    "Reading Companion audit chat is only available to its ToolPkg UI"
+                }
+                val runId = runIdJson.trim().toLongOrNull()
+                require(runId != null && runId > 0) { "runId is required" }
+                val appContext = context.applicationContext
+                val resolvedChildChatId =
+                    runBlocking(Dispatchers.IO) {
+                        val run =
+                            ReadingCompanionStore(appContext).use { store ->
+                                store.getAutoCommentRun(runId)
+                            } ?: error("段评任务记录不存在或已过期")
+                        val childChatId =
+                            run.childChatId?.takeIf(String::isNotBlank)
+                                ?: error("该任务没有关联的子代理对话")
+                        val chat =
+                            AppDatabase.getDatabase(appContext)
+                                .chatDao()
+                                .getChatById(childChatId)
+                                ?: error("关联的子代理对话不存在或已被删除")
+                        // run 级绑定校验（纯函数，与 JVM 测试同一决策路径）：隐藏路径要求
+                        // hiddenReason 精确等于本 run、parent 绑定一致、subagent run 弱关联
+                        // 三重匹配、父根 hiddenReason 与 run.bookId 一致（防他书错链）；
+                        // 对话内路径要求 parent 绑定与 subagent run 弱关联一致。前缀相同但
+                        // run 不同 / 伪装 runId / 他书 child 一律拒绝。
+                        val subagentRun =
+                            SubagentRunRepository.getInstance(appContext)
+                                .getByChildChatId(childChatId)
+                        val parentChat =
+                            chat.parentChatId?.let { parentId ->
+                                AppDatabase.getDatabase(appContext)
+                                    .chatDao()
+                                    .getChatById(parentId)
+                            }
+                        val authorized =
+                            ReadingCompanionAudit.isAuthorizedAuditChat(
+                                runId = runId,
+                                runBookId = run.bookId,
+                                runParentChatId = run.parentChatId,
+                                runSubagentRunId = run.subagentRunId,
+                                chatIsHidden = chat.isHidden,
+                                chatHiddenReason = chat.hiddenReason,
+                                chatParentChatId = chat.parentChatId,
+                                chatParentHiddenReason = parentChat?.hiddenReason,
+                                subagentOwnerType = subagentRun?.externalOwnerType,
+                                subagentOwnerId = subagentRun?.externalOwnerId,
+                                subagentRunId = subagentRun?.id,
+                            )
+                        require(authorized) {
+                            "该任务与所选聊天不匹配，无法打开审计对话"
+                        }
+                        childChatId
+                    }
+                Handler(Looper.getMainLooper()).post {
+                    try {
+                        ChatRuntimeHolder.getInstance(appContext)
+                            .getCore(ChatRuntimeSlot.MAIN)
+                            .getChatHistoryDelegate()
+                            .switchChat(resolvedChildChatId, scrollToBottom = false)
+                        AppRouterGateway.navigate(
+                            routeId = "native.ai_chat",
+                            args = emptyMap(),
+                            source = RouteEntrySource.SCRIPT,
+                        )
+                    } catch (navError: Throwable) {
+                        AppLogger.w(
+                            TAG,
+                            "openReadingAuditChat navigation failed: ${navError.message}",
+                            navError,
+                        )
+                    }
+                }
+                JSONObject()
+                    .put("success", true)
+                    .put(
+                        "data",
+                        JSONObject()
+                            .put("chatId", resolvedChildChatId)
+                            .put("route", "native.ai_chat"),
+                    )
+                    .toString()
+            } catch (error: Throwable) {
+                JSONObject()
+                    .put("success", false)
+                    .put(
+                        "message",
+                        error.message?.trim().orEmpty().ifBlank {
+                            "Failed to open audit chat"
                         },
                     )
                     .toString()

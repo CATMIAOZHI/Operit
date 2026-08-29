@@ -7,7 +7,7 @@
   },
   "description": {
     "zh": "在 Legado 已读边界内陪聊、回顾和建立本地小说知识索引。读者记忆与小说事实严格分开。",
-    "en": "Spoiler-safe Legado conversation, recall, and local novel knowledge. Reader memories stay separate from novel facts."
+    "en": "Legado conversation, recall, and local novel knowledge. Reader memories stay separate from novel facts."
   },
   "category": "AI Reading Companion",
   "enabledByDefault": true,
@@ -176,8 +176,8 @@
     {
       "name": "auto_commentary_history",
       "description": {
-        "zh": "查看自动段评任务历史；单次详情会显示已生成段评全文、段落锚点、类型、作者和安全调用链，但不会返回未读正文或密钥。",
-        "en": "Show auto-commentary history; run details include generated comment text, paragraph anchors, type, author, and a safe operation trace, never unread text or secrets."
+        "zh": "查看自动段评任务历史；单次详情会显示已生成段评全文、段落锚点、类型、作者和安全调用链，并可打开对应的完整审计对话。",
+        "en": "Show auto-commentary history; run details include generated comment text, paragraph anchors, type, author, and a safe operation trace, and can open the full audit chat."
       },
       "parameters": [
         {
@@ -194,8 +194,8 @@
     {
       "name": "auto_commentary_run_detail",
       "description": {
-        "zh": "查看单次自动段评任务的段评全文、章节/段落锚点、类型、作者和阶段/实际调用链；不返回未读正文或密钥。",
-        "en": "Show one auto-commentary run's generated text, chapter/paragraph anchors, type, author, and stage/operation trace without unread text or secrets."
+        "zh": "查看单次自动段评任务的段评全文、章节/段落锚点、类型、作者和阶段/实际调用链，并可打开该任务的完整审计对话。",
+        "en": "Show one auto-commentary run's generated text, chapter/paragraph anchors, type, author, and stage/operation trace, and open its full audit chat."
       },
       "parameters": [
         {
@@ -206,6 +206,32 @@
           },
           "type": "number",
           "required": true
+        }
+      ]
+    },
+    {
+      "name": "request_next_chapter_comments",
+      "description": {
+        "zh": "立即以本书角色卡的口吻，用当前对话直接生成下一章段落级 AI 段评（子任务执行，完成后返回状态与数量）。会产生模型消耗；完成后可在历史详情查看或打开本次审计对话。",
+        "en": "Immediately generate next-chapter paragraph-level AI comments in this conversation (runs as a subtask and returns status and count when done). Spends model tokens; open the run's audit chat afterwards for the full transcript."
+      },
+      "parameters": []
+    },
+    {
+      "name": "list_audit_chats",
+      "description": {
+        "zh": "按书列出段评审计隐藏聊天（隐藏根与每次任务的子代理对话摘要：chatId、标题、runId、状态），供界面打开对应审计对话。",
+        "en": "List commentary audit chats per book (hidden root and per-run subagent chat summaries: chatId, title, runId, status) so the UI can open them."
+      },
+      "parameters": [
+        {
+          "name": "bookId",
+          "description": {
+            "zh": "只返回指定书籍的审计聊天；省略返回全部书籍",
+            "en": "Return audit chats only for this book; omit for all books"
+          },
+          "type": "string",
+          "required": false
         }
       ]
     },
@@ -335,3 +361,7 @@ exports.auto_commentary_history = (params = {}) =>
   run("auto_commentary_history", { limit: params.limit });
 exports.auto_commentary_run_detail = (params = {}) =>
   run("auto_commentary_run_detail", { runId: params.runId });
+exports.request_next_chapter_comments = (params = {}) =>
+  run("request_next_chapter_comments", {});
+exports.list_audit_chats = (params = {}) =>
+  run("list_audit_chats", { bookId: params.bookId });

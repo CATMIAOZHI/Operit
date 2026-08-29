@@ -117,7 +117,7 @@ function getText(useEnglish) {
       autoOn:
         "On. The selected character pre-generates comments for the next chapter. See the current setup below.",
       autoOff:
-        "Off. Turn on to pre-generate next-chapter comments; this reads bounded private text and spends model tokens.",
+        "Off. Turn on to pre-generate next-chapter comments; this reads the next chapter and spends model tokens.",
       configTitle: "Current commentary setup",
       configCharacter: "Writer",
       configModel: "Model",
@@ -154,6 +154,11 @@ function getText(useEnglish) {
       preciseProgress: "Precise reading position available",
       chapterProgress: "Only chapter-level progress is available",
       history: "View all records",
+      auditTitle: "Audit chats",
+      auditOpened: "Audit chat opened.",
+      auditOpenFailed: "Could not open the audit chat: ",
+      auditDeleteHint:
+        "These chats are permanently hidden; they can only be viewed or deleted from the hidden chat list.",
       refresh: "Refresh status",
       manage: "Open package management",
       regenerate: "Generate next-chapter comments now",
@@ -210,7 +215,7 @@ function getText(useEnglish) {
         unknown_error: "The task failed for an unknown reason.",
       },
       queuedHint:
-        "Background history stays on this device in reading_companion.db. The status below never exposes unread text or comments.",
+        "Background history stays on this device in reading_companion.db. Run details show generated comment text and the real operation trace, and can open the full audit chat.",
       enableBasicFailed: "Could not change reading companion state: ",
       enableAutoFailed: "Could not change auto commentary state: ",
       enableStateMismatch: "The package did not turn on.",
@@ -234,7 +239,7 @@ function getText(useEnglish) {
     autoOn:
       "已开启。所选角色会预生成下一章段评；详细规则见下方“当前段评设置”。",
     autoOff:
-      "已关闭。开启后会读取有限的未读内容并产生模型 Token 消耗。",
+      "已关闭。开启后会按需读取最新章节内容，产生模型 Token 消耗。",
     configTitle: "当前段评设置",
     configCharacter: "作者",
     configModel: "模型",
@@ -266,6 +271,10 @@ function getText(useEnglish) {
     preciseProgress: "已获取精确阅读位置",
     chapterProgress: "当前只能获取章节级进度",
     history: "查看全部记录",
+    auditTitle: "审计对话",
+    auditOpened: "已打开审计对话。",
+    auditOpenFailed: "无法打开审计对话：",
+    auditDeleteHint: "这些聊天永久隐藏，只能在隐藏聊天列表查看或删除。",
     refresh: "刷新状态",
     manage: "打开包管理",
     regenerate: "立即生成下一章段评",
@@ -324,7 +333,7 @@ function getText(useEnglish) {
       unknown_error: "任务因未知原因失败。",
     },
     queuedHint:
-      "后台历史保存在本机 reading_companion.db；详情可显示已生成段评全文与安全调用链，未读正文仍不会显示。",
+      "后台历史保存在本机 reading_companion.db；详情可显示已生成段评全文与实际调用链，并可打开对应的审计对话。",
     enableBasicFailed: "切换阅读伴侣失败：",
     enableAutoFailed: "切换自动段评失败：",
     enableStateMismatch: "工具包未能开启。",
@@ -524,6 +533,7 @@ function readingCompanionEntryScreen(ctx) {
   const readingState = useStateValue(ctx, "readingState", null);
   const autoStatusState = useStateValue(ctx, "autoStatus", null);
   const historyState = useStateValue(ctx, "history", null);
+  const auditGroupsState = useStateValue(ctx, "auditGroups", []);
   const selectedPersonaState = useStateValue(ctx, "selectedPersona", null);
   const availableCardsState = useStateValue(ctx, "availableCards", []);
   const showCardPickerState = useStateValue(ctx, "showCardPicker", false);
@@ -547,6 +557,7 @@ function readingCompanionEntryScreen(ctx) {
       readingState.set(null);
       autoStatusState.set(null);
       historyState.set(null);
+      auditGroupsState.set([]);
       selectedPersonaState.set(null);
 
       const errors = [];
@@ -580,6 +591,21 @@ function readingCompanionEntryScreen(ctx) {
               "auto_commentary_history",
               { limit: 10 },
             ),
+          );
+        } catch (error) {
+          errors.push(toErrorText(error));
+        }
+        try {
+          const auditResult = await callPackageTool(
+            ctx,
+            TOOL_PACKAGE,
+            "list_audit_chats",
+            {},
+          );
+          auditGroupsState.set(
+            auditResult && Array.isArray(auditResult.groups)
+              ? auditResult.groups
+              : [],
           );
         } catch (error) {
           errors.push(toErrorText(error));
@@ -860,6 +886,27 @@ function readingCompanionEntryScreen(ctx) {
       return;
     }
     await Promise.resolve(ctx.navigate(HISTORY_ROUTE));
+  };
+
+  const openAuditChatByRunId = async (runId) => {
+    const normalizedRunId = Number(runId || 0);
+    if (!Number.isFinite(normalizedRunId) || normalizedRunId <= 0) {
+      return;
+    }
+    if (!ctx.openReadingAuditChat) {
+      errorState.set(
+        `${text.auditOpenFailed}${useEnglish ? "unavailable" : "当前版本不支持"}`,
+      );
+      return;
+    }
+    noticeState.set("");
+    errorState.set("");
+    try {
+      await ctx.openReadingAuditChat(normalizedRunId);
+      noticeState.set(text.auditOpened);
+    } catch (openError) {
+      errorState.set(`${text.auditOpenFailed}${toErrorText(openError)}`);
+    }
   };
 
   const book = readingState.value;
@@ -1374,6 +1421,95 @@ function readingCompanionEntryScreen(ctx) {
               ctx.UI.Text({ text: text.history }),
             ],
           ),
+        ]),
+      ),
+    );
+  }
+
+  const auditGroups = auditGroupsState.value;
+  if (auditGroups.length > 0) {
+    children.push(
+      ctx.UI.Card(
+        { fillMaxWidth: true, containerColor: colors.surface },
+        ctx.UI.Column({ fillMaxWidth: true, padding: 16, spacing: 8 }, [
+          ctx.UI.Text({
+            text: text.auditTitle,
+            style: "titleMedium",
+            color: colors.onSurface,
+          }),
+          ...auditGroups.map((group) => {
+            const groupBook = String(
+              (group && (group.bookName || group.bookId)) || "",
+            ).trim();
+            const root =
+              group && group.root && typeof group.root === "object"
+                ? group.root
+                : null;
+            const groupChats =
+              group && Array.isArray(group.chats) ? group.chats : [];
+            return ctx.UI.Column({ fillMaxWidth: true, spacing: 4 }, [
+              ctx.UI.Text({
+                text: groupBook || (useEnglish ? "Book" : "书籍"),
+                style: "labelLarge",
+                color: colors.onSurface,
+              }),
+              root && root.chatId
+                ? ctx.UI.Text({
+                    text:
+                      (useEnglish
+                        ? "Audit parent · "
+                        : "审计父聊天 · ") + (root.title || root.chatId),
+                    style: "bodySmall",
+                    color: colors.onSurfaceVariant,
+                    maxLines: 1,
+                    overflow: "ellipsis",
+                  })
+                : ctx.UI.Spacer({ height: 0 }),
+              ...groupChats.map((chat) =>
+                chat && chat.chatId && chat.runId
+                  ? ctx.UI.Row(
+                      {
+                        fillMaxWidth: true,
+                        spacing: 8,
+                        verticalAlignment: "center",
+                        modifier: ctx.Modifier
+                          .fillMaxWidth()
+                          .clickable(() => openAuditChatByRunId(chat.runId)),
+                      },
+                      [
+                        ctx.UI.Column({ weight: 1, spacing: 2 }, [
+                          ctx.UI.Text({
+                            text: String(chat.title || "").trim() ||
+                              (useEnglish ? "Run chat" : "任务聊天"),
+                            style: "bodyMedium",
+                            color: colors.onSurface,
+                            maxLines: 1,
+                            overflow: "ellipsis",
+                          }),
+                          ctx.UI.Text({
+                            text:
+                              `${statusLabel(text, chat.status)} · ` +
+                              runTriggerLabel(text, chat.trigger),
+                            style: "bodySmall",
+                            color: colors.onSurfaceVariant,
+                          }),
+                        ]),
+                        ctx.UI.Text({
+                          text: useEnglish ? "Open ›" : "打开 ›",
+                          style: "labelMedium",
+                          color: colors.primary,
+                        }),
+                      ],
+                    )
+                  : ctx.UI.Spacer({ height: 0 }),
+              ),
+            ]);
+          }),
+          ctx.UI.Text({
+            text: text.auditDeleteHint,
+            style: "bodySmall",
+            color: colors.onSurfaceVariant,
+          }),
         ]),
       ),
     );
