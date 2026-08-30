@@ -78,7 +78,9 @@ class ReadingCompanionSubagentPathTest {
     @Test
     fun `coordinator creates isolated six-tool subagent turns that end with terminal tools`() {
         assertTrue(coordinatorSource.contains("isolatedToolPrompts = ReadingCompanionSubagentTools.prompts()"))
-        assertTrue(coordinatorSource.contains("terminalToolNames = ReadingCompanionSubagentTools.TERMINAL_TOOL_NAMES"))
+        assertTrue(coordinatorSource.contains("terminalToolNames ="))
+        assertTrue(coordinatorSource.contains("ReadingCompanionSubagentTools.TERMINAL_TOOL_NAMES"))
+        assertTrue(coordinatorSource.contains("setOf(ReadingCompanionSubagentTools.TOOL_SUBMIT_SUMMARY)"))
         assertTrue(coordinatorSource.contains("promptHooksEnabled = false"))
         assertTrue(coordinatorSource.contains("functionType = FunctionType.CHAT"))
         assertTrue(coordinatorSource.contains("taskId = null"))

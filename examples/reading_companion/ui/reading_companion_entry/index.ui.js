@@ -2,6 +2,11 @@ const TOOL_PACKAGE = "reading_companion";
 const AUTO_COMMENTARY_PACKAGE = "reading_companion_auto_commentary";
 const HISTORY_ROUTE =
   "toolpkg:com.operit.reading_companion:ui:reading_companion_history";
+const SUMMARIES_ROUTE =
+  "toolpkg:com.operit.reading_companion:ui:reading_companion_summaries";
+const FILES_ROUTE =
+  "toolpkg:com.operit.reading_companion:ui:reading_companion_files";
+let manualBatchStopRequested = false;
 
 function useStateValue(ctx, key, initialValue) {
   const pair = ctx.useState(key, initialValue);
@@ -115,9 +120,14 @@ function getText(useEnglish) {
       basicOff: "Turn this on before asking an ordinary chat about a Legado book.",
       autoTitle: "AI auto commentary",
       autoOn:
-        "On. The selected character pre-generates comments for the next chapter. See the current setup below.",
+        "On. The selected character pre-generates comments for the chapters ahead. See the current setup below.",
       autoOff:
-        "Off. Turn on to pre-generate next-chapter comments; this reads the next chapter and spends model tokens.",
+        "Off. Turn on to pre-generate chapters of commentary ahead; this reads later chapters and spends model tokens.",
+      prefetchLabel: "Pre-generate distance",
+      prefetchHint:
+        "Background and manual runs fill the next {n} chapters (1–10). The change applies right away.",
+      prefetchSaved: "Pre-generate distance updated.",
+      prefetchFailed: "Could not update the pre-generate distance: ",
       configTitle: "Current commentary setup",
       configCharacter: "Writer",
       configModel: "Model",
@@ -154,14 +164,48 @@ function getText(useEnglish) {
       preciseProgress: "Precise reading position available",
       chapterProgress: "Only chapter-level progress is available",
       history: "View all records",
+      summaries: "View chapter summaries",
+      files: "Browse saved book files",
+      manualTitle: "Manual generation",
+      manualHint:
+        "The commentary batch fills ahead of the current progress; the summary batch covers already-read chapters. Each selected chapter creates 1 subagent task (a task may take multiple model turns); chapters that already exist are skipped. Batches here only run when you tap them — never automatically.",
+      manualComments: "Generate commentary batch",
+      manualSummaries: "Generate summary batch",
+      batchCommentHint:
+        "Fills commentary ahead of the current reading position (pre-generation window); chapters with fresh commentary are skipped automatically.",
+      batchSummaryHint:
+        "Generates summaries for the current and already-read chapters; chapters with a fresh summary are skipped automatically.",
+      batchCount: "Count",
+      batchStart: "Start chapter (optional)",
+      batchEnd: "End chapter (optional)",
+      batchCalls: (count) =>
+        `Up to ${count} chapter subagent task(s); existing chapters are skipped and each task may use multiple model turns`,
+      batchRange: (start, end, count) =>
+        `Chapters ${start}–${end} · ${count} selected`,
+      batchDone: "Manual batch completed.",
+      batchPartial: "Manual batch partially completed.",
+      batchNoMore: "No more eligible chapters were found in this range.",
+      batchStopped: "Stopped after the current chapter. Completed chapters were kept.",
+      batchFailed: "Manual batch failed: ",
+      batchRunning: "Running the selected manual batch…",
+      batchProgress: (done, total) =>
+        `Finished ${done}/${total} requested chapters. Completed chapters are saved immediately.`,
+      batchStop: "Stop after current chapter",
+      batchStopQueued: "The batch will stop after the current chapter finishes.",
+      batchFailureLine: (chapter, error) =>
+        `Chapter ${chapter} failed: ${error || "unknown_error"}`,
+      filesHint:
+        "Open the local book workspace without leaving the app. content.md is read-only.",
       auditTitle: "Audit chats",
+      auditListSummary: (total, shown) =>
+        `${total} audit chats in total, showing the most recent ${shown}.`,
       auditOpened: "Audit chat opened.",
       auditOpenFailed: "Could not open the audit chat: ",
       auditDeleteHint:
         "These chats are permanently hidden; they can only be viewed or deleted from the hidden chat list.",
       refresh: "Refresh status",
       manage: "Open package management",
-      regenerate: "Generate next-chapter comments now",
+      regenerate: "Generate or prefill commentary now",
       regenerating: "Generating comments with the selected model…",
       latestRun: "Latest commentary task",
       flowTitle: "Generation flow",
@@ -223,7 +267,7 @@ function getText(useEnglish) {
       regenerateFailed: "Could not generate next-chapter comments: ",
       loadFailed: "Status check failed: ",
       readyNotice: "Status refreshed.",
-      generatedNotice: "The next chapter commentary task finished.",
+      generatedNotice: "A pre-generated commentary task finished.",
       hint:
         "Enable the ToolPkg, then use any ordinary chat. Reading guidance appears only when the conversation is about books or reading; other chats are unchanged.",
     };
@@ -237,9 +281,14 @@ function getText(useEnglish) {
     basicOff: "请先开启，再在普通对话中询问 Legado 书籍。",
     autoTitle: "AI 自动段评",
     autoOn:
-      "已开启。所选角色会预生成下一章段评；详细规则见下方“当前段评设置”。",
+      "已开启。所选角色会提前生成后续章节段评（提前量可在下方调整）；详细规则见下方“当前段评设置”。",
     autoOff:
-      "已关闭。开启后会按需读取最新章节内容，产生模型 Token 消耗。",
+      "已关闭。开启后会读取后续章节内容并提前生成段评，产生模型 Token 消耗。",
+    prefetchLabel: "提前生成段评（章）",
+    prefetchHint:
+      "后台与手动生成会补足未来 {n} 章段评（1～10 章），改动立即生效。",
+    prefetchSaved: "提前生成章数已更新。",
+    prefetchFailed: "更新提前生成章数失败：",
     configTitle: "当前段评设置",
     configCharacter: "作者",
     configModel: "模型",
@@ -271,13 +320,44 @@ function getText(useEnglish) {
     preciseProgress: "已获取精确阅读位置",
     chapterProgress: "当前只能获取章节级进度",
     history: "查看全部记录",
-    auditTitle: "审计对话",
-    auditOpened: "已打开审计对话。",
+    summaries: "查看章节摘要",
+    files: "浏览已保存的书籍文件",
+    manualTitle: "手动生成",
+    manualHint:
+      "段评批次在当前进度之后补足段评，摘要批次为已读章节生成摘要；每个选中章节创建 1 个子代理任务，任务内部可能有多轮模型调用，已存在的会自动跳过。本面板的批次只在你点击时执行，不会自动触发。",
+    manualComments: "生成段评批次",
+    manualSummaries: "生成摘要批次",
+    batchCommentHint: "在当前进度之后补足段评（基于提前生成窗口；已有有效段评的自动跳过）",
+    batchSummaryHint: "为当前及已读章节生成摘要（已有有效摘要的自动跳过）",
+    batchCount: "数量",
+    batchStart: "起始章节（可选）",
+    batchEnd: "结束章节（可选）",
+    batchCalls: (count) =>
+      `最多 ${count} 个章节子代理任务；已存在的自动跳过，每个任务内部可能有多轮模型调用`,
+    batchRange: (start, end, count) =>
+      `第 ${start}～${end} 章 · 共选择 ${count} 章`,
+    batchDone: "手动批次已完成。",
+    batchPartial: "手动批次部分完成。",
+    batchNoMore: "所选范围内没有更多符合条件的章节。",
+    batchStopped: "已在当前章节完成后停止；此前完成的章节均已保留。",
+    batchFailed: "手动批次失败：",
+    batchRunning: "正在执行所选手动批次…",
+    batchProgress: (done, total) =>
+      `已完成 ${done}/${total} 个请求章节；每章完成后都会立即保存。`,
+    batchStop: "完成当前章后停止",
+    batchStopQueued: "将在当前章节完成后停止本批次。",
+    batchFailureLine: (chapter, error) =>
+      `第 ${chapter} 章失败：${error || "unknown_error"}`,
+    filesHint: "无需离开应用即可浏览本地书籍工作区；content.md 只读。",
+      auditTitle: "审计对话",
+      auditListSummary: (total, shown) =>
+        `共 ${total} 条审计对话，当前仅显示最近 ${shown} 条。`,
+      auditOpened: "已打开审计对话。",
     auditOpenFailed: "无法打开审计对话：",
     auditDeleteHint: "这些聊天永久隐藏，只能在隐藏聊天列表查看或删除。",
     refresh: "刷新状态",
     manage: "打开包管理",
-    regenerate: "立即生成下一章段评",
+    regenerate: "立即生成/补全段评",
     regenerating: "正在使用所选模型生成段评…",
     latestRun: "最近一次段评任务",
     flowTitle: "生成流程",
@@ -341,7 +421,7 @@ function getText(useEnglish) {
     regenerateFailed: "生成下一章段评失败：",
     loadFailed: "状态检查失败：",
     readyNotice: "状态已刷新。",
-    generatedNotice: "下一章段评任务已完成。",
+    generatedNotice: "提前生成的段评任务已完成。",
     hint:
       "开启工具包后，请在任意普通对话中继续使用；只有谈到书籍/阅读时才会引导伴读工具，其他聊天不受影响。",
   };
@@ -532,8 +612,13 @@ function readingCompanionEntryScreen(ctx) {
   const autoEnabledState = useStateValue(ctx, "autoEnabled", false);
   const readingState = useStateValue(ctx, "readingState", null);
   const autoStatusState = useStateValue(ctx, "autoStatus", null);
+  const prefetchState = useStateValue(ctx, "autoPrefetch", 5);
   const historyState = useStateValue(ctx, "history", null);
-  const auditGroupsState = useStateValue(ctx, "auditGroups", []);
+  const auditGroupsState = useStateValue(ctx, "auditGroups", {
+    groups: [],
+    totalRunChats: 0,
+    shownRunChats: 0,
+  });
   const selectedPersonaState = useStateValue(ctx, "selectedPersona", null);
   const availableCardsState = useStateValue(ctx, "availableCards", []);
   const showCardPickerState = useStateValue(ctx, "showCardPicker", false);
@@ -541,6 +626,14 @@ function readingCompanionEntryScreen(ctx) {
   const cardsLoadedState = useStateValue(ctx, "cardsLoaded", false);
   const errorState = useStateValue(ctx, "error", "");
   const noticeState = useStateValue(ctx, "notice", "");
+  const batchCommentCountState = useStateValue(ctx, "batchCommentCount", "3");
+  const batchCommentStartState = useStateValue(ctx, "batchCommentStart", "");
+  const batchCommentEndState = useStateValue(ctx, "batchCommentEnd", "");
+  const batchSummaryCountState = useStateValue(ctx, "batchSummaryCount", "3");
+  const batchSummaryStartState = useStateValue(ctx, "batchSummaryStart", "");
+  const batchSummaryEndState = useStateValue(ctx, "batchSummaryEnd", "");
+  const batchResultState = useStateValue(ctx, "batchResult", null);
+  const manualBatchActiveState = useStateValue(ctx, "manualBatchActive", false);
 
   const loadDashboard = async (showNotice) => {
     loadingState.set(true);
@@ -557,7 +650,11 @@ function readingCompanionEntryScreen(ctx) {
       readingState.set(null);
       autoStatusState.set(null);
       historyState.set(null);
-      auditGroupsState.set([]);
+      auditGroupsState.set({
+        groups: [],
+        totalRunChats: 0,
+        shownRunChats: 0,
+      });
       selectedPersonaState.set(null);
 
       const errors = [];
@@ -604,8 +701,8 @@ function readingCompanionEntryScreen(ctx) {
           );
           auditGroupsState.set(
             auditResult && Array.isArray(auditResult.groups)
-              ? auditResult.groups
-              : [],
+              ? auditResult
+              : { groups: [], totalRunChats: 0, shownRunChats: 0 },
           );
         } catch (error) {
           errors.push(toErrorText(error));
@@ -621,6 +718,22 @@ function readingCompanionEntryScreen(ctx) {
               {},
             ),
           );
+        } catch (error) {
+          errors.push(toErrorText(error));
+        }
+        try {
+          const configResult = await callPackageTool(
+            ctx,
+            AUTO_COMMENTARY_PACKAGE,
+            "auto_commentary_get_config",
+            {},
+          );
+          const configured = Number(
+            configResult && configResult.prefetchAheadChapters || 0,
+          );
+          if (configured >= 1 && configured <= 10) {
+            prefetchState.set(configured);
+          }
         } catch (error) {
           errors.push(toErrorText(error));
         }
@@ -792,6 +905,39 @@ function readingCompanionEntryScreen(ctx) {
     }
   };
 
+  const changePrefetch = async (delta) => {
+    if (busyState.value) {
+      return;
+    }
+    const next = Math.min(
+      10,
+      Math.max(1, Number(prefetchState.value || 5) + delta),
+    );
+    if (next === Number(prefetchState.value || 5)) {
+      return;
+    }
+    busyState.set(true);
+    noticeState.set("");
+    errorState.set("");
+    try {
+      const result = await callPackageTool(
+        ctx,
+        AUTO_COMMENTARY_PACKAGE,
+        "auto_commentary_set_config",
+        { prefetchAheadChapters: next },
+      );
+      const updated = Number(
+        result && result.prefetchAheadChapters || next,
+      );
+      prefetchState.set(updated);
+      noticeState.set(text.prefetchSaved);
+    } catch (error) {
+      errorState.set(`${text.prefetchFailed}${toErrorText(error)}`);
+    } finally {
+      busyState.set(false);
+    }
+  };
+
   const regenerateComments = async () => {
     if (busyState.value || !autoEnabledState.value) {
       return;
@@ -886,6 +1032,147 @@ function readingCompanionEntryScreen(ctx) {
       return;
     }
     await Promise.resolve(ctx.navigate(HISTORY_ROUTE));
+  };
+
+  const openSummaries = async () => {
+    if (!basicEnabledState.value) {
+      return;
+    }
+    await Promise.resolve(ctx.navigate(SUMMARIES_ROUTE));
+  };
+
+  const openFiles = async () => {
+    if (!basicEnabledState.value) {
+      return;
+    }
+    await Promise.resolve(ctx.navigate(FILES_ROUTE));
+  };
+
+  const optionalChapterIndex = (value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized) {
+      return null;
+    }
+    const parsed = Number(normalized);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new Error(useEnglish ? "Chapter numbers must be positive integers." : "章节号必须是正整数。");
+    }
+    return parsed - 1;
+  };
+
+  const batchParameters = (countValue, startValue, endValue) => {
+    const count = Number(String(countValue || "").trim());
+    if (!Number.isInteger(count) || count < 1 || count > 10) {
+      throw new Error(useEnglish ? "Choose a count from 1 to 10." : "数量请选择 1～10。");
+    }
+    const start = optionalChapterIndex(startValue);
+    const end = optionalChapterIndex(endValue);
+    if (start !== null && end !== null && end < start) {
+      throw new Error(useEnglish ? "End chapter must not be before start chapter." : "结束章节不能早于起始章节。");
+    }
+    return {
+      count,
+      start_chapter_index: start,
+      end_chapter_index: end,
+    };
+  };
+
+  const runManualBatch = async (kind) => {
+    if (busyState.value || !book) {
+      return;
+    }
+    const isComments = kind === "comments";
+    const countValue = isComments
+      ? batchCommentCountState.value
+      : batchSummaryCountState.value;
+    const startValue = isComments
+      ? batchCommentStartState.value
+      : batchSummaryStartState.value;
+    const endValue = isComments
+      ? batchCommentEndState.value
+      : batchSummaryEndState.value;
+    busyState.set(true);
+    manualBatchActiveState.set(true);
+    manualBatchStopRequested = false;
+    busyLabelState.set(text.batchRunning);
+    errorState.set("");
+    noticeState.set("");
+    try {
+      const parameters = batchParameters(countValue, startValue, endValue);
+      // Manual commentary is an explicit user action and must not require enabling the
+      // background auto-commentary package (which would otherwise encourage background reads).
+      const packageName = TOOL_PACKAGE;
+      const action = isComments
+        ? "auto_commentary_manual_batch"
+        : "manual_batch_summaries";
+      const targetChapterIndices = [];
+      const failures = [];
+      let modelTaskCount = 0;
+      let completedRequests = 0;
+      let noMoreEligibleChapters = false;
+      for (let index = 0; index < parameters.count; index += 1) {
+        if (manualBatchStopRequested) {
+          break;
+        }
+        const result = await callPackageTool(ctx, packageName, action, {
+          ...parameters,
+          count: 1,
+        });
+        const resultTargets =
+          result && Array.isArray(result.targetChapterIndices)
+            ? result.targetChapterIndices
+            : [];
+        resultTargets.forEach((chapterIndex) => {
+          if (!targetChapterIndices.includes(chapterIndex)) {
+            targetChapterIndices.push(chapterIndex);
+          }
+        });
+        modelTaskCount += Number(result && result.modelTaskCount || resultTargets.length);
+        const resultFailures =
+          result && Array.isArray(result.failures) ? result.failures : [];
+        resultFailures.forEach((failure) => failures.push(failure));
+        completedRequests += Number(result && result.completedCount || 0);
+        batchResultState.set({
+          kind,
+          targetChapterIndices: [...targetChapterIndices],
+          modelTaskCount,
+          completedRequests,
+          requestedCount: parameters.count,
+          failedCount: failures.length,
+          failures: [...failures],
+          status: failures.length > 0 ? "completed_with_failures" : "running",
+        });
+        busyLabelState.set(text.batchProgress(completedRequests, parameters.count));
+        if (resultFailures.length > 0 || Number(result && result.failedCount || 0) > 0) {
+          const firstFailure = resultFailures[0] || {};
+          throw new Error(
+            text.batchFailureLine(
+              Number(firstFailure.chapterNumber || 0),
+              String(firstFailure.error || "unknown_error"),
+            ),
+          );
+        }
+        if (resultTargets.length === 0) {
+          noMoreEligibleChapters = true;
+          break;
+        }
+      }
+      noticeState.set(
+        manualBatchStopRequested
+          ? text.batchStopped
+          : noMoreEligibleChapters
+            ? text.batchNoMore
+            : text.batchDone,
+      );
+      await loadDashboard(false);
+    } catch (error) {
+      errorState.set(`${text.batchFailed}${toErrorText(error)}`);
+    } finally {
+      busyState.set(false);
+      manualBatchActiveState.set(false);
+      manualBatchStopRequested = false;
+      busyLabelState.set("");
+    }
   };
 
   const openAuditChatByRunId = async (runId) => {
@@ -1000,6 +1287,57 @@ function readingCompanionEntryScreen(ctx) {
           !busyState.value,
           toggleAuto,
         ),
+        autoEnabledState.value
+          ? ctx.UI.Row(
+              {
+                fillMaxWidth: true,
+                horizontalArrangement: "spaceBetween",
+                verticalAlignment: "center",
+              },
+              [
+                ctx.UI.Column({ weight: 1, spacing: 2 }, [
+                  ctx.UI.Text({
+                    text: text.prefetchLabel,
+                    style: "bodyMedium",
+                    color: colors.onSurface,
+                  }),
+                  ctx.UI.Text({
+                    text: String(text.prefetchHint || "").replace(
+                      "{n}",
+                      String(prefetchState.value || 5),
+                    ),
+                    style: "bodySmall",
+                    color: colors.onSurfaceVariant,
+                  }),
+                ]),
+                ctx.UI.Row({ spacing: 8, verticalAlignment: "center" }, [
+                  ctx.UI.OutlinedButton(
+                    {
+                      enabled:
+                        !busyState.value &&
+                        Number(prefetchState.value || 5) > 1,
+                      onClick: () => changePrefetch(-1),
+                    },
+                    [ctx.UI.Text({ text: "−" })],
+                  ),
+                  ctx.UI.Text({
+                    text: String(prefetchState.value || 5),
+                    style: "titleMedium",
+                    color: colors.onSurface,
+                  }),
+                  ctx.UI.OutlinedButton(
+                    {
+                      enabled:
+                        !busyState.value &&
+                        Number(prefetchState.value || 5) < 10,
+                      onClick: () => changePrefetch(1),
+                    },
+                    [ctx.UI.Text({ text: "+" })],
+                  ),
+                ]),
+              ],
+            )
+          : ctx.UI.Spacer({ height: 0 }),
       ]),
     ),
   ];
@@ -1241,6 +1579,176 @@ function readingCompanionEntryScreen(ctx) {
     );
   }
 
+  if (book) {
+    const commentCount = Number(batchCommentCountState.value || 0);
+    const summaryCount = Number(batchSummaryCountState.value || 0);
+    const commentStart = String(batchCommentStartState.value || "").trim();
+    const commentEnd = String(batchCommentEndState.value || "").trim();
+    const summaryStart = String(batchSummaryStartState.value || "").trim();
+    const summaryEnd = String(batchSummaryEndState.value || "").trim();
+    const rangeText = (start, end, count) => {
+      if (start && end) {
+        return text.batchRange(start, end, Math.max(0, count));
+      }
+      if (start) {
+        return text.batchRange(
+          start,
+          `${start}+${Math.max(0, count) - 1}`,
+          Math.max(0, count),
+        );
+      }
+      return text.batchCalls(Math.max(0, count));
+    };
+    children.push(
+      ctx.UI.Card(
+        {
+          fillMaxWidth: true,
+          containerColor: colors.tertiaryContainer,
+        },
+        ctx.UI.Column({ fillMaxWidth: true, padding: 16, spacing: 10 }, [
+          ctx.UI.Text({
+            text: text.manualTitle,
+            style: "titleMedium",
+            color: colors.onTertiaryContainer,
+          }),
+          ctx.UI.Text({
+            text: text.manualHint,
+            style: "bodySmall",
+            color: colors.onTertiaryContainer,
+          }),
+          ctx.UI.Text({
+            text: useEnglish ? "Commentary batch" : "段评批次",
+            style: "labelLarge",
+            color: colors.onTertiaryContainer,
+          }),
+          ctx.UI.Text({
+            text: text.batchCommentHint,
+            style: "bodySmall",
+            color: colors.onTertiaryContainer,
+          }),
+          ctx.UI.TextField({
+            fillMaxWidth: true,
+            label: text.batchCount,
+            value: batchCommentCountState.value,
+            onValueChange: batchCommentCountState.set,
+            singleLine: true,
+            enabled: !busyState.value,
+          }),
+          ctx.UI.Row({ fillMaxWidth: true, spacing: 8 }, [
+            ctx.UI.TextField({
+              weight: 1,
+              label: text.batchStart,
+              value: batchCommentStartState.value,
+              onValueChange: batchCommentStartState.set,
+              singleLine: true,
+              enabled: !busyState.value,
+            }),
+            ctx.UI.TextField({
+              weight: 1,
+              label: text.batchEnd,
+              value: batchCommentEndState.value,
+              onValueChange: batchCommentEndState.set,
+              singleLine: true,
+              enabled: !busyState.value,
+            }),
+          ]),
+          ctx.UI.Text({
+            text: rangeText(commentStart, commentEnd, commentCount),
+            style: "bodySmall",
+            color: colors.onTertiaryContainer,
+          }),
+          ctx.UI.OutlinedButton({
+            fillMaxWidth: true,
+            enabled:
+              basicEnabledState.value &&
+              !!selectedRoleCardId &&
+              !busyState.value,
+            onClick: () => runManualBatch("comments"),
+          }, ctx.UI.Text({ text: text.manualComments })),
+          ctx.UI.Text({
+            text: useEnglish ? "Chapter summary batch" : "章节摘要批次",
+            style: "labelLarge",
+            color: colors.onTertiaryContainer,
+          }),
+          ctx.UI.Text({
+            text: text.batchSummaryHint,
+            style: "bodySmall",
+            color: colors.onTertiaryContainer,
+          }),
+          ctx.UI.TextField({
+            fillMaxWidth: true,
+            label: text.batchCount,
+            value: batchSummaryCountState.value,
+            onValueChange: batchSummaryCountState.set,
+            singleLine: true,
+            enabled: !busyState.value,
+          }),
+          ctx.UI.Row({ fillMaxWidth: true, spacing: 8 }, [
+            ctx.UI.TextField({
+              weight: 1,
+              label: text.batchStart,
+              value: batchSummaryStartState.value,
+              onValueChange: batchSummaryStartState.set,
+              singleLine: true,
+              enabled: !busyState.value,
+            }),
+            ctx.UI.TextField({
+              weight: 1,
+              label: text.batchEnd,
+              value: batchSummaryEndState.value,
+              onValueChange: batchSummaryEndState.set,
+              singleLine: true,
+              enabled: !busyState.value,
+            }),
+          ]),
+          ctx.UI.Text({
+            text: rangeText(summaryStart, summaryEnd, summaryCount),
+            style: "bodySmall",
+            color: colors.onTertiaryContainer,
+          }),
+          ctx.UI.OutlinedButton({
+            fillMaxWidth: true,
+            enabled: !busyState.value,
+            onClick: () => runManualBatch("summaries"),
+          }, ctx.UI.Text({ text: text.manualSummaries })),
+          batchResultState.value
+            ? ctx.UI.Column({ fillMaxWidth: true, spacing: 4 }, [
+                ctx.UI.Text({
+                  text: `${
+                    Number(batchResultState.value.failedCount || 0) > 0
+                      ? text.batchPartial
+                      : text.batchDone
+                  } ${
+                    Array.isArray(batchResultState.value.targetChapterIndices)
+                      ? batchResultState.value.targetChapterIndices
+                          .map((index) => Number(index) + 1)
+                          .join(", ")
+                      : ""
+                  } · ${text.batchCalls(
+                    Number(batchResultState.value.modelTaskCount || 0),
+                  )}`,
+                  style: "bodySmall",
+                  color: colors.onTertiaryContainer,
+                }),
+                ...(Array.isArray(batchResultState.value.failures)
+                  ? batchResultState.value.failures.map((failure) =>
+                      ctx.UI.Text({
+                        text: text.batchFailureLine(
+                          Number(failure && failure.chapterNumber || 0),
+                          String(failure && failure.error || "unknown_error"),
+                        ),
+                        style: "bodySmall",
+                        color: colors.error,
+                      }),
+                    )
+                  : []),
+              ])
+            : ctx.UI.Spacer({ height: 0 }),
+        ]),
+      ),
+    );
+  }
+
   if (autoEnabledState.value && book) {
     const configuredModel = commentaryConfiguration
       ? `${modelSourceLabel(
@@ -1421,13 +1929,44 @@ function readingCompanionEntryScreen(ctx) {
               ctx.UI.Text({ text: text.history }),
             ],
           ),
+          ctx.UI.OutlinedButton(
+            {
+              fillMaxWidth: true,
+              enabled: !busyState.value,
+              onClick: openSummaries,
+            },
+            [
+              ctx.UI.Icon({ name: "Description", size: 18 }),
+              ctx.UI.Text({ text: text.summaries }),
+            ],
+          ),
+          ctx.UI.OutlinedButton(
+            {
+              fillMaxWidth: true,
+              enabled: !busyState.value,
+              onClick: openFiles,
+            },
+            [
+              ctx.UI.Icon({ name: "FolderOpen", size: 18 }),
+              ctx.UI.Text({ text: text.files }),
+            ],
+          ),
         ]),
       ),
     );
   }
 
-  const auditGroups = auditGroupsState.value;
+  const auditPayload = auditGroupsState.value;
+  const auditGroups =
+    auditPayload && Array.isArray(auditPayload.groups) ? auditPayload.groups : [];
   if (auditGroups.length > 0) {
+    const auditTotal = Number(
+      auditPayload.totalRunChats || 0,
+    );
+    const auditShown = Number(
+      auditPayload.shownRunChats || 0,
+    );
+    const hasHiddenAuditChats = auditTotal > auditShown && auditShown > 0;
     children.push(
       ctx.UI.Card(
         { fillMaxWidth: true, containerColor: colors.surface },
@@ -1510,6 +2049,13 @@ function readingCompanionEntryScreen(ctx) {
             style: "bodySmall",
             color: colors.onSurfaceVariant,
           }),
+          hasHiddenAuditChats
+            ? ctx.UI.Text({
+                text: text.auditListSummary(auditTotal, auditShown),
+                style: "bodySmall",
+                color: colors.onSurfaceVariant,
+              })
+            : ctx.UI.Spacer({ height: 0 }),
         ]),
       ),
     );
@@ -1551,23 +2097,40 @@ function readingCompanionEntryScreen(ctx) {
 
   if (busyState.value && busyLabelState.value) {
     children.push(
-      ctx.UI.Row(
-        {
-          fillMaxWidth: true,
-          spacing: 10,
-          verticalAlignment: "center",
-        },
+      ctx.UI.Column(
+        { fillMaxWidth: true, spacing: 8 },
         [
-          ctx.UI.CircularProgressIndicator({
-            width: 18,
-            height: 18,
-            strokeWidth: 2,
-          }),
-          ctx.UI.Text({
-            text: busyLabelState.value,
-            style: "bodyMedium",
-            color: colors.onSurfaceVariant,
-          }),
+          ctx.UI.Row(
+            {
+              fillMaxWidth: true,
+              spacing: 10,
+              verticalAlignment: "center",
+            },
+            [
+              ctx.UI.CircularProgressIndicator({
+                width: 18,
+                height: 18,
+                strokeWidth: 2,
+              }),
+              ctx.UI.Text({
+                text: busyLabelState.value,
+                style: "bodyMedium",
+                color: colors.onSurfaceVariant,
+              }),
+            ],
+          ),
+          manualBatchActiveState.value
+            ? ctx.UI.OutlinedButton(
+                {
+                  fillMaxWidth: true,
+                  onClick: () => {
+                    manualBatchStopRequested = true;
+                    busyLabelState.set(text.batchStopQueued);
+                  },
+                },
+                ctx.UI.Text({ text: text.batchStop }),
+              )
+            : ctx.UI.Spacer({ height: 0 }),
         ],
       ),
     );

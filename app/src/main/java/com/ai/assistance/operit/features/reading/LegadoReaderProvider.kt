@@ -69,6 +69,7 @@ class LegadoReaderProvider(
                     add(
                         ReaderChapter(
                             bookId = bookId,
+                            sourceId = item.getString("url"),
                             index = item.getInt("index"),
                             title = item.optString("title"),
                         )
@@ -123,6 +124,7 @@ class LegadoReaderProvider(
         }
         ReadableChapterContent(
             bookId = responseBookId,
+            sourceId = item.getString("chapterUrl"),
             chapterIndex = responseChapterIndex,
             chapterTitle = item.optString("chapterTitle"),
             content = content,
@@ -170,6 +172,7 @@ class LegadoReaderProvider(
         }
         AnnotationChapterContent(
             bookId = bookId,
+            sourceId = data.getString("chapterUrl"),
             chapterIndex = chapterIndex,
             chapterTitle = data.optString("chapterTitle"),
             content = paragraphs.joinToString("\n"),
@@ -228,13 +231,14 @@ class LegadoReaderProvider(
                     return root.opt("data").takeUnless { value -> value === JSONObject.NULL }
                 }
             } catch (error: ReaderProviderException) {
-                throw error
+                lastError = error
             } catch (error: SecurityException) {
                 lastError = error
             } catch (error: Throwable) {
                 lastError = error
             }
         }
+        if (lastError is ReaderProviderException) throw lastError
         throw ReaderProviderException(
             ReaderProviderException.Reason.CONNECTION_FAILED,
             "无法连接 Legado 阅读数据提供者",

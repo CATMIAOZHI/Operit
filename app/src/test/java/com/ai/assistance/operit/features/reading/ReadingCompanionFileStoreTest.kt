@@ -1,0 +1,478 @@
+package com.ai.assistance.operit.features.reading
+
+import android.content.Context
+import java.io.File
+import java.nio.file.Files
+import org.json.JSONObject
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.mockito.Mockito.mock
+
+class ReadingCompanionFileStoreTest {
+    private lateinit var root: File
+    private lateinit var store: ReadingCompanionFileStore
+
+    private val book = ReaderBook(
+        id = "book-1",
+        name = "测试书",
+        author = "作者",
+        totalChapterCount = 2,
+        lastReadAt = 1L,
+    )
+    private val chapter = ReaderChapter(
+        bookId = book.id,
+        sourceId = "source-1",
+        index = 0,
+        title = "第一章",
+    )
+
+    @Before
+    fun setUp() {
+        root = Files.createTempDirectory("reading-companion-file-store").toFile()
+        store = ReadingCompanionFileStore(mock(Context::class.java), root)
+        store.syncBookCatalog(book, listOf(chapter))
+    }
+
+    @After
+    fun tearDown() {
+        root.deleteRecursively()
+    }
+
+    @Test
+    fun `content file is persisted with independent hash metadata and path`() {
+        val content = "第一段\n第二段"
+        store.writeChapterContent(book, chapter, content)
+
+        val paths = store.chapterFilePaths(book.id, chapter.sourceId)
+        assertNotNull(paths)
+        assertEquals(
+            File(paths!!.getString("chapterDirectory"), "content.md").absolutePath,
+            paths.getString("contentPath"),
+        )
+        assertEquals(JSONObject.NULL, paths.get("summaryPath"))
+        assertEquals(content, File(paths.getString("contentPath")).readText())
+
+        val meta = JSONObject(File(paths.getString("metaPath")).readText())
+        assertEquals(ReadingCompanionFileStore.contentHash(content), meta.getString("contentFileHash"))
+        assertEquals(
+            ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE,
+            meta.getString("contentFileHashKind"),
+        )
+        assertFalse("仅保存正文不能伪造摘要 freshness hash", meta.has("contentHash"))
+    }
+
+    @Test
+    fun `content refresh replaces body atomically without changing summary freshness contract`() {
+        val firstContent = "旧正文"
+        val secondContent = "净化替换后的正文"
+        store.writeSummary(book, chapter, firstContent, "客观摘要")
+        val firstMeta = store.chapterFilePaths(book.id, chapter.sourceId)
+            ?.let { JSONObject(File(it.getString("metaPath")).readText()) }
+            ?: error("meta missing")
+        val firstSummaryHash = firstMeta.getString("contentHash")
+
+        store.writeChapterContent(book, chapter, secondContent)
+
+        val paths = store.chapterFilePaths(book.id, chapter.sourceId) ?: error("chapter missing")
+        assertEquals(secondContent, File(paths.getString("contentPath")).readText())
+        val meta = JSONObject(File(paths.getString("metaPath")).readText())
+        assertEquals(firstSummaryHash, meta.getString("contentHash"))
+        assertEquals(
+            ReadingCompanionFileStore.contentHash(secondContent),
+            meta.getString("contentFileHash"),
+        )
+        assertEquals("客观摘要", store.readSummary(book.id, chapter.sourceId, firstSummaryHash))
+        assertNull(
+            "新的正文 hash 不应让旧摘要通过 freshness 校验",
+            store.readSummary(
+                book.id,
+                chapter.sourceId,
+                ReadingCompanionFileStore.contentHash(secondContent),
+            ),
+        )
+    }
+
+    @Test
+    fun `verified legacy summary migration also persists fetched content`() {
+        val content = "旧版本已经处理过的完整正文"
+        val contentHash = ReadingCompanionFileStore.contentHash(content)
+        val knowledge = StoredChapterKnowledge(
+            bookId = book.id,
+            chapterIndex = chapter.index,
+            chapterTitle = chapter.title,
+            sourceEndPosition = content.length,
+            isComplete = true,
+            contentHash = contentHash,
+            summary = "旧版本摘要",
+            structuredJson = "{}",
+            keywords = "",
+            updatedAt = 10L,
+        )
+
+        store.migrateLegacyChapter(
+            book = book,
+            chapter = chapter,
+            knowledge = knowledge,
+            autoChapter = null,
+            comments = emptyList(),
+            sourceContent = content,
+            contentHashKind = ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE,
+        )
+
+        val paths = store.chapterFilePaths(book.id, chapter.sourceId) ?: error("chapter missing")
+        assertEquals(content, File(paths.getString("contentPath")).readText())
+        assertEquals("旧版本摘要", File(paths.getString("summaryPath")).readText().trim())
+        val meta = JSONObject(File(paths.getString("metaPath")).readText())
+        assertEquals(contentHash, meta.getString("contentFileHash"))
+        assertEquals(contentHash, meta.getString("contentHash"))
+    }
+
+    @Test
+    fun `pending legacy migration never downgrades newly generated chapter metadata`() {
+        val currentContent = "当前正文"
+        val currentComment = AutoCommentRecord(
+            bookId = book.id,
+            chapterIndex = chapter.index,
+            paragraphIndex = 0,
+            text = "当前段评",
+            kind = "reaction",
+            roleCardId = "role-current",
+            roleCardName = "当前伴读",
+            evidenceJson = "{}",
+            createdAt = 20L,
+        )
+        store.writeGeneratedChapter(
+            book = book,
+            chapter = chapter,
+            sourceContent = currentContent,
+            contentHash = ReadingCompanionFileStore.contentHash(currentContent),
+            contractHash = "current-contract",
+            roleCardId = "role-current",
+            roleCardName = "当前伴读",
+            summary = "当前摘要",
+            comments = listOf(currentComment),
+        )
+        val paths = store.chapterFilePaths(book.id, chapter.sourceId) ?: error("chapter missing")
+        val metaBefore = File(paths.getString("metaPath")).readText()
+        val summaryBefore = File(paths.getString("summaryPath")).readText()
+        val commentsBefore = File(paths.getString("commentsPath")).readText()
+        val legacyKnowledge = StoredChapterKnowledge(
+            bookId = book.id,
+            chapterIndex = chapter.index,
+            chapterTitle = chapter.title,
+            sourceEndPosition = 4,
+            isComplete = true,
+            contentHash = "legacy-hash",
+            summary = "旧摘要",
+            structuredJson = "{}",
+            keywords = "",
+            updatedAt = 10L,
+        )
+
+        store.migrateLegacyChapter(
+            book = book,
+            chapter = chapter,
+            knowledge = legacyKnowledge,
+            autoChapter = null,
+            comments = emptyList(),
+            sourceContent = currentContent,
+            contentHashKind = ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE,
+        )
+
+        assertEquals(metaBefore, File(paths.getString("metaPath")).readText())
+        assertEquals(summaryBefore, File(paths.getString("summaryPath")).readText())
+        assertEquals(commentsBefore, File(paths.getString("commentsPath")).readText())
+        assertEquals(
+            "current-contract",
+            JSONObject(File(paths.getString("metaPath")).readText()).getString("contractHash"),
+        )
+        assertEquals(
+            LegacyMigrationRequirements(summary = false, comments = false, content = false),
+            store.legacyMigrationRequirements(
+                bookId = book.id,
+                sourceId = chapter.sourceId,
+                chapterIndex = chapter.index,
+                hasLegacySummary = true,
+                hasLegacyComments = true,
+                hasLegacyContentSource = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `legacy summary can fill missing component without invalidating current comments`() {
+        val content = "同一份已验证正文"
+        val currentComment = AutoCommentRecord(
+            bookId = book.id,
+            chapterIndex = chapter.index,
+            paragraphIndex = 0,
+            text = "当前段评",
+            kind = "reaction",
+            roleCardId = "role-current",
+            roleCardName = "当前伴读",
+            evidenceJson = "{}",
+            createdAt = 20L,
+        )
+        store.writeGeneratedChapter(
+            book = book,
+            chapter = chapter,
+            sourceContent = content,
+            contentHash = ReadingCompanionFileStore.contentHash(content),
+            contractHash = "current-contract",
+            roleCardId = "role-current",
+            roleCardName = "当前伴读",
+            summary = "",
+            comments = listOf(currentComment),
+            publishSummary = false,
+        )
+        val legacyKnowledge = StoredChapterKnowledge(
+            bookId = book.id,
+            chapterIndex = chapter.index,
+            chapterTitle = chapter.title,
+            sourceEndPosition = content.length,
+            isComplete = true,
+            contentHash = ReadingCompanionFileStore.contentHash(content),
+            summary = "可补迁的旧摘要",
+            structuredJson = "{}",
+            keywords = "",
+            updatedAt = 10L,
+        )
+
+        store.migrateLegacyChapter(
+            book = book,
+            chapter = chapter,
+            knowledge = legacyKnowledge,
+            autoChapter = null,
+            comments = emptyList(),
+            sourceContent = content,
+            contentHashKind = ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE,
+        )
+
+        val paths = store.chapterFilePaths(book.id, chapter.sourceId) ?: error("chapter missing")
+        assertEquals("可补迁的旧摘要", File(paths.getString("summaryPath")).readText().trim())
+        assertEquals(
+            "current-contract",
+            JSONObject(File(paths.getString("metaPath")).readText()).getString("contractHash"),
+        )
+        assertEquals(
+            1,
+            JSONObject(File(paths.getString("commentsPath")).readText())
+                .getJSONArray("comments")
+                .length(),
+        )
+    }
+
+    @Test
+    fun `generated annotation chapter stores source body and preserves file metadata`() {
+        val content = "段落一\n段落二"
+        val comment = AutoCommentRecord(
+            bookId = book.id,
+            chapterIndex = chapter.index,
+            paragraphIndex = 1,
+            text = "有意思",
+            kind = "reaction",
+            roleCardId = "role-1",
+            roleCardName = "伴读",
+            evidenceJson = "{}",
+            createdAt = 2L,
+        )
+        store.writeGeneratedChapter(
+            book = book,
+            chapter = chapter,
+            sourceContent = content,
+            contentHash = ReadingCompanionFileStore.contentHash(content),
+            contractHash = "contract-1",
+            roleCardId = "role-1",
+            roleCardName = "伴读",
+            summary = "目标章摘要",
+            comments = listOf(comment),
+        )
+
+        val paths = store.chapterFilePaths(book.id, chapter.sourceId) ?: error("chapter missing")
+        assertTrue(File(paths.getString("contentPath")).isFile)
+        assertEquals(content, File(paths.getString("contentPath")).readText())
+        val meta = JSONObject(File(paths.getString("metaPath")).readText())
+        assertEquals(
+            ReadingCompanionFileStore.CONTENT_HASH_KIND_ANNOTATION,
+            meta.getString("contentFileHashKind"),
+        )
+        assertEquals(
+            ReadingCompanionFileStore.contentHash(content),
+            meta.getString("contentFileHash"),
+        )
+        assertEquals("contract-1", meta.getString("contractHash"))
+    }
+
+    @Test
+    fun `content-only chapter directory remains enumerable`() {
+        val content = "只有正文文件"
+        store.writeChapterContent(book, chapter, content)
+        val firstPaths = store.chapterFilePaths(book.id, chapter.sourceId) ?: error("chapter missing")
+        File(firstPaths.getString("metaPath")).delete()
+
+        val paths = store.chapterFilePaths(book.id, chapter.sourceId)
+        assertNotNull("只有 content.md 时仍应返回章节目录", paths)
+        assertEquals(
+            File(firstPaths.getString("contentPath")).absolutePath,
+            paths!!.getString("contentPath"),
+        )
+        assertEquals(JSONObject.NULL, paths.get("metaPath"))
+    }
+
+    @Test
+    fun `safe search paths exclude prefetched future chapters without listing every past chapter`() {
+        val chapters =
+            (0..101).map { index ->
+                ReaderChapter(
+                    bookId = book.id,
+                    sourceId = "source-$index",
+                    index = index,
+                    title = "第${index + 1}章",
+                )
+            }
+        store.syncBookCatalog(book.copy(totalChapterCount = chapters.size), chapters)
+        listOf(0, 99, 100, 101).forEach { index ->
+            store.writeChapterContent(book, chapters[index], "正文-$index")
+        }
+
+        val paths = store.safeChapterSearchPaths(book.id, chapters, beforeChapterIndex = 100)
+        val returned = (0 until paths.length()).map(paths::getString)
+        val firstGroupDirectory =
+            File(store.chaptersRootPath(book.id), "0001-0100").absolutePath
+        val currentPrefetchedDirectory =
+            store.chapterFilePaths(book.id, chapters[100].sourceId)
+                ?.getString("chapterDirectory")
+                ?: error("current chapter missing")
+        val futureChapterDirectory =
+            store.chapterFilePaths(book.id, chapters[101].sourceId)
+                ?.getString("chapterDirectory")
+                ?: error("future chapter missing")
+
+        assertEquals(listOf(firstGroupDirectory), returned)
+        assertFalse(currentPrefetchedDirectory in returned)
+        assertFalse(futureChapterDirectory in returned)
+    }
+
+    @Test
+    fun `search paths ignore removed sources while catalog sync preserves their files`() {
+        val removedChapter =
+            ReaderChapter(book.id, "source-removed", 1, "被替换章节")
+        store.syncBookCatalog(book, listOf(chapter, removedChapter))
+        store.writeChapterContent(book, removedChapter, "净化前旧正文")
+        val oldDirectory =
+            store.chapterFilePaths(book.id, removedChapter.sourceId)
+                ?.getString("chapterDirectory")
+                ?: error("old chapter missing")
+
+        val replacement =
+            ReaderChapter(book.id, "source-replacement", 1, "替换后章节")
+        store.syncBookCatalog(book, listOf(chapter, replacement))
+
+        assertTrue(File(oldDirectory).isDirectory)
+        assertEquals(
+            "净化前旧正文",
+            File(oldDirectory, ReadingCompanionFileStore.CONTENT_FILE_NAME).readText(),
+        )
+        val safePaths =
+            store.safeChapterSearchPaths(book.id, listOf(chapter, replacement), 1)
+        val allCurrentPaths =
+            store.allCurrentChapterSearchPaths(book.id, listOf(chapter, replacement))
+        listOf(safePaths, allCurrentPaths).forEach { searchPaths ->
+            assertFalse(
+                (0 until searchPaths.length())
+                    .map(searchPaths::getString)
+                    .any { path -> path == oldDirectory },
+            )
+        }
+
+        store.syncBookCatalog(book, listOf(chapter, removedChapter))
+        val restoredContentPath =
+            store.chapterFilePaths(book.id, removedChapter.sourceId)
+                ?.getString("contentPath")
+                ?: error("re-added stable source was not restored")
+        assertEquals("净化前旧正文", File(restoredContentPath).readText())
+    }
+
+    @Test
+    fun `unchanged catalog sync does not rewrite book metadata or catalogs`() {
+        val catalogPath = store.catalogPaths(book.id).getString(0)
+        val bookMetadata = File(store.bookMetadataPath(book.id))
+        val catalog = File(catalogPath)
+        val sentinelTimestamp = 1_234_567_890L
+        assertTrue(bookMetadata.setLastModified(sentinelTimestamp))
+        assertTrue(catalog.setLastModified(sentinelTimestamp))
+
+        store.syncBookCatalog(book, listOf(chapter))
+
+        assertEquals(sentinelTimestamp, bookMetadata.lastModified())
+        assertEquals(sentinelTimestamp, catalog.lastModified())
+    }
+
+    @Test
+    fun `persistent browser paginates active catalog files and keeps content read only`() {
+        store.writeChapterContent(book, chapter, "正文")
+        store.writeSummary(book, chapter, "正文", "摘要")
+        store.ensureCharactersDocument(book.id)
+        val listing = store.listPersistedFiles(book, listOf(chapter), offset = 0, limit = 2)
+        assertEquals(0, listing.getInt("offset"))
+        assertEquals(2, listing.getInt("limit"))
+        assertTrue(listing.getJSONArray("entries").length() <= 2)
+        assertTrue(listing.has("nextOffset"))
+
+        val entries = store.listPersistedFiles(book, listOf(chapter), 0, 100)
+            .getJSONArray("entries")
+        val contentEntry =
+            (0 until entries.length())
+                .map(entries::getJSONObject)
+                .firstOrNull { it.getString("name") == "content.md" }
+                ?: error("content.md was not listed")
+        assertTrue(contentEntry.getBoolean("readOnly"))
+        val read = store.readPersistedFile(book.id, contentEntry.getString("path"))
+        assertEquals("正文", read.getString("content"))
+        assertTrue(read.getBoolean("readOnly"))
+    }
+
+    @Test
+    fun `persistent browser rejects canonical path traversal and disallowed names`() {
+        val outside = File(root.parentFile, "book.md").apply { writeText("outside") }
+        try {
+            val traversal = File(store.bookRootPath(book.id), "../book.md").path
+            val traversalError =
+                runCatching { store.readPersistedFile(book.id, traversal) }.exceptionOrNull()
+            assertNotNull("越界路径必须被拒绝", traversalError)
+
+            val rootBook = File(store.bookRootPath(book.id), "book.md")
+            rootBook.writeText("inside")
+            val disallowed = File(store.bookRootPath(book.id), "secret.txt")
+            disallowed.writeText("secret")
+            val typeError =
+                runCatching { store.readPersistedFile(book.id, disallowed.path) }.exceptionOrNull()
+            assertNotNull("不在 allowlist 的文件必须被拒绝", typeError)
+        } finally {
+            outside.delete()
+        }
+    }
+
+    @Test
+    fun `persistent browser rejects content from a stale source directory`() {
+        store.writeChapterContent(book, chapter, "旧来源正文")
+        val stalePath =
+            store.chapterFilePaths(book.id, chapter.sourceId)
+                ?.getString("contentPath")
+                ?: error("stale chapter content missing")
+
+        val replacement = chapter.copy(sourceId = "source-replacement")
+        store.syncBookCatalog(book, listOf(replacement))
+        assertTrue(File(stalePath).isFile)
+
+        val error =
+            runCatching { store.readPersistedFile(book.id, stalePath) }.exceptionOrNull()
+        assertNotNull("已从当前 catalog 移除的来源目录必须拒绝读取", error)
+    }
+}

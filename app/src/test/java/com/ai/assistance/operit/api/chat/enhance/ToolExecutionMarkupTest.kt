@@ -117,6 +117,27 @@ class ToolExecutionMarkupTest {
     }
 
     @Test
+    fun resultAccumulator_preservesInterruptTurnAcrossResults() {
+        val accumulator = ToolExecutionManager.BoundedToolResultAccumulator()
+        accumulator.add(result(text = "one"))
+        assertFalse(accumulator.anyInterruptTurn)
+
+        accumulator.add(result(text = "two", interruptTurn = true))
+        assertTrue("任一结果置位后聚合结果必须保留 interruptTurn", accumulator.anyInterruptTurn)
+
+        accumulator.add(result(text = "three"))
+        assertTrue("后续普通结果不得清除已置位的 interruptTurn", accumulator.anyInterruptTurn)
+    }
+
+    @Test
+    fun resultAccumulator_keepsInterruptTurnFalseWhenNoResultInterrupts() {
+        val accumulator = ToolExecutionManager.BoundedToolResultAccumulator()
+        accumulator.add(result(text = "one"))
+        accumulator.add(result(text = "two", success = false, error = "failed"))
+        assertFalse(accumulator.anyInterruptTurn)
+    }
+
+    @Test
     fun cancelledResult_preservesAccumulatedOutput() {
         val invocation =
             ToolInvocation(
@@ -149,11 +170,13 @@ class ToolExecutionMarkupTest {
         text: String,
         success: Boolean = true,
         error: String? = null,
+        interruptTurn: Boolean = false,
     ) =
         ToolResult(
             toolName = "test",
             success = success,
             result = StringResultData(text),
             error = error,
+            interruptTurn = interruptTurn,
         )
 }

@@ -56,7 +56,7 @@ object ReadingCompanionBridge {
                     }
                     "get_current_book" -> service.currentBook().toJson()
                     "get_context" -> service.currentContext(
-                        parameters.optInt("max_characters", 32_000),
+                        parameters.optInt("max_characters", 16_000),
                         runtime?.callerCardId,
                     )
                     "get_recent_comments" -> service.recentCompanionComments(
@@ -69,7 +69,9 @@ object ReadingCompanionBridge {
                     )
                     "get_chapter_summary" -> service.chapterSummary(
                         chapterIndex = parameters.optNullableInt("chapter_index"),
-                        generateIfMissing = parameters.optBoolean("generate_if_missing", true),
+                        // Summary generation is never implicit.  The only generation entrypoint
+                        // is an explicit manual batch action below.
+                        generateIfMissing = parameters.optBoolean("generate_if_missing", false),
                         runtime = runtime,
                     )
                     "get_character" -> service.character(
@@ -79,6 +81,16 @@ object ReadingCompanionBridge {
                     "get_recent_summaries" -> service.recentSummaries(
                         count = parameters.optInt("count", 5),
                         runtime = runtime,
+                    )
+                    "get_local_files" -> service.localBookFiles(runtime?.callerCardId)
+                    "list_summary_files" -> service.persistedSummaryFiles()
+                    "list_persisted_files" -> service.listPersistedFiles(
+                        offset = parameters.optInt("offset", 0),
+                        limit = parameters.optInt("limit", ReadingCompanionService.PERSISTED_FILES_DEFAULT_LIMIT),
+                        callerRoleCardId = runtime?.callerCardId,
+                    )
+                    "read_persisted_file" -> service.readPersistedFile(
+                        path = parameters.optString("path"),
                     )
                     "refresh_progress" -> service.refreshAndIndex(
                         maxCompletedChapters = parameters.optInt("max_chapters", 3)
@@ -103,6 +115,27 @@ object ReadingCompanionBridge {
                         ReadingCompanionAutoCommentary.getInstance(context).detail(
                             parameters.optLong("runId", -1L),
                         )
+                    "auto_commentary_get_config" -> {
+                        val autoCommentary =
+                            ReadingCompanionAutoCommentary.getInstance(context)
+                        JSONObject().put(
+                            "prefetchAheadChapters",
+                            autoCommentary.prefetchAheadChapters(),
+                        )
+                    }
+                    "auto_commentary_set_config" -> {
+                        val autoCommentary =
+                            ReadingCompanionAutoCommentary.getInstance(context)
+                        JSONObject().put(
+                            "prefetchAheadChapters",
+                            autoCommentary.setPrefetchAheadChapters(
+                                parameters.optInt(
+                                    "prefetchAheadChapters",
+                                    AutoCommentSupport.DEFAULT_PREFETCH_AHEAD_CHAPTERS,
+                                ),
+                            ),
+                        )
+                    }
                     "queue_regenerate_next_chapter_comments" -> {
                         require(
                             callerPackageName ==
@@ -169,6 +202,37 @@ object ReadingCompanionBridge {
                             )
                             .toJson()
                     }
+                    "auto_commentary_manual_batch" -> {
+                        require(
+                            callerPackageName ==
+                                ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME ||
+                                callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                        ) { "该操作仅允许阅读伴侣工具包调用" }
+                        val count = parameters.optInt("count", -1)
+                        val start = parameters.optNullableInt("start_chapter_index")
+                        val end = parameters.optNullableInt("end_chapter_index")
+                        ReadingCompanionAutoCommentary.getInstance(context)
+                            .generateManualBatch(
+                                count = count,
+                                startChapterIndex = start,
+                                endChapterIndex = end,
+                                runtime = runtime,
+                            )
+                    }
+                    "manual_batch_summaries" -> {
+                        require(
+                            callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                        ) { "该操作仅允许阅读伴侣主包调用" }
+                        val count = parameters.optInt("count", -1)
+                        val start = parameters.optNullableInt("start_chapter_index")
+                        val end = parameters.optNullableInt("end_chapter_index")
+                        service.manualBatchSummaries(
+                            count = count,
+                            startChapterIndex = start,
+                            endChapterIndex = end,
+                            runtime = runtime,
+                        )
+                    }
                     "list_audit_chats" -> {
                         require(
                             callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
@@ -176,6 +240,10 @@ object ReadingCompanionBridge {
                         ReadingCompanionAutoCommentary.getInstance(context).listAuditChats(
                             parameters.optString("bookId").trim()
                                 .takeIf(String::isNotBlank),
+                            parameters.optInt(
+                                "limit",
+                                ReadingCompanionAutoCommentary.AUDIT_CHAT_LIST_DEFAULT_LIMIT,
+                            ),
                         )
                     }
                     else -> throw IllegalArgumentException("未知的伴读操作：$action")
@@ -233,7 +301,7 @@ object ReadingCompanionBridge {
         put("currentChapterIndexedUntil", currentChapterIndexedUntil)
         put(
             "backgroundWorkScheduled",
-            remainingCompletedChapters > 0 || remainingKnowledgeChapters > 0,
+            remainingCompletedChapters > 0,
         )
     }
 

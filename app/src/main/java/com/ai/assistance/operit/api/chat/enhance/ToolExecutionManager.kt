@@ -165,6 +165,10 @@ object ToolExecutionManager {
         var lastResultError: String? = null
             private set
 
+        /** 聚合过程中是否出现过 interruptTurn=true 的结果（任一结果置位即保留）。 */
+        var anyInterruptTurn: Boolean = false
+            private set
+
         fun add(result: ToolResult) {
             val resultText =
                 (if (result.success) {
@@ -180,6 +184,7 @@ object ToolExecutionManager {
             resultCount += 1
             lastResultSuccess = result.success
             lastResultError = result.error?.take(maxChars)
+            anyInterruptTurn = anyInterruptTurn || result.interruptTurn
         }
 
         fun isEmpty(): Boolean = resultCount == 0
@@ -1772,7 +1777,8 @@ object ToolExecutionManager {
                         toolName = displayToolName,
                         success = lastResultSuccess,
                         result = StringResultData(combinedResultString),
-                        error = collectedResults.lastResultError
+                        error = collectedResults.lastResultError,
+                        interruptTurn = collectedResults.anyInterruptTurn,
                     ).withExecutionMetadata(
                         invocation = invocation,
                         state = ToolExecutionState.COMPLETED,

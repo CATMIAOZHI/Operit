@@ -22,8 +22,8 @@
         "en": "Reading Companion Tools"
       },
       "description": {
-        "zh": "读取当前进度、回顾已读剧情、生成摘要、查询人物并保存读者笔记或预测。",
-        "en": "Reads current progress, recalls read plot, builds summaries, finds characters, and stores reader notes or predictions."
+        "zh": "读取当前进度、回顾已读剧情、按用户明确操作生成摘要、查询人物并保存读者笔记或预测。",
+        "en": "Reads current progress, recalls read plot, generates summaries only after explicit user actions, finds characters, and stores reader notes or predictions."
       }
     },
     {

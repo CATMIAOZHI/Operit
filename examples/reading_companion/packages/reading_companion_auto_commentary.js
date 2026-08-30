@@ -6,8 +6,8 @@
     "en": "AI Auto Commentary"
   },
   "description": {
-    "zh": "使用当前书籍所选角色卡，隔离读取下一章及最近最多 8 章、总计最多 4.8 万字的前情，生成少而精、按段落解锁的个性段评；Legado 将角色卡名字显示为作者。过程中会产生模型 Token 消耗。",
-    "en": "Uses the selected per-book character card, the next chapter, and up to 8 recent chapters of private context (48,000 characters total) to pre-generate sparse in-character comments. Legado shows the card name as author. This spends model tokens."
+    "zh": "使用当前书籍所选角色卡，隔离读取后续章节（默认提前 5 章，可在 1～10 章调整）及最近最多 8 章、总计最多 4.8 万字的前情，生成少而精、按段落解锁的个性段评；Legado 将角色卡名字显示为作者。过程中会产生模型 Token 消耗。",
+    "en": "Uses the selected per-book character card, the chapters ahead (default 5, adjustable from 1 to 10) and up to 8 recent chapters of private context (48,000 characters total) to pre-generate sparse in-character comments. Legado shows the card name as author. This spends model tokens."
   },
   "category": "AI Reading Companion",
   "enabledByDefault": false,
@@ -57,6 +57,32 @@
       ]
     },
     {
+      "name": "auto_commentary_get_config",
+      "description": {
+        "zh": "查看自动段评的提前生成章数配置。",
+        "en": "Show the auto commentary pre-generate distance configuration."
+      },
+      "parameters": []
+    },
+    {
+      "name": "auto_commentary_set_config",
+      "description": {
+        "zh": "设置自动段评提前生成的章数（1～10），改动立即生效并在空闲时补足新窗口。",
+        "en": "Set how many chapters ahead auto commentary pre-generates (1 to 10). The change applies right away and idle runs fill the new window."
+      },
+      "parameters": [
+        {
+          "name": "prefetchAheadChapters",
+          "description": {
+            "zh": "提前生成章数，1 到 10。",
+            "en": "Number of chapters ahead to pre-generate, 1 to 10."
+          },
+          "type": "number",
+          "required": true
+        }
+      ]
+    },
+    {
       "name": "queue_regenerate_next_chapter_comments",
       "description": {
         "zh": "在后台排队重新生成下一章段评并立即返回，供界面持续显示生成阶段。会产生模型调用。",
@@ -71,6 +97,42 @@
         "en": "Regenerate next-chapter comments. This invokes the model; the generated text and audit chat are available in run history afterwards."
       },
       "parameters": []
+    },
+    {
+      "name": "auto_commentary_manual_batch",
+      "description": {
+        "zh": "仅在用户明确操作时，为允许提前阅读窗口内的连续章节逐章生成段评。每章创建一个子代理任务，任务内部可能有多轮模型调用；返回实际目标列表和任务数，不会使用重复 force 循环。",
+        "en": "Only after an explicit user action, generate commentary chapter by chapter for a selected range within the read-ahead window. Creates one subagent task per chapter, and each task may use multiple model turns; returns the target list and task count without a repeated force loop."
+      },
+      "parameters": [
+        {
+          "name": "count",
+          "description": {
+            "zh": "数量 1 到 10",
+            "en": "Number of chapters, 1 to 10"
+          },
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "start_chapter_index",
+          "description": {
+            "zh": "从 0 开始的起始章节索引，可省略",
+            "en": "Zero-based start chapter index, optional"
+          },
+          "type": "number",
+          "required": false
+        },
+        {
+          "name": "end_chapter_index",
+          "description": {
+            "zh": "从 0 开始的结束章节索引，可省略",
+            "en": "Zero-based end chapter index, optional"
+          },
+          "type": "number",
+          "required": false
+        }
+      ]
     }
   ]
 }
@@ -144,7 +206,18 @@ exports.auto_commentary_history = (params = {}) =>
   run("auto_commentary_history", { limit: params.limit });
 exports.auto_commentary_run_detail = (params = {}) =>
   run("auto_commentary_run_detail", { runId: params.runId });
+exports.auto_commentary_get_config = () => run("auto_commentary_get_config");
+exports.auto_commentary_set_config = (params = {}) =>
+  run("auto_commentary_set_config", {
+    prefetchAheadChapters: params.prefetchAheadChapters,
+  });
 exports.queue_regenerate_next_chapter_comments = () =>
   run("queue_regenerate_next_chapter_comments");
 exports.regenerate_next_chapter_comments = () =>
   run("regenerate_next_chapter_comments");
+exports.auto_commentary_manual_batch = (params = {}) =>
+  run("auto_commentary_manual_batch", {
+    count: params.count,
+    start_chapter_index: params.start_chapter_index,
+    end_chapter_index: params.end_chapter_index,
+  });

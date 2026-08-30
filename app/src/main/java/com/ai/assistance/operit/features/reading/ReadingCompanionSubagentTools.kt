@@ -11,35 +11,34 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * 阅读伴侣段评审计子代理的 6 个专用工具。
+ * 阅读伴侣段评子代理的 6 个专用工具。
  *
  * 执行器只信任 callerChatId -> subagent child -> 注册会话的反查结果；模型传入的任何
  * bookId/chapterIndex/书籍参数一律忽略（isolated prompts 也不暴露这些参数）。
- * submit_candidate 只写入本次 run 会话候选，绝不直接 replaceAutoComments；空候选被拒绝，
- * 由模型选择重试或 abstain。每次工具执行前后执行 claim 心跳，affected != 1 即
- * claim_lost 并停止本 run。
+ * submit_summary / submit_comments 只写入本次 run 会话候选，绝不直接发布。每次工具执行前后执行 claim
+ * 心跳，affected != 1 即 claim_lost 并停止本 run。
  */
 object ReadingCompanionSubagentTools {
-    const val TOOL_GET_TARGET_CHAPTER = "reading_commentary_get_target_chapter"
-    const val TOOL_GET_PREVIOUS_CONTEXT = "reading_commentary_get_previous_context"
+    const val TOOL_LIST_CHAPTERS = "reading_commentary_list_chapters"
+    const val TOOL_READ_CHAPTER = "reading_commentary_read_chapter"
+    const val TOOL_GET_CHAPTER_SUMMARIES = "reading_commentary_get_chapter_summaries"
     const val TOOL_SEARCH = "reading_commentary_search"
-    const val TOOL_GET_CONSTRAINTS = "reading_commentary_get_constraints"
-    const val TOOL_SUBMIT_CANDIDATE = "reading_commentary_submit_candidate"
-    const val TOOL_ABSTAIN = "reading_commentary_abstain"
+    const val TOOL_SUBMIT_SUMMARY = "reading_commentary_submit_summary"
+    const val TOOL_SUBMIT_COMMENTS = "reading_commentary_submit_comments"
 
-    /** 隔离工具面（isolatedToolPrompts 只允许这 6 个名字；第 7 个名字会被硬拒绝）。 */
+    /** 隔离工具面只允许这 6 个名字。 */
     val TOOL_NAMES: Set<String> =
         setOf(
-            TOOL_GET_TARGET_CHAPTER,
-            TOOL_GET_PREVIOUS_CONTEXT,
+            TOOL_LIST_CHAPTERS,
+            TOOL_READ_CHAPTER,
+            TOOL_GET_CHAPTER_SUMMARIES,
             TOOL_SEARCH,
-            TOOL_GET_CONSTRAINTS,
-            TOOL_SUBMIT_CANDIDATE,
-            TOOL_ABSTAIN,
+            TOOL_SUBMIT_SUMMARY,
+            TOOL_SUBMIT_COMMENTS,
         )
 
-    /** 终结性工具：执行后本轮立即收尾，模型不得继续调用其他工具。 */
-    val TERMINAL_TOOL_NAMES: Set<String> = setOf(TOOL_SUBMIT_CANDIDATE, TOOL_ABSTAIN)
+    /** submit_comments 成功时通过 interruptTurn 收尾；失败时允许模型修正。 */
+    val TERMINAL_TOOL_NAMES: Set<String> = emptySet()
 
     /**
      * 内部能力受限工具集合（与 PermissionReviewInternalTools 同语义）：只在校验过的审计
@@ -59,18 +58,30 @@ object ReadingCompanionSubagentTools {
     fun prompts(): List<ToolPrompt> =
         listOf(
             ToolPrompt(
-                name = TOOL_GET_TARGET_CHAPTER,
+                name = TOOL_LIST_CHAPTERS,
                 description =
-                    "Read the complete next-chapter text that this audit run must comment on. " +
-                        "Paragraphs are labeled with anchor ids like p0001; quote only read " +
-                        "content from this chapter. Never outputs content outside the target chapter.",
+                    "List the target chapter and its four immediately preceding catalog entries. " +
+                        "Use the returned opaque chapterRef values; never guess chapter numbers.",
             ),
             ToolPrompt(
-                name = TOOL_GET_PREVIOUS_CONTEXT,
+                name = TOOL_READ_CHAPTER,
                 description =
-                    "Read the already-loaded previous-chapter context (up to 8 recent chapters, " +
-                    "bounded characters) in reading order. Use it to keep commentary consistent " +
-                    "with what already happened.",
+                    "Read one chapter from the required five-chapter window using chapterRef. " +
+                        "The target chapter includes paragraph anchor ids; previous chapters are " +
+                        "context only.",
+                parametersStructured =
+                    listOf(
+                        ToolParameterSchema(
+                            name = "chapterRef",
+                            description = "Opaque chapterRef returned by list_chapters.",
+                        ),
+                    ),
+            ),
+            ToolPrompt(
+                name = TOOL_GET_CHAPTER_SUMMARIES,
+                description =
+                    "Read persisted summaries for chapters before the five-chapter raw-text " +
+                        "window. Missing summaries are omitted.",
             ),
             ToolPrompt(
                 name = TOOL_SEARCH,
@@ -87,43 +98,38 @@ object ReadingCompanionSubagentTools {
                     ),
             ),
             ToolPrompt(
-                name = TOOL_GET_CONSTRAINTS,
+                name = TOOL_SUBMIT_SUMMARY,
                 description =
-                    "Show the persona (character card) this audit run works for and the exact " +
-                    "comment count, length, anchor, kind and evidence rules that submit_candidate " +
-                    "will enforce. Call it before drafting candidates.",
+                    "Stage the factual target-chapter summary before submitting comments. Usually " +
+                        "write 100 to 200 Chinese characters; use up to about 300 only for an " +
+                        "unusually dense chapter. Keep key events, character or relationship " +
+                        "changes, and unresolved questions; do not retell paragraph by paragraph. " +
+                        "This tool does not end the turn and may be called again to revise the summary.",
+                parametersStructured =
+                    listOf(
+                        ToolParameterSchema(
+                            name = "summary",
+                            description =
+                                "Factual target-chapter summary without persona voice. Usually " +
+                                    "100-200 Chinese characters; dense chapters may use up to about 300.",
+                        ),
+                    ),
             ),
             ToolPrompt(
-                name = TOOL_SUBMIT_CANDIDATE,
+                name = TOOL_SUBMIT_COMMENTS,
                 description =
-                    "Submit the final candidate comments for this run in one call. Provide a JSON " +
-                    "comments array; each item uses anchorId (like p0001), text, kind, " +
-                    "evidenceIds and optional evidenceQuote exactly as get_constraints specifies. " +
-                    "An empty or fully-invalid list is rejected: submit a non-empty valid list or " +
-                    "call abstain instead. This ends the turn.",
+                    "Submit 0 to 6 sparse in-character comments after submit_summary. Use an empty " +
+                        "JSON array when no comment fits. Each comment uses anchorId, text, kind, " +
+                        "evidenceIds and optional evidenceQuote. A successful submission atomically " +
+                        "finalizes the staged summary and comments, then ends the turn.",
                 parametersStructured =
                     listOf(
                         ToolParameterSchema(
                             name = "comments",
                             description =
-                                "JSON array of candidate comments, for example " +
+                                "Raw JSON array of candidate comments, for example " +
                                     "[{\"anchorId\":\"p0001\",\"text\":\"...\",\"kind\":\"reaction\"," +
                                     "\"evidenceIds\":[\"p0001\"],\"evidenceQuote\":\"...\"}]",
-                        ),
-                    ),
-            ),
-            ToolPrompt(
-                name = TOOL_ABSTAIN,
-                description =
-                    "Abstain from commenting on this chapter (for example the chapter has no " +
-                    "suitable content). Marks the run as abstained and ends the turn; existing " +
-                    "comments are never overwritten.",
-                parametersStructured =
-                    listOf(
-                        ToolParameterSchema(
-                            name = "reason",
-                            description = "Short reason for abstaining.",
-                            required = false,
                         ),
                     ),
             ),
@@ -136,9 +142,16 @@ object ReadingCompanionSubagentTools {
         if (callerChatId == null) return failure(tool, ERROR_NO_CALLER)
         val session = ReadingCompanionSubagentSessionRegistry.sessionForChildChat(callerChatId)
         if (session == null) return failure(tool, ERROR_NO_SESSION)
+        if (session.submissionFinalized) {
+            return failure(
+                tool,
+                "候选已提交完成，本 run 不再接受任何工具调用；如需调整请等待下一次生成",
+            )
+        }
         val stopped = session.stoppedReason
         if (stopped != null) return failure(tool, "生成已停止（$stopped）")
         if (
+            !session.summaryOnly &&
             !session.backend.heartbeatClaimIfOwned(
                 session.bookId,
                 session.chapterIndex,
@@ -156,6 +169,7 @@ object ReadingCompanionSubagentTools {
         }
         val finishedAt = System.currentTimeMillis()
         if (
+            !session.summaryOnly &&
             session.stoppedReason == null &&
                 !session.backend.heartbeatClaimIfOwned(
                     session.bookId,
@@ -183,8 +197,7 @@ object ReadingCompanionSubagentTools {
         )
         session.backend.incrementRunToolInvocation(session.runId)
         val evidenceAdvanced =
-            tool.name == TOOL_SUBMIT_CANDIDATE && executed.success &&
-                session.candidateDrafts.isNotEmpty()
+            tool.name in setOf(TOOL_SUBMIT_SUMMARY, TOOL_SUBMIT_COMMENTS) && executed.success
         return when (
             session.loopGuard.recordResult(
                 toolName = tool.name,
@@ -210,48 +223,142 @@ object ReadingCompanionSubagentTools {
         session: ReadingCompanionRunSession,
     ): ToolResult =
         when (tool.name) {
-            TOOL_GET_TARGET_CHAPTER -> getTargetChapter(tool, session)
-            TOOL_GET_PREVIOUS_CONTEXT -> getPreviousContext(tool, session)
+            TOOL_LIST_CHAPTERS -> listChapters(tool, session)
+            TOOL_READ_CHAPTER -> readChapter(tool, session)
+            TOOL_GET_CHAPTER_SUMMARIES -> getChapterSummaries(tool, session)
             TOOL_SEARCH -> search(tool, session)
-            TOOL_GET_CONSTRAINTS -> getConstraints(tool, session)
-            TOOL_SUBMIT_CANDIDATE -> submitCandidate(tool, session)
-            TOOL_ABSTAIN -> abstain(tool, session)
+            TOOL_SUBMIT_SUMMARY -> submitSummary(tool, session)
+            TOOL_SUBMIT_COMMENTS -> submitComments(tool, session)
             else -> failure(tool, "未知的阅读伴读审计工具：${tool.name}")
         }
 
-    private fun getTargetChapter(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
-        val paragraphs = session.targetParagraphs()
-        val payload =
-            JSONObject()
-                .put("bookName", session.bookName)
-                .put("chapterIndex", session.chapterIndex)
-                .put("chapterNumber", session.chapterIndex + 1)
-                .put("chapterTitle", session.chapterTitle)
-                .put("paragraphCount", paragraphs.size)
-                .put("content", AutoCommentSupport.labeledParagraphs(paragraphs))
-        return success(tool, payload)
+    private fun requiredWindow(session: ReadingCompanionRunSession): List<ReaderChapter> {
+        val ordered = session.chapters.sortedBy(ReaderChapter::index)
+        val targetPosition = ordered.indexOfFirst { it.index == session.chapterIndex }
+        if (targetPosition < 0) return emptyList()
+        return ordered.subList(maxOf(0, targetPosition - 4), targetPosition + 1)
     }
 
-    private fun getPreviousContext(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
+    private fun listChapters(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
+        val targetRef = ReadingCompanionFileStore.chapterRef(
+            session.bookId,
+            session.targetChapter().sourceId,
+        )
         val chapters =
             JSONArray().apply {
-                session.previousContext.forEach { chapter ->
+                requiredWindow(session).forEach { chapter ->
                     put(
                         JSONObject()
-                            .put("chapterIndex", chapter.chapterIndex)
-                            .put("chapterNumber", chapter.chapterIndex + 1)
-                            .put("chapterTitle", chapter.chapterTitle)
-                            .put("excerptFromEnd", chapter.excerptFromEnd)
-                            .put("content", chapter.content),
+                            .put(
+                                "chapterRef",
+                                ReadingCompanionFileStore.chapterRef(
+                                    session.bookId,
+                                    chapter.sourceId,
+                                ),
+                            )
+                            .put("chapterIndex", chapter.index)
+                            .put("chapterNumber", chapter.index + 1)
+                            .put("chapterTitle", chapter.title)
+                            .put("isTarget", chapter.index == session.chapterIndex),
                     )
                 }
             }
         return success(
             tool,
             JSONObject()
+                .put("bookName", session.bookName)
+                .put("targetChapterRef", targetRef)
                 .put("chapterCount", chapters.length())
                 .put("chapters", chapters),
         )
+    }
+
+    private fun readChapter(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
+        val chapterRef =
+            tool.parameters.firstOrNull { it.name == "chapterRef" }?.value?.trim().orEmpty()
+        val chapter = requiredWindow(session).firstOrNull {
+            ReadingCompanionFileStore.chapterRef(session.bookId, it.sourceId) == chapterRef
+        } ?: return failure(tool, "chapterRef 不属于目标章及其前四章，请先调用 list_chapters")
+        val target = chapter.index == session.chapterIndex
+        val content =
+            if (target) {
+                session.targetContent
+            } else {
+                session.previousContext.firstOrNull { it.sourceId == chapter.sourceId }?.content
+                    ?: return failure(tool, "该前文章节正文未能从 Legado 加载")
+            }
+        val payload =
+            JSONObject()
+                .put("chapterRef", chapterRef)
+                .put("chapterNumber", chapter.index + 1)
+                .put("chapterTitle", chapter.title)
+                .put("isTarget", target)
+        if (target) {
+            val paragraphs = AutoCommentSupport.paragraphs(content)
+            payload
+                .put("paragraphCount", paragraphs.size)
+                .put("content", AutoCommentSupport.labeledParagraphs(paragraphs))
+        } else {
+            payload.put("content", content)
+        }
+        return success(tool, payload)
+    }
+
+    private fun getChapterSummaries(
+        tool: AITool,
+        session: ReadingCompanionRunSession,
+    ): ToolResult {
+        val rawWindowSources = requiredWindow(session).mapTo(hashSetOf(), ReaderChapter::sourceId)
+        val candidates =
+            session.chapters
+                .asSequence()
+                .filter { it.index < session.chapterIndex && it.sourceId !in rawWindowSources }
+                .filter {
+                    session.backend.hasPersistedSummary(session.bookId, it.sourceId)
+                }
+                .sortedByDescending(ReaderChapter::index)
+                .take(MAX_SUMMARY_FRESHNESS_CANDIDATES)
+                .toList()
+        val deadline = System.nanoTime() + SUMMARY_FRESHNESS_BUDGET_NS
+        val freshSummaries = mutableListOf<Pair<ReaderChapter, String>>()
+        for (chapter in candidates) {
+            if (
+                freshSummaries.size >= MAX_RETURNED_SUMMARIES ||
+                System.nanoTime() >= deadline
+            ) {
+                break
+            }
+            val summary =
+                runBlockingIoPreservingToolRuntimeContext {
+                    session.backend.readPersistedSummary(
+                        session.bookId,
+                        chapter.sourceId,
+                        chapter.index,
+                    )
+                }
+            if (summary != null) freshSummaries += chapter to summary
+        }
+        val summaries =
+            JSONArray().apply {
+                freshSummaries
+                    .asReversed()
+                    .forEach { (chapter, summary) ->
+                        put(
+                            JSONObject()
+                                .put(
+                                    "chapterRef",
+                                    ReadingCompanionFileStore.chapterRef(
+                                        session.bookId,
+                                        chapter.sourceId,
+                                    ),
+                                )
+                                .put("chapterNumber", chapter.index + 1)
+                                .put("chapterTitle", chapter.title)
+                                .put("summary", summary),
+                        )
+                    }
+            }
+        return success(tool, JSONObject().put("summaries", summaries))
     }
 
     private fun search(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
@@ -265,74 +372,159 @@ object ReadingCompanionSubagentTools {
         return success(tool, result)
     }
 
-    private fun getConstraints(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
-        // 数字与 AutoCommentSupport.parseAndValidate 的接受规则保持一致；提交校验以
-        // parseAndValidate 为唯一事实来源，此处文案仅为模型指引。
-        val payload =
-            JSONObject()
-                .put("roleCardName", session.roleCardName)
-                .put("roleCardPrompt", session.rolePrompt)
-                .put("bookName", session.bookName)
-                .put("chapterIndex", session.chapterIndex)
-                .put("chapterNumber", session.chapterIndex + 1)
-                .put("chapterTitle", session.chapterTitle)
-                .put(
-                    "rules",
-                    "Write 2 to 6 in-character comments for the target chapter only. " +
-                        "One comment per paragraph; anchorId like p0001 must exist in the " +
-                        "labeled content. Each text is at most 80 characters, concise, " +
-                        "in the persona's voice, and must not summarize the whole chapter or " +
-                        "spoil anything beyond the anchored paragraph. kind is a short " +
-                        "category such as reaction/echo/question. evidenceIds must include " +
-                        "the anchored paragraph and stay within this chapter; evidenceQuote " +
-                        "must be an exact substring of the cited paragraph. Candidates are " +
-                        "deduplicated by paragraph and by text.",
-                )
-                .put("suggestedCount", session.targetCount())
-        return success(tool, payload)
-    }
-
-    private fun submitCandidate(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
-        val commentsJson =
-            tool.parameters.firstOrNull { it.name == "comments" }?.value?.trim().orEmpty()
-        val drafts =
-            runCatching {
-                    AutoCommentSupport.parseAndValidate(
-                        rawJson = commentsJson,
-                        paragraphs = session.targetParagraphs(),
-                        maximumComments = session.targetCount(),
-                    )
-                }
-                .getOrElse { emptyList() }
-        if (drafts.isEmpty()) {
-            return failure(
-                tool,
-                "候选为空或全部校验失败：请提交至少一条有效候选（anchorId/text/kind/evidence " +
-                    "按 get_constraints 规则），或调用 abstain 弃权；空列表不会覆盖任何已有段评",
-            )
+    private fun submitSummary(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
+        val summary =
+            tool.parameters.firstOrNull { it.name == "summary" }?.value?.trim().orEmpty()
+        if (summary.isBlank() || summary.length > MAX_SUMMARY_CHARS) {
+            return failure(tool, "summary 必须为 1..$MAX_SUMMARY_CHARS 字的目标章客观摘要")
         }
-        session.submitCandidates(drafts)
+        if (!session.updateCandidateSummary(summary)) {
+            return failure(tool, "本 run 已完成提交或停止，无法再更新摘要")
+        }
+        if (session.summaryOnly) {
+            return when (session.tryFinalizeSummaryOnly()) {
+                SubmitCommentsStatus.FINALIZED ->
+                    ToolResult(
+                        toolName = tool.name,
+                        success = true,
+                        result =
+                            StringResultData(
+                                JSONObject()
+                                    .put("ok", true)
+                                    .put("code", "summary_submitted")
+                                    .put("summaryChars", summary.length)
+                                    .put("status", "submitted")
+                                    .toString(),
+                            ),
+                        // Summary-only sessions use submit_summary as their terminal action and
+                        // never stage or publish persona comments.
+                        interruptTurn = true,
+                    )
+                SubmitCommentsStatus.ALREADY_FINALIZED ->
+                    failure(tool, "本 run 已完成摘要提交，不能重复提交")
+                SubmitCommentsStatus.SUMMARY_REQUIRED ->
+                    failure(tool, "summary_required：摘要不能为空")
+            }
+        }
         return success(
             tool,
             JSONObject()
-                .put("accepted", drafts.size)
-                .put(
-                    "anchors",
-                    JSONArray().apply {
-                        drafts.forEach { put(AutoCommentSupport.paragraphId(it.paragraphIndex)) }
-                    },
-                )
-                .put("status", "submitted"),
+                .put("ok", true)
+                .put("code", "summary_staged")
+                .put("summaryChars", summary.length)
+                .put("nextTool", TOOL_SUBMIT_COMMENTS)
+                .put("status", "awaiting_comments"),
         )
     }
 
-    private fun abstain(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
-        val reason =
-            tool.parameters.firstOrNull { it.name == "reason" }?.value?.trim()?.take(200)
-        session.markAbstained()
-        return success(
-            tool,
-            JSONObject().put("status", "abstained").put("reason", reason ?: ""),
+    private fun submitComments(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
+        if (session.candidateSummary.isBlank()) {
+            return ToolResult(
+                toolName = tool.name,
+                success = false,
+                result = StringResultData(""),
+                error =
+                    JSONObject()
+                        .put("ok", false)
+                        .put("code", "summary_required")
+                        .put("retryable", true)
+                        .put("hint", "call $TOOL_SUBMIT_SUMMARY before submitting comments")
+                        .toString(),
+                interruptTurn = false,
+            )
+        }
+        val commentsJson =
+            tool.parameters.firstOrNull { it.name == "comments" }?.value?.trim().orEmpty()
+        val emptyComments =
+            runCatching {
+                val array = JSONArray(commentsJson)
+                array.length() == 0
+            }.getOrDefault(false)
+        val report =
+            if (emptyComments) {
+                null
+            } else {
+                AutoCommentSupport.parseAndValidateReport(
+                    rawJson = commentsJson,
+                    paragraphs = session.targetParagraphs(),
+                    maximumComments = AutoCommentSupport.MAX_COMMENTS,
+                )
+            }
+        val drafts = report?.accepted.orEmpty()
+        if (!emptyComments && (drafts.isEmpty() || report?.code != AutoCommentSupport.REPORT_SUBMITTED)) {
+            // 失败诊断：只带序号与原因码，绝不回灌正文/引用原文。
+            val diagnostic =
+                JSONObject()
+                    .put("ok", false)
+                    .put("code", report?.code ?: "invalid_json_shape")
+                    .put("inputCount", report?.inputCount ?: 0)
+                    .put("acceptedCount", 0)
+                    .put("rejectedCount", report?.rejectedCount ?: 0)
+                    .put(
+                        "reasons",
+                        JSONObject(report?.reasonCounts.orEmpty()),
+                    )
+                    .put(
+                        "rejections",
+                        JSONArray().apply {
+                            report?.rejections.orEmpty().forEach { rejection ->
+                                put(
+                                    JSONObject()
+                                        .put("candidateNumber", rejection.candidateNumber)
+                                        .put("reasons", JSONArray(rejection.reasons)),
+                                )
+                            }
+                        },
+                    )
+                    .put("retryable", true)
+                    .put(
+                        "expectedFormat",
+                        "raw JSON array string: [{\"anchorId\":\"p0001\",\"text\":\"...\"," +
+                            "\"kind\":\"reaction\",\"evidenceIds\":[\"p0001\"]," +
+                            "\"evidenceQuote\":\"...\"}]",
+                    )
+                    .put(
+                        "hint",
+                        "fix the reported candidates and resubmit; use [] when this chapter " +
+                            "should have no comments",
+                    )
+            return ToolResult(
+                toolName = tool.name,
+                success = false,
+                result = StringResultData(""),
+                error = diagnostic.toString(),
+                interruptTurn = false,
+            )
+        }
+        when (session.tryFinalizeComments(drafts)) {
+            SubmitCommentsStatus.SUMMARY_REQUIRED ->
+                return failure(tool, "summary_required：请先调用 $TOOL_SUBMIT_SUMMARY")
+            SubmitCommentsStatus.ALREADY_FINALIZED ->
+                return failure(tool, "本 run 已有成功的 submit_comments，忽略并发重复提交")
+            SubmitCommentsStatus.FINALIZED -> Unit
+        }
+        return ToolResult(
+            toolName = tool.name,
+            success = true,
+            result =
+                StringResultData(
+                    JSONObject()
+                        .put("ok", true)
+                        .put("code", AutoCommentSupport.REPORT_SUBMITTED)
+                        .put("summaryFinalized", true)
+                        .put("acceptedCount", drafts.size)
+                        .put(
+                            "anchors",
+                            JSONArray().apply {
+                                drafts.forEach {
+                                    put(AutoCommentSupport.paragraphId(it.paragraphIndex))
+                                }
+                            },
+                        )
+                        .put("status", "submitted")
+                        .toString(),
+                ),
+            interruptTurn = true,
         )
     }
 
@@ -350,12 +542,18 @@ object ReadingCompanionSubagentTools {
             result = StringResultData(""),
             error = message,
         )
+
+    private const val MAX_RETURNED_SUMMARIES = 12
+    private const val MAX_SUMMARY_FRESHNESS_CANDIDATES = 36
+    private const val SUMMARY_FRESHNESS_BUDGET_NS = 8_000_000_000L
+    private const val MAX_SUMMARY_CHARS = 4_000
 }
 
 /** 生产实现：包装 reading.db 与伴读服务（search 走同一兼容模型）。 */
 class ProductionReadingCompanionSubagentBackend(
     private val store: ReadingCompanionStore,
     private val service: ReadingCompanionService,
+    private val fileStore: ReadingCompanionFileStore,
 ) : ReadingCompanionSubagentBackend {
     override fun heartbeatClaimIfOwned(bookId: String, chapterIndex: Int, runId: Long): Boolean =
         store.heartbeatClaimIfOwned(bookId, chapterIndex, runId)
@@ -383,6 +581,16 @@ class ProductionReadingCompanionSubagentBackend(
 
     override fun incrementRunModelRound(runId: Long): Boolean =
         store.incrementRunModelRound(runId)
+
+    override fun hasPersistedSummary(bookId: String, sourceId: String): Boolean =
+        fileStore.hasSummary(bookId, sourceId)
+
+    override suspend fun readPersistedSummary(
+        bookId: String,
+        sourceId: String,
+        chapterIndex: Int,
+    ): String? =
+        service.readFreshPersistedSummary(bookId, sourceId, chapterIndex)
 
     override suspend fun search(query: String): JSONObject =
         service.search(query, ToolExecutionManager.currentToolRuntimeContext())
