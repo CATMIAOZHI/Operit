@@ -372,7 +372,8 @@ fun AgentChatInputSection(
     val currentModelName by actualViewModel.modelName.collectAsState()
     val configMappingWithIndex by
         functionalConfigManager.functionConfigMappingWithIndexFlow.collectAsState(initial = emptyMap())
-    var configSummaries by remember { mutableStateOf<List<ModelConfigSummary>>(emptyList()) }
+    val configSummaries by
+            modelConfigManager.configSummariesFlow.collectAsState(initial = emptyList())
     var currentModelParameters by remember {
         mutableStateOf<List<ModelParameter<*>>>(emptyList())
     }
@@ -406,7 +407,6 @@ fun AgentChatInputSection(
         }
 
     LaunchedEffect(Unit) {
-        configSummaries = modelConfigManager.getAllConfigSummaries()
         val profileIds = userPreferencesManager.memorySpaceListFlow.first()
         preferenceProfiles =
             profileIds.map { profileId -> userPreferencesManager.getMemorySpaceFlow(profileId).first() }
@@ -414,7 +414,6 @@ fun AgentChatInputSection(
 
     LaunchedEffect(showModelSelectorPopup.value, effectiveConfigMapping.configId) {
         if (showModelSelectorPopup.value) {
-            configSummaries = modelConfigManager.getAllConfigSummaries()
             currentModelParameters =
                 modelConfigManager.getModelParametersForConfig(effectiveConfigMapping.configId)
             currentIsToolPkgProvider =
