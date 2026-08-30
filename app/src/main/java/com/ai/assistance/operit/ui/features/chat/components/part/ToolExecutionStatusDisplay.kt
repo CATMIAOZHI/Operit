@@ -16,12 +16,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SubdirectoryArrowRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -33,7 +31,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,7 +49,6 @@ import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
-import com.ai.assistance.operit.core.agent.SubagentCoordinator
 import com.ai.assistance.operit.core.agent.AgentProfileRepository
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingKey
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingRepository
@@ -73,7 +69,6 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 
 data class PersistedToolExecution(
     val callId: String?,
@@ -714,7 +709,6 @@ private fun SubagentTaskResultRow(
     modifier: Modifier,
     isSuccess: Boolean,
     onClick: (() -> Unit)? = null,
-    onStopClick: (() -> Unit)? = null,
 ) {
     val accentColor =
         if (isSuccess) {
@@ -777,19 +771,6 @@ private fun SubagentTaskResultRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (onStopClick != null) {
-            IconButton(
-                onClick = onStopClick,
-                modifier = Modifier.size(48.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Stop,
-                    contentDescription = stringResource(R.string.subagent_stop_task),
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-        }
     }
 }
 
@@ -807,7 +788,6 @@ private fun SubagentTaskStatusDisplay(
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
-    val coroutineScope = rememberCoroutineScope()
     val repository = remember(context) { SubagentRunRepository.getInstance(context) }
     val chatCore =
         remember(context) {
@@ -1084,20 +1064,6 @@ private fun SubagentTaskStatusDisplay(
                 )
             }
         },
-        onStopClick =
-            if (
-                status == SubagentRunStatus.CREATED ||
-                    status == SubagentRunStatus.QUEUED ||
-                    status == SubagentRunStatus.RUNNING
-            ) {
-                {
-                    coroutineScope.launch {
-                        SubagentCoordinator.getInstance(context).cancelTask(resolvedRun.id)
-                    }
-                }
-            } else {
-                null
-            },
     )
 }
 
