@@ -59,10 +59,10 @@
       "parameters": [
         {
           "name": "max_characters",
-          "description": { "zh": "完整工具结果的序列化字符预算，32000 到 96000，默认且最低 32000；超出时硬裁剪", "en": "Serialized complete-result budget, 32000 to 96000; defaults to and never goes below 32000, with hard trimming for overflow" },
+          "description": { "zh": "完整工具结果的序列化字符预算，8000 到 96000，默认 16000；超出时硬裁剪", "en": "Serialized complete-result budget, 8000 to 96000; defaults to 16000 with hard trimming for overflow" },
           "type": "number",
           "required": false,
-          "default": 32000
+          "default": 16000
         }
       ]
     },
@@ -83,25 +83,10 @@
       ]
     },
     {
-      "name": "search",
-      "description": {
-        "zh": "三级检索已读范围：人物/事件结构化知识、章节摘要、正文片段；同时单独返回匹配的读者记忆。",
-        "en": "Three-level search over structured knowledge, chapter summaries, and read text, with reader memories returned separately."
-      },
-      "parameters": [
-        {
-          "name": "query",
-          "description": { "zh": "要回顾的问题或描述", "en": "Recall question or description" },
-          "type": "string",
-          "required": true
-        }
-      ]
-    },
-    {
       "name": "get_chapter_summary",
       "description": {
-        "zh": "获取当前或已读章节摘要和人物、事件、地点、物品、关系变化、伏笔候选等结构化知识；缺失时可用当前模型生成。",
-        "en": "Get structured knowledge for the current or a read chapter, optionally generating it with the current model."
+        "zh": "读取当前或已读章节已有的摘要和人物、事件、地点、物品、关系变化、伏笔候选等结构化知识；缺失时不会自动调用模型。",
+        "en": "Read existing structured knowledge for the current or a read chapter; missing summaries never trigger a model call automatically."
       },
       "parameters": [
         {
@@ -112,10 +97,10 @@
         },
         {
           "name": "generate_if_missing",
-          "description": { "zh": "缺失时是否生成，默认 true", "en": "Generate when missing, default true" },
+          "description": { "zh": "兼容旧调用参数；普通读取不会生成摘要，默认 false", "en": "Legacy compatibility parameter; ordinary reads never generate summaries, default false" },
           "type": "boolean",
           "required": false,
-          "default": true
+          "default": false
         }
       ]
     },
@@ -151,10 +136,26 @@
       ]
     },
     {
+      "name": "list_summary_files",
+      "description": {
+        "zh": "列出当前书籍已经持久化的全部章节摘要及其可编辑 Markdown 路径。可能包含当前进度之后的章节；仅在用户明确要求查看、审计或修改摘要时调用。",
+        "en": "List every persisted chapter summary and editable Markdown path for the current book. May include unread chapters; call only when the user explicitly asks to inspect or edit summaries."
+      },
+      "parameters": []
+    },
+    {
+      "name": "get_local_files",
+      "description": {
+        "zh": "返回普通回顾专用的 safeSearchPaths、用户明确要求提前阅读时使用的 allCurrentSearchPaths，以及 book.md、characters.md 和当前角色 ai-memory.md 路径。禁止直接 grep chaptersRootPath，因为它可能保留已失效目录。content.md 是最近一次成功从 Legado 获取的正文只读快照；之后正文或净化规则可能变化，只有插件再次实际处理该章时才刷新，禁止 edit。",
+        "en": "Return safeSearchPaths for ordinary recall, allCurrentSearchPaths for explicit read-ahead requests, and paths for book.md, characters.md, and this role's ai-memory.md. Never grep chaptersRootPath directly because it may retain inactive directories. content.md is the last successfully fetched read-only chapter snapshot; Legado content or cleanup rules may change afterward, and it refreshes only when the plugin actually processes that chapter again. Never edit it."
+      },
+      "parameters": []
+    },
+    {
       "name": "refresh_progress",
       "description": {
-        "zh": "刷新 Legado 进度，增量索引新读正文，并为已读完章节生成结构化摘要；剩余工作在后台继续。",
-        "en": "Refresh Legado progress, incrementally index new text, and build structured summaries in the background."
+        "zh": "刷新 Legado 进度并增量索引新读正文；摘要只会在用户明确发起手动批量操作时生成。",
+        "en": "Refresh Legado progress and incrementally index newly read text; summaries are generated only by an explicit manual batch."
       },
       "parameters": [
         {
@@ -163,13 +164,107 @@
           "type": "number",
           "required": false,
           "default": 3
+        }
+      ]
+    },
+    {
+      "name": "manual_batch_summaries",
+      "description": {
+        "zh": "仅在用户明确点击手动操作后，为指定已读章节逐章生成摘要。每章创建一个子代理任务，任务内部可能有多轮模型调用；返回目标范围和任务数。不会由普通伴读或后台触发。",
+        "en": "Only after an explicit user action, generate summaries chapter by chapter for selected read chapters. Creates one subagent task per chapter, and each task may use multiple model turns; returns the target range and task count. Never triggered by ordinary context or background refresh."
+      },
+      "parameters": [
+        {
+          "name": "count",
+          "description": { "zh": "数量 1 到 10", "en": "Number of chapters, 1 to 10" },
+          "type": "number",
+          "required": true
         },
         {
-          "name": "max_summaries",
-          "description": { "zh": "本次最多生成摘要数，默认 1", "en": "Maximum summaries generated now, default 1" },
+          "name": "start_chapter_index",
+          "description": { "zh": "从 0 开始的起始章节索引，可省略", "en": "Zero-based start chapter index, optional" },
+          "type": "number",
+          "required": false
+        },
+        {
+          "name": "end_chapter_index",
+          "description": { "zh": "从 0 开始的结束章节索引，可省略", "en": "Zero-based end chapter index, optional" },
+          "type": "number",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "auto_commentary_manual_batch",
+      "description": {
+        "zh": "仅在用户明确操作时，为允许提前阅读窗口内的连续章节逐章生成段评。每章创建一个子代理任务，任务内部可能有多轮模型调用；返回实际目标列表和任务数，不会开启或依赖后台自动段评。",
+        "en": "Only after an explicit user action, generate commentary chapter by chapter for a selected range within the read-ahead window. Creates one subagent task per chapter, and each task may use multiple model turns; returns the target list and task count without enabling or relying on background auto commentary."
+      },
+      "parameters": [
+        {
+          "name": "count",
+          "description": {
+            "zh": "数量 1 到 10",
+            "en": "Number of chapters, 1 to 10"
+          },
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "start_chapter_index",
+          "description": {
+            "zh": "从 0 开始的起始章节索引，可省略",
+            "en": "Zero-based start chapter index, optional"
+          },
+          "type": "number",
+          "required": false
+        },
+        {
+          "name": "end_chapter_index",
+          "description": {
+            "zh": "从 0 开始的结束章节索引，可省略",
+            "en": "Zero-based end chapter index, optional"
+          },
+          "type": "number",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "list_persisted_files",
+      "description": {
+        "zh": "分页列出当前书籍已保存的 book.md、characters.md、ai-memory.md 与各章 content/summary/comments/meta 文件，供界面浏览；不会导出整本书。",
+        "en": "List persisted book.md, characters.md, ai-memory.md, and chapter content/summary/comments/meta files with pagination for the in-app browser; never exports the whole book at once."
+      },
+      "parameters": [
+        {
+          "name": "offset",
+          "description": { "zh": "分页偏移，默认 0", "en": "Page offset, default 0" },
           "type": "number",
           "required": false,
-          "default": 1
+          "default": 0
+        },
+        {
+          "name": "limit",
+          "description": { "zh": "每页数量，1 到 100，默认 50", "en": "Page size from 1 to 100, default 50" },
+          "type": "number",
+          "required": false,
+          "default": 50
+        }
+      ]
+    },
+    {
+      "name": "read_persisted_file",
+      "description": {
+        "zh": "读取文件浏览器选中的白名单文件；路径必须来自 list_persisted_files。content.md 始终只读。",
+        "en": "Read an allowlisted file selected by the file browser; the path must come from list_persisted_files. content.md is always read-only."
+      },
+      "parameters": [
+        {
+          "name": "path",
+          "description": { "zh": "list_persisted_files 返回的文件路径", "en": "File path returned by list_persisted_files" },
+          "type": "string",
+          "required": true
         }
       ]
     },
@@ -231,6 +326,15 @@
             "en": "Return audit chats only for this book; omit for all books"
           },
           "type": "string",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "description": {
+            "zh": "最多返回最近多少条任务审计聊天（1-50，默认 10）",
+            "en": "Maximum number of recent run audit chats to return (1-50, default 10)"
+          },
+          "type": "number",
           "required": false
         }
       ]
@@ -351,11 +455,31 @@ exports.select_book = (params) => run("select_book", params);
 exports.get_current_book = (params) => run("get_current_book", params);
 exports.get_context = (params) => run("get_context", params);
 exports.get_recent_comments = (params) => run("get_recent_comments", params);
-exports.search = (params) => run("search", params);
 exports.get_chapter_summary = (params) => run("get_chapter_summary", params);
 exports.get_character = (params) => run("get_character", params);
 exports.get_recent_summaries = (params) => run("get_recent_summaries", params);
+exports.list_summary_files = (params) => run("list_summary_files", params);
+exports.get_local_files = (params) => run("get_local_files", params);
 exports.refresh_progress = (params) => run("refresh_progress", params);
+exports.manual_batch_summaries = (params) =>
+  run("manual_batch_summaries", {
+    count: params && params.count,
+    start_chapter_index: params && params.start_chapter_index,
+    end_chapter_index: params && params.end_chapter_index,
+  });
+exports.auto_commentary_manual_batch = (params = {}) =>
+  run("auto_commentary_manual_batch", {
+    count: params.count,
+    start_chapter_index: params.start_chapter_index,
+    end_chapter_index: params.end_chapter_index,
+  });
+exports.list_persisted_files = (params = {}) =>
+  run("list_persisted_files", {
+    offset: params.offset,
+    limit: params.limit,
+  });
+exports.read_persisted_file = (params = {}) =>
+  run("read_persisted_file", { path: params.path });
 exports.add_memory = (params) => run("add_memory", params);
 exports.auto_commentary_history = (params = {}) =>
   run("auto_commentary_history", { limit: params.limit });
@@ -364,4 +488,7 @@ exports.auto_commentary_run_detail = (params = {}) =>
 exports.request_next_chapter_comments = (params = {}) =>
   run("request_next_chapter_comments", {});
 exports.list_audit_chats = (params = {}) =>
-  run("list_audit_chats", { bookId: params.bookId });
+  run("list_audit_chats", {
+    bookId: params.bookId,
+    limit: params.limit,
+  });

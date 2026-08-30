@@ -48,6 +48,7 @@ data class AutoCommentModelExecution(
 data class GeneratedAutoComments(
     val comments: List<AutoCommentDraft>,
     val execution: AutoCommentModelExecution,
+    val summary: String = "",
     val usage: ProviderUsageSnapshot? = null,
 )
 
@@ -294,7 +295,6 @@ class ReadingCompanionModelGateway(
     ): GeneratedAutoComments {
         val paragraphs = AutoCommentSupport.paragraphs(content.content)
         require(paragraphs.any(String::isNotBlank)) { "下一章正文为空，无法生成段评" }
-        val targetCount = AutoCommentSupport.targetCount(content.content)
         val requestContext = resolveAutoCommentRequestContext(
             roleCardId = roleCardId,
             runtime = runtime,
@@ -307,7 +307,6 @@ class ReadingCompanionModelGateway(
                         buildBudgetedAutoCommentPrompt(
                             systemPrompt = systemPrompt,
                             paragraphs = paragraphs,
-                            targetCount = targetCount,
                             previousContext = previousContext,
                             contextWindowTokens = contextWindowTokens,
                         )
@@ -333,7 +332,7 @@ class ReadingCompanionModelGateway(
         val candidates = AutoCommentSupport.parseAndValidate(
             rawJson = extractJsonObject(call.output),
             paragraphs = paragraphs,
-            maximumComments = targetCount,
+            maximumComments = AutoCommentSupport.MAX_COMMENTS,
         )
         return GeneratedAutoComments(
             comments = candidates,
@@ -431,7 +430,6 @@ class ReadingCompanionModelGateway(
     private fun buildBudgetedAutoCommentPrompt(
         systemPrompt: String,
         paragraphs: List<String>,
-        targetCount: Int,
         previousContext: List<AutoCommentContextChapter>,
         contextWindowTokens: Int,
     ): PreparedAutoCommentPrompt {
@@ -447,7 +445,6 @@ class ReadingCompanionModelGateway(
         fun render(previousContextCharacters: Int): String =
             renderAutoCommentPrompt(
                 paragraphs = paragraphs,
-                targetCount = targetCount,
                 previousContext = AutoCommentSupport.trimPreviousContext(
                     chaptersChronological = previousContext,
                     maximumCharacters = previousContextCharacters,
@@ -515,7 +512,6 @@ class ReadingCompanionModelGateway(
 
     private fun renderAutoCommentPrompt(
         paragraphs: List<String>,
-        targetCount: Int,
         previousContext: List<AutoCommentContextChapter>,
     ): String {
         val previousContextBlock = if (previousContext.isEmpty()) {
@@ -551,7 +547,7 @@ class ReadingCompanionModelGateway(
             - 优先留出明显阅读间隔；只有相邻段分别发生独立强事件时才连续评论。
             - 避免“作为 AI”“这一段体现了”“作者通过……”等读书报告腔。
             - 大多数评论 2～40 字，必要分析最多 80 字；同一段最多一条，
-              本章硬上限 $targetCount 条，大多数普通章节应为 0～3 条。
+              整章最多 6 条；大多数普通章节应为 0～3 条。
 
             输出严格 JSON，不要 Markdown：
             {

@@ -14,8 +14,10 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -28,6 +30,14 @@ data class ReadingRefreshResult(
     val currentChapterIndexedUntil: Int?,
 )
 
+private data class FreshFileSummary(
+    val chapter: ReaderChapter,
+    val summary: String,
+    val path: String,
+    val contentHash: String,
+    val contentHashKind: String,
+)
+
 class ReadingCompanionService private constructor(
     context: Context,
 ) {
@@ -35,6 +45,7 @@ class ReadingCompanionService private constructor(
     private val provider: ReaderProvider = LegadoReaderProvider(appContext)
     private val store = ReadingCompanionStore(appContext)
     private val modelGateway = ReadingCompanionModelGateway(appContext)
+    private val manualSummaryMutex = Mutex()
 
     suspend fun listBooks(): JSONObject {
         val selectedId = store.getSelectedBookId()
@@ -64,7 +75,9 @@ class ReadingCompanionService private constructor(
     suspend fun selectBook(identifier: String?, automatic: Boolean): ReadingState {
         if (automatic) {
             store.setSelectedBookId(null)
-            return provider.getReadingState()
+            val state = provider.getReadingState()
+            store.setLastResolvedBookId(state.book.id)
+            return state
         }
         val query = identifier.orEmpty().trim()
         require(query.isNotBlank()) { "请选择书籍名称或 book_id" }
@@ -82,11 +95,193 @@ class ReadingCompanionService private constructor(
         val selected = matches.single()
         val state = provider.getReadingState(selected.id)
         store.setSelectedBookId(selected.id)
+        store.setLastResolvedBookId(selected.id)
         synchronizeBoundary(state)
         return state
     }
 
     suspend fun currentBook(): ReadingState = selectedReadingState()
+
+    suspend fun persistedSummaryFiles(): JSONObject {
+        val fileStore = ReadingCompanionFileStore(appContext)
+        // The summaries page is a local browse surface and must never block on a live Legado
+        // connection. Read everything from the persisted catalogs first; when Legado is
+        // reachable, refresh the catalog so chapter inserts/moves are reflected next time.
+        // An explicit selection wins; otherwise the last successfully resolved book id keeps
+        // working offline.  Never fall back to a fabricated placeholder id.
+        val localBookId = resolveLocalBookId()
+        val local = if (localBookId != null) {
+            fileStore.listSummaryFiles(localBookId)
+        } else {
+            JSONObject()
+                .put("summaries", JSONArray())
+                .put("currentChapterNumber", -1)
+                .put("staleCatalog", true)
+                .put("noBook", true)
+        }
+        try {
+            val refreshed = withTimeoutOrNull(SUMMARY_LIST_CATALOG_REFRESH_BUDGET_MS) {
+                val state = selectedReadingState()
+                val chapters = provider.getChapters(state.book.id)
+                fileStore.syncBookCatalog(state.book, chapters)
+                store.setLastResolvedBookId(state.book.id)
+                fileStore.listSummaryFiles(state.book.id)
+            }
+            if (refreshed != null) {
+                return refreshed.put("staleCatalog", false)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Fall through to the local listing below.
+        }
+        return local.put("staleCatalog", true)
+    }
+
+    /**
+     * Resolves the book workspace to address for local-only surfaces.  An explicit manual
+     * selection wins; otherwise the last successfully resolved book (manual or automatic recent)
+     * is reused so offline browsing keeps working.  Returns null only when no book has ever been
+     * resolved, in which case callers return an empty result instead of creating placeholder data.
+     */
+    private fun resolveLocalBookId(): String? =
+        store.getSelectedBookId() ?: store.getLastResolvedBookId()
+
+    /**
+     * Paginated read-only browser for the current book's durable files.
+     */
+    suspend fun listPersistedFiles(
+        offset: Int = 0,
+        limit: Int = PERSISTED_FILES_DEFAULT_LIMIT,
+        callerRoleCardId: String? = null,
+    ): JSONObject {
+        val fileStore = ReadingCompanionFileStore(appContext)
+        // Keep the browser's stable book-level documents visible even on a freshly selected book.
+        // This mirrors get_local_files and does not expose any writable content surface.
+        val bookId = resolveLocalBookId()
+        if (bookId != null) {
+            fileStore.ensureCharactersDocument(bookId)
+            callerRoleCardId
+                ?.trim()
+                ?.takeIf(String::isNotBlank)
+                ?.let { fileStore.ensureCompanionMemory(bookId, it) }
+        }
+        try {
+            val refreshed = withTimeoutOrNull(LIST_FILES_CATALOG_REFRESH_BUDGET_MS) {
+                val state = selectedReadingState()
+                val chapters = provider.getChapters(state.book.id)
+                fileStore.syncBookCatalog(state.book, chapters)
+                store.setLastResolvedBookId(state.book.id)
+                fileStore.listPersistedFiles(
+                    book = state.book,
+                    chapters = chapters,
+                    offset = offset,
+                    limit = limit,
+                )
+            }
+            if (refreshed != null) {
+                return refreshed.put("staleCatalog", false)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Fall through to the cached listing below.
+        }
+        if (bookId != null) {
+            return fileStore.listPersistedFilesFromCatalogs(
+                bookId = bookId,
+                offset = offset,
+                limit = limit,
+            ).put("staleCatalog", true)
+        }
+        return JSONObject()
+            .put("bookId", JSONObject.NULL)
+            .put("book", "")
+            .put("rootPath", "")
+            .put("offset", offset.coerceAtLeast(0))
+            .put("limit", limit)
+            .put("total", 0)
+            .put("entries", JSONArray())
+            .put("nextOffset", JSONObject.NULL)
+            .put("staleCatalog", true)
+            .put("noBook", true)
+    }
+
+    /**
+     * Read one file from the resolved book root.  ReadingCompanionFileStore performs canonical
+     * path and filename checks; this service deliberately does not expose arbitrary filesystem
+     * access to the ToolPkg.  A bounded best-effort catalog refresh keeps stale directories out,
+     * but when Legado is unreachable the on-disk catalog membership check still protects reads.
+     */
+    suspend fun readPersistedFile(path: String): JSONObject {
+        val bookId = resolveLocalBookId()
+            ?: throw IllegalArgumentException("当前没有可用的书籍，请先在 Legado 打开一本书或在阅读伴侣中选择书籍")
+        val fileStore = ReadingCompanionFileStore(appContext)
+        try {
+            val refreshedBookId = withTimeoutOrNull(READ_FILE_CATALOG_REFRESH_BUDGET_MS) {
+                val state = selectedReadingState()
+                val chapters = provider.getChapters(state.book.id)
+                fileStore.syncBookCatalog(state.book, chapters)
+                store.setLastResolvedBookId(state.book.id)
+                state.book.id
+            }
+            if (refreshedBookId != null) {
+                return fileStore.readPersistedFile(refreshedBookId, path)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Fall through to the local read below.
+        }
+        return fileStore.readPersistedFile(bookId, path)
+    }
+
+    suspend fun localBookFiles(callerRoleCardId: String?): JSONObject {
+        val state = selectedReadingState()
+        val chapters = provider.getChapters(state.book.id)
+        val fileStore = ReadingCompanionFileStore(appContext)
+        fileStore.syncBookCatalog(state.book, chapters)
+        val roleCardId = callerRoleCardId?.trim()?.takeIf(String::isNotBlank)
+        return JSONObject()
+            .put("book", state.book.name)
+            .put("author", state.book.author)
+            .put("currentChapterNumber", state.chapterIndex + 1)
+            .put("bookRootPath", fileStore.bookRootPath(state.book.id))
+            .put("bookMetadataPath", fileStore.bookMetadataPath(state.book.id))
+            .put("chaptersRootPath", fileStore.chaptersRootPath(state.book.id))
+            .put("charactersPath", fileStore.ensureCharactersDocument(state.book.id).absolutePath)
+            .put(
+                "companionMemoryPath",
+                roleCardId
+                    ?.let { fileStore.ensureCompanionMemory(state.book.id, it).absolutePath }
+                    ?: JSONObject.NULL,
+            )
+            .put("catalogPaths", fileStore.catalogPaths(state.book.id))
+            .put(
+                "safeSearchPaths",
+                fileStore.safeChapterSearchPaths(
+                    bookId = state.book.id,
+                    chapters = chapters,
+                    beforeChapterIndex = state.chapterIndex,
+                ),
+            )
+            .put(
+                "allCurrentSearchPaths",
+                fileStore.allCurrentChapterSearchPaths(
+                    bookId = state.book.id,
+                    chapters = chapters,
+                ),
+            )
+            .put(
+                "notice",
+                "For ordinary recall, grep only safeSearchPaths. chaptersRootPath may include " +
+                    "inactive chapter directories and must not be searched directly. When the user " +
+                    "explicitly asks to inspect future content, grep allCurrentSearchPaths. " +
+                    "content.md is the last successfully fetched snapshot; Legado content or " +
+                    "cleanup rules may change later, and the snapshot refreshes only when the " +
+                    "plugin actually processes that chapter again",
+            )
+    }
 
     suspend fun currentContext(
         maxCharacters: Int = DEFAULT_CONTEXT_CHARACTERS,
@@ -126,6 +321,27 @@ class ReadingCompanionService private constructor(
         val latestState = selectedReadingState(state.book.id)
         failIfBoundaryChanged(state, latestState)
         synchronizeBoundary(latestState)
+        val fileStore = ReadingCompanionFileStore(appContext)
+        val chapters = provider.getChapters(state.book.id)
+        val chapterByIndex = chapters.associateBy(ReaderChapter::index)
+        require(chapterByIndex[content.chapterIndex]?.sourceId == content.sourceId) {
+            "上下文组装期间当前章节目录发生变化"
+        }
+        previousChapters.forEach { previous ->
+            require(chapterByIndex[previous.chapterIndex]?.sourceId == previous.sourceId) {
+                "上下文组装期间前文章节目录发生变化"
+            }
+        }
+        fileStore.syncBookCatalog(state.book, chapters)
+        // The context call itself is a valid first processing pass (for example, before the
+        // incremental worker has run). Persist only the already-safe current prefix after the
+        // sourceId/boundary checks above; previous chapters remain read-only provider context.
+        fileStore.writeChapterContent(
+            book = state.book,
+            chapter = chapterByIndex.getValue(content.chapterIndex),
+            sourceContent = content.content,
+            contentHashKind = ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE,
+        )
 
         val completeTextChapterIndices = buildSet {
             if (start == 0) add(content.chapterIndex)
@@ -133,39 +349,52 @@ class ReadingCompanionService private constructor(
                 .filterNot(AutoCommentContextChapter::excerptFromEnd)
                 .forEach { add(it.chapterIndex) }
         }
-        val knowledge = store.getRecentKnowledge(
-            bookId = state.book.id,
-            throughChapterIndex = latestState.chapterIndex,
+        val fileSummaries = collectRecentFreshFileSummaries(
+            state = latestState,
             limit = MAX_CONTEXT_CHAPTERS,
-        ).filter { stored ->
-            SpoilerGuard.isPositionAllowed(
-                stored.chapterIndex,
-                0,
-                stored.sourceEndPosition,
-                latestState,
-            )
-        }
-        val contextSummaries = knowledge.mapNotNull { stored ->
-            val summary = stored.summary.trim()
-            if (summary.isBlank()) return@mapNotNull null
-            JSONObject().apply {
-                put("chapterIndex", stored.chapterIndex)
-                put("chapterNumber", stored.chapterIndex + 1)
-                put("chapterTitle", stored.chapterTitle)
-                put("sourceEndPos", stored.sourceEndPosition)
-                put("completeChapter", stored.isComplete)
-                // A full prose excerpt already carries the chapter text. Keep structured facts,
-                // while omitting a duplicate prose summary for that chapter.
-                if (stored.chapterIndex !in completeTextChapterIndices) {
-                    put("summary", summary)
+            includeCurrentReadableSummary = true,
+            chaptersOverride = chapters,
+            fileStoreOverride = fileStore,
+        )
+        val contextSummaries = mutableListOf<JSONObject>()
+        fileSummaries.forEach { fileSummary ->
+            val chapter = fileSummary.chapter
+            val stored = store.getChapterKnowledge(state.book.id, chapter.index)
+            val structuredVerified =
+                stored != null &&
+                    fileSummary.contentHashKind ==
+                        ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE &&
+                    fileSummary.contentHash == stored.contentHash &&
+                    SpoilerGuard.isPositionAllowed(
+                        stored.chapterIndex,
+                        0,
+                        stored.sourceEndPosition,
+                        latestState,
+                    )
+            contextSummaries += JSONObject().apply {
+                put("chapterIndex", chapter.index)
+                put("chapterNumber", chapter.index + 1)
+                put("chapterTitle", chapter.title)
+                put("summaryPath", fileSummary.path)
+                stored?.takeIf { structuredVerified }?.let {
+                    put("sourceEndPos", it.sourceEndPosition)
+                    put("completeChapter", it.isComplete)
+                }
+                // A full prose excerpt already carries the chapter text. Keep verified
+                // structured facts while omitting duplicate prose for that chapter.
+                if (chapter.index !in completeTextChapterIndices) {
+                    put("summary", fileSummary.summary)
                 }
                 put(
                     "summaryOmittedBecauseTextIncluded",
-                    stored.chapterIndex in completeTextChapterIndices,
+                    chapter.index in completeTextChapterIndices,
                 )
-                put("knowledge", compactKnowledgeJson(stored.structuredJson))
+                if (structuredVerified) {
+                    put("knowledge", compactKnowledgeJson(stored!!.structuredJson))
+                }
             }
-        }.distinctBy { summary ->
+        }
+        val distinctContextSummaries = contextSummaries.distinctBy { summary ->
             "${summary.optInt("chapterIndex")}:${summary.optString("summary")}:" +
                 summary.optJSONObject("knowledge")?.toString().orEmpty()
         }
@@ -180,13 +409,15 @@ class ReadingCompanionService private constructor(
         val unlockedParagraphIndex =
             AutoCommentSupport.unlockedParagraphIndex(content.content, content.isComplete)
         val roleCardId = callerRoleCardId?.trim()?.takeIf(String::isNotBlank)
+        val companionMemoryPath =
+            roleCardId?.let { fileStore.ensureCompanionMemory(state.book.id, it).absolutePath }
+        val charactersPath = fileStore.ensureCharactersDocument(state.book.id).absolutePath
         val companionComments =
             if (roleCardId == null) {
                 emptyList()
             } else {
-                store.getRecentUnlockedAutoComments(
-                    bookId = state.book.id,
-                    currentChapterIndex = latestState.chapterIndex,
+                readFreshCompanionComments(
+                    state = latestState,
                     currentUnlockedParagraph = unlockedParagraphIndex,
                     roleCardId = roleCardId,
                     limit = MAX_CONTEXT_COMPANION_COMMENTS,
@@ -194,7 +425,7 @@ class ReadingCompanionService private constructor(
             }
 
         val boundedSummaries = boundContextJson(
-            entries = contextSummaries,
+            entries = distinctContextSummaries,
             maximumCharacters = supplementalBudget * SUMMARY_BUDGET_FRACTION / 100,
         ) { entry, remaining ->
             entry.put(
@@ -220,6 +451,7 @@ class ReadingCompanionService private constructor(
         val returnState = selectedReadingState(state.book.id)
         failIfBoundaryChanged(latestState, returnState)
         synchronizeBoundary(returnState)
+        validateContextInputsStillCurrent(returnState, content, previousChapters)
 
         val result = JSONObject().apply {
             put("book", returnState.book.name)
@@ -299,6 +531,9 @@ class ReadingCompanionService private constructor(
             put("companionCommentCount", boundedComments.size)
             put("capturedAt", content.capturedAt)
             put("boundary", "read_prefix_only")
+            put("readingCompanionFilesRoot", fileStore.rootPath())
+            put("companionMemoryPath", companionMemoryPath ?: JSONObject.NULL)
+            put("charactersPath", charactersPath)
         }
         return enforceSerializedContextBudget(result, requestedCharacters)
     }
@@ -331,6 +566,7 @@ class ReadingCompanionService private constructor(
                 add(
                     AnnotationChapterContent(
                         bookId = chapter.bookId,
+                        sourceId = chapter.sourceId,
                         chapterIndex = chapter.chapterIndex,
                         chapterTitle = chapter.chapterTitle,
                         content = safeText,
@@ -500,13 +736,16 @@ class ReadingCompanionService private constructor(
         val unlockedParagraphIndex =
             AutoCommentSupport.unlockedParagraphIndex(content.content, content.isComplete)
         val roleCardId = callerRoleCardId?.trim()?.takeIf(String::isNotBlank)
-        val comments = store.getRecentUnlockedAutoComments(
-            bookId = state.book.id,
-            currentChapterIndex = state.chapterIndex,
-            currentUnlockedParagraph = unlockedParagraphIndex,
-            roleCardId = roleCardId,
-            limit = limit,
-        )
+        val comments =
+            roleCardId?.let {
+                readFreshCompanionComments(
+                    state = state,
+                    currentUnlockedParagraph = unlockedParagraphIndex,
+                    roleCardId = it,
+                    limit = limit,
+                )
+            }.orEmpty()
+        validateContextInputsStillCurrent(state, content, emptyList())
         return JSONObject().apply {
             put("book", state.book.name)
             put("roleCardId", roleCardId)
@@ -522,12 +761,14 @@ class ReadingCompanionService private constructor(
 
     suspend fun refreshAndIndex(
         maxCompletedChapters: Int,
-        maxKnowledgeChapters: Int,
+        @Suppress("UNUSED_PARAMETER") maxKnowledgeChapters: Int,
         scheduleMore: Boolean,
         runtime: ToolExecutionManager.ToolRuntimeContext? = null,
     ): ReadingRefreshResult = withContext(Dispatchers.IO) {
         val state = selectedReadingState()
         val chapters = provider.getChapters(state.book.id)
+        val fileStore = ReadingCompanionFileStore(appContext)
+        fileStore.syncBookCatalog(state.book, chapters)
         synchronizeBoundary(state)
 
         var indexed = 0
@@ -536,7 +777,21 @@ class ReadingCompanionService private constructor(
             runCatching {
                 provider.getReadableChapterContent(state.book.id, state.chapterIndex)
             }.getOrNull()?.let { current ->
-                validateContentBeforeStore(state, current)
+                validateContentBeforeStore(
+                    state,
+                    current,
+                    chapters.firstOrNull { it.index == state.chapterIndex }?.sourceId,
+                )
+                val currentChapter =
+                    chapters.firstOrNull {
+                        it.index == current.chapterIndex && it.sourceId == current.sourceId
+                    } ?: error("当前章节已从目录中移除")
+                fileStore.writeChapterContent(
+                    book = state.book,
+                    chapter = currentChapter,
+                    sourceContent = current.content,
+                    contentHashKind = ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE,
+                )
                 store.replaceChapter(current)
                 currentIndexedUntil = current.readableUntil
             }
@@ -550,36 +805,22 @@ class ReadingCompanionService private constructor(
             .toList()
         for (chapter in missingCompleted.take(maxCompletedChapters.coerceAtLeast(0))) {
             val content = provider.getReadableChapterContent(state.book.id, chapter.index)
-            validateContentBeforeStore(state, content)
+            validateContentBeforeStore(state, content, chapter.sourceId)
+            fileStore.writeChapterContent(
+                book = state.book,
+                chapter = chapter,
+                sourceContent = content.content,
+                contentHashKind = ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE,
+            )
             store.replaceChapter(content)
             indexed += 1
         }
         val remainingText = (missingCompleted.size - indexed).coerceAtLeast(0)
 
-        var summarized = 0
-        val knowledgeTargets = store.missingKnowledgeChapterIndices(
-            bookId = state.book.id,
-            throughChapterIndexExclusive = state.chapterIndex,
-            limit = maxKnowledgeChapters.coerceAtLeast(0).coerceAtMost(8),
-        )
-        for (chapterIndex in knowledgeTargets) {
-            val content = provider.getReadableChapterContent(state.book.id, chapterIndex)
-            validateContentBeforeStore(state, content)
-            store.replaceChapter(content)
-            val generated = modelGateway.summarizeChapter(state.book, content, runtime)
-            val latest = selectedReadingState(state.book.id)
-            failIfBoundaryRegressed(state, latest)
-            require(
-                SpoilerGuard.isPositionAllowed(
-                    content.chapterIndex,
-                    0,
-                    content.readableUntil,
-                    latest,
-                )
-            ) { "章节摘要生成期间阅读边界发生变化" }
-            store.storeKnowledge(content, generated.knowledge, generated.json)
-            summarized += 1
-        }
+        // Background refresh is intentionally indexing-only. Chapter summaries are a
+        // user-requested operation and are generated by the dedicated commentary subagent path;
+        // this method must never spend model calls while ordinary context/search is running.
+        val summarized = 0
         val remainingKnowledge = store.countMissingKnowledge(
             state.book.id,
             state.chapterIndex,
@@ -587,7 +828,9 @@ class ReadingCompanionService private constructor(
         val finalState = selectedReadingState(state.book.id)
         failIfBoundaryRegressed(state, finalState)
         synchronizeBoundary(finalState)
-        if (scheduleMore && (remainingText > 0 || remainingKnowledge > 0)) {
+        // Knowledge/summary rows are intentionally never a background scheduling reason.  They
+        // are generated only by an explicit manual summary batch;正文增量索引仍可继续后台运行。
+        if (scheduleMore && remainingText > 0) {
             scheduleBackgroundIndex()
         }
         ReadingRefreshResult(
@@ -602,47 +845,61 @@ class ReadingCompanionService private constructor(
 
     suspend fun chapterSummary(
         chapterIndex: Int?,
-        generateIfMissing: Boolean,
-        runtime: ToolExecutionManager.ToolRuntimeContext?,
+        @Suppress("UNUSED_PARAMETER") generateIfMissing: Boolean = false,
+        @Suppress("UNUSED_PARAMETER") runtime: ToolExecutionManager.ToolRuntimeContext? = null,
     ): JSONObject {
         val state = selectedReadingState()
         val targetIndex = chapterIndex ?: state.chapterIndex
         require(targetIndex in 0..state.chapterIndex) { "只能总结当前或已经读过的章节" }
         synchronizeBoundary(state)
-        store.getChapterKnowledge(state.book.id, targetIndex)
-            ?.takeIf { stored ->
-                SpoilerGuard.isPositionAllowed(
-                    stored.chapterIndex,
-                    0,
-                    stored.sourceEndPosition,
-                    state,
-                )
-            }
-            ?.let { return knowledgeJson(state, it, generatedNow = false) }
-        if (!generateIfMissing) {
+        val chapters = provider.getChapters(state.book.id)
+        val targetChapter = chapters.firstOrNull { it.index == targetIndex }
+            ?: error("目标章节已不在目录中")
+        val fileStore = ReadingCompanionFileStore(appContext)
+        fileStore.syncBookCatalog(state.book, chapters)
+        readFreshFileSummary(
+            state = state,
+            chapter = targetChapter,
+            includeCurrentReadableSummary = true,
+            fileStore = fileStore,
+        )?.let { fileSummary ->
+            val stored = store.getChapterKnowledge(state.book.id, targetIndex)
+            val structuredVerified =
+                stored != null &&
+                    fileSummary.contentHashKind ==
+                        ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE &&
+                    fileSummary.contentHash == stored.contentHash &&
+                    SpoilerGuard.isPositionAllowed(
+                        stored.chapterIndex,
+                        0,
+                        stored.sourceEndPosition,
+                        state,
+                    )
             return JSONObject()
                 .put("book", state.book.name)
                 .put("chapterIndex", targetIndex)
                 .put("chapterNumber", targetIndex + 1)
-                .put("status", "not_generated")
-        }
-
-        val content = provider.getReadableChapterContent(state.book.id, targetIndex)
-        validateContentBeforeStore(state, content)
-        store.replaceChapter(content)
-        val generated = modelGateway.summarizeChapter(state.book, content, runtime)
-        val latest = selectedReadingState(state.book.id)
-        failIfBoundaryRegressed(state, latest)
-        require(
-            SpoilerGuard.isPositionAllowed(targetIndex, 0, content.readableUntil, latest)
-        ) { "章节摘要生成期间阅读边界发生变化" }
-        store.storeKnowledge(content, generated.knowledge, generated.json)
-        return knowledgeJson(
-            state = latest,
-            stored = store.getChapterKnowledge(state.book.id, targetIndex)
-                ?: error("章节摘要保存失败"),
-            generatedNow = true,
-        )
+                .put("chapterTitle", targetChapter.title)
+                .put("summary", fileSummary.summary)
+                .put("summaryPath", fileSummary.path)
+                .put("generatedNow", false)
+                .apply {
+                    if (structuredVerified) {
+                        put("sourceEndPos", stored!!.sourceEndPosition)
+                        put("completeChapter", stored.isComplete)
+                        put("knowledge", compactKnowledgeJson(stored.structuredJson))
+                    }
+                }
+            }
+        // Ordinary chapter-summary reads are deliberately side-effect free. Even when a legacy
+        // caller passes generateIfMissing=true, generation must be initiated through an explicit
+        // user manual action that runs the summary-only commentary subagent.
+        return JSONObject()
+            .put("book", state.book.name)
+            .put("chapterIndex", targetIndex)
+            .put("chapterNumber", targetIndex + 1)
+            .put("status", "not_generated_or_stale")
+            .put("manualGenerationRequired", true)
     }
 
     suspend fun recentSummaries(
@@ -652,8 +909,7 @@ class ReadingCompanionService private constructor(
         val state = selectedReadingState()
         synchronizeBoundary(state)
         val safeCount = count.coerceIn(1, 10)
-        var summaries = store.getRecentKnowledge(state.book.id, state.chapterIndex, safeCount)
-            .filter { SpoilerGuard.isPositionAllowed(it.chapterIndex, 0, it.sourceEndPosition, state) }
+        var summaries = collectRecentFreshFileSummaries(state, safeCount)
         if (summaries.size < safeCount) {
             refreshAndIndex(
                 maxCompletedChapters = safeCount,
@@ -662,30 +918,366 @@ class ReadingCompanionService private constructor(
                 runtime = runtime,
             )
             val latest = selectedReadingState(state.book.id)
-            summaries = store.getRecentKnowledge(state.book.id, latest.chapterIndex, safeCount)
-                .filter {
-                    SpoilerGuard.isPositionAllowed(it.chapterIndex, 0, it.sourceEndPosition, latest)
-                }
+            summaries = collectRecentFreshFileSummaries(latest, safeCount)
         }
         return JSONObject().apply {
             put("book", state.book.name)
             put(
                 "summaries",
                 JSONArray().apply {
-                    summaries.forEach { stored ->
+                    summaries.forEach { fileSummary ->
                         put(
                             JSONObject()
-                                .put("chapterIndex", stored.chapterIndex)
-                                .put("chapterNumber", stored.chapterIndex + 1)
-                                .put("chapterTitle", stored.chapterTitle)
-                                .put("sourceEndPos", stored.sourceEndPosition)
-                                .put("completeChapter", stored.isComplete)
-                                .put("summary", stored.summary)
+                                .put("chapterIndex", fileSummary.chapter.index)
+                                .put("chapterNumber", fileSummary.chapter.index + 1)
+                                .put("chapterTitle", fileSummary.chapter.title)
+                                .put("summary", fileSummary.summary)
+                                .put("summaryPath", fileSummary.path)
                         )
                     }
                 },
             )
         }
+    }
+
+    /**
+     * Explicit user-triggered batch summary generation.
+     *
+     * Selection is made from complete chapters at or before the current reading boundary.  When
+     * no range is supplied the newest chapters lacking a fresh persisted summary are selected.
+     * A supplied range narrows the same candidate set; valid summaries are still skipped because
+     * ordinary batch fill must not overwrite them.  Each selected chapter gets exactly one
+     * summary-only subagent task.
+     */
+    suspend fun manualBatchSummaries(
+        count: Int,
+        startChapterIndex: Int?,
+        endChapterIndex: Int?,
+        runtime: ToolExecutionManager.ToolRuntimeContext?,
+    ): JSONObject {
+        check(manualSummaryMutex.tryLock()) { "已有手动摘要批次正在生成，请等待完成后再试" }
+        return try {
+            withContext(Dispatchers.IO) {
+                require(count in 1..MAX_MANUAL_BATCH_COUNT) {
+                    "摘要批量数量必须为 1～$MAX_MANUAL_BATCH_COUNT"
+                }
+                require(startChapterIndex == null || startChapterIndex >= 0) {
+                    "摘要批量起始章节必须为非负索引"
+                }
+                require(endChapterIndex == null || endChapterIndex >= 0) {
+                    "摘要批量结束章节必须为非负索引"
+                }
+                if (startChapterIndex != null && endChapterIndex != null) {
+                    require(endChapterIndex >= startChapterIndex) {
+                        "摘要批量结束章节不能早于起始章节"
+                    }
+                }
+
+        val state = selectedReadingState()
+        val chapters = provider.getChapters(state.book.id)
+            .sortedByDescending(ReaderChapter::index)
+        val fileStore = ReadingCompanionFileStore(appContext)
+        fileStore.syncBookCatalog(state.book, chapters)
+
+        val rangeStart = startChapterIndex ?: 0
+        val rangeEnd = endChapterIndex ?: state.chapterIndex
+        val candidateContents = mutableListOf<Pair<ReaderChapter, ReadableChapterContent>>()
+        val selectionFailures = mutableListOf<JSONObject>()
+        for (chapter in chapters) {
+            if (
+                chapter.index < rangeStart ||
+                chapter.index > rangeEnd ||
+                chapter.index > state.chapterIndex
+            ) {
+                continue
+            }
+            val content = try {
+                provider.getReadableChapterContent(state.book.id, chapter.index)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                selectionFailures +=
+                    JSONObject()
+                        .put("chapterIndex", chapter.index)
+                        .put("chapterNumber", chapter.index + 1)
+                        .put("status", "unavailable")
+                        .put("error", safeReadingCompanionError(error))
+                continue
+            }
+            if (
+                content.bookId != state.book.id ||
+                content.chapterIndex != chapter.index ||
+                content.sourceId != chapter.sourceId ||
+                !content.isComplete ||
+                content.readableUntil != content.content.length
+            ) {
+                continue
+            }
+            val currentHash = ReadingCompanionFileStore.contentHash(content.content)
+            // A summary may have been produced by the commentary path and therefore be tied to
+            // the annotation body instead of the readable prefix.  Verify whichever content kind
+            // the persisted metadata declares; an existing fresh summary of either kind is not a
+            // missing target for ordinary batch fill.
+            val existingSummary =
+                fileStore.summaryContentHashKind(state.book.id, chapter.sourceId)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { contentHashKind ->
+                        val persistedHash =
+                            if (contentHashKind ==
+                                ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE
+                            ) {
+                                currentHash
+                            } else {
+                                try {
+                                    currentSummaryContentHash(
+                                        state.book.id,
+                                        chapter,
+                                        contentHashKind,
+                                    )
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            }
+                        persistedHash?.let {
+                            fileStore.readSummary(
+                                bookId = state.book.id,
+                                sourceId = chapter.sourceId,
+                                expectedContentHash = it,
+                            )
+                        }
+                    }
+            if (existingSummary != null) continue
+            candidateContents += chapter to content
+            if (candidateContents.size >= count) break
+        }
+
+        val targets = candidateContents.map { it.first.index }
+        val results = JSONArray()
+        val failures = JSONArray().apply {
+            selectionFailures.forEach(::put)
+        }
+        var completedCount = 0
+        val coordinator = ReadingCompanionSubagentCoordinator.getInstance(appContext)
+        candidateContents.forEach { (chapter, content) ->
+            val result =
+                try {
+                    generateSummaryForChapter(
+                        state = state,
+                        chapter = chapter,
+                        content = content,
+                        chapters = chapters,
+                        fileStore = fileStore,
+                        coordinator = coordinator,
+                        runtime = runtime,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    failures.put(
+                        JSONObject()
+                            .put("chapterIndex", chapter.index)
+                            .put("chapterNumber", chapter.index + 1)
+                            .put("status", "failed")
+                            .put("error", safeReadingCompanionError(error)),
+                    )
+                    JSONObject()
+                        .put("chapterIndex", chapter.index)
+                        .put("chapterNumber", chapter.index + 1)
+                        .put("status", "failed")
+                        .put("error", safeReadingCompanionError(error))
+                }
+            results.put(result)
+            if (result.optString("status") == "generated") completedCount += 1
+        }
+
+                JSONObject()
+                    .put("book", state.book.name)
+                    .put("requestedCount", count)
+                    .put("targetChapterIndices", JSONArray().apply { targets.forEach(::put) })
+                    .put("completedCount", completedCount)
+                    .put("failedCount", failures.length())
+                    .put("failures", failures)
+                    .put("results", results)
+                    // One summary-only subagent task is created per selected chapter. Each task
+                    // may naturally require multiple provider turns while it reads and submits.
+                    .put("modelTaskCount", targets.size)
+                    .put(
+                        "status",
+                        if (failures.length() == 0) {
+                            "completed"
+                        } else {
+                            "completed_with_failures"
+                        },
+                    )
+            }
+        } finally {
+            manualSummaryMutex.unlock()
+        }
+    }
+
+    private suspend fun generateSummaryForChapter(
+        state: ReadingState,
+        chapter: ReaderChapter,
+        content: ReadableChapterContent,
+        chapters: List<ReaderChapter>,
+        fileStore: ReadingCompanionFileStore,
+        coordinator: ReadingCompanionSubagentCoordinator,
+        runtime: ToolExecutionManager.ToolRuntimeContext?,
+    ): JSONObject {
+        val runId =
+            store.startAutoCommentRun(
+                trigger = TRIGGER_MANUAL_SUMMARY,
+                executionMode = AUTO_COMMENT_RUN_EXECUTION_MODE_SUBAGENT,
+            )
+        store.updateAutoCommentRunTarget(
+            runId = runId,
+            bookId = state.book.id,
+            chapterIndex = chapter.index,
+            chapterTitle = content.chapterTitle,
+        )
+        return try {
+            val previousContext = loadSummaryPreviousContext(
+                bookId = state.book.id,
+                targetChapterIndex = chapter.index,
+                chapters = chapters,
+            )
+            val target =
+                AnnotationChapterContent(
+                    bookId = content.bookId,
+                    sourceId = content.sourceId,
+                    chapterIndex = content.chapterIndex,
+                    chapterTitle = content.chapterTitle,
+                    content = content.content,
+                    contractHash = ReadingCompanionFileStore.contentHash(content.content),
+                    capturedAt = content.capturedAt,
+                )
+            val persona =
+                AutoCommentPersona(
+                    bookId = state.book.id,
+                    roleCardId = SUMMARY_ONLY_ROLE_CARD_ID,
+                    roleCardName = SUMMARY_ONLY_ROLE_CARD_NAME,
+                    updatedAt = System.currentTimeMillis(),
+                )
+            val outcome = coordinator.runGeneration(
+                runId = runId,
+                trigger = TRIGGER_MANUAL_SUMMARY,
+                runtime = runtime,
+                bookId = state.book.id,
+                bookName = state.book.name,
+                chapterIndex = chapter.index,
+                chapterTitle = content.chapterTitle,
+                contentHash = target.contractHash,
+                persona = persona,
+                rolePrompt = "",
+                targetContent = target.content,
+                chapters = chapters,
+                previousContext = previousContext,
+                summaryOnly = true,
+            )
+            store.updateAutoCommentRunExecution(runId, outcome.execution)
+            store.updateAutoCommentRunPromptMetrics(
+                runId = runId,
+                targetCharacterCount = content.content.count { !it.isWhitespace() },
+                metrics = AutoCommentPromptMetrics(
+                    previousContextChapterCount = previousContext.size,
+                    previousContextCharacterCount =
+                        previousContext.sumOf { it.content.trim().length },
+                    contextWindowTokens = 0,
+                    estimatedInputTokens =
+                        (content.content.length + previousContext.sumOf { it.content.length }) / 2,
+                ),
+            )
+            validateContentBeforeStore(state, content, chapter.sourceId)
+            fileStore.writeSummary(
+                book = state.book,
+                chapter = chapter,
+                sourceContent = content.content,
+                summary = outcome.summary,
+            )
+            // Keep the summary discoverable by the existing FTS-backed search/knowledge APIs
+            // without invoking the legacy direct model gateway or fabricating structured facts.
+            store.replaceChapter(content)
+            store.storeKnowledge(
+                content = content,
+                knowledge =
+                    ChapterKnowledge(
+                        summary = outcome.summary,
+                        characters = emptyList(),
+                        events = emptyList(),
+                        locations = emptyList(),
+                        items = emptyList(),
+                        relationshipChanges = emptyList(),
+                        possibleForeshadowing = emptyList(),
+                        keywords = emptyList(),
+                    ),
+                structuredJson = JSONObject().toString(),
+            )
+            store.finishAutoCommentRun(
+                runId = runId,
+                status = ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATED,
+                commentCount = 0,
+            )
+            JSONObject()
+                .put("chapterIndex", chapter.index)
+                .put("chapterNumber", chapter.index + 1)
+                .put("chapterTitle", chapter.title)
+                .put("status", "generated")
+                .put("summary", outcome.summary)
+                .put("runId", runId)
+        } catch (cancelled: CancellationException) {
+            store.markRunInterrupted(runId, errorMessage = "cancelled")
+            throw cancelled
+        } catch (error: Throwable) {
+            store.finishAutoCommentRun(
+                runId = runId,
+                status = ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_FAILED,
+                errorMessage = safeReadingCompanionError(error),
+            )
+            throw error
+        } finally {
+            // Summary-only runs use the same hidden audit-chat retention as commentary runs.
+            // Drain pruned/orphaned child cleanup here as well so a summary-only user does not
+            // accumulate hidden chats indefinitely.
+            runCatching { store.flushPrunedRunChatCleanup() }
+            runCatching { store.runOrphanChatCleanup() }
+        }
+    }
+
+    private suspend fun loadSummaryPreviousContext(
+        bookId: String,
+        targetChapterIndex: Int,
+        chapters: List<ReaderChapter>,
+    ): List<AutoCommentContextChapter> {
+        val chapterByIndex = chapters.associateBy(ReaderChapter::index)
+        val nearest = mutableListOf<AutoCommentContextChapter>()
+        for (index in (targetChapterIndex - REQUIRED_SUMMARY_PREVIOUS_CHAPTERS) until targetChapterIndex) {
+            val expected = chapterByIndex[index] ?: continue
+            val content =
+                try {
+                    provider.getReadableChapterContent(bookId, index)
+                } catch (_: ReaderProviderException) {
+                    continue
+                }
+            if (
+                content.bookId != bookId ||
+                content.sourceId != expected.sourceId ||
+                !content.isComplete ||
+                content.readableUntil != content.content.length
+            ) {
+                continue
+            }
+            nearest +=
+                AutoCommentContextChapter(
+                    sourceId = content.sourceId,
+                    chapterIndex = index,
+                    chapterTitle = content.chapterTitle,
+                    content = content.content,
+                    excerptFromEnd = false,
+                )
+        }
+        return nearest
     }
 
     suspend fun character(
@@ -695,8 +1287,12 @@ class ReadingCompanionService private constructor(
         require(name.isNotBlank()) { "人物名称不能为空" }
         val state = selectedReadingState()
         synchronizeBoundary(state)
-        var hits = store.getCharacterEvidence(state.book.id, name.trim(), 12)
-            .filter { SpoilerGuard.isPositionAllowed(it.chapterIndex, 0, it.endPosition, state) }
+        var resultState = state
+        var hits = verifyDatabaseHits(
+            state,
+            store.getCharacterEvidence(state.book.id, name.trim(), 12)
+                .filter { SpoilerGuard.isPositionAllowed(it.chapterIndex, 0, it.endPosition, state) },
+        )
         if (hits.isEmpty()) {
             refreshAndIndex(
                 maxCompletedChapters = 5,
@@ -705,11 +1301,16 @@ class ReadingCompanionService private constructor(
                 runtime = runtime,
             )
             val latest = selectedReadingState(state.book.id)
-            hits = store.getCharacterEvidence(latest.book.id, name.trim(), 12)
-                .filter {
-                    SpoilerGuard.isPositionAllowed(it.chapterIndex, 0, it.endPosition, latest)
-                }
+            resultState = latest
+            hits = verifyDatabaseHits(
+                latest,
+                store.getCharacterEvidence(latest.book.id, name.trim(), 12)
+                    .filter {
+                        SpoilerGuard.isPositionAllowed(it.chapterIndex, 0, it.endPosition, latest)
+                    },
+                )
         }
+        hits = verifyDatabaseHits(resultState, hits)
         return JSONObject().apply {
             put("book", state.book.name)
             put("queryName", name)
@@ -819,14 +1420,18 @@ class ReadingCompanionService private constructor(
         } else {
             guardedCandidates.sortedByDescending(ReadingSearchHit::score)
         }
-        val selected = ordered.filter { hit ->
-            SpoilerGuard.isPositionAllowed(
-                hit.chapterIndex,
-                hit.startPosition,
-                hit.endPosition,
+        val selected =
+            verifyDatabaseHits(
                 returnState,
+                ordered.filter { hit ->
+                    SpoilerGuard.isPositionAllowed(
+                        hit.chapterIndex,
+                        hit.startPosition,
+                        hit.endPosition,
+                        returnState,
+                    )
+                }.take(8),
             )
-        }.take(8)
 
         return JSONObject().apply {
             put("book", returnState.book.name)
@@ -864,7 +1469,7 @@ class ReadingCompanionService private constructor(
         }
     }
 
-    private fun searchEvidence(
+    private suspend fun searchEvidence(
         state: ReadingState,
         terms: List<String>,
     ): List<ReadingSearchHit> {
@@ -881,7 +1486,7 @@ class ReadingCompanionService private constructor(
             limit = 20,
         )
         val fullText = store.searchText(state.book.id, terms, limit = 50)
-        return (structured + summaries + fullText)
+        val candidates = (structured + summaries + fullText)
             .filter {
                 SpoilerGuard.isPositionAllowed(
                     it.chapterIndex,
@@ -896,6 +1501,7 @@ class ReadingCompanionService private constructor(
                     .thenByDescending { it.score }
             )
             .take(30)
+        return verifyDatabaseHits(state, candidates)
     }
 
     private fun sourcePriority(source: String): Int = when {
@@ -921,10 +1527,366 @@ class ReadingCompanionService private constructor(
         return provider.getReadingState(selected)
     }
 
+    internal suspend fun readFreshPersistedSummary(
+        bookId: String,
+        sourceId: String,
+        chapterIndex: Int,
+    ): String? {
+        val fileStore = ReadingCompanionFileStore(appContext)
+        val kind = fileStore.summaryContentHashKind(bookId, sourceId) ?: return null
+        val chapter = ReaderChapter(bookId, sourceId, chapterIndex, "")
+        val currentHash = try {
+            withTimeoutOrNull(SUMMARY_TOOL_FRESHNESS_TIMEOUT_MS) {
+                currentSummaryContentHash(bookId, chapter, kind)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        return fileStore.readSummary(bookId, sourceId, currentHash)
+    }
+
+    private suspend fun collectRecentFreshFileSummaries(
+        state: ReadingState,
+        limit: Int,
+        includeCurrentReadableSummary: Boolean = false,
+        chaptersOverride: List<ReaderChapter>? = null,
+        fileStoreOverride: ReadingCompanionFileStore? = null,
+    ): List<FreshFileSummary> {
+        val chapters = chaptersOverride ?: provider.getChapters(state.book.id)
+        val fileStore = fileStoreOverride ?: ReadingCompanionFileStore(appContext)
+        fileStore.syncBookCatalog(state.book, chapters)
+        val candidates = chapters
+            .asSequence()
+            .filter { chapter ->
+                chapter.index < state.chapterIndex ||
+                    (includeCurrentReadableSummary && chapter.index == state.chapterIndex)
+            }
+            .filter { chapter -> fileStore.hasSummary(state.book.id, chapter.sourceId) }
+            .sortedByDescending(ReaderChapter::index)
+            .take((limit * 3).coerceAtMost(30))
+            .toList()
+        val result = mutableListOf<FreshFileSummary>()
+        val sourceByIndex = mutableMapOf<Int, String>()
+        withTimeoutOrNull(SUMMARY_CONTEXT_FRESHNESS_BUDGET_MS) {
+            for (chapter in candidates) {
+                if (result.size >= limit) break
+                val summary = readFreshFileSummary(
+                    state = state,
+                    chapter = chapter,
+                    includeCurrentReadableSummary = includeCurrentReadableSummary,
+                    fileStore = fileStore,
+                ) ?: continue
+                sourceByIndex[chapter.index] = chapter.sourceId
+                result += summary
+            }
+        }
+        val currentChapterByIndex =
+            provider.getChapters(state.book.id).associateBy(ReaderChapter::index)
+        val finalResult = mutableListOf<FreshFileSummary>()
+        withTimeoutOrNull(SUMMARY_CONTEXT_FRESHNESS_BUDGET_MS) {
+            result.forEach { summary ->
+                val currentChapter =
+                    currentChapterByIndex[summary.chapter.index] ?: return@forEach
+                if (currentChapter.sourceId != sourceByIndex[summary.chapter.index]) return@forEach
+                readFreshFileSummary(
+                    state = state,
+                    chapter = currentChapter,
+                    includeCurrentReadableSummary = includeCurrentReadableSummary,
+                    fileStore = fileStore,
+                )?.let(finalResult::add)
+            }
+        }
+        return finalResult
+    }
+
+    private suspend fun readFreshFileSummary(
+        state: ReadingState,
+        chapter: ReaderChapter,
+        includeCurrentReadableSummary: Boolean,
+        fileStore: ReadingCompanionFileStore,
+    ): FreshFileSummary? {
+        if (chapter.index > state.chapterIndex) return null
+        val contentHashKind =
+            fileStore.summaryContentHashKind(state.book.id, chapter.sourceId) ?: return null
+        if (
+            chapter.index == state.chapterIndex &&
+            (
+                !includeCurrentReadableSummary ||
+                    contentHashKind != ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE
+            )
+        ) {
+            return null
+        }
+        val contentHash =
+            fileStore.summaryContentHash(state.book.id, chapter.sourceId) ?: return null
+        val summary =
+            readFreshPersistedSummary(state.book.id, chapter.sourceId, chapter.index) ?: return null
+        val path =
+            fileStore.chapterFilePaths(state.book.id, chapter.sourceId)
+                ?.optString("summaryPath")
+                ?.takeIf(String::isNotBlank)
+                ?: return null
+        return FreshFileSummary(
+            chapter = chapter,
+            summary = summary,
+            path = path,
+            contentHash = contentHash,
+            contentHashKind = contentHashKind,
+        )
+    }
+
+    private suspend fun verifyDatabaseHits(
+        state: ReadingState,
+        hits: List<ReadingSearchHit>,
+    ): List<ReadingSearchHit> {
+        if (hits.isEmpty()) return emptyList()
+        val chapters = provider.getChapters(state.book.id)
+        val chapterByIndex = chapters.associateBy(ReaderChapter::index)
+        val fileStore = ReadingCompanionFileStore(appContext)
+        fileStore.syncBookCatalog(state.book, chapters)
+        val verifiedTextIndices = mutableSetOf<Int>()
+        val verifiedKnowledgeIndices = mutableSetOf<Int>()
+        withTimeoutOrNull(SUMMARY_CONTEXT_FRESHNESS_BUDGET_MS) {
+            for (chapterIndex in hits.asSequence().map(ReadingSearchHit::chapterIndex).distinct().take(16)) {
+                val chapter = chapterByIndex[chapterIndex] ?: continue
+                val indexedHash = store.getIndexedChapter(state.book.id, chapterIndex)?.contentHash
+                    ?: continue
+                val currentHash = try {
+                    withTimeoutOrNull(SUMMARY_TOOL_FRESHNESS_TIMEOUT_MS) {
+                        currentSummaryContentHash(
+                            state.book.id,
+                            chapter,
+                            ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE,
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+                if (currentHash == indexedHash) {
+                    verifiedTextIndices += chapterIndex
+                    val knowledgeHash =
+                        store.getChapterKnowledge(state.book.id, chapterIndex)?.contentHash
+                    if (knowledgeHash == indexedHash) {
+                        verifiedKnowledgeIndices += chapterIndex
+                    }
+                }
+            }
+        }
+        return hits.filter {
+            if (it.source == "full_text") {
+                it.chapterIndex in verifiedTextIndices
+            } else {
+                it.chapterIndex in verifiedKnowledgeIndices
+            }
+        }
+    }
+
+    private suspend fun currentSummaryContentHash(
+        bookId: String,
+        chapter: ReaderChapter,
+        kind: String,
+    ): String? =
+        when (kind) {
+            ReadingCompanionFileStore.CONTENT_HASH_KIND_ANNOTATION -> {
+                val current = provider.getAnnotationChapterContent(bookId, chapter.index)
+                current
+                    .takeIf { it.sourceId == chapter.sourceId }
+                    ?.content
+                    ?.let(ReadingCompanionFileStore::contentHash)
+            }
+            ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE -> {
+                val current = provider.getReadableChapterContent(bookId, chapter.index)
+                current
+                    .takeIf { it.sourceId == chapter.sourceId }
+                    ?.content
+                    ?.let(ReadingCompanionFileStore::contentHash)
+            }
+            else -> null
+        }
+
+    private suspend fun readFreshCompanionComments(
+        state: ReadingState,
+        currentUnlockedParagraph: Int,
+        roleCardId: String,
+        limit: Int,
+    ): List<AutoCommentRecord> {
+        val safeLimit = limit.coerceIn(0, MAX_CONTEXT_COMPANION_COMMENTS)
+        if (safeLimit == 0) return emptyList()
+        val chapters = provider.getChapters(state.book.id)
+        val fileStore = ReadingCompanionFileStore(appContext)
+        fileStore.syncBookCatalog(state.book, chapters)
+        val sourceByIndex = mutableMapOf<Int, String>()
+        val contractByIndex = mutableMapOf<Int, String>()
+        val result = mutableListOf<AutoCommentRecord>()
+        withTimeoutOrNull(SUMMARY_CONTEXT_FRESHNESS_BUDGET_MS) {
+            for (chapter in chapters.asReversed()) {
+                if (chapter.index > state.chapterIndex || result.size >= safeLimit) continue
+                val storedContract =
+                    fileStore.publishedContractHash(state.book.id, chapter.sourceId, roleCardId)
+                        ?: continue
+                val current = try {
+                    withTimeoutOrNull(SUMMARY_TOOL_FRESHNESS_TIMEOUT_MS) {
+                        provider.getAnnotationChapterContent(state.book.id, chapter.index)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                } ?: continue
+                if (current.sourceId != chapter.sourceId || current.contractHash != storedContract) {
+                    continue
+                }
+                val published =
+                    fileStore.readPublishedComments(
+                        state.book.id,
+                        chapter.index,
+                        current.contractHash,
+                    )?.takeIf { it.optBoolean("ready") } ?: continue
+                sourceByIndex[chapter.index] = chapter.sourceId
+                contractByIndex[chapter.index] = current.contractHash
+                val comments = published.optJSONArray("comments") ?: JSONArray()
+                for (position in 0 until comments.length()) {
+                    val comment = comments.optJSONObject(position) ?: continue
+                    val paragraphIndex = comment.optInt("paragraphIndex", -1)
+                    if (
+                        paragraphIndex < 0 ||
+                        (
+                            chapter.index == state.chapterIndex &&
+                                paragraphIndex > currentUnlockedParagraph
+                            )
+                    ) {
+                        continue
+                    }
+                    result += AutoCommentRecord(
+                        bookId = state.book.id,
+                        chapterIndex = chapter.index,
+                        paragraphIndex = paragraphIndex,
+                        text = comment.optString("text"),
+                        kind = comment.optString("kind"),
+                        roleCardId = roleCardId,
+                        roleCardName = published.optString("roleCardName"),
+                        evidenceJson =
+                            (comment.optJSONObject("evidence") ?: JSONObject()).toString(),
+                        createdAt = comment.optLong("createdAt"),
+                    )
+                }
+            }
+        }
+        val currentChapterByIndex =
+            provider.getChapters(state.book.id).associateBy(ReaderChapter::index)
+        val finalValidIndices = mutableSetOf<Int>()
+        withTimeoutOrNull(SUMMARY_CONTEXT_FRESHNESS_BUDGET_MS) {
+            sourceByIndex.forEach { (chapterIndex, sourceId) ->
+                val chapter = currentChapterByIndex[chapterIndex] ?: return@forEach
+                if (chapter.sourceId != sourceId) return@forEach
+                val current = try {
+                    withTimeoutOrNull(SUMMARY_TOOL_FRESHNESS_TIMEOUT_MS) {
+                        provider.getAnnotationChapterContent(state.book.id, chapterIndex)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                } ?: return@forEach
+                if (
+                    current.sourceId == sourceId &&
+                    current.contractHash == contractByIndex[chapterIndex]
+                ) {
+                    finalValidIndices += chapterIndex
+                }
+            }
+        }
+        return result
+            .filter { it.chapterIndex in finalValidIndices }
+            .sortedWith(
+                compareByDescending<AutoCommentRecord> { it.chapterIndex }
+                    .thenByDescending(AutoCommentRecord::paragraphIndex)
+            )
+            .take(safeLimit)
+    }
+
+    private suspend fun validateContextInputsStillCurrent(
+        state: ReadingState,
+        current: ReadableChapterContent,
+        previous: List<AutoCommentContextChapter>,
+    ) {
+        val chapters = provider.getChapters(state.book.id).associateBy(ReaderChapter::index)
+        require(chapters[current.chapterIndex]?.sourceId == current.sourceId) {
+            "上下文返回前当前章节目录发生变化"
+        }
+        val latestCurrent = provider.getReadableChapterContent(state.book.id, current.chapterIndex)
+        validateContentBeforeStore(state, latestCurrent, current.sourceId)
+        require(
+            latestCurrent.readableUntil == current.readableUntil &&
+                ReadingCompanionFileStore.contentHash(latestCurrent.content) ==
+                    ReadingCompanionFileStore.contentHash(current.content)
+        ) { "上下文返回前当前章节正文发生变化" }
+        previous.forEach { prior ->
+            require(chapters[prior.chapterIndex]?.sourceId == prior.sourceId) {
+                "上下文返回前前文章节目录发生变化"
+            }
+            val latestPrior =
+                provider.getReadableChapterContent(state.book.id, prior.chapterIndex)
+            require(latestPrior.sourceId == prior.sourceId) {
+                "上下文返回前前文章节来源发生变化"
+            }
+            require(
+                if (prior.excerptFromEnd) {
+                    latestPrior.content.endsWith(prior.content)
+                } else {
+                    latestPrior.content == prior.content
+                }
+            ) { "上下文返回前前文章节正文发生变化" }
+        }
+    }
+
+    private suspend fun validateGenerationInputStillCurrent(
+        initialState: ReadingState,
+        generatedFrom: ReadableChapterContent,
+        fileStore: ReadingCompanionFileStore,
+    ): Pair<ReadingState, ReaderChapter> {
+        val latest = selectedReadingState(initialState.book.id)
+        failIfBoundaryRegressed(initialState, latest)
+        require(
+            SpoilerGuard.isPositionAllowed(
+                generatedFrom.chapterIndex,
+                0,
+                generatedFrom.readableUntil,
+                latest,
+            )
+        ) { "章节摘要生成期间阅读边界发生变化" }
+        val currentChapters = provider.getChapters(initialState.book.id)
+        fileStore.syncBookCatalog(initialState.book, currentChapters)
+        val currentChapter =
+            currentChapters.firstOrNull { it.index == generatedFrom.chapterIndex }
+                ?: error("摘要生成期间目标章节已从目录中移除")
+        require(currentChapter.sourceId == generatedFrom.sourceId) {
+            "摘要生成期间章节目录发生变化"
+        }
+        val currentContent =
+            provider.getReadableChapterContent(initialState.book.id, generatedFrom.chapterIndex)
+        validateContentBeforeStore(latest, currentContent, currentChapter.sourceId)
+        require(
+            currentContent.sourceId == generatedFrom.sourceId &&
+                currentContent.readableUntil == generatedFrom.readableUntil &&
+                ReadingCompanionFileStore.contentHash(currentContent.content) ==
+                    ReadingCompanionFileStore.contentHash(generatedFrom.content)
+        ) { "摘要生成期间章节正文发生变化" }
+        return latest to currentChapter
+    }
+
     private suspend fun validateContentBeforeStore(
         previousState: ReadingState,
         content: ReadableChapterContent,
+        expectedSourceId: String?,
     ) {
+        require(!expectedSourceId.isNullOrBlank() && content.sourceId == expectedSourceId) {
+            "Legado 目录在读取章节时发生变化，请稍后重试"
+        }
         val latest = selectedReadingState(previousState.book.id)
         failIfBoundaryRegressed(previousState, latest)
         synchronizeBoundary(latest)
@@ -1031,8 +1993,8 @@ class ReadingCompanionService private constructor(
         const val TOOLPKG_ID = "com.operit.reading_companion"
         const val SUBPACKAGE_NAME = "reading_companion"
         const val AUTO_COMMENTARY_SUBPACKAGE_NAME = "reading_companion_auto_commentary"
-        private const val DEFAULT_CONTEXT_CHARACTERS = 32_000
-        private const val MIN_CONTEXT_CHARACTERS = 32_000
+        private const val DEFAULT_CONTEXT_CHARACTERS = 16_000
+        private const val MIN_CONTEXT_CHARACTERS = 8_000
         private const val MAX_CONTEXT_CHARACTERS = 96_000
         private const val CURRENT_CHAPTER_MAX_CHARACTERS = 6_000
         private const val MAX_SUPPLEMENTAL_CONTEXT_CHARACTERS = 8_000
@@ -1045,6 +2007,17 @@ class ReadingCompanionService private constructor(
         private const val COMMENT_BUDGET_FRACTION = 20
         private const val INDEX_WORK_NAME = "reading_companion_incremental_index"
         private const val SEARCH_MODEL_STEP_TIMEOUT_MS = 8_000L
+        private const val SUMMARY_LIST_CATALOG_REFRESH_BUDGET_MS = 6_000L
+        private const val LIST_FILES_CATALOG_REFRESH_BUDGET_MS = 6_000L
+        private const val READ_FILE_CATALOG_REFRESH_BUDGET_MS = 6_000L
+        private const val SUMMARY_CONTEXT_FRESHNESS_BUDGET_MS = 8_000L
+        private const val SUMMARY_TOOL_FRESHNESS_TIMEOUT_MS = 1_500L
+        const val PERSISTED_FILES_DEFAULT_LIMIT = 50
+        private const val MAX_MANUAL_BATCH_COUNT = 10
+        private const val REQUIRED_SUMMARY_PREVIOUS_CHAPTERS = 4
+        private const val TRIGGER_MANUAL_SUMMARY = "manual_summary"
+        private const val SUMMARY_ONLY_ROLE_CARD_ID = "__reading_summary_only__"
+        private const val SUMMARY_ONLY_ROLE_CARD_NAME = "章节摘要"
 
         @Volatile
         private var instance: ReadingCompanionService? = null
@@ -1078,10 +2051,7 @@ class ReadingCompanionIndexWorker(
                 maxKnowledgeChapters = 2,
                 scheduleMore = false,
             )
-            if (
-                refresh.remainingCompletedChapters > 0 ||
-                refresh.remainingKnowledgeChapters > 0
-            ) {
+            if (refresh.remainingCompletedChapters > 0) {
                 service.scheduleBackgroundIndexContinuation()
             }
             Result.success()

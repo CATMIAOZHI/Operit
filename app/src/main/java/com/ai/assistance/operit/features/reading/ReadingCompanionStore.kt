@@ -44,6 +44,7 @@ data class StoredChapterKnowledge(
     val chapterTitle: String,
     val sourceEndPosition: Int,
     val isComplete: Boolean,
+    val contentHash: String,
     val summary: String,
     val structuredJson: String,
     val keywords: String,
@@ -1110,11 +1111,53 @@ class ReadingCompanionStore(context: Context) :
     }
 
     /**
+     * Remembers the most recent successfully resolved book id (explicit selection or automatic
+     * recent book), so the local summaries/files surfaces can still address the on-disk book
+     * workspace while Legado is unreachable.  Never resolves to a fabricated placeholder id.
+     */
+    @Synchronized
+    fun setLastResolvedBookId(bookId: String) {
+        if (bookId.isBlank()) return
+        writableDatabase.insertWithOnConflict(
+            "reading_settings",
+            null,
+            ContentValues().apply {
+                put("setting_key", LAST_RESOLVED_BOOK_KEY)
+                put("setting_value", bookId)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
+    @Synchronized
+    fun getLastResolvedBookId(): String? {
+        readableDatabase.query(
+            "reading_settings",
+            arrayOf("setting_value"),
+            "setting_key = ?",
+            arrayOf(LAST_RESOLVED_BOOK_KEY),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor ->
+            return if (cursor.moveToFirst()) cursor.getString(0).takeIf(String::isNotBlank) else null
+        }
+    }
+
+    /**
      * Removes novel-derived data beyond the latest observed boundary. Reader memories are kept:
      * they are explicitly user-authored and are independently boundary-filtered on retrieval.
      */
     @Synchronized
     fun prepareForState(state: ReadingState) {
+        // 段评预取覆盖表跟随预取窗口：清理边界必须与 firstMissingPrefetchChapter
+        // 的扫描窗口一致，否则每次 prepare 都会删掉窗口内“已覆盖”记录，
+        // 导致流水线反复生成同一章段评（Token 烧毁循环）。
+        val autoCommentRetentionIndex = AutoCommentSupport.prefetchWindowUpperIndex(
+            state.chapterIndex,
+            getPrefetchAheadChapters(),
+        )
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -1141,7 +1184,7 @@ class ReadingCompanionStore(context: Context) :
             db.delete(
                 "auto_comment_chapters",
                 "book_id = ? AND chapter_index > ?",
-                arrayOf(state.book.id, (state.chapterIndex + 1).toString()),
+                arrayOf(state.book.id, autoCommentRetentionIndex.toString()),
             )
             val bodyPosition = state.bodyPosition
             if (bodyPosition == null) {
@@ -1369,6 +1412,110 @@ class ReadingCompanionStore(context: Context) :
         ) > 0
     }
 
+    private val prefetchPreferences by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        appContext.getSharedPreferences(PREFETCH_PREFERENCES_NAME, Context.MODE_PRIVATE)
+    }
+
+    fun getPrefetchAheadChapters(): Int =
+        prefetchPreferences
+            .getInt(
+                PREFETCH_AHEAD_CHAPTERS_KEY,
+                AutoCommentSupport.DEFAULT_PREFETCH_AHEAD_CHAPTERS,
+            )
+            .let(AutoCommentSupport::clampPrefetchAheadChapters)
+
+    @Synchronized
+    fun setPrefetchAheadChapters(value: Int): Int {
+        val clamped = AutoCommentSupport.clampPrefetchAheadChapters(value)
+        prefetchPreferences
+            .edit()
+            .putInt(PREFETCH_AHEAD_CHAPTERS_KEY, clamped)
+            .apply()
+        return clamped
+    }
+
+    /**
+     * 提前生成窗口的“已覆盖”判定：章节已 READY、生成策略版本一致，且（已选角色时）
+     * 角色一致。角色卡变更后旧角色章节视为未覆盖，允许新角色重新生成。
+     */
+    @Synchronized
+    fun isAutoCommentChapterCovered(
+        bookId: String,
+        chapterIndex: Int,
+        roleCardId: String? = null,
+    ): Boolean {
+        val chapter = getAutoCommentChapter(bookId, chapterIndex) ?: return false
+        if (chapter.status != AUTO_COMMENT_STATUS_READY) return false
+        if (
+            chapter.generationPolicyVersion !=
+            AutoCommentSupport.GENERATION_POLICY_VERSION
+        ) {
+            return false
+        }
+        if (roleCardId == null) return true
+        return chapter.roleCardId == roleCardId
+    }
+
+    @Synchronized
+    fun hasRecentAutoCommentClaim(
+        bookId: String,
+        chapterIndex: Int,
+        staleAfterMs: Long,
+    ): Boolean {
+        val now = System.currentTimeMillis()
+        return readableDatabase.query(
+            "auto_comment_generation_claims",
+            arrayOf("updated_at"),
+            "book_id = ? AND chapter_index = ?",
+            arrayOf(bookId, chapterIndex.toString()),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor ->
+            cursor.moveToFirst() && now - cursor.getLong(0) < staleAfterMs
+        }
+    }
+
+    /**
+     * 该章最近一次终态 run 是否处于“失败重试冷静期”：终态为 failed /
+     * no_valid_comments / superseded（均表示该章未产出有效段评），且完成时间距现在
+     * 小于 cooldownMs 时返回 true，供流水线跳过该章，避免反复烧 Token 重试同一章。
+     */
+    @Synchronized
+    fun isAutoCommentChapterInRetryCooldown(
+        bookId: String,
+        chapterIndex: Int,
+        cooldownMs: Long,
+    ): Boolean {
+        if (cooldownMs <= 0) return false
+        val now = System.currentTimeMillis()
+        return readableDatabase.query(
+            "auto_comment_runs",
+            arrayOf("finished_at"),
+            """
+            book_id = ? AND chapter_index = ? AND finished_at IS NOT NULL
+            AND status IN (?, ?, ?)
+            """.trimIndent(),
+            arrayOf(
+                bookId,
+                chapterIndex.toString(),
+                AUTO_COMMENT_RUN_STATUS_FAILED,
+                AUTO_COMMENT_RUN_STATUS_NO_VALID_COMMENTS,
+                AUTO_COMMENT_RUN_STATUS_SUPERSEDED,
+            ),
+            null,
+            null,
+            "finished_at DESC, id DESC",
+            "1",
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return false
+            // SQL 已过滤为真实失败终态；纯协调状态（already_generating 等）
+            // 不会遮住更早的真实失败 run，按最新完成时间计算冷却。
+            now - cursor.getLong(0) < cooldownMs
+        }
+    }
+
     @Synchronized
     fun setAutoCommentPersona(
         bookId: String,
@@ -1452,6 +1599,54 @@ class ReadingCompanionStore(context: Context) :
         comments: List<AutoCommentRecord>,
     ): Boolean {
         AutoCommentSupport.requireReplacementComments(comments)
+        return publishAutoComments(
+            bookId = bookId,
+            chapterIndex = chapterIndex,
+            chapterTitle = chapterTitle,
+            contentHash = contentHash,
+            roleCardId = roleCardId,
+            roleCardName = roleCardName,
+            generationRunId = generationRunId,
+            comments = comments,
+        )
+    }
+
+    /**
+     * A successful submit_comments may deliberately contain zero comments while still publishing
+     * its chapter summary. Keep this explicit so parser/validation failures can never erase old
+     * comments by accidentally passing an empty list through [replaceAutoComments].
+     */
+    @Synchronized
+    fun completeAutoCommentGenerationWithNoComments(
+        bookId: String,
+        chapterIndex: Int,
+        chapterTitle: String,
+        contentHash: String,
+        roleCardId: String,
+        roleCardName: String,
+        generationRunId: Long,
+    ): Boolean =
+        publishAutoComments(
+            bookId = bookId,
+            chapterIndex = chapterIndex,
+            chapterTitle = chapterTitle,
+            contentHash = contentHash,
+            roleCardId = roleCardId,
+            roleCardName = roleCardName,
+            generationRunId = generationRunId,
+            comments = emptyList(),
+        )
+
+    private fun publishAutoComments(
+        bookId: String,
+        chapterIndex: Int,
+        chapterTitle: String,
+        contentHash: String,
+        roleCardId: String,
+        roleCardName: String,
+        generationRunId: Long,
+        comments: List<AutoCommentRecord>,
+    ): Boolean {
         val db = writableDatabase
         val createdAt = System.currentTimeMillis()
         var replaced = false
@@ -2972,6 +3167,7 @@ class ReadingCompanionStore(context: Context) :
                 "chapter_title",
                 "source_end_pos",
                 "is_complete",
+                "content_hash",
                 "summary",
                 "structured_json",
                 "keywords",
@@ -2991,10 +3187,11 @@ class ReadingCompanionStore(context: Context) :
                 chapterTitle = cursor.getString(2),
                 sourceEndPosition = cursor.getInt(3),
                 isComplete = cursor.getInt(4) == 1,
-                summary = cursor.getString(5),
-                structuredJson = cursor.getString(6),
-                keywords = cursor.getString(7),
-                updatedAt = cursor.getLong(8),
+                contentHash = cursor.getString(5),
+                summary = cursor.getString(6),
+                structuredJson = cursor.getString(7),
+                keywords = cursor.getString(8),
+                updatedAt = cursor.getLong(9),
             )
         }
     }
@@ -3014,6 +3211,7 @@ class ReadingCompanionStore(context: Context) :
                 "chapter_title",
                 "source_end_pos",
                 "is_complete",
+                "content_hash",
                 "summary",
                 "structured_json",
                 "keywords",
@@ -3033,10 +3231,11 @@ class ReadingCompanionStore(context: Context) :
                     chapterTitle = cursor.getString(2),
                     sourceEndPosition = cursor.getInt(3),
                     isComplete = cursor.getInt(4) == 1,
-                    summary = cursor.getString(5),
-                    structuredJson = cursor.getString(6),
-                    keywords = cursor.getString(7),
-                    updatedAt = cursor.getLong(8),
+                    contentHash = cursor.getString(5),
+                    summary = cursor.getString(6),
+                    structuredJson = cursor.getString(7),
+                    keywords = cursor.getString(8),
+                    updatedAt = cursor.getLong(9),
                 )
             }
         }
@@ -3462,6 +3661,7 @@ class ReadingCompanionStore(context: Context) :
         private const val DATABASE_NAME = "reading_companion.db"
         internal const val DATABASE_VERSION = 13
         private const val SELECTED_BOOK_KEY = "selected_book_id"
+        private const val LAST_RESOLVED_BOOK_KEY = "last_resolved_book_id"
         const val AUTO_COMMENT_STATUS_GENERATING = "generating"
         const val AUTO_COMMENT_STATUS_READY = "ready"
         const val AUTO_COMMENT_STATUS_FAILED = "failed"
@@ -3473,5 +3673,7 @@ class ReadingCompanionStore(context: Context) :
         const val AUTO_COMMENT_RUN_STATUS_INTERRUPTED = "interrupted"
         const val AUTO_COMMENT_RUN_STATUS_NO_VALID_COMMENTS = "no_valid_comments"
         private const val AUTO_COMMENT_RUN_RETENTION = 50
+        private const val PREFETCH_PREFERENCES_NAME = "reading_companion_prefs"
+        private const val PREFETCH_AHEAD_CHAPTERS_KEY = "prefetch_ahead_chapters"
     }
 }

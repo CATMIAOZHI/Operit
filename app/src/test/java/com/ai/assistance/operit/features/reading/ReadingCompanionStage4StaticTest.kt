@@ -184,4 +184,28 @@ class ReadingCompanionStage4StaticTest {
             )
         }
     }
+
+    @Test
+    fun `main companion uses local grep and removes semantic search exposure`() {
+        val promptSource = source("../examples/reading_companion/main.js")
+        val packageSource = source("../examples/reading_companion/packages/reading_companion.js")
+        assertTrue(promptSource.contains("get_local_files first"))
+        assertTrue(promptSource.contains("then read_file"))
+        assertTrue(promptSource.contains("content.md"))
+        assertTrue(promptSource.contains("Never edit content.md"))
+        assertFalse(
+            "主工具包元数据不得再暴露复杂 search",
+            Regex("\"name\"\\s*:\\s*\"search\"").containsMatchIn(packageSource),
+        )
+        assertFalse(
+            "主工具包不得再导出 search 函数",
+            packageSource.contains("exports.search"),
+        )
+        assertTrue(packageSource.contains("8000 到 96000"))
+        assertTrue(packageSource.contains("\"default\": 16000"))
+        assertTrue(packageSource.contains("safeSearchPaths"))
+        assertTrue(packageSource.contains("allCurrentSearchPaths"))
+        assertTrue(promptSource.contains("Never grep chaptersRootPath directly"))
+        assertTrue(promptSource.contains("绝不能直接 grep chaptersRootPath"))
+    }
 }

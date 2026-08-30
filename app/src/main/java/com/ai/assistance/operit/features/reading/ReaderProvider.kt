@@ -10,6 +10,8 @@ data class ReaderBook(
 
 data class ReaderChapter(
     val bookId: String,
+    /** Legado's source chapter URL; stable when insertions only shift [index]. */
+    val sourceId: String,
     val index: Int,
     val title: String,
 )
@@ -25,6 +27,7 @@ data class ReadingState(
 
 data class ReadableChapterContent(
     val bookId: String,
+    val sourceId: String,
     val chapterIndex: Int,
     val chapterTitle: String,
     val content: String,
@@ -36,6 +39,7 @@ data class ReadableChapterContent(
 
 data class AnnotationChapterContent(
     val bookId: String,
+    val sourceId: String,
     val chapterIndex: Int,
     val chapterTitle: String,
     val content: String,

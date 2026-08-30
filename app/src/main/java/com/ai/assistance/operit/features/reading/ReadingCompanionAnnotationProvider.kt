@@ -26,11 +26,13 @@ import org.json.JSONObject
  */
 class ReadingCompanionAnnotationProvider : ContentProvider() {
     private lateinit var store: ReadingCompanionStore
+    private lateinit var fileStore: ReadingCompanionFileStore
     private lateinit var matcher: UriMatcher
 
     override fun onCreate(): Boolean {
         val appContext = requireNotNull(context).applicationContext
         store = ReadingCompanionStore(appContext)
+        fileStore = ReadingCompanionFileStore(appContext)
         matcher = UriMatcher(UriMatcher.NO_MATCH).apply {
             val authority = "${appContext.packageName}.readingCompanionAnnotations"
             addURI(authority, "reviews/summary", MATCH_SUMMARY)
@@ -98,6 +100,45 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
         val bookId = requireParameter(uri, "bookId")
         val chapterIndex = requireParameter(uri, "chapterIndex").toInt()
         val expectedHash = uri.getQueryParameter("contentHash")?.takeIf(String::isNotBlank)
+        fileStore.readPublishedComments(bookId, chapterIndex, expectedHash)?.let { published ->
+            if (!published.optBoolean("ready")) {
+                return success(
+                    JSONObject()
+                        .put("enabled", true)
+                        .put("ready", false)
+                        .put("stale", published.optBoolean("stale")),
+                )
+            }
+            val grouped = linkedMapOf<Int, MutableList<JSONObject>>()
+            val comments = published.optJSONArray("comments") ?: JSONArray()
+            repeat(comments.length()) { position ->
+                val comment = comments.optJSONObject(position) ?: return@repeat
+                grouped.getOrPut(comment.optInt("paragraphIndex")) { mutableListOf() }
+                    .add(comment)
+            }
+            return success(
+                JSONObject()
+                    .put("enabled", true)
+                    .put("ready", true)
+                    .put("contentHash", published.optString("contractHash"))
+                    .put(
+                        "comments",
+                        JSONArray().apply {
+                            grouped.toSortedMap().forEach { (paragraphIndex, values) ->
+                                put(
+                                    JSONObject()
+                                        .put("paragraphIndex", paragraphIndex)
+                                        .put("count", values.size)
+                                        .put("preview", values.firstOrNull()?.optString("text").orEmpty()),
+                                )
+                            }
+                        },
+                    ),
+            )
+        }
+        if (fileStore.hasCatalog(bookId)) {
+            return success(JSONObject().put("enabled", true).put("ready", false))
+        }
         val chapter = store.getAutoCommentChapter(bookId, chapterIndex)
             ?: return success(JSONObject().put("enabled", true).put("ready", false))
         if (
@@ -143,6 +184,40 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
         val chapterIndex = requireParameter(uri, "chapterIndex").toInt()
         val paragraphIndex = requireParameter(uri, "paragraphIndex").toInt()
         val expectedHash = uri.getQueryParameter("contentHash")?.takeIf(String::isNotBlank)
+        fileStore.readPublishedComments(bookId, chapterIndex, expectedHash)?.let { published ->
+            if (!published.optBoolean("ready")) {
+                return success(JSONObject().put("ready", false).put("comments", JSONArray()))
+            }
+            val roleCardName = published.optString("roleCardName")
+            val source = published.optJSONArray("comments") ?: JSONArray()
+            return success(
+                JSONObject()
+                    .put("ready", true)
+                    .put(
+                        "comments",
+                        JSONArray().apply {
+                            repeat(source.length()) { position ->
+                                val comment = source.optJSONObject(position) ?: return@repeat
+                                if (comment.optInt("paragraphIndex") != paragraphIndex) {
+                                    return@repeat
+                                }
+                                put(
+                                    JSONObject()
+                                        .put("id", "${chapterIndex}_${paragraphIndex}_$position")
+                                        .put("name", roleCardName)
+                                        .put("badges", JSONArray().put("AI"))
+                                        .put("content", comment.optString("text"))
+                                        .put("kind", comment.optString("kind"))
+                                        .put("createdAt", comment.optLong("createdAt")),
+                                )
+                            }
+                        },
+                    ),
+            )
+        }
+        if (fileStore.hasCatalog(bookId)) {
+            return success(JSONObject().put("ready", false).put("comments", JSONArray()))
+        }
         val chapter = store.getAutoCommentChapter(bookId, chapterIndex)
             ?: return success(JSONObject().put("ready", false).put("comments", JSONArray()))
         if (

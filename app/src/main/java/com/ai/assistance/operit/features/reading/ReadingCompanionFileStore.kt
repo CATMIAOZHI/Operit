@@ -1,0 +1,1450 @@
+package com.ai.assistance.operit.features.reading
+
+import android.content.Context
+import com.ai.assistance.operit.util.OperitPaths
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.nio.charset.StandardCharsets
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+
+internal data class LegacyMigrationRequirements(
+    val summary: Boolean,
+    val comments: Boolean,
+    val content: Boolean,
+)
+
+/**
+ * Human- and agent-readable book files. SQLite remains the runtime coordinator for claims and
+ * Legado queries. Summaries/comments are durable editable artifacts; content.md is the last
+ * successfully fetched read-only snapshot. Legado content or cleanup rules may change afterward,
+ * and the snapshot refreshes only when the plugin actually processes that chapter again.
+ */
+class ReadingCompanionFileStore(
+    @Suppress("UNUSED_PARAMETER") context: Context,
+    /**
+     * Test-only root override. Production callers should leave this null so all books remain
+     * under the shared Operit external-storage directory.
+     */
+    internal val storageRootOverride: File? = null,
+) {
+    private val root =
+        storageRootOverride ?: File(OperitPaths.operitRootPathSdcard(), "reading_companion/books")
+
+    fun syncBookCatalog(book: ReaderBook, chapters: List<ReaderChapter>) = withFileStoreLock {
+        val bookDir = bookDir(book.id)
+        bookDir.mkdirs()
+        val bookMetadataFile = File(bookDir, "book.md")
+        val stableBookMetadata = buildString {
+            appendLine("# ${book.name}")
+            appendLine()
+            appendLine("- author: ${book.author}")
+            appendLine("- bookIdHash: ${sha256(book.id)}")
+            appendLine("- chapterCount: ${chapters.size}")
+            appendLine()
+            appendLine("章节目录按每 100 章拆分在 `chapters/*/catalog.json`。")
+        }
+        atomicWriteIfChanged(bookMetadataFile, stableBookMetadata)
+        val chapterRoot = File(bookDir, "chapters")
+        val existingChapterDirectoriesByName =
+            chapterRoot
+                .listFiles()
+                .orEmpty()
+                .asSequence()
+                .filter(File::isDirectory)
+                .flatMap { groupDirectory ->
+                    groupDirectory
+                        .listFiles()
+                        .orEmpty()
+                        .asSequence()
+                        .filter(File::isDirectory)
+                }
+                .groupBy(File::getName)
+        val activeGroupNames = linkedSetOf<String>()
+        chapters
+            .sortedBy(ReaderChapter::index)
+            .groupBy { chapter -> chapter.index / CHAPTERS_PER_GROUP }
+            .toSortedMap()
+            .values
+            .forEach { group ->
+                if (group.isEmpty()) return@forEach
+                val first = (group.first().index / CHAPTERS_PER_GROUP) * CHAPTERS_PER_GROUP + 1
+                val last = first + CHAPTERS_PER_GROUP - 1
+                val activeGroupName = groupName(first, last)
+                activeGroupNames += activeGroupName
+                val groupDir = File(chapterRoot, activeGroupName).apply { mkdirs() }
+                group.forEach { chapter ->
+                    val directoryName = chapterDirectoryName(book.id, chapter.sourceId)
+                    val targetDir = File(groupDir, directoryName)
+                    val existingDir =
+                        existingChapterDirectoriesByName[directoryName]
+                            .orEmpty()
+                            .firstOrNull { directory -> directory == targetDir }
+                            ?: existingChapterDirectoriesByName[directoryName].orEmpty().firstOrNull()
+                    if (existingDir != null && existingDir != targetDir && !targetDir.exists()) {
+                        moveDirectory(existingDir, targetDir)
+                    }
+                }
+                atomicWriteIfChanged(
+                    File(groupDir, "catalog.json"),
+                    JSONObject()
+                        .put("schemaVersion", SCHEMA_VERSION)
+                        .put("bookIdHash", sha256(book.id))
+                        .put("firstOrdinal", first)
+                        .put("lastOrdinal", last)
+                        .put(
+                            "chapters",
+                            JSONArray().apply {
+                                group.forEach { chapter ->
+                                    val relativePath =
+                                        "$activeGroupName/" +
+                                            chapterDirectoryName(book.id, chapter.sourceId)
+                                    put(
+                                        JSONObject()
+                                            .put("chapterRef", chapterRef(book.id, chapter.sourceId))
+                                            .put("ordinal", chapter.index + 1)
+                                            .put("title", chapter.title)
+                                            .put(
+                                                "relativePath",
+                                                relativePath,
+                                            ),
+                                    )
+                                }
+                            },
+                        )
+                        .toString(2),
+                )
+            }
+        chapterRoot.listFiles().orEmpty()
+            .filter(File::isDirectory)
+            .filter { it.name !in activeGroupNames }
+            .forEach { staleGroup ->
+                File(staleGroup, "catalog.json").delete()
+                if (staleGroup.listFiles().isNullOrEmpty()) staleGroup.delete()
+            }
+        val companionDir = File(bookDir, "companions")
+        companionDir.mkdirs()
+    }
+
+    fun writeGeneratedChapter(
+        book: ReaderBook,
+        chapter: ReaderChapter,
+        sourceContent: String,
+        contentHash: String,
+        contractHash: String,
+        roleCardId: String,
+        roleCardName: String,
+        summary: String,
+        comments: List<AutoCommentRecord>,
+        publishSummary: Boolean = true,
+    ) = withFileStoreLock {
+        if (publishSummary) {
+            require(summary.isNotBlank()) { "章节摘要不能为空" }
+        }
+        val chapterDir = chapterDir(book.id, chapter)
+        chapterDir.mkdirs()
+        writeChapterContentLocked(
+            book = book,
+            chapter = chapter,
+            sourceContent = sourceContent,
+            contentHashKind = CONTENT_HASH_KIND_ANNOTATION,
+        )
+        val revision = System.currentTimeMillis().toString()
+        val metaFile = File(chapterDir, "meta.json")
+        val summaryFile = File(chapterDir, "summary.md")
+        val previousMeta = metaFile
+            .takeIf(File::isFile)
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+            ?: JSONObject()
+        val existingSummary = summaryFile
+            .takeIf(File::isFile)
+            ?.readText()
+            ?.trim()
+            .orEmpty()
+        val generatedSummaryHash = previousMeta?.optString("summaryHash").orEmpty()
+        val preserveHumanSummary =
+                existingSummary.isNotBlank() &&
+                (
+                    !previousMeta.has("summaryHash") ||
+                        previousMeta.optString("editor") == "main_agent" ||
+                        (
+                            generatedSummaryHash.isNotBlank() &&
+                                sha256Full(existingSummary) != generatedSummaryHash
+                        )
+                )
+        val shouldPublishSummary = publishSummary && summary.isNotBlank()
+        val publishedSummary =
+            if (!shouldPublishSummary) {
+                existingSummary
+            } else if (preserveHumanSummary) {
+                existingSummary
+            } else {
+                summary.trim()
+            }
+        if (shouldPublishSummary) {
+            atomicWrite(summaryFile, "$publishedSummary\n")
+        }
+        atomicWrite(
+            File(chapterDir, "comments.json"),
+            JSONObject()
+                .put("schemaVersion", SCHEMA_VERSION)
+                .put("revision", revision)
+                .put(
+                    "generationPolicyVersion",
+                    AutoCommentSupport.GENERATION_POLICY_VERSION,
+                )
+                .put("status", "ready")
+                .put("roleCardId", roleCardId)
+                .put("roleCardName", roleCardName)
+                .put(
+                    "comments",
+                    JSONArray().apply {
+                        comments.forEach { comment ->
+                            put(
+                                JSONObject()
+                                    .put("paragraphIndex", comment.paragraphIndex)
+                                    .put(
+                                        "anchorId",
+                                        AutoCommentSupport.paragraphId(comment.paragraphIndex),
+                                    )
+                                    .put("text", comment.text)
+                                    .put("kind", comment.kind)
+                                    .put("evidence", JSONObject(comment.evidenceJson))
+                                    .put("createdAt", comment.createdAt),
+                            )
+                        }
+                    },
+                )
+                .toString(2),
+        )
+        // meta.json is the commit marker. Readers reject comments whose revision does not match it.
+        // Preserve contentFileHash/contentFileHashKind written above (and any future metadata)
+        // while updating only the generated-artifact fields owned by this operation.
+        val publishedMeta = JSONObject(previousMeta.toString())
+            .put("schemaVersion", SCHEMA_VERSION)
+            .put("chapterRef", chapterRef(book.id, chapter.sourceId))
+            .put("ordinal", chapter.index + 1)
+            .put("title", chapter.title)
+            .put(
+                "contentHash",
+                if (!shouldPublishSummary || preserveHumanSummary) {
+                    previousMeta.optString("contentHash")
+                } else {
+                    contentHash
+                },
+            )
+            .put(
+                "contentHashKind",
+                if (!shouldPublishSummary || preserveHumanSummary) {
+                    previousMeta.optString("contentHashKind")
+                } else {
+                    CONTENT_HASH_KIND_ANNOTATION
+                },
+            )
+            .put("contractHash", contractHash)
+            .put("revision", revision)
+            .put(
+                "generationPolicyVersion",
+                AutoCommentSupport.GENERATION_POLICY_VERSION,
+            )
+            .put(
+                "summaryHash",
+                if (shouldPublishSummary && publishedSummary.isNotBlank()) {
+                    sha256Full(publishedSummary)
+                } else {
+                    previousMeta.optString("summaryHash")
+                },
+            )
+            .put(
+                "editor",
+                if (!shouldPublishSummary) {
+                    previousMeta.optString("editor").ifBlank { "comments_subagent" }
+                } else if (preserveHumanSummary) {
+                    "main_agent"
+                } else {
+                    "auto_commentary"
+                },
+            )
+            .put("updatedAt", System.currentTimeMillis())
+        atomicWrite(metaFile, publishedMeta.toString(2))
+    }
+
+    fun writeSummary(
+        book: ReaderBook,
+        chapter: ReaderChapter,
+        sourceContent: String,
+        summary: String,
+    ) = withFileStoreLock {
+        require(summary.isNotBlank()) { "章节摘要不能为空" }
+        val chapterDir = chapterDir(book.id, chapter).apply { mkdirs() }
+        writeChapterContentLocked(
+            book = book,
+            chapter = chapter,
+            sourceContent = sourceContent,
+            contentHashKind = CONTENT_HASH_KIND_READABLE,
+        )
+        val metaFile = File(chapterDir, "meta.json")
+        val summaryFile = File(chapterDir, "summary.md")
+        val previousMeta = metaFile
+            .takeIf(File::isFile)
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+            ?: JSONObject()
+        val sourceHash = sha256Full(sourceContent)
+        val existingSummary = summaryFile
+            .takeIf(File::isFile)
+            ?.readText()
+            ?.trim()
+            .orEmpty()
+        val previousSummaryHash = previousMeta.optString("summaryHash")
+        val preserveHumanSummary =
+            existingSummary.isNotBlank() &&
+                (
+                    !previousMeta.has("summaryHash") ||
+                        previousMeta.optString("editor") == "main_agent" ||
+                        (
+                            previousSummaryHash.isNotBlank() &&
+                                sha256Full(existingSummary) != previousSummaryHash
+                        )
+                )
+        val publishedSummary = if (preserveHumanSummary) existingSummary else summary.trim()
+        atomicWrite(summaryFile, "$publishedSummary\n")
+        previousMeta
+            .put("schemaVersion", SCHEMA_VERSION)
+            .put("chapterRef", chapterRef(book.id, chapter.sourceId))
+            .put("ordinal", chapter.index + 1)
+            .put("title", chapter.title)
+            .put(
+                "contentHash",
+                if (preserveHumanSummary) previousMeta.optString("contentHash") else sourceHash,
+            )
+            .put(
+                "contentHashKind",
+                if (preserveHumanSummary) {
+                    previousMeta.optString("contentHashKind")
+                } else {
+                    CONTENT_HASH_KIND_READABLE
+                },
+            )
+            .put("summaryHash", sha256Full(publishedSummary))
+            .put("editor", if (preserveHumanSummary) "main_agent" else "summary_model")
+            .put("updatedAt", System.currentTimeMillis())
+        atomicWrite(metaFile, previousMeta.toString(2))
+    }
+
+    /**
+     * Persist the exact Legado body fetched for a chapter.
+     *
+     * The content-file hash is intentionally separate from [meta.json]'s summary/annotation
+     * freshness hash. A readable-body refresh must not make an old summary or comment appear
+     * fresh (or overwrite a human-edited summary); the existing contentHash/contentHashKind
+     * fields remain owned by the generated artifact that populated them.
+     */
+    fun writeChapterContent(
+        book: ReaderBook,
+        chapter: ReaderChapter,
+        sourceContent: String,
+        contentHashKind: String = CONTENT_HASH_KIND_READABLE,
+    ) = withFileStoreLock {
+        writeChapterContentLocked(book, chapter, sourceContent, contentHashKind)
+    }
+
+    private fun writeChapterContentLocked(
+        book: ReaderBook,
+        chapter: ReaderChapter,
+        sourceContent: String,
+        contentHashKind: String,
+    ) {
+        require(contentHashKind.isNotBlank()) { "正文文件哈希类型不能为空" }
+        val chapterDir = chapterDir(book.id, chapter).apply { mkdirs() }
+        val contentFile = File(chapterDir, CONTENT_FILE_NAME)
+        val contentFileHash = contentHash(sourceContent)
+        val previousMeta = File(chapterDir, META_FILE_NAME)
+            .takeIf(File::isFile)
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+            ?: JSONObject()
+        val existingContent = contentFile
+            .takeIf(File::isFile)
+            ?.let { runCatching { it.readText(StandardCharsets.UTF_8) }.getOrNull() }
+        if (
+            existingContent != sourceContent ||
+            previousMeta.optString(CONTENT_FILE_HASH_FIELD) != contentFileHash ||
+            previousMeta.optString(CONTENT_FILE_HASH_KIND_FIELD) != contentHashKind
+        ) {
+            // content.md is a read-only last-fetched Legado snapshot for agents. Replace it
+            // atomically whenever a newly fetched body/hash changes instead of mutating in place.
+            atomicWrite(contentFile, sourceContent)
+        }
+        previousMeta
+            .put("schemaVersion", SCHEMA_VERSION)
+            .put("chapterRef", chapterRef(book.id, chapter.sourceId))
+            .put("ordinal", chapter.index + 1)
+            .put("title", chapter.title)
+            .put(CONTENT_FILE_HASH_FIELD, contentFileHash)
+            .put(CONTENT_FILE_HASH_KIND_FIELD, contentHashKind)
+            .put("updatedAt", System.currentTimeMillis())
+        atomicWrite(File(chapterDir, META_FILE_NAME), previousMeta.toString(2))
+    }
+
+    fun migrateLegacyChapter(
+        book: ReaderBook,
+        chapter: ReaderChapter,
+        knowledge: StoredChapterKnowledge?,
+        autoChapter: AutoCommentChapter?,
+        comments: List<AutoCommentRecord>,
+        sourceContent: String? = null,
+        contentHashKind: String? = null,
+    ) = withFileStoreLock {
+        if (knowledge == null && autoChapter == null && comments.isEmpty()) return
+        val chapterDir = chapterDir(book.id, chapter).apply { mkdirs() }
+        val metaFile = File(chapterDir, "meta.json")
+        val summaryFile = File(chapterDir, "summary.md")
+        val commentsFile = File(chapterDir, "comments.json")
+        val initialMeta =
+            metaFile.takeIf(File::isFile)
+                ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+                ?: JSONObject()
+        val legacySummary = knowledge?.summary?.trim().orEmpty()
+        val shouldImportSummary = !summaryFile.exists() && legacySummary.isNotBlank()
+        val shouldImportComments =
+            !commentsFile.exists() && (autoChapter != null || comments.isNotEmpty())
+        val shouldImportContent =
+            sourceContent != null &&
+                (
+                    !File(chapterDir, CONTENT_FILE_NAME).isFile ||
+                        initialMeta.optString(CONTENT_FILE_HASH_FIELD) != contentHash(sourceContent)
+                )
+        if (!shouldImportSummary && !shouldImportComments && !shouldImportContent) {
+            return@withFileStoreLock
+        }
+        if (shouldImportContent) {
+            writeChapterContentLocked(
+                book = book,
+                chapter = chapter,
+                sourceContent = sourceContent!!,
+                contentHashKind =
+                    contentHashKind?.takeIf(String::isNotBlank)
+                        ?: CONTENT_HASH_KIND_READABLE,
+            )
+        }
+        val previousMeta =
+            metaFile.takeIf(File::isFile)
+                ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+                ?: JSONObject()
+        previousMeta
+            .put("schemaVersion", SCHEMA_VERSION)
+            .put("chapterRef", chapterRef(book.id, chapter.sourceId))
+            .put("ordinal", chapter.index + 1)
+            .put("title", chapter.title)
+        if (shouldImportSummary) {
+            previousMeta
+                .put("contentHash", knowledge?.contentHash.orEmpty())
+                .put("contentHashKind", CONTENT_HASH_KIND_READABLE)
+                .put("summaryHash", sha256Full(legacySummary))
+            atomicWrite(summaryFile, "$legacySummary\n")
+        }
+        if (shouldImportComments) {
+            val legacyRevision = "legacy-${autoChapter?.updatedAt ?: 0L}"
+            previousMeta
+                .put("contractHash", autoChapter?.contentHash.orEmpty())
+                .put("revision", legacyRevision)
+                .put("generationPolicyVersion", autoChapter?.generationPolicyVersion ?: 0)
+            atomicWrite(
+                commentsFile,
+                JSONObject()
+                    .put("schemaVersion", SCHEMA_VERSION)
+                    .put("revision", legacyRevision)
+                    .put(
+                        "generationPolicyVersion",
+                        autoChapter?.generationPolicyVersion ?: 0,
+                    )
+                    .put("status", autoChapter?.status ?: "legacy")
+                    .put("roleCardId", autoChapter?.roleCardId.orEmpty())
+                    .put("roleCardName", autoChapter?.roleCardName.orEmpty())
+                    .put(
+                        "comments",
+                        JSONArray().apply {
+                            comments.forEach { comment ->
+                                put(
+                                    JSONObject()
+                                        .put("paragraphIndex", comment.paragraphIndex)
+                                        .put(
+                                            "anchorId",
+                                            AutoCommentSupport.paragraphId(comment.paragraphIndex),
+                                        )
+                                        .put("text", comment.text)
+                                        .put("kind", comment.kind)
+                                        .put("evidence", JSONObject(comment.evidenceJson))
+                                        .put("createdAt", comment.createdAt),
+                                )
+                            }
+                        },
+                    )
+                    .toString(2),
+            )
+        }
+        if (shouldImportSummary) {
+            previousMeta.put("editor", "legacy_migration")
+        }
+        if (shouldImportSummary || shouldImportComments) {
+            previousMeta
+                .put(
+                    "updatedAt",
+                    maxOf(
+                        previousMeta.optLong("updatedAt", 0L),
+                        knowledge?.updatedAt ?: 0L,
+                        autoChapter?.updatedAt ?: 0L,
+                    ),
+                )
+        }
+        // meta.json is the commit marker and is written last, after any imported artifacts.
+        atomicWrite(metaFile, previousMeta.toString(2))
+    }
+
+    fun quarantineLegacyChapter(
+        book: ReaderBook,
+        chapterIndex: Int,
+        knowledge: StoredChapterKnowledge?,
+        autoChapter: AutoCommentChapter?,
+        comments: List<AutoCommentRecord>,
+        reason: String = "旧数据库只保存章节序号，无法安全绑定到当前 source URL",
+    ) = withFileStoreLock {
+        if (knowledge == null && autoChapter == null && comments.isEmpty()) return@withFileStoreLock
+        val legacyDir = File(
+            File(bookDir(book.id), "legacy-unverified"),
+            "%04d".format(chapterIndex + 1),
+        ).apply { mkdirs() }
+        val updatedAt = maxOf(
+            knowledge?.updatedAt ?: 0L,
+            autoChapter?.updatedAt ?: 0L,
+        )
+        knowledge?.summary?.trim()?.takeIf(String::isNotBlank)?.let { summary ->
+            atomicWrite(File(legacyDir, "summary.md"), "$summary\n")
+        }
+        atomicWrite(
+            File(legacyDir, "meta.json"),
+            JSONObject()
+                .put("schemaVersion", SCHEMA_VERSION)
+                .put("legacyChapterIndex", chapterIndex)
+                .put("legacyChapterNumber", chapterIndex + 1)
+                .put("legacyChapterTitle", knowledge?.chapterTitle ?: autoChapter?.chapterTitle)
+                .put("identityVerified", false)
+                .put("reason", reason)
+                .put("contentHash", autoChapter?.contentHash.orEmpty())
+                .put("updatedAt", updatedAt)
+                .toString(2),
+        )
+        if (autoChapter != null || comments.isNotEmpty()) {
+            atomicWrite(
+                File(legacyDir, "comments.json"),
+                JSONObject()
+                    .put("schemaVersion", SCHEMA_VERSION)
+                    .put("status", "quarantined")
+                    .put("roleCardId", autoChapter?.roleCardId.orEmpty())
+                    .put("roleCardName", autoChapter?.roleCardName.orEmpty())
+                    .put(
+                        "generationPolicyVersion",
+                        autoChapter?.generationPolicyVersion ?: 0,
+                    )
+                    .put(
+                        "comments",
+                        JSONArray().apply {
+                            comments.forEach { comment ->
+                                put(
+                                    JSONObject()
+                                        .put("paragraphIndex", comment.paragraphIndex)
+                                        .put("text", comment.text)
+                                        .put("kind", comment.kind)
+                                        .put("evidence", JSONObject(comment.evidenceJson))
+                                        .put("createdAt", comment.createdAt),
+                                )
+                            }
+                        },
+                    )
+                    .toString(2),
+            )
+        }
+    }
+
+    fun readSummary(
+        bookId: String,
+        sourceId: String,
+        expectedContentHash: String? = null,
+    ): String? = withFileStoreLock {
+        val dir = findChapterDir(bookId, sourceId) ?: return null
+        if (!expectedContentHash.isNullOrBlank()) {
+            val meta = File(dir, "meta.json")
+                .takeIf(File::isFile)
+                ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+                ?: return null
+            if (meta.optString("contentHash") != expectedContentHash) return null
+        }
+        val summary = File(dir, "summary.md")
+        return summary.takeIf(File::isFile)?.readText()?.trim()?.takeIf(String::isNotBlank)
+    }
+
+    fun readPublishedComments(
+        bookId: String,
+        chapterIndex: Int,
+        expectedContractHash: String?,
+    ): JSONObject? = withFileStoreLock {
+        readPublishedCommentsLocked(bookId, chapterIndex, expectedContractHash)
+    }
+
+    private fun readPublishedCommentsLocked(
+        bookId: String,
+        chapterIndex: Int,
+        expectedContractHash: String?,
+    ): JSONObject? {
+        if (chapterIndex < 0) return null
+        val ordinal = chapterIndex + 1
+        val first = (chapterIndex / CHAPTERS_PER_GROUP) * CHAPTERS_PER_GROUP + 1
+        val last = first + CHAPTERS_PER_GROUP - 1
+        val chapterRoot = File(bookDir(bookId), "chapters")
+        val catalogFile = File(File(chapterRoot, groupName(first, last)), "catalog.json")
+        if (!catalogFile.isFile) return null
+        val catalog = runCatching { JSONObject(catalogFile.readText()) }.getOrNull() ?: return null
+        val chapters = catalog.optJSONArray("chapters") ?: return null
+        val entry = (0 until chapters.length())
+            .asSequence()
+            .mapNotNull { chapters.optJSONObject(it) }
+            .firstOrNull { it.optInt("ordinal", -1) == ordinal }
+            ?: return null
+        val relativePath = entry.optString("relativePath").takeIf(String::isNotBlank)
+            ?: return null
+        val chapterDir = File(chapterRoot, relativePath)
+        val meta = File(chapterDir, "meta.json")
+            .takeIf(File::isFile)
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+            ?: return null
+        val storedContractHash = meta.optString("contractHash")
+        if (
+            !expectedContractHash.isNullOrBlank() &&
+            storedContractHash != expectedContractHash
+        ) {
+            return JSONObject()
+                .put("ready", false)
+                .put("stale", true)
+                .put("contractHash", storedContractHash)
+        }
+        val commentsFile = File(chapterDir, "comments.json")
+        val comments = commentsFile
+            .takeIf(File::isFile)
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+            ?: return null
+        return JSONObject()
+            .put(
+                "ready",
+                comments.optString("status") == "ready" &&
+                    comments.optString("revision") == meta.optString("revision") &&
+                    comments.optInt("generationPolicyVersion") ==
+                        AutoCommentSupport.GENERATION_POLICY_VERSION &&
+                    meta.optInt("generationPolicyVersion") ==
+                        AutoCommentSupport.GENERATION_POLICY_VERSION,
+            )
+            .put("stale", false)
+            .put("contractHash", storedContractHash)
+            .put("roleCardName", comments.optString("roleCardName"))
+            .put("comments", comments.optJSONArray("comments") ?: JSONArray())
+    }
+
+    fun publishedContractHash(
+        bookId: String,
+        sourceId: String,
+        roleCardId: String?,
+    ): String? = withFileStoreLock {
+        publishedContractHashLocked(bookId, sourceId, roleCardId)
+    }
+
+    private fun publishedContractHashLocked(
+        bookId: String,
+        sourceId: String,
+        roleCardId: String?,
+    ): String? {
+        val chapterDir = findChapterDir(bookId, sourceId) ?: return null
+        val meta = File(chapterDir, "meta.json")
+            .takeIf(File::isFile)
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+            ?: return null
+        val comments = File(chapterDir, "comments.json")
+            .takeIf(File::isFile)
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+            ?: return null
+        if (comments.optString("status") != "ready") return null
+        if (comments.optString("revision") != meta.optString("revision")) return null
+        if (
+            comments.optInt("generationPolicyVersion") !=
+                AutoCommentSupport.GENERATION_POLICY_VERSION ||
+            meta.optInt("generationPolicyVersion") !=
+                AutoCommentSupport.GENERATION_POLICY_VERSION
+        ) {
+            return null
+        }
+        if (roleCardId != null && comments.optString("roleCardId") != roleCardId) return null
+        return meta.optString("contractHash").takeIf(String::isNotBlank)
+    }
+
+    /**
+     * Lists persisted summaries purely from the local book catalogs; no Legado connection is
+     * required. The catalog JSON written by [syncBookCatalog] keeps chapterRef/ordinal/title per
+     * chapter, so this listing stays correct even while Legado is disconnected.
+     */
+    fun listSummaryFiles(bookId: String): JSONObject = withFileStoreLock {
+        val rootDir = bookDir(bookId).canonicalFile
+        val canonicalRootPath = rootDir.path
+        val chapterRoot = File(rootDir, "chapters")
+        val summaries = JSONArray()
+        chapterRoot
+            .listFiles()
+            .orEmpty()
+            .filter(File::isDirectory)
+            .sortedBy(File::getName)
+            .forEach { group ->
+                val catalog =
+                    File(group, "catalog.json")
+                        .takeIf(File::isFile)
+                        ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+                        ?: return@forEach
+                val entries = catalog.optJSONArray("chapters") ?: return@forEach
+                repeat(entries.length()) { index ->
+                    val item = entries.optJSONObject(index) ?: return@repeat
+                    val relative = item.optString("relativePath").trim()
+                    if (relative.isBlank()) return@repeat
+                    val chapterDirectory = File(chapterRoot, relative)
+                    val canonicalChapter =
+                        runCatching { chapterDirectory.canonicalFile }.getOrNull() ?: return@repeat
+                    if (
+                        !canonicalChapter.isDirectory ||
+                        canonicalChapter.path == canonicalRootPath ||
+                        !canonicalChapter.path.startsWith(canonicalRootPath + File.separator)
+                    ) return@repeat
+                    val summaryFile = File(canonicalChapter, "summary.md")
+                    if (!summaryFile.isFile) return@repeat
+                    val meta =
+                        File(summaryFile.parentFile, META_FILE_NAME)
+                            .takeIf(File::isFile)
+                            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+                    summaries.put(
+                        JSONObject()
+                            .put("chapterRef", item.optString("chapterRef"))
+                            .put("chapterNumber", item.optInt("ordinal", -1))
+                            .put("chapterTitle", item.optString("title"))
+                            .put("summary", summaryFile.readText().trim())
+                            .put("path", summaryFile.absolutePath)
+                            .put("contentHash", meta?.optString("contentHash").orEmpty())
+                            .put(
+                                "contentHashKind",
+                                meta?.optString("contentHashKind").orEmpty(),
+                            )
+                            .put(
+                                "updatedAt",
+                                meta?.optLong("updatedAt") ?: summaryFile.lastModified(),
+                            ),
+                    )
+                }
+            }
+        JSONObject()
+            .put("summaries", summaries)
+            .put("currentChapterNumber", -1)
+            .put("staleCatalog", false)
+    }
+
+    /**
+     * Cached fallback of [listPersistedFiles]: reads the same durable documents while only
+     * consulting the locally persisted catalog JSON instead of the live Legado chapter list.
+     */
+    fun listPersistedFilesFromCatalogs(
+        bookId: String,
+        offset: Int = 0,
+        limit: Int = 50,
+    ): JSONObject = withFileStoreLock {
+        val safeOffset = offset.coerceAtLeast(0)
+        val safeLimit = limit.coerceIn(1, 100)
+        val rootDir = bookDir(bookId)
+        val canonicalRootPath = rootDir.canonicalFile.path
+        val chapterRoot = File(rootDir, "chapters")
+        val entries = mutableListOf<JSONObject>()
+
+        fun addFile(
+            file: File,
+            kind: String,
+            chapterNumber: Int? = null,
+            chapterTitle: String? = null,
+        ) {
+            val canonical = runCatching { file.canonicalFile }.getOrNull() ?: return
+            if (
+                !canonical.isFile ||
+                canonical.name !in PERSISTED_FILE_ALLOWLIST ||
+                !(
+                    canonical.path == canonicalRootPath ||
+                        canonical.path.startsWith(canonicalRootPath + File.separator)
+                    )
+            ) return
+            val relative = runCatching {
+                rootDir.canonicalFile.toPath().relativize(canonical.toPath()).toString()
+            }.getOrNull()?.replace(File.separatorChar, '/') ?: return
+            entries += JSONObject()
+                .put("path", canonical.absolutePath)
+                .put("relativePath", relative)
+                .put("name", canonical.name)
+                .put("kind", kind)
+                .put(
+                    "readOnly",
+                    canonical.name == CONTENT_FILE_NAME ||
+                        canonical.name == "catalog.json",
+                )
+                .apply {
+                    chapterNumber?.let { put("chapterNumber", it) }
+                    chapterTitle?.let { put("chapterTitle", it) }
+                }
+        }
+
+        listOf("book.md", "characters.md", "ai-memory.md")
+            .map { File(rootDir, it) }
+            .forEach { addFile(it, "book") }
+        File(rootDir, "companions")
+            .listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter(File::isDirectory)
+            .sortedBy(File::getName)
+            .map { File(it, "ai-memory.md") }
+            .forEach { addFile(it, "companion") }
+
+        val catalogChapterMetadata = mutableMapOf<String, Pair<Int, String>>()
+        chapterRoot
+            .listFiles()
+            .orEmpty()
+            .filter(File::isDirectory)
+            .sortedBy(File::getName)
+            .forEach { group ->
+                val catalogFile = File(group, "catalog.json")
+                addFile(catalogFile, "catalog")
+                val parsed = runCatching { JSONObject(catalogFile.readText()) }.getOrNull()
+                val catalogEntries = parsed?.optJSONArray("chapters") ?: return@forEach
+                repeat(catalogEntries.length()) { index ->
+                    val item = catalogEntries.optJSONObject(index) ?: return@repeat
+                    val relative = item.optString("relativePath").trim()
+                    if (relative.isBlank()) return@repeat
+                    catalogChapterMetadata[relative] =
+                        item.optInt("ordinal", -1) to item.optString("title")
+                }
+            }
+
+        catalogChapterMetadata
+            .toSortedMap()
+            .forEach { (relative, metadata) ->
+                val chapterDir = File(chapterRoot, relative)
+                val ordinal = metadata.first.takeIf { it > 0 }
+                listOf(CONTENT_FILE_NAME, "summary.md", "comments.json", META_FILE_NAME)
+                    .map { File(chapterDir, it) }
+                    .forEach { addFile(it, "chapter", ordinal, metadata.second) }
+            }
+
+        val ordered = entries
+            .distinctBy { it.optString("path") }
+            .sortedBy { it.optString("relativePath") }
+        val page = ordered.drop(safeOffset).take(safeLimit)
+        val bookName =
+            File(rootDir, "book.md")
+                .takeIf(File::isFile)
+                ?.readText()
+                ?.lineSequence()
+                ?.firstOrNull()
+                ?.removePrefix("#")
+                ?.trim()
+                .orEmpty()
+        JSONObject()
+            .put("bookId", bookId)
+            .put("book", bookName)
+            .put("rootPath", rootDir.canonicalPath)
+            .put("offset", safeOffset)
+            .put("limit", safeLimit)
+            .put("total", ordered.size)
+            .put("entries", JSONArray().apply { page.forEach(::put) })
+            .put(
+                "nextOffset",
+                if (safeOffset + page.size < ordered.size) safeOffset + page.size
+                else JSONObject.NULL,
+            )
+    }
+
+    /**
+     * Lists only the durable documents exposed by the persistent browser.
+     *
+     * The browser deliberately walks the active catalog rather than the whole directory tree:
+     * stale source directories are not current chapter files and must
+     * not accidentally become part of the normal browsing surface.
+     */
+    fun listPersistedFiles(
+        book: ReaderBook,
+        chapters: List<ReaderChapter>,
+        offset: Int = 0,
+        limit: Int = 50,
+    ): JSONObject = withFileStoreLock {
+        val safeOffset = offset.coerceAtLeast(0)
+        val safeLimit = limit.coerceIn(1, 100)
+        val rootDir = bookDir(book.id)
+        val canonicalRootPath = rootDir.canonicalFile.path
+        val chapterRoot = File(rootDir, "chapters")
+        val entries = mutableListOf<JSONObject>()
+
+        fun addFile(
+            file: File,
+            kind: String,
+            chapterNumber: Int? = null,
+            chapterTitle: String? = null,
+        ) {
+            val canonical = runCatching { file.canonicalFile }.getOrNull() ?: return
+            if (
+                !canonical.isFile ||
+                canonical.name !in PERSISTED_FILE_ALLOWLIST ||
+                !(
+                    canonical.path == canonicalRootPath ||
+                        canonical.path.startsWith(canonicalRootPath + File.separator)
+                    )
+            ) return
+            val relative = runCatching {
+                rootDir.canonicalFile.toPath().relativize(canonical.toPath()).toString()
+            }.getOrNull()?.replace(File.separatorChar, '/') ?: return
+            entries += JSONObject()
+                .put("path", canonical.absolutePath)
+                .put("relativePath", relative)
+                .put("name", canonical.name)
+                .put("kind", kind)
+                .put(
+                    "readOnly",
+                    canonical.name == CONTENT_FILE_NAME ||
+                        canonical.name == "catalog.json",
+                )
+                .apply {
+                    chapterNumber?.let { put("chapterNumber", it) }
+                    chapterTitle?.let { put("chapterTitle", it) }
+                }
+        }
+
+        // Root documents and per-role companion memories are book-level files.
+        listOf("book.md", "characters.md", "ai-memory.md")
+            .map { File(rootDir, it) }
+            .forEach { addFile(it, "book") }
+        File(rootDir, "companions")
+            .listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter(File::isDirectory)
+            .sortedBy(File::getName)
+            .map { File(it, "ai-memory.md") }
+            .forEach { addFile(it, "companion") }
+
+        // Catalog entries are the source of truth for which chapter directories are active.
+        val catalogChapterMetadata = mutableMapOf<String, Pair<Int, String>>()
+        chapters
+            .sortedBy(ReaderChapter::index)
+            .groupBy { it.index / CHAPTERS_PER_GROUP }
+            .toSortedMap()
+            .values
+            .forEach { group ->
+                if (group.isEmpty()) return@forEach
+                val first = (group.first().index / CHAPTERS_PER_GROUP) * CHAPTERS_PER_GROUP + 1
+                val catalog = File(
+                    File(chapterRoot, groupName(first, first + CHAPTERS_PER_GROUP - 1)),
+                    "catalog.json",
+                )
+                addFile(catalog, "catalog")
+                val parsed = runCatching { JSONObject(catalog.readText()) }.getOrNull()
+                val catalogEntries = parsed?.optJSONArray("chapters") ?: return@forEach
+                repeat(catalogEntries.length()) { index ->
+                    val item = catalogEntries.optJSONObject(index) ?: return@repeat
+                    val relative = item.optString("relativePath").trim()
+                    if (relative.isBlank()) return@repeat
+                    catalogChapterMetadata[relative] =
+                        item.optInt("ordinal", -1) to item.optString("title")
+                }
+            }
+
+        catalogChapterMetadata
+            .toSortedMap()
+            .forEach { (relative, metadata) ->
+                val chapterDir = File(chapterRoot, relative)
+                val ordinal = metadata.first.takeIf { it > 0 }
+                listOf(CONTENT_FILE_NAME, "summary.md", "comments.json", META_FILE_NAME)
+                    .map { File(chapterDir, it) }
+                    .forEach { addFile(it, "chapter", ordinal, metadata.second) }
+            }
+
+        val ordered = entries
+            .distinctBy { it.optString("path") }
+            .sortedBy { it.optString("relativePath") }
+        val page = ordered.drop(safeOffset).take(safeLimit)
+        JSONObject()
+            .put("book", book.name)
+            .put("bookId", book.id)
+            .put("rootPath", rootDir.canonicalPath)
+            .put("offset", safeOffset)
+            .put("limit", safeLimit)
+            .put("total", ordered.size)
+            .put("entries", JSONArray().apply { page.forEach(::put) })
+            .put(
+                "nextOffset",
+                if (safeOffset + page.size < ordered.size) safeOffset + page.size
+                else JSONObject.NULL,
+            )
+    }
+
+    /**
+     * Reads one persisted browser entry after canonical-root and filename allowlist checks.
+     * Every returned document is explicitly read-only; in particular content.md is never a
+     * writable editing surface.  The on-disk catalogs are also consulted so a caller cannot
+     * bypass pagination and read a stale source directory that no longer belongs to the current
+     * book catalog.
+     */
+    fun readPersistedFile(bookId: String, path: String): JSONObject = withFileStoreLock {
+        val requested = path.trim()
+        require(requested.isNotBlank()) { "文件路径不能为空" }
+        val rootDir = bookDir(bookId).canonicalFile
+        val target = File(requested).canonicalFile
+        val rootPath = rootDir.path
+        val targetPath = target.path
+        require(
+            targetPath != rootPath &&
+                targetPath.startsWith(rootPath + File.separator),
+        ) { "文件路径必须位于当前书籍目录内" }
+        require(target.name in PERSISTED_FILE_ALLOWLIST) { "不允许读取该文件类型" }
+        require(target.isFile) { "文件不存在" }
+        val relative = rootDir.toPath().relativize(target.toPath()).toString()
+            .replace(File.separatorChar, '/')
+        require(!relative.split('/').contains("legacy-unverified")) {
+            "不允许读取旧数据库隔离文件"
+        }
+        require(isActivePersistedPathLocked(bookId, target)) {
+            "文件不属于当前书籍目录或当前章节 catalog"
+        }
+        JSONObject()
+            .put("path", target.absolutePath)
+            .put("relativePath", relative)
+            .put("name", target.name)
+            .put("content", target.readText(StandardCharsets.UTF_8))
+            .put("readOnly", true)
+    }
+
+    /**
+     * Checks membership in the current durable browser surface using the catalogs already synced
+     * for this book.  Root documents and companion memories are book-level entries; chapter files
+     * are allowed only when their directory is referenced by an active catalog.json.
+     */
+    private fun isActivePersistedPathLocked(bookId: String, target: File): Boolean {
+        val rootDir = bookDir(bookId).canonicalFile
+        val targetPath = target.canonicalPath
+        fun sameFile(file: File): Boolean =
+            runCatching { file.canonicalFile }.getOrNull()?.let { canonical ->
+                canonical.isFile && canonical.canonicalPath == targetPath
+            } == true
+
+        listOf("book.md", "characters.md", "ai-memory.md")
+            .map { File(rootDir, it) }
+            .forEach { if (sameFile(it)) return true }
+        File(rootDir, "companions")
+            .listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter(File::isDirectory)
+            .map { File(it, "ai-memory.md") }
+            .forEach { if (sameFile(it)) return true }
+
+        val chapterRoot = File(rootDir, "chapters")
+        chapterRoot
+            .listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter(File::isDirectory)
+            .forEach { groupDirectory ->
+                val catalog = File(groupDirectory, "catalog.json")
+                if (sameFile(catalog)) return true
+                val parsed = runCatching { JSONObject(catalog.readText()) }.getOrNull()
+                    ?: return@forEach
+                val catalogEntries = parsed.optJSONArray("chapters") ?: return@forEach
+                repeat(catalogEntries.length()) { index ->
+                    val item = catalogEntries.optJSONObject(index) ?: return@repeat
+                    val relative = item.optString("relativePath").trim()
+                    if (relative.isBlank()) return@repeat
+                    val chapterDirectory = File(chapterRoot, relative)
+                    listOf(CONTENT_FILE_NAME, "summary.md", "comments.json", META_FILE_NAME)
+                        .map { File(chapterDirectory, it) }
+                        .forEach { if (sameFile(it)) return true }
+                }
+            }
+        return false
+    }
+
+    fun ensureCompanionMemory(bookId: String, roleCardId: String): File {
+        val memory = File(
+            File(File(bookDir(bookId), "companions"), sha256(roleCardId)),
+            "ai-memory.md",
+        )
+        if (!memory.exists()) {
+            memory.parentFile?.mkdirs()
+            atomicWrite(
+                memory,
+                """
+                # 我的伴读记忆
+
+                ## 当前看法
+
+                ## 未证实猜测
+
+                ## 我们共同的话题
+
+                ## 互动偏好
+                """.trimIndent() + "\n",
+            )
+        }
+        return memory
+    }
+
+    fun ensureCharactersDocument(bookId: String): File = withFileStoreLock {
+        val document = File(bookDir(bookId), "characters.md")
+        if (!document.exists()) {
+            document.parentFile?.mkdirs()
+            atomicWrite(
+                document,
+                """
+                # 主要人物
+
+                > 只记录读者当前进度内已经公开的人物信息；不要写入后台提前读取到的未来剧情。
+
+                ## 人物条目
+
+                <!--
+                建议格式：
+                ### 人物名
+                - 身份与别名：
+                - 与其他人物的关系：
+                - 当前状态与变化：
+                - 我的看法：
+                -->
+                """.trimIndent() + "\n",
+            )
+        }
+        document
+    }
+
+    fun rootPath(): String = root.absolutePath
+
+    fun bookRootPath(bookId: String): String = bookDir(bookId).absolutePath
+
+    fun bookMetadataPath(bookId: String): String = File(bookDir(bookId), "book.md").absolutePath
+
+    fun chaptersRootPath(bookId: String): String =
+        File(bookDir(bookId), "chapters").absolutePath
+
+    fun chapterFilePaths(bookId: String, sourceId: String): JSONObject? = withFileStoreLock {
+        val dir = findChapterDir(bookId, sourceId) ?: return@withFileStoreLock null
+        val content = File(dir, CONTENT_FILE_NAME).takeIf(File::isFile)
+        val summary = File(dir, "summary.md").takeIf(File::isFile)
+        val comments = File(dir, "comments.json").takeIf(File::isFile)
+        val meta = File(dir, "meta.json").takeIf(File::isFile)
+        if (content == null && summary == null && comments == null && meta == null) {
+            return@withFileStoreLock null
+        }
+        JSONObject()
+            .put("chapterDirectory", dir.absolutePath)
+            .put("contentPath", content?.absolutePath ?: JSONObject.NULL)
+            .put("summaryPath", summary?.absolutePath ?: JSONObject.NULL)
+            .put("commentsPath", comments?.absolutePath ?: JSONObject.NULL)
+            .put("metaPath", meta?.absolutePath ?: JSONObject.NULL)
+    }
+
+    fun catalogPaths(bookId: String): JSONArray = withFileStoreLock {
+        JSONArray().apply {
+            File(bookDir(bookId), "chapters")
+                .listFiles()
+                .orEmpty()
+                .asSequence()
+                .filter(File::isDirectory)
+                .sortedBy(File::getName)
+                .map { File(it, "catalog.json") }
+                .filter(File::isFile)
+                .forEach { put(it.absolutePath) }
+        }
+    }
+
+    /**
+     * Bounded default grep roots containing only chapters strictly before [beforeChapterIndex].
+     *
+     * Completed 100-chapter groups are returned as whole directories. Only the current group is
+     * expanded into individual chapter directories, keeping the response bounded by group count
+     * plus at most 100 paths while excluding prefetched future chapters in that same group.
+     */
+    fun safeChapterSearchPaths(
+        bookId: String,
+        chapters: List<ReaderChapter>,
+        beforeChapterIndex: Int,
+    ): JSONArray =
+        boundedChapterSearchPaths(bookId, chapters) { chapter ->
+            chapter.index < beforeChapterIndex
+        }
+
+    fun allCurrentChapterSearchPaths(
+        bookId: String,
+        chapters: List<ReaderChapter>,
+    ): JSONArray = boundedChapterSearchPaths(bookId, chapters) { true }
+
+    fun summaryContentHashKind(bookId: String, sourceId: String): String? =
+        withFileStoreLock {
+            val dir = findChapterDir(bookId, sourceId) ?: return@withFileStoreLock null
+            File(dir, "meta.json")
+                .takeIf(File::isFile)
+                ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+                ?.optString("contentHashKind")
+                ?.takeIf(String::isNotBlank)
+        }
+
+    fun summaryContentHash(bookId: String, sourceId: String): String? =
+        withFileStoreLock {
+            val dir = findChapterDir(bookId, sourceId) ?: return@withFileStoreLock null
+            File(dir, "meta.json")
+                .takeIf(File::isFile)
+                ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+                ?.optString("contentHash")
+                ?.takeIf(String::isNotBlank)
+        }
+
+    fun contentFileHash(bookId: String, sourceId: String): String? =
+        withFileStoreLock {
+            val dir = findChapterDir(bookId, sourceId) ?: return@withFileStoreLock null
+            File(dir, META_FILE_NAME)
+                .takeIf(File::isFile)
+                ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+                ?.optString(CONTENT_FILE_HASH_FIELD)
+                ?.takeIf(String::isNotBlank)
+        }
+
+    fun contentFileHashKind(bookId: String, sourceId: String): String? =
+        withFileStoreLock {
+            val dir = findChapterDir(bookId, sourceId) ?: return@withFileStoreLock null
+            File(dir, META_FILE_NAME)
+                .takeIf(File::isFile)
+                ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+                ?.optString(CONTENT_FILE_HASH_KIND_FIELD)
+                ?.takeIf(String::isNotBlank)
+        }
+
+    fun hasSummary(bookId: String, sourceId: String): Boolean =
+        withFileStoreLock {
+            findChapterDir(bookId, sourceId)
+                ?.let { File(it, "summary.md") }
+                ?.isFile == true
+        }
+
+    fun hasCatalog(bookId: String): Boolean =
+        File(bookDir(bookId), "chapters")
+            .listFiles()
+            .orEmpty()
+            .any { group -> File(group, "catalog.json").isFile }
+
+    fun isLegacyMigrationComplete(bookId: String): Boolean =
+        File(bookDir(bookId), LEGACY_MIGRATION_MARKER).isFile
+
+    internal fun legacyMigrationRequirements(
+        bookId: String,
+        sourceId: String,
+        chapterIndex: Int,
+        hasLegacySummary: Boolean,
+        hasLegacyComments: Boolean,
+        hasLegacyContentSource: Boolean,
+    ): LegacyMigrationRequirements = withFileStoreLock {
+        val chapterDir = findChapterDir(bookId, sourceId)
+        val quarantineDir =
+            File(
+                File(bookDir(bookId), "legacy-unverified"),
+                "%04d".format(chapterIndex + 1),
+            )
+        LegacyMigrationRequirements(
+            summary =
+                hasLegacySummary &&
+                    chapterDir?.let { File(it, "summary.md").isFile } != true &&
+                    !File(quarantineDir, "summary.md").isFile,
+            comments =
+                hasLegacyComments &&
+                    chapterDir?.let { File(it, "comments.json").isFile } != true &&
+                    !File(quarantineDir, "comments.json").isFile,
+            content =
+                hasLegacyContentSource &&
+                    chapterDir != null &&
+                    !File(chapterDir, CONTENT_FILE_NAME).isFile,
+        )
+    }
+
+    fun countQuarantinedLegacyChapters(bookId: String): Int =
+        File(bookDir(bookId), "legacy-unverified")
+            .listFiles()
+            .orEmpty()
+            .count(File::isDirectory)
+
+    fun markLegacyMigrationComplete(bookId: String) {
+        atomicWrite(
+            File(bookDir(bookId), LEGACY_MIGRATION_MARKER),
+            "schemaVersion=$SCHEMA_VERSION\ncompletedAt=${System.currentTimeMillis()}\n",
+        )
+    }
+
+    private fun bookDir(bookId: String): File = File(root, sha256(bookId))
+
+    private fun chapterDir(bookId: String, chapter: ReaderChapter): File {
+        findChapterDir(bookId, chapter.sourceId)?.let { return it }
+        val first = (chapter.index / CHAPTERS_PER_GROUP) * CHAPTERS_PER_GROUP + 1
+        val last = first + CHAPTERS_PER_GROUP - 1
+        return File(
+            File(File(bookDir(bookId), "chapters"), groupName(first, last)),
+            chapterDirectoryName(bookId, chapter.sourceId),
+        )
+    }
+
+    private fun findChapterDir(bookId: String, sourceId: String): File? {
+        val chapterRoot = File(bookDir(bookId), "chapters")
+        if (!chapterRoot.isDirectory) return null
+        val name = chapterDirectoryName(bookId, sourceId)
+        return chapterRoot.listFiles()
+            ?.asSequence()
+            ?.filter(File::isDirectory)
+            ?.map { File(it, name) }
+            ?.firstOrNull(File::isDirectory)
+    }
+
+    private fun chapterDirectoryName(bookId: String, sourceId: String): String =
+        chapterRef(bookId, sourceId).removePrefix("ch_")
+
+    private fun groupName(first: Int, last: Int): String =
+        "%04d-%04d".format(first, last)
+
+    private fun atomicWrite(target: File, content: String) {
+        target.parentFile?.mkdirs()
+        val temporary = File.createTempFile(".${target.name}.", ".new", target.parentFile)
+        temporary.writeText(content, StandardCharsets.UTF_8)
+        try {
+            try {
+                Files.move(
+                    temporary.toPath(),
+                    target.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(
+                    temporary.toPath(),
+                    target.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            }
+        } catch (error: Throwable) {
+            temporary.delete()
+            throw IllegalStateException("无法发布阅读伴侣文件：${target.name}", error)
+        }
+    }
+
+    private fun atomicWriteIfChanged(target: File, content: String) {
+        val unchanged =
+            target.isFile &&
+                runCatching { target.readText(StandardCharsets.UTF_8) == content }.getOrDefault(false)
+        if (!unchanged) atomicWrite(target, content)
+    }
+
+    companion object {
+        const val SCHEMA_VERSION = 1
+        const val CHAPTERS_PER_GROUP = 100
+        const val CONTENT_FILE_NAME = "content.md"
+        const val CONTENT_FILE_HASH_FIELD = "contentFileHash"
+        const val CONTENT_FILE_HASH_KIND_FIELD = "contentFileHashKind"
+        const val META_FILE_NAME = "meta.json"
+        const val CONTENT_HASH_KIND_ANNOTATION = "annotation_content"
+        const val CONTENT_HASH_KIND_READABLE = "readable_content"
+        const val CONTENT_HASH_KIND_UNKNOWN = "unknown"
+        val PERSISTED_FILE_ALLOWLIST: Set<String> =
+            setOf(
+                "book.md",
+                "characters.md",
+                "ai-memory.md",
+                CONTENT_FILE_NAME,
+                "summary.md",
+                "comments.json",
+                META_FILE_NAME,
+                "catalog.json",
+            )
+        private const val LEGACY_MIGRATION_MARKER = ".legacy-db-migration-v1"
+        private val PROCESS_LOCK = Any()
+
+        fun chapterRef(bookId: String, sourceId: String): String =
+            "ch_${sha256("$bookId\u0000$sourceId")}"
+
+        fun contentHash(content: String): String = sha256Full(content)
+
+        private fun sha256(value: String): String =
+            sha256Full(value).take(24)
+
+        private fun sha256Full(value: String): String =
+            MessageDigest.getInstance("SHA-256")
+                .digest(value.toByteArray(StandardCharsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+    }
+
+    private inline fun <T> withFileStoreLock(block: () -> T): T =
+        synchronized(PROCESS_LOCK, block)
+
+    private fun boundedChapterSearchPaths(
+        bookId: String,
+        chapters: List<ReaderChapter>,
+        include: (ReaderChapter) -> Boolean,
+    ): JSONArray = withFileStoreLock {
+        val paths = JSONArray()
+        val chapterRoot = File(bookDir(bookId), "chapters")
+        chapters
+            .sortedBy(ReaderChapter::index)
+            .groupBy { chapter -> chapter.index / CHAPTERS_PER_GROUP }
+            .toSortedMap()
+            .values
+            .forEach { group ->
+                if (group.isEmpty()) return@forEach
+                val includedChapters = group.filter(include)
+                if (includedChapters.isEmpty()) return@forEach
+                val first = (group.first().index / CHAPTERS_PER_GROUP) * CHAPTERS_PER_GROUP + 1
+                val groupDirectory =
+                    File(chapterRoot, groupName(first, first + CHAPTERS_PER_GROUP - 1))
+                val activeDirectoryNames =
+                    group.map { chapter -> chapterDirectoryName(bookId, chapter.sourceId) }.toSet()
+                val actualDirectories =
+                    groupDirectory
+                        .listFiles()
+                        .orEmpty()
+                        .filter(File::isDirectory)
+                val groupContainsOnlyActiveSources =
+                    actualDirectories.all { directory -> directory.name in activeDirectoryNames }
+                if (includedChapters.size == group.size && groupContainsOnlyActiveSources) {
+                    if (groupDirectory.isDirectory) paths.put(groupDirectory.absolutePath)
+                    return@forEach
+                }
+                includedChapters.forEach { chapter ->
+                    val directory =
+                        File(groupDirectory, chapterDirectoryName(bookId, chapter.sourceId))
+                    if (
+                        directory.isDirectory &&
+                        listOf(CONTENT_FILE_NAME, "summary.md", "comments.json", META_FILE_NAME)
+                            .any { name -> File(directory, name).isFile }
+                    ) {
+                        paths.put(directory.absolutePath)
+                    }
+                }
+            }
+        paths
+    }
+
+    private fun moveDirectory(source: File, target: File) {
+        target.parentFile?.mkdirs()
+        try {
+            Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(source.toPath(), target.toPath())
+        }
+    }
+}

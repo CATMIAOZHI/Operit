@@ -4,6 +4,16 @@ const HISTORY_ROUTE =
   "toolpkg:com.operit.reading_companion:ui:reading_companion_history";
 const DETAIL_ROUTE =
   "toolpkg:com.operit.reading_companion:ui:reading_companion_run_detail";
+const FILES_ROUTE =
+  "toolpkg:com.operit.reading_companion:ui:reading_companion_files";
+const FILE_VIEW_ROUTE =
+  "toolpkg:com.operit.reading_companion:ui:reading_companion_file_view";
+const FILE_VIEW_PATH_ENV_KEY = "OPERIT_READING_COMPANION_FILE_VIEW_PATH_V1";
+const FILE_VIEW_NAME_ENV_KEY = "OPERIT_READING_COMPANION_FILE_VIEW_NAME_V1";
+const FILE_VIEW_RELATIVE_ENV_KEY =
+  "OPERIT_READING_COMPANION_FILE_VIEW_RELATIVE_V1";
+const FILE_VIEW_READONLY_ENV_KEY =
+  "OPERIT_READING_COMPANION_FILE_VIEW_READONLY_V1";
 
 function parseJson(value) {
   if (typeof value !== "string") {
@@ -25,6 +35,29 @@ function toErrorText(error) {
     return String(error.message);
   }
   return String(error || "");
+}
+
+/**
+ * Runs an async tool call with a hard deadline so a stuck native bridge can never leave the
+ * panel on an infinite spinner. The underlying promise keeps running; only the UI gives up.
+ */
+async function callWithTimeout(task, timeoutMessage, timeoutMs) {
+  const deadlineMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : 15000;
+  let timer = null;
+  try {
+    return await Promise.race([
+      task(),
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(String(timeoutMessage || "Timed out")));
+        }, deadlineMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function unwrapToolResult(value) {
@@ -245,9 +278,16 @@ function modelSourceLabel(source, english) {
 
 module.exports = {
   DETAIL_ROUTE,
+  FILES_ROUTE,
+  FILE_VIEW_ROUTE,
+  FILE_VIEW_PATH_ENV_KEY,
+  FILE_VIEW_NAME_ENV_KEY,
+  FILE_VIEW_RELATIVE_ENV_KEY,
+  FILE_VIEW_READONLY_ENV_KEY,
   HISTORY_ROUTE,
   RUN_ID_ENV_KEY,
   callHistoryTool,
+  callWithTimeout,
   formatDate,
   formatDuration,
   modelSourceLabel,
