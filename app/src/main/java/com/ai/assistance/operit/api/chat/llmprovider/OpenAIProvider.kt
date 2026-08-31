@@ -2626,7 +2626,11 @@ open class OpenAIProvider(
                     logLargeString("AIService", data, "[Send message] Original data when JSON parsing failed: ")
                 }
             }
-            
+
+            // Some OpenAI-compatible endpoints terminate the SSE body without a [DONE] sentinel.
+            // Close any stateful reasoning envelope before returning so it cannot leak into the
+            // next enhanced-conversation round when display content is concatenated.
+            closeReasoningBlockIfOpen(state, emitter)
             finalizeOpenToolSequence(state, emitter)
 
             AppLogger.d(

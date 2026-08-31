@@ -232,7 +232,7 @@ private fun RecentChatSelectorOverlay(
     val coroutineScope = rememberCoroutineScope()
     val items = remember(chatHistories) {
         chatHistories
-            .filterNot { it.chatKind == ChatKind.SUBAGENT.name }
+            .filterNot { it.chatKind == ChatKind.SUBAGENT.name || it.isHidden }
             .sortedByDescending { it.updatedAt }
             .take(20)
     }

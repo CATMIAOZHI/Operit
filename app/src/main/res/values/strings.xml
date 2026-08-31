@@ -216,6 +216,12 @@
     <string name="workflow_execution_log_node_title">节点日志：%1$s</string>
     <string name="workflow_execution_log_empty">暂无执行日志</string>
     <string name="workflow_execution_log_empty_for_node">该节点暂无执行日志：%1$s</string>
+    <string name="workflow_execution_log_failure_stage">失败阶段：%1$s</string>
+    <string name="workflow_execution_log_failure_reason">异常原文：%1$s</string>
+    <string name="workflow_execution_failure_stage_startup">工作流启动</string>
+    <string name="workflow_execution_failure_stage_runtime_initialization">运行环境初始化</string>
+    <string name="workflow_execution_failure_stage_execution">工作流执行</string>
+    <string name="workflow_execution_failure_stage_cancellation">执行取消</string>
     <string name="workflow_edit_dialog_title">编辑工作流</string>
     <string name="workflow_enabled_label">启用工作流</string>
     <string name="workflow_disabled">已禁用</string>
@@ -1099,12 +1105,14 @@
     <string name="agreement_title">用户协议与隐私政策</string>
     <string name="agreement_subtitle">请在使用前仔细阅读并同意以下条款。</string>
     <string name="agreement_version">协议版本：%1$s</string>
+    <string name="personal_branch_disclaimer_title">个人分支版本声明</string>
+    <string name="personal_branch_disclaimer_content">本应用是由 CATMIAOZHI 基于 AAswordman / Operit 独立维护和发布的个人分支版本，不属于上游官方发行。对本分支的修改、构建、发布与附加服务所产生的问题，请通过 CATMIAOZHI / Operit 仓库的 Issues 反馈；除上游项目自身代码依法或依其许可证应承担的责任外，上游项目及其维护者不对本个人分支的改动、构建、分发或运行承担责任。</string>
     <string name="agreement_human_readable_title">人话版协议（非法律版本）</string>
     <string name="agreement_human_readable_content">服务边界说明：Operit 不提供面向公众的拟人化情感互动服务。Operit 是在用户设备本地运行的开源客户端，不运营模型推理服务、不托管聊天会话或交互数据，也不向用户分发共享模型凭据。云模型请求由用户使用自行配置的凭据从设备直接发送至所选模型服务商，相关数据适用该服务商的规则；本地模型在设备内推理。\n\n本应用可以调用文件、终端、自动化、Root、ADB 和扩展等能力。请在操作前核对内容、备份重要数据并谨慎授予权限；因用户操作、用户配置、第三方服务或第三方扩展造成的设备、数据、账号或其他损失，应由实际操作人依适用法律处理。\n\n插件市场中的第三方插件、脚本、Skill、工具包和其他内容，其著作权及相关责任归标注的作者或权利人所有。市场展示或安装不表示 Operit 对该内容作出保证、背书或取得其权利。使用、修改、发布或再分发前，请自行确认许可和权利状态。</string>
     <string name="agreement_serious_title">严谨版法律协议</string>
     <string name="agreement_serious_content"><![CDATA[
-        <p><b>Operit 用户协议与隐私政策</b><br>版本：2026-07-15；拟生效日期：2026 年 7 月 15 日。</p>
-        <p><b>1. 适用范围与协议版本</b><br>本协议适用于 Operit 官方发布的 Android 客户端及其可选在线功能。使用本应用即表示您已阅读并同意当前版本。本应用在启动时记录您确认的协议版本；协议发生实质更新时，应用将要求您重新确认后方可继续使用。仓库中的开源代码许可由根目录 <code>LICENSE</code> 所载 GNU 宽通用公共许可证第三版（LGPLv3）规定；本协议不排除或缩减适用法律及开源许可证赋予您的权利。</p>
+        <p><b>Operit 用户协议与隐私政策</b><br>版本：2026-08-24；拟生效日期：2026 年 8 月 24 日。</p>
+        <p><b>1. 适用范围与协议版本</b><br>本协议适用于 CATMIAOZHI / Operit 仓库维护者发布的 Operit 个人分支 Android 客户端及其可选在线功能，不代表上游项目的官方协议或发行。使用本应用即表示您已阅读并同意当前版本。本应用在启动时记录您确认的协议版本；协议发生实质更新时，应用将要求您重新确认后方可继续使用。仓库中的开源代码许可由根目录 <code>LICENSE</code> 所载 GNU 宽通用公共许可证第三版（LGPLv3）规定；本协议不排除或缩减适用法律及开源许可证赋予您的权利。</p>
         <p><b>2. 产品定位与第三方服务</b><br>Operit 是开源客户端软件，不提供大语言模型推理、共享 API Key、聊天请求中转或聊天记录云端托管。云模型、云端语音、搜索、绘图、MCP 及其他网络功能由您自行选择、配置和启用。您使用该等服务时，数据将直接发送给相应服务商，并受其服务条款和隐私政策约束。您应自行判断服务商、模型、端点和扩展的安全性、合法性与适用性，并妥善保管相关凭据。</p>
         <p><b>3. 数据处理与隐私</b><br>聊天记录、角色卡、记忆、模型配置和 API Key 通常存储在设备的应用数据中。您主动导出、备份、上传文件、使用第三方网络功能或向外部 HTTP 服务提交请求时，相关数据将依您的操作被复制、传输或披露。市场、公告、更新检查、GitHub 登录和发布功能会访问 Operit、GitHub 或相关第三方资源；这些功能不转发聊天模型请求。请结合设备安全设置、第三方服务条款及本协议管理您的数据和凭据。</p>
         <p><b>4. 对外部署与运营责任</b><br>外部 HTTP 服务、QQ Bot、自动回复及类似能力由您选择启用。您将其开放给他人或公众使用时，应作为实际部署或运营者负责访问控制、用户授权、内容安全、数据保护、未成年人保护、必要的提示和其他适用义务。面向中国境内公众持续提供模拟自然人人格特征、思维模式或沟通风格的情感互动服务时，您应自行评估并遵守《人工智能拟人化互动服务管理暂行办法》及其他适用规定。您不得利用本应用提供虚拟亲属、虚拟伴侣等面向未成年人的虚拟亲密关系服务，不得诱导情感依赖或沉迷、实施情感操纵，或从事其他侵害他人合法权益的活动。</p>
@@ -3137,6 +3145,7 @@
     <string name="chat_pending_queue_title">待发送队列（%1$d）</string>
     <string name="chat_queue_add_message">加入发送队列</string>
     <string name="chat_queue_added">已加入发送队列</string>
+    <string name="chat_queue_send_deferred">目标对话仍在处理中，队列消息已保留</string>
     <string name="chat_use_default_config_continue">使用默认配置继续</string>
     <string name="chat_default_config_incomplete">默认配置不完整，请填写必要信息</string>
     <string name="chat_locked_cannot_delete">该聊天已锁定，无法删除</string>
@@ -3592,6 +3601,7 @@
     <string name="token_stats_category_title">标题</string>
     <string name="token_stats_category_memory">记忆</string>
     <string name="token_stats_category_character">角色生成</string>
+    <string name="token_stats_category_reading_companion">AI 阅读伴侣</string>
     <string name="token_stats_category_connection_test">连接测试</string>
     <string name="token_stats_category_other">其他</string>
     <string name="token_stats_status_completed">完成</string>
@@ -3632,9 +3642,10 @@
     <string name="token_stats_group_search_hint">搜索分组、模型、Provider 或配置</string>
     <string name="token_stats_group_selected_count">已选择 %1$d 个身份</string>
     <string name="token_stats_group_new_short">新建分组</string>
-    <string name="token_stats_group_move">移动</string>
+    <string name="token_stats_group_move">合并显示</string>
     <string name="token_stats_group_edit_pricing">修改 %1$s 的定价</string>
-    <string name="token_stats_group_move_title">移动到分组</string>
+    <string name="token_stats_group_move_title">合并显示到分组</string>
+    <string name="token_stats_group_display_only_hint">分组只影响统计展示；费用仍按每个真实 Provider、模型和 API 配置分别计算。</string>
     <string name="token_stats_group_custom_summary">自定义分组 · %1$d 个身份</string>
     <string name="token_stats_group_default_summary">默认分组 · %1$d 个身份</string>
     <string name="token_stats_group_empty">该分组暂无身份</string>
@@ -3642,6 +3653,18 @@
     <string name="token_stats_group_restore_confirm_short">恢复</string>
     <string name="token_stats_config_deleted">已删除的配置</string>
     <string name="token_stats_pricing_search_hint">搜索模型、Provider 或 API 配置</string>
+    <string name="token_stats_pricing_catalog_title">自动定价目录</string>
+    <string name="token_stats_pricing_catalog_loading">正在加载内置定价目录</string>
+    <string name="token_stats_pricing_catalog_remote">正在使用云端更新目录</string>
+    <string name="token_stats_pricing_catalog_bundled">正在使用 APK 内置目录</string>
+    <string name="token_stats_pricing_catalog_revision">版本 %1$s · 数据日期 %2$s</string>
+    <string name="token_stats_pricing_catalog_checked">上次检查：%1$s</string>
+    <string name="token_stats_pricing_catalog_not_checked">尚未检查云端更新</string>
+    <string name="token_stats_pricing_catalog_refresh">立即更新</string>
+    <string name="token_stats_pricing_catalog_refresh_failed">更新失败，已继续使用当前目录：%1$s</string>
+    <string name="token_stats_pricing_filter_all">全部</string>
+    <string name="token_stats_pricing_filter_missing">价格缺失</string>
+    <string name="token_stats_pricing_filter_custom">已自定义</string>
     <string name="token_stats_filter_all_providers">全部 Provider</string>
     <string name="token_stats_pricing_inherits_model">使用模型价格</string>
     <string name="token_stats_pricing_model_default">模型默认价格</string>
@@ -3658,6 +3681,11 @@
     <string name="token_stats_pricing_none">暂无自定义价格覆盖</string>
     <string name="token_stats_pricing_add">新增覆盖</string>
     <string name="token_stats_pricing_edit">编辑覆盖</string>
+    <string name="token_stats_pricing_custom_title">自定义定价</string>
+    <string name="token_stats_pricing_config_target">API 配置：%1$s</string>
+    <string name="token_stats_pricing_inherit_empty_hint">留空的价格将继续使用自动定价。</string>
+    <string name="token_stats_pricing_advanced_show">设置缓存价格（高级）</string>
+    <string name="token_stats_pricing_advanced_hide">收起缓存价格</string>
     <string name="token_stats_pricing_delete">删除</string>
     <string name="token_stats_pricing_scope_provider">按 Provider/模型</string>
     <string name="token_stats_pricing_scope_config">按 API 配置</string>
@@ -3677,7 +3705,7 @@
     <string name="token_stats_group_manage">分组管理</string>
     <string name="token_stats_group_members">组内 %1$d 个身份</string>
     <string name="token_stats_group_rename">重命名分组</string>
-    <string name="token_stats_group_new">新建分组并合并</string>
+    <string name="token_stats_group_new">新建分组并合并显示</string>
     <string name="token_stats_group_create">创建</string>
     <string name="token_stats_group_merge">合并到其他分组</string>
     <string name="token_stats_group_merge_into">目标分组</string>
@@ -4026,7 +4054,21 @@
     <string name="select">选择</string>
     <string name="default_config_model_restriction">使用默认配置时，只能使用deepseek-v4-flash模型</string>
     <string name="enable_direct_image_processing">模型支持识图</string>
-    <string name="enable_direct_image_processing_desc">启用后，图片将直接发送给AI处理，而不是让AI通过OCR工具读取</string>
+    <string name="enable_direct_image_processing_desc">启用后，AI 调用 read_file 读取图片时会交给当前模型；用户附加图片时不会自动发送图片内容</string>
+    <string name="model_multimodal_capabilities_desc">为当前配置中的每个模型分别设置图片、音频和视频输入能力。自动同步只读取本地目录；需要更新时，可手动从 Operit 仓库刷新一次并持久缓存。</string>
+    <string name="model_multimodal_capabilities_no_models">添加模型后可分别设置图片、音频和视频能力</string>
+    <string name="model_multimodal_select_model">选择模型</string>
+    <string name="model_multimodal_select_model_title">选择要配置的模型</string>
+    <string name="model_multimodal_search_models">搜索模型</string>
+    <string name="model_multimodal_no_models_found">没有可配置的模型</string>
+    <string name="model_multimodal_auto_sync">自动同步当前配置</string>
+    <string name="model_multimodal_auto_sync_all_matched">已根据官方模型目录配置 %1$d 个模型</string>
+    <string name="model_multimodal_auto_sync_partially_matched">已配置 %1$d 个模型；另有 %2$d 个模型无法唯一匹配，已保留原设置</string>
+    <string name="model_multimodal_auto_sync_none_matched">没有可唯一匹配的官方模型，现有设置未修改</string>
+    <string name="model_multimodal_auto_sync_failed">读取本地模型目录失败，现有设置未修改</string>
+    <string name="model_multimodal_catalog_refresh">刷新本地模型目录</string>
+    <string name="model_multimodal_catalog_refresh_success">本地模型目录已更新，共 %1$d 个官方模型</string>
+    <string name="model_multimodal_catalog_refresh_failed">从 Operit 仓库刷新失败，已保留原本地目录</string>
     <string name="enable_direct_audio_processing">模型支持音频解析</string>
     <string name="enable_direct_audio_processing_desc">启用后，音频将直接发送给AI处理，而不是通过工具返回文本转写/描述</string>
     <string name="enable_direct_video_processing">模型支持视频解析</string>
@@ -7383,6 +7425,9 @@
     <string name="workflow_unknown_error">未知错误</string>
     <string name="workflow_in_list_type_mismatch">IN 列表类型不匹配：同时包含数字和非数字 right=\'%1$s\'</string>
     <string name="workflow_log_start_execution">开始执行工作流: %1$s (%2$s)</string>
+    <string name="workflow_log_runtime_initialization_failed">工作流运行环境初始化失败：%1$s</string>
+    <string name="workflow_log_startup_failed">工作流启动失败：%1$s</string>
+    <string name="workflow_log_execution_cancelled_reason">工作流执行已取消：%1$s</string>
     <string name="workflow_log_no_trigger_node">工作流没有触发节点</string>
     <string name="workflow_log_trigger_node_not_exist">指定的触发节点不存在: %1$s</string>
     <string name="workflow_log_scheduled_trigger">定时触发: 只执行指定触发节点 %1$s</string>
@@ -7578,14 +7623,16 @@
     <string name="ai_message_tool_start">[工具: %1$s]</string>
     <string name="ai_message_success">成功</string>
     <string name="ai_message_failure">失败</string>
-    <string name="ai_message_image_attached_multimodal_notice">图片内容已作为多模态输入随本消息附着，勿调用文件读取工具读取该路径。</string>
+    <string name="ai_message_image_attached_multimodal_notice">图片内容已作为多模态输入随本消息附着。</string>
+    <string name="ai_message_image_attached_on_demand_notice">图片内容尚未读取；需要查看时，请调用 read_file 并使用 id 中的路径。</string>
     <string name="ai_message_result_prefix">[结果: </string>
     <string name="ai_message_result_suffix">]</string>
     <string name="ai_message_result_omitted">[结果: %1$s 已省略]</string>
     <string name="ai_message_result_omitted_with_status">[结果: %1$s %2$s 已省略]</string>
-    <string name="ai_message_package_warmup_title">【工具包预热】</string>
-    <string name="ai_message_package_warmup_empty">本次摘要范围内未检测到包工具调用，因此未进行工具包预热。</string>
-    <string name="ai_message_package_warmup_intro">以下根据本次摘要范围内的工具使用频次，自动激活了最高频的工具包，并附上 use_package 的返回结果，供下一轮预热。</string>
+    <string name="ai_message_package_warmup_title">【已激活包】</string>
+    <string name="ai_message_package_warmup_empty">本次摘要范围内未检测到已激活包。</string>
+    <string name="ai_message_package_warmup_intro">以下已激活包可以直接使用。</string>
+    <string name="ai_message_package_activated_hint">已激活包：以下工具提示可以直接使用。</string>
     <string name="ai_message_use_package_failed">use_package 调用失败: %1$s</string>
     <string name="ai_message_use_package_empty">use_package 返回为空。</string>
     <string name="ai_message_package_warmup_item">%1$d. 包 %2$s（命中 %3$d 次）</string>
@@ -8602,4 +8649,13 @@
     <string name="terminal_startup_error_delete">无法删除启动服务。</string>
     <string name="terminal_startup_error_delete_restore_runtime">无法删除启动服务，且未能恢复其运行状态。</string>
     <string name="terminal_startup_error_remove_files">无法移除启动服务文件。</string>
+    <string name="hidden_chats_title">隐藏聊天</string>
+    <string name="hidden_chats_empty">没有隐藏聊天。</string>
+    <string name="hidden_chats_permanently_hidden_note">审计类隐藏聊天不可取消隐藏，只能查看或删除。</string>
+    <string name="hidden_chats_delete_confirm_title">删除隐藏聊天</string>
+    <string name="hidden_chats_delete_confirm_message">确定要删除隐藏聊天“%1$s”及其全部对话内容吗？此操作不可恢复。</string>
+    <string name="open_audit_chat">打开子代理对话</string>
+    <string name="open_audit_chat_failed">无法打开审计对话：%1$s</string>
+    <string name="reading_companion_loop_detected">段评子代理检测到重复调用循环，本次生成已停止。</string>
+    <string name="reading_companion_no_progress">段评子代理未检测到有效进展，本次生成已停止。</string>
 </resources>

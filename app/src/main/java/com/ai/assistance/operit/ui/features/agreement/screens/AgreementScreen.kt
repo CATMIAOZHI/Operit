@@ -84,6 +84,23 @@ fun AgreementScreen(onAgreementAccepted: () -> Unit) {
                                         .padding(16.dp)
                 ) {
                         Column(modifier = Modifier.fillMaxSize().verticalScroll(scrollState)) {
+                                Text(
+                                        text = stringResource(R.string.personal_branch_disclaimer_title),
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                        text = stringResource(R.string.personal_branch_disclaimer_content),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                Spacer(modifier = Modifier.height(24.dp))
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                Spacer(modifier = Modifier.height(24.dp))
+
                                 // Human-readable version
                                 Text(
                                         text = stringResource(R.string.agreement_human_readable_title),

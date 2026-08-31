@@ -287,14 +287,10 @@ class MessageProcessingDelegate(
         workspacePath: String?,
         workspaceEnv: String?,
         replyToMessage: ChatMessage?,
+        multimodalCapabilities: ModelMultimodalCapabilities,
         chatId: String? = null
     ): String = withContext(Dispatchers.IO) {
         val totalStartTime = messageTimingNow()
-        val configId = functionalConfigManager.getConfigIdForFunction(FunctionType.CHAT)
-        val currentModelConfig = modelConfigManager.getModelConfigFlow(configId).first()
-        val enableDirectImageProcessing = currentModelConfig.enableDirectImageProcessing
-        val enableDirectAudioProcessing = currentModelConfig.enableDirectAudioProcessing
-        val enableDirectVideoProcessing = currentModelConfig.enableDirectVideoProcessing
 
         val finalMessageContent = AIMessageManager.buildUserMessageContent(
             context = context,
@@ -303,15 +299,15 @@ class MessageProcessingDelegate(
             workspacePath = workspacePath,
             workspaceEnv = workspaceEnv,
             replyToMessage = replyToMessage,
-            enableDirectImageProcessing = enableDirectImageProcessing,
-            enableDirectAudioProcessing = enableDirectAudioProcessing,
-            enableDirectVideoProcessing = enableDirectVideoProcessing,
+            enableDirectAudioProcessing = multimodalCapabilities.audio,
+            enableDirectVideoProcessing = multimodalCapabilities.video,
             chatId = chatId
         )
         logMessageTiming(
             stage = "delegate.groupOrchestration.buildUserMessageContent",
             startTimeMs = totalStartTime,
-            details = "attachments=${attachments.size}, configId=$configId, finalLength=${finalMessageContent.length}"
+            details =
+                "attachments=${attachments.size}, capabilities=$multimodalCapabilities, finalLength=${finalMessageContent.length}"
         )
         finalMessageContent
     }
@@ -688,7 +684,7 @@ class MessageProcessingDelegate(
             isGroupOrchestrationTurn: Boolean = false,
             groupParticipantNamesText: String? = null,
             turnOptions: ChatTurnOptions = ChatTurnOptions()
-    ) {
+    ): Boolean {
         val rawMessageText = messageTextOverride ?: _userMessage.value.text
         fun rejectRegisteredTurn(error: String) {
             turnOptions.turnId?.let { turnId ->
@@ -708,7 +704,7 @@ class MessageProcessingDelegate(
                 "sendUserMessage忽略: 空消息且无附件, chatId=$chatId, autoContinuation=$isAutoContinuation"
             )
             rejectRegisteredTurn("Message was empty")
-            return
+            return false
         }
         val chatRuntime = runtimeFor(chatId)
         if (chatRuntime.isLoading.value) {
@@ -717,7 +713,7 @@ class MessageProcessingDelegate(
                 "sendUserMessage忽略: chat正在处理中, chatId=$chatId, roleCardId=$roleCardId, override=${!messageTextOverride.isNullOrBlank()}, suppressUserMessageInHistory=$suppressUserMessageInHistory"
             )
             rejectRegisteredTurn("Chat is already processing another turn")
-            return
+            return false
         }
 
         val originalMessageText = rawMessageText.trim()
@@ -758,15 +754,25 @@ class MessageProcessingDelegate(
 
             AppLogger.d(TAG, "开始处理用户消息：附件数量=${attachments.size}")
 
-            // 获取当前模型配置以检查是否启用直接图片处理
-            val configId = chatModelConfigIdOverride?.takeIf { it.isNotBlank() }
-                ?: functionalConfigManager.getConfigIdForFunction(FunctionType.CHAT)
+            // 图片附件始终按需读取；音频和视频是否直传由当前模型的独立能力决定。
+            val chatConfigMapping =
+                functionalConfigManager.getConfigMappingForFunction(FunctionType.CHAT)
+            val overrideConfigId = chatModelConfigIdOverride?.takeIf { it.isNotBlank() }
+            val configId = overrideConfigId ?: chatConfigMapping.configId
+            val modelIndex =
+                if (overrideConfigId != null) {
+                    (chatModelIndexOverride ?: 0).coerceAtLeast(0)
+                } else {
+                    chatConfigMapping.modelIndex
+                }
             val loadModelConfigStartTime = messageTimingNow()
             val currentModelConfig = modelConfigManager.getModelConfigFlow(configId).first()
-            val enableDirectImageProcessing = currentModelConfig.enableDirectImageProcessing
-            val enableDirectAudioProcessing = currentModelConfig.enableDirectAudioProcessing
-            val enableDirectVideoProcessing = currentModelConfig.enableDirectVideoProcessing
-            AppLogger.d(TAG, "直接图片处理状态: $enableDirectImageProcessing (配置ID: $configId)")
+            val multimodalCapabilities =
+                currentModelConfig.multimodalCapabilitiesForModel(modelIndex)
+            AppLogger.d(
+                TAG,
+                "图片附件按需读取，当前模型多模态能力: $multimodalCapabilities (配置ID: $configId, 模型索引: $modelIndex)"
+            )
             logMessageTiming(
                 stage = "delegate.loadModelConfig",
                 startTimeMs = loadModelConfigStartTime,
@@ -783,9 +789,8 @@ class MessageProcessingDelegate(
                 workspacePath = workspacePath,
                 workspaceEnv = workspaceEnv,
                 replyToMessage = replyToMessage,
-                enableDirectImageProcessing = enableDirectImageProcessing,
-                enableDirectAudioProcessing = enableDirectAudioProcessing,
-                enableDirectVideoProcessing = enableDirectVideoProcessing,
+                enableDirectAudioProcessing = multimodalCapabilities.audio,
+                enableDirectVideoProcessing = multimodalCapabilities.video,
                 chatId = chatId,
                 roleCardId = roleCardId,
                 isSubTask = turnOptions.isSubTask,
@@ -1684,6 +1689,7 @@ class MessageProcessingDelegate(
                 )
             )
         }
+        return true
     }
 
     suspend fun regenerateAiMessageVariant(

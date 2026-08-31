@@ -51,6 +51,7 @@ import com.ai.assistance.operit.util.LocaleUtils
 import com.ai.assistance.operit.api.chat.enhance.MultiServiceManager
 import com.ai.assistance.operit.data.repository.CustomEmojiRepository
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkBuilder
+import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
 import com.ai.assistance.operit.data.repository.getCustomMoodDefinitions
 import com.ai.assistance.operit.data.repository.getMoodAnimationMapping
 
@@ -66,6 +67,29 @@ internal fun stripToolExecutionMetadataFromToolResults(content: String): String 
         val body = matchResult.groupValues[3]
         "<$tagName$attrs>$body</$tagName>"
     }
+}
+
+internal fun mergeToolResultImageLinksForHistory(
+    segments: List<PromptTurn>,
+): List<PromptTurn> {
+    val merged = mutableListOf<PromptTurn>()
+    for (segment in segments) {
+        val isStandaloneImagePayload =
+            segment.kind == PromptTurnKind.ASSISTANT &&
+                MediaLinkParser.hasImageLinks(segment.content) &&
+                MediaLinkParser.removeImageLinks(segment.content).isBlank()
+        val precedingToolResult = merged.lastOrNull()
+
+        if (isStandaloneImagePayload && precedingToolResult?.kind == PromptTurnKind.TOOL_RESULT) {
+            merged[merged.lastIndex] =
+                precedingToolResult.copy(
+                    content = "${precedingToolResult.content.trimEnd()}\n${segment.content.trimStart()}"
+                )
+        } else {
+            merged.add(segment)
+        }
+    }
+    return merged
 }
 
 /** 处理会话相关功能的服务类，包括会话总结、偏好处理和对话切割准备 */
@@ -830,6 +854,11 @@ class ConversationService(
             }
         }
 
+        // A read_file image result is stored as a structured tool result followed by a standalone
+        // image link. Keep both in one TOOL_RESULT turn so providers resend the image as the
+        // external user payload of that tool result instead of an invalid assistant image block.
+        val historySafeSegments = mergeToolResultImageLinksForHistory(segments)
+
         // 合并连续的相同角色消息
         val mergedSegments = mutableListOf<PromptTurn>()
         var currentKind: PromptTurnKind? = null
@@ -837,7 +866,7 @@ class ConversationService(
         var currentToolName: String? = null
         var currentMetadata: Map<String, Any?> = emptyMap()
 
-        for (segment in segments) {
+        for (segment in historySafeSegments) {
             val shouldMergeCurrent =
                 segment.kind == currentKind &&
                     segment.kind !in setOf(PromptTurnKind.TOOL_CALL, PromptTurnKind.TOOL_RESULT)
@@ -1137,6 +1166,7 @@ class ConversationService(
             LocaleUtils.LanguageCodes.MALAY -> "Malay"
             LocaleUtils.LanguageCodes.INDONESIAN -> "Indonesian"
             LocaleUtils.LanguageCodes.PORTUGUESE_BRAZIL -> "Portuguese (Brazil)"
+            LocaleUtils.LanguageCodes.ROMANIAN -> "Romanian"
             else -> context.getString(R.string.conversation_language_chinese) // 默认翻译为中文
         }
         
@@ -1257,15 +1287,13 @@ ${FunctionalPrompts.translationUserPrompt(targetLanguage, text)}
         userIntent: String?,
         multiServiceManager: MultiServiceManager
     ): String {
-        return try {
-            val service = multiServiceManager.getServiceForFunction(FunctionType.IMAGE_RECOGNITION)
-            
-            // 添加图片到池子并获取ID
-            val imageId = com.ai.assistance.operit.util.ImagePoolManager.addImage(imagePath)
-            if (imageId == "error") {
-                return "Failed to load image: $imagePath"
-            }
+        val service = multiServiceManager.getServiceForFunction(FunctionType.IMAGE_RECOGNITION)
 
+        // 添加图片到池子并获取ID
+        val imageId = com.ai.assistance.operit.util.ImagePoolManager.addImage(imagePath)
+        check(imageId != "error") { "Failed to load image: $imagePath" }
+
+        return try {
             // 构建提示词，包含用户意图和图片链接
             val imageLink = MediaLinkBuilder.image(context, imageId)
             val prompt = if (userIntent.isNullOrBlank()) {
@@ -1288,13 +1316,15 @@ ${FunctionalPrompts.translationUserPrompt(targetLanguage, text)}
                 result.append(chunk)
             }
             
-            // 清理图片缓存
-            com.ai.assistance.operit.util.ImagePoolManager.removeImage(imageId)
-            
-            ChatUtils.removeThinkingContent(result.toString()).trim()
+            ChatUtils.removeThinkingContent(result.toString()).trim().also { analysis ->
+                check(analysis.isNotBlank()) { "Image recognition returned an empty response" }
+            }
         } catch (e: Exception) {
             AppLogger.e(TAG, "识图分析失败", e)
-            "Image recognition failed: ${e.message}"
+            throw e
+        } finally {
+            // Ensure a failed recognition request does not leak its pooled image.
+            com.ai.assistance.operit.util.ImagePoolManager.removeImage(imageId)
         }
     }
 

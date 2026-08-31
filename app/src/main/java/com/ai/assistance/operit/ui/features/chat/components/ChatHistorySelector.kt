@@ -57,6 +57,7 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material3.AlertDialog
@@ -602,6 +603,8 @@ fun ChatHistorySelector(
         activeStreamingChatIds: Set<String> = emptySet(),
         lazyListState: LazyListState? = null,
         onBack: (() -> Unit)? = null,
+        /** 顶部“隐藏聊天”入口；null 时不显示（普通列表永远只显示 !isHidden 行）。 */
+        onOpenHiddenChats: (() -> Unit)? = null,
         searchQuery: String,
         onSearchQueryChange: (String) -> Unit,
         historyDisplayMode: ChatHistoryDisplayMode,
@@ -3307,6 +3310,19 @@ fun ChatHistorySelector(
                             tint = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.size(20.dp)
                         )
+                    }
+                    if (onOpenHiddenChats != null) {
+                        IconButton(
+                            onClick = onOpenHiddenChats,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.VisibilityOff,
+                                contentDescription = stringResource(R.string.hidden_chats_title),
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                     if (onBack != null) {
                         IconButton(

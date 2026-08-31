@@ -113,7 +113,6 @@ val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localProperties.load(FileInputStream(localPropertiesFile))
 }
-
 android {
     namespace = "com.ai.assistance.operit"
     compileSdk = 36
@@ -142,6 +141,7 @@ android {
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
+            version = libs.versions.cmake.get()
         }
     }
 
@@ -149,8 +149,8 @@ android {
         applicationId = "com.rainy.operitry"
         minSdk = 26
         targetSdk = 34
-        versionCode = 44
-        versionName = "1.12.0+4-ry.1"
+        versionCode = 46
+        versionName = "1.12.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -170,8 +170,7 @@ android {
             }
         }
 
-        buildConfigField("String", "GITHUB_CLIENT_ID", "\"${localProperties.getProperty("GITHUB_CLIENT_ID")}\"")
-        buildConfigField("String", "GITHUB_CLIENT_SECRET", "\"${localProperties.getProperty("GITHUB_CLIENT_SECRET")}\"")
+        buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "false")
     }
 
     buildTypes {

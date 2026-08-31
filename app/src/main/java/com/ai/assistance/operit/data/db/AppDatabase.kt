@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.data.db
 
 import android.content.Context
+import android.database.sqlite.SQLiteException
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -9,6 +10,7 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.execSQL
 import com.ai.assistance.operit.data.dao.ChatDao
+import com.ai.assistance.operit.data.dao.ChatContentDao
 import com.ai.assistance.operit.data.dao.ChatFolderDao
 import com.ai.assistance.operit.data.dao.ChatTodoDao
 import com.ai.assistance.operit.data.dao.MessageDao
@@ -53,7 +55,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         TokenStatCleanupOperationEntity::class,
         TokenStatCleanupItemEntity::class,
     ],
-    version = 32,
+    version = 33,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -67,6 +69,8 @@ abstract class AppDatabase : RoomDatabase() {
 
     /** 获取消息DAO */
     abstract fun messageDao(): MessageDao
+
+    abstract fun chatContentDao(): ChatContentDao
 
     abstract fun messageVariantDao(): MessageVariantDao
 
@@ -915,6 +919,75 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        /**
+         * v32 → v33：阅读伴侣审计隐藏聊天与跨库弱关联。
+         *
+         * - `chats.isHidden`/`chats.hiddenReason`：隐藏聊天不进入普通列表；旧行默认可见。
+         * - `subagent_runs.externalOwnerType/externalOwnerId/modelRoundCount`：阅读 run 对
+         *   subagent run 的弱关联（无跨库 FK，统一由 reconciliation 对账）与模型轮次计数。
+         *
+         * 全部为纯 ALTER ADD + 索引，对既有行无损、可重入（重复执行时列已存在即跳过）。
+         */
+        internal val MIGRATION_32_33 =
+            object : Migration(32, 33) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    addColumns { sql -> db.execSQL(sql) }
+                }
+
+                override fun migrate(connection: SQLiteConnection) {
+                    addColumns { sql -> connection.execSQL(sql) }
+                }
+
+                private fun addColumns(execSql: (String) -> Unit) {
+                    alterColumn(execSql) {
+                        "ALTER TABLE `chats` ADD COLUMN `isHidden` INTEGER NOT NULL DEFAULT 0"
+                    }
+                    alterColumn(execSql) {
+                        "ALTER TABLE `chats` ADD COLUMN `hiddenReason` TEXT"
+                    }
+                    execSql(
+                        "CREATE INDEX IF NOT EXISTS `index_chats_isHidden` " +
+                            "ON `chats` (`isHidden`)"
+                    )
+                    alterColumn(execSql) {
+                        "ALTER TABLE `subagent_runs` ADD COLUMN `externalOwnerType` TEXT"
+                    }
+                    alterColumn(execSql) {
+                        "ALTER TABLE `subagent_runs` ADD COLUMN `externalOwnerId` TEXT"
+                    }
+                    alterColumn(execSql) {
+                        "ALTER TABLE `subagent_runs` ADD COLUMN " +
+                            "`modelRoundCount` INTEGER NOT NULL DEFAULT 0"
+                    }
+                    execSql(
+                        "CREATE INDEX IF NOT EXISTS " +
+                            "`index_subagent_runs_externalOwnerType_externalOwnerId` " +
+                            "ON `subagent_runs` (`externalOwnerType`, `externalOwnerId`)"
+                    )
+                }
+
+                /**
+                 * 幂等重放只容忍"列已存在"（duplicate column name）；其他 SQLite 错误必须上抛，
+                 * 不能把真实迁移失败误当成可重入。
+                 */
+                private fun alterColumn(
+                    execSql: (String) -> Unit,
+                    sql: () -> String,
+                ) {
+                    try {
+                        execSql(sql())
+                    } catch (error: Exception) {
+                        val message = error.message.orEmpty()
+                        val sqliteFailure =
+                            error is SQLiteException || error is androidx.sqlite.SQLiteException
+                        val duplicateColumn = duplicateColumnRegex.containsMatchIn(message)
+                        if (!(sqliteFailure && duplicateColumn)) throw error
+                    }
+                }
+            }
+
+        private val duplicateColumnRegex = Regex("(?i)duplicate column name")
+
         private val finalTrueAttributeRegex =
             Regex("""\bfinal\s*=\s*["']true["']""", RegexOption.IGNORE_CASE)
 
@@ -1051,6 +1124,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_29_30,
                                 MIGRATION_30_31,
                                 MIGRATION_31_32,
+                                MIGRATION_32_33,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

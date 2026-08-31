@@ -84,4 +84,56 @@ class RenderBatchCoordinatorTest {
 
         assertEquals(prefix + tail, renderNodes.single().content)
     }
+
+    @Test
+    fun equalLengthBlockNodeReplacement_isRendered() = runTest {
+        val nodes = mutableStateListOf(MarkdownNode(MarkdownProcessorType.PLAIN_TEXT, "x"))
+        val renderNodes = mutableStateListOf<MarkdownNodeStable>()
+        val updater =
+            BatchNodeUpdater(
+                nodes = nodes,
+                renderNodes = renderNodes,
+                conversionCache = mutableMapOf(),
+                nodeAnimationStates = mutableStateMapOf(),
+                xmlNodeStreams = mutableMapOf<Int, Stream<String>>(),
+                rendererId = "equal-length-block-test",
+                scope = this,
+            )
+
+        updater.requestUpdate()
+        advanceUntilIdle()
+
+        nodes[0] = MarkdownNode(MarkdownProcessorType.BLOCK_LATEX, "x")
+        updater.requestStructuralUpdate(0)
+        advanceUntilIdle()
+
+        assertEquals(MarkdownProcessorType.BLOCK_LATEX, renderNodes.single().type)
+    }
+
+    @Test
+    fun equalLengthChildNodeReplacement_isRendered() = runTest {
+        val parent = MarkdownNode(MarkdownProcessorType.PLAIN_TEXT, "x")
+        parent.children.add(MarkdownNode(MarkdownProcessorType.PLAIN_TEXT, "x"))
+        val nodes = mutableStateListOf(parent)
+        val renderNodes = mutableStateListOf<MarkdownNodeStable>()
+        val updater =
+            BatchNodeUpdater(
+                nodes = nodes,
+                renderNodes = renderNodes,
+                conversionCache = mutableMapOf(),
+                nodeAnimationStates = mutableStateMapOf(),
+                xmlNodeStreams = mutableMapOf<Int, Stream<String>>(),
+                rendererId = "equal-length-child-test",
+                scope = this,
+            )
+
+        updater.requestUpdate()
+        advanceUntilIdle()
+
+        parent.children[0] = MarkdownNode(MarkdownProcessorType.INLINE_LATEX, "x")
+        updater.requestStructuralUpdate(0)
+        advanceUntilIdle()
+
+        assertEquals(MarkdownProcessorType.INLINE_LATEX, renderNodes.single().children.single().type)
+    }
 }

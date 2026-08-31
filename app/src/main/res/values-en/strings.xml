@@ -227,6 +227,12 @@
     <string name="workflow_execution_log_node_title">Node logs: %1$s</string>
     <string name="workflow_execution_log_empty">No execution logs yet</string>
     <string name="workflow_execution_log_empty_for_node">No logs for node: %1$s</string>
+    <string name="workflow_execution_log_failure_stage">Failure stage: %1$s</string>
+    <string name="workflow_execution_log_failure_reason">Original exception: %1$s</string>
+    <string name="workflow_execution_failure_stage_startup">Workflow startup</string>
+    <string name="workflow_execution_failure_stage_runtime_initialization">Runtime initialization</string>
+    <string name="workflow_execution_failure_stage_execution">Workflow execution</string>
+    <string name="workflow_execution_failure_stage_cancellation">Execution cancelled</string>
     <string name="workflow_edit_dialog_title">Edit Workflow</string>
     <string name="workflow_enabled_label">Enable workflow</string>
     <string name="workflow_disabled">Disabled</string>
@@ -1123,12 +1129,14 @@
     <string name="agreement_title">User Agreement and Privacy Policy</string>
     <string name="agreement_subtitle">Please read and agree to the following terms before use.</string>
     <string name="agreement_version">Agreement version: %1$s</string>
+    <string name="personal_branch_disclaimer_title">Personal Branch Disclaimer</string>
+    <string name="personal_branch_disclaimer_content">This app is a personal branch independently maintained and distributed by CATMIAOZHI based on AAswordman / Operit. It is not an official upstream release. Report issues arising from this branch\'s modifications, builds, distribution, or additional services through the CATMIAOZHI / Operit repository Issues page. Except for responsibility that applies to the upstream project\'s own code under applicable law or its license, the upstream project and its maintainers are not responsible for this personal branch\'s modifications, builds, distribution, or operation.</string>
     <string name="agreement_human_readable_title">Plain Language Version (Not a legal document)</string>
     <string name="agreement_human_readable_content">Service boundary: Operit does not provide publicly available anthropomorphic emotional interaction services. Operit is an open-source client that runs locally on your device. It does not operate model inference services, host chat sessions or interaction data, or distribute shared model credentials. Cloud model requests are sent directly from your device to the model provider you configure with your own credentials; related data is governed by the rules of that provider. Local models run inference on your device.\n\nThis app can call files, terminals, automation, Root, ADB, extensions, and similar capabilities. Check operations before running them, back up important data, and grant permissions carefully. Losses involving devices, data, accounts, or other interests caused by user actions, user configuration, third-party services, or third-party extensions should be handled by the actual operator under applicable law.\n\nThird-party plugins, scripts, Skills, toolkits, and other marketplace content belong to their labelled authors or right holders, together with related responsibility. Marketplace listing or installation does not mean Operit guarantees, endorses, or obtains rights to that content. Confirm the license and rights status before using, modifying, publishing, or redistributing it.</string>
     <string name="agreement_serious_title">Formal Legal Agreement</string>
     <string name="agreement_serious_content"><![CDATA[
-        <p><b>Operit User Agreement and Privacy Policy</b><br>Version: 2026-07-15; intended effective date: July 15, 2026.</p>
-        <p><b>1. Scope and Agreement Version</b><br>This agreement applies to the officially released Operit Android client and its optional online features. By using this app, you confirm that you have read and accepted the current version. The app records the agreement version you have accepted at startup; when the agreement is materially updated, the app will require you to confirm the new version before continuing. The open-source code in the repository is licensed under the GNU Lesser General Public License version 3 (LGPLv3) in the root <code>LICENSE</code> file. This agreement does not exclude or reduce rights granted by applicable law or open-source licenses.</p>
+        <p><b>Operit User Agreement and Privacy Policy</b><br>Version: 2026-08-24; intended effective date: August 24, 2026.</p>
+        <p><b>1. Scope and Agreement Version</b><br>This agreement applies to the Operit personal-branch Android client and its optional online features distributed by the maintainers of the CATMIAOZHI / Operit repository. It is not the upstream project\'s official agreement or release. By using this app, you confirm that you have read and accepted the current version. The app records the agreement version you have accepted at startup; when the agreement is materially updated, the app will require you to confirm the new version before continuing. The open-source code in the repository is licensed under the GNU Lesser General Public License version 3 (LGPLv3) in the root <code>LICENSE</code> file. This agreement does not exclude or reduce rights granted by applicable law or open-source licenses.</p>
         <p><b>2. Product Positioning and Third-Party Services</b><br>Operit is open-source client software. It does not provide large language model inference, shared API Keys, chat request relay, or cloud hosting of chat records. Cloud models, cloud voice, search, image generation, MCP, and other network features are selected, configured, and enabled by you. When you use those services, data is sent directly to the corresponding service provider and is governed by the terms and privacy policy of that provider. You should evaluate the safety, legality, and suitability of providers, models, endpoints, and extensions, and keep credentials secure.</p>
         <p><b>3. Data Processing and Privacy</b><br>Chat records, character cards, memories, model configuration, and API Keys are usually stored in the app data on your device. When you actively export, back up, upload files, use third-party network features, or submit requests to an external HTTP service, related data will be copied, transmitted, or disclosed according to your actions. Marketplace, announcements, update checks, GitHub login, and publishing features may access Operit, GitHub, or related third-party resources; these features do not relay chat model requests. Manage your data and credentials together with device security settings, third-party service terms, and this agreement.</p>
         <p><b>4. External Deployment and Operator Responsibility</b><br>External HTTP services, QQ Bot, auto-reply, and similar capabilities are enabled at your choice. If you make them available to others or to the public, you act as the actual deployer or operator and are responsible for access control, user authorization, content safety, data protection, minor protection, required notices, and other applicable obligations. If you continuously provide emotional interaction services to the public in mainland China that simulate natural-person personality traits, thinking patterns, or communication styles, you should evaluate and comply with the Interim Measures for the Administration of Artificial Intelligence Anthropomorphic Interaction Services (《人工智能拟人化互动服务管理暂行办法》) and other applicable rules. You must not use this app to provide virtual relatives, virtual companions, or other virtual intimate relationship services to minors, induce emotional dependence or addiction, conduct emotional manipulation, or otherwise infringe the lawful rights and interests of others.</p>
@@ -3227,6 +3235,7 @@
     <string name="chat_pending_queue_title">Pending Queue (%1$d)</string>
     <string name="chat_queue_add_message">Queue Message</string>
     <string name="chat_queue_added">Added to queue</string>
+    <string name="chat_queue_send_deferred">The target chat is still processing; the queued message was kept</string>
     <string name="chat_use_default_config_continue">Continue with default configuration</string>
     <string name="chat_default_config_incomplete">Default configuration is incomplete. Please fill in required information.</string>
     <string name="chat_locked_cannot_delete">This chat is locked and cannot be deleted</string>
@@ -3673,6 +3682,7 @@
     <string name="token_stats_category_title">Title</string>
     <string name="token_stats_category_memory">Memory</string>
     <string name="token_stats_category_character">Character generation</string>
+    <string name="token_stats_category_reading_companion">AI Reading Companion</string>
     <string name="token_stats_category_connection_test">Connection test</string>
     <string name="token_stats_category_other">Other</string>
     <string name="token_stats_status_completed">Completed</string>
@@ -3713,9 +3723,10 @@
     <string name="token_stats_group_search_hint">Search groups, models, providers, or configs</string>
     <string name="token_stats_group_selected_count">%1$d identities selected</string>
     <string name="token_stats_group_new_short">New group</string>
-    <string name="token_stats_group_move">Move</string>
+    <string name="token_stats_group_move">Merge display</string>
     <string name="token_stats_group_edit_pricing">Edit pricing for %1$s</string>
-    <string name="token_stats_group_move_title">Move to group</string>
+    <string name="token_stats_group_move_title">Merge display into group</string>
+    <string name="token_stats_group_display_only_hint">Groups only affect statistics display. Costs are still calculated for each real provider, model, and API configuration.</string>
     <string name="token_stats_group_custom_summary">Custom group · %1$d identities</string>
     <string name="token_stats_group_default_summary">Default group · %1$d identities</string>
     <string name="token_stats_group_empty">No identities in this group</string>
@@ -3723,6 +3734,18 @@
     <string name="token_stats_group_restore_confirm_short">Restore</string>
     <string name="token_stats_config_deleted">Deleted configuration</string>
     <string name="token_stats_pricing_search_hint">Search models, providers, or API configs</string>
+    <string name="token_stats_pricing_catalog_title">Automatic pricing catalog</string>
+    <string name="token_stats_pricing_catalog_loading">Loading the bundled pricing catalog</string>
+    <string name="token_stats_pricing_catalog_remote">Using the cloud-updated catalog</string>
+    <string name="token_stats_pricing_catalog_bundled">Using the catalog bundled with the APK</string>
+    <string name="token_stats_pricing_catalog_revision">Version %1$s · Data date %2$s</string>
+    <string name="token_stats_pricing_catalog_checked">Last checked: %1$s</string>
+    <string name="token_stats_pricing_catalog_not_checked">Cloud updates have not been checked yet</string>
+    <string name="token_stats_pricing_catalog_refresh">Update now</string>
+    <string name="token_stats_pricing_catalog_refresh_failed">Update failed; the current catalog is still in use: %1$s</string>
+    <string name="token_stats_pricing_filter_all">All</string>
+    <string name="token_stats_pricing_filter_missing">Missing price</string>
+    <string name="token_stats_pricing_filter_custom">Customized</string>
     <string name="token_stats_filter_all_providers">All providers</string>
     <string name="token_stats_pricing_inherits_model">Uses model price</string>
     <string name="token_stats_pricing_model_default">Model default price</string>
@@ -3739,6 +3762,11 @@
     <string name="token_stats_pricing_none">No custom price overrides yet</string>
     <string name="token_stats_pricing_add">Add override</string>
     <string name="token_stats_pricing_edit">Edit override</string>
+    <string name="token_stats_pricing_custom_title">Custom pricing</string>
+    <string name="token_stats_pricing_config_target">API configuration: %1$s</string>
+    <string name="token_stats_pricing_inherit_empty_hint">Leave a price blank to keep using automatic pricing.</string>
+    <string name="token_stats_pricing_advanced_show">Set cache prices (advanced)</string>
+    <string name="token_stats_pricing_advanced_hide">Hide cache prices</string>
     <string name="token_stats_pricing_delete">Delete</string>
     <string name="token_stats_pricing_scope_provider">Provider/Model</string>
     <string name="token_stats_pricing_scope_config">API Config</string>
@@ -3758,7 +3786,7 @@
     <string name="token_stats_group_manage">Manage group</string>
     <string name="token_stats_group_members">%1$d identities in group</string>
     <string name="token_stats_group_rename">Rename group</string>
-    <string name="token_stats_group_new">Create group and merge</string>
+    <string name="token_stats_group_new">Create group and merge display</string>
     <string name="token_stats_group_create">Create</string>
     <string name="token_stats_group_merge">Merge into another group</string>
     <string name="token_stats_group_merge_into">Target group</string>
@@ -4073,7 +4101,21 @@
     <string name="select">Select</string>
     <string name="default_config_model_restriction">When using default configuration, only deepseek-v4-flash model can be used</string>
     <string name="enable_direct_image_processing">Model supports vision</string>
-    <string name="enable_direct_image_processing_desc">When enabled, images will be sent directly to the AI for processing instead of using OCR tools to read them</string>
+    <string name="enable_direct_image_processing_desc">When enabled, images requested through read_file are given to the current model; attaching an image does not send its contents automatically</string>
+    <string name="model_multimodal_capabilities_desc">Configure image, audio, and video input separately for each model. Sync reads only the local catalog; refresh it manually from the Operit repository when needed, then it stays cached.</string>
+    <string name="model_multimodal_capabilities_no_models">Add a model to configure its image, audio, and video capabilities</string>
+    <string name="model_multimodal_select_model">Select model</string>
+    <string name="model_multimodal_select_model_title">Choose a model to configure</string>
+    <string name="model_multimodal_search_models">Search models</string>
+    <string name="model_multimodal_no_models_found">No models to configure</string>
+    <string name="model_multimodal_auto_sync">Sync this configuration</string>
+    <string name="model_multimodal_auto_sync_all_matched">Configured %1$d models from the official model catalog</string>
+    <string name="model_multimodal_auto_sync_partially_matched">Configured %1$d models; %2$d could not be matched uniquely and kept their existing settings</string>
+    <string name="model_multimodal_auto_sync_none_matched">No official models could be matched uniquely; existing settings were not changed</string>
+    <string name="model_multimodal_auto_sync_failed">Could not read the local model catalog; existing settings were not changed</string>
+    <string name="model_multimodal_catalog_refresh">Refresh local model catalog</string>
+    <string name="model_multimodal_catalog_refresh_success">Updated the local catalog with %1$d official models</string>
+    <string name="model_multimodal_catalog_refresh_failed">Could not refresh from the Operit repository; the previous local catalog was kept</string>
     <string name="enable_direct_audio_processing">Model supports audio</string>
     <string name="enable_direct_audio_processing_desc">When enabled, audio will be sent directly to the AI for processing instead of returning tool-based transcription/description</string>
     <string name="enable_direct_video_processing">Model supports video</string>
@@ -6904,6 +6946,9 @@
     <string name="workflow_unknown_error">Unknown error</string>
     <string name="workflow_in_list_type_mismatch">IN list type mismatch: contains numbers and non-numbers right=\'%1$s\'</string>
     <string name="workflow_log_start_execution">Starting workflow execution: %1$s (%2$s)</string>
+    <string name="workflow_log_runtime_initialization_failed">Workflow runtime initialization failed: %1$s</string>
+    <string name="workflow_log_startup_failed">Workflow startup failed: %1$s</string>
+    <string name="workflow_log_execution_cancelled_reason">Workflow execution cancelled: %1$s</string>
     <string name="workflow_log_no_trigger_node">Workflow has no trigger node</string>
     <string name="workflow_log_trigger_node_not_exist">Specified trigger node does not exist: %1$s</string>
     <string name="workflow_log_scheduled_trigger">Scheduled trigger: executing specified trigger node %1$s</string>
@@ -8371,12 +8416,14 @@
     <string name="skill_publish_name_empty">Skill name cannot be empty.</string>
     <string name="skill_publish_check_name_conflict_failed">Failed to check for Skill name conflict: %1$s</string>
     <string name="skill_publish_name_taken_message">There is already a plugin named「%1$s」in the Skill marketplace. Please choose a different name.</string>
-    <string name="ai_message_image_attached_multimodal_notice">Image content has been attached as multimodal input with this message. Do not call file reading tools to read this path.</string>
+    <string name="ai_message_image_attached_multimodal_notice">Image content has been attached as multimodal input with this message.</string>
+    <string name="ai_message_image_attached_on_demand_notice">The image content has not been read. Call read_file with the path in id when you need to inspect it.</string>
     <string name="ai_message_result_prefix">[Result: </string>
     <string name="ai_message_result_suffix">]</string>
-    <string name="ai_message_package_warmup_title">【Package Warmup】</string>
-    <string name="ai_message_package_warmup_empty">No package tool calls were detected within the scope of this summary, so no package warmup was performed.</string>
-    <string name="ai_message_package_warmup_intro">Based on the frequency of tool usage within the scope of this summary, the most frequently used packages have been automatically activated, and the results of use_package are attached for the next warmup round.</string>
+    <string name="ai_message_package_warmup_title">【Activated Packages】</string>
+    <string name="ai_message_package_warmup_empty">No activated packages were detected in this summary window.</string>
+    <string name="ai_message_package_warmup_intro">The following activated packages can be used directly.</string>
+    <string name="ai_message_package_activated_hint">Activated package: the tool prompt below can be used directly.</string>
     <string name="ai_message_use_package_failed">use_package call failed: %1$s</string>
     <string name="ai_message_use_package_empty">use_package returned empty.</string>
     <string name="ai_message_package_warmup_item">%1$d. Package %2$s (hit %3$d times)</string>
@@ -8621,4 +8668,13 @@
     <string name="terminal_startup_error_delete">Unable to delete the startup service.</string>
     <string name="terminal_startup_error_delete_restore_runtime">Unable to delete the startup service or restore its runtime.</string>
     <string name="terminal_startup_error_remove_files">Unable to remove the startup service files.</string>
+    <string name="hidden_chats_title">Hidden chats</string>
+    <string name="hidden_chats_empty">No hidden chats.</string>
+    <string name="hidden_chats_permanently_hidden_note">Audit chats are permanently hidden and can only be viewed or deleted.</string>
+    <string name="hidden_chats_delete_confirm_title">Delete hidden chat</string>
+    <string name="hidden_chats_delete_confirm_message">Delete the hidden chat “%1$s” and all of its content? This cannot be undone.</string>
+    <string name="open_audit_chat">Open subagent chat</string>
+    <string name="open_audit_chat_failed">Could not open the audit chat: %1$s</string>
+    <string name="reading_companion_loop_detected">The commentary subagent detected a repeated call loop; generation stopped.</string>
+    <string name="reading_companion_no_progress">The commentary subagent made no effective progress; generation stopped.</string>
 </resources>

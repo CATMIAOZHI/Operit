@@ -111,6 +111,7 @@ class SubagentSliceCoordinator(context: Context) {
                             responseStreamAcquireTimeoutMs = RESPONSE_STREAM_ACQUIRE_TIMEOUT_MS,
                             responseTimeoutMs = null,
                             turnId = taskId,
+                            allowPermanentHiddenAuditMutation = true,
                         ),
                 )
             val session =

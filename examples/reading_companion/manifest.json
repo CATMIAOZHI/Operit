@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.reading_companion",
+  "version": "0.8.0",
+  "main": "main.js",
+  "display_name": {
+    "zh": "AI 阅读伴侣",
+    "en": "AI Reading Companion"
+  },
+  "description": {
+    "zh": "连接 Legado；开启后任意普通对话谈到阅读即可安全调用伴读工具，并维护章节摘要、人物事件索引和读者记忆。",
+    "en": "Connects to Legado so any ordinary chat can use spoiler-safe reading tools when the topic is reading, with chapter knowledge and reader memories."
+  },
+  "enabled_by_default": false,
+  "subpackages": [
+    {
+      "id": "reading_companion",
+      "entry": "packages/reading_companion.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "阅读伴侣工具",
+        "en": "Reading Companion Tools"
+      },
+      "description": {
+        "zh": "读取当前进度、回顾已读剧情、按用户明确操作生成摘要、查询人物并保存读者笔记或预测。",
+        "en": "Reads current progress, recalls read plot, generates summaries only after explicit user actions, finds characters, and stores reader notes or predictions."
+      }
+    },
+    {
+      "id": "reading_companion_auto_commentary",
+      "entry": "packages/reading_companion_auto_commentary.js",
+      "enabled_by_default": false,
+      "display_name": {
+        "zh": "AI 自动段评",
+        "en": "AI Auto Commentary"
+      },
+      "description": {
+        "zh": "由用户为每本书选择一个角色卡，隔离读取下一章及有限前情，一次生成少而精的角色化段评；前情上限为最近 8 章、4.8 万字并按所选模型窗口裁剪，Legado 将角色卡名字显示为段评作者。开启会产生模型 Token 消耗。",
+        "en": "Uses a selected per-book character card, the next chapter, and bounded private context to write sparse in-character comments. Prior context is capped at 8 chapters / 48,000 characters and trimmed to the selected model window. Legado shows the card name as author; enabling spends model tokens."
+      }
+    }
+  ]
+}

@@ -82,7 +82,10 @@ internal fun selectChatHistoriesForCategory(
     histories: List<ChatHistory>,
     category: ChatHistoryCategory,
 ): List<ChatHistory> {
-    val visibleHistories = histories.filter { it.chatKind != ChatKind.SUBAGENT.name }
+    val visibleHistories =
+        histories.filter {
+            it.chatKind != ChatKind.SUBAGENT.name && !it.isHidden
+        }
     return when (category) {
         ChatHistoryCategory.ALL -> visibleHistories
         ChatHistoryCategory.RECENT ->

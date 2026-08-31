@@ -3,12 +3,18 @@ package com.ai.assistance.operit.api.chat.enhance
 import android.content.Context
 import android.os.SystemClock
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.api.chat.protocol.ExecutableToolProtocolParser
 import com.ai.assistance.operit.core.agent.SubagentToolPolicy
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.AIToolHookDecision
 import com.ai.assistance.operit.core.tools.JsPackageToolExecutorMarker
 import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
+import com.ai.assistance.operit.features.reading.ReadingCompanionCallVerdict
+import com.ai.assistance.operit.features.reading.ReadingCompanionLoopException
+import com.ai.assistance.operit.features.reading.ReadingCompanionSubagentSessionRegistry
+import com.ai.assistance.operit.features.reading.ReadingCompanionSubagentTools
+import com.ai.assistance.operit.features.reading.normalizeReadingCompanionToolCall
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.ToolExecutor
 import com.ai.assistance.operit.core.tools.ToolExecutionLimits
@@ -26,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ThreadContextElement
 import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -34,7 +41,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
-import com.ai.assistance.operit.ui.common.displays.MessageContentParser
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
 import com.ai.assistance.operit.ui.permissions.PermissionReviewCircuitBreaker
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
@@ -42,12 +48,7 @@ import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
 import com.ai.assistance.operit.ui.permissions.ToolPermissionDecision
 import com.ai.assistance.operit.ui.permissions.ToolPermissionDenialSource
 import com.ai.assistance.operit.ui.permissions.resolveApprovalDecisionWithPermanentOverride
-import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.ChatUtils
-import com.ai.assistance.operit.util.markdown.NestedMarkdownProcessor
-import com.ai.assistance.operit.util.stream.plugins.StreamXmlPlugin
-import com.ai.assistance.operit.util.stream.splitBy
-import com.ai.assistance.operit.util.stream.stream
 import com.ai.assistance.operit.util.LocaleUtils
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
@@ -75,20 +76,6 @@ object ToolExecutionManager {
     private data class ExactToolInstruction(
         val name: String,
         val orderedParameters: List<Pair<String, String>>,
-    )
-
-    private data class ToolInvocationCandidate(
-        val toolMatch: MatchResult,
-        val startBoundaryIndex: Int,
-        val endBoundaryIndex: Int,
-        val parameters: List<ToolParameterCandidate>,
-    )
-
-    private data class ToolParameterCandidate(
-        val name: String,
-        val rawValue: String,
-        val startBoundaryIndex: Int,
-        val endBoundaryIndex: Int,
     )
 
     /**
@@ -153,6 +140,8 @@ object ToolExecutionManager {
         val workspaceEnv: String? = null,
         val parentModelConfigId: String? = null,
         val parentModelIndex: Int? = null,
+        val parentModelSupportsVision: Boolean = false,
+        val imageRecognitionModelAvailable: Boolean = false,
         val isSubagent: Boolean = false,
         val callId: String? = null,
         val invocationIndex: Int? = null,
@@ -176,6 +165,10 @@ object ToolExecutionManager {
         var lastResultError: String? = null
             private set
 
+        /** 聚合过程中是否出现过 interruptTurn=true 的结果（任一结果置位即保留）。 */
+        var anyInterruptTurn: Boolean = false
+            private set
+
         fun add(result: ToolResult) {
             val resultText =
                 (if (result.success) {
@@ -191,6 +184,7 @@ object ToolExecutionManager {
             resultCount += 1
             lastResultSuccess = result.success
             lastResultError = result.error?.take(maxChars)
+            anyInterruptTurn = anyInterruptTurn || result.interruptTurn
         }
 
         fun isEmpty(): Boolean = resultCount == 0
@@ -263,18 +257,7 @@ object ToolExecutionManager {
     }
 
     internal suspend fun countDisplayedToolInvocations(content: String): Int {
-        var invocationCount = 0
-        content.stream().splitBy(NestedMarkdownProcessor.getBlockPlugins()).collect { group ->
-            val blockContent = StringBuilder()
-            group.stream.collect { chunk -> blockContent.append(chunk) }
-            val blockText = blockContent.toString()
-            if (group.tag is StreamXmlPlugin &&
-                ChatMarkupRegex.isToolCall(blockText)
-            ) {
-                invocationCount += 1
-            }
-        }
-        return invocationCount
+        return ExecutableToolProtocolParser.countCompleteToolInvocations(content)
     }
 
     private fun resolveToolTarget(tool: AITool): ResolvedToolTarget {
@@ -407,6 +390,11 @@ object ToolExecutionManager {
 
     internal fun currentToolRuntimeContext(): ToolRuntimeContext? =
         toolRuntimeContextThreadLocal.get()
+
+    internal fun toolRuntimeContextElement(
+        runtimeContext: ToolRuntimeContext? = currentToolRuntimeContext(),
+    ): ThreadContextElement<ToolRuntimeContext?> =
+        toolRuntimeContextThreadLocal.asContextElement(runtimeContext)
 
     private fun addPackageContextParamIfMissing(
         params: MutableList<ToolParameter>,
@@ -591,7 +579,12 @@ object ToolExecutionManager {
         toolExposureMode: ToolExposureMode
     ): ToolResult? {
         val toolName = invocation.tool.name.trim()
-        if (toolName in PermissionReviewInternalTools.names) return null
+        if (
+            toolName in PermissionReviewInternalTools.names ||
+                toolName in ReadingCompanionSubagentTools.CAPABILITY_BOUND_NAMES
+        ) {
+            return null
+        }
         val useEnglish = isEnglishLanguage(context)
         val errorMessage =
             when {
@@ -683,157 +676,13 @@ object ToolExecutionManager {
      * @return 检测到的工具调用列表。
      */
     suspend fun extractToolInvocations(response: String): List<ToolInvocation> {
-        val invocations = mutableListOf<ToolInvocation>()
-        val candidates = mutableListOf<ToolInvocationCandidate>()
-        val candidateBoundaries = mutableListOf<Int>()
-        val protectedParameterRanges = mutableListOf<Int>()
-        val displayScanContent = StringBuilder(response.length)
-        val charStream = response.stream()
-        val plugins = NestedMarkdownProcessor.getBlockPlugins()
-
-        charStream.splitBy(plugins).collect { group ->
-            val chunkContent = StringBuilder()
-            group.stream.collect { chunk -> chunkContent.append(chunk) }
-            val chunkString = chunkContent.toString()
-
-            if (chunkString.isEmpty()) return@collect
-
-            if (group.tag is StreamXmlPlugin) {
-                ChatMarkupRegex.matchToolCall(chunkString)?.let { toolMatch ->
-                    val candidateText = toolMatch.value
-                    val candidateOffsetInChunk = chunkString.indexOf(candidateText)
-                    if (candidateOffsetInChunk > 0) {
-                        displayScanContent.append(chunkString, 0, candidateOffsetInChunk)
-                    }
-                    val candidateScanStart = displayScanContent.length
-                    val startBoundaryIndex = candidateBoundaries.size
-                    candidateBoundaries.add(candidateScanStart)
-                    val toolBodyGroup = toolMatch.groups[3]
-                    val parameterCandidates =
-                        if (toolBodyGroup == null) {
-                            emptyList()
-                        } else {
-                            MessageContentParser.toolParamPattern.findAll(toolBodyGroup.value)
-                                .map { parameter ->
-                                    val parameterStart =
-                                        candidateScanStart +
-                                            toolBodyGroup.range.first +
-                                            parameter.range.first
-                                    val parameterEnd =
-                                        candidateScanStart +
-                                            toolBodyGroup.range.first +
-                                            parameter.range.last +
-                                            1
-                                    protectedParameterRanges.add(parameterStart)
-                                    protectedParameterRanges.add(parameterEnd)
-                                    val parameterStartBoundaryIndex = candidateBoundaries.size
-                                    candidateBoundaries.add(parameterStart)
-                                    val parameterEndBoundaryIndex = candidateBoundaries.size
-                                    candidateBoundaries.add(parameterEnd)
-                                    ToolParameterCandidate(
-                                        name = parameter.groupValues[1],
-                                        rawValue = parameter.groupValues[2],
-                                        startBoundaryIndex = parameterStartBoundaryIndex,
-                                        endBoundaryIndex = parameterEndBoundaryIndex,
-                                    )
-                                }
-                                .toList()
-                        }
-                    displayScanContent.append(candidateText)
-                    val endBoundaryIndex = candidateBoundaries.size
-                    candidateBoundaries.add(displayScanContent.length)
-                    candidates.add(
-                        ToolInvocationCandidate(
-                            toolMatch = toolMatch,
-                            startBoundaryIndex = startBoundaryIndex,
-                            endBoundaryIndex = endBoundaryIndex,
-                            parameters = parameterCandidates,
-                        )
-                    )
-                    val candidateEndInChunk = candidateOffsetInChunk + candidateText.length
-                    if (candidateEndInChunk < chunkString.length) {
-                        displayScanContent.append(chunkString, candidateEndInChunk, chunkString.length)
-                    }
-                    return@collect
-                }
-            }
-
-            // Keep every non-executable group in the same global display-only state machine.
-            // This deliberately includes fenced examples and non-line-start pseudo XML: they are
-            // not executable contexts, so their parameter-looking text must not receive protection.
-            displayScanContent.append(chunkString)
-        }
-
-        val visibleCandidateBoundaries =
-            ChatUtils.displayOnlyBoundaryVisibility(
-                displayScanContent.toString(),
-                candidateBoundaries.toIntArray(),
-                protectedParameterRanges.toIntArray(),
-            )
-        candidates.forEach { candidate ->
-            if (!visibleCandidateBoundaries[candidate.startBoundaryIndex] ||
-                !visibleCandidateBoundaries[candidate.endBoundaryIndex]
-            ) {
-                return@forEach
-            }
-
-            val toolMatch = candidate.toolMatch
-            val toolName = toolMatch.groupValues.getOrNull(2) ?: return@forEach
-            val parameters =
-                candidate.parameters.mapNotNull { parameter ->
-                    if (!visibleCandidateBoundaries[parameter.startBoundaryIndex] ||
-                        !visibleCandidateBoundaries[parameter.endBoundaryIndex]
-                    ) {
-                        null
-                    } else {
-                        ToolParameter(parameter.name, unescapeXml(parameter.rawValue))
-                    }
-                }
-
-            val tool = AITool(name = toolName, parameters = parameters)
-            invocations.add(
-                ToolInvocation(
-                    tool = tool,
-                    rawText = toolMatch.value,
-                    responseLocation = toolMatch.range,
-                )
-            )
-        }
+        val invocations = ExecutableToolProtocolParser.parse(response)
 
         AppLogger.d(
             TAG,
             "Found ${invocations.size} tool invocations: ${invocations.map { resolveDisplayToolName(it.tool) }}"
         )
         return invocations
-    }
-
-    /**
-     * Unescapes XML special characters
-     * @param input The XML escaped string
-     * @return Unescaped string
-     */
-    private fun unescapeXml(input: String): String {
-        var result = input
-
-        // 处理 CDATA 标记
-        if (result.startsWith("<![CDATA[") && result.endsWith("]]>")) {
-            result = result.substring(9, result.length - 3)
-        }
-
-        // 即使没有完整的 CDATA 标记，也尝试清理末尾的 ]]> 和开头的 <![CDATA[
-        if (result.endsWith("]]>")) {
-            result = result.substring(0, result.length - 3)
-        }
-
-        if (result.startsWith("<![CDATA[")) {
-            result = result.substring(9)
-        }
-
-        return result.replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&amp;", "&")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
     }
 
     /**
@@ -899,11 +748,15 @@ object ToolExecutionManager {
         deferCircuitBreaker: Boolean = false,
         liveAssistantContent: String? = null,
     ): ToolPermissionCheckResult {
-        if (invocation.tool.name in PermissionReviewInternalTools.names) {
+        if (
+            invocation.tool.name in PermissionReviewInternalTools.names ||
+                invocation.tool.name in ReadingCompanionSubagentTools.CAPABILITY_BOUND_NAMES
+        ) {
             toolHandler.notifyToolPermissionChecked(
                 invocation.tool,
                 granted = true,
-                reason = "Capability-bound internal permission-review tool",
+                reason =
+                    "Capability-bound internal tool (permission review or reading commentary audit)",
             )
             return ToolPermissionCheckResult(ToolPermissionDecision.Allowed, null)
         }
@@ -991,6 +844,8 @@ object ToolExecutionManager {
         workspaceEnv: String? = null,
         parentModelConfigId: String? = null,
         parentModelIndex: Int? = null,
+        parentModelSupportsVision: Boolean = false,
+        imageRecognitionModelAvailable: Boolean = false,
         liveAssistantContent: String? = null,
         isSubagent: Boolean = false,
         subagentToolLoopGuard: SubagentToolLoopGuard? = null,
@@ -1027,7 +882,23 @@ object ToolExecutionManager {
         // { "x": 1 } would otherwise be mistaken for identical instructions and trigger a
         // review on the third distinct call.
         val rawInvocations = invocations
-        if (isSubagent && subagentToolLoopGuard != null && rawInvocations.size > 1) {
+        // Reading commentary audit runs are non-interactive: a background run has no UI at all,
+        // and a conversation-path audit must never pause for an approval dialog. The registry
+        // lookup is O(1) and only matches live audit child chats, so ordinary subagents and
+        // normal chats are untouched.
+        val readingCompanionSession =
+            if (isSubagent) {
+                ReadingCompanionSubagentSessionRegistry.sessionForChildChat(callerChatId)
+            } else {
+                null
+            }
+        val readingCompanionLoopGuard = readingCompanionSession?.loopGuard
+        if (
+            readingCompanionLoopGuard == null &&
+                isSubagent &&
+                subagentToolLoopGuard != null &&
+                rawInvocations.size > 1
+        ) {
             val firstReviewIndex =
                 subagentToolLoopGuard.firstReviewIndex(
                     tools = rawInvocations.map { it.tool },
@@ -1055,6 +926,8 @@ object ToolExecutionManager {
                         workspaceEnv = workspaceEnv,
                         parentModelConfigId = parentModelConfigId,
                         parentModelIndex = parentModelIndex,
+                        parentModelSupportsVision = parentModelSupportsVision,
+                        imageRecognitionModelAvailable = imageRecognitionModelAvailable,
                         liveAssistantContent = liveAssistantContent,
                         isSubagent = true,
                         subagentToolLoopGuard = subagentToolLoopGuard,
@@ -1076,6 +949,8 @@ object ToolExecutionManager {
                         workspaceEnv = workspaceEnv,
                         parentModelConfigId = parentModelConfigId,
                         parentModelIndex = parentModelIndex,
+                        parentModelSupportsVision = parentModelSupportsVision,
+                        imageRecognitionModelAvailable = imageRecognitionModelAvailable,
                         liveAssistantContent = liveAssistantContent,
                         isSubagent = true,
                         subagentToolLoopGuard = subagentToolLoopGuard,
@@ -1097,7 +972,62 @@ object ToolExecutionManager {
 
         val loopApprovedInvocations =
             java.util.IdentityHashMap<ToolInvocation, Boolean>()
-        if (isSubagent && subagentToolLoopGuard != null) {
+        if (readingCompanionLoopGuard != null) {
+            // 段评任务在模型轮次边界 heartbeat（每批工具调用 = 一个可观测模型轮次；
+            // 工具级心跳已由 ReadingCompanionSubagentTools 每次执行前后完成）。claim 被
+            // 抢占/释放立即停止：affected != 1 即 claim_lost，绝不续跑。手动摘要任务由
+            // ManualBatchGate 串行化，没有段评 claim，必须与协调器/工具执行器一致地跳过
+            // 此检查。阅读侧 model_round_count 按边界递增；主库 modelRoundCount 在同一
+            // 模型轮次边界原子递增（终审 WARNING-1：两库计数一致）。
+            val readingSession = readingCompanionSession
+            if (readingSession != null) {
+                if (
+                    !readingSession.summaryOnly &&
+                    !readingSession.backend.heartbeatClaimIfOwned(
+                        readingSession.bookId,
+                        readingSession.chapterIndex,
+                        readingSession.runId,
+                    )
+                ) {
+                    readingSession.stop("claim_lost")
+                    throw ReadingCompanionLoopException(
+                        runId = readingSession.runId,
+                        reason = "claim_lost",
+                        message =
+                            "段评生成任务的执行权已失效，已停止执行以避免重复生成。",
+                    )
+                }
+                readingSession.backend.incrementRunModelRound(readingSession.runId)
+                // 主库 subagent_runs.modelRoundCount 在同一模型轮次边界原子递增，与阅读侧
+                // model_round_count 保持一致的审计计数（终审 WARNING-1）；计数失败绝不影响
+                // 本轮工具执行。
+                callerChatId?.let { chatId ->
+                    runCatching {
+                        com.ai.assistance.operit.data.repository.SubagentRunRepository
+                            .getInstance(context.applicationContext)
+                            .incrementModelRoundCountByChildChatId(chatId)
+                    }
+                }
+            }
+            // 非交互护栏：同一工具 + 规范化参数连续 3 次直接抛错终止本轮，绝不弹确认框。
+            rawInvocations.forEach { invocation ->
+                val rawTool = invocation.tool
+                if (
+                    readingCompanionLoopGuard.recordCall(
+                        toolName = rawTool.name,
+                        normalizedArguments = normalizeReadingCompanionToolCall(rawTool),
+                    ) == ReadingCompanionCallVerdict.LOOP_DETECTED
+                ) {
+                    throw ReadingCompanionLoopException(
+                        runId = readingCompanionLoopGuard.runId,
+                        reason = "loop_detected",
+                        message =
+                            "Reading companion audit subagent repeated the same tool call " +
+                                "3 times: ${rawTool.name}",
+                    )
+                }
+            }
+        } else if (isSubagent && subagentToolLoopGuard != null) {
             val permissionSystem = toolHandler.getToolPermissionSystem()
             val rawToolsByIndex = rawInvocations.map { it.tool }
             for ((index, invocation) in boundInvocations.withIndex()) {
@@ -1184,6 +1114,8 @@ object ToolExecutionManager {
                 workspaceEnv = workspaceEnv,
                 parentModelConfigId = parentModelConfigId,
                 parentModelIndex = parentModelIndex,
+                parentModelSupportsVision = parentModelSupportsVision,
+                imageRecognitionModelAvailable = imageRecognitionModelAvailable,
                 isSubagent = isSubagent,
                 timingScopeId = timingScopeId,
                 batchSize = boundInvocations.size.coerceAtLeast(1),
@@ -1733,7 +1665,7 @@ object ToolExecutionManager {
         val toolName = invocation.tool.name
         val displayToolName = resolveDisplayToolName(invocation.tool)
 
-        return withContext(toolRuntimeContextThreadLocal.asContextElement(runtimeContext)) {
+        return withContext(toolRuntimeContextElement(runtimeContext)) {
             var startedAtElapsedMs: Long? = null
             val collectedResults = BoundedToolResultAccumulator()
             // Parallel group members run with a deferred result sink and publish later from the
@@ -1846,7 +1778,8 @@ object ToolExecutionManager {
                         toolName = displayToolName,
                         success = lastResultSuccess,
                         result = StringResultData(combinedResultString),
-                        error = collectedResults.lastResultError
+                        error = collectedResults.lastResultError,
+                        interruptTurn = collectedResults.anyInterruptTurn,
                     ).withExecutionMetadata(
                         invocation = invocation,
                         state = ToolExecutionState.COMPLETED,

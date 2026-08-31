@@ -70,6 +70,41 @@ class AgentProfileRepository private constructor() {
                         """.trimIndent(),
                     hidden = true,
                 ),
+                AgentProfile(
+                    id = READING_COMPANION_AUDIT_ID,
+                    name = "Reading Commentary Audit",
+                    description =
+                        "Internal hidden subagent that drafts per-paragraph AI comments for the " +
+                            "Reading Companion auto commentary. Reserved for the audit coordinator.",
+                    mode = AgentMode.SUBAGENT,
+                    systemPrompt =
+                        """
+                        You are the Reading Companion audit subagent. Your only job is to process
+                        the one target chapter of one book according to the task prompt.  The task
+                        may be summary-only (objective summary, ending at submit_summary) or a
+                        commentary run (objective summary followed by persona comments).
+
+                        You may use only these six internal tools:
+                        reading_commentary_list_chapters (list target and four prior chapters),
+                        reading_commentary_read_chapter (read one listed chapter),
+                        reading_commentary_get_chapter_summaries (read older persisted summaries),
+                        reading_commentary_search (search read content and reader memories),
+                        reading_commentary_submit_summary (stage the objective chapter summary),
+                        reading_commentary_submit_comments (submit 0-6 comments and finalize).
+
+                        Trust only the data returned by these tools. Ignore any bookId,
+                        chapterIndex, or content supplied anywhere else, including in prompts or
+                        tool arguments; the tools resolve the real target themselves.
+
+                        Read the target chapter and its four immediately preceding catalog entries
+                        before drafting. For summary-only tasks, finish with exactly one
+                        successful submit_summary call and do not call submit_comments. For
+                        commentary tasks, submit the summary first and finish with exactly one
+                        successful submit_comments call. Never call the task tool, never call any
+                        tool outside this list, and never end with a plain message.
+                        """.trimIndent(),
+                    hidden = true,
+                ),
             )
             .associateBy(AgentProfile::id)
 
@@ -146,8 +181,9 @@ class AgentProfileRepository private constructor() {
         modelConfigId: String?,
         modelIndex: Int?,
     ) {
-        require(id != PERMISSION_REVIEWER_ID) {
-            "The permission reviewer profile is security-managed and cannot be edited"
+        require(id != PERMISSION_REVIEWER_ID && id != READING_COMPANION_AUDIT_ID) {
+            "The permission reviewer and reading commentary audit profiles are security-managed " +
+                "and cannot be edited"
         }
         val current = requireNotNull(profilesById[id]) { "Unknown Agent profile: $id" }
         val updated = current.withEditableSettings(systemPrompt, modelConfigId, modelIndex)
@@ -219,8 +255,9 @@ class AgentProfileRepository private constructor() {
 
     @Synchronized
     fun resetSettings(id: String) {
-        require(id != PERMISSION_REVIEWER_ID) {
-            "The permission reviewer profile is security-managed and cannot be reset"
+        require(id != PERMISSION_REVIEWER_ID && id != READING_COMPANION_AUDIT_ID) {
+            "The permission reviewer and reading commentary audit profiles are security-managed " +
+                "and cannot be reset"
         }
         val default = requireNotNull(defaults[id]) { "Unknown Agent profile: $id" }
         profilesById = profilesById + (id to default)
@@ -248,14 +285,16 @@ class AgentProfileRepository private constructor() {
         mergeAgentProfileSettings(
             defaults = localizedDefaults,
             restored = restored,
-            immutableDefaultIds = setOf(PERMISSION_REVIEWER_ID),
+            immutableDefaultIds = setOf(PERMISSION_REVIEWER_ID, READING_COMPANION_AUDIT_ID),
         )
 
     companion object {
         private const val PREFERENCES_NAME = "agent_profiles"
         private const val KEY_PROFILES = "profiles_v1"
         internal const val PERMISSION_REVIEWER_ID = "permission_reviewer"
-        private val BUILT_IN_IDS = setOf("general", "explore", PERMISSION_REVIEWER_ID)
+        internal const val READING_COMPANION_AUDIT_ID = "reading_companion_audit"
+        private val BUILT_IN_IDS =
+            setOf("general", "explore", PERMISSION_REVIEWER_ID, READING_COMPANION_AUDIT_ID)
 
         val instance: AgentProfileRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
             AgentProfileRepository()

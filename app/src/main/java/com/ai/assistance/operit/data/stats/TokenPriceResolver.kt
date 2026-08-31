@@ -46,9 +46,8 @@ data class ResolvedPricing(
 )
 
 /**
- * 价格层级解析：`内置模型默认价 -> provider/model 覆盖 -> 特定 API 配置覆盖`，
- * 阶段 1 额外桥接旧 DataStore 中用户保存的 provider/model 价格（[LegacyPriceSettings]），
- * 顺序为：CONFIG 覆盖 > PROVIDER_MODEL 覆盖 > 旧系统价格 > 内置默认价。
+ * 价格层级解析：`目录默认价 -> 旧 DataStore -> provider/model 覆盖 -> 配置覆盖`。
+ * 每一层按字段叠加：null 继承，显式 0 保留；切换 billingMode 时清空不兼容字段。
  */
 object TokenPriceResolver {
 
@@ -93,7 +92,7 @@ object TokenPriceResolver {
     /**
      * 解析定价：按**规范化业务字段**（而非任何主键）匹配覆盖行，
      * 行内容与查询键一致才命中，键/内容错配不可能造成错误解析。
-     * 顺序：CONFIG 覆盖 > PROVIDER_MODEL 覆盖 > 旧系统价格 > 内置默认价。
+     * 顺序：目录默认价 -> 旧系统价格 -> PROVIDER_MODEL 覆盖 -> CONFIG 覆盖。
      */
     fun resolve(
         provider: String,
@@ -107,124 +106,120 @@ object TokenPriceResolver {
         val canonicalModel = TokenStatIdentityResolver.normalizeModelName(model)
         val canonicalConfigId = configId?.trim().orEmpty()
 
-        if (canonicalConfigId.isNotEmpty()) {
-            overrides.firstOrNull {
-                it.scope == SCOPE_CONFIG &&
-                    TokenStatIdentityResolver.normalizeProvider(it.provider) == canonicalProvider &&
-                    TokenStatIdentityResolver.normalizeModelName(it.model) == canonicalModel &&
-                    it.configId.trim() == canonicalConfigId
-            }?.let { return fromOverrideRow(it, PricingSource.CONFIG_OVERRIDE) }
-        }
-
-        overrides.firstOrNull {
+        val providerOverride = overrides.firstOrNull {
             it.scope == SCOPE_PROVIDER_MODEL &&
                 TokenStatIdentityResolver.normalizeProvider(it.provider) == canonicalProvider &&
                 TokenStatIdentityResolver.normalizeModelName(it.model) == canonicalModel &&
                 it.configId.isBlank()
-        }?.let { return fromOverrideRow(it, PricingSource.PROVIDER_MODEL_OVERRIDE) }
+        }
+        val configOverride = if (canonicalConfigId.isNotEmpty()) overrides.firstOrNull {
+            it.scope == SCOPE_CONFIG &&
+                TokenStatIdentityResolver.normalizeProvider(it.provider) == canonicalProvider &&
+                TokenStatIdentityResolver.normalizeModelName(it.model) == canonicalModel &&
+                it.configId.trim() == canonicalConfigId
+        } else null
 
+        var pricing = MutablePricing.fromDefaults(defaults)
+        var source = if (pricing.baseKnown) PricingSource.DEFAULT else PricingSource.UNKNOWN
         if (legacyOverride != null && legacyOverride.hasAnyUserSetting()) {
-            return fromLegacy(legacyOverride, defaults)
+            pricing.applyLegacy(legacyOverride)
+            source = PricingSource.LEGACY_OVERRIDE
         }
-
-        return fromDefaults(defaults)
+        providerOverride?.let {
+            pricing.applyOverride(it)
+            source = PricingSource.PROVIDER_MODEL_OVERRIDE
+        }
+        configOverride?.let {
+            pricing.applyOverride(it)
+            source = PricingSource.CONFIG_OVERRIDE
+        }
+        return pricing.toResolved(source)
     }
 
-    /** 数据库覆盖行：显式实体，null 表示未使用；价格 0 是用户的真实设置。 */
-    private fun fromOverrideRow(
-        row: TokenStatPriceOverrideEntity,
-        source: PricingSource,
-    ): ResolvedPricing {
-        val billingMode = BillingMode.fromString(row.billingMode)
-        val currency = parseCurrency(row.pricingCurrency)
-        return if (billingMode == BillingMode.COUNT) {
-            ResolvedPricing(
-                billingMode = billingMode,
-                currency = currency,
-                pricePerRequest = row.pricePerRequest,
-                source = source,
-                known = row.pricePerRequest != null,
-            )
-        } else {
-            val input = row.inputPricePerMillion
-            val cached = row.cachedInputPricePerMillion ?: input
-            val output = row.outputPricePerMillion
-            ResolvedPricing(
-                billingMode = billingMode,
-                currency = currency,
-                inputPricePerMillion = input,
-                cachedInputPricePerMillion = cached,
-                cacheWritePricePerMillion = row.cacheWritePricePerMillion,
-                outputPricePerMillion = output,
-                source = source,
-                known = input != null || output != null,
-            )
-        }
-    }
-
-    /** 旧系统价格：缺省分量回退到内置默认价；> 0 才算用户设置（旧约定 0 == 未设置）。 */
-    private fun fromLegacy(
-        legacy: LegacyPriceSettings,
-        defaults: ModelPricingDefaults,
-    ): ResolvedPricing {
-        val billingMode = legacy.billingMode ?: defaults.billingMode
-        return if (billingMode == BillingMode.COUNT) {
-            val pricePerRequest =
-                legacy.pricePerRequest?.takeIf { it > 0.0 } ?: defaults.pricePerRequest
-            ResolvedPricing(
-                billingMode = billingMode,
+    private data class MutablePricing(
+        var billingMode: BillingMode,
+        var currency: PricingCurrency,
+        var input: Double?,
+        var cached: Double?,
+        var cacheWrite: Double?,
+        var output: Double?,
+        var perRequest: Double?,
+        val baseKnown: Boolean,
+        var hasExplicitLayer: Boolean = false,
+    ) {
+        companion object {
+            fun fromDefaults(defaults: ModelPricingDefaults) = MutablePricing(
+                billingMode = defaults.billingMode,
                 currency = defaults.currency,
-                pricePerRequest = pricePerRequest,
-                source = PricingSource.LEGACY_OVERRIDE,
-                known = pricePerRequest > 0.0,
-            )
-        } else {
-            val input =
-                legacy.inputPricePerMillion?.takeIf { it > 0.0 }
-                    ?: defaults.inputPricePerMillion
-            val cached =
-                legacy.cachedInputPricePerMillion?.takeIf { it > 0.0 }
-                    ?: defaults.cachedInputPricePerMillion
-                    ?: input
-            val output =
-                legacy.outputPricePerMillion?.takeIf { it > 0.0 }
-                    ?: defaults.outputPricePerMillion
-            ResolvedPricing(
-                billingMode = billingMode,
-                currency = defaults.currency,
-                inputPricePerMillion = input,
-                cachedInputPricePerMillion = cached,
-                // 旧系统没有缓存写入计费，不猜测：保持未知
-                cacheWritePricePerMillion = null,
-                outputPricePerMillion = output,
-                source = PricingSource.LEGACY_OVERRIDE,
-                known = (input ?: 0.0) > 0.0 || (cached ?: 0.0) > 0.0 || (output ?: 0.0) > 0.0,
+                input = defaults.inputPricePerMillion.takeIf { defaults.hasInputPrice },
+                cached = defaults.cachedInputPricePerMillion.takeIf { defaults.hasCachedInputPrice },
+                cacheWrite = defaults.cacheWritePricePerMillion,
+                output = defaults.outputPricePerMillion.takeIf { defaults.hasOutputPrice },
+                perRequest = defaults.pricePerRequest.takeIf { defaults.hasPricePerRequest },
+                baseKnown = defaults.known || if (defaults.billingMode == BillingMode.COUNT) {
+                    defaults.hasPricePerRequest
+                } else {
+                    defaults.hasInputPrice && defaults.hasCachedInputPrice && defaults.hasOutputPrice
+                },
             )
         }
-    }
 
-    /** 内置默认价；默认值表对未知模型/供应商给出全 0 缺省（zeroPricing），视为未知。 */
-    private fun fromDefaults(defaults: ModelPricingDefaults): ResolvedPricing {
-        val known =
-            if (defaults.billingMode == BillingMode.COUNT) {
-                defaults.pricePerRequest > 0.0
+        fun applyLegacy(layer: LegacyPriceSettings) {
+            layer.billingMode?.let { switchMode(it) }
+            // LegacyStorage historically used zero as “not set”; preserve that compatibility rule.
+            layer.inputPricePerMillion?.takeIf { it > 0.0 }?.let { input = it }
+            layer.cachedInputPricePerMillion?.takeIf { it > 0.0 }?.let { cached = it }
+            layer.outputPricePerMillion?.takeIf { it > 0.0 }?.let { output = it }
+            layer.pricePerRequest?.takeIf { it > 0.0 }?.let { perRequest = it }
+            hasExplicitLayer = true
+        }
+
+        fun applyOverride(row: TokenStatPriceOverrideEntity) {
+            hasExplicitLayer = true
+            switchMode(BillingMode.fromString(row.billingMode))
+            currency = parseCurrency(row.pricingCurrency)
+            if (billingMode == BillingMode.COUNT) {
+                row.pricePerRequest?.let { perRequest = it }
             } else {
-                defaults.inputPricePerMillion > 0.0 ||
-                    defaults.cachedInputPricePerMillion > 0.0 ||
-                    defaults.outputPricePerMillion > 0.0
+                row.inputPricePerMillion?.let { input = it }
+                row.cachedInputPricePerMillion?.let { cached = it }
+                row.cacheWritePricePerMillion?.let { cacheWrite = it }
+                row.outputPricePerMillion?.let { output = it }
             }
-        return ResolvedPricing(
-            billingMode = defaults.billingMode,
-            currency = defaults.currency,
-            inputPricePerMillion = defaults.inputPricePerMillion,
-            cachedInputPricePerMillion = defaults.cachedInputPricePerMillion,
-            // 内置价格表没有缓存写入单价，不猜测：保持未知
-            cacheWritePricePerMillion = null,
-            outputPricePerMillion = defaults.outputPricePerMillion,
-            pricePerRequest = defaults.pricePerRequest,
-            source = if (known) PricingSource.DEFAULT else PricingSource.UNKNOWN,
-            known = known,
-        )
+        }
+
+        private fun switchMode(next: BillingMode) {
+            if (next == billingMode) return
+            billingMode = next
+            if (next == BillingMode.COUNT) {
+                input = null; cached = null; cacheWrite = null; output = null
+                // A per-request value attached to token-mode defaults belongs to the
+                // inactive mode. Only the COUNT layer may opt back into it explicitly.
+                perRequest = null
+            } else {
+                perRequest = null
+            }
+        }
+
+        fun toResolved(source: PricingSource): ResolvedPricing {
+            val complete = if (billingMode == BillingMode.COUNT) {
+                perRequest != null
+            } else {
+                input != null && cached != null && output != null
+            }
+            val known = complete && (baseKnown || hasExplicitLayer)
+            return ResolvedPricing(
+                billingMode = billingMode,
+                currency = currency,
+                inputPricePerMillion = if (billingMode == BillingMode.TOKEN) input else null,
+                cachedInputPricePerMillion = if (billingMode == BillingMode.TOKEN) cached else null,
+                cacheWritePricePerMillion = if (billingMode == BillingMode.TOKEN) cacheWrite else null,
+                outputPricePerMillion = if (billingMode == BillingMode.TOKEN) output else null,
+                pricePerRequest = if (billingMode == BillingMode.COUNT) perRequest else null,
+                source = if (known) source else PricingSource.UNKNOWN,
+                known = known,
+            )
+        }
     }
 
     private fun parseCurrency(raw: String): PricingCurrency =

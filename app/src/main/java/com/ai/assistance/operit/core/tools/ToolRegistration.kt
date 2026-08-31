@@ -3,6 +3,7 @@ package com.ai.assistance.operit.core.tools
 import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.features.reading.ReadingCompanionSubagentTools
 import com.ai.assistance.operit.ui.permissions.ToolPermissionDecision
 import com.ai.assistance.operit.core.tools.climode.CliToolModeSupport
 import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
@@ -24,6 +25,17 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
+
+internal fun <T> runBlockingIoPreservingToolRuntimeContext(
+    block: suspend () -> T,
+): T {
+    val runtimeContext = ToolExecutionManager.currentToolRuntimeContext()
+    return runBlocking(
+        Dispatchers.IO + ToolExecutionManager.toolRuntimeContextElement(runtimeContext)
+    ) {
+        block()
+    }
+}
 
 /**
  * This file contains all tool registrations centralized for easier maintenance and integration It
@@ -47,6 +59,16 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         name = PermissionReviewInspectionTool.NAME,
         executor = PermissionReviewInspectionTool::inspect,
     )
+    // Hidden control-plane tools for the Reading Companion commentary audit subagent. They are
+    // never added to ordinary chat tool prompts; isolated audit turns expose exactly these six
+    // via isolatedToolPrompts. The executor resolves the run context from callerChatId and
+    // ignores model-supplied book/chapter values.
+    ReadingCompanionSubagentTools.TOOL_NAMES.forEach { toolName ->
+        handler.registerTool(
+            name = toolName,
+            executor = ReadingCompanionSubagentTools::execute,
+        )
+    }
     handler.registerTool(
         name = ChatTodoTool.NAME,
         descriptionGenerator = { context.getString(R.string.toolreg_todowrite_desc) },
@@ -1779,7 +1801,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_read_file_desc, path, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.readFile(tool) } }
+            executor = { tool ->
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.readFile(tool) }
+            }
     )
 
     // 按行号范围读取文件内容
@@ -1813,7 +1837,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_read_file_full_desc, path, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.readFileFull(tool) } }
+            executor = { tool ->
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.readFileFull(tool) }
+            }
     )
 
     // 读取二进制文件内容（Base64编码）

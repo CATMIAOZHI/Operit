@@ -13,6 +13,7 @@ import com.ai.assistance.operit.data.model.CustomParameterData
 import com.ai.assistance.operit.data.model.FavoriteModelRef
 import com.ai.assistance.operit.data.model.ModelConfigBackup
 import com.ai.assistance.operit.data.model.ModelConfigData
+import com.ai.assistance.operit.data.model.ModelMultimodalCapabilities
 import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.mergeCollapsedConfigIds
 import com.ai.assistance.operit.data.model.ModelParameter
@@ -24,6 +25,10 @@ import com.ai.assistance.operit.data.model.ApiKeyInfo
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.normalizeProviderId
 import com.ai.assistance.operit.data.model.normalizeConfigOrder
+import com.ai.assistance.operit.data.model.withModelNames
+import com.ai.assistance.operit.data.model.withDirectAudioProcessingForAllModels
+import com.ai.assistance.operit.data.model.withDirectImageProcessingForAllModels
+import com.ai.assistance.operit.data.model.withDirectVideoProcessingForAllModels
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -40,7 +45,12 @@ private val Context.modelConfigDataStore: DataStore<Preferences> by
 private val Context.apiDataStore: DataStore<Preferences> by
         preferencesDataStore(name = "api_settings")
 
-class ModelConfigManager(private val context: Context) {
+class ModelConfigManager(
+        private val context: Context,
+        configDataStore: DataStore<Preferences> = context.modelConfigDataStore
+) {
+
+    private val configDataStore = configDataStore
 
     // 提供context访问器
     val appContext: Context
@@ -73,15 +83,22 @@ class ModelConfigManager(private val context: Context) {
 
     // 获取所有配置ID列表
     val configListFlow: Flow<List<String>> =
-            context.modelConfigDataStore.data.map { preferences ->
+            configDataStore.data.map { preferences ->
                 val configList = preferences[CONFIG_LIST_KEY] ?: ""
                 if (configList.isEmpty()) emptyList()
                 else json.decodeFromString<List<String>>(configList)
             }
 
+    // 所有配置摘要的响应式版本。主界面模型选择器必须持续收集它，才能在配置页
+    // 新增或修改模型后立即更新，而不需要重新进入配置页。
+    val configSummariesFlow: Flow<List<ModelConfigSummary>> =
+            configDataStore.data.map { preferences ->
+                readConfigSummariesFromPrefs(preferences)
+            }
+
     // 收藏模型列表 Flow
     val favoriteModelsFlow: Flow<List<FavoriteModelRef>> =
-            context.modelConfigDataStore.data.map { preferences ->
+            configDataStore.data.map { preferences ->
                 val raw = preferences[FAVORITE_MODELS_KEY] ?: ""
                 if (raw.isEmpty()) emptyList()
                 else {
@@ -95,7 +112,7 @@ class ModelConfigManager(private val context: Context) {
 
     // 折叠的提供商 ID 集合 Flow（外部使用 Set 语义）
     val collapsedProviderIdsFlow: Flow<Set<String>> =
-            context.modelConfigDataStore.data.map { preferences ->
+            configDataStore.data.map { preferences ->
                 val raw = preferences[COLLAPSED_PROVIDER_IDS_KEY] ?: ""
                 if (raw.isEmpty()) emptySet()
                 else {
@@ -112,7 +129,7 @@ class ModelConfigManager(private val context: Context) {
 
     // 折叠的配置 ID 集合 Flow（使用 config ID 精确匹配，不做大小写归一化）
     val collapsedConfigIdsFlow: Flow<Set<String>> =
-            context.modelConfigDataStore.data.map { preferences ->
+            configDataStore.data.map { preferences ->
                 val raw = preferences[COLLAPSED_CONFIG_IDS_KEY] ?: ""
                 if (raw.isEmpty()) emptySet()
                 else {
@@ -138,7 +155,7 @@ class ModelConfigManager(private val context: Context) {
             saveConfigToDataStore(defaultConfig)
 
             // 保存配置列表，移除活跃ID
-            context.modelConfigDataStore.edit { preferences ->
+            configDataStore.edit { preferences ->
                 preferences[CONFIG_LIST_KEY] = json.encodeToString(listOf(DEFAULT_CONFIG_ID))
             }
         } else {
@@ -178,7 +195,7 @@ class ModelConfigManager(private val context: Context) {
     // 保存配置
     suspend fun saveModelConfig(config: ModelConfigData) {
         val configKey = stringPreferencesKey("config_${config.id}")
-        context.modelConfigDataStore.edit { preferences ->
+        configDataStore.edit { preferences ->
             preferences[configKey] = json.encodeToString(config)
         }
     }
@@ -186,7 +203,7 @@ class ModelConfigManager(private val context: Context) {
     // 从DataStore加载配置
     private suspend fun loadConfigFromDataStore(configId: String): ModelConfigData? {
         val configKey = stringPreferencesKey("config_${configId}")
-        return context.modelConfigDataStore.data.first().let { preferences ->
+        return configDataStore.data.first().let { preferences ->
             val configJson = preferences[configKey]
             if (configJson != null) {
                 try {
@@ -212,7 +229,7 @@ class ModelConfigManager(private val context: Context) {
     // 将配置保存到DataStore
     private suspend fun saveConfigToDataStore(config: ModelConfigData) {
         val configKey = stringPreferencesKey("config_${config.id}")
-        context.modelConfigDataStore.edit { preferences ->
+        configDataStore.edit { preferences ->
             preferences[configKey] = json.encodeToString(config)
         }
     }
@@ -227,6 +244,38 @@ class ModelConfigManager(private val context: Context) {
             } catch (_: Exception) {
                 emptyList()
             }
+        }
+    }
+
+    private fun readConfigSummariesFromPrefs(prefs: Preferences): List<ModelConfigSummary> {
+        return readConfigListFromPrefs(prefs).map { configId ->
+            val configJson = prefs[stringPreferencesKey("config_${configId}")]
+            val config =
+                    if (configJson != null) {
+                        try {
+                            json.decodeFromString<ModelConfigData>(configJson)
+                        } catch (_: Exception) {
+                            fallbackConfigFor(configId)
+                        }
+                    } else {
+                        fallbackConfigFor(configId)
+                    }
+            ModelConfigSummary(
+                    id = config.id,
+                    name = config.name,
+                    modelName = config.modelName,
+                    apiEndpoint = config.apiEndpoint,
+                    apiProviderType = config.apiProviderType,
+                    apiProviderTypeId = config.apiProviderTypeId
+            )
+        }
+    }
+
+    private fun fallbackConfigFor(configId: String): ModelConfigData {
+        return if (configId == DEFAULT_CONFIG_ID) {
+            createFreshDefaultConfig()
+        } else {
+            ModelConfigData(id = configId, name = context.getString(R.string.model_config_config_id, configId))
         }
     }
 
@@ -277,7 +326,7 @@ class ModelConfigManager(private val context: Context) {
     ): ModelConfigData {
         val configKey = stringPreferencesKey("config_${configId}")
         var updated: ModelConfigData? = null
-        context.modelConfigDataStore.edit { preferences ->
+        configDataStore.edit { preferences ->
             val current =
                     run {
                         val configJson = preferences[configKey]
@@ -309,7 +358,7 @@ class ModelConfigManager(private val context: Context) {
 
     // 获取指定ID的配置
     fun getModelConfigFlow(configId: String): Flow<ModelConfigData> {
-        return context.modelConfigDataStore.data.map { preferences ->
+        return configDataStore.data.map { preferences ->
             val config = loadConfigFromDataStore(configId) ?: ModelConfigData(id = configId, name = context.getString(R.string.model_config_config_id, configId))
             config
         }
@@ -333,24 +382,7 @@ class ModelConfigManager(private val context: Context) {
 
     // 获取所有配置的摘要信息
     suspend fun getAllConfigSummaries(): List<ModelConfigSummary> {
-        val configIds = configListFlow.first()
-        val summaries = mutableListOf<ModelConfigSummary>()
-
-        for (id in configIds) {
-            val config = getModelConfigFlow(id).first()
-            summaries.add(
-                    ModelConfigSummary(
-                            id = config.id,
-                            name = config.name,
-                            modelName = config.modelName,
-                            apiEndpoint = config.apiEndpoint,
-                            apiProviderType = config.apiProviderType,
-                            apiProviderTypeId = config.apiProviderTypeId
-                    )
-            )
-        }
-
-        return summaries
+        return readConfigSummariesFromPrefs(configDataStore.data.first())
     }
 
     // ---------- 排序、收藏、折叠 ----------
@@ -359,7 +391,7 @@ class ModelConfigManager(private val context: Context) {
      * 更新配置 ID 的全局排序。在单个 DataStore edit 中原子化完成。
      */
     suspend fun updateConfigOrder(requestedOrder: List<String>) {
-        context.modelConfigDataStore.edit { preferences ->
+        configDataStore.edit { preferences ->
             val currentIds = readConfigListFromPrefs(preferences)
             val normalized = normalizeConfigOrder(requestedOrder, currentIds)
             preferences[CONFIG_LIST_KEY] = json.encodeToString(normalized)
@@ -372,7 +404,7 @@ class ModelConfigManager(private val context: Context) {
      */
     suspend fun toggleFavoriteModel(configId: String, modelName: String) {
         if (modelName.isBlank()) return
-        context.modelConfigDataStore.edit { preferences ->
+        configDataStore.edit { preferences ->
             val current = readFavoriteModelsFromPrefs(preferences)
             val ref = FavoriteModelRef(configId, modelName)
             val key = ref.configId to ref.modelName
@@ -392,7 +424,7 @@ class ModelConfigManager(private val context: Context) {
     suspend fun toggleProviderCollapsed(providerTypeId: String) {
         val normalized = normalizeProviderId(providerTypeId)
         if (normalized.isEmpty()) return
-        context.modelConfigDataStore.edit { preferences ->
+        configDataStore.edit { preferences ->
             val current = readCollapsedProviderIdsFromPrefs(preferences)
             val updated = if (normalized in current) {
                 current - normalized
@@ -410,7 +442,7 @@ class ModelConfigManager(private val context: Context) {
      */
     suspend fun toggleConfigCollapsed(configId: String) {
         if (configId.isBlank()) return
-        context.modelConfigDataStore.edit { preferences ->
+        configDataStore.edit { preferences ->
             val current = readCollapsedConfigIdsFromPrefs(preferences)
             val updated = if (configId in current) {
                 current - configId
@@ -435,7 +467,7 @@ class ModelConfigManager(private val context: Context) {
                         enableToolCall = true
                 )
 
-        context.modelConfigDataStore.edit { preferences ->
+        configDataStore.edit { preferences ->
             // 保存新配置
             preferences[stringPreferencesKey("config_${configId}")] = json.encodeToString(newConfig)
             // 原子化更新配置列表
@@ -454,7 +486,7 @@ class ModelConfigManager(private val context: Context) {
             return
         }
 
-        context.modelConfigDataStore.edit { preferences ->
+        configDataStore.edit { preferences ->
             // 从列表中移除
             val currentList = readConfigListFromPrefs(preferences).toMutableList()
             currentList.remove(configId)
@@ -485,7 +517,7 @@ class ModelConfigManager(private val context: Context) {
             modelName: String
     ): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(apiKey = apiKey, apiEndpoint = apiEndpoint, modelName = modelName)
+            it.withModelNames(modelName).copy(apiKey = apiKey, apiEndpoint = apiEndpoint)
         }
     }
 
@@ -499,10 +531,9 @@ class ModelConfigManager(private val context: Context) {
             apiProviderTypeId: String = apiProviderType.name
     ): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(
+            it.withModelNames(modelName).copy(
                     apiKey = apiKey,
                     apiEndpoint = apiEndpoint,
-                    modelName = modelName,
                     apiProviderType = apiProviderType,
                     apiProviderTypeId = apiProviderTypeId
             )
@@ -521,10 +552,9 @@ class ModelConfigManager(private val context: Context) {
             mnnThreadCount: Int
     ): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(
+            it.withModelNames(modelName).copy(
                     apiKey = apiKey,
                     apiEndpoint = apiEndpoint,
-                    modelName = modelName,
                     apiProviderType = apiProviderType,
                     apiProviderTypeId = apiProviderTypeId,
                     mnnForwardType = mnnForwardType,
@@ -548,6 +578,7 @@ class ModelConfigManager(private val context: Context) {
             enableDirectImageProcessing: Boolean,
             enableDirectAudioProcessing: Boolean,
             enableDirectVideoProcessing: Boolean,
+            modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities>,
             enableGoogleSearch: Boolean,
             enableClaude1hPromptCache: Boolean,
             enableToolCall: Boolean
@@ -567,6 +598,7 @@ class ModelConfigManager(private val context: Context) {
                     enableDirectImageProcessing = enableDirectImageProcessing,
                     enableDirectAudioProcessing = enableDirectAudioProcessing,
                     enableDirectVideoProcessing = enableDirectVideoProcessing,
+                    modelMultimodalCapabilities = modelMultimodalCapabilities,
                     enableGoogleSearch = enableGoogleSearch,
                     enableClaude1hPromptCache = enableClaude1hPromptCache,
                     enableToolCall = enableToolCall
@@ -680,19 +712,19 @@ class ModelConfigManager(private val context: Context) {
     // 更新图片直接处理配置
     suspend fun updateDirectImageProcessing(configId: String, enableDirectImageProcessing: Boolean): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(enableDirectImageProcessing = enableDirectImageProcessing)
+            it.withDirectImageProcessingForAllModels(enableDirectImageProcessing)
         }
     }
 
     suspend fun updateDirectAudioProcessing(configId: String, enableDirectAudioProcessing: Boolean): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(enableDirectAudioProcessing = enableDirectAudioProcessing)
+            it.withDirectAudioProcessingForAllModels(enableDirectAudioProcessing)
         }
     }
 
     suspend fun updateDirectVideoProcessing(configId: String, enableDirectVideoProcessing: Boolean): ModelConfigData {
         return updateConfigInternal(configId) {
-            it.copy(enableDirectVideoProcessing = enableDirectVideoProcessing)
+            it.withDirectVideoProcessingForAllModels(enableDirectVideoProcessing)
         }
     }
 
@@ -755,6 +787,18 @@ class ModelConfigManager(private val context: Context) {
      */
     suspend fun getModelParametersForConfig(configId: String): List<ModelParameter<*>> {
         val config = getModelConfigFlow(configId).first()
+        return getModelParametersForConfigSnapshot(config)
+    }
+
+    /**
+     * 从已经读取的配置快照构造完整模型参数列表。
+     *
+     * 调用方需要让服务、模型配置与请求参数严格对应时，应使用创建服务时的同一份快照，
+     * 避免再次读取 DataStore 后混入更新中的参数。
+     */
+    fun getModelParametersForConfigSnapshot(
+        config: ModelConfigData,
+    ): List<ModelParameter<*>> {
         val parameters = mutableListOf<ModelParameter<*>>()
 
         // 映射标准参数
@@ -895,7 +939,7 @@ class ModelConfigManager(private val context: Context) {
      */
     suspend fun exportAllConfigs(): String {
         // 从同一个快照读取所有数据，保证一致性
-        val snapshot = context.modelConfigDataStore.data.first()
+        val snapshot = configDataStore.data.first()
         val configIds = readConfigListFromPrefs(snapshot)
         val allConfigs = mutableListOf<ModelConfigData>()
 
@@ -980,7 +1024,7 @@ class ModelConfigManager(private val context: Context) {
         var updatedCount = 0
         var skippedCount = 0
 
-        context.modelConfigDataStore.edit { preferences ->
+        configDataStore.edit { preferences ->
             val currentIds = readConfigListFromPrefs(preferences)
             val currentIdSet = currentIds.toSet()
 
@@ -1093,7 +1137,7 @@ class ModelConfigManager(private val context: Context) {
         var updatedCount = 0
         var skippedCount = 0
 
-        context.modelConfigDataStore.edit { preferences ->
+        configDataStore.edit { preferences ->
             val currentIds = readConfigListFromPrefs(preferences).toMutableList()
             val currentIdSet = currentIds.toSet()
 

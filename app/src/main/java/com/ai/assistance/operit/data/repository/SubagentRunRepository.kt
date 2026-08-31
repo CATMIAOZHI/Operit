@@ -18,6 +18,14 @@ data class CreateSubagentRunRequest(
     val agentConfigSnapshot: String?,
     val modelConfigIdSnapshot: String?,
     val modelIndexSnapshot: Int?,
+    /** child 聊天隐藏标记（阅读伴侣后台/插件路径隐藏 child；对话内路径 false）。 */
+    val childHidden: Boolean = false,
+    /** child 聊天隐藏原因（仅 childHidden=true 时使用）。 */
+    val childHiddenReason: String? = null,
+    /** 跨库弱关联所有者类型（阅读伴侣：reading_companion_run）。 */
+    val externalOwnerType: String? = null,
+    /** 跨库弱关联所有者 ID（阅读伴侣：reading run id 字符串）。 */
+    val externalOwnerId: String? = null,
 )
 
 data class SubagentRunWithChat(
@@ -61,6 +69,8 @@ class SubagentRunRepository internal constructor(
                     chatKind = ChatKind.SUBAGENT.name,
                     characterCardName = parent.characterCardName,
                     characterGroupId = parent.characterGroupId,
+                    isHidden = request.childHidden,
+                    hiddenReason = request.childHiddenReason,
                 )
             val run =
                 SubagentRunEntity(
@@ -75,6 +85,8 @@ class SubagentRunRepository internal constructor(
                     agentConfigSnapshot = request.agentConfigSnapshot,
                     modelConfigIdSnapshot = request.modelConfigIdSnapshot,
                     modelIndexSnapshot = request.modelIndexSnapshot,
+                    externalOwnerType = request.externalOwnerType,
+                    externalOwnerId = request.externalOwnerId,
                 )
             chatDao.insertChat(child)
             runDao.insert(run)
@@ -147,6 +159,19 @@ class SubagentRunRepository internal constructor(
 
     suspend fun incrementToolInvocationCountByChildChatId(childChatId: String): Boolean =
         runDao.incrementToolInvocationCountByChildChatId(childChatId) == 1
+
+    suspend fun incrementModelRoundCountByChildChatId(childChatId: String): Boolean =
+        runDao.incrementModelRoundCountByChildChatId(childChatId) == 1
+
+    suspend fun getByExternalOwner(ownerType: String, ownerId: String) =
+        runDao.getByExternalOwner(ownerType, ownerId)
+
+    suspend fun getByExternalOwnerType(ownerType: String) =
+        runDao.getByExternalOwnerType(ownerType)
+
+    /** 补链/清理解绑后由对账逻辑调用；不会删除 run 本身。 */
+    suspend fun clearExternalOwner(ownerType: String, ownerId: String): Int =
+        runDao.clearExternalOwner(ownerType, ownerId)
 
     suspend fun setArchived(taskId: String, archived: Boolean): Boolean =
         runDao.updateArchivedAt(

@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Api
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
@@ -52,7 +53,11 @@ import com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
+import com.ai.assistance.operit.data.model.ModelMultimodalCapabilities
 import com.ai.assistance.operit.data.model.ModelOption
+import com.ai.assistance.operit.data.model.OfficialModelCapabilitiesRepository
+import com.ai.assistance.operit.data.model.getModelList
+import com.ai.assistance.operit.data.model.multimodalCapabilitiesForModel
 import com.ai.assistance.operit.data.model.normalizeProviderId
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
@@ -61,8 +66,10 @@ import com.ai.assistance.operit.ui.features.settings.DebouncedModelConfigAutoSav
 import com.ai.assistance.operit.ui.features.settings.ModelConfigSaveCoordinator
 import com.ai.assistance.operit.ui.features.settings.RegisterModelConfigSaveAction
 import com.ai.assistance.operit.util.LocationUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
@@ -126,12 +133,36 @@ fun ModelApiSettingsSection(
     var llamaContextSizeInput by remember(config.id) { mutableStateOf(config.llamaContextSize.toString()) }
     var llamaGpuLayersInput by remember(config.id) { mutableStateOf(config.llamaGpuLayers.toString()) }
 
-    // 图片处理配置状态
+    // 多模态处理配置状态
     var enableDirectImageProcessingInput by remember(config.id) { mutableStateOf(config.enableDirectImageProcessing) }
+    var modelMultimodalCapabilitiesInput by remember(config.id) {
+        mutableStateOf(
+            getModelList(config.modelName).associateWith { modelName ->
+                config.multimodalCapabilitiesForModel(modelName)
+            }
+        )
+    }
+    var showMultimodalModelPicker by remember { mutableStateOf(false) }
+    var selectedMultimodalModel by remember(config.id) {
+        mutableStateOf(getModelList(config.modelName).firstOrNull().orEmpty())
+    }
 
     var enableDirectAudioProcessingInput by remember(config.id) { mutableStateOf(config.enableDirectAudioProcessing) }
 
     var enableDirectVideoProcessingInput by remember(config.id) { mutableStateOf(config.enableDirectVideoProcessing) }
+    val officialModelCapabilitiesRepository =
+        remember(context.applicationContext) {
+            OfficialModelCapabilitiesRepository(context.applicationContext)
+        }
+    var isSyncingMultimodalCapabilities by remember(config.id) { mutableStateOf(false) }
+    var isRefreshingMultimodalCatalog by remember(config.id) { mutableStateOf(false) }
+    var multimodalSyncJob by remember(config.id) { mutableStateOf<Job?>(null) }
+
+    DisposableEffect(config.id) {
+        onDispose {
+            multimodalSyncJob?.cancel()
+        }
+    }
     
     // Google Search Grounding 配置状态 (仅Gemini)
     var enableGoogleSearchInput by remember(config.id) { mutableStateOf(config.enableGoogleSearch) }
@@ -158,6 +189,7 @@ fun ModelApiSettingsSection(
         val enableDirectImageProcessing: Boolean,
         val enableDirectAudioProcessing: Boolean,
         val enableDirectVideoProcessing: Boolean,
+        val modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities>,
         val enableGoogleSearch: Boolean,
         val enableClaude1hPromptCache: Boolean,
         val enableToolCall: Boolean,
@@ -182,6 +214,7 @@ fun ModelApiSettingsSection(
                     enableDirectImageProcessing = state.enableDirectImageProcessing,
                     enableDirectAudioProcessing = state.enableDirectAudioProcessing,
                     enableDirectVideoProcessing = state.enableDirectVideoProcessing,
+                    modelMultimodalCapabilities = state.modelMultimodalCapabilities,
                     enableGoogleSearch = state.enableGoogleSearch,
                     enableClaude1hPromptCache = state.enableClaude1hPromptCache,
                     enableToolCall = state.enableToolCall,
@@ -195,6 +228,7 @@ fun ModelApiSettingsSection(
     }
 
     fun buildAutoSaveState(): ApiAutoSaveState {
+        val configuredModelNames = getModelList(modelNameInput)
         return ApiAutoSaveState(
             apiEndpoint = apiEndpointInput,
             apiKey = apiKeyInput,
@@ -209,6 +243,11 @@ fun ModelApiSettingsSection(
             enableDirectImageProcessing = enableDirectImageProcessingInput,
             enableDirectAudioProcessing = enableDirectAudioProcessingInput,
             enableDirectVideoProcessing = enableDirectVideoProcessingInput,
+            modelMultimodalCapabilities =
+                configuredModelNames.associateWith { modelName ->
+                    modelMultimodalCapabilitiesInput[modelName]
+                        ?: ModelMultimodalCapabilities()
+                },
             enableGoogleSearch = enableGoogleSearchInput,
             enableClaude1hPromptCache = enableClaude1hPromptCacheInput,
             enableToolCall = enableToolCallInput,
@@ -392,6 +431,8 @@ fun ModelApiSettingsSection(
                                 enableDirectImageProcessing = enableDirectImageProcessingInput,
                                 enableDirectAudioProcessing = enableDirectAudioProcessingInput,
                                 enableDirectVideoProcessing = enableDirectVideoProcessingInput,
+                                modelMultimodalCapabilities =
+                                    modelMultimodalCapabilitiesInput,
                                 enableGoogleSearch = enableGoogleSearchInput,
                                 enableClaude1hPromptCache = enableClaude1hPromptCacheInput,
                                 enableToolCall = enableToolCallInput
@@ -413,6 +454,76 @@ fun ModelApiSettingsSection(
                     apiEndpointInput,
                     selectedApiProvider ?: ApiProviderType.OPENAI_GENERIC
                 )
+        }
+    }
+
+    fun syncOfficialModelCapabilities() {
+        if (isSyncingMultimodalCapabilities || isRefreshingMultimodalCatalog) return
+        val configuredModelNames = getModelList(modelNameInput)
+        if (configuredModelNames.isEmpty()) return
+        isSyncingMultimodalCapabilities = true
+        multimodalSyncJob = scope.launch {
+            try {
+                val catalog = officialModelCapabilitiesRepository.loadCatalog()
+                val matchedCapabilities = catalog.matchAll(configuredModelNames)
+                val unmatchedCount = configuredModelNames.size - matchedCapabilities.size
+
+                if (matchedCapabilities.isNotEmpty()) {
+                    modelMultimodalCapabilitiesInput =
+                        modelMultimodalCapabilitiesInput + matchedCapabilities
+                }
+                showNotification(
+                    when {
+                        matchedCapabilities.isEmpty() ->
+                            context.getString(R.string.model_multimodal_auto_sync_none_matched)
+                        unmatchedCount == 0 ->
+                            context.getString(
+                                R.string.model_multimodal_auto_sync_all_matched,
+                                matchedCapabilities.size,
+                            )
+                        else ->
+                            context.getString(
+                                R.string.model_multimodal_auto_sync_partially_matched,
+                                matchedCapabilities.size,
+                                unmatchedCount,
+                            )
+                    }
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "同步官方模型多模态能力失败: ${e.message}", e)
+                showNotification(context.getString(R.string.model_multimodal_auto_sync_failed))
+            } finally {
+                isSyncingMultimodalCapabilities = false
+                multimodalSyncJob = null
+            }
+        }
+    }
+
+    fun refreshOfficialModelCapabilitiesCatalog() {
+        if (isSyncingMultimodalCapabilities || isRefreshingMultimodalCatalog) return
+        isRefreshingMultimodalCatalog = true
+        multimodalSyncJob = scope.launch {
+            try {
+                val catalog = officialModelCapabilitiesRepository.refreshCatalog()
+                showNotification(
+                    context.getString(
+                        R.string.model_multimodal_catalog_refresh_success,
+                        catalog.models.size,
+                    )
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "刷新本地模型能力目录失败: ${e.message}", e)
+                showNotification(
+                    context.getString(R.string.model_multimodal_catalog_refresh_failed)
+                )
+            } finally {
+                isRefreshingMultimodalCatalog = false
+                multimodalSyncJob = null
+            }
         }
     }
     // 移除了强制锁定模型名称的逻辑，允许用户自由修改
@@ -723,25 +834,281 @@ fun ModelApiSettingsSection(
                     }
             )
 
-            SettingsSwitchRow(
-                title = stringResource(R.string.enable_direct_image_processing),
-                subtitle = stringResource(R.string.enable_direct_image_processing_desc),
-                checked = enableDirectImageProcessingInput,
-                onCheckedChange = { enableDirectImageProcessingInput = it }
-            )
+            val configuredModels = getModelList(modelNameInput)
+            val activeModel =
+                configuredModels.firstOrNull()?.let { firstModel ->
+                    selectedMultimodalModel
+                        .takeIf { it in configuredModels }
+                        ?: firstModel
+                }.orEmpty()
+            // 配置的模型列表变化后，保持当前选择；若失效则回退到第一个模型
+            LaunchedEffect(configuredModels) {
+                if (selectedMultimodalModel !in configuredModels) {
+                    selectedMultimodalModel = configuredModels.firstOrNull().orEmpty()
+                }
+            }
 
-            SettingsSwitchRow(
-                title = stringResource(R.string.enable_direct_audio_processing),
-                subtitle = stringResource(R.string.enable_direct_audio_processing_desc),
-                checked = enableDirectAudioProcessingInput,
-                onCheckedChange = { enableDirectAudioProcessingInput = it }
-            )
-            SettingsSwitchRow(
-                title = stringResource(R.string.enable_direct_video_processing),
-                subtitle = stringResource(R.string.enable_direct_video_processing_desc),
-                checked = enableDirectVideoProcessingInput,
-                onCheckedChange = { enableDirectVideoProcessingInput = it }
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsInfoBanner(
+                    text = stringResource(R.string.model_multimodal_capabilities_desc)
+                )
+                OutlinedButton(
+                    onClick = { syncOfficialModelCapabilities() },
+                    enabled =
+                        configuredModels.isNotEmpty() &&
+                            !isSyncingMultimodalCapabilities &&
+                            !isRefreshingMultimodalCatalog,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (isSyncingMultimodalCapabilities) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.model_multimodal_auto_sync))
+                }
+                TextButton(
+                    onClick = { refreshOfficialModelCapabilitiesCatalog() },
+                    enabled =
+                        !isSyncingMultimodalCapabilities &&
+                            !isRefreshingMultimodalCatalog,
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    if (isRefreshingMultimodalCatalog) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.model_multimodal_catalog_refresh))
+                }
+                if (configuredModels.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.model_multimodal_capabilities_no_models),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    )
+                } else {
+                    // 选择器：先选择一个模型，再配置它的能力
+                    SettingsSelectorRow(
+                        title = stringResource(R.string.model_multimodal_select_model),
+                        subtitle = stringResource(R.string.select),
+                        value = activeModel,
+                        onClick = { showMultimodalModelPicker = true }
+                    )
+
+                    activeModel.takeIf { it.isNotEmpty() }?.let { modelName ->
+                        val capabilities =
+                            modelMultimodalCapabilitiesInput[modelName]
+                                ?: ModelMultimodalCapabilities()
+                        Column {
+                            SettingsSwitchRow(
+                                title = stringResource(R.string.enable_direct_image_processing),
+                                subtitle = stringResource(R.string.enable_direct_image_processing_desc),
+                                checked = capabilities.image,
+                                onCheckedChange = { enabled ->
+                                    modelMultimodalCapabilitiesInput =
+                                        modelMultimodalCapabilitiesInput +
+                                            (modelName to capabilities.copy(image = enabled))
+                                },
+                            )
+                            SettingsSwitchRow(
+                                title = stringResource(R.string.enable_direct_audio_processing),
+                                subtitle = stringResource(R.string.enable_direct_audio_processing_desc),
+                                checked = capabilities.audio,
+                                onCheckedChange = { enabled ->
+                                    modelMultimodalCapabilitiesInput =
+                                        modelMultimodalCapabilitiesInput +
+                                            (modelName to capabilities.copy(audio = enabled))
+                                },
+                            )
+                            SettingsSwitchRow(
+                                title = stringResource(R.string.enable_direct_video_processing),
+                                subtitle = stringResource(R.string.enable_direct_video_processing_desc),
+                                checked = capabilities.video,
+                                onCheckedChange = { enabled ->
+                                    modelMultimodalCapabilitiesInput =
+                                        modelMultimodalCapabilitiesInput +
+                                            (modelName to capabilities.copy(video = enabled))
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 多模态配置模型选择对话框
+            if (showMultimodalModelPicker) {
+                val pickerModels = getModelList(modelNameInput)
+                var pickerSearch by remember { mutableStateOf("") }
+                val filteredPickerModels =
+                    remember(pickerSearch, pickerModels) {
+                        if (pickerSearch.isEmpty()) pickerModels
+                        else
+                            pickerModels.filter {
+                                it.contains(pickerSearch, ignoreCase = true)
+                            }
+                    }
+                Dialog(onDismissRequest = { showMultimodalModelPicker = false }) {
+                    Surface(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            tonalElevation = 6.dp,
+                            shadowElevation = 8.dp
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = stringResource(R.string.model_multimodal_select_model_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(bottom = 12.dp)
+                            )
+
+                            OutlinedTextField(
+                                value = pickerSearch,
+                                onValueChange = { pickerSearch = it },
+                                placeholder = {
+                                    Text(
+                                        stringResource(R.string.model_multimodal_search_models),
+                                        fontSize = 14.sp
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Search,
+                                        contentDescription =
+                                            stringResource(R.string.model_multimodal_search_models),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                },
+                                trailingIcon = {
+                                    if (pickerSearch.isNotEmpty()) {
+                                        IconButton(
+                                            onClick = { pickerSearch = "" },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Clear,
+                                                contentDescription = stringResource(R.string.clear),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                singleLine = true,
+                                modifier =
+                                    Modifier.fillMaxWidth().padding(bottom = 12.dp).height(48.dp),
+                                colors =
+                                    OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                                        focusedLeadingIconColor = MaterialTheme.colorScheme.primary,
+                                        unfocusedLeadingIconColor =
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                    ),
+                                textStyle = TextStyle(fontSize = 14.sp)
+                            )
+
+                            if (filteredPickerModels.isEmpty()) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().height(160.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.model_multimodal_no_models_found),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            } else {
+                                androidx.compose.foundation.lazy.LazyColumn(
+                                    modifier = Modifier.fillMaxWidth().weight(1f)
+                                ) {
+                                    items(filteredPickerModels.size) { index ->
+                                        val modelName = filteredPickerModels[index]
+                                        val isSelected = modelName == activeModel
+                                        Row(
+                                            modifier =
+                                                Modifier.fillMaxWidth()
+                                                    .clickable {
+                                                        selectedMultimodalModel = modelName
+                                                        showMultimodalModelPicker = false
+                                                    }
+                                                    .background(
+                                                        if (isSelected)
+                                                            MaterialTheme.colorScheme.primaryContainer
+                                                                .copy(alpha = 0.5f)
+                                                        else MaterialTheme.colorScheme.surface
+                                                    )
+                                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = modelName,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight =
+                                                    if (isSelected) FontWeight.SemiBold
+                                                    else FontWeight.Normal,
+                                                color =
+                                                    if (isSelected)
+                                                        MaterialTheme.colorScheme.primary
+                                                    else MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
+                                        if (index < filteredPickerModels.lastIndex) {
+                                            HorizontalDivider(
+                                                thickness = 0.5.dp,
+                                                color =
+                                                    MaterialTheme.colorScheme.outlineVariant.copy(
+                                                        alpha = 0.5f
+                                                    ),
+                                                modifier = Modifier.padding(horizontal = 12.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                            ) {
+                                FilledTonalButton(
+                                    onClick = { showMultimodalModelPicker = false },
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Text(stringResource(R.string.close), fontSize = 14.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             
             // Google Search Grounding 开关 (仅Gemini支持)
             if (selectedApiProvider == ApiProviderType.GOOGLE ||
@@ -802,6 +1169,9 @@ fun ModelApiSettingsSection(
                     shadowElevation = 8.dp
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    val refreshUnknownErrorText = stringResource(R.string.unknown_error)
+                    val refreshModelsListFailedText = stringResource(R.string.refresh_models_list_failed)
+                    val refreshModelsFailedText = stringResource(R.string.refresh_models_failed)
                     // 标题栏
                     Row(
                             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -824,14 +1194,14 @@ fun ModelApiSettingsSection(
                                                 if (result.isSuccess) {
                                                     modelsList = result.getOrThrow()
                                                 } else {
-                                                    val errorMsg = result.exceptionOrNull()?.message ?: context.getString(R.string.unknown_error)
-                                                    modelLoadError = context.getString(R.string.refresh_models_list_failed, errorMsg)
-                                                    showNotification(modelLoadError ?: context.getString(R.string.refresh_models_failed))
+                                                    val errorMsg = result.exceptionOrNull()?.message ?: refreshUnknownErrorText
+                                                    modelLoadError = refreshModelsListFailedText.format(errorMsg)
+                                                    showNotification(modelLoadError ?: refreshModelsFailedText)
                                                 }
                                             } catch (e: Exception) {
-                                                val errorMsg = e.message ?: context.getString(R.string.unknown_error)
-                                                modelLoadError = context.getString(R.string.refresh_models_list_failed, errorMsg)
-                                                showNotification(modelLoadError ?: context.getString(R.string.refresh_models_failed))
+                                                val errorMsg = e.message ?: refreshUnknownErrorText
+                                                modelLoadError = refreshModelsListFailedText.format(errorMsg)
+                                                showNotification(modelLoadError ?: refreshModelsFailedText)
                                             } finally {
                                                 isLoadingModels = false
                                             }

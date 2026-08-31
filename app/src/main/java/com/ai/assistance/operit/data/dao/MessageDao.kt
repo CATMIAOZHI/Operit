@@ -15,10 +15,6 @@ interface MessageDao {
     @Query("SELECT COUNT(*) FROM messages")
     suspend fun getTotalMessageCount(): Int
 
-    /** 获取指定聊天的所有消息，按时间戳排序 */
-    @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY timestamp ASC")
-    suspend fun getMessagesForChat(chatId: String): List<MessageEntity>
-
     @Query(
         "SELECT COUNT(*) FROM messages WHERE chatId = :chatId AND (:upToTimestampInclusive IS NULL OR timestamp <= :upToTimestampInclusive)"
     )
@@ -26,6 +22,9 @@ interface MessageDao {
         chatId: String,
         upToTimestampInclusive: Long?,
     ): Int
+
+    @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = :chatId LIMIT 1)")
+    suspend fun existsAnyMessage(chatId: String): Boolean
 
     @Query(
         """
@@ -89,85 +88,6 @@ interface MessageDao {
         query: String,
         previewCharCount: Int,
     ): List<ChatMessageLocatorPreview>
-
-    @Query(
-        "SELECT * FROM messages WHERE chatId = :chatId AND timestamp >= :startTimestampInclusive ORDER BY timestamp ASC"
-    )
-    suspend fun getMessagesForChatFromTimestampAsc(
-        chatId: String,
-        startTimestampInclusive: Long,
-    ): List<MessageEntity>
-
-    @Query(
-        """
-        SELECT * FROM messages
-        WHERE chatId = :chatId
-            AND timestamp >= :startTimestampInclusive
-            AND timestamp <= :endTimestampInclusive
-        ORDER BY timestamp ASC
-        """
-    )
-    suspend fun getMessagesForChatWindowAsc(
-        chatId: String,
-        startTimestampInclusive: Long,
-        endTimestampInclusive: Long,
-    ): List<MessageEntity>
-
-    @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY timestamp ASC LIMIT :limit")
-    suspend fun getMessagesForChatAsc(chatId: String, limit: Int): List<MessageEntity>
-
-    @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY timestamp DESC LIMIT :limit")
-    suspend fun getMessagesForChatDesc(chatId: String, limit: Int): List<MessageEntity>
-
-    @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY timestamp ASC LIMIT :limit OFFSET :offset")
-    suspend fun getMessagesForChatAscRange(chatId: String, offset: Int, limit: Int): List<MessageEntity>
-
-    @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
-    suspend fun getMessagesForChatDescRange(chatId: String, offset: Int, limit: Int): List<MessageEntity>
-
-    @Query(
-        "SELECT * FROM messages WHERE chatId = :chatId AND timestamp > :afterTimestampExclusive ORDER BY timestamp ASC LIMIT :limit"
-    )
-    suspend fun getMessagesForChatAfterTimestampExclusiveAsc(
-        chatId: String,
-        afterTimestampExclusive: Long,
-        limit: Int,
-    ): List<MessageEntity>
-
-    @Query(
-        """
-        SELECT * FROM messages
-        WHERE chatId = :chatId
-            AND (:afterTimestampExclusive IS NULL OR timestamp > :afterTimestampExclusive)
-            AND (:beforeTimestampExclusive IS NULL OR timestamp < :beforeTimestampExclusive)
-            AND (:upToTimestampInclusive IS NULL OR timestamp <= :upToTimestampInclusive)
-        ORDER BY timestamp ASC
-        """
-    )
-    suspend fun getMessagesForChatInRangeAsc(
-        chatId: String,
-        afterTimestampExclusive: Long?,
-        beforeTimestampExclusive: Long?,
-        upToTimestampInclusive: Long?,
-    ): List<MessageEntity>
-
-    @Query(
-        "SELECT * FROM messages WHERE chatId = :chatId AND timestamp <= :maxTimestamp ORDER BY timestamp DESC LIMIT :limit"
-    )
-    suspend fun getMessagesForChatBeforeTimestampDesc(
-        chatId: String,
-        maxTimestamp: Long,
-        limit: Int
-    ): List<MessageEntity>
-
-    @Query(
-        "SELECT * FROM messages WHERE chatId = :chatId AND timestamp < :beforeTimestampExclusive ORDER BY timestamp DESC LIMIT :limit"
-    )
-    suspend fun getMessagesForChatBeforeTimestampExclusiveDesc(
-        chatId: String,
-        beforeTimestampExclusive: Long,
-        limit: Int,
-    ): List<MessageEntity>
 
     @Query(
         "SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = :chatId AND timestamp < :beforeTimestampExclusive LIMIT 1)"
@@ -289,10 +209,6 @@ interface MessageDao {
     /** 删除指定聊天的所有消息 */
     @Query("DELETE FROM messages WHERE chatId = :chatId")
     suspend fun deleteAllMessagesForChat(chatId: String)
-
-    /** 根据时间戳查找消息 */
-    @Query("SELECT * FROM messages WHERE chatId = :chatId AND timestamp = :timestamp LIMIT 1")
-    suspend fun getMessageByTimestamp(chatId: String, timestamp: Long): MessageEntity?
 
     /** 删除指定聊天中从某个时间戳开始的所有消息 */
     @Query("DELETE FROM messages WHERE chatId = :chatId AND timestamp >= :timestamp")

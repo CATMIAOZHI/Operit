@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.api.chat.enhance
 
+import com.ai.assistance.operit.api.chat.protocol.ExecutableToolProtocolParser
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.stream.StreamLogger
@@ -9,6 +10,373 @@ import org.junit.Test
 import org.mockito.Mockito
 
 class ToolInvocationExtractionTest {
+    @Test
+    fun executableExtraction_ignoresUnknownUnclosedMarkupBeforeTool() = runBlocking {
+        val content =
+            "usage:<bytes>, limit:<bytes>\n" +
+                "<tool_avwh name=\"inspect\">" +
+                "<param name=\"path\">/tmp/actual</param>" +
+                "</tool_avwh>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(listOf("inspect"), invocations.map { it.tool.name })
+        assertEquals("/tmp/actual", invocations.single().tool.parameters.single().value)
+    }
+
+    @Test
+    fun executableExtraction_doesNotTreatArbitraryUnknownTagAsTypePlaceholder() = runBlocking {
+        val content =
+            "label:<x>\n" +
+                "<tool name=\"unsafe\"></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun executableExtraction_failsClosedForUsagePlaceholderWithNarrativeTail() = runBlocking {
+        val content =
+            "usage:<bytes> narrative\n" +
+                "<tool name=\"unsafe\"></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun executableExtraction_failsClosedAfterMalformedUnknownOpening() = runBlocking {
+        val malformedPrefixes =
+            listOf(
+                "<narrative title=\"unfinished\n",
+                "<narrative\n",
+            )
+        val unsafeTool = "<tool name=\"unsafe\"></tool>"
+
+        for (prefix in malformedPrefixes) {
+            val invocations = withoutAndroidLogging {
+                ToolExecutionManager.extractExecutableToolInvocations(prefix + unsafeTool)
+            }
+
+            assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+        }
+    }
+
+    @Test
+    fun executableExtraction_failsClosedAfterMalformedCompleteOpening() = runBlocking {
+        val malformedPrefixes =
+            listOf(
+                "<narrative!>\n",
+                "<think!foo>\n",
+            )
+        val unsafeTool = "<tool name=\"unsafe\"></tool>"
+
+        for (prefix in malformedPrefixes) {
+            val invocations = withoutAndroidLogging {
+                ToolExecutionManager.extractExecutableToolInvocations(prefix + unsafeTool)
+            }
+
+            assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+        }
+    }
+
+    @Test
+    fun executableExtraction_ignoresToolInsideXmlComment() = runBlocking {
+        val content =
+            "<!--\n" +
+                "<tool name=\"unsafe\"></tool>\n" +
+                "-->\n" +
+                "<tool name=\"safe\"></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(listOf("safe"), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun executableExtraction_failsClosedInsideUnclosedXmlComment() = runBlocking {
+        val content =
+            "<!--\n" +
+                "<tool name=\"unsafe\"></tool>\n" +
+                "<tool name=\"also_unsafe\"></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun executableExtraction_ignoresParametersInsideMalformedCompleteContainer() = runBlocking {
+        val content =
+            "<tool name=\"write_file\">" +
+                "<narrative!><param name=\"path\">/unsafe</param></narrative!>" +
+                "</tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun truncationInspection_recognizesTopLevelPartialToolAfterFailClosedScan() {
+        val inspection =
+            ExecutableToolProtocolParser.inspectTruncation(
+                "<tool name=\"visit_web\"",
+            )
+
+        assertEquals("tool", inspection.truncatedTool?.tagName)
+        assertEquals("<tool name=\"visit_web\"", inspection.truncatedTool?.fragment)
+    }
+
+    @Test
+    fun executableExtraction_ignoresToolShapedTextInsideInlineCode() = runBlocking {
+        val content =
+            "`<tool name=\"example\"><param name=\"path\">/fake</param></tool>`\n" +
+                "<tool name=\"read_file\"><param name=\"path\">/real</param></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(listOf("read_file"), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun executableExtraction_ignoresToolShapedTextInsideFencedCodeAfterProse() = runBlocking {
+        val content =
+            "Example: ```xml\n" +
+                "<tool name=\"example\"><param name=\"path\">/fake</param></tool>\n" +
+                "```\n" +
+                "<tool name=\"read_file\"><param name=\"path\">/real</param></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(listOf("read_file"), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun executableExtraction_preservesAdjacentToolCalls() = runBlocking {
+        val content =
+            "<tool name=\"first\"></tool>" +
+                "<tool name=\"second\"></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(listOf("first", "second"), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun executableExtraction_acceptsLegacyParameterSpacing() = runBlocking {
+        val content =
+            "<tool name=\"inspect\"><param name = \"path\">/tmp/actual</param></tool>"
+
+        val invocation = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content).single()
+        }
+
+        assertEquals("path", invocation.tool.parameters.single().name)
+        assertEquals("/tmp/actual", invocation.tool.parameters.single().value)
+    }
+
+    @Test
+    fun executableExtraction_acceptsSingleQuotedParameterName() = runBlocking {
+        val content =
+            "<tool name=\"inspect\"><param name='path'>/tmp/actual</param></tool>"
+
+        val invocation = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content).single()
+        }
+
+        assertEquals("path", invocation.tool.parameters.single().name)
+        assertEquals("/tmp/actual", invocation.tool.parameters.single().value)
+    }
+
+    @Test
+    fun executableExtraction_doesNotCloseToolInsideCdataParameter() = runBlocking {
+        val payload = "script </tool> with <think>literal</think>"
+        val content =
+            "<tool name=\"write_file\">" +
+                "<param name=\"content\"><![CDATA[$payload]]></param>" +
+                "</tool>"
+
+        val invocation = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content).single()
+        }
+
+        assertEquals(payload, invocation.tool.parameters.single().value)
+    }
+
+    @Test
+    fun executableExtraction_doesNotBorrowClosingTagFromNestedTool() = runBlocking {
+        val content =
+            "<tool name=\"truncated\">" +
+                "<tool name=\"real\"></tool>" +
+                "</tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun executableExtraction_ignoresParametersInsideUnknownContainers() = runBlocking {
+        val content =
+            "<tool name=\"write_file\">" +
+                "<narrative><param name=\"path\">/unsafe</param></narrative>" +
+                "</tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(listOf("write_file"), invocations.map { it.tool.name })
+        assertEquals(emptyList<String>(), invocations.single().tool.parameters)
+    }
+
+    @Test
+    fun executableExtraction_ignoresToolInsideClosedUnknownContainer() = runBlocking {
+        val content =
+            "<bytes>Note: <tool name=\"unsafe\"></tool></bytes>" +
+                "<tool name=\"safe\"></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(listOf("safe"), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun executableExtraction_failsClosedInsideUnclosedNarrativeContainer() = runBlocking {
+        val content =
+            "<bytes>Note: <tool name=\"unsafe\"></tool>\n" +
+                "<tool name=\"also_unsafe\"></tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        assertEquals(emptyList<String>(), invocations.map { it.tool.name })
+    }
+
+    @Test
+    fun truncationInspection_ignoresToolShapedCodeExample() {
+        val content =
+            """
+            ```xml
+            <tool name="fake">
+            """.trimIndent()
+
+        val inspection = ExecutableToolProtocolParser.inspectTruncation(content)
+
+        assertEquals(null, inspection.truncatedTool)
+        assertEquals(emptyList<String>(), inspection.completeToolNames)
+    }
+
+    @Test(timeout = 5_000L)
+    fun truncationInspection_handlesManyUnclosedCandidatesInLinearTime() {
+        val content =
+            buildString {
+                repeat(3_000) { index ->
+                    append("<tool name=\"truncated$index\">")
+                }
+            }
+
+        val inspection = ExecutableToolProtocolParser.inspectTruncation(content)
+
+        assertEquals("tool", inspection.truncatedTool?.tagName)
+    }
+
+    @Test
+    fun truncatedRepair_usesQuotedTagEndAndClosesOpenParameter() {
+        val fragment =
+            "<tool name=\"write_file\" title=\"contains > safely\">" +
+                "<param name=\"content\">partial"
+
+        val suffix =
+            ExecutableToolProtocolParser.buildTruncatedToolRepairSuffix(
+                fragment = fragment,
+                fallbackTagName = "tool",
+            )
+
+        assertEquals("</param></tool>", suffix)
+    }
+
+    @Test
+    fun truncatedRepair_ignoresToolCloserInsideCdata() {
+        val fragment =
+            "<tool name=\"write_file\">" +
+                "<param name=\"content\"><![CDATA[text </tool>]]>partial"
+
+        val suffix =
+            ExecutableToolProtocolParser.buildTruncatedToolRepairSuffix(
+                fragment = fragment,
+                fallbackTagName = "tool",
+            )
+
+        assertEquals("</param></tool>", suffix)
+    }
+
+    @Test
+    fun truncatedRepair_closesUnfinishedCdataBeforeParameterAndTool() {
+        val fragment =
+            "<tool name=\"write_file\">" +
+                "<param name=\"content\"><![CDATA[text </tool>"
+
+        val suffix =
+            ExecutableToolProtocolParser.buildTruncatedToolRepairSuffix(
+                fragment = fragment,
+                fallbackTagName = "tool",
+            )
+
+        assertEquals("]]></param></tool>", suffix)
+    }
+
+    @Test
+    fun truncatedRepair_ordersOpenParameterBeforePartialToolCloser() {
+        val fragment =
+            "<tool name=\"write_file\"><param name=\"content\">partial</tool"
+
+        val suffix =
+            ExecutableToolProtocolParser.buildTruncatedToolRepairSuffix(
+                fragment = fragment,
+                fallbackTagName = "tool",
+            )
+
+        assertEquals("", suffix)
+    }
+
+    @Test
+    fun truncatedRepair_readsSingleQuotedToolName() {
+        assertEquals(
+            "visit_web",
+            ExecutableToolProtocolParser.extractAttributeValue(
+                source = "<tool name='visit_web'>",
+                attributeName = "name",
+            ),
+        )
+    }
+
     @Test
     fun markdownExamples_doNotBecomeToolInvocations() = runBlocking {
         val content =

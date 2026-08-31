@@ -32,6 +32,12 @@ set APP_HOME=%DIRNAME%
 @rem Resolve any "." and ".." in APP_HOME to make it shorter.
 for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
 
+@rem Allow this checkout to select its Gradle JDK without changing the user's global environment.
+@rem The machine-local file is ignored by Git and contains one absolute JDK home path.
+set "OPERIT_JAVA_HOME_FILE=%APP_HOME%\.gradle-local\java-home.txt"
+if exist "%OPERIT_JAVA_HOME_FILE%" set /p OPERIT_PROJECT_JAVA_HOME=<"%OPERIT_JAVA_HOME_FILE%"
+if defined OPERIT_PROJECT_JAVA_HOME set "JAVA_HOME=%OPERIT_PROJECT_JAVA_HOME%"
+
 @rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
 set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
 

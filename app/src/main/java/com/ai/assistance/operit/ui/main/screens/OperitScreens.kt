@@ -28,6 +28,7 @@ import com.ai.assistance.operit.ui.common.NavItem
 import com.ai.assistance.operit.ui.features.about.screens.AboutScreen
 import com.ai.assistance.operit.ui.features.assistant.screens.AssistantConfigScreen
 import com.ai.assistance.operit.ui.features.chat.screens.AIChatScreen
+import com.ai.assistance.operit.ui.features.chat.screens.HiddenChatsScreen
 import com.ai.assistance.operit.ui.features.demo.screens.ShizukuDemoScreen
 import com.ai.assistance.operit.ui.features.help.screens.HelpScreen
 import com.ai.assistance.operit.ui.features.memory.screens.MemoryScreen
@@ -54,7 +55,6 @@ import com.ai.assistance.operit.ui.features.settings.screens.AgentProfileSetting
 import com.ai.assistance.operit.ui.features.settings.screens.ExternalHttpChatSettingsScreen
 import com.ai.assistance.operit.ui.features.settings.screens.FunctionalConfigScreen
 import com.ai.assistance.operit.ui.features.settings.screens.GlobalDisplaySettingsScreen
-import com.ai.assistance.operit.ui.features.settings.screens.GitHubAccountScreen
 import com.ai.assistance.operit.ui.features.settings.screens.LanguageSettingsScreen
 import com.ai.assistance.operit.ui.features.settings.screens.LayoutAdjustmentSettingsScreen
 import com.ai.assistance.operit.ui.features.settings.screens.ModelConfigScreen
@@ -166,10 +166,31 @@ sealed class Screen(
                     onNavigateToOnboardingModelConfig = { navigateTo(ModelConfigOnboarding) },
                     onNavigateToModelPrompts = { navigateTo(ModelPromptsSettings) },
                     onNavigateToPackageManager = { navigateTo(Packages) },
+                    onNavigateBack = onGoBack,
                     onLoading = onLoading,
                     onError = onError,
                     onGestureConsumed = onGestureConsumed
             )
+        }
+    }
+
+    /**
+     * 隐藏聊天列表（阅读伴侣审计等隐藏入口专用）。无侧栏入口：仅能通过
+     * ChatHistorySelector 的“隐藏聊天”入口与路由 native.hidden_chats 进入；
+     * 只能查看/删除，审计聊天不可取消隐藏。
+     */
+    data object HiddenChats : Screen(titleRes = R.string.hidden_chats_title) {
+        @Composable
+        override fun Content(
+                navController: NavController,
+                navigateTo: ScreenNavigationHandler,
+                onGoBack: () -> Unit,
+                hasBackgroundImage: Boolean,
+                onLoading: (Boolean) -> Unit,
+                onError: (String) -> Unit,
+                onGestureConsumed: (Boolean) -> Unit
+        ) {
+            HiddenChatsScreen()
         }
     }
 
@@ -215,7 +236,8 @@ sealed class Screen(
                         )
                     )
                 },
-                onOpenTerminalStartupServices = { navigateTo(TerminalStartupServices) }
+                onOpenTerminalStartupServices = { navigateTo(TerminalStartupServices) },
+                onOpenMarket = { navigateTo(Market(MarketHomeTab.ALL)) },
             )
         }
     }
@@ -250,17 +272,11 @@ sealed class Screen(
         ) {
             UnifiedMarketScreen(
                 initialTab = initialTab,
-                onNavigateToArtifactPublish = { navigateTo(ArtifactPublish) },
-                onNavigateToRepoPublish = { type -> navigateTo(RepoPublish(type)) },
-                onNavigateToMarketManage = { navigateTo(MarketManage) },
                 onNavigateToDetail = { issue ->
                     navigateTo(MarketEntryDetail(issue))
                 },
                 onNavigateToCategory = { categoryId ->
                     navigateTo(MarketCategory(categoryId))
-                },
-                onNavigateToNotifications = {
-                    navigateTo(MarketNotifications)
                 }
             )
         }
@@ -330,13 +346,6 @@ sealed class Screen(
                 initialEntry = entry,
                 fromManage = fromManage,
                 onNavigateBack = onGoBack,
-                onPublishNewVersion = { target ->
-                    when (target.type.lowercase()) {
-                        "script", "package" -> navigateTo(ArtifactContinuePublish(target.toArtifactPublishClusterContext()))
-                        "skill" -> navigateTo(RepoPublishVersion(MarketStatsType.SKILL, target))
-                        "mcp" -> navigateTo(RepoPublishVersion(MarketStatsType.MCP, target))
-                    }
-                },
                 onNavigateToAuthor = { authorId, authorLogin, authorAvatarUrl ->
                     navigateTo(
                         MarketAuthor(
@@ -616,7 +625,6 @@ sealed class Screen(
             SettingsScreen(
                     navigateToToolPermissions = { navigateTo(ToolPermission) },
                     onNavigateToUserPreferences = { navigateTo(UserPreferencesSettings) },
-                    navigateToGitHubAccount = { navigateTo(GitHubAccount) },
                     navigateToModelConfig = { navigateTo(ModelConfig) },
                     navigateToAgentProfiles = { navigateTo(AgentProfiles) },
                     navigateToThemeSettings = { navigateTo(ThemeSettings) },
@@ -634,21 +642,6 @@ sealed class Screen(
                     navigateToContextSummarySettings = { navigateTo(ContextSummarySettings) },
                     navigateToLayoutAdjustmentSettings = { navigateTo(LayoutAdjustmentSettings) }
             )
-        }
-    }
-
-    data object GitHubAccount : Screen(navItem = NavItem.Settings, titleRes = R.string.github_account) {
-        @Composable
-        override fun Content(
-            navController: NavController,
-            navigateTo: ScreenNavigationHandler,
-            onGoBack: () -> Unit,
-            hasBackgroundImage: Boolean,
-            onLoading: (Boolean) -> Unit,
-            onError: (String) -> Unit,
-            onGestureConsumed: (Boolean) -> Unit
-        ) {
-            GitHubAccountScreen()
         }
     }
 

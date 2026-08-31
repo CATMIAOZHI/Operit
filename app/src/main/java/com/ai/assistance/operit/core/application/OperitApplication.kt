@@ -52,6 +52,7 @@ import com.ai.assistance.operit.data.preferences.preferencesManager
 import com.ai.assistance.operit.data.repository.CustomEmojiRepository
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.data.stats.TokenStatsStartupCoordinator
+import com.ai.assistance.operit.data.pricing.ModelPricingCatalogRepository
 import com.ai.assistance.operit.ui.features.chat.webview.LocalWebServer
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.editor.language.LanguageFactory
 import com.ai.assistance.operit.util.GlobalExceptionHandler
@@ -304,6 +305,13 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
         AppLogger.d(TAG, "【启动计时】JSON序列化器初始化完成 - ${System.currentTimeMillis() - startTime}ms")
 
+        // Pricing is loaded and refreshed off the startup/request hot path. Until this finishes,
+        // DefaultModelPricingCollect safely serves its bundled JVM-visible fallback table.
+        applicationScope.launch(Dispatchers.IO) {
+            runCatching { ModelPricingCatalogRepository.getInstance(applicationContext) }
+                .onFailure { AppLogger.w(TAG, "Pricing catalog initialization failed", it) }
+        }
+
         memoryAutoSaveScheduler = MemoryAutoSaveScheduler(applicationContext, applicationScope)
             .also { it.start() }
         AppLogger.d(TAG, "【启动计时】长期记忆自动保存轮询器启动完成 - ${System.currentTimeMillis() - startTime}ms")
@@ -387,6 +395,17 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                 AppLogger.w(
                     TAG,
                     "Marked $reconciledRuns unfinished Subagent runs as INTERRUPTED after restart",
+                )
+            }
+            runCatching {
+                com.ai.assistance.operit.features.reading.ReadingCompanionStore(
+                    applicationContext
+                ).reconcileAfterProcessStart(now = startTime)
+            }.onFailure { error ->
+                AppLogger.w(
+                    TAG,
+                    "Reading companion reconciliation failed after restart",
+                    error,
                 )
             }
             AppLogger.d(TAG, "【启动计时】数据库预加载完成（异步） - ${System.currentTimeMillis() - dbStartTime}ms")

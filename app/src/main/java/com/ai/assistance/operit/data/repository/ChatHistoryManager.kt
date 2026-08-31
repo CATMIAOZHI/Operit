@@ -87,6 +87,17 @@ private val Context.currentChatIdDataStore by preferencesDataStore(name = "curre
 internal fun normalizeChatFolderId(folderId: String?): String? =
     folderId.takeUnless { it == SYSTEM_UNGROUPED_FOLDER_ID }
 
+/**
+ * 阅读伴侣审计聊天永久隐藏前缀。hiddenReason 以该前缀开头的聊天只能查看/删除，
+ * 任何路径都禁止取消隐藏（见 [ChatHistoryManager.setChatHidden] 与 merge 保留规则）。
+ */
+internal const val READING_COMPANION_PERMANENT_HIDDEN_REASON_PREFIX =
+    "READING_COMPANION_AUDIT_"
+
+internal fun ChatHistory.isPermanentHiddenAuditChat(): Boolean =
+    isHidden &&
+        hiddenReason?.startsWith(READING_COMPANION_PERMANENT_HIDDEN_REASON_PREFIX) == true
+
 internal val OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS =
     listOf(
         "id",
@@ -104,11 +115,52 @@ internal val OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS =
         "modelConfigIdSnapshot",
         "modelIndexSnapshot",
         "toolInvocationCount",
+        "externalOwnerType",
+        "externalOwnerId",
+        "modelRoundCount",
         "archivedAt",
     )
 
 internal val OPERIT_ARCHIVE_CHAT_TODO_SNAPSHOT_COLUMNS =
     listOf("chatId", "position", "content", "status", "priority")
+
+internal const val OPERIT_ARCHIVE_CONTENT_CHUNK_BYTE_COUNT = 65_536
+internal const val OPERIT_ARCHIVE_CONTENT_INITIAL_PROJECTION =
+    "COALESCE(" +
+        "SUBSTR(CAST(content AS BLOB), 1, $OPERIT_ARCHIVE_CONTENT_CHUNK_BYTE_COUNT), X'') " +
+        "AS contentChunkBytes, LENGTH(CAST(content AS BLOB)) AS contentByteCount"
+internal const val OPERIT_ARCHIVE_CONTENT_CHUNK_EXPRESSION =
+    "SUBSTR(CAST(content AS BLOB), ?, ?)"
+
+internal fun materializeOperitArchiveUtf8Content(
+    initialChunk: ByteArray,
+    contentByteCount: Long,
+    entityDescription: String,
+    readChunk: (startByte: Long, byteCount: Int) -> ByteArray?,
+): String {
+    if (contentByteCount <= initialChunk.size.toLong()) {
+        return initialChunk.toString(StandardCharsets.UTF_8)
+    }
+
+    val content = ByteArrayOutputStream(initialChunk.size * 2)
+    content.write(initialChunk)
+    var startByte = initialChunk.size.toLong() + 1L
+    while (startByte <= contentByteCount) {
+        val chunk =
+            checkNotNull(readChunk(startByte, OPERIT_ARCHIVE_CONTENT_CHUNK_BYTE_COUNT)) {
+                "Archived chat row disappeared while reading content: $entityDescription"
+            }
+        check(chunk.isNotEmpty()) {
+            "Archived chat content ended before its recorded length: $entityDescription"
+        }
+        content.write(chunk)
+        startByte += chunk.size
+    }
+    check(content.size().toLong() == contentByteCount) {
+        "Archived chat content length changed while reading: $entityDescription"
+    }
+    return content.toByteArray().toString(StandardCharsets.UTF_8)
+}
 
 internal fun remapArchivedParentToolCallIds(
     chat: OperitArchivedChat,
@@ -174,6 +226,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
     private val chatBranchRepository = ChatBranchRepository(database)
     private val messageDao = database.messageDao()
     private val messageVariantDao = database.messageVariantDao()
+    private val chatContentDao = database.chatContentDao()
     private val chatTodoDao = database.chatTodoDao()
     private val subagentRunDao = database.subagentRunDao()
     private val subagentRunRepository = SubagentRunRepository.getInstance(context)
@@ -376,7 +429,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
             return emptyList()
         }
         val visibleTimestamps = messageEntities.map { it.timestamp }
-        val variants = messageVariantDao.getVariantsForMessages(chatId, visibleTimestamps)
+        val variants = chatContentDao.getVariantsForMessages(chatId, visibleTimestamps)
         return hydrateMessages(messageEntities, variants)
     }
 
@@ -448,14 +501,49 @@ class ChatHistoryManager private constructor(private val context: Context) {
             pinned = getInt(getColumnIndexOrThrow("pinned")) != 0,
             isFavorite = getInt(getColumnIndexOrThrow("isFavorite")) != 0,
             lastMessageAt = longOrNull("lastMessageAt"),
+            isHidden = getInt(getColumnIndexOrThrow("isHidden")) != 0,
+            hiddenReason = stringOrNull("hiddenReason"),
         )
 
-    private fun Cursor.toSnapshotMessageEntity(): MessageEntity =
-        MessageEntity(
-            messageId = getLong(getColumnIndexOrThrow("messageId")),
+    private fun SQLiteDatabase.materializeSnapshotContent(
+        initialChunk: ByteArray,
+        contentByteCount: Long,
+        entityId: Long,
+        chunkQuery: String,
+    ): String =
+        materializeOperitArchiveUtf8Content(
+            initialChunk = initialChunk,
+            contentByteCount = contentByteCount,
+            entityDescription = "entityId=$entityId",
+        ) { startByte, byteCount ->
+                rawQuery(
+                    chunkQuery,
+                    arrayOf(
+                        startByte.toString(),
+                        byteCount.toString(),
+                        entityId.toString(),
+                    ),
+                ).use { cursor ->
+                    check(cursor.moveToFirst()) { "Archived chat row disappeared while reading content" }
+                    cursor.getBlob(0)
+                }
+        }
+
+    private fun Cursor.toSnapshotMessageEntity(snapshot: SQLiteDatabase): MessageEntity {
+        val messageId = getLong(getColumnIndexOrThrow("messageId"))
+        return MessageEntity(
+            messageId = messageId,
             chatId = getString(getColumnIndexOrThrow("chatId")),
             sender = getString(getColumnIndexOrThrow("sender")),
-            content = getString(getColumnIndexOrThrow("content")),
+            content =
+                snapshot.materializeSnapshotContent(
+                    initialChunk = getBlob(getColumnIndexOrThrow("contentChunkBytes")),
+                    contentByteCount = getLong(getColumnIndexOrThrow("contentByteCount")),
+                    entityId = messageId,
+                    chunkQuery =
+                        "SELECT $OPERIT_ARCHIVE_CONTENT_CHUNK_EXPRESSION " +
+                            "FROM messages WHERE messageId = ?",
+                ),
             timestamp = getLong(getColumnIndexOrThrow("timestamp")),
             orderIndex = getInt(getColumnIndexOrThrow("orderIndex")),
             roleName = getString(getColumnIndexOrThrow("roleName")),
@@ -472,14 +560,24 @@ class ChatHistoryManager private constructor(private val context: Context) {
             displayMode = getString(getColumnIndexOrThrow("displayMode")),
             isFavorite = getInt(getColumnIndexOrThrow("isFavorite")) != 0,
         )
+    }
 
-    private fun Cursor.toSnapshotMessageVariantEntity(): MessageVariantEntity =
-        MessageVariantEntity(
-            variantId = getLong(getColumnIndexOrThrow("variantId")),
+    private fun Cursor.toSnapshotMessageVariantEntity(snapshot: SQLiteDatabase): MessageVariantEntity {
+        val variantId = getLong(getColumnIndexOrThrow("variantId"))
+        return MessageVariantEntity(
+            variantId = variantId,
             chatId = getString(getColumnIndexOrThrow("chatId")),
             messageTimestamp = getLong(getColumnIndexOrThrow("messageTimestamp")),
             variantIndex = getInt(getColumnIndexOrThrow("variantIndex")),
-            content = getString(getColumnIndexOrThrow("content")),
+            content =
+                snapshot.materializeSnapshotContent(
+                    initialChunk = getBlob(getColumnIndexOrThrow("contentChunkBytes")),
+                    contentByteCount = getLong(getColumnIndexOrThrow("contentByteCount")),
+                    entityId = variantId,
+                    chunkQuery =
+                        "SELECT $OPERIT_ARCHIVE_CONTENT_CHUNK_EXPRESSION " +
+                            "FROM message_variants WHERE variantId = ?",
+                ),
             roleName = getString(getColumnIndexOrThrow("roleName")),
             provider = getString(getColumnIndexOrThrow("provider")),
             modelName = getString(getColumnIndexOrThrow("modelName")),
@@ -491,6 +589,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
             waitDurationMs = getLong(getColumnIndexOrThrow("waitDurationMs")),
             completedAt = getLong(getColumnIndexOrThrow("completedAt")),
         )
+    }
 
     private fun Cursor.toArchivedSubagentRun(): OperitArchivedSubagentRun =
         OperitArchivedSubagentRun(
@@ -512,6 +611,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     if (isNull(index)) null else getInt(index)
                 },
             toolInvocationCount = getInt(getColumnIndexOrThrow("toolInvocationCount")),
+            externalOwnerType = stringOrNull("externalOwnerType"),
+            externalOwnerId = stringOrNull("externalOwnerId"),
+            modelRoundCount = getInt(getColumnIndexOrThrow("modelRoundCount")),
             archivedAt = longOrNull("archivedAt"),
         )
 
@@ -521,20 +623,34 @@ class ChatHistoryManager private constructor(private val context: Context) {
     ): OperitArchivedChat {
         val messageEntities =
             snapshot.rawQuery(
-                "SELECT * FROM messages WHERE chatId = ? ORDER BY orderIndex",
+                """
+                SELECT messageId, chatId, sender,
+                    $OPERIT_ARCHIVE_CONTENT_INITIAL_PROJECTION,
+                    timestamp, orderIndex, roleName, selectedVariantIndex, provider, modelName,
+                    inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs,
+                    waitDurationMs, completedAt, displayMode, isFavorite
+                FROM messages WHERE chatId = ? ORDER BY orderIndex
+                """.trimIndent(),
                 arrayOf(chatEntity.id),
             ).use { cursor ->
                 buildList {
-                    while (cursor.moveToNext()) add(cursor.toSnapshotMessageEntity())
+                    while (cursor.moveToNext()) add(cursor.toSnapshotMessageEntity(snapshot))
                 }
             }
         val variantsByTimestamp =
             snapshot.rawQuery(
-                "SELECT * FROM message_variants WHERE chatId = ? ORDER BY messageTimestamp, variantIndex",
+                """
+                SELECT variantId, chatId, messageTimestamp, variantIndex,
+                    $OPERIT_ARCHIVE_CONTENT_INITIAL_PROJECTION,
+                    roleName, provider, modelName, inputTokens, outputTokens, cachedInputTokens,
+                    sentAt, outputDurationMs, waitDurationMs, completedAt
+                FROM message_variants
+                WHERE chatId = ? ORDER BY messageTimestamp, variantIndex
+                """.trimIndent(),
                 arrayOf(chatEntity.id),
             ).use { cursor ->
                 buildList {
-                    while (cursor.moveToNext()) add(cursor.toSnapshotMessageVariantEntity())
+                    while (cursor.moveToNext()) add(cursor.toSnapshotMessageVariantEntity(snapshot))
                 }
             }.groupBy { it.messageTimestamp }
         val archivedMessages =
@@ -596,7 +712,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens,
                                currentWindowSize, `group`, folderId, displayOrder, workspace,
                                workspaceEnv, parentChatId, chatKind, characterCardName, characterGroupId,
-                               locked, pinned, isFavorite, lastMessageAt
+                               locked, pinned, isFavorite, lastMessageAt, isHidden, hiddenReason
                         FROM operit_export_source.chats
                         """.trimIndent(),
                     )
@@ -1813,6 +1929,17 @@ class ChatHistoryManager private constructor(private val context: Context) {
             emptyList()
         )
 
+    /** 隐藏聊天（隐藏入口专用，含阅读伴侣审计聊天）。 */
+    val hiddenChatHistoriesFlow =
+        chatDao
+            .observeHiddenChats()
+            .toHistoryFlow()
+            .stateIn(
+                historyFlowScope,
+                SharingStarted.Lazily,
+                emptyList(),
+            )
+
     val chatFoldersFlow =
         chatFolderDao
             .observeFolders()
@@ -1828,6 +1955,18 @@ class ChatHistoryManager private constructor(private val context: Context) {
             chatDao.getAllChatsDirectly().map {
                 it.toChatHistory().copy(folderId = normalizeChatFolderId(it.folderId))
             }
+        }
+
+    suspend fun getVisibleChatHistoriesSnapshot(): List<ChatHistory> =
+        getChatHistoriesSnapshot().filterNot { it.isHidden }
+
+    suspend fun getChatMetadata(chatId: String): ChatHistory? =
+        withContext(Dispatchers.IO) {
+            chatDao.getChatById(chatId)
+                ?.toChatHistory()
+                ?.let { history ->
+                    history.copy(folderId = normalizeChatFolderId(history.folderId))
+                }
         }
 
     suspend fun getChatFoldersSnapshot(): List<ChatFolderEntity> =
@@ -2416,7 +2555,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         afterTimestamp: Long?,
     ): ChatMessage? {
         if (beforeTimestamp == null && afterTimestamp == null) {
-            val hasAnyMessages = messageDao.getMessagesForChatAsc(chatId, 1).isNotEmpty()
+            val hasAnyMessages = messageDao.existsAnyMessage(chatId)
             return if (hasAnyMessages) {
                 AppLogger.w(TAG, "缺少插入锚点，拒绝在非空聊天中插入消息: chatId=$chatId")
                 null
@@ -2427,9 +2566,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
         val beforeMessage =
             when {
-                beforeTimestamp != null -> messageDao.getMessageByTimestamp(chatId, beforeTimestamp)
+                beforeTimestamp != null -> chatContentDao.getMessageByTimestamp(chatId, beforeTimestamp)
                 afterTimestamp != null ->
-                    messageDao
+                    chatContentDao
                         .getMessagesForChatBeforeTimestampExclusiveDesc(
                             chatId,
                             afterTimestamp,
@@ -2441,13 +2580,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
         val afterMessage =
             when {
                 beforeTimestamp != null && afterTimestamp == null ->
-                    messageDao
+                    chatContentDao
                         .getMessagesForChatAfterTimestampExclusiveAsc(
                             chatId,
                             beforeTimestamp,
                             1,
                         ).firstOrNull()
-                afterTimestamp != null -> messageDao.getMessageByTimestamp(chatId, afterTimestamp)
+                afterTimestamp != null -> chatContentDao.getMessageByTimestamp(chatId, afterTimestamp)
                 else -> null
             }
 
@@ -2520,9 +2659,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
             try {
                 val beforeMessage =
                     when {
-                        beforeTimestamp != null -> messageDao.getMessageByTimestamp(chatId, beforeTimestamp)
+                        beforeTimestamp != null -> chatContentDao.getMessageByTimestamp(chatId, beforeTimestamp)
                         afterTimestamp != null ->
-                            messageDao
+                            chatContentDao
                                 .getMessagesForChatBeforeTimestampExclusiveDesc(
                                     chatId,
                                     afterTimestamp,
@@ -2533,13 +2672,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 val afterMessage =
                     when {
                         beforeTimestamp != null && afterTimestamp == null ->
-                            messageDao
+                            chatContentDao
                                 .getMessagesForChatAfterTimestampExclusiveAsc(
                                     chatId,
                                     beforeTimestamp,
                                     1,
                                 ).firstOrNull()
-                        afterTimestamp != null -> messageDao.getMessageByTimestamp(chatId, afterTimestamp)
+                        afterTimestamp != null -> chatContentDao.getMessageByTimestamp(chatId, afterTimestamp)
                         else -> null
                     }
 
@@ -2622,7 +2761,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
             try {
                 database.withTransaction {
                     val baseMessage =
-                        messageDao.getMessageByTimestamp(chatId, messageTimestamp)
+                        chatContentDao.getMessageByTimestamp(chatId, messageTimestamp)
                             ?: throw IllegalArgumentException(
                                 "Message $messageTimestamp does not exist in chat $chatId",
                             )
@@ -2631,7 +2770,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     }
 
                     val variants =
-                        messageVariantDao.getVariantsForMessage(chatId, messageTimestamp)
+                        chatContentDao.getVariantsForMessage(chatId, messageTimestamp)
                             .sortedBy { it.variantIndex }
                     if (variants.isEmpty()) {
                         throw IllegalStateException("Message $messageTimestamp has no deletable variants")
@@ -2739,12 +2878,12 @@ class ChatHistoryManager private constructor(private val context: Context) {
         chatMutex(chatId).withLock {
             try {
                 database.withTransaction {
-                    val existingMessage = messageDao.getMessageByTimestamp(chatId, message.timestamp)
+                    val existingMessage = chatContentDao.getMessageByTimestamp(chatId, message.timestamp)
 
                     if (existingMessage != null) {
                         if (message.selectedVariantIndex > 0) {
                             val existingVariant =
-                                messageVariantDao.getVariantForMessage(
+                                chatContentDao.getVariantForMessage(
                                     chatId,
                                     message.timestamp,
                                     message.selectedVariantIndex,
@@ -2841,7 +2980,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         chatMutex(chatId).withLock {
             try {
                 val existingMessage =
-                    messageDao.getMessageByTimestamp(chatId, timestamp) ?: return@withLock
+                    chatContentDao.getMessageByTimestamp(chatId, timestamp) ?: return@withLock
                 if (existingMessage.isFavorite == isFavorite) {
                     return@withLock
                 }
@@ -2865,13 +3004,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return chatMutex(chatId).withLock {
             database.withTransaction {
                 val baseMessage =
-                    messageDao.getMessageByTimestamp(chatId, messageTimestamp)
+                    chatContentDao.getMessageByTimestamp(chatId, messageTimestamp)
                         ?: throw IllegalArgumentException("Message $messageTimestamp does not exist in chat $chatId")
                 if (baseMessage.sender != "ai") {
                     throw IllegalArgumentException("Only AI messages can have regenerated variants")
                 }
                 val nextVariantIndex =
-                    messageVariantDao.getVariantsForMessage(chatId, messageTimestamp).size + 1
+                    chatContentDao.getVariantsForMessage(chatId, messageTimestamp).size + 1
                 messageVariantDao.insertVariant(
                     MessageVariantEntity.fromChatMessage(
                         chatId = chatId,
@@ -2903,10 +3042,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
     ) {
         chatMutex(chatId).withLock {
             database.withTransaction {
-                messageDao.getMessageByTimestamp(chatId, messageTimestamp)
+                chatContentDao.getMessageByTimestamp(chatId, messageTimestamp)
                     ?: throw IllegalArgumentException("Message $messageTimestamp does not exist in chat $chatId")
                 if (selectedVariantIndex > 0) {
-                    messageVariantDao.getVariantForMessage(chatId, messageTimestamp, selectedVariantIndex)
+                    chatContentDao.getVariantForMessage(chatId, messageTimestamp, selectedVariantIndex)
                         ?: throw IllegalArgumentException(
                             "Variant $selectedVariantIndex does not exist for message $messageTimestamp",
                         )
@@ -3200,6 +3339,61 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return newHistory
     }
 
+    /**
+     * 创建一个隐藏的普通顶层聊天（chatKind=NORMAL、parentChatId=null、isHidden=true）。
+     *
+     * 阅读伴侣审计父聊天（每书一个 hiddenReason=READING_COMPANION_AUDIT_ROOT:<bookId>）
+     * 使用本入口创建；隐藏聊天不进入普通列表/统计，只能通过隐藏入口查看与删除。
+     */
+    suspend fun createHiddenNormalChat(title: String, hiddenReason: String): ChatHistory {
+        require(hiddenReason.isNotBlank()) { "hiddenReason is required for hidden chats" }
+        val now = System.currentTimeMillis()
+        val entity =
+            ChatEntity(
+                title = title,
+                createdAt = now,
+                updatedAt = now,
+                displayOrder = -now,
+                chatKind = ChatKind.NORMAL.name,
+                isHidden = true,
+                hiddenReason = hiddenReason,
+            )
+        chatDao.insertChat(entity)
+        return entity.toChatHistory().copy(folderId = normalizeChatFolderId(entity.folderId))
+    }
+
+    /**
+     * 切换聊天隐藏状态。hiddenReason 以 [READING_COMPANION_PERMANENT_HIDDEN_REASON_PREFIX]
+     * 开头的审计聊天永久隐藏，禁止 hidden=false（只能查看/删除）。
+     */
+    suspend fun setChatHidden(
+        chatId: String,
+        hidden: Boolean,
+        hiddenReason: String? = null,
+    ): Boolean {
+        val before = chatDao.getChatById(chatId) ?: return false
+        val effectiveReason = before.hiddenReason ?: hiddenReason
+        if (
+            !hidden &&
+            effectiveReason?.startsWith(READING_COMPANION_PERMANENT_HIDDEN_REASON_PREFIX) == true
+        ) {
+            throw IllegalStateException(
+                "Reading companion audit chats are permanently hidden and cannot be unhidden"
+            )
+        }
+        if (hidden && hiddenReason.isNullOrBlank()) {
+            throw IllegalArgumentException("hiddenReason is required when hiding a chat")
+        }
+        chatDao.updateChat(
+            before.copy(
+                isHidden = hidden,
+                hiddenReason = if (hidden) hiddenReason else null,
+                updatedAt = System.currentTimeMillis(),
+            )
+        )
+        return true
+    }
+
     suspend fun createFolderWithInitialChat(
         parentFolderId: String?,
         folderName: String,
@@ -3425,7 +3619,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
                 // AppLogger.d(TAG, "直接从数据库加载聊天 $chatId 的消息")
-                val messageEntities = messageDao.getMessagesForChat(chatId)
+                val messageEntities = chatContentDao.getMessagesForChat(chatId)
                 // AppLogger.d(TAG, "聊天 $chatId 共加载 ${messages.size} 条消息")
                 hydrateMessages(chatId, messageEntities)
             } catch (e: Exception) {
@@ -3448,17 +3642,17 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 val messageEntities = when (normalizedOrder) {
                     "desc" -> {
                         if (effectiveLimit != null) {
-                            messageDao.getMessagesForChatDesc(chatId, effectiveLimit)
+                            chatContentDao.getMessagesForChatDesc(chatId, effectiveLimit)
                         } else {
-                            messageDao.getMessagesForChat(chatId).asReversed()
+                            chatContentDao.getMessagesForChat(chatId).asReversed()
                         }
                     }
 
                     else -> {
                         if (effectiveLimit != null) {
-                            messageDao.getMessagesForChatAsc(chatId, effectiveLimit)
+                            chatContentDao.getMessagesForChatAsc(chatId, effectiveLimit)
                         } else {
-                            messageDao.getMessagesForChat(chatId)
+                            chatContentDao.getMessagesForChat(chatId)
                         }
                     }
                 }
@@ -3483,8 +3677,8 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 val limit = end - start + 1
 
                 val messageEntities = when (normalizedOrder) {
-                    "desc" -> messageDao.getMessagesForChatDescRange(chatId, start, limit)
-                    else -> messageDao.getMessagesForChatAscRange(chatId, start, limit)
+                    "desc" -> chatContentDao.getMessagesForChatDescRange(chatId, start, limit)
+                    else -> chatContentDao.getMessagesForChatAscRange(chatId, start, limit)
                 }
 
                 hydrateMessages(chatId, messageEntities)
@@ -3982,7 +4176,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         else -> messageDao.getLatestSummaryTimestamp(chatId)
                     }
                 val messageEntities =
-                    messageDao.getMessagesForChatInRangeAsc(
+                    chatContentDao.getMessagesForChatInRangeAsc(
                         chatId = chatId,
                         afterTimestampExclusive = latestSummaryTimestamp,
                         beforeTimestampExclusive = beforeTimestampExclusive,
@@ -4013,9 +4207,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 val latestSummaryTimestamp = messageDao.getLatestSummaryTimestamp(chatId)
                 val messageEntities =
                     if (latestSummaryTimestamp != null) {
-                        messageDao.getMessagesForChatFromTimestampAsc(chatId, latestSummaryTimestamp)
+                        chatContentDao.getMessagesForChatFromTimestampAsc(chatId, latestSummaryTimestamp)
                     } else {
-                        messageDao.getMessagesForChat(chatId)
+                        chatContentDao.getMessagesForChat(chatId)
                     }
                 hydrateMessages(chatId, messageEntities)
             } catch (e: Exception) {
@@ -4034,13 +4228,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 messageDao.getLatestSummaryTimestampUpTo(chatId, upToTimestampInclusive)
             val messageEntities =
                 if (latestSummaryTimestamp != null) {
-                    messageDao.getMessagesForChatWindowAsc(
+                    chatContentDao.getMessagesForChatWindowAsc(
                         chatId = chatId,
                         startTimestampInclusive = latestSummaryTimestamp,
                         endTimestampInclusive = upToTimestampInclusive
                     )
                 } else {
-                    messageDao.getMessagesForChatInRangeAsc(
+                    chatContentDao.getMessagesForChatInRangeAsc(
                         chatId = chatId,
                         afterTimestampExclusive = null,
                         beforeTimestampExclusive = null,
@@ -4081,7 +4275,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 val messageEntities =
-                    messageDao.getMessagesForChatFromTimestampAsc(chatId, startTimestampInclusive)
+                    chatContentDao.getMessagesForChatFromTimestampAsc(chatId, startTimestampInclusive)
                 hydrateMessages(chatId, messageEntities)
             } catch (e: Exception) {
                 AppLogger.e(TAG, "按起始时间加载聊天消息失败", e)
@@ -4098,7 +4292,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 val messageEntities =
-                    messageDao.getMessagesForChatWindowAsc(
+                    chatContentDao.getMessagesForChatWindowAsc(
                         chatId = chatId,
                         startTimestampInclusive = startTimestampInclusive,
                         endTimestampInclusive = endTimestampInclusive,
@@ -4119,7 +4313,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 val messageEntities =
-                    messageDao.getMessagesForChatAfterTimestampExclusiveAsc(
+                    chatContentDao.getMessagesForChatAfterTimestampExclusiveAsc(
                         chatId,
                         afterTimestampExclusive,
                         limit,
@@ -4140,7 +4334,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 val messageEntities =
-                    messageDao
+                    chatContentDao
                         .getMessagesForChatBeforeTimestampExclusiveDesc(
                             chatId,
                             beforeTimestampExclusive,
@@ -4191,13 +4385,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
             try {
                 val messageEntities =
                     if (beforeTimestampExclusive != null) {
-                        messageDao.getMessagesForChatBeforeTimestampExclusiveDesc(
+                        chatContentDao.getMessagesForChatBeforeTimestampExclusiveDesc(
                             chatId,
                             beforeTimestampExclusive,
                             limit,
                         )
                     } else {
-                        messageDao.getMessagesForChatDesc(chatId, limit)
+                        chatContentDao.getMessagesForChatDesc(chatId, limit)
                     }
                 hydrateMessages(chatId, messageEntities)
             } catch (e: Exception) {
@@ -4215,7 +4409,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 val messageEntities =
-                    messageDao.getMessagesForChatBeforeTimestampDesc(
+                    chatContentDao.getMessagesForChatBeforeTimestampDesc(
                         chatId,
                         maxTimestampInclusive,
                         limit,
@@ -4504,6 +4698,10 @@ internal fun mergePersistedChatEntity(
         // UI snapshot and must not undo a completed structural move.
         folderId = if (preserveStructure) existing.folderId else incoming.folderId,
         displayOrder = if (preserveStructure) existing.displayOrder else incoming.displayOrder,
+        // Hiding state is repository-owned: a legacy archive without the flag must never
+        // unhide an existing hidden chat (audit chats are permanently hidden).
+        isHidden = existing.isHidden,
+        hiddenReason = existing.hiddenReason,
     )
 
 data class ChatImportResult(

@@ -77,6 +77,9 @@
     <queries>
         <!-- 允许查询和绑定到无障碍服务提供者应用 -->
         <package android:name="com.ai.assistance.operit.provider" />
+        <provider android:authorities="com.legado.app.release.readerProvider" />
+        <provider android:authorities="com.legado.app.debug.readerProvider" />
+        <provider android:authorities="com.legado.app.readerProvider" />
     </queries>
 
     <application
@@ -244,14 +247,6 @@
                 <data android:scheme="https" />
             </intent-filter>
             <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="operitry"
-                    android:host="github-oauth-callback" />
-            </intent-filter>
-            <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
@@ -397,6 +392,13 @@
                 <action android:name="com.ai.assistance.operit.EXTERNAL_CHAT" />
             </intent-filter>
         </receiver>
+
+        <provider
+            android:name=".features.reading.ReadingCompanionAnnotationProvider"
+            android:authorities="${applicationId}.readingCompanionAnnotations"
+            android:enabled="true"
+            android:exported="true"
+            tools:ignore="ExportedContentProvider" />
 
         <service
             android:name=".services.UIDebuggerService"

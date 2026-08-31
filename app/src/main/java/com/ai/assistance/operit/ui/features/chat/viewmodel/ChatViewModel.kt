@@ -58,6 +58,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import com.ai.assistance.operit.ui.floating.ui.pet.AvatarEmotionManager
 import com.ai.assistance.operit.api.voice.VoiceService
 import com.ai.assistance.operit.api.voice.VoiceServiceFactory
@@ -97,6 +98,7 @@ import com.ai.assistance.operit.services.ChatServiceUiBridge
 import com.ai.assistance.operit.services.EmptyChatServiceUiBridge
 import com.ai.assistance.operit.ui.features.chat.util.MessageImageGenerator
 import com.ai.assistance.operit.ui.features.chat.components.CharacterSelectorTarget
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.PendingQueueMessageItem
 enum class ChatHistoryDisplayMode {
     BY_CHARACTER_CARD,
     BY_FOLDER,
@@ -149,6 +151,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     val isSpeechSessionActive: StateFlow<Boolean> = _isSpeechSessionActive.asStateFlow()
     private val _isSpeechPaused = MutableStateFlow(false)
     val isSpeechPaused: StateFlow<Boolean> = _isSpeechPaused.asStateFlow()
+
+    private val pendingMessageQueueStore = PendingMessageQueueStore()
+    internal val pendingMessageQueueStates: StateFlow<Map<String, PendingMessageQueueState>> =
+        pendingMessageQueueStore.states
 
     // 添加自动朗读状态 - Now managed by ApiConfigDelegate
     val isAutoReadEnabled: StateFlow<Boolean> by lazy { apiConfigDelegate.enableAutoRead }
@@ -432,6 +438,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         // Setup additional components
         setupPermissionSystemCollection()
         setupAttachmentDelegateToastCollection()
+        viewModelScope.launch {
+            chatHistories.collect { histories ->
+                pendingMessageQueueStore.syncExistingChatIds(histories.mapTo(mutableSetOf()) { it.id })
+            }
+        }
 
         // 初始化语音服务
         initializeVoiceService()
@@ -738,6 +749,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    /**
+     * 仅切换主聊天页的内存态，不改全局 currentChatId。
+     *
+     * 隐藏审计 transcript 使用此路径，退出或进程重启后仍以用户原来的可见聊天为全局选择。
+     */
+    fun switchChatLocally(chatId: String, scrollToBottom: Boolean = false) {
+        chatHistoryDelegate.switchChat(
+            chatId = chatId,
+            syncToGlobal = false,
+            scrollToBottom = scrollToBottom,
+        )
+    }
+
     fun loadOlderMessagesForCurrentChat() {
         viewModelScope.launch {
             chatHistoryDelegate.loadOlderMessagesForCurrentChat()
@@ -767,15 +791,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun deleteChatHistory(chatId: String) {
         chatHistoryDelegate.deleteChatHistory(chatId) { deleted ->
-            if (!deleted) {
+            if (deleted) {
+                pendingMessageQueueStore.removeChat(chatId)
+            } else {
                 uiStateDelegate.showToast(context.getString(R.string.chat_locked_cannot_delete))
             }
         }
     }
 
     fun clearCurrentChat() {
-        chatHistoryDelegate.clearCurrentChat { deleted ->
+        chatHistoryDelegate.clearCurrentChat { deleted, deletedChatId ->
             if (deleted) {
+                deletedChatId?.let(pendingMessageQueueStore::removeChat)
                 uiStateDelegate.showToast(context.getString(R.string.chat_cleared))
             } else {
                 uiStateDelegate.showToast(context.getString(R.string.chat_locked_cannot_delete))
@@ -1521,6 +1548,79 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     }
 
+    fun trySendQueuedTextMessage(
+        text: String,
+        chatId: String,
+        chatGeneration: Long,
+        promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT,
+    ): Boolean {
+        if (!pendingMessageQueueStore.isCurrentGeneration(chatId, chatGeneration)) return false
+        if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
+        if (isChatBusy(chatId)) return false
+        hideMentionSuggestionPanel()
+        return messageCoordinationDelegate.trySendUserMessageToExistingChat(
+            promptFunctionType = promptFunctionType,
+            chatId = chatId,
+            messageText = text,
+        )
+    }
+
+    suspend fun awaitPendingQueueTargetIdle(
+        chatId: String,
+        timeoutMillis: Long = 30_000L,
+    ): Boolean =
+        withTimeoutOrNull(timeoutMillis) {
+            while (isChatBusy(chatId)) {
+                delay(50L)
+            }
+            true
+        } ?: false
+
+    private fun isChatBusy(chatId: String): Boolean {
+        val summarizingThisChat =
+            messageCoordinationDelegate.isSummarizing.value &&
+                messageCoordinationDelegate.summarizingChatId.value == chatId
+        val sendTriggeredSummaryForThisChat =
+            messageCoordinationDelegate.isSendTriggeredSummarizing.value &&
+                messageCoordinationDelegate.sendTriggeredSummarizingChatId.value == chatId
+        return messageProcessingDelegate.isChatLoading(chatId) ||
+            summarizingThisChat ||
+            sendTriggeredSummaryForThisChat
+    }
+
+    fun enqueuePendingQueueMessage(chatId: String, text: String, isQueueBlocked: Boolean) {
+        pendingMessageQueueStore.enqueue(chatId, text, isQueueBlocked)
+    }
+
+    fun removePendingQueueMessage(chatId: String, messageId: Long): PendingQueueMessageItem? =
+        pendingMessageQueueStore.remove(chatId, messageId)
+
+    fun restorePendingQueueMessage(chatId: String, message: PendingQueueMessageItem) {
+        pendingMessageQueueStore.restore(chatId, message)
+    }
+
+    fun isPendingQueueItemCurrent(chatId: String, message: PendingQueueMessageItem): Boolean =
+        pendingMessageQueueStore.isCurrentGeneration(chatId, message.chatGeneration)
+
+    fun setPendingQueueExpanded(chatId: String, expanded: Boolean) {
+        pendingMessageQueueStore.setExpanded(chatId, expanded)
+    }
+
+    fun hasPendingQueueAutoDequeue(chatId: String, isQueueBlocked: Boolean): Boolean =
+        pendingMessageQueueStore.hasPendingAutoDequeue(chatId, isQueueBlocked)
+
+    fun takeNextPendingQueueAutoDequeue(chatId: String): PendingQueueMessageItem? =
+        pendingMessageQueueStore.takeNextAutoDequeue(chatId)
+
+    fun cancelPendingQueueTarget(chatId: String, chatGeneration: Long): Boolean {
+        if (!pendingMessageQueueStore.isCurrentGeneration(chatId, chatGeneration)) return false
+        pendingMessageQueueStore.suppressNextAutoDequeue(chatId)
+        cancelMessage(chatId)
+        return true
+    }
+
+    fun isPendingQueueTargetBusy(chatId: String): Boolean = isChatBusy(chatId)
+
     suspend fun removeLastVisibleUserMessageFromCurrentChat(text: String): Boolean {
         if (isCurrentTranscriptReadOnly()) return false
         val chatId = currentChatId.value ?: return false
@@ -1654,14 +1754,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun cancelCurrentMessage() {
-        // 先取消总结（如果正在进行）
+        chatHistoryDelegate.currentChatId.value?.let(::cancelMessage)
+    }
+
+    fun cancelMessage(chatId: String) {
         if (::messageCoordinationDelegate.isInitialized) {
-            messageCoordinationDelegate.cancelSummary()
+            messageCoordinationDelegate.cancelSummaryForChat(chatId)
         }
-        val chatId = chatHistoryDelegate.currentChatId.value
-        if (chatId != null) {
-            messageProcessingDelegate.cancelMessage(chatId)
-        }
+        messageProcessingDelegate.cancelMessage(chatId)
     }
 
     // UI状态相关方法

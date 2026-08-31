@@ -143,7 +143,7 @@ org.gradle.parallel=true
 
 ## **5. 第五步：配置 GitHub OAuth 应用**
 
-为了使应用的 GitHub 相关功能（如登录、MCP 包管理）能正常工作，你需要注册自己的 GitHub OAuth Application 并配置 Client ID。
+为了使应用的 GitHub 相关功能（如登录、MCP 包管理）能正常工作，你需要注册自己的 GitHub OAuth Application，并部署一个由你控制的 HTTPS token-exchange broker。APK 只包含公开的 Client ID，不得包含 Client Secret。
 
 1. **创建 GitHub OAuth App:**  
    - 访问你的 GitHub 开发者设置页面：[**GitHub Developer Settings**](https://github.com/settings/developers)
@@ -156,16 +156,22 @@ org.gradle.parallel=true
 2. **获取 Client ID:**  
    创建成功后，页面会显示生成的 **Client ID**。复制这个 ID。
 
-3. **配置项目:**  
+3. **部署 OAuth broker:**
+   - 在 GitHub OAuth App 页面生成 Client Secret，并只将 Client ID 与 Client Secret 放入 broker 的服务端 secret store；不得写入 `local.properties`、BuildConfig、APK、仓库或日志。
+   - broker 必须实现 [`docs/agent/github-oauth-broker.md`](../../agent/github-oauth-broker.md) 中定义的请求、响应、redirect URI 校验和日志安全边界。
+   - 将 broker 部署到你控制的 HTTPS origin，例如 `https://oauth.example.com`；示例配置中的 `https://github-oauth.example.com` 只是占位符，不能直接使用。
+
+4. **配置项目:**
    - 在项目根目录，找到 `local.properties.example` 文件。
    - 复制该文件并重命名为 `local.properties`。
-   - 打开 `local.properties` 文件，将 `"YOUR_OWN_GITHUB_CLIENT_ID_HERE"` 替换为你刚刚复制的 Client ID。
+   - 打开 `local.properties`，填写 OAuth App 的 Client ID 和已部署 broker 的 HTTPS origin。
 
    ```properties
    # 示例:
    GITHUB_CLIENT_ID=iv1.1234567890abcdef
+   GITHUB_OAUTH_BROKER_BASE_URL=https://oauth.example.com
    ```
-   **注意：** `local.properties` 文件已被 Git 忽略，因此你的个人 ID 不会被提交到仓库中，确保了安全。
+   **注意：** `local.properties` 已被 Git 忽略，但仍然只能保存公开的 Client ID 和 broker 地址；Client Secret 必须始终留在 broker 服务端。
 
 ## **6. 第六步：克隆并编译项目**
 

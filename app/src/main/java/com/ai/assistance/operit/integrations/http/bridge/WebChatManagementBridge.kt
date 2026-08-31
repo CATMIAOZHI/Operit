@@ -82,7 +82,7 @@ internal class WebChatManagementBridge(
         items: List<WebChatReorderItem>,
         expectedItems: List<WebChatReorderItem>?,
     ): Boolean {
-        val currentHistories = chatHistoryManager.getChatHistoriesSnapshot()
+        val currentHistories = chatHistoryManager.getVisibleChatHistoriesSnapshot()
         val historiesById = currentHistories.associateBy { it.id }
         if (
             items.map { it.chatId }.distinct().size != items.size ||

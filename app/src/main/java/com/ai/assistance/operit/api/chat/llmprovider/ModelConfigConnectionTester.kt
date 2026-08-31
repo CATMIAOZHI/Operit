@@ -5,6 +5,7 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ToolParameterSchema
 import com.ai.assistance.operit.data.model.ToolPrompt
+import com.ai.assistance.operit.data.model.forSelectedModel
 import com.ai.assistance.operit.data.model.getModelByIndex
 import com.ai.assistance.operit.data.model.getValidModelIndex
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
@@ -54,7 +55,7 @@ object ModelConfigConnectionTester {
     ): ModelConnectionTestReport {
         val actualModelIndex = getValidModelIndex(config.modelName, requestedModelIndex)
         val testedModelName = getModelByIndex(config.modelName, actualModelIndex)
-        val configForTest = config.copy(modelName = testedModelName)
+        val configForTest = config.forSelectedModel(actualModelIndex)
         val items = mutableListOf<ModelConnectionTestItem>()
 
         val service =

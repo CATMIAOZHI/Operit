@@ -99,7 +99,6 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -608,7 +607,7 @@ fun ToolPkgComposeDslToolScreen(
     var isDispatching by remember(containerPackageName, uiModuleId) { mutableStateOf(false) }
     var dispatchingCount by remember(containerPackageName, uiModuleId) { mutableStateOf(0) }
     var hasDispatchedInitialOnLoad by
-        rememberSaveable(routeInstanceId, containerPackageName, uiModuleId) {
+        remember(routeInstanceId, containerPackageName, uiModuleId) {
             mutableStateOf(false)
         }
     var nextDispatchTicket by remember(containerPackageName, uiModuleId) { mutableStateOf(1L) }
