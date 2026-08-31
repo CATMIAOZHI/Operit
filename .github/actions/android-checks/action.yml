@@ -107,8 +107,6 @@ runs:
         set -euo pipefail
         {
           echo "sdk.dir=$ANDROID_HOME"
-          echo 'GITHUB_CLIENT_ID='
-          echo 'GITHUB_CLIENT_SECRET='
         } > local.properties
 
     - name: Restore Android dependency cache

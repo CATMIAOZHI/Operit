@@ -55,7 +55,6 @@ import com.ai.assistance.operit.ui.features.settings.screens.AgentProfileSetting
 import com.ai.assistance.operit.ui.features.settings.screens.ExternalHttpChatSettingsScreen
 import com.ai.assistance.operit.ui.features.settings.screens.FunctionalConfigScreen
 import com.ai.assistance.operit.ui.features.settings.screens.GlobalDisplaySettingsScreen
-import com.ai.assistance.operit.ui.features.settings.screens.GitHubAccountScreen
 import com.ai.assistance.operit.ui.features.settings.screens.LanguageSettingsScreen
 import com.ai.assistance.operit.ui.features.settings.screens.LayoutAdjustmentSettingsScreen
 import com.ai.assistance.operit.ui.features.settings.screens.ModelConfigScreen
@@ -237,7 +236,8 @@ sealed class Screen(
                         )
                     )
                 },
-                onOpenTerminalStartupServices = { navigateTo(TerminalStartupServices) }
+                onOpenTerminalStartupServices = { navigateTo(TerminalStartupServices) },
+                onOpenMarket = { navigateTo(Market(MarketHomeTab.ALL)) },
             )
         }
     }
@@ -272,17 +272,11 @@ sealed class Screen(
         ) {
             UnifiedMarketScreen(
                 initialTab = initialTab,
-                onNavigateToArtifactPublish = { navigateTo(ArtifactPublish) },
-                onNavigateToRepoPublish = { type -> navigateTo(RepoPublish(type)) },
-                onNavigateToMarketManage = { navigateTo(MarketManage) },
                 onNavigateToDetail = { issue ->
                     navigateTo(MarketEntryDetail(issue))
                 },
                 onNavigateToCategory = { categoryId ->
                     navigateTo(MarketCategory(categoryId))
-                },
-                onNavigateToNotifications = {
-                    navigateTo(MarketNotifications)
                 }
             )
         }
@@ -352,13 +346,6 @@ sealed class Screen(
                 initialEntry = entry,
                 fromManage = fromManage,
                 onNavigateBack = onGoBack,
-                onPublishNewVersion = { target ->
-                    when (target.type.lowercase()) {
-                        "script", "package" -> navigateTo(ArtifactContinuePublish(target.toArtifactPublishClusterContext()))
-                        "skill" -> navigateTo(RepoPublishVersion(MarketStatsType.SKILL, target))
-                        "mcp" -> navigateTo(RepoPublishVersion(MarketStatsType.MCP, target))
-                    }
-                },
                 onNavigateToAuthor = { authorId, authorLogin, authorAvatarUrl ->
                     navigateTo(
                         MarketAuthor(
@@ -638,7 +625,6 @@ sealed class Screen(
             SettingsScreen(
                     navigateToToolPermissions = { navigateTo(ToolPermission) },
                     onNavigateToUserPreferences = { navigateTo(UserPreferencesSettings) },
-                    navigateToGitHubAccount = { navigateTo(GitHubAccount) },
                     navigateToModelConfig = { navigateTo(ModelConfig) },
                     navigateToAgentProfiles = { navigateTo(AgentProfiles) },
                     navigateToThemeSettings = { navigateTo(ThemeSettings) },
@@ -656,21 +642,6 @@ sealed class Screen(
                     navigateToContextSummarySettings = { navigateTo(ContextSummarySettings) },
                     navigateToLayoutAdjustmentSettings = { navigateTo(LayoutAdjustmentSettings) }
             )
-        }
-    }
-
-    data object GitHubAccount : Screen(navItem = NavItem.Settings, titleRes = R.string.github_account) {
-        @Composable
-        override fun Content(
-            navController: NavController,
-            navigateTo: ScreenNavigationHandler,
-            onGoBack: () -> Unit,
-            hasBackgroundImage: Boolean,
-            onLoading: (Boolean) -> Unit,
-            onError: (String) -> Unit,
-            onGestureConsumed: (Boolean) -> Unit
-        ) {
-            GitHubAccountScreen()
         }
     }
 

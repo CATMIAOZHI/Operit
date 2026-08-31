@@ -342,13 +342,12 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         chatHistories.find { it.id == currentChatId }
     }
     val isSubagentChat = currentChatView?.chatKind == ChatKind.SUBAGENT.name
-    val isHiddenReadingAuditRun =
+    val isHiddenReadingAuditChat =
         (
-            isSubagentChat &&
-                currentChatView?.isHidden == true &&
-                ReadingCompanionAudit.isHiddenAuditRun(currentChatView.hiddenReason)
+            currentChatView?.isHidden == true &&
+                ReadingCompanionAudit.isPermanentHiddenReason(currentChatView.hiddenReason)
         ) || ReadingCompanionAudit.hasPendingReturnFor(currentChatId)
-    val isReadOnlyTranscript = isSubagentChat || isHiddenReadingAuditRun
+    val isReadOnlyTranscript = isSubagentChat || isHiddenReadingAuditChat
     val subagentRunRepository = remember(context) { SubagentRunRepository.getInstance(context) }
     val currentSubagentRunFlow =
         remember(isSubagentChat, currentChatView?.id) {
@@ -389,10 +388,10 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     }
     BackHandler(
         enabled =
-            isHiddenReadingAuditRun ||
+            isHiddenReadingAuditChat ||
                 (isSubagentChat && currentChatView?.parentChatId != null),
     ) {
-        if (isHiddenReadingAuditRun) {
+        if (isHiddenReadingAuditChat) {
             exitHiddenReadingAuditRun()
         } else {
             currentChatView?.parentChatId?.let { parentChatId ->
@@ -1446,7 +1445,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                     actualViewModel = actualViewModel,
                                     chatHistories = displayedChatHistories,
                                     allChatHistories = visibleAllChatHistories,
-                                    searchableChatHistories = chatHistories,
+                                    searchableChatHistories = visibleAllChatHistories,
                                     currentChatId = currentChatId ?: "",
                                     showChatHistorySelector = showChatHistorySelector,
                                     historyListState = historyListState,

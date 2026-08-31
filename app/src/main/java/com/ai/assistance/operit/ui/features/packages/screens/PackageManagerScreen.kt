@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Store
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.AutoMode
@@ -128,6 +129,7 @@ fun PackageManagerScreen(
     onStartPluginCreation: (PluginCreationIntent) -> Unit = {},
     onOpenToolPkgPluginConfig: (String, String, String, Boolean) -> Unit = { _, _, _, _ -> },
     onOpenTerminalStartupServices: () -> Unit = {},
+    onOpenMarket: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val toolHandler = remember { AIToolHandler.getInstance(context) }
@@ -559,11 +561,22 @@ fun PackageManagerScreen(
             }
         },
         floatingActionButton = {
-            if (selectedTab == PackageTab.PLUGINS || selectedTab == PackageTab.PACKAGES) {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    horizontalAlignment = Alignment.End
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                SmallFloatingActionButton(
+                    onClick = onOpenMarket,
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                 ) {
+                    Icon(
+                        imageVector = Icons.Default.Store,
+                        contentDescription = stringResource(R.string.screen_title_market),
+                    )
+                }
+
+                if (selectedTab == PackageTab.PLUGINS || selectedTab == PackageTab.PACKAGES) {
                     if (packageLoadErrors.value.isNotEmpty()) {
                         SmallFloatingActionButton(
                             onClick = { showPackageLoadErrorsDialog = true },
