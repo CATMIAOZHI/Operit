@@ -175,8 +175,14 @@
       },
       "parameters": [
         {
+          "name": "batch_id",
+          "description": { "zh": "本次批次的唯一标识，用于精确停止", "en": "Unique ID for this batch, used for precise cancellation" },
+          "type": "string",
+          "required": true
+        },
+        {
           "name": "count",
-          "description": { "zh": "数量 1 到 10", "en": "Number of chapters, 1 to 10" },
+          "description": { "zh": "本次最多生成 1 到 999 章", "en": "Maximum chapters to generate this run, 1 to 999" },
           "type": "number",
           "required": true
         },
@@ -195,26 +201,80 @@
       ]
     },
     {
+      "name": "summary_batch_prefs",
+      "description": {
+        "zh": "读取或保存当前书籍的手动摘要范围与单次预算。无参数时读取；传参时保存。章节号从 1 开始。",
+        "en": "Read or save the current book's manual-summary range and per-run budget. No parameters reads; supplied parameters save. Chapter numbers are one-based."
+      },
+      "parameters": [
+        {
+          "name": "start_chapter",
+          "description": { "zh": "起始章号", "en": "Start chapter number" },
+          "type": "number",
+          "required": false
+        },
+        {
+          "name": "end_chapter",
+          "description": { "zh": "结束章号", "en": "End chapter number" },
+          "type": "number",
+          "required": false
+        },
+        {
+          "name": "clear_start",
+          "description": { "zh": "清除已保存的起始章号", "en": "Clear the saved start chapter" },
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "clear_end",
+          "description": { "zh": "清除已保存的结束章号", "en": "Clear the saved end chapter" },
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "budget",
+          "description": { "zh": "本次最多生成 1 到 999 章", "en": "Maximum chapters to generate this run, 1 to 999" },
+          "type": "number",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "cancel_manual_summary_batch",
+      "description": {
+        "zh": "请求当前手动摘要批次在完成正在生成的章节后停止。",
+        "en": "Request that the active manual summary batch stop after its current chapter finishes."
+      },
+      "parameters": [
+        {
+          "name": "batch_id",
+          "description": { "zh": "要停止的批次标识", "en": "ID of the batch to stop" },
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
       "name": "auto_commentary_manual_batch",
       "description": {
-        "zh": "仅在用户明确操作时，为允许提前阅读窗口内的连续章节逐章生成段评。每章创建一个子代理任务，任务内部可能有多轮模型调用；返回实际目标列表和任务数，不会开启或依赖后台自动段评。",
-        "en": "Only after an explicit user action, generate commentary chapter by chapter for a selected range within the read-ahead window. Creates one subagent task per chapter, and each task may use multiple model turns; returns the target list and task count without enabling or relying on background auto commentary."
+        "zh": "仅在用户明确操作时，为已读历史章节或允许提前阅读窗口内的章节逐章生成段评。每章创建一个子代理任务，已有有效段评会跳过；不会开启或依赖后台自动段评。",
+        "en": "Only after an explicit user action, generate commentary chapter by chapter for already-read history or the allowed read-ahead window. Creates one subagent task per chapter, skips fresh commentary, and does not enable or rely on background auto commentary."
       },
       "parameters": [
         {
           "name": "count",
           "description": {
-            "zh": "数量 1 到 10",
-            "en": "Number of chapters, 1 to 10"
+            "zh": "ahead 时必填，数量 1 到 10；read 时可省略并固定每次最多处理 10 个缺失章节",
+            "en": "Required for ahead (1 to 10); optional for read, which always processes up to 10 missing chapters per run"
           },
           "type": "number",
-          "required": true
+          "required": false
         },
         {
           "name": "start_chapter_index",
           "description": {
-            "zh": "从 0 开始的起始章节索引，可省略",
-            "en": "Zero-based start chapter index, optional"
+            "zh": "从 0 开始的起始章节索引；scope=read 时必填，ahead 时可省略",
+            "en": "Zero-based start chapter index; required for scope=read and optional for ahead"
           },
           "type": "number",
           "required": false
@@ -222,11 +282,54 @@
         {
           "name": "end_chapter_index",
           "description": {
-            "zh": "从 0 开始的结束章节索引，可省略",
-            "en": "Zero-based end chapter index, optional"
+            "zh": "从 0 开始的结束章节索引；scope=read 时必填，ahead 时可省略",
+            "en": "Zero-based end chapter index; required for scope=read and optional for ahead"
           },
           "type": "number",
           "required": false
+        },
+        {
+          "name": "batch_id",
+          "description": {
+            "zh": "本次点击的批次标识，用于整批停止",
+            "en": "Batch ID for this user action, used to stop the whole batch"
+          },
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "book_id",
+          "description": {
+            "zh": "界面开始本批次时显示的书籍 ID，用于防止切书后误生成",
+            "en": "Book ID shown when the batch started, preventing generation after a book switch"
+          },
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "scope",
+          "description": {
+            "zh": "ahead（默认）：当前进度之后的提前生成窗口；read：仅当前章节之前的已读历史",
+            "en": "ahead (default): the read-ahead window after current progress; read: already-read history strictly before the current chapter"
+          },
+          "type": "string",
+          "required": false,
+          "default": "ahead"
+        }
+      ]
+    },
+    {
+      "name": "cancel_manual_commentary_batch",
+      "description": {
+        "zh": "请求手动段评批次在当前章节完成后停止。",
+        "en": "Request that a manual commentary batch stop after its current chapter."
+      },
+      "parameters": [
+        {
+          "name": "batch_id",
+          "description": { "zh": "要停止的批次标识", "en": "ID of the batch to stop" },
+          "type": "string",
+          "required": true
         }
       ]
     },
@@ -463,16 +566,32 @@ exports.get_local_files = (params) => run("get_local_files", params);
 exports.refresh_progress = (params) => run("refresh_progress", params);
 exports.manual_batch_summaries = (params) =>
   run("manual_batch_summaries", {
+    batch_id: params && params.batch_id,
     count: params && params.count,
     start_chapter_index: params && params.start_chapter_index,
     end_chapter_index: params && params.end_chapter_index,
   });
+exports.summary_batch_prefs = (params = {}) =>
+  run("summary_batch_prefs", {
+    start_chapter: params.start_chapter,
+    end_chapter: params.end_chapter,
+    clear_start: params.clear_start,
+    clear_end: params.clear_end,
+    budget: params.budget,
+  });
+exports.cancel_manual_summary_batch = (params = {}) =>
+  run("cancel_manual_summary_batch", { batch_id: params.batch_id });
 exports.auto_commentary_manual_batch = (params = {}) =>
   run("auto_commentary_manual_batch", {
     count: params.count,
     start_chapter_index: params.start_chapter_index,
     end_chapter_index: params.end_chapter_index,
+    batch_id: params.batch_id,
+    book_id: params.book_id,
+    scope: params.scope,
   });
+exports.cancel_manual_commentary_batch = (params = {}) =>
+  run("cancel_manual_commentary_batch", { batch_id: params.batch_id });
 exports.list_persisted_files = (params = {}) =>
   run("list_persisted_files", {
     offset: params.offset,

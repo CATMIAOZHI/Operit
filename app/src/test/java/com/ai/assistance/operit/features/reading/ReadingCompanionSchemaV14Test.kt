@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * reading.db v12 → v13 无损升级测试（纯 JVM，sqlite-jdbc）。
+ * reading.db v12 → v14 无损升级测试（纯 JVM，sqlite-jdbc）。
  *
  * 生产路径 `onUpgrade` 用共享常量 [AUTO_COMMENT_RUN_V13_SUBAGENT_COLUMN_DEFINITIONS]
  * 逐列 ALTER（见 [ReadingCompanionStore.ensureAutoCommentRunSubagentColumns] /
@@ -16,14 +16,18 @@ import org.junit.Test
  * - 新列存在且可空列为空、计数列默认 0；
  * - 逐列 ALTER 可重放（列已存在跳过，不报错）。
  */
-class ReadingCompanionSchemaV13Test {
+class ReadingCompanionSchemaV14Test {
 
     @Test
-    fun `store database version is 13 so v12 devices run the upgrade path`() {
-        assertEquals(13, ReadingCompanionStore.DATABASE_VERSION)
+    fun `store database version is 14 so v13 devices run the liveness upgrade path`() {
+        assertEquals(14, ReadingCompanionStore.DATABASE_VERSION)
         // onUpgrade 必然走到 oldVersion < 13 => ensureAutoCommentRunSubagentColumns：
         // 该函数与测试共用 AUTO_COMMENT_RUN_V13_SUBAGENT_COLUMN_DEFINITIONS，见下。
         assertTrue(AUTO_COMMENT_RUN_V13_SUBAGENT_COLUMN_DEFINITIONS.isNotEmpty())
+        assertEquals(
+            "run_heartbeat_at",
+            AUTO_COMMENT_RUN_V14_LIVENESS_COLUMN_DEFINITION.first,
+        )
     }
 
     /** 与生产 v12 形态一致的 auto_comment_runs 建表语句（测试夹具；含 v12 全部列）。 */
@@ -179,6 +183,53 @@ class ReadingCompanionSchemaV13Test {
             }
             // execution_mode 默认值必须是 direct（旧行兼容语义的落库事实）。
             assertEquals("'direct'", columns.getValue("execution_mode").first)
+        }
+    }
+
+    @Test
+    fun `v13 to v14 migration preserves runs and backfills a separate heartbeat`() {
+        DriverManager.getConnection("jdbc:sqlite::memory:").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(v12AutoCommentRunsCreateSql)
+                AUTO_COMMENT_RUN_V13_SUBAGENT_COLUMN_DEFINITIONS.forEach { (name, definition) ->
+                    statement.execute("ALTER TABLE auto_comment_runs ADD COLUMN $name $definition")
+                }
+                statement.execute(
+                    """
+                    INSERT INTO auto_comment_runs (
+                        trigger_source, status, stage, stage_updated_at, comment_count,
+                        started_at, finished_at
+                    ) VALUES
+                        ('manual_summary', 'generating', 'waiting_model', 1200, 0, 1000, NULL),
+                        ('background', 'generated', 'completed', 1800, 3, 1000, 2000)
+                    """.trimIndent(),
+                )
+                val (name, definition) = AUTO_COMMENT_RUN_V14_LIVENESS_COLUMN_DEFINITION
+                statement.execute("ALTER TABLE auto_comment_runs ADD COLUMN $name $definition")
+                statement.execute(
+                    """
+                    UPDATE auto_comment_runs
+                    SET run_heartbeat_at = CASE
+                        WHEN finished_at IS NOT NULL THEN finished_at
+                        WHEN stage_updated_at > 0 THEN stage_updated_at
+                        ELSE started_at
+                    END
+                    WHERE run_heartbeat_at = 0
+                    """.trimIndent(),
+                )
+            }
+            connection.createStatement().use { statement ->
+                statement.executeQuery(
+                    "SELECT id, status, run_heartbeat_at FROM auto_comment_runs ORDER BY id",
+                ).use { rows ->
+                    assertTrue(rows.next())
+                    assertEquals("generating", rows.getString(2))
+                    assertEquals(1200L, rows.getLong(3))
+                    assertTrue(rows.next())
+                    assertEquals("generated", rows.getString(2))
+                    assertEquals(2000L, rows.getLong(3))
+                }
+            }
         }
     }
 }

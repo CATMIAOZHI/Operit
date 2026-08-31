@@ -167,19 +167,16 @@ class ReadingCompanionSubagentCoordinator private constructor(context: Context) 
                         )
                     },
                 )
-            // 60s heartbeat ticker：run 仍 generating 就刷新 claim.updated_at（防止 5 分钟
-            // stale 窗口误杀长多轮请求）；claim 已丢失（affected != 1）立即停止本 run。
+            // 60s heartbeat ticker：两类任务都刷新 run_heartbeat_at，防止 5 分钟 stale
+            // 清扫误杀长模型轮次；普通段评另外刷新 claim.updated_at，claim 已丢失
+            //（affected != 1）则立即停止。summary-only 没有段评 claim，仅使用 run 心跳。
             val result =
                 coroutineScope {
                     val ticker =
                         launch {
                             while (isActive) {
                                 delay(HEARTBEAT_TICKER_INTERVAL_MS)
-                                val run = store.getAutoCommentRun(runId)
-                                if (
-                                    run?.status !=
-                                        ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATING
-                                ) {
+                                if (!store.heartbeatRunIfGenerating(runId)) {
                                     break
                                 }
                                 if (
@@ -317,7 +314,7 @@ class ReadingCompanionSubagentCoordinator private constructor(context: Context) 
     }
 
     companion object {
-        /** 后台/手动/对话内共用的 claim 心跳间隔（远小于 5 分钟 stale 窗口）。 */
+        /** 后台/手动/对话内共用的 run/claim 心跳间隔（远小于 5 分钟 stale 窗口）。 */
         private const val HEARTBEAT_TICKER_INTERVAL_MS = 60_000L
 
         /**

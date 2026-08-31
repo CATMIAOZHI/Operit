@@ -16,6 +16,7 @@ import org.junit.Test
  * SQL 来源**（常量拼接），验证：
  * - heartbeat 刷新 claims.updated_at（而不是 stage_updated_at）；
  * - 5 分钟 stale 窗口内，heartbeat 刷新后的 run 不被 interruptStale 误杀；
+ * - 无 claim 的 summary-only run 由独立 run heartbeat 保活；
  * - 错误 owner heartbeat 返回 false（affected=0），旧段评归属不变。
  */
 class ReadingCompanionHeartbeatTest {
@@ -28,6 +29,7 @@ class ReadingCompanionHeartbeatTest {
                     CREATE TABLE auto_comment_runs (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         status TEXT NOT NULL,
+                        run_heartbeat_at INTEGER NOT NULL,
                         started_at INTEGER NOT NULL
                     )
                     """.trimIndent()
@@ -120,10 +122,14 @@ class ReadingCompanionHeartbeatTest {
         openDatabase().use { connection ->
             connection.createStatement().use { statement ->
                 statement.execute(
-                    "INSERT INTO auto_comment_runs (id, status, started_at) VALUES (1, 'generating', 1000)"
+                    "INSERT INTO auto_comment_runs " +
+                        "(id, status, run_heartbeat_at, started_at) " +
+                        "VALUES (1, 'generating', 1000, 1000)"
                 )
                 statement.execute(
-                    "INSERT INTO auto_comment_runs (id, status, started_at) VALUES (2, 'generating', 1000)"
+                    "INSERT INTO auto_comment_runs " +
+                        "(id, status, run_heartbeat_at, started_at) " +
+                        "VALUES (2, 'generating', 1000, 1000)"
                 )
                 // run 1：创建后从未心跳（updated_at = 创建时刻）。
                 statement.execute(
@@ -143,14 +149,58 @@ class ReadingCompanionHeartbeatTest {
             val swept =
                 connection.prepareStatement(
                     "UPDATE auto_comment_runs SET status = 'interrupted' " +
-                        "WHERE status = 'generating' AND started_at < ? " +
-                        "AND id NOT IN $READING_CLAIMS_NOT_STALE_SUBQUERY_SQL"
+                        "WHERE $READING_STALE_RUN_WHERE_SQL"
                 ).use { prepared ->
-                    prepared.setLong(1, staleBefore)
+                    prepared.setString(1, "generating")
                     prepared.setLong(2, staleBefore)
+                    prepared.setLong(3, staleBefore)
                     prepared.executeUpdate()
                 }
             assertEquals("只有从未心跳的 run 1 被清扫", 1, swept)
+            connection.createStatement().use { statement ->
+                statement.executeQuery(
+                    "SELECT id, status FROM auto_comment_runs ORDER BY id"
+                ).use { rows ->
+                    assertTrue(rows.next())
+                    assertEquals(1, rows.getInt(1))
+                    assertEquals("interrupted", rows.getString(2))
+                    assertTrue(rows.next())
+                    assertEquals(2, rows.getInt(1))
+                    assertEquals("generating", rows.getString(2))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `summary-only run heartbeat prevents periodic stale sweep without a claim`() {
+        openDatabase().use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(
+                    "INSERT INTO auto_comment_runs " +
+                        "(id, status, run_heartbeat_at, started_at) " +
+                        "VALUES (1, 'generating', 1000, 1000)"
+                )
+                statement.execute(
+                    "INSERT INTO auto_comment_runs " +
+                        "(id, status, run_heartbeat_at, started_at) " +
+                        "VALUES (2, 'generating', 241000, 1000)"
+                )
+            }
+            // T = 361000，staleBefore = T - 5min = 61000。两个 run 都没有 claim；
+            // run 1 已失活，run 2 在 4 分钟时由 Coordinator ticker 刷新。
+            val staleBefore = 61_000L
+            val swept =
+                connection.prepareStatement(
+                    "UPDATE auto_comment_runs SET status = 'interrupted' " +
+                        "WHERE $READING_STALE_RUN_WHERE_SQL"
+                ).use { prepared ->
+                    prepared.setString(1, "generating")
+                    prepared.setLong(2, staleBefore)
+                    prepared.setLong(3, staleBefore)
+                    prepared.executeUpdate()
+                }
+            assertEquals("只有没有 run heartbeat 的摘要被清扫", 1, swept)
             connection.createStatement().use { statement ->
                 statement.executeQuery(
                     "SELECT id, status FROM auto_comment_runs ORDER BY id"

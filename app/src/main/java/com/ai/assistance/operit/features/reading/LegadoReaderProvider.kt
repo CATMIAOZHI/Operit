@@ -6,11 +6,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 
 class LegadoReaderProvider(
     context: Context,
 ) : ReaderProvider {
     private val appContext = context.applicationContext
+    private val chapterSourceIdsByBook = ConcurrentHashMap<String, Map<Int, String>>()
 
     override suspend fun getBooks(): List<ReaderBook> = withContext(Dispatchers.IO) {
         val data = query(path = "books/query")
@@ -63,7 +65,7 @@ class LegadoReaderProvider(
             )
             val array = data as? JSONArray
                 ?: throw invalidResponse("Legado 目录响应不是数组")
-            buildList {
+            val chapters = buildList {
                 repeat(array.length()) { index ->
                     val item = array.getJSONObject(index)
                     add(
@@ -76,12 +78,39 @@ class LegadoReaderProvider(
                     )
                 }
             }
+            chapterSourceIdsByBook[bookId] = chapters.associate { it.index to it.sourceId }
+            chapters
         }
 
     override suspend fun getReadableChapterContent(
         bookId: String,
         chapterIndex: Int,
+    ): ReadableChapterContent =
+        getReadableChapterContentInternal(
+            bookId = bookId,
+            chapterIndex = chapterIndex,
+            catalogSnapshotSourceId = null,
+        )
+
+    override suspend fun getReadableChapterContentForCatalogSnapshot(
+        bookId: String,
+        chapterIndex: Int,
+        expectedSourceId: String,
+    ): ReadableChapterContent =
+        getReadableChapterContentInternal(
+            bookId = bookId,
+            chapterIndex = chapterIndex,
+            catalogSnapshotSourceId = expectedSourceId,
+        )
+
+    private suspend fun getReadableChapterContentInternal(
+        bookId: String,
+        chapterIndex: Int,
+        catalogSnapshotSourceId: String?,
     ): ReadableChapterContent = withContext(Dispatchers.IO) {
+        val sourceIdBeforeContent =
+            catalogSnapshotSourceId?.takeIf(String::isNotBlank)
+                ?: chapterSourceIdBeforeContent(bookId, chapterIndex)
         val data = try {
             query(
                 path = "book/readableContent/query",
@@ -124,7 +153,14 @@ class LegadoReaderProvider(
         }
         ReadableChapterContent(
             bookId = responseBookId,
-            sourceId = item.getString("chapterUrl"),
+            sourceId =
+                resolveChapterSourceId(
+                    response = item,
+                    bookId = bookId,
+                    chapterIndex = chapterIndex,
+                    sourceIdBeforeContent = sourceIdBeforeContent,
+                    verifyCatalogAfterContent = catalogSnapshotSourceId == null,
+                ),
             chapterIndex = responseChapterIndex,
             chapterTitle = item.optString("chapterTitle"),
             content = content,
@@ -139,6 +175,7 @@ class LegadoReaderProvider(
         bookId: String,
         chapterIndex: Int,
     ): AnnotationChapterContent = withContext(Dispatchers.IO) {
+        val sourceIdBeforeContent = chapterSourceIdBeforeContent(bookId, chapterIndex)
         val data = query(
             path = "book/annotationContent/query",
             parameters = mapOf(
@@ -172,7 +209,14 @@ class LegadoReaderProvider(
         }
         AnnotationChapterContent(
             bookId = bookId,
-            sourceId = data.getString("chapterUrl"),
+            sourceId =
+                resolveChapterSourceId(
+                    response = data,
+                    bookId = bookId,
+                    chapterIndex = chapterIndex,
+                    sourceIdBeforeContent = sourceIdBeforeContent,
+                    verifyCatalogAfterContent = true,
+                ),
             chapterIndex = chapterIndex,
             chapterTitle = data.optString("chapterTitle"),
             content = paragraphs.joinToString("\n"),
@@ -181,69 +225,98 @@ class LegadoReaderProvider(
         )
     }
 
+    private suspend fun chapterSourceIdBeforeContent(
+        bookId: String,
+        chapterIndex: Int,
+    ): String =
+        chapterSourceIdsByBook[bookId]
+            ?.get(chapterIndex)
+            ?.takeIf(String::isNotBlank)
+            ?: getChapters(bookId)
+                .firstOrNull { it.index == chapterIndex }
+                ?.sourceId
+                ?.takeIf(String::isNotBlank)
+            ?: throw invalidResponse("Legado 目录缺少目标章节身份")
+
+    private suspend fun resolveChapterSourceId(
+        response: JSONObject,
+        bookId: String,
+        chapterIndex: Int,
+        sourceIdBeforeContent: String,
+        verifyCatalogAfterContent: Boolean,
+    ): String {
+        val responseChapterUrl = response.optString("chapterUrl")
+        if (responseChapterUrl.isNotBlank()) return responseChapterUrl
+        val sourceIdAfterContent =
+            if (verifyCatalogAfterContent) {
+                getChapters(bookId).firstOrNull { it.index == chapterIndex }?.sourceId
+            } else {
+                sourceIdBeforeContent
+            }
+        return LegadoChapterIdentitySupport.resolve(
+            responseChapterUrl = responseChapterUrl,
+            catalogChapterUrlBeforeContent = sourceIdBeforeContent,
+            catalogChapterUrlAfterContent = sourceIdAfterContent,
+        ) ?: throw invalidResponse("Legado 目录在正文读取期间发生变化")
+    }
+
     private fun query(
         path: String,
         parameters: Map<String, String> = emptyMap(),
     ): Any? {
-        val installedAuthorities = LEGADO_AUTHORITIES.filter { authority ->
-            @Suppress("DEPRECATION")
-            appContext.packageManager.resolveContentProvider(authority, 0) != null
-        }
-        if (installedAuthorities.isEmpty()) {
-            throw ReaderProviderException(
+        val authority =
+            LegadoAuthoritySupport.selectInstalled { candidate ->
+                @Suppress("DEPRECATION")
+                appContext.packageManager.resolveContentProvider(candidate, 0) != null
+            } ?: throw ReaderProviderException(
                 ReaderProviderException.Reason.LEGADO_NOT_INSTALLED,
                 "未找到兼容的 Legado 阅读数据提供者",
             )
-        }
-        var lastError: Throwable? = null
-        for (authority in installedAuthorities) {
-            val uri = Uri.Builder()
-                .scheme("content")
-                .authority(authority)
-                .appendEncodedPath(path)
-                .apply {
-                    parameters.forEach { (name, value) -> appendQueryParameter(name, value) }
-                }
-                .build()
-            try {
-                val cursor = appContext.contentResolver.query(
-                    uri,
-                    arrayOf("result"),
-                    null,
-                    null,
-                    null,
-                ) ?: continue
-                cursor.use {
-                    if (!it.moveToFirst()) {
-                        throw invalidResponse("Legado ContentProvider 返回空游标")
-                    }
-                    val column = it.getColumnIndex("result")
-                    if (column < 0) {
-                        throw invalidResponse("Legado ContentProvider 缺少 result 列")
-                    }
-                    val root = JSONObject(it.getString(column))
-                    if (!root.optBoolean("isSuccess")) {
-                        throw ReaderProviderException(
-                            ReaderProviderException.Reason.INVALID_RESPONSE,
-                            root.optString("errorMsg", "Legado 请求失败"),
-                        )
-                    }
-                    return root.opt("data").takeUnless { value -> value === JSONObject.NULL }
-                }
-            } catch (error: ReaderProviderException) {
-                lastError = error
-            } catch (error: SecurityException) {
-                lastError = error
-            } catch (error: Throwable) {
-                lastError = error
+        val uri = Uri.Builder()
+            .scheme("content")
+            .authority(authority)
+            .appendEncodedPath(path)
+            .apply {
+                parameters.forEach { (name, value) -> appendQueryParameter(name, value) }
             }
+            .build()
+        try {
+            val cursor = appContext.contentResolver.query(
+                uri,
+                arrayOf("result"),
+                null,
+                null,
+                null,
+            ) ?: throw ReaderProviderException(
+                ReaderProviderException.Reason.CONNECTION_FAILED,
+                "无法连接已选中的 Legado 阅读数据提供者",
+            )
+            cursor.use {
+                if (!it.moveToFirst()) {
+                    throw invalidResponse("Legado ContentProvider 返回空游标")
+                }
+                val column = it.getColumnIndex("result")
+                if (column < 0) {
+                    throw invalidResponse("Legado ContentProvider 缺少 result 列")
+                }
+                val root = JSONObject(it.getString(column))
+                if (!root.optBoolean("isSuccess")) {
+                    throw ReaderProviderException(
+                        ReaderProviderException.Reason.INVALID_RESPONSE,
+                        root.optString("errorMsg", "Legado 请求失败"),
+                    )
+                }
+                return root.opt("data").takeUnless { value -> value === JSONObject.NULL }
+            }
+        } catch (error: ReaderProviderException) {
+            throw error
+        } catch (error: Throwable) {
+            throw ReaderProviderException(
+                ReaderProviderException.Reason.CONNECTION_FAILED,
+                "无法连接已选中的 Legado 阅读数据提供者",
+                error,
+            )
         }
-        if (lastError is ReaderProviderException) throw lastError
-        throw ReaderProviderException(
-            ReaderProviderException.Reason.CONNECTION_FAILED,
-            "无法连接 Legado 阅读数据提供者",
-            lastError,
-        )
     }
 
     private fun invalidResponse(message: String) =
@@ -255,11 +328,33 @@ class LegadoReaderProvider(
     private fun JSONObject.optNullableInt(name: String): Int? =
         if (isNull(name) || !has(name)) null else optInt(name)
 
-    private companion object {
-        val LEGADO_AUTHORITIES = listOf(
+}
+
+internal object LegadoAuthoritySupport {
+    val prioritizedAuthorities =
+        listOf(
             "com.legado.app.release.readerProvider",
             "com.legado.app.debug.readerProvider",
             "com.legado.app.readerProvider",
         )
+
+    /**
+     * Selects one Legado installation by package priority. Query failures must never choose a
+     * different authority because each installation owns an independent bookshelf and boundary.
+     */
+    fun selectInstalled(isInstalled: (String) -> Boolean): String? =
+        prioritizedAuthorities.firstOrNull(isInstalled)
+}
+
+internal object LegadoChapterIdentitySupport {
+    fun resolve(
+        responseChapterUrl: String?,
+        catalogChapterUrlBeforeContent: String?,
+        catalogChapterUrlAfterContent: String?,
+    ): String? {
+        responseChapterUrl?.takeIf(String::isNotBlank)?.let { return it }
+        val before = catalogChapterUrlBeforeContent?.takeIf(String::isNotBlank)
+        val after = catalogChapterUrlAfterContent?.takeIf(String::isNotBlank)
+        return after?.takeIf { it == before }
     }
 }

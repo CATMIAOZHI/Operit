@@ -973,14 +973,16 @@ object ToolExecutionManager {
         val loopApprovedInvocations =
             java.util.IdentityHashMap<ToolInvocation, Boolean>()
         if (readingCompanionLoopGuard != null) {
-            // 模型轮次边界 heartbeat（每批工具调用 = 一个可观测模型轮次；工具级心跳已由
-            // ReadingCompanionSubagentTools 每次执行前后完成）。claim 被抢占/释放立即停止：
-            // affected != 1 即 claim_lost，绝不续跑。阅读侧 model_round_count 按此可观测
-            // 边界递增；主库 modelRoundCount 在同一模型轮次边界原子递增（终审 WARNING-1：
-            // 两库计数一致）。
+            // 段评任务在模型轮次边界 heartbeat（每批工具调用 = 一个可观测模型轮次；
+            // 工具级心跳已由 ReadingCompanionSubagentTools 每次执行前后完成）。claim 被
+            // 抢占/释放立即停止：affected != 1 即 claim_lost，绝不续跑。手动摘要任务由
+            // ManualBatchGate 串行化，没有段评 claim，必须与协调器/工具执行器一致地跳过
+            // 此检查。阅读侧 model_round_count 按边界递增；主库 modelRoundCount 在同一
+            // 模型轮次边界原子递增（终审 WARNING-1：两库计数一致）。
             val readingSession = readingCompanionSession
             if (readingSession != null) {
                 if (
+                    !readingSession.summaryOnly &&
                     !readingSession.backend.heartbeatClaimIfOwned(
                         readingSession.bookId,
                         readingSession.chapterIndex,
@@ -992,8 +994,7 @@ object ToolExecutionManager {
                         runId = readingSession.runId,
                         reason = "claim_lost",
                         message =
-                            "Reading companion audit subagent lost its claim before a " +
-                                "model round; generation stopped.",
+                            "段评生成任务的执行权已失效，已停止执行以避免重复生成。",
                     )
                 }
                 readingSession.backend.incrementRunModelRound(readingSession.runId)
