@@ -27,6 +27,27 @@ class UpdateManagerVersionTest {
     }
 
     @Test
+    fun compatibilityBridgeIsNewerThanLegacyPersonalRelease() {
+        assertTrue(
+            UpdateManager.compareVersions(
+                "1.12.1+0-ry.2",
+                "1.12.0+4-ry.6"
+            ) > 0
+        )
+    }
+
+    @Test
+    fun compatibilityBridgeMatchesPackagedPersonalVersion() {
+        assertEquals(
+            0,
+            UpdateManager.compareVersions(
+                "1.12.1+0-ry.2",
+                "1.12.1-ry.2"
+            )
+        )
+    }
+
+    @Test
     fun personalRevisionOrdersReleasesOnSameUpstreamBase() {
         assertTrue(
             UpdateManager.compareVersions(
