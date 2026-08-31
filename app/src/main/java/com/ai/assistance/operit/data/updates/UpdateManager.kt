@@ -76,17 +76,20 @@ class UpdateManager private constructor(private val context: Context) {
         private fun baseVersionOf(v: String): String {
             val s = v.trim().removePrefix("v")
             val plusIdx = s.indexOf('+')
-            return if (plusIdx >= 0) s.substring(0, plusIdx) else s
+            val base = if (plusIdx >= 0) s.substring(0, plusIdx) else s
+            return base.substringBefore("-ry.")
         }
 
         private fun parseVersion(v: String): ParsedVersion {
             val s = v.trim().removePrefix("v")
             val plusIdx = s.indexOf('+')
-            val base = if (plusIdx >= 0) s.substring(0, plusIdx) else s
+            val baseWithRy = if (plusIdx >= 0) s.substring(0, plusIdx) else s
+            val base = baseWithRy.substringBefore("-ry.")
             val buildSuffix = if (plusIdx >= 0) s.substring(plusIdx + 1) else ""
             val patchIndex = buildSuffix.substringBefore('-').toIntOrNull() ?: 0
             val ryRevision =
-                buildSuffix.substringAfter("-ry.", missingDelimiterValue = "")
+                (if (buildSuffix.contains("-ry.")) buildSuffix else baseWithRy)
+                    .substringAfter("-ry.", missingDelimiterValue = "")
                     .substringBefore('-')
                     .toIntOrNull() ?: 0
 
