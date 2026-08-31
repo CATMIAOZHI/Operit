@@ -125,6 +125,17 @@ class ChatMarkupRegexTest {
         assertEquals("", ChatMarkupRegex.removeGeminiThoughtSignatureMeta("<meta provider=\"GEMINI:THOUGHT_SIGNATURE\">x</meta>"))
     }
 
+    @Test fun geminiContentMeta_roundTripsAndIsRemovedFromVisibleContent() {
+        val meta = ChatMarkupRegex.geminiContentMetaTag("encoded-content")
+        val content = "visible$meta"
+
+        assertEquals(
+            listOf("encoded-content"),
+            ChatMarkupRegex.extractGeminiContentPayloads(content),
+        )
+        assertEquals("visible", ChatMarkupRegex.removeGeminiThoughtSignatureMeta(content))
+    }
+
     @Test fun toolCallPattern_extractsNameAndBody() {
         val match = ChatMarkupRegex.toolCallPattern.find("<tool name=\"run\">pwd</tool>")
         assertNotNull(match)

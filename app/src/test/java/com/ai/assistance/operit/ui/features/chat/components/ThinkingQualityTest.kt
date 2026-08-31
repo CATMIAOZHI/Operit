@@ -96,6 +96,27 @@ class ThinkingQualityTest {
         )
     }
 
+    @Test fun requestSummary_reportsGemini37MinimumWhenThinkingToggleIsOff() {
+        assertEquals(
+            ThinkingRequestSummary.Effort("low"),
+            ThinkingRequestSemantics.resolve(
+                providerType = ApiProviderType.GOOGLE,
+                modelName = "gemini-3.7-flash",
+                qualityLevel = 5,
+                modelParameters =
+                    listOf(
+                        stringParameter("thinking_level", "high"),
+                        objectParameter(
+                            "thinkingConfig",
+                            "{\"thinkingLevel\":\"high\"}",
+                            ParameterCategory.GENERATION,
+                        ),
+                    ),
+                enableThinking = false,
+            ),
+        )
+    }
+
     @Test fun requestSummary_reportsGeminiConfiguredThinkingIntensity() {
         assertEquals(
             ThinkingRequestSummary.BudgetTokens(32_768),
