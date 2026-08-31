@@ -50,6 +50,7 @@ import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory
 import com.ai.assistance.operit.api.chat.llmprovider.LlamaProvider
 import com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
+import com.ai.assistance.operit.api.chat.llmprovider.parseProviderCustomHeaders
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
@@ -452,7 +453,8 @@ fun ModelApiSettingsSection(
                     context,
                     apiKeyInput,
                     apiEndpointInput,
-                    selectedApiProvider ?: ApiProviderType.OPENAI_GENERIC
+                    selectedApiProvider ?: ApiProviderType.OPENAI_GENERIC,
+                    customHeaders = parseProviderCustomHeaders(config.customHeaders),
                 )
         }
     }

@@ -71,36 +71,8 @@ object ModelListFetcher {
                     ApiProviderType.ANTHROPIC,
                     ApiProviderType.ANTHROPIC_GENERIC -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.GOOGLE,
-                    ApiProviderType.GEMINI_GENERIC -> {
-                        // 对于Gemini API，直接使用提供的端点或默认端点
-                        if (apiEndpoint.contains("generativelanguage.googleapis.com")) {
-                            // 如果端点已经是模型列表URL，直接使用
-                            if (apiEndpoint.endsWith("/models")) {
-                                apiEndpoint
-                            } else {
-                                // 否则构造标准模型列表URL
-                                val version = if (apiEndpoint.contains("/v1/")) "v1" else "v1beta"
-                                "https://generativelanguage.googleapis.com/$version/models"
-                            }
-                        } else if (apiEndpoint.contains("aiplatform.googleapis.com") ||
-                                        apiEndpoint.contains("vertex")
-                        ) {
-                            // Vertex AI格式
-                            val projectMatch = Regex("projects/([^/]+)").find(apiEndpoint)
-                            val locationMatch = Regex("locations/([^/]+)").find(apiEndpoint)
-
-                            if (projectMatch != null && locationMatch != null) {
-                                val project = projectMatch.groupValues[1]
-                                val location = locationMatch.groupValues[1]
-                                "https://$location-aiplatform.googleapis.com/v1/projects/$project/locations/$location/publishers/google/models"
-                            } else {
-                                "https://generativelanguage.googleapis.com/v1beta/models"
-                            }
-                        } else {
-                            // 默认使用直接API
-                            "https://generativelanguage.googleapis.com/v1beta/models"
-                        }
-                    }
+                    ApiProviderType.GEMINI_GENERIC ->
+                        buildGeminiModelsListUrl(apiEndpoint).toString()
                     ApiProviderType.ZHIPU -> "${extractBaseUrl(apiEndpoint)}/v4/models"
                     ApiProviderType.DEEPSEEK -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.OPENROUTER -> "${extractBaseUrl(apiEndpoint)}/v1/models"
@@ -151,6 +123,89 @@ object ModelListFetcher {
         }
     }
 
+    private fun fetchGoogleModelPages(
+        context: Context,
+        modelsUrl: String,
+        apiKey: String,
+        customHeaders: Map<String, String>,
+        httpClient: OkHttpClient,
+    ): List<ModelOption> {
+        val modelsById = linkedMapOf<String, ModelOption>()
+        val seenPageTokens = mutableSetOf<String>()
+        var pageToken: String? = null
+
+        do {
+            val pageUrl =
+                modelsUrl
+                    .toHttpUrl()
+                    .newBuilder()
+                    .setQueryParameter("pageSize", "1000")
+                    .apply {
+                        if (pageToken.isNullOrBlank()) {
+                            removeAllQueryParameters("pageToken")
+                        } else {
+                            setQueryParameter("pageToken", pageToken)
+                        }
+                        if (apiKey.isNotBlank()) {
+                            setQueryParameter("key", apiKey)
+                        }
+                    }
+                    .build()
+            val requestBuilder =
+                Request.Builder()
+                    .url(pageUrl)
+                    .addHeader("Content-Type", "application/json")
+            customHeaders.forEach { (name, value) ->
+                requestBuilder.header(name, value)
+            }
+            val request = requestBuilder.get().build()
+
+            AppLogger.d(
+                TAG,
+                "发送Gemini模型列表请求: ${sanitizeUrlForLog(request.url.toString(), apiKey)}",
+            )
+            val pageResult =
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        val errorBody =
+                            response.body?.string()
+                                ?: context.getString(R.string.model_fetch_no_error_details)
+                        throw IOException(
+                            context.getString(
+                                R.string.model_fetch_api_failed,
+                                response.code,
+                                errorBody,
+                            )
+                        )
+                    }
+
+                    val responseBody =
+                        response.body?.string()
+                            ?: throw IOException(
+                                context.getString(R.string.model_fetch_response_empty)
+                            )
+                    val parsedModels = parseGoogleModelResponse(context, responseBody)
+                    val nextPageToken =
+                        JSONObject(responseBody)
+                            .optString("nextPageToken", "")
+                            .trim()
+                            .takeIf { it.isNotEmpty() }
+                    parsedModels to nextPageToken
+                }
+
+            pageResult.first.forEach { model ->
+                modelsById.putIfAbsent(model.id, model)
+            }
+            val nextPageToken = pageResult.second
+            if (nextPageToken != null && !seenPageTokens.add(nextPageToken)) {
+                throw IOException("Gemini models.list returned a repeated nextPageToken")
+            }
+            pageToken = nextPageToken
+        } while (pageToken != null)
+
+        return modelsById.values.sortedBy { it.id }
+    }
+
     /** 从完整URL提取基本URL 例如: https://api.openai.com/v1/chat/completions -> https://api.openai.com */
     private fun extractBaseUrl(fullUrl: String): String {
         return try {
@@ -192,7 +247,9 @@ object ModelListFetcher {
             context: Context,
             apiKey: String,
             apiEndpoint: String,
-            apiProviderType: ApiProviderType = ApiProviderType.OPENAI
+            apiProviderType: ApiProviderType = ApiProviderType.OPENAI,
+            customHeaders: Map<String, String> = emptyMap(),
+            httpClient: OkHttpClient = client,
     ): Result<List<ModelOption>> {
         AppLogger.d(TAG, "开始获取模型列表: 端点=${sanitizeUrlForLog(apiEndpoint, apiKey)}, 提供商=${apiProviderType.name}")
 
@@ -220,10 +277,29 @@ object ModelListFetcher {
                             ApiProviderConfigs.requiresApiKey(apiProviderType, completedEndpoint)
                     AppLogger.d(TAG, "准备发送请求到: ${sanitizeUrlForLog(modelsUrl, apiKey)}, 尝试次数: ${retryCount + 1}/${maxRetries + 1}")
 
+                    if (
+                        apiProviderType == ApiProviderType.GOOGLE ||
+                            apiProviderType == ApiProviderType.GEMINI_GENERIC
+                    ) {
+                        val modelOptions =
+                            fetchGoogleModelPages(
+                                context = context,
+                                modelsUrl = modelsUrl,
+                                apiKey = apiKey,
+                                customHeaders = customHeaders,
+                                httpClient = httpClient,
+                            )
+                        AppLogger.d(TAG, "成功解析Gemini模型列表，共获取 ${modelOptions.size} 个模型")
+                        return@withContext Result.success(modelOptions)
+                    }
+
                     val requestBuilder =
                             Request.Builder()
                                     .url(modelsUrl)
                                     .addHeader("Content-Type", "application/json")
+                    customHeaders.forEach { (name, value) ->
+                        requestBuilder.header(name, value)
+                    }
 
                     // 根据不同供应商添加不同的认证头
                     when (apiProviderType) {
@@ -286,7 +362,7 @@ object ModelListFetcher {
                     val request = requestBuilder.get().build()
 
                     AppLogger.d(TAG, "发送HTTP请求: ${sanitizeUrlForLog(request.url.toString(), apiKey)}")
-                    val response = client.newCall(request).execute()
+                    val response = httpClient.newCall(request).execute()
 
                     if (!response.isSuccessful) {
                         val errorBody = response.body?.string() ?: context.getString(R.string.model_fetch_no_error_details)
@@ -297,7 +373,7 @@ object ModelListFetcher {
                             val fallbackUrl = modelsUrl.removeSuffix("/v1/models") + "/models"
                             AppLogger.w(TAG, "API请求失败，尝试兼容路径: $fallbackUrl")
                             val fallbackRequest = request.newBuilder().url(fallbackUrl).get().build()
-                            val fallbackResponse = client.newCall(fallbackRequest).execute()
+                            val fallbackResponse = httpClient.newCall(fallbackRequest).execute()
                             if (fallbackResponse.isSuccessful) {
                                 val fallbackBody = fallbackResponse.body?.string()
                                 if (fallbackBody.isNullOrEmpty()) {

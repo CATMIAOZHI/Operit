@@ -213,27 +213,24 @@ private object SharedHttpClient {
     }
 }
 
+internal fun parseProviderCustomHeaders(customHeadersJson: String): Map<String, String> {
+    return try {
+        val headers = mutableMapOf<String, String>()
+        if (customHeadersJson.isNotEmpty() && customHeadersJson != "{}") {
+            val jsonObject = JSONObject(customHeadersJson)
+            for (key in jsonObject.keys()) {
+                headers[key] = jsonObject.getString(key)
+            }
+        }
+        headers
+    } catch (e: Exception) {
+        AppLogger.e("AIServiceFactory", "解析自定义请求头失败", e)
+        emptyMap()
+    }
+}
+
 /** AI服务工厂，根据提供商类型创建相应的AIService实例 */
 object AIServiceFactory {
-
-    /**
-     * 解析自定义请求头的JSON字符串为Map
-     */
-    private fun parseCustomHeaders(customHeadersJson: String): Map<String, String> {
-        return try {
-            val headers = mutableMapOf<String, String>()
-            if (customHeadersJson.isNotEmpty() && customHeadersJson != "{}") {
-                val jsonObject = JSONObject(customHeadersJson)
-                for (key in jsonObject.keys()) {
-                    headers[key] = jsonObject.getString(key)
-                }
-            }
-            headers
-        } catch (e: Exception) {
-            AppLogger.e("AIServiceFactory", "解析自定义请求头失败", e)
-            emptyMap()
-        }
-    }
 
     private fun buildAndroidLlamaSessionConfig(config: ModelConfigData): LlamaSession.Config {
         val safeThreadCount =
@@ -291,7 +288,7 @@ object AIServiceFactory {
         }
 
         val httpClient = SharedHttpClient.instance
-        val customHeaders = parseCustomHeaders(config.customHeaders)
+        val customHeaders = parseProviderCustomHeaders(config.customHeaders)
         val providerType =
             ApiProviderType.fromProviderTypeId(providerTypeId)
                 ?: throw IllegalArgumentException(

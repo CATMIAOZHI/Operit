@@ -409,6 +409,12 @@ private fun buildGeminiFunctionalReasoningParameters(
 
 private fun gemini3ThinkingLevel(modelName: String, qualityLevel: Int): String {
     return when {
+        modelName.startsWith(GEMINI_37_FLASH_MODEL) ->
+            when (qualityLevel) {
+                1, 2 -> "low"
+                3 -> "medium"
+                else -> "high"
+            }
         modelName.contains("3.1-flash-image") ||
             modelName.contains("3.1-flash-lite-image") ->
             if (qualityLevel == ApiPreferences.MIN_THINKING_QUALITY_LEVEL) "minimal" else "high"
@@ -1119,6 +1125,7 @@ private val GEMINI_3_FUNCTIONAL_THINKING_MODELS =
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
         "gemini-3.6-flash",
+        GEMINI_37_FLASH_MODEL,
     )
 
 private val CLAUDE_ADAPTIVE_FABLE_VERSIONS = setOf(5 to 0)

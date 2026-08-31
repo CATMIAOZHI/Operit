@@ -5,6 +5,7 @@ import java.security.SecureRandom
 object ChatMarkupRegex {
     private const val TOOL_TAG_SUFFIX_REGEX_SOURCE = "[A-Za-z0-9_]+"
     private const val GEMINI_THOUGHT_SIGNATURE_PROVIDER = "gemini:thought_signature"
+    private const val GEMINI_CONTENT_PROVIDER = "gemini:content"
     private const val OPENAI_RESPONSES_REASONING_PROVIDER = "openai:responses_reasoning"
     const val TOOL_TAG_NAME_REGEX_SOURCE =
         "tool(?:_(?!result(?:_|\\b))$TOOL_TAG_SUFFIX_REGEX_SOURCE)?"
@@ -248,6 +249,10 @@ object ChatMarkupRegex {
         return """<meta provider="$GEMINI_THOUGHT_SIGNATURE_PROVIDER">$signatureBase64</meta>"""
     }
 
+    fun geminiContentMetaTag(contentBase64: String): String {
+        return """<meta provider="$GEMINI_CONTENT_PROVIDER">$contentBase64</meta>"""
+    }
+
     fun openAiResponsesReasoningMetaTag(payloadBase64: String): String {
         return """<meta provider="$OPENAI_RESPONSES_REASONING_PROVIDER">$payloadBase64</meta>"""
     }
@@ -267,6 +272,23 @@ object ChatMarkupRegex {
                     ?.takeIf { it.isNotEmpty() }
             }
             .lastOrNull()
+    }
+
+    fun extractGeminiContentPayloads(content: String): List<String> {
+        return metaTag.findAll(content)
+            .mapNotNull { match ->
+                val tagContent = match.value
+                val provider = extractMetaProvider(tagContent)
+                if (!provider.equals(GEMINI_CONTENT_PROVIDER, ignoreCase = true)) {
+                    return@mapNotNull null
+                }
+                metaBodyRegex.find(tagContent)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+            }
+            .toList()
     }
 
     fun extractOpenAiResponsesReasoningPayloads(content: String): List<String> {
@@ -290,7 +312,10 @@ object ChatMarkupRegex {
         var removed = false
         val result = metaTag.replace(content) { match ->
             val provider = extractMetaProvider(match.value)
-            if (provider.equals(GEMINI_THOUGHT_SIGNATURE_PROVIDER, ignoreCase = true)) {
+            if (
+                provider.equals(GEMINI_THOUGHT_SIGNATURE_PROVIDER, ignoreCase = true) ||
+                    provider.equals(GEMINI_CONTENT_PROVIDER, ignoreCase = true)
+            ) {
                 removed = true
                 ""
             } else {

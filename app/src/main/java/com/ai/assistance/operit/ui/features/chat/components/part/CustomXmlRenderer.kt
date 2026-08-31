@@ -397,7 +397,7 @@ class CustomXmlRenderer(
     private fun shouldHideHiddenMeta(content: String, tagName: String?): Boolean {
         return tagName == "meta" &&
             Regex(
-                """\bprovider\s*=\s*["'](?:gemini:thought_signature|openai:responses_reasoning)["']""",
+                """\bprovider\s*=\s*["'](?:gemini:thought_signature|gemini:content|openai:responses_reasoning)["']""",
                 RegexOption.IGNORE_CASE
             )
                 .containsMatchIn(content)

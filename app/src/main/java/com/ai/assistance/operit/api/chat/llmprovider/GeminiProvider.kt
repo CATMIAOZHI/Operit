@@ -26,14 +26,14 @@ import com.ai.assistance.operit.util.stream.stream
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
-import android.util.Base64
 import com.ai.assistance.operit.R
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.SocketTimeoutException
-import java.net.URL
 import java.net.UnknownHostException
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -47,25 +47,178 @@ import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
 internal fun buildGeminiThinkingConfig(
     enableThinking: Boolean,
     modelParameters: List<ModelParameter<*>>,
+    modelName: String = "",
 ): JSONObject? {
-    if (!enableThinking) {
-        return null
-    }
-
     val thinkingBudget =
-        (modelParameters.lastOrNull { it.apiName == "thinking_budget" && it.isEnabled }
+        (modelParameters.lastOrNull {
+            it.apiName in setOf("thinking_budget", "thinkingBudget") && it.isEnabled
+        }
             ?.currentValue as? Number)?.toInt()
-    val thinkingLevel =
+    val nativeThinkingConfig =
         modelParameters
-            .lastOrNull { it.apiName == "thinking_level" && it.isEnabled }
+            .lastOrNull {
+                it.apiName == "thinkingConfig" &&
+                    it.isEnabled &&
+                    it.category != ParameterCategory.OTHER
+            }
+            ?.currentValue
+            ?.toString()
+            ?.trim()
+            ?.takeIf { it.startsWith("{") }
+            ?.let { raw -> runCatching { JSONObject(raw) }.getOrNull() }
+    val flatThinkingLevel =
+        modelParameters
+            .lastOrNull {
+                it.apiName in setOf("thinking_level", "thinkingLevel") && it.isEnabled
+            }
             ?.currentValue
             ?.toString()
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
+    val nativeThinkingLevel =
+        nativeThinkingConfig
+            ?.optString("thinkingLevel", "")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+    val requestedThinkingLevel = flatThinkingLevel ?: nativeThinkingLevel
+
+    if (isGemini37FlashModel(modelName)) {
+        // Gemini 3.7 Flash cannot disable thinking. When the chat switch is off, always use the
+        // supported minimum; persisted flat or provider-native overrides must not silently
+        // override the disabled UI state.
+        val thinkingLevel =
+            if (!enableThinking) {
+                "low"
+            } else {
+                requestedThinkingLevel
+                    ?.lowercase()
+                    ?.let { if (it == "minimal") "low" else it }
+                    ?.takeIf { it in setOf("low", "medium", "high") }
+                    ?: "medium"
+            }
+        return JSONObject().apply {
+            put("includeThoughts", enableThinking)
+            put("thinkingLevel", thinkingLevel)
+        }
+    }
+
+    if (!enableThinking) {
+        return null
+    }
+
     return JSONObject().apply {
         put("includeThoughts", true)
-        thinkingBudget?.let { put("thinkingBudget", it) }
-        thinkingLevel?.let { put("thinkingLevel", it) }
+        if (!isGemini3Model(modelName)) {
+            thinkingBudget?.let { put("thinkingBudget", it) }
+        }
+        requestedThinkingLevel?.let { put("thinkingLevel", it) }
+    }
+}
+
+private const val GEMINI_REPLAY_INLINE_DATA_REF = "__operitGeminiInlineDataFile"
+
+internal data class GeminiReplayInlineDataFile(
+    val fileName: String,
+    val sha256: String,
+)
+
+private fun geminiReplaySha256(bytes: ByteArray): String =
+    MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString(separator = "") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+        }
+
+/**
+ * Collects a streamed Gemini model turn for exact replay when the API returns state that cannot be
+ * reconstructed from visible text (thought signatures, function calls, or server-side tool parts).
+ *
+ * Plain text is retained only in memory until the turn is known to require replay and adjacent
+ * unsigned text chunks are coalesced. When an inline image has been persisted locally, its raw
+ * Base64 is replaced only inside hidden metadata by a restricted file reference plus checksum; the
+ * original Part fields and signature remain in place and are hydrated before the next request.
+ */
+internal class GeminiReplayContentAccumulator {
+    private val parts = JSONArray()
+    private var lastPlainTextPart: JSONObject? = null
+    private var requiresReplay = false
+    private var role = "model"
+
+    fun appendContent(
+        content: JSONObject,
+        inlineDataFiles: Map<Int, GeminiReplayInlineDataFile> = emptyMap(),
+    ) {
+        content.optString("role", "").trim().takeIf { it.isNotEmpty() }?.let { role = it }
+        val sourceParts = content.optJSONArray("parts") ?: return
+        for (index in 0 until sourceParts.length()) {
+            val sourcePart = sourceParts.optJSONObject(index) ?: continue
+            appendPart(sourcePart, inlineDataFiles[index])
+        }
+    }
+
+    fun buildContentOrNull(): JSONObject? {
+        if (!requiresReplay || parts.length() == 0) return null
+        return JSONObject().apply {
+            put("role", role)
+            put("parts", JSONArray(parts.toString()))
+        }
+    }
+
+    private fun appendPart(
+        sourcePart: JSONObject,
+        inlineDataFile: GeminiReplayInlineDataFile?,
+    ) {
+        if (sourcePart.has("inlineData") || sourcePart.has("inline_data")) {
+            val part = JSONObject(sourcePart.toString())
+            if (inlineDataFile != null) {
+                val inlineDataKey = if (part.has("inlineData")) "inlineData" else "inline_data"
+                part.getJSONObject(inlineDataKey).remove("data")
+                part.put(
+                    GEMINI_REPLAY_INLINE_DATA_REF,
+                    JSONObject().apply {
+                        put("fileName", inlineDataFile.fileName)
+                        put("sha256", inlineDataFile.sha256)
+                    },
+                )
+            }
+            // If local persistence failed, retain the original Part including Base64. Correct
+            // replay takes priority over the storage optimization.
+            requiresReplay = true
+            parts.put(part)
+            lastPlainTextPart = null
+            return
+        }
+
+        val part = JSONObject(sourcePart.toString())
+        val keys = mutableSetOf<String>()
+        val keyIterator = part.keys()
+        while (keyIterator.hasNext()) {
+            keys += keyIterator.next()
+        }
+        val isPlainTextPart =
+            part.has("text") && keys.all { key -> key == "text" || key == "thought" }
+
+        if (!isPlainTextPart) {
+            requiresReplay = true
+            parts.put(part)
+            lastPlainTextPart = null
+            return
+        }
+
+        val thought = part.optBoolean("thought", false)
+        val previous = lastPlainTextPart
+        if (
+            previous != null &&
+                previous.optBoolean("thought", false) == thought
+        ) {
+            previous.put(
+                "text",
+                previous.optString("text", "") + part.optString("text", ""),
+            )
+        } else {
+            parts.put(part)
+            lastPlainTextPart = part
+        }
     }
 }
 
@@ -83,7 +236,7 @@ internal fun filterGeminiMediaLinks(
     }
 
 /** Google Gemini API的实现 支持标准Gemini接口流式传输 */
-class GeminiProvider(
+open class GeminiProvider(
     private val apiEndpoint: String,
     private val apiKeyProvider: ApiKeyProvider,
     private val modelName: String,
@@ -111,14 +264,18 @@ class GeminiProvider(
     private var activeResponse: Response? = null
     @Volatile private var isManuallyCancelled = false
 
-    /**
-     * 由客户端错误（如4xx状态码）触发的API异常，是否重试由统一策略决定
-     */
+    /** Gemini HTTP 4xx 响应；是否继续尝试下一密钥由统一重试策略决定。 */
     class NonRetriableException(
         message: String,
         override val statusCode: Int,
         cause: Throwable? = null
     ) : IOException(message, cause), HttpStatusCodeException
+
+    /** 本地历史媒体已经缺失或变化，重复请求及切换 API Key 都无法恢复。 */
+    class ReplayMediaException(
+        message: String,
+        cause: Throwable? = null,
+    ) : IOException(message, cause)
 
     // Token计数
     private val tokenCacheManager = TokenCacheManager()
@@ -275,13 +432,14 @@ class GeminiProvider(
         val thoughtSignature: String?
     )
 
-    private fun encodeGeminiThoughtSignature(signature: String): String {
-        return Base64.encodeToString(signature.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-    }
+    private data class GeminiPendingFunctionCall(
+        val name: String,
+        val id: String?,
+    )
 
     private fun decodeGeminiThoughtSignature(signatureBase64: String): String? {
         return try {
-            String(Base64.decode(signatureBase64, Base64.DEFAULT), Charsets.UTF_8)
+            String(Base64.getMimeDecoder().decode(signatureBase64), Charsets.UTF_8)
                 .takeIf { it.isNotEmpty() }
         } catch (e: IllegalArgumentException) {
             logDebug("Gemini thoughtSignature meta base64 无法解码，已忽略")
@@ -299,32 +457,113 @@ class GeminiProvider(
         )
     }
 
-    private fun appendGeminiThoughtSignatureMeta(
+    private fun encodeGeminiContent(content: JSONObject): String {
+        return Base64.getEncoder()
+            .encodeToString(content.toString().toByteArray(Charsets.UTF_8))
+    }
+
+    private fun decodeGeminiContents(content: String): List<JSONObject> {
+        return ChatMarkupRegex.extractGeminiContentPayloads(content).mapNotNull { payload ->
+            try {
+                val decoded = String(Base64.getMimeDecoder().decode(payload), Charsets.UTF_8)
+                hydrateGeminiReplayContent(JSONObject(decoded))
+            } catch (e: ReplayMediaException) {
+                throw e
+            } catch (e: Exception) {
+                logDebug("Gemini content meta 无法解码，已忽略: ${e.message}")
+                null
+            }
+        }
+    }
+
+    private fun hydrateGeminiReplayContent(content: JSONObject): JSONObject {
+        val parts = content.optJSONArray("parts") ?: return content
+        for (index in 0 until parts.length()) {
+            val part = parts.optJSONObject(index) ?: continue
+            if (!part.has(GEMINI_REPLAY_INLINE_DATA_REF)) continue
+
+            val reference =
+                part.optJSONObject(GEMINI_REPLAY_INLINE_DATA_REF)
+                    ?: throw geminiReplayMediaFailure("invalid-reference", "引用格式无效")
+            val fileName = reference.optString("fileName", "").trim()
+            val expectedSha256 = reference.optString("sha256", "").trim().lowercase()
+            val inlineData =
+                part.optJSONObject("inlineData") ?: part.optJSONObject("inline_data")
+                    ?: throw geminiReplayMediaFailure(fileName, "缺少 inlineData Part")
+            val bytes = readGeminiReplayMedia(fileName, expectedSha256)
+
+            inlineData.put("data", Base64.getEncoder().encodeToString(bytes))
+            part.remove(GEMINI_REPLAY_INLINE_DATA_REF)
+        }
+        return content
+    }
+
+    private fun readGeminiReplayMedia(
+        fileName: String,
+        expectedSha256: String,
+    ): ByteArray {
+        if (
+            fileName.isBlank() ||
+                fileName != File(fileName).name ||
+                fileName.contains('/') ||
+                fileName.contains('\\') ||
+                !expectedSha256.matches(Regex("[0-9a-f]{64}"))
+        ) {
+            throw geminiReplayMediaFailure(fileName, "引用校验失败")
+        }
+
+        val outputDirectory =
+            try {
+                getOutputImagesDir().canonicalFile
+            } catch (e: IOException) {
+                throw geminiReplayMediaFailure(fileName, "无法解析输出目录", e)
+            }
+        val replayFile =
+            try {
+                File(outputDirectory, fileName).canonicalFile
+            } catch (e: IOException) {
+                throw geminiReplayMediaFailure(fileName, "无法解析图片文件", e)
+            }
+        if (replayFile.parentFile != outputDirectory || !replayFile.isFile) {
+            throw geminiReplayMediaFailure(fileName, "图片文件不存在")
+        }
+
+        val bytes =
+            try {
+                replayFile.readBytes()
+            } catch (e: IOException) {
+                throw geminiReplayMediaFailure(fileName, "无法读取图片文件", e)
+            }
+        if (geminiReplaySha256(bytes) != expectedSha256) {
+            throw geminiReplayMediaFailure(fileName, "图片文件内容已变化")
+        }
+        return bytes
+    }
+
+    private fun geminiReplayMediaFailure(
+        fileName: String,
+        detail: String,
+        cause: Throwable? = null,
+    ): ReplayMediaException {
+        val safeName = fileName.take(120).ifBlank { "unknown" }
+        return ReplayMediaException(
+            message = "Gemini 历史图片无法精确回放（$detail）：$safeName",
+            cause = cause,
+        )
+    }
+
+    private fun appendGeminiContentMeta(
         contentBuilder: StringBuilder,
-        thoughtSignature: String
+        content: JSONObject,
     ) {
         if (contentBuilder.isNotEmpty() && contentBuilder[contentBuilder.length - 1] != '\n') {
             contentBuilder.append('\n')
         }
         contentBuilder.append(
-            ChatMarkupRegex.geminiThoughtSignatureMetaTag(
-                encodeGeminiThoughtSignature(thoughtSignature)
-            )
+            ChatMarkupRegex.geminiContentMetaTag(encodeGeminiContent(content))
         )
     }
 
-    private fun JSONObject.optGeminiThoughtSignature(): String? {
-        val camelCase = optString("thoughtSignature", "").trim()
-        if (camelCase.isNotEmpty()) {
-            return camelCase
-        }
-        val snakeCase = optString("thought_signature", "").trim()
-        if (snakeCase.isNotEmpty()) {
-            return snakeCase
-        }
-        return null
-    }
-    
     /**
      * 解析XML格式的tool调用，转换为Gemini FunctionCall格式
      * @return 文本内容、functionCall对象列表、以及挂在Part级别的thought signature
@@ -625,7 +864,7 @@ class GeminiProvider(
         var queuedAssistantToolText: String? = null
         var queuedAssistantThoughtSignature: String? = null
         val queuedFunctionCalls = mutableListOf<JSONObject>()
-        val openFunctionCallNames = mutableListOf<String>()
+        val openFunctionCalls = mutableListOf<GeminiPendingFunctionCall>()
 
         fun appendParts(target: JSONArray, parts: JSONArray) {
             for (index in 0 until parts.length()) {
@@ -683,25 +922,67 @@ class GeminiProvider(
             )
 
             queuedFunctionCalls.forEach { functionCall ->
-                openFunctionCallNames.add(functionCall.optProviderToolName().orEmpty())
+                openFunctionCalls.add(
+                    GeminiPendingFunctionCall(
+                        name = functionCall.optProviderToolName().orEmpty(),
+                        id = functionCall.optString("id", "").trim().takeIf { it.isNotEmpty() },
+                    )
+                )
             }
             queuedAssistantToolText = null
             queuedAssistantThoughtSignature = null
             queuedFunctionCalls.clear()
         }
 
+        fun emitRawGeminiContents(rawContents: List<JSONObject>) {
+            if (rawContents.isEmpty()) return
+            emitQueuedFunctionCallsIfNeeded()
+
+            val partsArray = JSONArray()
+            rawContents.forEach { rawContent ->
+                val rawParts = rawContent.optJSONArray("parts") ?: return@forEach
+                for (index in 0 until rawParts.length()) {
+                    val sourcePart = rawParts.optJSONObject(index) ?: continue
+                    val part = JSONObject(sourcePart.toString())
+                    partsArray.put(part)
+                    part.optJSONObject("functionCall")?.let { functionCall ->
+                        openFunctionCalls.add(
+                            GeminiPendingFunctionCall(
+                                name = functionCall.optProviderToolName().orEmpty(),
+                                id =
+                                    functionCall
+                                        .optString("id", "")
+                                        .trim()
+                                        .takeIf { it.isNotEmpty() },
+                            )
+                        )
+                    }
+                }
+            }
+
+            if (partsArray.length() > 0) {
+                contentsArray.put(
+                    JSONObject().apply {
+                        put("role", "model")
+                        put("parts", partsArray)
+                    }
+                )
+            }
+        }
+
         fun appendCancelledOpenFunctionResponses(target: JSONArray, reason: String): Boolean {
             emitQueuedFunctionCallsIfNeeded()
-            if (openFunctionCallNames.isEmpty()) return false
+            if (openFunctionCalls.isEmpty()) return false
 
-            logDebug("发现未完成的Gemini functionCall，按取消处理: count=${openFunctionCallNames.size}, reason=$reason")
-            openFunctionCallNames.forEach { functionName ->
+            logDebug("发现未完成的Gemini functionCall，按取消处理: count=${openFunctionCalls.size}, reason=$reason")
+            openFunctionCalls.forEach { pendingCall ->
                 target.put(
                     JSONObject().apply {
                         put(
                             "functionResponse",
                             JSONObject().apply {
-                                put("name", functionName.ifBlank { "cancelled_function" })
+                                put("name", pendingCall.name.ifBlank { "cancelled_function" })
+                                pendingCall.id?.let { put("id", it) }
                                 put(
                                     "response",
                                     JSONObject().apply {
@@ -713,7 +994,7 @@ class GeminiProvider(
                     }
                 )
             }
-            openFunctionCallNames.clear()
+            openFunctionCalls.clear()
             return true
         }
 
@@ -729,6 +1010,15 @@ class GeminiProvider(
         }
 
         for (turn in historyWithoutSystem) {
+            val rawGeminiContents =
+                if (
+                    turn.kind == PromptTurnKind.ASSISTANT ||
+                        turn.kind == PromptTurnKind.TOOL_CALL
+                ) {
+                    decodeGeminiContents(turn.content)
+                } else {
+                    emptyList()
+                }
             val content =
                 if (!preserveThinkInHistory && turn.kind == PromptTurnKind.ASSISTANT) {
                     ChatUtils.removeThinkingContent(turn.content)
@@ -737,12 +1027,20 @@ class GeminiProvider(
                 }
             val contentWithoutGeminiMeta = ChatMarkupRegex.removeGeminiThoughtSignatureMeta(content)
 
+            if (rawGeminiContents.isNotEmpty()) {
+                if (openFunctionCalls.isNotEmpty()) {
+                    flushOpenFunctionCallsAsCancelled("raw_model_content_before_result")
+                }
+                emitRawGeminiContents(rawGeminiContents)
+                continue
+            }
+
             if (enableToolCall) {
                 when (turn.kind) {
                     PromptTurnKind.ASSISTANT -> {
                         val functionCallPayload = parseXmlToolCalls(content)
                         if (functionCallPayload.functionCalls.isNotEmpty()) {
-                            if (openFunctionCallNames.isNotEmpty()) {
+                            if (openFunctionCalls.isNotEmpty()) {
                                 flushOpenFunctionCallsAsCancelled("assistant_function_call_before_result")
                             }
                             queueFunctionCalls(
@@ -764,7 +1062,7 @@ class GeminiProvider(
                     PromptTurnKind.TOOL_CALL -> {
                         val functionCallPayload = parseXmlToolCalls(content)
                         if (functionCallPayload.functionCalls.isNotEmpty()) {
-                            if (openFunctionCallNames.isNotEmpty()) {
+                            if (openFunctionCalls.isNotEmpty()) {
                                 flushOpenFunctionCallsAsCancelled("typed_function_call_before_result")
                             }
                             queueFunctionCalls(
@@ -801,16 +1099,17 @@ class GeminiProvider(
                         val (textContent, functionResponses) = parseXmlToolResults(contentWithoutGeminiMeta)
                         val responsesList = functionResponses ?: emptyList()
 
-                        if (responsesList.isNotEmpty() && openFunctionCallNames.isNotEmpty()) {
+                        if (responsesList.isNotEmpty() && openFunctionCalls.isNotEmpty()) {
                             val partsArray = JSONArray()
-                            val validCount = minOf(responsesList.size, openFunctionCallNames.size)
+                            val validCount = minOf(responsesList.size, openFunctionCalls.size)
 
                             repeat(validCount) { index ->
                                 val response = JSONObject(responsesList[index].toString())
-                                val pendingName = openFunctionCallNames[index]
-                                if (pendingName.isNotBlank()) {
-                                    response.put("name", pendingName)
+                                val pendingCall = openFunctionCalls[index]
+                                if (pendingCall.name.isNotBlank()) {
+                                    response.put("name", pendingCall.name)
                                 }
+                                pendingCall.id?.let { response.put("id", it) }
                                 partsArray.put(
                                     JSONObject().apply {
                                         put("functionResponse", response)
@@ -820,12 +1119,17 @@ class GeminiProvider(
                             }
 
                             repeat(validCount) {
-                                openFunctionCallNames.removeAt(0)
+                                openFunctionCalls.removeAt(0)
                             }
 
                             if (responsesList.size > validCount) {
                                 logDebug("发现多余的Gemini functionResponse: ${responsesList.size} results vs ${validCount} pending functionCalls")
                             }
+
+                            appendCancelledOpenFunctionResponses(
+                                partsArray,
+                                "missing_tool_result_for_function_call",
+                            )
 
                             if (textContent.isNotEmpty()) {
                                 appendParts(partsArray, buildPartsArray(textContent))
@@ -957,7 +1261,7 @@ class GeminiProvider(
         return json
     }
 
-     private fun getOutputImagesDir(): File {
+     protected open fun getOutputImagesDir(): File {
          val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
          return File(downloadsDir, "Operit/output images")
      }
@@ -972,17 +1276,20 @@ class GeminiProvider(
          }
      }
 
-     private fun writeOutputImage(bytes: ByteArray, mimeType: String, prefix: String): Uri? {
+     protected open fun formatOutputImageUri(file: File): String = Uri.fromFile(file).toString()
+
+     protected open fun writeOutputImage(bytes: ByteArray, mimeType: String, prefix: String): File? {
          return try {
              val dir = getOutputImagesDir()
-             if (!dir.exists()) {
-                 dir.mkdirs()
+             if (!dir.exists() && !dir.mkdirs()) {
+                 throw IOException("Could not create Gemini output image directory")
              }
              val ext = fileExtensionForImageMime(mimeType)
-             val fileName = "${prefix}_${System.currentTimeMillis()}.$ext"
+             val uniqueId = UUID.randomUUID().toString().replace("-", "")
+             val fileName = "${prefix}_${System.currentTimeMillis()}_$uniqueId.$ext"
              val outFile = File(dir, fileName)
              FileOutputStream(outFile).use { it.write(bytes) }
-             Uri.fromFile(outFile)
+             outFile
          } catch (e: Exception) {
              logError("保存输出图片失败", e)
              null
@@ -1057,6 +1364,9 @@ class GeminiProvider(
         buildRetryMessage: (String, Int) -> String
     ): Int {
         if (exception is UserCancellationException || exception is kotlinx.coroutines.CancellationException) {
+            throw exception
+        }
+        if (exception is ReplayMediaException) {
             throw exception
         }
         if (isManuallyCancelled) {
@@ -1191,7 +1501,7 @@ class GeminiProvider(
                         if (!response.isSuccessful) {
                             val errorBody = response.body?.string() ?: context.getString(R.string.gemini_error_no_error_details)
                             logError("API请求失败: ${response.code}, $errorBody")
-                            // 4xx错误仍保留单独的异常类型，具体是否重试由统一策略决定
+                            // 保留 4xx 状态，让统一策略在多密钥配置下尝试下一密钥。
                             if (response.code in 400..499) {
                                 throw NonRetriableException(
                                     context.getString(R.string.gemini_error_api_request_failed, response.code, errorBody),
@@ -1250,6 +1560,36 @@ class GeminiProvider(
         return responseStream.withEventChannel(eventChannel)
     }
 
+    private fun putGeminiModelParameter(
+        requestJson: JSONObject,
+        generationConfig: JSONObject,
+        parameter: ModelParameter<*>,
+    ) {
+        if (parameter.valueType == com.ai.assistance.operit.data.model.ParameterValueType.OBJECT) {
+            val raw = parameter.currentValue.toString().trim()
+            val parsed: Any? =
+                try {
+                    when {
+                        raw.startsWith("{") -> JSONObject(raw)
+                        raw.startsWith("[") -> JSONArray(raw)
+                        else -> null
+                    }
+                } catch (e: Exception) {
+                    logError("Gemini OBJECT参数解析失败: ${parameter.apiName}", e)
+                    null
+                }
+            val target =
+                if (parameter.category == ParameterCategory.OTHER) {
+                    requestJson
+                } else {
+                    generationConfig
+                }
+            target.put(parameter.apiName, parsed ?: raw)
+        } else {
+            generationConfig.put(parameter.apiName, parameter.currentValue)
+        }
+    }
+
     /** 创建请求体 */
     private fun createRequestBody(
             context: Context,
@@ -1263,11 +1603,13 @@ class GeminiProvider(
 
         // 添加工具定义
         val tools = JSONArray()
+        var hasFunctionDeclarations = false
         
         // 添加 Function Calling 工具（如果启用且有可用工具）
         if (enableToolCall && availableTools != null && availableTools.isNotEmpty()) {
             val functionDeclarations = buildToolDefinitionsForGemini(availableTools)
             if (functionDeclarations.length() > 0) {
+                hasFunctionDeclarations = true
                 tools.put(JSONObject().apply {
                     put("function_declarations", functionDeclarations)
                 })
@@ -1290,6 +1632,14 @@ class GeminiProvider(
         } else {
             null
         }
+        if (hasFunctionDeclarations && enableGoogleSearch) {
+            json.put(
+                "toolConfig",
+                JSONObject().apply {
+                    put("includeServerSideToolInvocations", true)
+                },
+            )
+        }
 
         val (contentsResult, _) = buildContentsAndCountTokens(chatHistory, toolsJson, preserveThinkInHistory)
         val (contentsArray, systemInstruction) = contentsResult
@@ -1303,7 +1653,12 @@ class GeminiProvider(
         val generationConfig = JSONObject()
 
         // 功能模型可为每次请求提供显式 budget/level；未提供时仍保留聊天开关语义。
-        val thinkingConfig = buildGeminiThinkingConfig(enableThinking, modelParameters)
+        val thinkingConfig =
+            buildGeminiThinkingConfig(
+                enableThinking = enableThinking,
+                modelParameters = modelParameters,
+                modelName = modelName,
+            )
         if (thinkingConfig != null) {
             generationConfig.put("thinkingConfig", thinkingConfig)
             logDebug("已应用Gemini思考配置: $thinkingConfig")
@@ -1314,49 +1669,44 @@ class GeminiProvider(
             if (param.isEnabled) {
                 when (param.apiName) {
                     "temperature" ->
-                            generationConfig.put(
-                                    "temperature",
-                                    (param.currentValue as Number).toFloat()
-                            )
-                    "top_p" ->
-                            generationConfig.put("topP", (param.currentValue as Number).toFloat())
-                    "top_k" -> generationConfig.put("topK", (param.currentValue as Number).toInt())
+                            if (!isGemini3Model(modelName)) {
+                                generationConfig.put(
+                                        "temperature",
+                                        (param.currentValue as Number).toFloat()
+                                )
+                            }
+                    "top_p", "topP" ->
+                            if (!isGemini3Model(modelName)) {
+                                generationConfig.put(
+                                    "topP",
+                                    (param.currentValue as Number).toFloat(),
+                                )
+                            }
+                    "top_k", "topK" ->
+                            if (!isGemini3Model(modelName)) {
+                                generationConfig.put(
+                                    "topK",
+                                    (param.currentValue as Number).toInt(),
+                                )
+                            }
                     "max_tokens" ->
                             generationConfig.put(
                                     "maxOutputTokens",
                                     (param.currentValue as Number).toInt()
                             )
-                    "thinking_budget", "thinking_level" -> Unit
-                    else -> {
-                        when (param.valueType) {
-                            com.ai.assistance.operit.data.model.ParameterValueType.OBJECT -> {
-                                val raw = param.currentValue.toString().trim()
-                                val parsed: Any? = try {
-                                    when {
-                                        raw.startsWith("{") -> JSONObject(raw)
-                                        raw.startsWith("[") -> JSONArray(raw)
-                                        else -> null
-                                    }
-                                } catch (e: Exception) {
-                                    logError("Gemini OBJECT参数解析失败: ${param.apiName}", e)
-                                    null
-                                }
-                                if (param.category == ParameterCategory.OTHER) {
-                                    if (parsed != null) {
-                                        json.put(param.apiName, parsed)
-                                    } else {
-                                        json.put(param.apiName, raw)
-                                    }
-                                } else {
-                                    if (parsed != null) {
-                                        generationConfig.put(param.apiName, parsed)
-                                    } else {
-                                        generationConfig.put(param.apiName, raw)
-                                    }
-                                }
-                            }
-                            else -> generationConfig.put(param.apiName, param.currentValue)
+                    "thinking_budget", "thinkingBudget", "thinking_level", "thinkingLevel" -> Unit
+                    "thinkingConfig" -> {
+                        if (!isGemini3Model(modelName)) {
+                            putGeminiModelParameter(json, generationConfig, param)
                         }
+                    }
+                    "candidate_count", "candidateCount" -> {
+                        if (!isGemini3Model(modelName)) {
+                            generationConfig.put("candidateCount", param.currentValue)
+                        }
+                    }
+                    else -> {
+                        putGeminiModelParameter(json, generationConfig, param)
                     }
                 }
             }
@@ -1384,12 +1734,27 @@ class GeminiProvider(
             isStreaming: Boolean,
             requestId: String
     ): Request {
-        // 确定请求URL
-        val baseUrl = determineBaseUrl(apiEndpoint)
-        val method = if (isStreaming) "streamGenerateContent" else "generateContent"
-        val requestUrl = "$baseUrl/v1beta/models/$modelName:$method"
-
-        AppLogger.d(TAG, "请求URL: $requestUrl")
+        val currentApiKey = apiKeyProvider.getApiKey()
+        val requestUrl =
+            buildGeminiGenerateContentUrl(
+                apiEndpoint = apiEndpoint,
+                modelName = modelName,
+                streaming = isStreaming,
+                apiKey = currentApiKey,
+            )
+        val portSuffix =
+            if (
+                requestUrl.port == 80 && requestUrl.scheme == "http" ||
+                    requestUrl.port == 443 && requestUrl.scheme == "https"
+            ) {
+                ""
+            } else {
+                ":${requestUrl.port}"
+            }
+        AppLogger.d(
+            TAG,
+            "请求URL: ${requestUrl.scheme}://${requestUrl.host}$portSuffix${requestUrl.encodedPath}",
+        )
 
         // 创建Request Builder
         val builder = Request.Builder()
@@ -1399,34 +1764,13 @@ class GeminiProvider(
             builder.addHeader(key, value)
         }
 
-        // 添加API密钥
-        val currentApiKey = apiKeyProvider.getApiKey()
-        val finalUrl =
-                if (requestUrl.contains("?")) {
-                    "$requestUrl&key=$currentApiKey"
-                } else {
-                    "$requestUrl?key=$currentApiKey"
-                }
-
-        val request = builder.url(finalUrl)
+        val request = builder.url(requestUrl)
                 .post(requestBody)
                 .addHeader("Content-Type", "application/json")
                 .build()
 
         logLargeString(TAG, context.getString(R.string.gemini_request_headers, HttpLogSanitizer.headersForLog(request.headers)))
         return request
-    }
-
-    /** 确定基础URL */
-    private fun determineBaseUrl(endpoint: String): String {
-        return try {
-            val url = URL(endpoint)
-            val port = if (url.port != -1) ":${url.port}" else ""
-            "${url.protocol}://${url.host}${port}"
-        } catch (e: Exception) {
-            logError("解析API端点失败", e)
-            "https://generativelanguage.googleapis.com"
-        }
     }
 
     /** 处理API流式响应 */
@@ -1449,12 +1793,26 @@ class GeminiProvider(
         var dataCount = 0
         var jsonCount = 0
         var contentCount = 0
+        val replayContentAccumulator = GeminiReplayContentAccumulator()
 
         // 恢复JSON累积逻辑，用于处理分段JSON
         val completeJsonBuilder = StringBuilder()
         var isCollectingJson = false
         var jsonDepth = 0
         var jsonStartSymbol = ' ' // 记录JSON是以 { 还是 [ 开始的
+
+        suspend fun extractStreamingContent(json: JSONObject): String {
+            return extractContentFromJson(
+                context = context,
+                json = json,
+                requestId = requestId,
+                onTokensUpdated = onTokensUpdated,
+                onUsageReported = onUsageReported,
+                attemptNumber = attemptNumber,
+                includeReplayMetadata = false,
+                replayContentAccumulator = replayContentAccumulator,
+            )
+        }
 
         try {
             reader.useLines { lines ->
@@ -1481,7 +1839,7 @@ class GeminiProvider(
                             val json = JSONObject(data)
                             jsonCount++
 
-                            val content = extractContentFromJson(context, json, requestId, onTokensUpdated, onUsageReported, attemptNumber)
+                            val content = extractStreamingContent(json)
                             if (content.isNotEmpty()) {
                                 contentCount++
                                 logDebug("提取SSE内容，长度: ${content.length}")
@@ -1541,15 +1899,7 @@ class GeminiProvider(
                                                 val jsonObject = jsonContent.optJSONObject(i)
                                                 if (jsonObject != null) {
                                                     jsonCount++
-                                                    val content =
-                                                            extractContentFromJson(
-                                                                    context,
-                                                                    jsonObject,
-                                                                    requestId,
-                                                                    onTokensUpdated,
-                                                                    onUsageReported,
-                                                                    attemptNumber
-                                                            )
+                                                    val content = extractStreamingContent(jsonObject)
                                                     if (content.isNotEmpty()) {
                                                         contentCount++
                                                         logDebug(
@@ -1608,7 +1958,7 @@ class GeminiProvider(
                             for (i in 0 until jsonContent.length()) {
                                 val jsonObject = jsonContent.optJSONObject(i) ?: continue
                                 jsonCount++
-                                val content = extractContentFromJson(context, jsonObject, requestId, onTokensUpdated, onUsageReported, attemptNumber)
+                                val content = extractStreamingContent(jsonObject)
                                 if (content.isNotEmpty()) {
                                     contentCount++
                                     logDebug("从最终JSON数组[$i]提取内容，长度: ${content.length}")
@@ -1619,7 +1969,7 @@ class GeminiProvider(
                         }
                         is JSONObject -> {
                             jsonCount++
-                            val content = extractContentFromJson(context, jsonContent, requestId, onTokensUpdated, onUsageReported, attemptNumber)
+                            val content = extractStreamingContent(jsonContent)
                             if (content.isNotEmpty()) {
                                 contentCount++
                                 logDebug("从最终JSON对象提取内容，长度: ${content.length}")
@@ -1638,14 +1988,33 @@ class GeminiProvider(
             // 确保思考模式正确结束
             if (isInThinkingMode) {
                 logDebug("流结束时仍在思考模式，添加结束标签")
-                streamCollector.emit("</think>")
+                val thinkingEndTag = "</think>"
+                receivedContent.append(thinkingEndTag)
+                streamCollector.emit(thinkingEndTag)
                 isInThinkingMode = false
             }
             
             // 确保至少发送一次内容
             if (contentCount == 0) {
                 logDebug("未检测到内容，发送空格")
+                receivedContent.append(" ")
                 streamCollector.emit(" ")
+            }
+
+            replayContentAccumulator.buildContentOrNull()?.let { replayContent ->
+                val replayTag =
+                    ChatMarkupRegex.geminiContentMetaTag(encodeGeminiContent(replayContent))
+                val replayChunk =
+                    if (
+                        receivedContent.isNotEmpty() &&
+                            receivedContent[receivedContent.length - 1] != '\n'
+                    ) {
+                        "\n$replayTag"
+                    } else {
+                        replayTag
+                    }
+                receivedContent.append(replayChunk)
+                streamCollector.emit(replayChunk)
             }
         } catch (e: Exception) {
             logError("处理响应时发生异常: ${e.message}", e)
@@ -1712,11 +2081,12 @@ class GeminiProvider(
         requestId: String,
         onTokensUpdated: suspend (input: Int, cachedInput: Int, output: Int) -> Unit,
         onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, attempt: Int) -> Unit)? = null,
-        attemptNumber: Int = 1
+        attemptNumber: Int = 1,
+        includeReplayMetadata: Boolean = true,
+        replayContentAccumulator: GeminiReplayContentAccumulator? = null,
     ): String {
         val contentBuilder = StringBuilder()
         val searchSourcesBuilder = StringBuilder()
-        val pendingThoughtSignatures = mutableListOf<String>()
 
         try {
             throwIfGeminiErrorPayload(context, json)
@@ -1850,6 +2220,7 @@ class GeminiProvider(
                 logDebug("未找到parts数组或为空")
                 return ""
             }
+            val replayInlineDataFiles = mutableMapOf<Int, GeminiReplayInlineDataFile>()
 
             // 遍历parts，提取text内容和functionCall
             for (i in 0 until parts.length()) {
@@ -1868,14 +2239,20 @@ class GeminiProvider(
                              isInThinkingMode = false
                          }
                          val bytes = try {
-                             Base64.decode(b64, Base64.DEFAULT)
+                             Base64.getMimeDecoder().decode(b64)
                          } catch (_: Exception) {
                              null
                          }
                          if (bytes != null && bytes.isNotEmpty()) {
-                             val uri = writeOutputImage(bytes, mimeType, "gemini_image_$i")
-                             if (uri != null) {
-                                 contentBuilder.append("\n![gemini_image_$i](${uri})\n")
+                             val outputFile = writeOutputImage(bytes, mimeType, "gemini_image_$i")
+                             if (outputFile != null) {
+                                 val uri = formatOutputImageUri(outputFile)
+                                 contentBuilder.append("\n![gemini_image_$i]($uri)\n")
+                                 replayInlineDataFiles[i] =
+                                     GeminiReplayInlineDataFile(
+                                         fileName = outputFile.name,
+                                         sha256 = geminiReplaySha256(bytes),
+                                     )
                              }
                          }
                          continue
@@ -1922,10 +2299,6 @@ class GeminiProvider(
                         // 输出工具结束标签
                         contentBuilder.append("\n</$toolTagName>\n")
                         logDebug("Gemini FunctionCall流式转XML: $toolName")
-
-                        part.optGeminiThoughtSignature()?.let { signature ->
-                            pendingThoughtSignatures.add(signature)
-                        }
                     }
                 }
 
@@ -1966,8 +2339,16 @@ class GeminiProvider(
                 }
             }
 
-            pendingThoughtSignatures.forEach { signature ->
-                appendGeminiThoughtSignatureMeta(contentBuilder, signature)
+            val effectiveReplayAccumulator =
+                replayContentAccumulator
+                    ?: if (includeReplayMetadata) GeminiReplayContentAccumulator() else null
+            effectiveReplayAccumulator?.appendContent(content, replayInlineDataFiles)
+            if (includeReplayMetadata) {
+                effectiveReplayAccumulator
+                    ?.buildContentOrNull()
+                    ?.let { replayContent ->
+                        appendGeminiContentMeta(contentBuilder, replayContent)
+                    }
             }
 
             // 将搜索来源拼接到内容最前面
@@ -1992,7 +2373,8 @@ class GeminiProvider(
             context = context,
             apiKey = apiKeyProvider.getApiKey(),
             apiEndpoint = apiEndpoint,
-            apiProviderType = ApiProviderType.GOOGLE
+            apiProviderType = providerType,
+            customHeaders = customHeaders,
         )
     }
 
