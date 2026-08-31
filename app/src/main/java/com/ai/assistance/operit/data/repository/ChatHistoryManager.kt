@@ -94,6 +94,10 @@ internal fun normalizeChatFolderId(folderId: String?): String? =
 internal const val READING_COMPANION_PERMANENT_HIDDEN_REASON_PREFIX =
     "READING_COMPANION_AUDIT_"
 
+internal fun ChatHistory.isPermanentHiddenAuditChat(): Boolean =
+    isHidden &&
+        hiddenReason?.startsWith(READING_COMPANION_PERMANENT_HIDDEN_REASON_PREFIX) == true
+
 internal val OPERIT_ARCHIVE_SUBAGENT_RUN_SNAPSHOT_COLUMNS =
     listOf(
         "id",
@@ -1951,6 +1955,18 @@ class ChatHistoryManager private constructor(private val context: Context) {
             chatDao.getAllChatsDirectly().map {
                 it.toChatHistory().copy(folderId = normalizeChatFolderId(it.folderId))
             }
+        }
+
+    suspend fun getVisibleChatHistoriesSnapshot(): List<ChatHistory> =
+        getChatHistoriesSnapshot().filterNot { it.isHidden }
+
+    suspend fun getChatMetadata(chatId: String): ChatHistory? =
+        withContext(Dispatchers.IO) {
+            chatDao.getChatById(chatId)
+                ?.toChatHistory()
+                ?.let { history ->
+                    history.copy(folderId = normalizeChatFolderId(history.folderId))
+                }
         }
 
     suspend fun getChatFoldersSnapshot(): List<ChatFolderEntity> =

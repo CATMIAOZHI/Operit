@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.data.api
 
-import com.ai.assistance.operit.BuildConfig
 import com.ai.assistance.operit.util.AppLogger
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +31,7 @@ data class GitHubOAuthExchangeResponse(
 
 /** Exchanges a GitHub authorization code without placing the OAuth client secret in the APK. */
 class GitHubOAuthBrokerService(
-    brokerBaseUrl: String = BuildConfig.GITHUB_OAUTH_BROKER_BASE_URL
+    brokerBaseUrl: String = ""
 ) {
     private val brokerOrigin = requireBrokerOrigin(brokerBaseUrl)
     private val client =

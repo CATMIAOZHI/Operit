@@ -146,8 +146,6 @@ jobs:
 
       - name: Configure Android build
         env:
-          OPERIT_GITHUB_CLIENT_ID: ${{ vars.OPERIT_GITHUB_CLIENT_ID }}
-          OPERIT_GITHUB_OAUTH_BROKER_BASE_URL: ${{ vars.OPERIT_GITHUB_OAUTH_BROKER_BASE_URL }}
           RELEASE_KEYSTORE_BASE64: ${{ secrets.OPERIT_RELEASE_KEYSTORE_BASE64 }}
           RELEASE_STORE_PASSWORD: ${{ secrets.OPERIT_RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.OPERIT_RELEASE_KEY_ALIAS }}
@@ -159,30 +157,6 @@ jobs:
           : "${RELEASE_STORE_PASSWORD:?OPERIT_RELEASE_STORE_PASSWORD is required}"
           : "${RELEASE_KEY_ALIAS:?OPERIT_RELEASE_KEY_ALIAS is required}"
           : "${RELEASE_KEY_PASSWORD:?OPERIT_RELEASE_KEY_PASSWORD is required}"
-          : "${OPERIT_GITHUB_CLIENT_ID:?Repository variable OPERIT_GITHUB_CLIENT_ID is required}"
-          : "${OPERIT_GITHUB_OAUTH_BROKER_BASE_URL:?Repository variable OPERIT_GITHUB_OAUTH_BROKER_BASE_URL is required}"
-
-          python3 - "$OPERIT_GITHUB_OAUTH_BROKER_BASE_URL" <<'PY'
-          import sys
-          from urllib.parse import urlsplit
-
-          raw_url = sys.argv[1]
-          url = urlsplit(raw_url)
-          if (
-              raw_url != raw_url.strip()
-              or url.scheme != "https"
-              or not url.hostname
-              or url.username is not None
-              or url.password is not None
-              or url.query
-              or url.fragment
-          ):
-              raise SystemExit(
-                  "OPERIT_GITHUB_OAUTH_BROKER_BASE_URL must be a valid HTTPS URL "
-                  "without credentials, query, or fragment"
-              )
-          PY
-
           release_keystore="$RUNNER_TEMP/operit-ry-release.jks"
           printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$release_keystore"
           chmod 600 "$release_keystore"
@@ -202,8 +176,6 @@ jobs:
           umask 077
           {
             echo "sdk.dir=$ANDROID_HOME"
-            printf 'GITHUB_CLIENT_ID=%s\n' "$OPERIT_GITHUB_CLIENT_ID"
-            printf 'GITHUB_OAUTH_BROKER_BASE_URL=%s\n' "$OPERIT_GITHUB_OAUTH_BROKER_BASE_URL"
             echo "RELEASE_STORE_FILE=$release_keystore"
             echo "RELEASE_STORE_PASSWORD=$RELEASE_STORE_PASSWORD"
             echo "RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS"

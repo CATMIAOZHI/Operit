@@ -113,9 +113,6 @@ val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localProperties.load(FileInputStream(localPropertiesFile))
 }
-fun buildConfigString(value: String?): String =
-    "\"${value.orEmpty().trim().trim('"').replace("\\", "\\\\").replace("\"", "\\\"")}\""
-
 android {
     namespace = "com.ai.assistance.operit"
     compileSdk = 36
@@ -173,16 +170,6 @@ android {
             }
         }
 
-        buildConfigField(
-            "String",
-            "GITHUB_CLIENT_ID",
-            buildConfigString(localProperties.getProperty("GITHUB_CLIENT_ID"))
-        )
-        buildConfigField(
-            "String",
-            "GITHUB_OAUTH_BROKER_BASE_URL",
-            buildConfigString(localProperties.getProperty("GITHUB_OAUTH_BROKER_BASE_URL"))
-        )
         buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "false")
     }
 

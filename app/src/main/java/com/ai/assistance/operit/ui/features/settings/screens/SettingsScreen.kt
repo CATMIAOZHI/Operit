@@ -36,12 +36,10 @@ import com.ai.assistance.operit.core.tools.skill.SkillManager
 import com.ai.assistance.operit.data.mcp.MCPRepository
 import com.ai.assistance.operit.core.tools.defaultTool.standard.CookiePrivacyManager
 import com.ai.assistance.operit.data.model.FunctionType
-import com.ai.assistance.operit.data.preferences.GitHubAuthPreferences
 import com.ai.assistance.operit.data.preferences.LegacyStoragePreferences
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.data.repository.WorkflowRepository
-import com.ai.assistance.operit.ui.features.github.GitHubLoginWebViewDialog
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -55,7 +53,6 @@ private val SettingsScreenScrollPosition = mutableStateOf(0)
 @Composable
 fun SettingsScreen(
         onNavigateToUserPreferences: () -> Unit,
-        navigateToGitHubAccount: () -> Unit,
         navigateToToolPermissions: () -> Unit,
         navigateToModelConfig: () -> Unit,
         navigateToAgentProfiles: () -> Unit,
@@ -76,17 +73,13 @@ fun SettingsScreen(
 ) {
         val context = LocalContext.current
         val userPreferences = remember { UserPreferencesManager.getInstance(context) }
-        val githubAuth = remember { GitHubAuthPreferences.getInstance(context) }
         val legacyStorage = remember { LegacyStoragePreferences.getInstance(context) }
         val skillManager = remember { SkillManager.getInstance(context) }
         val mcpRepository = remember { MCPRepository(context.applicationContext) }
         val workflowRepository = remember { WorkflowRepository(context.applicationContext) }
         val scope = rememberCoroutineScope()
-        var showGitHubLogin by remember { mutableStateOf(false) }
         var showClearCookieConfirm by remember { mutableStateOf(false) }
 
-        val isGitHubLoggedIn = githubAuth.isLoggedInFlow.collectAsState(initial = false).value
-        val gitHubUser = githubAuth.userInfoFlow.collectAsState(initial = null).value
         val readLegacySkills = legacyStorage.readLegacySkillsFlow().collectAsState(initial = false).value
         val readLegacyMcp = legacyStorage.readLegacyMcpFlow().collectAsState(initial = false).value
         val readLegacyWorkflows = legacyStorage.readLegacyWorkflowsFlow().collectAsState(initial = false).value
@@ -119,48 +112,6 @@ fun SettingsScreen(
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                         .verticalScroll(scrollState)
         ) {
-                // ======= 账号 =======
-                SettingsSection(
-                        title = stringResource(id = R.string.settings_section_account),
-                        icon = Icons.Default.AccountCircle,
-                        containerColor = cardContainerColor
-                ) {
-                        CompactSettingsItem(
-                                title = stringResource(R.string.github_account),
-                                subtitle = if (isGitHubLoggedIn && gitHubUser != null) {
-                                        "@${gitHubUser!!.login}"
-                                } else {
-                                        stringResource(R.string.github_account_not_logged_in)
-                                },
-                                icon = Icons.Default.Person,
-                                onClick = navigateToGitHubAccount
-                        )
-
-                        if (isGitHubLoggedIn) {
-                                CompactSettingsItem(
-                                        title = stringResource(R.string.logout),
-                                        subtitle = stringResource(R.string.github_account_logout_desc),
-                                        icon = Icons.Default.Logout,
-                                        onClick = {
-                                                scope.launch { githubAuth.logout() }
-                                        }
-                                )
-                        } else {
-                                CompactSettingsItem(
-                                        title = stringResource(R.string.login_github),
-                                        subtitle = stringResource(R.string.github_account_login_desc),
-                                        icon = Icons.Default.Login,
-                                        onClick = { showGitHubLogin = true }
-                                )
-                        }
-                }
-
-                if (showGitHubLogin) {
-                        GitHubLoginWebViewDialog(
-                                onDismissRequest = { showGitHubLogin = false }
-                        )
-                }
-
                 // ======= 个性化配置 =======
                 SettingsSection(
                         title = stringResource(id = R.string.settings_section_personalization),

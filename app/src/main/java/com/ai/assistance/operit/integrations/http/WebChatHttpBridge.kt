@@ -375,7 +375,7 @@ class WebChatHttpBridge(
 
     private fun handleListChats(): NanoHTTPD.Response {
         val chats = runBlocking {
-            val histories = chatHistoryManager.getChatHistoriesSnapshot()
+            val histories = chatHistoryManager.getVisibleChatHistoriesSnapshot()
             val characterGroupNamesById = resolveCharacterGroupNames(histories)
             val bindingAvatarUrlByChatId = resolveBindingAvatarUrls(histories)
             val folderNamesById =
@@ -596,7 +596,7 @@ class WebChatHttpBridge(
         session: NanoHTTPD.IHTTPSession,
         chatId: String
     ): NanoHTTPD.Response {
-        if (!runBlocking { chatHistoryManager.chatExists(chatId) }) {
+        if (runBlocking { currentChatMeta(chatId) } == null) {
             return jsonResponse(
                 NanoHTTPD.Response.Status.NOT_FOUND,
                 WebErrorResponse("Chat not found")
@@ -756,7 +756,7 @@ class WebChatHttpBridge(
     }
 
     private fun handleSelectChat(chatId: String): NanoHTTPD.Response {
-        if (!runBlocking { chatHistoryManager.chatExists(chatId) }) {
+        if (runBlocking { currentChatMeta(chatId) } == null) {
             return jsonResponse(
                 NanoHTTPD.Response.Status.NOT_FOUND,
                 WebErrorResponse("Chat not found")
@@ -778,7 +778,7 @@ class WebChatHttpBridge(
     }
 
     private fun handleDeleteChat(chatId: String): NanoHTTPD.Response {
-        if (!runBlocking { chatHistoryManager.chatExists(chatId) }) {
+        if (runBlocking { currentChatMeta(chatId) } == null) {
             return jsonResponse(
                 NanoHTTPD.Response.Status.NOT_FOUND,
                 WebErrorResponse("Chat not found")
@@ -814,7 +814,7 @@ class WebChatHttpBridge(
         session: NanoHTTPD.IHTTPSession,
         chatId: String
     ): NanoHTTPD.Response {
-        if (!runBlocking { chatHistoryManager.chatExists(chatId) }) {
+        if (runBlocking { currentChatMeta(chatId) } == null) {
             return jsonResponse(
                 NanoHTTPD.Response.Status.NOT_FOUND,
                 WebErrorResponse("Chat not found")
@@ -915,7 +915,7 @@ class WebChatHttpBridge(
         session: NanoHTTPD.IHTTPSession,
         chatId: String
     ): NanoHTTPD.Response {
-        if (!runBlocking { chatHistoryManager.chatExists(chatId) }) {
+        if (runBlocking { currentChatMeta(chatId) } == null) {
             return jsonResponse(
                 NanoHTTPD.Response.Status.NOT_FOUND,
                 WebErrorResponse("Chat not found")
@@ -934,7 +934,7 @@ class WebChatHttpBridge(
         session: NanoHTTPD.IHTTPSession,
         chatId: String
     ): NanoHTTPD.Response {
-        if (!runBlocking { chatHistoryManager.chatExists(chatId) }) {
+        if (runBlocking { currentChatMeta(chatId) } == null) {
             return jsonResponse(
                 NanoHTTPD.Response.Status.NOT_FOUND,
                 WebErrorResponse("Chat not found")
@@ -1007,7 +1007,7 @@ class WebChatHttpBridge(
         session: NanoHTTPD.IHTTPSession,
         chatId: String
     ): NanoHTTPD.Response {
-        if (!runBlocking { chatHistoryManager.chatExists(chatId) }) {
+        if (runBlocking { currentChatMeta(chatId) } == null) {
             return jsonResponse(
                 NanoHTTPD.Response.Status.NOT_FOUND,
                 WebErrorResponse("Chat not found")
@@ -1138,7 +1138,7 @@ class WebChatHttpBridge(
         session: NanoHTTPD.IHTTPSession,
         chatId: String
     ): NanoHTTPD.Response {
-        if (!runBlocking { chatHistoryManager.chatExists(chatId) }) {
+        if (runBlocking { currentChatMeta(chatId) } == null) {
             return jsonResponse(
                 NanoHTTPD.Response.Status.NOT_FOUND,
                 WebErrorResponse("Chat not found")
@@ -2460,7 +2460,7 @@ class WebChatHttpBridge(
     }
 
     private suspend fun currentChatMeta(chatId: String): ChatHistory? {
-        return chatHistoryManager.getChatHistoriesSnapshot().firstOrNull { it.id == chatId }
+        return chatHistoryManager.getChatMetadata(chatId)?.takeUnless { it.isHidden }
     }
 
     private suspend fun switchAppChatContext(

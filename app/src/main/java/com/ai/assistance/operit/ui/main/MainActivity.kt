@@ -83,8 +83,6 @@ import com.ai.assistance.operit.data.backup.RawSnapshotBackupManager
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.res.stringResource
-import com.ai.assistance.operit.data.preferences.GitHubAuthPreferences
-import com.ai.assistance.operit.ui.features.github.GitHubOAuthCoordinator
 import com.ai.assistance.operit.widget.ToolPkgDesktopWidgetHost
 import org.json.JSONObject
 import kotlin.system.exitProcess
@@ -178,7 +176,6 @@ class MainActivity : ComponentActivity() {
     private var pendingSharedFileUris: List<Uri>? = null
 
     private var pendingSharedText: String? = null
-    private var pendingGitHubAuthUri: Uri? = null
     private var pendingShortcutNavItem: NavItem? = null
     private var pendingShortcutRequestId: Long = 0L
     private var currentMainNavItem: NavItem = NavItem.AiChat
@@ -380,7 +377,6 @@ class MainActivity : ComponentActivity() {
 
         // 设置初始界面
         setAppContent()
-        processPendingGitHubAuth()
 
         // 初始化并设置更新管理器
         setupUpdateManager()
@@ -571,7 +567,6 @@ class MainActivity : ComponentActivity() {
         val handledShortcutIntent = handleIntent(intent)
 
         if (handledShortcutIntent) {
-            processPendingGitHubAuth()
             setAppContent()
             return
         }
@@ -608,14 +603,6 @@ class MainActivity : ComponentActivity() {
             return true
         }
 
-        val intentUri = intent?.data
-        if (GitHubAuthPreferences.isOAuthRedirectUri(intentUri)) {
-            pendingGitHubAuthUri = intentUri
-            // The URI contains a short-lived authorization code; never copy it into logs.
-            AppLogger.d(TAG, "Received GitHub OAuth redirect")
-            return true
-        }
-        
         // Handle opened and shared files
         when (intent?.action) {
             Intent.ACTION_VIEW -> {
@@ -669,42 +656,6 @@ class MainActivity : ComponentActivity() {
             }
         }
         return false
-    }
-
-    private fun processPendingGitHubAuth() {
-        val authUri = pendingGitHubAuthUri ?: return
-        pendingGitHubAuthUri = null
-
-        lifecycleScope.launch {
-            val coordinator = GitHubOAuthCoordinator(this@MainActivity)
-            val result = coordinator.completeExternalLogin(authUri)
-            result.fold(
-                onSuccess = { user ->
-                    Toast.makeText(
-                        this@MainActivity,
-                        getString(R.string.main_github_login_success, user.login),
-                        Toast.LENGTH_LONG
-                    ).show()
-                },
-                onFailure = { error ->
-                    val message = error.message.orEmpty()
-                    if (authUri.getQueryParameter("error") == "access_denied") {
-                        Toast.makeText(
-                            this@MainActivity,
-                            getString(R.string.github_login_external_cancelled),
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    } else {
-                        Toast.makeText(
-                            this@MainActivity,
-                            getString(R.string.main_github_login_failed, message),
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                    AppLogger.e(TAG, "Failed to complete external GitHub login", error)
-                }
-            )
-        }
     }
 
     private suspend fun prepareStartupChatIfNeeded() {

@@ -63,7 +63,7 @@ class ChatClassificationV24MigrationAndroidTest {
         assertFalse(empty.isFavorite)
 
         val messageFavorite =
-            requireNotNull(database.messageDao().getMessageByTimestamp("chat-1", 300L))
+            requireNotNull(database.chatContentDao().getMessageByTimestamp("chat-1", 300L))
         assertEquals(true, messageFavorite.isFavorite)
         assertFalse(first.isFavorite)
 
@@ -109,7 +109,7 @@ class ChatClassificationV24MigrationAndroidTest {
         assertEquals(200L, favoritedChat.lastMessageAt)
         assertEquals(
             false,
-            database.messageDao().getMessageByTimestamp("chat", 200L)?.isFavorite,
+            database.chatContentDao().getMessageByTimestamp("chat", 200L)?.isFavorite,
         )
 
         database.chatDao().updateChatOrderAndFolder(

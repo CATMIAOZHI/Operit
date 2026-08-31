@@ -88,7 +88,7 @@ class ChatBranchRepositoryAndroidTest {
         assertEquals(1, result.copiedSubagentCount)
         val copiedRun = database.subagentRunDao().getByParentChatId(branch.id).single()
         val copiedParentContent =
-            database.messageDao().getMessagesForChat(branch.id).single().content
+            database.chatContentDao().getMessagesForChat(branch.id).single().content
         assertEquals(3, copiedRun.toolInvocationCount)
         assertEquals(false, copiedParentContent.contains("id=\"run\""))
         assertEquals(false, copiedParentContent.contains(">run</param>"))
@@ -101,7 +101,7 @@ class ChatBranchRepositoryAndroidTest {
         assertEquals(ChatKind.SUBAGENT.name, copiedChild?.chatKind)
         assertEquals(
             "child result",
-            database.messageDao().getMessagesForChat(copiedRun.childChatId).single().content,
+            database.chatContentDao().getMessagesForChat(copiedRun.childChatId).single().content,
         )
     }
 

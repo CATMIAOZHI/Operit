@@ -15,7 +15,6 @@ import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,7 +37,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -61,7 +59,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.api.MarketV2Entry
 import com.ai.assistance.operit.data.api.MarketV2Version
-import com.ai.assistance.operit.data.preferences.GitHubAuthPreferences
 import com.ai.assistance.operit.ui.features.packages.market.MarketReviewState
 import com.ai.assistance.operit.ui.features.packages.market.MarketInstallProgress
 import com.ai.assistance.operit.ui.features.packages.market.MarketInstallStage
@@ -94,7 +91,6 @@ fun UnifiedMarketDetailEntryScreen(
     initialEntry: MarketV2Entry,
     fromManage: Boolean = false,
     onNavigateBack: () -> Unit = {},
-    onPublishNewVersion: (MarketV2Entry) -> Unit = {},
     onNavigateToAuthor: (String, String, String) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
@@ -103,19 +99,14 @@ fun UnifiedMarketDetailEntryScreen(
             key = "market-detail-${initialEntry.id}",
             factory = UnifiedMarketDetailViewModel.Factory(context.applicationContext)
         )
-    val githubAuth = remember { GitHubAuthPreferences.getInstance(context) }
-    val currentUser by githubAuth.userInfoFlow.collectAsState(initial = null)
 
     val loadedEntry by viewModel.entry.collectAsState()
     val entry = loadedEntry ?: initialEntry
     val errorMessage by viewModel.errorMessage.collectAsState()
     val commentsMap by viewModel.entryComments.collectAsState()
     val isLoadingComments by viewModel.isLoadingComments.collectAsState()
-    val isPostingComment by viewModel.isPostingComment.collectAsState()
-    val isDeletingComment by viewModel.isDeletingComment.collectAsState()
     val reactionsMap by viewModel.entryReactions.collectAsState()
     val isLoadingReactions by viewModel.isLoadingReactions.collectAsState()
-    val isReacting by viewModel.isReacting.collectAsState()
     val installStates by viewModel.installStates.collectAsState()
     val localInstallStates by viewModel.localInstallStates.collectAsState()
     val entryId = entry.id
@@ -133,14 +124,6 @@ fun UnifiedMarketDetailEntryScreen(
             entry.marketLikeCount()
         }
     val isPreviewMode = fromManage && entry.isOpen() && review.state != MarketReviewState.APPROVED
-    var hasThumbsUp by remember { mutableStateOf(false) }
-    var showCommentDialog by remember { mutableStateOf(false) }
-    var showEditCommentDialog by remember { mutableStateOf(false) }
-    var editingCommentId by remember { mutableStateOf<String?>(null) }
-    var replyingCommentId by remember { mutableStateOf<String?>(null) }
-    var commentText by remember { mutableStateOf("") }
-    var waitingForCommentPost by remember { mutableStateOf(false) }
-    var commentPostStarted by remember { mutableStateOf(false) }
     var selectedEntry by remember(initialEntry.id) { mutableStateOf(initialEntry) }
     var showVersionHistoryDialog by remember { mutableStateOf(false) }
 
@@ -154,19 +137,6 @@ fun UnifiedMarketDetailEntryScreen(
             viewModel.loadEntryReactions(entry)
         }
         if (sourceUrl.isNotBlank()) viewModel.fetchRepositoryInfo(sourceUrl)
-    }
-
-    val isPostingCurrentComment = entryId in isPostingComment
-    LaunchedEffect(isPostingCurrentComment, waitingForCommentPost, commentPostStarted) {
-        if (waitingForCommentPost && isPostingCurrentComment) {
-            commentPostStarted = true
-        } else if (waitingForCommentPost && commentPostStarted) {
-            showCommentDialog = false
-            replyingCommentId = null
-            commentText = ""
-            waitingForCommentPost = false
-            commentPostStarted = false
-        }
     }
 
     errorMessage?.let { error ->
@@ -320,35 +290,6 @@ fun UnifiedMarketDetailEntryScreen(
                     }
                 }
             }
-            if (entry.allowPublicUpdates && entry.isOpen()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.market_publish_new_version),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = stringResource(R.string.market_publish_new_version_detail_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Button(
-                            onClick = { onPublishNewVersion(entry) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(stringResource(R.string.market_publish_new_version))
-                        }
-                    }
-                }
-            }
         },
             entry.versions.takeIf { it.isNotEmpty() }?.let {
                 UnifiedMarketDetailIconAction(
@@ -362,9 +303,9 @@ fun UnifiedMarketDetailEntryScreen(
         reactions =
             UnifiedMarketDetailReactionsState(
                 title = stringResource(R.string.mcp_plugin_community_feedback),
-                helperText = if (currentUser == null) stringResource(R.string.mcp_plugin_login_required) else null,
+                helperText = null,
                 isLoading = entryId in isLoadingReactions,
-                isMutating = entryId in isReacting,
+                isMutating = false,
                 options =
                     listOf(
                         UnifiedMarketDetailReactionOption(
@@ -372,14 +313,9 @@ fun UnifiedMarketDetailEntryScreen(
                             count = likes,
                             icon = Icons.Default.ThumbUp,
                             tint = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                            isSelected = hasThumbsUp,
-                            enabled = currentUser != null,
-                            onClick = {
-                                if (!hasThumbsUp) {
-                                    hasThumbsUp = true
-                                    viewModel.addReactionToEntry(entryId)
-                                }
-                            }
+                            isSelected = false,
+                            enabled = false,
+                            onClick = {}
                         )
                     )
             ),
@@ -388,84 +324,20 @@ fun UnifiedMarketDetailEntryScreen(
                 title = stringResource(R.string.mcp_plugin_comments, currentComments.size),
                 comments = currentComments,
                 isLoading = entryId in isLoadingComments,
-                isPosting = entryId in isPostingComment,
-                canPost = currentUser != null,
-                postHint = if (currentUser == null) stringResource(R.string.mcp_plugin_login_required) else null,
-                currentUserLogin = currentUser?.login,
-                currentUserAuthorId = currentUser?.id?.let { "gh_$it" },
+                isPosting = false,
+                canPost = false,
+                postHint = null,
+                currentUserLogin = null,
+                currentUserAuthorId = null,
                 entryOwnerLogin = entry.marketPublisherName(),
                 entryOwnerAuthorId = entry.marketPublisherId(),
                 onRefresh = { viewModel.loadEntryComments(entryId) },
-                onRequestPost = {
-                    replyingCommentId = null
-                    showCommentDialog = true
-                },
-                onReplyToComment = { comment ->
-                    replyingCommentId = comment.id
-                    commentText = ""
-                    showCommentDialog = true
-                },
-                onEditComment = { comment ->
-                    editingCommentId = comment.id
-                    commentText = comment.body
-                    showEditCommentDialog = true
-                },
-                onDeleteComment = { comment ->
-                    viewModel.deleteComment(entryId, comment.id)
-                }
+                onRequestPost = {},
+                onReplyToComment = {},
+                onEditComment = {},
+                onDeleteComment = {}
             )
     )
-
-    if (showEditCommentDialog) {
-        UnifiedMarketDetailCommentDialog(
-            commentText = commentText,
-            onCommentTextChange = { commentText = it },
-            isPosting = entryId in isPostingComment,
-            onDismiss = {
-                showEditCommentDialog = false
-                editingCommentId = null
-            },
-            onPost = {
-                editingCommentId?.let { viewModel.editComment(entryId, it, commentText) }
-                showEditCommentDialog = false
-                editingCommentId = null
-            }
-        )
-    }
-
-    if (showCommentDialog) {
-        UnifiedMarketDetailCommentDialog(
-            commentText = commentText,
-            onCommentTextChange = { commentText = it },
-            onDismiss = {
-                showCommentDialog = false
-                replyingCommentId = null
-                commentText = ""
-            },
-            onPost = {
-                if (commentText.isNotBlank()) {
-                    waitingForCommentPost = true
-                    commentPostStarted = false
-                    viewModel.postEntryComment(entryId, commentText, replyingCommentId)
-                }
-            },
-            isPosting = entryId in isPostingComment
-        )
-    }
-
-    if (isDeletingComment.isNotEmpty()) {
-        AlertDialog(
-            onDismissRequest = {},
-            title = { Text(stringResource(R.string.market_detail_deleting_comment)) },
-            text = {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CircularProgressIndicator()
-                    Text(stringResource(R.string.market_detail_deleting_comment_message))
-                }
-            },
-            confirmButton = {}
-        )
-    }
 
     if (showVersionHistoryDialog) {
         MarketVersionHistoryDialog(

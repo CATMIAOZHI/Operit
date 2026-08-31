@@ -318,6 +318,11 @@ class ChatServiceCore(
     suspend fun chatExists(chatId: String): Boolean =
         chatHistoryDelegate.chatExists(chatId)
 
+    suspend fun getChatMetadata(
+        chatId: String
+    ): com.ai.assistance.operit.data.model.ChatHistory? =
+        chatHistoryDelegate.getChatMetadata(chatId)
+
     fun registerChatTurn(turnId: String): CompletableDeferred<ChatTurnTerminalSignal> {
         val deferred = CompletableDeferred<ChatTurnTerminalSignal>()
         check(pendingChatTurns.putIfAbsent(turnId, deferred) == null) {

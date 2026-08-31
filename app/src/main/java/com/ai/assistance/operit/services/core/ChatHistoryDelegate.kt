@@ -343,6 +343,9 @@ class ChatHistoryDelegate(
     suspend fun chatExists(chatId: String): Boolean =
         chatHistoryManager.chatExists(chatId)
 
+    suspend fun getChatMetadata(chatId: String): ChatHistory? =
+        chatHistoryManager.getChatMetadata(chatId)
+
     suspend fun getRuntimeChatHistory(chatId: String): List<ChatMessage> =
         chatHistoryManager.loadRuntimeChatMessages(chatId)
 

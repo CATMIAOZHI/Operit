@@ -118,7 +118,7 @@ class ChatFolderRepositoryAndroidTest {
             )
 
         val folder = database.chatFolderDao().getFolder(requireNotNull(persisted.folderId))
-        val messages = database.messageDao().getMessagesForChat(persisted.id)
+        val messages = database.chatContentDao().getMessagesForChat(persisted.id)
         assertEquals("Atomic", folder?.name)
         assertEquals("group-id", persisted.characterGroupId)
         assertEquals(1234L, persisted.lastMessageAt)

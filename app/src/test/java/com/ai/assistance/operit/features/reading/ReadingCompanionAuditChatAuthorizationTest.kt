@@ -226,4 +226,48 @@ class ReadingCompanionAuditChatAuthorizationTest {
         assertTrue(hiddenChatsScreen.contains("ReadingCompanionAudit.rememberReturnChat("))
         assertTrue(hiddenChatsScreen.contains("syncToGlobal = !isReadingAuditChat"))
     }
+
+    @Test
+    fun `ordinary chat surfaces exclude hidden audits and shared dispatch is guarded`() {
+        fun source(relativePath: String): String =
+            File(relativePath).readText().replace("\r\n", "\n")
+
+        val aiChatScreen =
+            source(
+                "src/main/java/com/ai/assistance/operit/ui/features/chat/screens/AIChatScreen.kt",
+            )
+        val standardChatTool =
+            source(
+                "src/main/java/com/ai/assistance/operit/core/tools/defaultTool/standard/StandardChatManagerTool.kt",
+            )
+        val webChatBridge =
+            source(
+                "src/main/java/com/ai/assistance/operit/integrations/http/WebChatHttpBridge.kt",
+            )
+        val webChatManagementBridge =
+            source(
+                "src/main/java/com/ai/assistance/operit/integrations/http/bridge/WebChatManagementBridge.kt",
+            )
+        val dispatcher =
+            source(
+                "src/main/java/com/ai/assistance/operit/services/core/ChatTurnDispatcher.kt",
+            )
+        val subagentCoordinator =
+            source(
+                "src/main/java/com/ai/assistance/operit/core/agent/SubagentCoordinator.kt",
+            )
+
+        assertTrue(aiChatScreen.contains("searchableChatHistories = visibleAllChatHistories"))
+        assertFalse(aiChatScreen.contains("searchableChatHistories = chatHistories"))
+        assertTrue(standardChatTool.contains("getVisibleChatHistoriesSnapshot()"))
+        assertTrue(standardChatTool.contains("getChatMetadata(chatId)?.takeUnless { it.isHidden }"))
+        assertFalse(standardChatTool.contains("getChatTitle(chatId)"))
+        assertTrue(webChatBridge.contains("getVisibleChatHistoriesSnapshot()"))
+        assertTrue(webChatBridge.contains("getChatMetadata(chatId)?.takeUnless { it.isHidden }"))
+        assertFalse(webChatBridge.contains("chatHistoryManager.chatExists(chatId)"))
+        assertTrue(webChatManagementBridge.contains("getVisibleChatHistoriesSnapshot()"))
+        assertTrue(dispatcher.contains("core.getChatMetadata("))
+        assertTrue(dispatcher.contains("allowPermanentHiddenAuditMutation"))
+        assertTrue(subagentCoordinator.contains("allowPermanentHiddenAuditMutation = true"))
+    }
 }

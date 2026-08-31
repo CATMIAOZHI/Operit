@@ -9,7 +9,6 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.ai.assistance.operit.BuildConfig
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -81,7 +80,7 @@ class GitHubAuthPreferences(private val context: Context) {
 
     companion object {
         // GitHub OAuth相关配置
-        val GITHUB_CLIENT_ID = BuildConfig.GITHUB_CLIENT_ID
+        const val GITHUB_CLIENT_ID = ""
         const val GITHUB_SCOPE = "notifications,public_repo,user:email,read:user"
         private const val REQUIRED_AUTH_VERSION = 3
         private const val GITHUB_REDIRECT_SCHEME = "operitry"
@@ -140,6 +139,9 @@ class GitHubAuthPreferences(private val context: Context) {
         preferences: Preferences,
         nowMillis: Long = System.currentTimeMillis(),
     ): Boolean {
+        if (GITHUB_CLIENT_ID.isBlank()) {
+            return false
+        }
         val grantedScopes = parseScopeSet(preferences[GRANTED_SCOPE])
         val authVersion = preferences[AUTH_VERSION] ?: 0L
         return isGitHubAuthSessionUsable(

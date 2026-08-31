@@ -483,6 +483,7 @@ class SubagentCoordinator private constructor(context: Context) {
                                     RESPONSE_STREAM_ACQUIRE_TIMEOUT_MS,
                                 responseTimeoutMs = null,
                                 turnId = taskId,
+                                allowPermanentHiddenAuditMutation = true,
                             ),
                     )
                 activeSession =
