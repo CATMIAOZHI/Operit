@@ -152,8 +152,8 @@ android {
         applicationId = "com.rainy.operitry"
         minSdk = 26
         targetSdk = 34
-        versionCode = 44
-        versionName = "1.12.0+4-ry.1"
+        versionCode = 46
+        versionName = "1.12.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -183,6 +183,7 @@ android {
             "GITHUB_OAUTH_BROKER_BASE_URL",
             buildConfigString(localProperties.getProperty("GITHUB_OAUTH_BROKER_BASE_URL"))
         )
+        buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "false")
     }
 
     buildTypes {

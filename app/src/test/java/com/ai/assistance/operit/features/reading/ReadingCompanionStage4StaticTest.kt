@@ -10,13 +10,13 @@ import org.junit.Test
  * 阶段 4 静态契约断言（纯 JVM，无 Android 依赖）。
  *
  * 覆盖：隐藏聊天列表入口（无取消隐藏）、受限宿主动作 openReadingAuditChat（不信任 JS
- * chatId）、Bridge list_audit_chats、run detail 弱关联字段、prune 联动挂账、以及全部
- * “未读正文不会暴露”类剧透文案清零。
+ * chatId）、Bridge list_audit_chats、run detail 弱关联字段、prune 联动挂账，以及不再
+ * 向用户承诺无法兑现的硬性剧透隔离。
  */
 class ReadingCompanionStage4StaticTest {
 
     private fun source(relativePath: String): String =
-        File(relativePath).readText()
+        File(relativePath).readText().replace("\r\n", "\n")
 
     private val hiddenChatsScreenSource =
         source(
@@ -58,8 +58,6 @@ class ReadingCompanionStage4StaticTest {
 
     private val spoilerPatterns =
         listOf(
-            "未读",
-            "Unread",
             "never exposes",
             "never displayed",
             "不会暴露",
@@ -70,7 +68,14 @@ class ReadingCompanionStage4StaticTest {
     fun `hidden chats screen lists, opens and subtree-deletes without any unhide entry`() {
         assertTrue(hiddenChatsScreenSource.contains("observeHiddenChats()"))
         assertTrue(hiddenChatsScreenSource.contains("deleteChatHistory(chat.id)"))
-        assertTrue(hiddenChatsScreenSource.contains("switchChat(chat.id"))
+        assertTrue(hiddenChatsScreenSource.contains("chatHistoryDelegate.switchChat("))
+        assertTrue(hiddenChatsScreenSource.contains("chat.id,"))
+        assertTrue(
+            hiddenChatsScreenSource.contains("syncToGlobal = !isReadingAuditChat"),
+        )
+        assertTrue(
+            hiddenChatsScreenSource.contains("ReadingCompanionAudit.rememberReturnChat("),
+        )
         assertTrue(hiddenChatsScreenSource.contains("hidden_chats_permanently_hidden_note"))
         assertFalse(
             "隐藏聊天入口不得提供取消隐藏按钮",
@@ -100,7 +105,8 @@ class ReadingCompanionStage4StaticTest {
             jsEngineSource.contains("ReadingCompanionAudit.isAuthorizedAuditChat("),
         )
         assertTrue(jsEngineSource.contains("subagentOwnerId = subagentRun?.externalOwnerId"))
-        assertTrue(jsEngineSource.contains("switchChat(resolvedChildChatId"))
+        assertTrue(jsEngineSource.contains("chatHistoryDelegate.switchChat("))
+        assertTrue(jsEngineSource.contains("syncToGlobal = false"))
         assertTrue(jsEngineSource.contains("native.ai_chat"))
         assertFalse(
             "openReadingAuditChat 不得直接接受 JS chatId 参数",
@@ -137,7 +143,7 @@ class ReadingCompanionStage4StaticTest {
     }
 
     @Test
-    fun `spoiler copy is gone from every reading companion js surface`() {
+    fun `hard spoiler guarantees are gone from every reading companion js surface`() {
         jsFiles.forEach { path ->
             val content = source(path)
             spoilerPatterns.forEach { pattern ->

@@ -50,6 +50,7 @@ import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.features.reading.ReadingCompanionAudit
 import com.ai.assistance.operit.ui.main.navigation.AppRouterGateway
 import com.ai.assistance.operit.ui.main.navigation.RouteEntrySource
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -69,6 +70,12 @@ fun HiddenChatsScreen() {
     val chatDao = remember { AppDatabase.getDatabase(context.applicationContext).chatDao() }
     val hiddenChats by chatDao.observeHiddenChats().collectAsState(initial = null)
     val chatHistoryManager = remember { ChatHistoryManager.getInstance(context.applicationContext) }
+    val chatHistoryDelegate =
+        remember {
+            ChatRuntimeHolder.getInstance(context.applicationContext)
+                .getCore(ChatRuntimeSlot.MAIN)
+                .getChatHistoryDelegate()
+        }
     val title = stringResource(R.string.hidden_chats_title)
     val emptyText = stringResource(R.string.hidden_chats_empty)
     val permanentNote = stringResource(R.string.hidden_chats_permanently_hidden_note)
@@ -79,15 +86,32 @@ fun HiddenChatsScreen() {
     var deleting by remember { mutableStateOf(false) }
 
     val openChat: (ChatEntity) -> Unit = { chat ->
-        ChatRuntimeHolder.getInstance(context.applicationContext)
-            .getCore(ChatRuntimeSlot.MAIN)
-            .getChatHistoryDelegate()
-            .switchChat(chat.id, scrollToBottom = false)
-        AppRouterGateway.navigate(
-            routeId = "native.ai_chat",
-            args = emptyMap(),
-            source = RouteEntrySource.SCRIPT,
-        )
+        scope.launch {
+            val isReadingAuditChat =
+                ReadingCompanionAudit.isPermanentHiddenReason(chat.hiddenReason)
+            if (isReadingAuditChat) {
+                val safeReturnChatId =
+                    chatHistoryManager.currentChatIdFlow
+                        .first()
+                        ?.let { returnChatId -> chatDao.getChatById(returnChatId) }
+                        ?.takeIf { !it.isHidden }
+                        ?.id
+                ReadingCompanionAudit.rememberReturnChat(
+                    auditChildChatId = chat.id,
+                    returnChatId = safeReturnChatId,
+                )
+            }
+            chatHistoryDelegate.switchChat(
+                chat.id,
+                syncToGlobal = !isReadingAuditChat,
+                scrollToBottom = false,
+            )
+            AppRouterGateway.navigate(
+                routeId = "native.ai_chat",
+                args = emptyMap(),
+                source = RouteEntrySource.SCRIPT,
+            )
+        }
     }
 
     val deleteChat: (ChatEntity) -> Unit = { chat ->
@@ -209,7 +233,7 @@ fun HiddenChatsScreen() {
             title = { Text(deleteConfirmTitle) },
             text = {
                 Text(
-                    context.getString(R.string.hidden_chats_delete_confirm_message, chat.title),
+                    stringResource(R.string.hidden_chats_delete_confirm_message, chat.title),
                 )
             },
             confirmButton = {

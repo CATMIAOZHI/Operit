@@ -167,6 +167,7 @@ class ReadingCompanionAuditChatAuthorizationTest {
         val firstChild = "audit-child-${System.nanoTime()}"
         val siblingChild = "$firstChild-sibling"
         val visibleChat = "$firstChild-visible"
+        val noReturnChat = "$firstChild-no-return"
 
         ReadingCompanionAudit.rememberReturnChat(firstChild, visibleChat)
         ReadingCompanionAudit.carryReturnChat(firstChild, siblingChild)
@@ -174,6 +175,11 @@ class ReadingCompanionAuditChatAuthorizationTest {
         assertTrue(ReadingCompanionAudit.takeReturnChat(siblingChild) == visibleChat)
         assertTrue(ReadingCompanionAudit.takeReturnChat(siblingChild) == null)
         assertTrue(ReadingCompanionAudit.takeReturnChat(firstChild) == null)
+
+        ReadingCompanionAudit.rememberReturnChat(noReturnChat, null)
+        assertTrue(ReadingCompanionAudit.hasPendingReturnFor(noReturnChat))
+        assertTrue(ReadingCompanionAudit.takeReturnChat(noReturnChat) == null)
+        assertFalse(ReadingCompanionAudit.hasPendingReturnFor(noReturnChat))
     }
 
     @Test
@@ -194,9 +200,14 @@ class ReadingCompanionAuditChatAuthorizationTest {
             File(
                 "src/main/java/com/ai/assistance/operit/ui/features/chat/viewmodel/ChatViewModel.kt",
             ).readText()
+        val hiddenChatsScreen =
+            File(
+                "src/main/java/com/ai/assistance/operit/ui/features/chat/screens/HiddenChatsScreen.kt",
+            ).readText()
 
         assertTrue(aiChatScreen.contains("ReadingCompanionAudit.takeReturnChat("))
         assertTrue(aiChatScreen.contains("ReadingCompanionAudit.hasPendingReturnFor("))
+        assertTrue(aiChatScreen.contains("ReadingCompanionAudit.isPermanentHiddenReason("))
         assertTrue(aiChatScreen.contains("isReadOnlyTranscript"))
         assertTrue(aiChatScreen.contains("actualViewModel.switchChatLocally("))
         assertTrue(aiChatScreen.contains("onNavigateBack()"))
@@ -211,5 +222,8 @@ class ReadingCompanionAuditChatAuthorizationTest {
         assertTrue(jsEngine.contains("?.takeIf { !it.isHidden }"))
         assertTrue(jsEngine.contains("syncToGlobal = false"))
         assertTrue(chatViewModel.contains("fun switchChatLocally("))
+        assertTrue(hiddenChatsScreen.contains("ReadingCompanionAudit.isPermanentHiddenReason("))
+        assertTrue(hiddenChatsScreen.contains("ReadingCompanionAudit.rememberReturnChat("))
+        assertTrue(hiddenChatsScreen.contains("syncToGlobal = !isReadingAuditChat"))
     }
 }

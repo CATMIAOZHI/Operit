@@ -11,7 +11,7 @@ package com.ai.assistance.operit.features.reading
 object ReadingCompanionAudit {
     private data class AuditNavigationReturn(
         val auditChildChatId: String,
-        val returnChatId: String,
+        val returnChatId: String?,
     )
 
     @Volatile
@@ -47,7 +47,7 @@ object ReadingCompanionAudit {
 
     /**
      * 记住打开隐藏审计聊天前的可见聊天。返回时先恢复它，再退出聊天路由，避免当前聊天
-     * 落到隐藏父根；若没有安全来源则清掉旧映射，由 UI 选择任一可见聊天兜底。
+     * 落到隐藏父根；若没有安全来源也保留本次审计导航标记，由 UI 选择任一可见聊天兜底。
      */
     @Synchronized
     fun rememberReturnChat(auditChildChatId: String, returnChatId: String?) {
@@ -57,15 +57,11 @@ object ReadingCompanionAudit {
             returnChatId
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() && it != childId }
-        if (safeReturnId == null) {
-            auditNavigationReturn = null
-        } else {
-            auditNavigationReturn =
-                AuditNavigationReturn(
-                    auditChildChatId = childId,
-                    returnChatId = safeReturnId,
-                )
-        }
+        auditNavigationReturn =
+            AuditNavigationReturn(
+                auditChildChatId = childId,
+                returnChatId = safeReturnId,
+            )
     }
 
     /** 一次性取出隐藏审计聊天的安全返回聊天。 */
