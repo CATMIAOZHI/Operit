@@ -76,19 +76,14 @@ internal fun selectManualCommentaryTargets(
     scope: String = MANUAL_COMMENTARY_SCOPE_AHEAD,
 ): List<Int> {
     if (count <= 0) return emptyList()
-    val historical = scope == MANUAL_COMMENTARY_SCOPE_READ
+    val explicitRange = scope == MANUAL_COMMENTARY_SCOPE_READ
     val first =
-        if (historical) {
+        if (explicitRange) {
             maxOf(0, startChapterIndex ?: 0)
         } else {
             maxOf(currentChapterIndex + 1, startChapterIndex ?: (currentChapterIndex + 1))
         }
-    val last =
-        if (historical) {
-            minOf(currentChapterIndex - 1, upperChapterIndex)
-        } else {
-            upperChapterIndex
-        }
+    val last = upperChapterIndex
     if (first > last) return emptyList()
     val available = availableChapterIndices.toSet()
     return (first..last)
@@ -140,7 +135,7 @@ class ReadingCompanionAutoCommentary private constructor(
         trigger: String = TRIGGER_BACKGROUND,
         restartedFromRunId: Long? = null,
         targetChapterIndex: Int? = null,
-        allowHistoricalTarget: Boolean = false,
+        allowExplicitTarget: Boolean = false,
         expectedManualBookId: String? = null,
         expectedManualTargetSourceId: String? = null,
     ): AutoCommentaryGenerationResult {
@@ -161,7 +156,7 @@ class ReadingCompanionAutoCommentary private constructor(
                 runtime = runtime,
                 trigger = trigger,
                 targetChapterIndex = targetChapterIndex,
-                allowHistoricalTarget = allowHistoricalTarget,
+                allowExplicitTarget = allowExplicitTarget,
                 expectedManualBookId = expectedManualBookId,
                 expectedManualTargetSourceId = expectedManualTargetSourceId,
             )
@@ -201,8 +196,8 @@ class ReadingCompanionAutoCommentary private constructor(
 
     /**
      * Explicit user-triggered commentary batch. Targets are fixed before the first model run and
-     * each index is visited at most once; a cached/fresh chapter is reported as skipped rather than
-     * forcing the moving "next chapter" selector to reuse a previous target.
+     * each index is visited at most once. Ahead batches skip fresh chapters; an explicit `read`
+     * transport scope force-regenerates its selected range, including current or unread chapters.
      */
     suspend fun generateManualBatch(
         count: Int,
@@ -265,31 +260,41 @@ class ReadingCompanionAutoCommentary private constructor(
             scope == MANUAL_COMMENTARY_SCOPE_AHEAD ||
                 scope == MANUAL_COMMENTARY_SCOPE_READ,
         ) { "段评批量范围必须为 ahead 或 read" }
-        val historical = scope == MANUAL_COMMENTARY_SCOPE_READ
-        if (historical) {
+        val explicitRange = scope == MANUAL_COMMENTARY_SCOPE_READ
+        if (explicitRange) {
             require(startChapterIndex != null && endChapterIndex != null) {
-                "补全已读章节段评必须指定起始章节和结束章节"
+                "指定章节段评必须填写起始章节和结束章节"
+            }
+            require(
+                endChapterIndex - startChapterIndex + 1 <=
+                    AutoCommentSupport.MAX_PREFETCH_AHEAD_CHAPTERS,
+            ) {
+                "指定章节段评每次最多生成 ${AutoCommentSupport.MAX_PREFETCH_AHEAD_CHAPTERS} 章"
             }
         }
-        val requestedCount = count
+        val requestedCount =
+            if (explicitRange) {
+                endChapterIndex!! - startChapterIndex!! + 1
+            } else {
+                count
+            }
         val state = provider.getReadingState()
         require(expectedBookId == null || state.book.id == expectedBookId) {
             "当前书籍已变化，请刷新页面后重试"
         }
         val chapters = provider.getChapters(state.book.id)
         val upper =
-            if (historical) {
-                state.chapterIndex - 1
+            if (explicitRange) {
+                chapters.maxOfOrNull(ReaderChapter::index) ?: -1
             } else {
                 AutoCommentSupport.prefetchWindowUpperIndex(
                     state.chapterIndex,
                     store.getPrefetchAheadChapters(),
                 )
             }
-        // With no explicit end, scan the whole bounded prefetch window and then take [count]
-        // missing chapters.  This is important for ordinary "补齐 N 章" requests: a valid
-        // chapter at the front must be skipped rather than consuming one slot and leaving the
-        // batch short.  An explicit end remains a hard inclusive boundary.
+        // Ahead batches scan the bounded prefetch window before taking [count], so fresh chapters
+        // do not consume the requested fill count. Explicit ranges use their inclusive end and
+        // regenerate every catalog chapter selected by the user.
         val rangeEnd = endChapterIndex?.coerceAtMost(upper) ?: upper
         val candidateTargets = selectManualCommentaryTargets(
             currentChapterIndex = state.chapterIndex,
@@ -304,13 +309,23 @@ class ReadingCompanionAutoCommentary private constructor(
         )
         val fileStore = ReadingCompanionFileStore(appContext)
         val chapterByIndex = chapters.associateBy(ReaderChapter::index)
-        val targets = candidateTargets.mapNotNull(chapterByIndex::get).filterNot { chapter ->
-            isFreshCommentary(
-                bookId = state.book.id,
-                chapter = chapter,
-                fileStore = fileStore,
-            )
-        }.take(requestedCount)
+        val targets =
+            candidateTargets
+                .mapNotNull(chapterByIndex::get)
+                .let { candidates ->
+                    if (explicitRange) {
+                        candidates
+                    } else {
+                        candidates.filterNot { chapter ->
+                            isFreshCommentary(
+                                bookId = state.book.id,
+                                chapter = chapter,
+                                fileStore = fileStore,
+                            )
+                        }
+                    }
+                }
+                .take(requestedCount)
         val results = JSONArray()
         val failures = JSONArray()
         val processedTargets = mutableListOf<ReaderChapter>()
@@ -322,11 +337,11 @@ class ReadingCompanionAutoCommentary private constructor(
             val chapterIndex = targetChapter.index
             val result = try {
                 generateNextChapter(
-                    force = false,
+                    force = explicitRange,
                     runtime = runtime,
                     trigger = TRIGGER_MANUAL,
                     targetChapterIndex = chapterIndex,
-                    allowHistoricalTarget = historical,
+                    allowExplicitTarget = explicitRange,
                     expectedManualBookId = state.book.id,
                     expectedManualTargetSourceId = targetChapter.sourceId,
                 )
@@ -430,7 +445,7 @@ class ReadingCompanionAutoCommentary private constructor(
         runtime: ToolExecutionManager.ToolRuntimeContext?,
         trigger: String,
         targetChapterIndex: Int?,
-        allowHistoricalTarget: Boolean,
+        allowExplicitTarget: Boolean,
         expectedManualBookId: String?,
         expectedManualTargetSourceId: String?,
     ): AutoCommentaryGenerationResult {
@@ -508,7 +523,7 @@ class ReadingCompanionAutoCommentary private constructor(
             roleCardId = storedPersona?.roleCardId,
             force = force,
             targetChapterIndex = targetChapterIndex,
-            allowHistoricalTarget = allowHistoricalTarget,
+            allowExplicitTarget = allowExplicitTarget,
             fileStore = fileStore,
         )
         if (nextChapterIndex == null) {
@@ -703,8 +718,8 @@ class ReadingCompanionAutoCommentary private constructor(
                 latestChapters.firstOrNull { it.index == nextChapterIndex }?.sourceId ==
                     expectedTargetChapter.sourceId
             val targetStillAllowed =
-                if (allowHistoricalTarget) {
-                    nextChapterIndex in 0 until latestState.chapterIndex
+                if (allowExplicitTarget) {
+                    latestChapters.any { it.index == nextChapterIndex }
                 } else {
                     nextChapterIndex <=
                         AutoCommentSupport.prefetchWindowUpperIndex(
@@ -1037,20 +1052,20 @@ class ReadingCompanionAutoCommentary private constructor(
         roleCardId: String?,
         force: Boolean,
         targetChapterIndex: Int?,
-        allowHistoricalTarget: Boolean,
+        allowExplicitTarget: Boolean,
         fileStore: ReadingCompanionFileStore,
     ): Int? {
         val chapterByIndex = chapters.associateBy(ReaderChapter::index)
         val upper =
             AutoCommentSupport.prefetchWindowUpperIndex(currentChapterIndex, prefetchAhead)
-        if (!allowHistoricalTarget && currentChapterIndex >= upper) return null
+        if (!allowExplicitTarget && currentChapterIndex >= upper) return null
         val candidateIndices =
             targetChapterIndex?.let { listOf(it) }
                 ?: ((currentChapterIndex + 1)..upper).toList()
         for (chapterIndex in candidateIndices) {
             val inAllowedRange =
-                if (allowHistoricalTarget) {
-                    chapterIndex in 0 until currentChapterIndex
+                if (allowExplicitTarget) {
+                    chapterIndex in chapterByIndex
                 } else {
                     chapterIndex in (currentChapterIndex + 1)..upper
                 }

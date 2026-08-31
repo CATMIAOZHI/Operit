@@ -171,13 +171,13 @@ function getText(useEnglish) {
       files: "Browse saved book files",
       manualTitle: "Manual generation",
       manualHint:
-        "Commentary can target either already-read chapters or the read-ahead window; summaries cover already-read chapters. Each selected chapter creates 1 subagent task and existing results are skipped. These batches run only when you tap them.",
+        "A specified commentary range may include read, current, or unread chapters and replaces existing commentary after a successful regeneration. Read-ahead generation skips fresh results; summaries cover already-read chapters. These batches run only when you tap them.",
       manualComments: "Generate ahead commentary",
-      manualReadComments: "Fill already-read commentary",
+      manualReadComments: "Regenerate specified chapters",
       manualSummaries: "Generate summary batch",
-      readCommentaryTitle: "Already-read commentary",
+      readCommentaryTitle: "Specified chapter commentary",
       readCommentaryHint:
-        "Choose an explicit read range. Each run fills up to 10 missing chapters and skips fresh commentary.",
+        "Choose 1–10 catalog chapters. The range may include unread chapters; every selected chapter is regenerated, and a successful result replaces its old commentary.",
       aheadCommentaryTitle: "Read-ahead commentary",
       aheadCommentaryHint:
         "Choose only how many chapters to fill after the current chapter. The configured pre-generation window is the hard boundary.",
@@ -189,6 +189,7 @@ function getText(useEnglish) {
       batchCommentStart: "Start chapter (required)",
       batchCommentEnd: "End chapter (required)",
       readRangeRequired: "Enter both the start and end chapter.",
+      readRangeTooLarge: "Choose no more than 10 chapters per run.",
       batchStart: "Start chapter (optional)",
       batchEnd: "End chapter (optional)",
       batchCalls: (count) =>
@@ -348,12 +349,12 @@ function getText(useEnglish) {
     files: "浏览已保存的书籍文件",
     manualTitle: "手动生成",
     manualHint:
-      "段评既可补全已读历史，也可在当前进度后提前生成；摘要用于已读章节。每个选中章节创建 1 个子代理任务，已有结果会跳过；本面板只在你点击时执行。",
+      "指定章节段评可覆盖已读、当前或未读章节，成功后替换该章旧段评；提前生成会跳过已有有效结果，摘要仍用于已读章节。本面板只在你点击时执行。",
     manualComments: "提前生成段评",
-    manualReadComments: "补全已读章节段评",
+    manualReadComments: "重新生成指定章节段评",
     manualSummaries: "生成摘要批次",
-    readCommentaryTitle: "已读章节段评",
-    readCommentaryHint: "明确选择已读范围；每次最多补全其中 10 个缺失章节，已有有效段评自动跳过。",
+    readCommentaryTitle: "指定章节段评",
+    readCommentaryHint: "选择目录中的 1～10 章，可包含未读章节；所选章节都会重新生成，成功后替换旧段评。",
     aheadCommentaryTitle: "提前生成段评",
     aheadCommentaryHint: "只需填写数量；从当前章之后开始补全，并严格受“提前生成章数”窗口限制。",
     aheadCountRequired: "请输入 1～10 的章节数量。",
@@ -363,6 +364,7 @@ function getText(useEnglish) {
     batchCommentStart: "起始章节（必填）",
     batchCommentEnd: "结束章节（必填）",
     readRangeRequired: "请填写起始章节和结束章节。",
+    readRangeTooLarge: "每次最多选择 10 章。",
     batchStart: "起始章节（可选）",
     batchEnd: "结束章节（可选）",
     batchCalls: (count) =>
@@ -1155,12 +1157,23 @@ function readingCompanionEntryScreen(ctx) {
     if (isCommentsBatch && commentaryScope === "read" && (start === null || end === null)) {
       throw new Error(
         useEnglish
-          ? "Already-read commentary requires a count, start chapter, and end chapter."
-          : "补全已读章节段评必须填写数量、起始章节和结束章节。",
+          ? "Specified chapter commentary requires a start chapter and an end chapter."
+          : "指定章节段评必须填写起始章节和结束章节。",
       );
     }
     if (start !== null && end !== null && end < start) {
       throw new Error(useEnglish ? "End chapter must not be before start chapter." : "结束章节不能早于起始章节。");
+    }
+    if (
+      isCommentsBatch &&
+      commentaryScope === "read" &&
+      end - start + 1 > 10
+    ) {
+      throw new Error(
+        useEnglish
+          ? "Choose no more than 10 chapters per run."
+          : "指定章节段评每次最多选择 10 章。",
+      );
     }
     return {
       count,
@@ -1178,24 +1191,24 @@ function readingCompanionEntryScreen(ctx) {
       return;
     }
     const isComments = kind === "comments";
-    const isHistoricalComments = isComments && commentaryScope === "read";
+    const isSpecifiedComments = isComments && commentaryScope === "read";
     const countValue = overrides && overrides.countValue !== undefined
       ? overrides.countValue
-      : isHistoricalComments
+      : isSpecifiedComments
         ? "10"
         : isComments
           ? batchCommentCountState.value
           : batchSummaryCountState.value;
     const startValue = overrides && overrides.startValue !== undefined
       ? overrides.startValue
-      : isHistoricalComments
+      : isSpecifiedComments
         ? batchCommentStartState.value
         : isComments
           ? ""
           : batchSummaryStartState.value;
     const endValue = overrides && overrides.endValue !== undefined
       ? overrides.endValue
-      : isHistoricalComments
+      : isSpecifiedComments
         ? batchCommentEndState.value
         : isComments
           ? ""
@@ -1898,7 +1911,9 @@ function readingCompanionEntryScreen(ctx) {
           ]),
           ctx.UI.Text({
             text:
-              readRangeCount > 0
+              readRangeCount > 10
+                ? text.readRangeTooLarge
+                : readRangeCount > 0
                 ? text.batchRange(commentStart, commentEnd, readRangeCount)
                 : text.readRangeRequired,
             style: "bodySmall",
@@ -1910,6 +1925,7 @@ function readingCompanionEntryScreen(ctx) {
               basicEnabledState.value &&
               !!selectedRoleCardId &&
               readRangeCount > 0 &&
+              readRangeCount <= 10 &&
               !busyState.value,
             onClick: () => runManualBatch("comments", null, "read"),
           }, ctx.UI.Text({ text: text.manualReadComments })),

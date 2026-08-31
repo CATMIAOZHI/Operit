@@ -453,6 +453,84 @@ class ReadingCompanionSubagentToolsTest {
     }
 
     @Test
+    fun `mixed valid and late evidence candidates require a complete corrected resubmit`() {
+        val backend = FakeBackend()
+        val session = registerSession("child-partial", backend)
+        try {
+            assertTrue(stageSummary("child-partial", "目标章摘要").success)
+            val first =
+                withCaller("child-partial") {
+                    ReadingCompanionSubagentTools.execute(
+                        tool(
+                            ReadingCompanionSubagentTools.TOOL_SUBMIT_COMMENTS,
+                            "comments" to
+                                """
+                                [
+                                  {"anchorId":"p0001","text":"第一条","kind":"reaction","evidenceIds":["p0001"]},
+                                  {"anchorId":"p0002","text":"第二条","kind":"analysis","evidenceIds":["p0002","p0003"]}
+                                ]
+                                """.trimIndent(),
+                        ),
+                    )
+                }
+
+            assertFalse(first.success)
+            assertFalse("部分失败必须允许模型修正", first.interruptTurn)
+            val diagnostic = JSONObject(first.error.orEmpty())
+            assertEquals(
+                ReadingCompanionSubagentTools.CODE_PARTIAL_CANDIDATES_REJECTED,
+                diagnostic.getString("code"),
+            )
+            assertEquals(2, diagnostic.getInt("inputCount"))
+            assertEquals(1, diagnostic.getInt("acceptedCount"))
+            assertEquals(1, diagnostic.getInt("rejectedCount"))
+            assertEquals(
+                1,
+                diagnostic
+                    .getJSONObject("reasons")
+                    .getInt(AutoCommentSupport.REASON_EVIDENCE_AFTER_ANCHOR),
+            )
+            assertEquals(
+                2,
+                diagnostic
+                    .getJSONArray("rejections")
+                    .getJSONObject(0)
+                    .getInt("candidateNumber"),
+            )
+            assertTrue(diagnostic.getString("hint").contains("complete corrected array"))
+            assertTrue("混合失败不得留下部分候选", session.candidateDrafts.isEmpty())
+            assertFalse("混合失败不得终结会话", session.submissionFinalized)
+
+            val corrected =
+                withCaller("child-partial") {
+                    ReadingCompanionSubagentTools.execute(
+                        tool(
+                            ReadingCompanionSubagentTools.TOOL_SUBMIT_COMMENTS,
+                            "comments" to
+                                """
+                                [
+                                  {"anchorId":"p0001","text":"第一条","kind":"reaction","evidenceIds":["p0001"]},
+                                  {"anchorId":"p0003","text":"第二条","kind":"analysis","evidenceIds":["p0002","p0003"]}
+                                ]
+                                """.trimIndent(),
+                        ),
+                    )
+                }
+
+            assertTrue(corrected.success)
+            assertTrue(corrected.interruptTurn)
+            val payload = JSONObject(corrected.result.toString())
+            assertEquals(2, payload.getInt("inputCount"))
+            assertEquals(2, payload.getInt("acceptedCount"))
+            assertEquals(0, payload.getInt("rejectedCount"))
+            assertEquals(listOf(1, 3), session.candidateDrafts.map(AutoCommentDraft::paragraphIndex))
+            assertTrue(session.submissionFinalized)
+        } finally {
+            ReadingCompanionSubagentSessionRegistry.unregister("child-partial")
+        }
+    }
+
+    @Test
     fun `summary submission with empty array finalizes without comments`() {
         val backend = FakeBackend()
         val session = registerSession("child-4", backend)

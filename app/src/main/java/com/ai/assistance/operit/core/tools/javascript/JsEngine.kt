@@ -1814,7 +1814,12 @@ class JsEngine(private val context: Context) {
                 val runId = runIdJson.trim().toLongOrNull()
                 require(runId != null && runId > 0) { "runId is required" }
                 val appContext = context.applicationContext
-                val resolvedChildChatId =
+                val chatHistoryDelegate =
+                    ChatRuntimeHolder.getInstance(appContext)
+                        .getCore(ChatRuntimeSlot.MAIN)
+                        .getChatHistoryDelegate()
+                val returnChatIdSnapshot = chatHistoryDelegate.currentChatId.value
+                val (resolvedChildChatId, safeReturnChatId) =
                     runBlocking(Dispatchers.IO) {
                         val run =
                             ReadingCompanionStore(appContext).use { store ->
@@ -1859,14 +1864,31 @@ class JsEngine(private val context: Context) {
                         require(authorized) {
                             "该任务与所选聊天不匹配，无法打开审计对话"
                         }
-                        childChatId
+                        val safeReturnChatId =
+                            returnChatIdSnapshot
+                                ?.takeIf { it != childChatId }
+                                ?.let { returnChatId ->
+                                    AppDatabase.getDatabase(appContext)
+                                        .chatDao()
+                                        .getChatById(returnChatId)
+                                }
+                                ?.takeIf { !it.isHidden }
+                                ?.id
+                        childChatId to safeReturnChatId
                     }
                 Handler(Looper.getMainLooper()).post {
                     try {
-                        ChatRuntimeHolder.getInstance(appContext)
-                            .getCore(ChatRuntimeSlot.MAIN)
-                            .getChatHistoryDelegate()
-                            .switchChat(resolvedChildChatId, scrollToBottom = false)
+                        ReadingCompanionAudit.rememberReturnChat(
+                            auditChildChatId = resolvedChildChatId,
+                            returnChatId = safeReturnChatId,
+                        )
+                        // 审计对话只在当前主聊天页临时显示，不写入全局 currentChatId。
+                        // 即使进程在审计页被杀，下次进入聊天也仍回到原来的可见会话。
+                        chatHistoryDelegate.switchChat(
+                            resolvedChildChatId,
+                            syncToGlobal = false,
+                            scrollToBottom = false,
+                        )
                         AppRouterGateway.navigate(
                             routeId = "native.ai_chat",
                             args = emptyMap(),

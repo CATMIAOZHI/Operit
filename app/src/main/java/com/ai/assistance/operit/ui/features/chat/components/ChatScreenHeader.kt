@@ -37,6 +37,7 @@ import com.ai.assistance.operit.data.model.ActivePrompt
 import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.core.agent.SubagentCoordinator
+import com.ai.assistance.operit.features.reading.ReadingCompanionAudit
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.floating.FloatingMode
@@ -72,6 +73,7 @@ fun ChatScreenHeader(
         chatHeaderTransparent: Boolean,
         chatHeaderHistoryIconColor: Int?,
         chatHeaderPipIconColor: Int?,
+        onExitHiddenReadingAuditRun: () -> Unit,
         onCharacterSwitcherClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -82,6 +84,10 @@ fun ChatScreenHeader(
     val currentChat = remember(currentChatId, chatHistories) {
         chatHistories.firstOrNull { it.id == currentChatId }
     }
+    val isHiddenReadingAuditRun =
+        currentChat?.chatKind == ChatKind.SUBAGENT.name &&
+            currentChat.isHidden &&
+            ReadingCompanionAudit.isHiddenAuditRun(currentChat.hiddenReason)
     val repository = remember(context) { SubagentRunRepository.getInstance(context) }
     val coroutineScope = rememberCoroutineScope()
     val managementParentChatId =
@@ -130,7 +136,18 @@ fun ChatScreenHeader(
                 currentChat?.takeIf { it.chatKind == ChatKind.SUBAGENT.name }?.id,
             onSelect = { run ->
                 showSubagentManager = false
-                actualViewModel.switchChat(run.childChatId, scrollToBottom = false)
+                if (isHiddenReadingAuditRun) {
+                    ReadingCompanionAudit.carryReturnChat(
+                        fromAuditChildChatId = currentChat?.id.orEmpty(),
+                        toAuditChildChatId = run.childChatId,
+                    )
+                    actualViewModel.switchChatLocally(
+                        run.childChatId,
+                        scrollToBottom = false,
+                    )
+                } else {
+                    actualViewModel.switchChat(run.childChatId, scrollToBottom = false)
+                }
             },
             onStop = { run ->
                 coroutineScope.launch {
@@ -142,10 +159,14 @@ fun ChatScreenHeader(
                     if (repository.setArchived(run.id, archived = true) &&
                         currentChatId == run.childChatId
                     ) {
-                        actualViewModel.switchChat(
-                            managementParentChatId,
-                            scrollToBottom = false,
-                        )
+                        if (isHiddenReadingAuditRun) {
+                            onExitHiddenReadingAuditRun()
+                        } else {
+                            actualViewModel.switchChat(
+                                managementParentChatId,
+                                scrollToBottom = false,
+                            )
+                        }
                     }
                 }
             },
@@ -190,13 +211,28 @@ fun ChatScreenHeader(
             currentChildChatId = currentChat.id,
             transparent = chatHeaderTransparent,
             onBackToParent = {
-                (run?.parentChatId ?: currentChat.parentChatId)
-                    ?.let { parentChatId ->
-                        actualViewModel.switchChat(parentChatId, scrollToBottom = false)
-                    }
+                if (isHiddenReadingAuditRun) {
+                    onExitHiddenReadingAuditRun()
+                } else {
+                    (run?.parentChatId ?: currentChat.parentChatId)
+                        ?.let { parentChatId ->
+                            actualViewModel.switchChat(parentChatId, scrollToBottom = false)
+                        }
+                }
             },
             onSwitchSubagent = { childChatId ->
-                actualViewModel.switchChat(childChatId, scrollToBottom = false)
+                if (isHiddenReadingAuditRun) {
+                    ReadingCompanionAudit.carryReturnChat(
+                        fromAuditChildChatId = currentChat.id,
+                        toAuditChildChatId = childChatId,
+                    )
+                    actualViewModel.switchChatLocally(
+                        childChatId,
+                        scrollToBottom = false,
+                    )
+                } else {
+                    actualViewModel.switchChat(childChatId, scrollToBottom = false)
+                }
             },
             onManageSubagents = { showSubagentManager = true },
             reviewCount = permissionReviewCount,

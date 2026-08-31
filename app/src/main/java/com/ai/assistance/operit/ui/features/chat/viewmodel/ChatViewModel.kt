@@ -749,6 +749,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    /**
+     * 仅切换主聊天页的内存态，不改全局 currentChatId。
+     *
+     * 隐藏审计 transcript 使用此路径，退出或进程重启后仍以用户原来的可见聊天为全局选择。
+     */
+    fun switchChatLocally(chatId: String, scrollToBottom: Boolean = false) {
+        chatHistoryDelegate.switchChat(
+            chatId = chatId,
+            syncToGlobal = false,
+            scrollToBottom = scrollToBottom,
+        )
+    }
+
     fun loadOlderMessagesForCurrentChat() {
         viewModelScope.launch {
             chatHistoryDelegate.loadOlderMessagesForCurrentChat()

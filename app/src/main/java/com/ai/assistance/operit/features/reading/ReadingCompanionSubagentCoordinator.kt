@@ -365,6 +365,11 @@ class ReadingCompanionSubagentCoordinator private constructor(context: Context) 
                     本章不适合段评时 comments 提交空数组。submit_comments 成功后会把摘要和段评
                     原子发布并结束本轮；校验失败时按错误提示修正后重试。
 
+                    每条段评的 anchorId 必须选择“读到这里才足以理解这条段评”的最后一个段落。
+                    evidenceIds 必须包含 anchorId，且所有证据段落都不得晚于 anchorId；如果段评
+                    用到了后续揭示，就把 anchorId 后移到最后一个必要证据段落。任一候选校验失败时，
+                    本次数组都不会发布，必须按诊断重新提交完整修正版。
+
                     不要调用 task 或任何本列表之外的工具，不要在 submit_comments 成功后再发起调用。
                     """.trimIndent(),
                 )

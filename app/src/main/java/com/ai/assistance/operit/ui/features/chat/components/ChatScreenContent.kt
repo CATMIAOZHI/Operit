@@ -129,6 +129,7 @@ fun ChatScreenContent(
         onShowCharacterSelectorChange: (Boolean) -> Unit,
         onSwitchCharacter: (CharacterSelectorTarget) -> Unit,
         onOpenCharacterSettings: () -> Unit,
+        onExitHiddenReadingAuditRun: () -> Unit,
         chatAreaHorizontalPadding: Float = 16f,
         bubbleUserImageStyle: BubbleImageStyleConfig? = null,
         bubbleAiImageStyle: BubbleImageStyleConfig? = null,
@@ -338,6 +339,7 @@ fun ChatScreenContent(
                         chatHeaderTransparent = chatHeaderTransparent,
                         chatHeaderHistoryIconColor = chatHeaderHistoryIconColor,
                         chatHeaderPipIconColor = chatHeaderPipIconColor,
+                        onExitHiddenReadingAuditRun = onExitHiddenReadingAuditRun,
                         onCharacterSwitcherClick = { onShowCharacterSelectorChange(true) }
                 )
             }
@@ -349,6 +351,7 @@ fun ChatScreenContent(
                         chatHeaderTransparent = chatHeaderTransparent,
                         chatHeaderHistoryIconColor = chatHeaderHistoryIconColor,
                         chatHeaderPipIconColor = chatHeaderPipIconColor,
+                        onExitHiddenReadingAuditRun = onExitHiddenReadingAuditRun,
                         onCharacterSwitcherClick = { onShowCharacterSelectorChange(true) }
                 )
                 ChatArea(

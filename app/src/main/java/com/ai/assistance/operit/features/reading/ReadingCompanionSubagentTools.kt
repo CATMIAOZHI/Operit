@@ -25,6 +25,7 @@ object ReadingCompanionSubagentTools {
     const val TOOL_SEARCH = "reading_commentary_search"
     const val TOOL_SUBMIT_SUMMARY = "reading_commentary_submit_summary"
     const val TOOL_SUBMIT_COMMENTS = "reading_commentary_submit_comments"
+    const val CODE_PARTIAL_CANDIDATES_REJECTED = "partial_candidates_rejected"
 
     /** 隔离工具面只允许这 6 个名字。 */
     val TOOL_NAMES: Set<String> =
@@ -120,14 +121,20 @@ object ReadingCompanionSubagentTools {
                 description =
                     "Submit 0 to 6 sparse in-character comments after submit_summary. Use an empty " +
                         "JSON array when no comment fits. Each comment uses anchorId, text, kind, " +
-                        "evidenceIds and optional evidenceQuote. A successful submission atomically " +
-                        "finalizes the staged summary and comments, then ends the turn.",
+                        "evidenceIds and optional evidenceQuote. Set anchorId to the latest (highest) " +
+                        "paragraph needed to understand the comment. evidenceIds must include anchorId, " +
+                        "and every evidenceId must be less than or equal to anchorId. If a comment " +
+                        "depends on a later paragraph, move anchorId to that later paragraph. The whole " +
+                        "array is rejected for correction if any candidate is invalid; a fully valid " +
+                        "submission atomically finalizes the summary and comments, then ends the turn.",
                 parametersStructured =
                     listOf(
                         ToolParameterSchema(
                             name = "comments",
                             description =
-                                "Raw JSON array of candidate comments, for example " +
+                                "Complete raw JSON array of candidate comments. anchorId must be the " +
+                                    "latest supporting paragraph; evidenceIds must include anchorId and " +
+                                    "must never point after it. For example " +
                                     "[{\"anchorId\":\"p0001\",\"text\":\"...\",\"kind\":\"reaction\"," +
                                     "\"evidenceIds\":[\"p0001\"],\"evidenceQuote\":\"...\"}]",
                         ),
@@ -451,14 +458,29 @@ object ReadingCompanionSubagentTools {
                 )
             }
         val drafts = report?.accepted.orEmpty()
-        if (!emptyComments && (drafts.isEmpty() || report?.code != AutoCommentSupport.REPORT_SUBMITTED)) {
+        val hasRejectedCandidates = (report?.rejectedCount ?: 0) > 0
+        if (
+            !emptyComments &&
+            (
+                drafts.isEmpty() ||
+                    report?.code != AutoCommentSupport.REPORT_SUBMITTED ||
+                    hasRejectedCandidates
+            )
+        ) {
             // 失败诊断：只带序号与原因码，绝不回灌正文/引用原文。
+            // 混合有效/无效也不发布：让模型重交完整修正版，避免成功响应静默丢候选。
+            val diagnosticCode =
+                if (drafts.isNotEmpty() && hasRejectedCandidates) {
+                    CODE_PARTIAL_CANDIDATES_REJECTED
+                } else {
+                    report?.code ?: "invalid_json_shape"
+                }
             val diagnostic =
                 JSONObject()
                     .put("ok", false)
-                    .put("code", report?.code ?: "invalid_json_shape")
+                    .put("code", diagnosticCode)
                     .put("inputCount", report?.inputCount ?: 0)
-                    .put("acceptedCount", 0)
+                    .put("acceptedCount", drafts.size)
                     .put("rejectedCount", report?.rejectedCount ?: 0)
                     .put(
                         "reasons",
@@ -485,8 +507,10 @@ object ReadingCompanionSubagentTools {
                     )
                     .put(
                         "hint",
-                        "fix the reported candidates and resubmit; use [] when this chapter " +
-                            "should have no comments",
+                        "nothing from this attempt was finalized; resubmit the complete corrected " +
+                            "array. anchorId must be the latest supporting paragraph, evidenceIds " +
+                            "must include it, and no evidenceId may be after it. Use [] when this " +
+                            "chapter should have no comments",
                     )
             return ToolResult(
                 toolName = tool.name,
@@ -512,7 +536,9 @@ object ReadingCompanionSubagentTools {
                         .put("ok", true)
                         .put("code", AutoCommentSupport.REPORT_SUBMITTED)
                         .put("summaryFinalized", true)
+                        .put("inputCount", report?.inputCount ?: 0)
                         .put("acceptedCount", drafts.size)
+                        .put("rejectedCount", 0)
                         .put(
                             "anchors",
                             JSONArray().apply {
