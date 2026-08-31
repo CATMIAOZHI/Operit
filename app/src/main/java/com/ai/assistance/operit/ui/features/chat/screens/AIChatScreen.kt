@@ -57,6 +57,7 @@ import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.preferences.WaifuPreferences
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
+import com.ai.assistance.operit.features.reading.ReadingCompanionAudit
 import com.ai.assistance.operit.ui.components.ErrorDialog
 import com.ai.assistance.operit.ui.features.chat.components.*
 import com.ai.assistance.operit.ui.features.chat.components.style.input.agent.AgentChatInputSection
@@ -134,6 +135,7 @@ fun AIChatScreen(
         onNavigateToOnboardingModelConfig: () -> Unit = {},
         onNavigateToModelPrompts: () -> Unit = {},
         onNavigateToPackageManager: () -> Unit = {},
+        onNavigateBack: () -> Unit = {},
         onGestureConsumed: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -340,6 +342,13 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         chatHistories.find { it.id == currentChatId }
     }
     val isSubagentChat = currentChatView?.chatKind == ChatKind.SUBAGENT.name
+    val isHiddenReadingAuditRun =
+        (
+            isSubagentChat &&
+                currentChatView?.isHidden == true &&
+                ReadingCompanionAudit.isHiddenAuditRun(currentChatView.hiddenReason)
+        ) || ReadingCompanionAudit.hasPendingReturnFor(currentChatId)
+    val isReadOnlyTranscript = isSubagentChat || isHiddenReadingAuditRun
     val subagentRunRepository = remember(context) { SubagentRunRepository.getInstance(context) }
     val currentSubagentRunFlow =
         remember(isSubagentChat, currentChatView?.id) {
@@ -349,9 +358,46 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                 ?: flowOf(null)
         }
     val currentSubagentRun by currentSubagentRunFlow.collectAsState(initial = null)
-    BackHandler(enabled = isSubagentChat && currentChatView?.parentChatId != null) {
-        currentChatView?.parentChatId?.let { parentChatId ->
-            actualViewModel.switchChat(parentChatId, scrollToBottom = false)
+    val exitHiddenReadingAuditRun = {
+        val auditChildChatId = currentChatView?.id ?: currentChatId.orEmpty()
+        val rememberedReturnChatId =
+            ReadingCompanionAudit.takeReturnChat(auditChildChatId)
+        val fallbackReturnChatId =
+            chatHistories
+                .firstOrNull { chat ->
+                    chat.id != auditChildChatId &&
+                        !chat.isHidden &&
+                        chat.chatKind == ChatKind.NORMAL.name
+                }
+                ?.id
+                ?: chatHistories
+                    .firstOrNull { chat ->
+                        chat.id != auditChildChatId && !chat.isHidden
+                    }
+                    ?.id
+        if (rememberedReturnChatId != null) {
+            actualViewModel.switchChatLocally(
+                rememberedReturnChatId,
+                scrollToBottom = false,
+            )
+        } else {
+            fallbackReturnChatId?.let { returnChatId ->
+                actualViewModel.switchChat(returnChatId, scrollToBottom = false)
+            }
+        }
+        onNavigateBack()
+    }
+    BackHandler(
+        enabled =
+            isHiddenReadingAuditRun ||
+                (isSubagentChat && currentChatView?.parentChatId != null),
+    ) {
+        if (isHiddenReadingAuditRun) {
+            exitHiddenReadingAuditRun()
+        } else {
+            currentChatView?.parentChatId?.let { parentChatId ->
+                actualViewModel.switchChat(parentChatId, scrollToBottom = false)
+            }
         }
     }
     val latestChatViewParams by rememberUpdatedState(
@@ -589,7 +635,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val displayedChatHistory =
         remember(
             chatHistory,
-            isSubagentChat,
+            isReadOnlyTranscript,
             currentSubagentRun,
             currentChatView?.characterCardName,
             currentChatView?.parentChatId,
@@ -597,7 +643,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
             activeCharacterCard,
             localizedUserRoleName,
         ) {
-            if (!isSubagentChat) {
+            if (!isReadOnlyTranscript) {
                 chatHistory
             } else {
                 val parentCharacterName =
@@ -1074,8 +1120,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     var showCharacterSelector by remember { mutableStateOf(false) }
 
     var bottomBarHeightPx by remember { mutableStateOf(0) }
-    LaunchedEffect(isSubagentChat) {
-        if (isSubagentChat) {
+    LaunchedEffect(isReadOnlyTranscript) {
+        if (isReadOnlyTranscript) {
             bottomBarHeightPx = 0
         }
     }
@@ -1153,7 +1199,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 bottomInset = bottomBarHeightDp,
                                  actualViewModel = actualViewModel,
                                  enableMessageDialogs = !isFloatingMode,
-                                 readOnlyTranscript = isSubagentChat,
+                                 readOnlyTranscript = isReadOnlyTranscript,
                                  showChatHistorySelector = showChatHistorySelector,
                                 chatHistory = displayedChatHistory,
                                 isLoading = isLoading,
@@ -1197,6 +1243,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 onShowCharacterSelectorChange = { showCharacterSelector = it },
                                 onSwitchCharacter = onSwitchCharacter,
                                 onOpenCharacterSettings = onNavigateToModelPrompts,
+                                onExitHiddenReadingAuditRun = exitHiddenReadingAuditRun,
                                 chatAreaHorizontalPadding = chatAreaHorizontalPadding,
                                 bubbleUserImageStyle = bubbleUserImageStyle,
                                 bubbleAiImageStyle = bubbleAiImageStyle,
@@ -1210,7 +1257,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                         )
 
                         if (
-                            !isSubagentChat &&
+                            !isReadOnlyTranscript &&
                                 inputStyle == UserPreferencesManager.INPUT_STYLE_CLASSIC
                         ) {
                             ClassicChatSettingsBar(
@@ -1297,7 +1344,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                         }
                     }
 
-                    if (!isSubagentChat) {
+                    if (!isReadOnlyTranscript) {
                         Box(
                             modifier =
                                 Modifier

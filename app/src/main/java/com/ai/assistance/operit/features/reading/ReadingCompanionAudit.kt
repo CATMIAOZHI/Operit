@@ -9,6 +9,14 @@ package com.ai.assistance.operit.features.reading
  * [ReadingCompanionStore] 的常量保持一致（同一来源避免漂移）。
  */
 object ReadingCompanionAudit {
+    private data class AuditNavigationReturn(
+        val auditChildChatId: String,
+        val returnChatId: String,
+    )
+
+    @Volatile
+    private var auditNavigationReturn: AuditNavigationReturn? = null
+
     /** 主库 subagent_runs.externalOwnerType 的阅读伴侣取值（跨库弱关联）。 */
     const val OWNER_TYPE: String = READING_COMPANION_SUBAGENT_OWNER_TYPE
 
@@ -32,6 +40,58 @@ object ReadingCompanionAudit {
     fun isPermanentHiddenReason(reason: String?): Boolean =
         reason?.startsWith(HIDDEN_ROOT_PREFIX) == true ||
             reason?.startsWith(HIDDEN_RUN_PREFIX) == true
+
+    /** 是否是用户从阅读伴侣记录页打开的隐藏审计子聊天。 */
+    fun isHiddenAuditRun(reason: String?): Boolean =
+        reason?.startsWith(HIDDEN_RUN_PREFIX) == true
+
+    /**
+     * 记住打开隐藏审计聊天前的可见聊天。返回时先恢复它，再退出聊天路由，避免当前聊天
+     * 落到隐藏父根；若没有安全来源则清掉旧映射，由 UI 选择任一可见聊天兜底。
+     */
+    @Synchronized
+    fun rememberReturnChat(auditChildChatId: String, returnChatId: String?) {
+        val childId = auditChildChatId.trim()
+        if (childId.isEmpty()) return
+        val safeReturnId =
+            returnChatId
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() && it != childId }
+        if (safeReturnId == null) {
+            auditNavigationReturn = null
+        } else {
+            auditNavigationReturn =
+                AuditNavigationReturn(
+                    auditChildChatId = childId,
+                    returnChatId = safeReturnId,
+                )
+        }
+    }
+
+    /** 一次性取出隐藏审计聊天的安全返回聊天。 */
+    @Synchronized
+    fun takeReturnChat(auditChildChatId: String): String? {
+        val pending = auditNavigationReturn ?: return null
+        if (pending.auditChildChatId != auditChildChatId.trim()) return null
+        auditNavigationReturn = null
+        return pending.returnChatId
+    }
+
+    /** 聊天列表尚未加载时，仍可凭当前 chatId 识别本次隐藏审计导航。 */
+    @Synchronized
+    fun hasPendingReturnFor(auditChildChatId: String?): Boolean =
+        auditNavigationReturn?.auditChildChatId == auditChildChatId?.trim()
+
+    /** 在审计子聊天之间切换时沿用最初的安全返回点。 */
+    @Synchronized
+    fun carryReturnChat(fromAuditChildChatId: String, toAuditChildChatId: String) {
+        val pending = auditNavigationReturn ?: return
+        if (pending.auditChildChatId != fromAuditChildChatId.trim()) return
+        val nextChildId = toAuditChildChatId.trim()
+        if (nextChildId.isEmpty()) return
+        auditNavigationReturn =
+            pending.copy(auditChildChatId = nextChildId)
+    }
 
     /** 构造每书审计根聊天的 hiddenReason。 */
     fun rootHiddenReason(bookId: String): String = "$HIDDEN_ROOT_PREFIX$bookId"

@@ -53,6 +53,37 @@ class ReadingCompanionPersonaContextTest {
     }
 
     @Test
+    fun `task prompt requires the anchor to follow every supporting paragraph`() {
+        val prompt =
+            ReadingCompanionSubagentCoordinator.buildSubagentTaskPrompt(
+                bookName = "Book A",
+                chapterIndex = 2,
+                roleCardName = "Rainy",
+                rolePrompt = fullPersona,
+            )
+
+        assertTrue(prompt.contains("最后一个段落"))
+        assertTrue(prompt.contains("evidenceIds 必须包含 anchorId"))
+        assertTrue(prompt.contains("所有证据段落都不得晚于 anchorId"))
+        assertTrue(prompt.contains("重新提交完整修正版"))
+
+        val submitPrompt =
+            ReadingCompanionSubagentTools
+                .prompts()
+                .single { it.name == ReadingCompanionSubagentTools.TOOL_SUBMIT_COMMENTS }
+        assertTrue(submitPrompt.description.contains("latest (highest) paragraph"))
+        assertTrue(submitPrompt.description.contains("every evidenceId must be less than or equal"))
+        assertTrue(submitPrompt.description.contains("whole array is rejected"))
+        assertTrue(
+            submitPrompt.parametersStructured
+                .orEmpty()
+                .single { it.name == "comments" }
+                .description
+                .contains("must never point after it"),
+        )
+    }
+
+    @Test
     fun `subagent path resolves the persona from the model gateway and passes it to the coordinator`() {
         val autoCommentarySource =
             File(

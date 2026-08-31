@@ -151,4 +151,65 @@ class ReadingCompanionAuditChatAuthorizationTest {
                 jsEngineSource.contains("val hiddenPath"),
         )
     }
+
+    @Test
+    fun `hidden audit run is distinguished from its hidden root`() {
+        assertTrue(ReadingCompanionAudit.isHiddenAuditRun(ReadingCompanionAudit.runHiddenReason(7L)))
+        assertFalse(
+            ReadingCompanionAudit.isHiddenAuditRun(
+                ReadingCompanionAudit.rootHiddenReason("book-1"),
+            ),
+        )
+    }
+
+    @Test
+    fun `audit navigation return point is safe transferable and one shot`() {
+        val firstChild = "audit-child-${System.nanoTime()}"
+        val siblingChild = "$firstChild-sibling"
+        val visibleChat = "$firstChild-visible"
+
+        ReadingCompanionAudit.rememberReturnChat(firstChild, visibleChat)
+        ReadingCompanionAudit.carryReturnChat(firstChild, siblingChild)
+
+        assertTrue(ReadingCompanionAudit.takeReturnChat(siblingChild) == visibleChat)
+        assertTrue(ReadingCompanionAudit.takeReturnChat(siblingChild) == null)
+        assertTrue(ReadingCompanionAudit.takeReturnChat(firstChild) == null)
+    }
+
+    @Test
+    fun `audit chat back exits route instead of switching to hidden parent`() {
+        val aiChatScreen =
+            File(
+                "src/main/java/com/ai/assistance/operit/ui/features/chat/screens/AIChatScreen.kt",
+            ).readText()
+        val chatHeader =
+            File(
+                "src/main/java/com/ai/assistance/operit/ui/features/chat/components/ChatScreenHeader.kt",
+            ).readText()
+        val jsEngine =
+            File(
+                "src/main/java/com/ai/assistance/operit/core/tools/javascript/JsEngine.kt",
+            ).readText()
+        val chatViewModel =
+            File(
+                "src/main/java/com/ai/assistance/operit/ui/features/chat/viewmodel/ChatViewModel.kt",
+            ).readText()
+
+        assertTrue(aiChatScreen.contains("ReadingCompanionAudit.takeReturnChat("))
+        assertTrue(aiChatScreen.contains("ReadingCompanionAudit.hasPendingReturnFor("))
+        assertTrue(aiChatScreen.contains("isReadOnlyTranscript"))
+        assertTrue(aiChatScreen.contains("actualViewModel.switchChatLocally("))
+        assertTrue(aiChatScreen.contains("onNavigateBack()"))
+        assertTrue(chatHeader.contains("onExitHiddenReadingAuditRun()"))
+        assertTrue(chatHeader.contains("ReadingCompanionAudit.carryReturnChat("))
+        assertTrue(
+            Regex("""actualViewModel\.switchChatLocally\(""")
+                .findAll(chatHeader)
+                .count() >= 2,
+        )
+        assertTrue(jsEngine.contains("ReadingCompanionAudit.rememberReturnChat("))
+        assertTrue(jsEngine.contains("?.takeIf { !it.isHidden }"))
+        assertTrue(jsEngine.contains("syncToGlobal = false"))
+        assertTrue(chatViewModel.contains("fun switchChatLocally("))
+    }
 }

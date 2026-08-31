@@ -167,6 +167,7 @@ sealed class Screen(
                     onNavigateToOnboardingModelConfig = { navigateTo(ModelConfigOnboarding) },
                     onNavigateToModelPrompts = { navigateTo(ModelPromptsSettings) },
                     onNavigateToPackageManager = { navigateTo(Packages) },
+                    onNavigateBack = onGoBack,
                     onLoading = onLoading,
                     onError = onError,
                     onGestureConsumed = onGestureConsumed

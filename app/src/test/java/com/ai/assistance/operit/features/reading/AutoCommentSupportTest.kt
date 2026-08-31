@@ -444,7 +444,7 @@ class AutoCommentSupportTest {
     }
 
     @Test
-    fun `manual read commentary targets stop before current chapter`() {
+    fun `manual specified commentary targets may include current and unread chapters`() {
         val targets =
             selectManualCommentaryTargets(
                 currentChapterIndex = 5,
@@ -455,7 +455,7 @@ class AutoCommentSupportTest {
                 scope = MANUAL_COMMENTARY_SCOPE_READ,
             )
 
-        assertEquals(listOf(2, 3, 4), targets)
+        assertEquals(listOf(2, 3, 4, 5, 6, 7, 8), targets)
     }
 
     @Test

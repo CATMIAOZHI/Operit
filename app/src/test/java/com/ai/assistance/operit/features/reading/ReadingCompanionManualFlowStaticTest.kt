@@ -94,7 +94,7 @@ class ReadingCompanionManualFlowStaticTest {
     }
 
     @Test
-    fun `manual read commentary scope is wired end to end`() {
+    fun `manual specified commentary scope is wired end to end`() {
         val bridge =
             source(
                 "src/main/java/com/ai/assistance/operit/features/reading/" +
@@ -111,7 +111,8 @@ class ReadingCompanionManualFlowStaticTest {
 
         assertTrue(bridge.contains(".optString("))
         assertTrue(bridge.contains("\"scope\""))
-        assertTrue(commentary.contains("allowHistoricalTarget = historical"))
+        assertTrue(commentary.contains("allowExplicitTarget = explicitRange"))
+        assertTrue(commentary.contains("force = explicitRange"))
         assertTrue(commentary.contains("expectedManualBookId = state.book.id"))
         assertTrue(commentary.contains("expectedManualTargetSourceId = targetChapter.sourceId"))
         assertTrue(commentary.contains("manualCommentaryAnchorMatches("))
@@ -119,7 +120,7 @@ class ReadingCompanionManualFlowStaticTest {
         assertTrue(commentary.contains("supersededChapterIndex = chapterIndex"))
         assertTrue(commentary.contains("supersededChapterIndex != null -> STATUS_SUPERSEDED"))
         assertTrue(bridge.contains("\"cancel_manual_commentary_batch\""))
-        assertTrue(commentary.contains("chapterIndex in 0 until currentChapterIndex"))
+        assertTrue(commentary.contains("chapterIndex in chapterByIndex"))
         assertTrue(packageSource.contains("scope: params.scope"))
         assertTrue(packageSource.contains("book_id: params.book_id"))
         assertTrue(packageSource.contains("batch_id: params.batch_id"))
@@ -129,9 +130,10 @@ class ReadingCompanionManualFlowStaticTest {
         assertTrue(entryUi.contains("text.batchSuperseded"))
         assertTrue(entryUi.contains("commentaryScope === \"read\""))
         assertTrue(entryUi.contains("start === null || end === null"))
-        assertTrue(entryUi.contains("isHistoricalComments"))
-        assertTrue(entryUi.contains("isHistoricalComments\n        ? \"10\""))
+        assertTrue(entryUi.contains("isSpecifiedComments"))
+        assertTrue(entryUi.contains("isSpecifiedComments\n        ? \"10\""))
         assertTrue(entryUi.contains("readRangeCount > 0"))
+        assertTrue(entryUi.contains("readRangeCount <= 10"))
         assertTrue(entryUi.contains("commentCount <= 10"))
         assertTrue(
             bridge.contains(
@@ -145,14 +147,16 @@ class ReadingCompanionManualFlowStaticTest {
         )
         assertTrue(
             packageSource.contains(
-                "scope=read 时必填，ahead 时可省略",
+                "scope=read 时必填，可指向已读、当前或未读章节",
             ),
         )
         assertTrue(
             packageSource.contains(
-                "read 时可省略并固定每次最多处理 10 个缺失章节",
+                "read 时忽略，由必填起止章节决定数量且范围最多 10 章",
             ),
         )
+        assertTrue(packageSource.contains("成功后替换旧段评"))
+        assertTrue(entryUi.contains("可包含未读章节"))
     }
 
     @Test
