@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.features.reading
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -158,6 +159,39 @@ class AutoCommentSupportTest {
         assertEquals("456", selected.first().content)
         assertEquals(true, selected.first().excerptFromEnd)
         assertEquals("4444", selected.last().content)
+    }
+
+    @Test
+    fun `previous context freshness ignores provider edge whitespace`() {
+        val full =
+            contextChapter(
+                index = 2,
+                content = "稳定正文",
+            )
+        val tail =
+            contextChapter(
+                index = 3,
+                content = "最后一段",
+            ).copy(excerptFromEnd = true)
+
+        assertTrue(
+            AutoCommentSupport.previousContextStillMatches(
+                latestContent = "\n稳定正文\r\n",
+                captured = full,
+            ),
+        )
+        assertTrue(
+            AutoCommentSupport.previousContextStillMatches(
+                latestContent = "前文\n最后一段\n\n",
+                captured = tail,
+            ),
+        )
+        assertFalse(
+            AutoCommentSupport.previousContextStillMatches(
+                latestContent = "前文\n已被替换",
+                captured = tail,
+            ),
+        )
     }
 
     @Test
@@ -407,6 +441,49 @@ class AutoCommentSupportTest {
 
         assertEquals(listOf(1, 2, 3, 4), targets)
         assertEquals(targets.size, targets.toSet().size)
+    }
+
+    @Test
+    fun `manual read commentary targets stop before current chapter`() {
+        val targets =
+            selectManualCommentaryTargets(
+                currentChapterIndex = 5,
+                upperChapterIndex = 8,
+                availableChapterIndices = 0..8,
+                count = 10,
+                startChapterIndex = 2,
+                scope = MANUAL_COMMENTARY_SCOPE_READ,
+            )
+
+        assertEquals(listOf(2, 3, 4), targets)
+    }
+
+    @Test
+    fun `manual commentary target anchor rejects book and source replacement`() {
+        assertTrue(
+            manualCommentaryAnchorMatches(
+                expectedBookId = "book-a",
+                expectedSourceId = "source-a",
+                actualBookId = "book-a",
+                actualSourceId = "source-a",
+            ),
+        )
+        assertFalse(
+            manualCommentaryAnchorMatches(
+                expectedBookId = "book-a",
+                expectedSourceId = "source-a",
+                actualBookId = "book-b",
+                actualSourceId = "source-a",
+            ),
+        )
+        assertFalse(
+            manualCommentaryAnchorMatches(
+                expectedBookId = "book-a",
+                expectedSourceId = "source-a",
+                actualBookId = "book-a",
+                actualSourceId = "source-b",
+            ),
+        )
     }
 
     @Test

@@ -60,6 +60,22 @@ interface ReaderProvider {
     ): ReadableChapterContent
 
     /**
+     * Reads content against a caller-owned catalog snapshot without doing a per-chapter catalog
+     * refresh. The caller must compare the complete catalog before and after the whole read-only
+     * scan and must not persist any returned body until that comparison succeeds.
+     */
+    suspend fun getReadableChapterContentForCatalogSnapshot(
+        bookId: String,
+        chapterIndex: Int,
+        expectedSourceId: String,
+    ): ReadableChapterContent =
+        getReadableChapterContent(bookId, chapterIndex).also { content ->
+            require(content.sourceId == expectedSourceId) {
+                "章节正文与目录快照不一致"
+            }
+        }
+
+    /**
      * Reads a complete chapter only for the isolated auto-comment generator.
      *
      * Implementations must not route this content into ordinary search, summaries, memories, or
@@ -70,6 +86,19 @@ interface ReaderProvider {
         bookId: String,
         chapterIndex: Int,
     ): AnnotationChapterContent
+}
+
+internal object ReaderChapterCatalogSupport {
+    fun hasSameIdentity(
+        before: List<ReaderChapter>,
+        after: List<ReaderChapter>,
+    ): Boolean =
+        before
+            .map { Triple(it.index, it.sourceId, it.title) }
+            .sortedBy { it.first } ==
+            after
+                .map { Triple(it.index, it.sourceId, it.title) }
+                .sortedBy { it.first }
 }
 
 internal object SpoilerGuard {

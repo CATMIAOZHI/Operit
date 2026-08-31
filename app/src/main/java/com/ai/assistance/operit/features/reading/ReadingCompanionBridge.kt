@@ -208,30 +208,160 @@ object ReadingCompanionBridge {
                                 ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME ||
                                 callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
                         ) { "该操作仅允许阅读伴侣工具包调用" }
-                        val count = parameters.optInt("count", -1)
-                        val start = parameters.optNullableInt("start_chapter_index")
-                        val end = parameters.optNullableInt("end_chapter_index")
-                        ReadingCompanionAutoCommentary.getInstance(context)
-                            .generateManualBatch(
-                                count = count,
-                                startChapterIndex = start,
-                                endChapterIndex = end,
-                                runtime = runtime,
+                        val batchBookId = parameters.optString("book_id").trim()
+                        val lease =
+                            ManualBatchGate.acquire("comments", batchBookId)
+                                ?: throw IllegalArgumentException("已有其他批次正在生成，请等待完成后再试")
+                        try {
+                            val start = parameters.optNullableInt("start_chapter_index")
+                            val end = parameters.optNullableInt("end_chapter_index")
+                            val batchId = parameters.optString("batch_id").trim()
+                            val scope =
+                                parameters
+                                    .optString(
+                                        "scope",
+                                        MANUAL_COMMENTARY_SCOPE_AHEAD,
+                                    )
+                                    .trim()
+                            val count =
+                                if (scope == MANUAL_COMMENTARY_SCOPE_READ) {
+                                    AutoCommentSupport.MAX_PREFETCH_AHEAD_CHAPTERS
+                                } else {
+                                    parameters.optInt("count", -1)
+                                }
+                            ReadingCompanionAutoCommentary.getInstance(context)
+                                .generateManualBatch(
+                                    count = count,
+                                    startChapterIndex = start,
+                                    endChapterIndex = end,
+                                    scope = scope,
+                                    batchId = batchId,
+                                    expectedBookId = batchBookId,
+                                    runtime = runtime,
+                                )
+                        } finally {
+                            ManualBatchGate.release(lease)
+                        }
+                    }
+                    "cancel_manual_commentary_batch" -> {
+                        require(
+                            callerPackageName ==
+                                ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME ||
+                                callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                        ) { "该操作仅允许阅读伴侣工具包调用" }
+                        val batchId = parameters.optString("batch_id").trim()
+                        JSONObject()
+                            .put(
+                                "stopRequested",
+                                ReadingCompanionAutoCommentary.getInstance(context)
+                                    .requestManualCommentaryBatchStop(batchId),
                             )
                     }
                     "manual_batch_summaries" -> {
                         require(
                             callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
                         ) { "该操作仅允许阅读伴侣主包调用" }
-                        val count = parameters.optInt("count", -1)
-                        val start = parameters.optNullableInt("start_chapter_index")
-                        val end = parameters.optNullableInt("end_chapter_index")
-                        service.manualBatchSummaries(
-                            count = count,
-                            startChapterIndex = start,
-                            endChapterIndex = end,
-                            runtime = runtime,
-                        )
+                        val batchBookId = parameters.optString("book_id").trim()
+                        val lease =
+                            ManualBatchGate.acquire("summaries", batchBookId)
+                                ?: throw IllegalArgumentException("已有其他批次正在生成，请等待完成后再试")
+                        try {
+                            val batchId = parameters.optString("batch_id").trim()
+                            val count = parameters.optInt("count", -1)
+                            val start = parameters.optNullableInt("start_chapter_index")
+                            val end = parameters.optNullableInt("end_chapter_index")
+                            service.manualBatchSummaries(
+                                batchId = batchId,
+                                count = count,
+                                startChapterIndex = start,
+                                endChapterIndex = end,
+                                runtime = runtime,
+                            )
+                        } finally {
+                            ManualBatchGate.release(lease)
+                        }
+                    }
+                    "cancel_manual_summary_batch" -> {
+                        require(
+                            callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                        ) { "该操作仅允许阅读伴侣主包调用" }
+                        val batchId = parameters.optString("batch_id").trim()
+                        JSONObject()
+                            .put(
+                                "stopRequested",
+                                service.requestManualSummaryBatchStop(batchId),
+                            )
+                    }
+                    "summary_batch_prefs" -> {
+                        require(
+                            callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                        ) { "该操作仅允许阅读伴侣主包调用" }
+                        val existing = service.summaryBatchPrefs()
+                        val hasAnyValue =
+                            parameters.has("start_chapter") ||
+                                parameters.has("end_chapter") ||
+                                parameters.optBoolean("clear_start", false) ||
+                                parameters.optBoolean("clear_end", false) ||
+                                parameters.has("budget")
+                        if (!hasAnyValue) {
+                            return@withContext JSONObject()
+                                .put("startChapter", existing?.startChapter ?: JSONObject.NULL)
+                                .put("endChapter", existing?.endChapter ?: JSONObject.NULL)
+                                .put(
+                                    "budget",
+                                    existing?.budget
+                                        ?: ReadingCompanionStore.DEFAULT_SUMMARY_BATCH_BUDGET,
+                                )
+                        }
+                        val startChapter =
+                            if (parameters.has("start_chapter")) {
+                                parameters.optNullableInt("start_chapter")
+                            } else if (parameters.optBoolean("clear_start", false)) {
+                                null
+                            } else {
+                                existing?.startChapter
+                            }
+                        val endChapter =
+                            if (parameters.has("end_chapter")) {
+                                parameters.optNullableInt("end_chapter")
+                            } else if (parameters.optBoolean("clear_end", false)) {
+                                null
+                            } else {
+                                existing?.endChapter
+                            }
+                        val budget =
+                            if (parameters.has("budget")) {
+                                parameters.optInt(
+                                    "budget",
+                                    ReadingCompanionStore.DEFAULT_SUMMARY_BATCH_BUDGET,
+                                )
+                            } else {
+                                existing?.budget ?: ReadingCompanionStore.DEFAULT_SUMMARY_BATCH_BUDGET
+                            }
+                        require(startChapter == null || startChapter >= 1) {
+                            "摘要批次起始章节必须为 1 起的章号"
+                        }
+                        require(endChapter == null || endChapter >= 1) {
+                            "摘要批次结束章节必须为 1 起的章号"
+                        }
+                        if (startChapter != null && endChapter != null) {
+                            require(endChapter >= startChapter) {
+                                "摘要批次结束章节不能早于起始章节"
+                            }
+                        }
+                        require(budget in 1..ReadingCompanionService.MAX_MANUAL_BATCH_BUDGET) {
+                            "摘要批次预算必须为 1～${ReadingCompanionService.MAX_MANUAL_BATCH_BUDGET}"
+                        }
+                        val saved =
+                            service.saveSummaryBatchPrefs(
+                                startChapter = startChapter,
+                                endChapter = endChapter,
+                                budget = budget,
+                            )
+                        JSONObject()
+                            .put("startChapter", saved.startChapter ?: JSONObject.NULL)
+                            .put("endChapter", saved.endChapter ?: JSONObject.NULL)
+                            .put("budget", saved.budget)
                     }
                     "list_audit_chats" -> {
                         require(

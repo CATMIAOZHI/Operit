@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import java.security.MessageDigest
 import kotlin.math.max
 import kotlin.math.min
+import org.json.JSONObject
 
 data class ReadingSearchHit(
     val id: Long,
@@ -58,6 +59,16 @@ data class ReaderMemory(
     val type: String,
     val content: String,
     val createdAt: Long,
+)
+
+/**
+ * Per-book manual summary-batch preferences.  Chapters are 1-based user-facing numbers
+ * (null/omitted = unbounded side); [budget] is the per-run generation cap.
+ */
+data class SummaryBatchPrefs(
+    val startChapter: Int?,
+    val endChapter: Int?,
+    val budget: Int,
 )
 
 data class AutoCommentChapter(
@@ -424,6 +435,13 @@ internal val AUTO_COMMENT_RUN_V13_SUBAGENT_COLUMN_DEFINITIONS: List<Pair<String,
     )
 
 /**
+ * v14 新增的 run 存活心跳列。它与 stage_updated_at 分离，避免 60 秒存活心跳篡改审计页
+ * 展示的真实阶段开始时间。新装与升级共用同一列定义。
+ */
+internal val AUTO_COMMENT_RUN_V14_LIVENESS_COLUMN_DEFINITION =
+    "run_heartbeat_at" to "INTEGER NOT NULL DEFAULT 0"
+
+/**
  * claim 归属判定 WHERE（heartbeat 与 JVM 心跳测试共用同一来源）。
  *
  * 只有 claim owner（book+chapter+runId 全匹配）能刷新 updated_at；affected != 1 即
@@ -440,6 +458,15 @@ internal const val READING_CLAIM_OWNER_WHERE_SQL =
  */
 internal const val READING_CLAIMS_NOT_STALE_SUBQUERY_SQL =
     "(SELECT run_id FROM auto_comment_generation_claims WHERE updated_at > ?)"
+
+/**
+ * 通用 stale run 选择条件。claim-owned 段评由 claim 心跳保护；无 claim 的 summary-only
+ * run 由 run_heartbeat_at 保护。进程启动清扫传入启动时刻，因此旧进程遗留 run 即使曾
+ * 心跳也仍会被中断。
+ */
+internal const val READING_STALE_RUN_WHERE_SQL =
+    "status = ? AND run_heartbeat_at < ? AND " +
+        "id NOT IN $READING_CLAIMS_NOT_STALE_SUBQUERY_SQL"
 
 /** 段评生成执行模式：单发（v13 前兼容值）。 */
 const val AUTO_COMMENT_RUN_EXECUTION_MODE_DIRECT = "direct"
@@ -645,6 +672,20 @@ class ReadingCompanionStore(context: Context) :
         if (oldVersion < 13) {
             ensureAutoCommentRunSubagentColumns(db)
         }
+        if (oldVersion < 14) {
+            ensureAutoCommentRunLivenessColumn(db)
+            db.execSQL(
+                """
+                UPDATE auto_comment_runs
+                SET run_heartbeat_at = CASE
+                    WHEN finished_at IS NOT NULL THEN finished_at
+                    WHEN stage_updated_at > 0 THEN stage_updated_at
+                    ELSE started_at
+                END
+                WHERE run_heartbeat_at = 0
+                """.trimIndent(),
+            )
+        }
     }
 
     private fun createCoreTables(db: SQLiteDatabase) {
@@ -835,6 +876,7 @@ class ReadingCompanionStore(context: Context) :
                 status TEXT NOT NULL,
                 stage TEXT NOT NULL DEFAULT 'starting',
                 stage_updated_at INTEGER NOT NULL DEFAULT 0,
+                ${AUTO_COMMENT_RUN_V14_LIVENESS_COLUMN_DEFINITION.first} ${AUTO_COMMENT_RUN_V14_LIVENESS_COLUMN_DEFINITION.second},
                 role_card_id TEXT,
                 role_card_name TEXT,
                 model_config_id TEXT,
@@ -950,6 +992,17 @@ class ReadingCompanionStore(context: Context) :
                 definition = definition,
             )
         }
+    }
+
+    /** v14：run 存活心跳列（幂等 ALTER；与 fresh create 共用定义）。 */
+    private fun ensureAutoCommentRunLivenessColumn(db: SQLiteDatabase) {
+        val (name, definition) = AUTO_COMMENT_RUN_V14_LIVENESS_COLUMN_DEFINITION
+        addColumnIfMissing(
+            db,
+            table = "auto_comment_runs",
+            column = name,
+            definition = definition,
+        )
     }
 
     private fun addColumnIfMissing(
@@ -1143,6 +1196,61 @@ class ReadingCompanionStore(context: Context) :
         ).use { cursor ->
             return if (cursor.moveToFirst()) cursor.getString(0).takeIf(String::isNotBlank) else null
         }
+    }
+
+    /**
+     * Saved manual summary-batch preferences for [bookId], or null when nothing has been saved.
+     * Values are stored as JSON under a book-scoped key in reading_settings.
+     */
+    fun getSummaryBatchPrefs(bookId: String): SummaryBatchPrefs? {
+        if (bookId.isBlank()) return null
+        readableDatabase.query(
+            "reading_settings",
+            arrayOf("setting_value"),
+            "setting_key = ?",
+            arrayOf(SUMMARY_BATCH_PREFS_KEY_PREFIX + bookId),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            val raw = cursor.getString(0).takeIf(String::isNotBlank) ?: return null
+            return runCatching {
+                val json = JSONObject(raw)
+                val rawStart = json.optNullableInt("startChapter")?.takeIf { it >= 1 }
+                val rawEnd = json.optNullableInt("endChapter")?.takeIf { it >= 1 }
+                val validRange = rawStart == null || rawEnd == null || rawEnd >= rawStart
+                SummaryBatchPrefs(
+                    startChapter = rawStart.takeIf { validRange },
+                    endChapter = rawEnd.takeIf { validRange },
+                    budget =
+                        json.optInt("budget", DEFAULT_SUMMARY_BATCH_BUDGET)
+                            .coerceIn(1, MAX_SUMMARY_BATCH_BUDGET),
+                )
+            }.getOrNull()
+        }
+    }
+
+    @Synchronized
+    fun setSummaryBatchPrefs(bookId: String, prefs: SummaryBatchPrefs) {
+        if (bookId.isBlank()) return
+        writableDatabase.insertWithOnConflict(
+            "reading_settings",
+            null,
+            ContentValues().apply {
+                put("setting_key", SUMMARY_BATCH_PREFS_KEY_PREFIX + bookId)
+                put(
+                    "setting_value",
+                    JSONObject()
+                        .put("startChapter", prefs.startChapter ?: JSONObject.NULL)
+                        .put("endChapter", prefs.endChapter ?: JSONObject.NULL)
+                        .put("budget", prefs.budget)
+                        .toString(),
+                )
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
     }
 
     /**
@@ -1918,6 +2026,7 @@ class ReadingCompanionStore(context: Context) :
                     put("status", AUTO_COMMENT_RUN_STATUS_GENERATING)
                     put("stage", AutoCommentRunStages.STARTING)
                     put("stage_updated_at", now)
+                    put("run_heartbeat_at", now)
                     put("comment_count", 0)
                     put("started_at", now)
                 },
@@ -2128,6 +2237,22 @@ class ReadingCompanionStore(context: Context) :
             ContentValues().apply { put("updated_at", now) },
             READING_CLAIM_OWNER_WHERE_SQL,
             arrayOf(bookId, chapterIndex.toString(), runId.toString()),
+        ) == 1
+
+    /**
+     * 刷新通用 run 存活时间。summary-only 没有段评 claim，靠此心跳避免被周期 stale 清扫
+     * 误杀；只有仍为 generating 的 run 才能刷新。
+     */
+    @Synchronized
+    fun heartbeatRunIfGenerating(
+        runId: Long,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean =
+        writableDatabase.update(
+            "auto_comment_runs",
+            ContentValues().apply { put("run_heartbeat_at", now) },
+            "id = ? AND status = ?",
+            arrayOf(runId.toString(), AUTO_COMMENT_RUN_STATUS_GENERATING),
         ) == 1
 
     @Synchronized
@@ -2483,6 +2608,7 @@ class ReadingCompanionStore(context: Context) :
                     put("stage", finalStage)
                     put("stage_updated_at", finishedAt)
                 }
+                put("run_heartbeat_at", finishedAt)
                 put("finished_at", finishedAt)
             },
             "id = ?",
@@ -2742,11 +2868,11 @@ class ReadingCompanionStore(context: Context) :
             cursor.moveToFirst()
         }
         if (claimActive) return true
-        // 兜底：run 已创建但 claim 尚未写入（或已释放但 run 尚未收尾）的极小窗口。
+        // 兜底：无 claim 的 summary-only run，以及 claim 尚未写入/已释放但尚未收尾的窗口。
         return readableDatabase.query(
             "auto_comment_runs",
             arrayOf("id"),
-            "status = ? AND started_at >= ?",
+            "status = ? AND run_heartbeat_at >= ?",
             arrayOf(AUTO_COMMENT_RUN_STATUS_GENERATING, staleBefore.toString()),
             null,
             null,
@@ -2767,11 +2893,7 @@ class ReadingCompanionStore(context: Context) :
             db.query(
                 "auto_comment_runs",
                 arrayOf("id"),
-                """
-                status = ? AND started_at < ? AND id NOT IN (
-                    $READING_CLAIMS_NOT_STALE_SUBQUERY_SQL
-                )
-                """.trimIndent(),
+                READING_STALE_RUN_WHERE_SQL,
                 arrayOf(
                     AUTO_COMMENT_RUN_STATUS_GENERATING,
                     staleBefore.toString(),
@@ -2804,11 +2926,7 @@ class ReadingCompanionStore(context: Context) :
                     put("error_message", "interrupted")
                     put("finished_at", finishedAt)
                 },
-                """
-                status = ? AND started_at < ? AND id NOT IN (
-                    $READING_CLAIMS_NOT_STALE_SUBQUERY_SQL
-                )
-                """.trimIndent(),
+                READING_STALE_RUN_WHERE_SQL,
                 arrayOf(
                     AUTO_COMMENT_RUN_STATUS_GENERATING,
                     staleBefore.toString(),
@@ -3659,9 +3777,12 @@ class ReadingCompanionStore(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "reading_companion.db"
-        internal const val DATABASE_VERSION = 13
+        internal const val DATABASE_VERSION = 14
         private const val SELECTED_BOOK_KEY = "selected_book_id"
         private const val LAST_RESOLVED_BOOK_KEY = "last_resolved_book_id"
+        private const val SUMMARY_BATCH_PREFS_KEY_PREFIX = "summary_batch|"
+        const val DEFAULT_SUMMARY_BATCH_BUDGET = 20
+        const val MAX_SUMMARY_BATCH_BUDGET = 999
         const val AUTO_COMMENT_STATUS_GENERATING = "generating"
         const val AUTO_COMMENT_STATUS_READY = "ready"
         const val AUTO_COMMENT_STATUS_FAILED = "failed"
@@ -3677,3 +3798,6 @@ class ReadingCompanionStore(context: Context) :
         private const val PREFETCH_AHEAD_CHAPTERS_KEY = "prefetch_ahead_chapters"
     }
 }
+
+private fun JSONObject.optNullableInt(name: String): Int? =
+    if (!has(name) || isNull(name)) null else getInt(name)

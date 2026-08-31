@@ -55,21 +55,46 @@ private fun AutoCommentaryGenerationResult.toJson(): JSONObject = JSONObject().a
  * per-chapter claim/freshness check before generating, but the explicit indices ensure a batch
  * cannot fall back to the same "next" chapter on every iteration.
  */
+internal const val MANUAL_COMMENTARY_SCOPE_AHEAD = "ahead"
+internal const val MANUAL_COMMENTARY_SCOPE_READ = "read"
+
+internal fun manualCommentaryAnchorMatches(
+    expectedBookId: String,
+    expectedSourceId: String,
+    actualBookId: String,
+    actualSourceId: String?,
+): Boolean =
+    actualBookId == expectedBookId &&
+        actualSourceId == expectedSourceId
+
 internal fun selectManualCommentaryTargets(
     currentChapterIndex: Int,
     upperChapterIndex: Int,
     availableChapterIndices: Iterable<Int>,
     count: Int,
     startChapterIndex: Int? = null,
+    scope: String = MANUAL_COMMENTARY_SCOPE_AHEAD,
 ): List<Int> {
-    if (count <= 0 || upperChapterIndex <= currentChapterIndex) return emptyList()
-    val first = maxOf(currentChapterIndex + 1, startChapterIndex ?: (currentChapterIndex + 1))
-    if (first > upperChapterIndex) return emptyList()
+    if (count <= 0) return emptyList()
+    val historical = scope == MANUAL_COMMENTARY_SCOPE_READ
+    val first =
+        if (historical) {
+            maxOf(0, startChapterIndex ?: 0)
+        } else {
+            maxOf(currentChapterIndex + 1, startChapterIndex ?: (currentChapterIndex + 1))
+        }
+    val last =
+        if (historical) {
+            minOf(currentChapterIndex - 1, upperChapterIndex)
+        } else {
+            upperChapterIndex
+        }
+    if (first > last) return emptyList()
     val available = availableChapterIndices.toSet()
-    return (first..upperChapterIndex)
+    return (first..last)
         .filter { it in available }
         .distinct()
-        .take(count.coerceAtMost(AutoCommentSupport.MAX_PREFETCH_AHEAD_CHAPTERS))
+        .take(count)
 }
 
 class AutoCommentRoleNotSelectedException :
@@ -104,6 +129,10 @@ class ReadingCompanionAutoCommentary private constructor(
     private val store = ReadingCompanionStore(appContext)
     private val modelGateway = ReadingCompanionModelGateway(appContext)
     private val subagentCoordinator = ReadingCompanionSubagentCoordinator.getInstance(appContext)
+    @Volatile
+    private var activeManualCommentaryBatchId: String? = null
+    @Volatile
+    private var manualCommentaryStopRequested = false
 
     suspend fun generateNextChapter(
         force: Boolean = false,
@@ -111,6 +140,9 @@ class ReadingCompanionAutoCommentary private constructor(
         trigger: String = TRIGGER_BACKGROUND,
         restartedFromRunId: Long? = null,
         targetChapterIndex: Int? = null,
+        allowHistoricalTarget: Boolean = false,
+        expectedManualBookId: String? = null,
+        expectedManualTargetSourceId: String? = null,
     ): AutoCommentaryGenerationResult {
         store.interruptStaleAutoCommentRuns(
             staleBefore = System.currentTimeMillis() - GENERATING_STALE_AFTER_MS,
@@ -129,6 +161,9 @@ class ReadingCompanionAutoCommentary private constructor(
                 runtime = runtime,
                 trigger = trigger,
                 targetChapterIndex = targetChapterIndex,
+                allowHistoricalTarget = allowHistoricalTarget,
+                expectedManualBookId = expectedManualBookId,
+                expectedManualTargetSourceId = expectedManualTargetSourceId,
             )
         } catch (cancelled: CancellationException) {
             // 进程/Worker 停止：标 interrupted + 释放 claim；child transcript 保留（不删除），
@@ -173,7 +208,45 @@ class ReadingCompanionAutoCommentary private constructor(
         count: Int,
         startChapterIndex: Int? = null,
         endChapterIndex: Int? = null,
+        scope: String = MANUAL_COMMENTARY_SCOPE_AHEAD,
+        batchId: String? = null,
+        expectedBookId: String? = null,
         runtime: ToolExecutionManager.ToolRuntimeContext? = null,
+    ): JSONObject {
+        val normalizedBatchId = batchId.orEmpty().trim().takeIf(String::isNotEmpty)
+        if (normalizedBatchId != null) {
+            activeManualCommentaryBatchId = normalizedBatchId
+            manualCommentaryStopRequested = false
+        }
+        return try {
+            generateManualBatchInternal(
+                count = count,
+                startChapterIndex = startChapterIndex,
+                endChapterIndex = endChapterIndex,
+                scope = scope,
+                batchId = normalizedBatchId,
+                expectedBookId = expectedBookId?.trim()?.takeIf(String::isNotEmpty),
+                runtime = runtime,
+            )
+        } finally {
+            if (
+                normalizedBatchId != null &&
+                activeManualCommentaryBatchId == normalizedBatchId
+            ) {
+                activeManualCommentaryBatchId = null
+                manualCommentaryStopRequested = false
+            }
+        }
+    }
+
+    private suspend fun generateManualBatchInternal(
+        count: Int,
+        startChapterIndex: Int?,
+        endChapterIndex: Int?,
+        scope: String,
+        batchId: String?,
+        expectedBookId: String?,
+        runtime: ToolExecutionManager.ToolRuntimeContext?,
     ): JSONObject {
         require(
             count in
@@ -188,14 +261,31 @@ class ReadingCompanionAutoCommentary private constructor(
         if (startChapterIndex != null && endChapterIndex != null) {
             require(endChapterIndex >= startChapterIndex) { "段评批量结束章节不能早于起始章节" }
         }
+        require(
+            scope == MANUAL_COMMENTARY_SCOPE_AHEAD ||
+                scope == MANUAL_COMMENTARY_SCOPE_READ,
+        ) { "段评批量范围必须为 ahead 或 read" }
+        val historical = scope == MANUAL_COMMENTARY_SCOPE_READ
+        if (historical) {
+            require(startChapterIndex != null && endChapterIndex != null) {
+                "补全已读章节段评必须指定起始章节和结束章节"
+            }
+        }
         val requestedCount = count
         val state = provider.getReadingState()
+        require(expectedBookId == null || state.book.id == expectedBookId) {
+            "当前书籍已变化，请刷新页面后重试"
+        }
         val chapters = provider.getChapters(state.book.id)
         val upper =
-            AutoCommentSupport.prefetchWindowUpperIndex(
-                state.chapterIndex,
-                store.getPrefetchAheadChapters(),
-            )
+            if (historical) {
+                state.chapterIndex - 1
+            } else {
+                AutoCommentSupport.prefetchWindowUpperIndex(
+                    state.chapterIndex,
+                    store.getPrefetchAheadChapters(),
+                )
+            }
         // With no explicit end, scan the whole bounded prefetch window and then take [count]
         // missing chapters.  This is important for ordinary "补齐 N 章" requests: a valid
         // chapter at the front must be skipped rather than consuming one slot and leaving the
@@ -208,12 +298,13 @@ class ReadingCompanionAutoCommentary private constructor(
             // Scan the whole requested range before taking [count], otherwise already valid
             // chapters at the front would consume the batch and leave later missing chapters
             // unfilled.
-            count = AutoCommentSupport.MAX_PREFETCH_AHEAD_CHAPTERS,
+            count = chapters.size,
             startChapterIndex = startChapterIndex,
+            scope = scope,
         )
         val fileStore = ReadingCompanionFileStore(appContext)
-        val targets = candidateTargets.filterNot { chapterIndex ->
-            val chapter = chapters.firstOrNull { it.index == chapterIndex } ?: return@filterNot true
+        val chapterByIndex = chapters.associateBy(ReaderChapter::index)
+        val targets = candidateTargets.mapNotNull(chapterByIndex::get).filterNot { chapter ->
             isFreshCommentary(
                 bookId = state.book.id,
                 chapter = chapter,
@@ -222,14 +313,22 @@ class ReadingCompanionAutoCommentary private constructor(
         }.take(requestedCount)
         val results = JSONArray()
         val failures = JSONArray()
+        val processedTargets = mutableListOf<ReaderChapter>()
         var completedCount = 0
-        targets.forEach { chapterIndex ->
+        var modelTaskCount = 0
+        var supersededChapterIndex: Int? = null
+        for (targetChapter in targets) {
+            if (isManualCommentaryStopRequested(batchId)) break
+            val chapterIndex = targetChapter.index
             val result = try {
                 generateNextChapter(
                     force = false,
                     runtime = runtime,
                     trigger = TRIGGER_MANUAL,
                     targetChapterIndex = chapterIndex,
+                    allowHistoricalTarget = historical,
+                    expectedManualBookId = state.book.id,
+                    expectedManualTargetSourceId = targetChapter.sourceId,
                 )
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -249,20 +348,63 @@ class ReadingCompanionAutoCommentary private constructor(
                 )
             }
             results.put(result.toJson())
+            if (result.status == STATUS_SUPERSEDED) {
+                supersededChapterIndex = chapterIndex
+                break
+            }
+            processedTargets += targetChapter
+            if (
+                result.execution != null ||
+                result.status == STATUS_GENERATED ||
+                result.status == "failed"
+            ) {
+                modelTaskCount += 1
+            }
             if (result.status == STATUS_GENERATED || result.status == STATUS_CACHED) {
                 completedCount += 1
             }
         }
+        val stopped = isManualCommentaryStopRequested(batchId)
         return JSONObject()
-            .put("status", if (failures.length() == 0) "completed" else "completed_with_failures")
+            .put(
+                "status",
+                when {
+                    stopped -> "stopped"
+                    supersededChapterIndex != null -> STATUS_SUPERSEDED
+                    failures.length() == 0 -> "completed"
+                    else -> "completed_with_failures"
+                },
+            )
+            .put("scope", scope)
             .put("requestedCount", requestedCount)
-            .put("targetChapterIndices", JSONArray().apply { targets.forEach(::put) })
-            .put("modelTaskCount", targets.size)
+            .put(
+                "targetChapterIndices",
+                JSONArray().apply { processedTargets.forEach { put(it.index) } },
+            )
+            .put("modelTaskCount", modelTaskCount)
             .put("completedCount", completedCount)
+            .put("supersededChapterIndex", supersededChapterIndex)
             .put("failedCount", failures.length())
             .put("failures", failures)
             .put("results", results)
     }
+
+    fun requestManualCommentaryBatchStop(batchId: String): Boolean {
+        val normalizedBatchId = batchId.trim()
+        if (
+            normalizedBatchId.isEmpty() ||
+            activeManualCommentaryBatchId != normalizedBatchId
+        ) {
+            return false
+        }
+        manualCommentaryStopRequested = true
+        return true
+    }
+
+    private fun isManualCommentaryStopRequested(batchId: String?): Boolean =
+        batchId != null &&
+            activeManualCommentaryBatchId == batchId &&
+            manualCommentaryStopRequested
 
     private suspend fun isFreshCommentary(
         bookId: String,
@@ -288,6 +430,9 @@ class ReadingCompanionAutoCommentary private constructor(
         runtime: ToolExecutionManager.ToolRuntimeContext?,
         trigger: String,
         targetChapterIndex: Int?,
+        allowHistoricalTarget: Boolean,
+        expectedManualBookId: String?,
+        expectedManualTargetSourceId: String?,
     ): AutoCommentaryGenerationResult {
         store.updateAutoCommentRunStage(runId, AutoCommentRunStages.READING_TARGET)
         val initialState = traceOperation(
@@ -299,6 +444,22 @@ class ReadingCompanionAutoCommentary private constructor(
         ) {
             provider.getReadingState()
         }
+        if (
+            expectedManualBookId != null &&
+            initialState.book.id != expectedManualBookId
+        ) {
+            store.finishAutoCommentRun(
+                runId = runId,
+                status = ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_SUPERSEDED,
+            )
+            return AutoCommentaryGenerationResult(
+                bookId = expectedManualBookId,
+                chapterIndex = targetChapterIndex,
+                status = STATUS_SUPERSEDED,
+                commentCount = 0,
+                runId = runId,
+            )
+        }
         store.updateBook(initialState)
         store.prepareForState(initialState)
         val chapters = traceOperation(
@@ -309,6 +470,31 @@ class ReadingCompanionAutoCommentary private constructor(
                 .put("bookId", initialState.book.id),
         ) {
             provider.getChapters(initialState.book.id)
+        }
+        if (
+            expectedManualBookId != null &&
+            expectedManualTargetSourceId != null &&
+            !manualCommentaryAnchorMatches(
+                expectedBookId = expectedManualBookId,
+                expectedSourceId = expectedManualTargetSourceId,
+                actualBookId = initialState.book.id,
+                actualSourceId =
+                    targetChapterIndex?.let { expectedIndex ->
+                        chapters.firstOrNull { it.index == expectedIndex }?.sourceId
+                    },
+            )
+        ) {
+            store.finishAutoCommentRun(
+                runId = runId,
+                status = ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_SUPERSEDED,
+            )
+            return AutoCommentaryGenerationResult(
+                bookId = expectedManualBookId,
+                chapterIndex = targetChapterIndex,
+                status = STATUS_SUPERSEDED,
+                commentCount = 0,
+                runId = runId,
+            )
         }
         val fileStore = ReadingCompanionFileStore(appContext)
         fileStore.syncBookCatalog(initialState.book, chapters)
@@ -322,6 +508,7 @@ class ReadingCompanionAutoCommentary private constructor(
             roleCardId = storedPersona?.roleCardId,
             force = force,
             targetChapterIndex = targetChapterIndex,
+            allowHistoricalTarget = allowHistoricalTarget,
             fileStore = fileStore,
         )
         if (nextChapterIndex == null) {
@@ -515,12 +702,19 @@ class ReadingCompanionAutoCommentary private constructor(
             val targetIdentityUnchanged =
                 latestChapters.firstOrNull { it.index == nextChapterIndex }?.sourceId ==
                     expectedTargetChapter.sourceId
+            val targetStillAllowed =
+                if (allowHistoricalTarget) {
+                    nextChapterIndex in 0 until latestState.chapterIndex
+                } else {
+                    nextChapterIndex <=
+                        AutoCommentSupport.prefetchWindowUpperIndex(
+                            latestState.chapterIndex,
+                            prefetchAhead,
+                        )
+                }
             if (
                 latestState.book.id != initialState.book.id ||
-                nextChapterIndex > AutoCommentSupport.prefetchWindowUpperIndex(
-                    latestState.chapterIndex,
-                    prefetchAhead,
-                ) ||
+                !targetStillAllowed ||
                 !targetIdentityUnchanged ||
                 latestPersona?.roleCardId != generated.execution.roleCardId
             ) {
@@ -843,17 +1037,24 @@ class ReadingCompanionAutoCommentary private constructor(
         roleCardId: String?,
         force: Boolean,
         targetChapterIndex: Int?,
+        allowHistoricalTarget: Boolean,
         fileStore: ReadingCompanionFileStore,
     ): Int? {
         val chapterByIndex = chapters.associateBy(ReaderChapter::index)
         val upper =
             AutoCommentSupport.prefetchWindowUpperIndex(currentChapterIndex, prefetchAhead)
-        if (currentChapterIndex >= upper) return null
+        if (!allowHistoricalTarget && currentChapterIndex >= upper) return null
         val candidateIndices =
             targetChapterIndex?.let { listOf(it) }
                 ?: ((currentChapterIndex + 1)..upper).toList()
         for (chapterIndex in candidateIndices) {
-            if (chapterIndex !in (currentChapterIndex + 1)..upper) continue
+            val inAllowedRange =
+                if (allowHistoricalTarget) {
+                    chapterIndex in 0 until currentChapterIndex
+                } else {
+                    chapterIndex in (currentChapterIndex + 1)..upper
+                }
+            if (!inAllowedRange) continue
             val chapter = chapterByIndex[chapterIndex] ?: continue
             if (force) return chapterIndex
             val storedContractHash =

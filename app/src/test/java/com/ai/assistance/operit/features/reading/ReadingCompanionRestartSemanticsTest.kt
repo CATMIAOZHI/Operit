@@ -37,6 +37,7 @@ class ReadingCompanionRestartSemanticsTest {
                         status TEXT NOT NULL,
                         stage TEXT NOT NULL DEFAULT 'starting',
                         stage_updated_at INTEGER NOT NULL DEFAULT 0,
+                        run_heartbeat_at INTEGER NOT NULL DEFAULT 0,
                         comment_count INTEGER NOT NULL DEFAULT 0,
                         started_at INTEGER NOT NULL,
                         restarted_from_run_id INTEGER
@@ -78,11 +79,11 @@ class ReadingCompanionRestartSemanticsTest {
             val swept =
                 connection.prepareStatement(
                     "UPDATE auto_comment_runs SET status = 'interrupted' " +
-                        "WHERE status = 'generating' AND started_at < ? " +
-                        "AND id NOT IN $READING_CLAIMS_NOT_STALE_SUBQUERY_SQL"
+                        "WHERE $READING_STALE_RUN_WHERE_SQL"
                 ).use { prepared ->
-                    prepared.setLong(1, restartAt)
+                    prepared.setString(1, "generating")
                     prepared.setLong(2, restartAt)
+                    prepared.setLong(3, restartAt)
                     prepared.executeUpdate()
                 }
             assertEquals(1, swept)
@@ -121,9 +122,9 @@ class ReadingCompanionRestartSemanticsTest {
             val oldRunId = 1L
             connection.prepareStatement(
                 "INSERT INTO auto_comment_runs " +
-                    "(trigger_source, execution_mode, status, stage, stage_updated_at, " +
+                    "(trigger_source, execution_mode, status, stage, stage_updated_at, run_heartbeat_at, " +
                     "comment_count, started_at, restarted_from_run_id) " +
-                    "VALUES ('background', 'subagent', 'generating', 'starting', 2000, 0, 2000, ?)"
+                    "VALUES ('background', 'subagent', 'generating', 'starting', 2000, 2000, 0, 2000, ?)"
             ).use { prepared ->
                 prepared.setLong(1, oldRunId)
                 prepared.executeUpdate()
@@ -139,6 +140,33 @@ class ReadingCompanionRestartSemanticsTest {
                     assertEquals(oldRunId, rows.getLong(4))
                 }
             }
+        }
+    }
+
+    @Test
+    fun `restart sweep interrupts a summary run even when the old process heartbeated it`() {
+        openDatabase().use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(
+                    "INSERT INTO auto_comment_runs " +
+                        "(trigger_source, execution_mode, status, stage_updated_at, " +
+                        "run_heartbeat_at, started_at) " +
+                        "VALUES ('manual_summary', 'subagent', 'generating', 1000, 1900, 1000)"
+                )
+            }
+            // 新进程启动时刻晚于旧进程最后心跳；启动清扫仍必须回收遗留摘要。
+            val restartAt = 2000L
+            val swept =
+                connection.prepareStatement(
+                    "UPDATE auto_comment_runs SET status = 'interrupted' " +
+                        "WHERE $READING_STALE_RUN_WHERE_SQL"
+                ).use { prepared ->
+                    prepared.setString(1, "generating")
+                    prepared.setLong(2, restartAt)
+                    prepared.setLong(3, restartAt)
+                    prepared.executeUpdate()
+                }
+            assertEquals(1, swept)
         }
     }
 

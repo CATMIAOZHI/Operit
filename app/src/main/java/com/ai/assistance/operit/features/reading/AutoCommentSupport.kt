@@ -162,6 +162,23 @@ internal object AutoCommentSupport {
         return selectedNearestFirst.asReversed()
     }
 
+    /**
+     * [selectPreviousContext] removes leading/trailing whitespace before storing either the full
+     * chapter or its tail excerpt. Compare the re-read provider body using the same normalization;
+     * otherwise a stable trailing newline is incorrectly reported as a changed chapter.
+     */
+    fun previousContextStillMatches(
+        latestContent: String,
+        captured: AutoCommentContextChapter,
+    ): Boolean {
+        val normalizedLatest = latestContent.trim()
+        return if (captured.excerptFromEnd) {
+            normalizedLatest.endsWith(captured.content)
+        } else {
+            normalizedLatest == captured.content
+        }
+    }
+
     fun labeledPreviousContext(chapters: List<AutoCommentContextChapter>): String =
         chapters.joinToString("\n") { chapter ->
             """

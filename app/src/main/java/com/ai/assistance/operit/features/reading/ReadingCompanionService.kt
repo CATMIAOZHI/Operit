@@ -38,6 +38,14 @@ private data class FreshFileSummary(
     val contentHashKind: String,
 )
 
+private data class SummaryBatchCandidateScan(
+    val totalInRange: Int,
+    val existingInRange: Int,
+    val candidates: List<ReaderChapter>,
+    val selectionFailures: List<JSONObject>,
+    val stopped: Boolean,
+)
+
 class ReadingCompanionService private constructor(
     context: Context,
 ) {
@@ -46,6 +54,12 @@ class ReadingCompanionService private constructor(
     private val store = ReadingCompanionStore(appContext)
     private val modelGateway = ReadingCompanionModelGateway(appContext)
     private val manualSummaryMutex = Mutex()
+    @Volatile
+    private var manualSummaryBatchActive = false
+    @Volatile
+    private var manualSummaryStopRequested = false
+    @Volatile
+    private var activeManualSummaryBatchId: String? = null
 
     suspend fun listBooks(): JSONObject {
         val selectedId = store.getSelectedBookId()
@@ -950,16 +964,21 @@ class ReadingCompanionService private constructor(
      * summary-only subagent task.
      */
     suspend fun manualBatchSummaries(
+        batchId: String,
         count: Int,
         startChapterIndex: Int?,
         endChapterIndex: Int?,
         runtime: ToolExecutionManager.ToolRuntimeContext?,
     ): JSONObject {
         check(manualSummaryMutex.tryLock()) { "已有手动摘要批次正在生成，请等待完成后再试" }
+        manualSummaryStopRequested = false
+        activeManualSummaryBatchId = batchId
+        manualSummaryBatchActive = true
         return try {
             withContext(Dispatchers.IO) {
-                require(count in 1..MAX_MANUAL_BATCH_COUNT) {
-                    "摘要批量数量必须为 1～$MAX_MANUAL_BATCH_COUNT"
+                require(batchId.isNotBlank()) { "摘要批次标识不能为空" }
+                require(count in 1..MAX_MANUAL_BATCH_BUDGET) {
+                    "摘要批量数量必须为 1～$MAX_MANUAL_BATCH_BUDGET"
                 }
                 require(startChapterIndex == null || startChapterIndex >= 0) {
                     "摘要批量起始章节必须为非负索引"
@@ -981,9 +1000,179 @@ class ReadingCompanionService private constructor(
 
         val rangeStart = startChapterIndex ?: 0
         val rangeEnd = endChapterIndex ?: state.chapterIndex
-        val candidateContents = mutableListOf<Pair<ReaderChapter, ReadableChapterContent>>()
+        val scan = scanSummaryBatchCandidates(
+            state = state,
+            chapters = chapters,
+            fileStore = fileStore,
+            rangeStart = rangeStart,
+            rangeEnd = rangeEnd,
+            limit = count,
+        )
+        val chaptersAfterScan = provider.getChapters(state.book.id)
+        require(ReaderChapterCatalogSupport.hasSameIdentity(chapters, chaptersAfterScan)) {
+            "Legado 目录在摘要候选扫描期间发生变化，请重试"
+        }
+        val candidates = scan.candidates
+        val selectionFailures = scan.selectionFailures
+
+        val processedTargets = mutableListOf<Int>()
+        val results = JSONArray()
+        val unavailable = JSONArray().apply {
+            selectionFailures.forEach(::put)
+        }
+        val failures = JSONArray()
+        var completedCount = 0
+        val coordinator = ReadingCompanionSubagentCoordinator.getInstance(appContext)
+        for (chapter in candidates) {
+            if (manualSummaryStopRequested) break
+            val content =
+                try {
+                    provider.getReadableChapterContent(state.book.id, chapter.index)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    unavailable.put(unavailableBatchResult(chapter, error))
+                    continue
+                }
+            if (
+                content.bookId != state.book.id ||
+                content.chapterIndex != chapter.index ||
+                content.sourceId != chapter.sourceId ||
+                !content.isComplete ||
+                content.readableUntil != content.content.length
+            ) {
+                unavailable.put(
+                    unavailableBatchResult(
+                        chapter,
+                        IllegalStateException("章节正文已变化或暂不完整"),
+                    ),
+                )
+                continue
+            }
+            processedTargets += chapter.index
+            val result =
+                try {
+                    generateSummaryForChapter(
+                        state = state,
+                        chapter = chapter,
+                        content = content,
+                        chapters = chapters,
+                        fileStore = fileStore,
+                        coordinator = coordinator,
+                        runtime = runtime,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    val failed = failedBatchResult(chapter, error)
+                    failures.put(failed)
+                    // Also surfaces the failure inside the per-run results list, matching the
+                    // historical batch result shape.
+                    failed
+                }
+            results.put(result)
+            if (result.optString("status") == "generated") completedCount += 1
+        }
+
+            val remainingMissing =
+                scan.totalInRange - scan.existingInRange - completedCount
+            val stopped = scan.stopped || manualSummaryStopRequested
+            JSONObject()
+                .put("book", state.book.name)
+                .put("requestedCount", count)
+                .put("totalInRange", scan.totalInRange)
+                .put("existingInRange", scan.existingInRange)
+                .put("scanComplete", !scan.stopped)
+                .put("remainingMissing", remainingMissing)
+                .put("remainingReadableMissing", remainingMissing)
+                .put(
+                    "targetChapterIndices",
+                    JSONArray().apply { processedTargets.forEach(::put) },
+                )
+                .put("completedCount", completedCount)
+                .put("failedCount", failures.length())
+                .put("failures", failures)
+                .put("unavailableCount", unavailable.length())
+                .put("unavailable", unavailable)
+                .put("results", results)
+                // One summary-only subagent task is created per selected chapter. Each task
+                // may naturally require multiple provider turns while it reads and submits.
+                .put("modelTaskCount", processedTargets.size)
+                .put(
+                    "status",
+                    when {
+                        stopped -> "stopped"
+                        failures.length() > 0 -> "completed_with_failures"
+                        else -> "completed"
+                    },
+                )
+            }
+        } finally {
+            manualSummaryBatchActive = false
+            manualSummaryStopRequested = false
+            activeManualSummaryBatchId = null
+            manualSummaryMutex.unlock()
+        }
+    }
+
+    /** Requests that the active summary batch stop before starting its next chapter. */
+    fun requestManualSummaryBatchStop(batchId: String): Boolean {
+        if (
+            batchId.isBlank() ||
+            !manualSummaryBatchActive ||
+            activeManualSummaryBatchId != batchId
+        ) {
+            return false
+        }
+        manualSummaryStopRequested = true
+        return true
+    }
+
+    /** Saved per-book summary-batch preferences for the current book, or null when never set. */
+    suspend fun summaryBatchPrefs(): SummaryBatchPrefs? =
+        store.getSummaryBatchPrefs(selectedReadingState().book.id)
+
+    /** Persists the per-book summary-batch preferences for the current book. */
+    suspend fun saveSummaryBatchPrefs(
+        startChapter: Int?,
+        endChapter: Int?,
+        budget: Int,
+    ): SummaryBatchPrefs {
+        val bookId = selectedReadingState().book.id
+        val prefs = SummaryBatchPrefs(
+            startChapter = startChapter,
+            endChapter = endChapter,
+            budget = budget,
+        )
+        store.setSummaryBatchPrefs(bookId, prefs)
+        return prefs
+    }
+
+    /**
+     * Shared scan for the manual summary-batch surfaces.  Counts every *complete* chapter inside
+     * [rangeStart]..[rangeEnd] that is at or before the current reading boundary, separates the
+     * chapters that already carry a fresh summary of either content kind, and collects up to
+     * [limit] missing candidates newest-first. Chapters whose readable content cannot be fetched
+     * are reported as unavailable and never counted as complete candidates.
+     */
+    private suspend fun scanSummaryBatchCandidates(
+        state: ReadingState,
+        chapters: List<ReaderChapter>,
+        fileStore: ReadingCompanionFileStore,
+        rangeStart: Int,
+        rangeEnd: Int,
+        limit: Int,
+    ): SummaryBatchCandidateScan {
+        var totalInRange = 0
+        var existingInRange = 0
+        val candidates = mutableListOf<ReaderChapter>()
         val selectionFailures = mutableListOf<JSONObject>()
+        var stopped = false
         for (chapter in chapters) {
+            if (manualSummaryStopRequested) {
+                stopped = true
+                break
+            }
             if (
                 chapter.index < rangeStart ||
                 chapter.index > rangeEnd ||
@@ -992,7 +1181,11 @@ class ReadingCompanionService private constructor(
                 continue
             }
             val content = try {
-                provider.getReadableChapterContent(state.book.id, chapter.index)
+                provider.getReadableChapterContentForCatalogSnapshot(
+                    bookId = state.book.id,
+                    chapterIndex = chapter.index,
+                    expectedSourceId = chapter.sourceId,
+                )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -1013,6 +1206,7 @@ class ReadingCompanionService private constructor(
             ) {
                 continue
             }
+            totalInRange += 1
             val currentHash = ReadingCompanionFileStore.contentHash(content.content)
             // A summary may have been produced by the commentary path and therefore be tied to
             // the annotation body instead of the readable prefix.  Verify whichever content kind
@@ -1048,74 +1242,36 @@ class ReadingCompanionService private constructor(
                             )
                         }
                     }
-            if (existingSummary != null) continue
-            candidateContents += chapter to content
-            if (candidateContents.size >= count) break
-        }
-
-        val targets = candidateContents.map { it.first.index }
-        val results = JSONArray()
-        val failures = JSONArray().apply {
-            selectionFailures.forEach(::put)
-        }
-        var completedCount = 0
-        val coordinator = ReadingCompanionSubagentCoordinator.getInstance(appContext)
-        candidateContents.forEach { (chapter, content) ->
-            val result =
-                try {
-                    generateSummaryForChapter(
-                        state = state,
-                        chapter = chapter,
-                        content = content,
-                        chapters = chapters,
-                        fileStore = fileStore,
-                        coordinator = coordinator,
-                        runtime = runtime,
-                    )
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Throwable) {
-                    failures.put(
-                        JSONObject()
-                            .put("chapterIndex", chapter.index)
-                            .put("chapterNumber", chapter.index + 1)
-                            .put("status", "failed")
-                            .put("error", safeReadingCompanionError(error)),
-                    )
-                    JSONObject()
-                        .put("chapterIndex", chapter.index)
-                        .put("chapterNumber", chapter.index + 1)
-                        .put("status", "failed")
-                        .put("error", safeReadingCompanionError(error))
-                }
-            results.put(result)
-            if (result.optString("status") == "generated") completedCount += 1
-        }
-
-                JSONObject()
-                    .put("book", state.book.name)
-                    .put("requestedCount", count)
-                    .put("targetChapterIndices", JSONArray().apply { targets.forEach(::put) })
-                    .put("completedCount", completedCount)
-                    .put("failedCount", failures.length())
-                    .put("failures", failures)
-                    .put("results", results)
-                    // One summary-only subagent task is created per selected chapter. Each task
-                    // may naturally require multiple provider turns while it reads and submits.
-                    .put("modelTaskCount", targets.size)
-                    .put(
-                        "status",
-                        if (failures.length() == 0) {
-                            "completed"
-                        } else {
-                            "completed_with_failures"
-                        },
-                    )
+            if (existingSummary != null) {
+                existingInRange += 1
+            } else if (candidates.size < limit) {
+                // Do not retain chapter bodies for the whole batch. The selected chapter is
+                // fetched and revalidated immediately before its subagent task starts.
+                candidates += chapter
             }
-        } finally {
-            manualSummaryMutex.unlock()
         }
+        return SummaryBatchCandidateScan(
+            totalInRange = totalInRange,
+            existingInRange = existingInRange,
+            candidates = candidates,
+            selectionFailures = selectionFailures,
+            stopped = stopped,
+        )
     }
+
+    private fun unavailableBatchResult(chapter: ReaderChapter, error: Throwable): JSONObject =
+        JSONObject()
+            .put("chapterIndex", chapter.index)
+            .put("chapterNumber", chapter.index + 1)
+            .put("status", "unavailable")
+            .put("error", safeReadingCompanionError(error))
+
+    private fun failedBatchResult(chapter: ReaderChapter, error: Throwable): JSONObject =
+        JSONObject()
+            .put("chapterIndex", chapter.index)
+            .put("chapterNumber", chapter.index + 1)
+            .put("status", "failed")
+            .put("error", safeReadingCompanionError(error))
 
     private suspend fun generateSummaryForChapter(
         state: ReadingState,
@@ -1835,11 +1991,10 @@ class ReadingCompanionService private constructor(
                 "上下文返回前前文章节来源发生变化"
             }
             require(
-                if (prior.excerptFromEnd) {
-                    latestPrior.content.endsWith(prior.content)
-                } else {
-                    latestPrior.content == prior.content
-                }
+                AutoCommentSupport.previousContextStillMatches(
+                    latestContent = latestPrior.content,
+                    captured = prior,
+                ),
             ) { "上下文返回前前文章节正文发生变化" }
         }
     }
@@ -2013,7 +2168,7 @@ class ReadingCompanionService private constructor(
         private const val SUMMARY_CONTEXT_FRESHNESS_BUDGET_MS = 8_000L
         private const val SUMMARY_TOOL_FRESHNESS_TIMEOUT_MS = 1_500L
         const val PERSISTED_FILES_DEFAULT_LIMIT = 50
-        private const val MAX_MANUAL_BATCH_COUNT = 10
+        const val MAX_MANUAL_BATCH_BUDGET = 999
         private const val REQUIRED_SUMMARY_PREVIOUS_CHAPTERS = 4
         private const val TRIGGER_MANUAL_SUMMARY = "manual_summary"
         private const val SUMMARY_ONLY_ROLE_CARD_ID = "__reading_summary_only__"
