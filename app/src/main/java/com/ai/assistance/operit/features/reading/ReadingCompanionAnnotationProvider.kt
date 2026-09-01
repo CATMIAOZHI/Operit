@@ -3,16 +3,12 @@ package com.ai.assistance.operit.features.reading
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.UriMatcher
-import android.content.pm.PackageManager as AndroidPackageManager
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Binder
-import android.os.Build
 import android.os.Bundle
 import android.os.Process
-import com.ai.assistance.operit.BuildConfig
-import java.security.MessageDigest
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -100,7 +96,14 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
         val bookId = requireParameter(uri, "bookId")
         val chapterIndex = requireParameter(uri, "chapterIndex").toInt()
         val expectedHash = uri.getQueryParameter("contentHash")?.takeIf(String::isNotBlank)
-        fileStore.readPublishedComments(bookId, chapterIndex, expectedHash)?.let { published ->
+        val requestedMappingVersion = uri.getQueryParameter("mappingVersion")
+        fileStore.readPublishedComments(
+            bookId = bookId,
+            chapterIndex = chapterIndex,
+            expectedContractHash = expectedHash,
+            allowStaleFingerprintMapping =
+                requestedMappingVersion == ReadingCompanionFileStore.PARAGRAPH_MAPPING_VERSION,
+        )?.let { published ->
             if (!published.optBoolean("ready")) {
                 return success(
                     JSONObject()
@@ -113,6 +116,22 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
             val comments = published.optJSONArray("comments") ?: JSONArray()
             repeat(comments.length()) { position ->
                 val comment = comments.optJSONObject(position) ?: return@repeat
+                if (
+                    published.optBoolean("remapRequired") &&
+                    (
+                        comment.optString(
+                            ReadingCompanionFileStore.PARAGRAPH_MAPPING_VERSION_FIELD,
+                        ) != ReadingCompanionFileStore.PARAGRAPH_MAPPING_VERSION ||
+                            comment.optString(
+                                ReadingCompanionFileStore.PARAGRAPH_FINGERPRINT_FIELD,
+                            ).isBlank() ||
+                            !comment.optBoolean(
+                                ReadingCompanionFileStore.PARAGRAPH_FINGERPRINT_UNIQUE_FIELD,
+                            )
+                    )
+                ) {
+                    return@repeat
+                }
                 grouped.getOrPut(comment.optInt("paragraphIndex")) { mutableListOf() }
                     .add(comment)
             }
@@ -121,6 +140,11 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
                     .put("enabled", true)
                     .put("ready", true)
                     .put("contentHash", published.optString("contractHash"))
+                    .put("remapRequired", published.optBoolean("remapRequired"))
+                    .put(
+                        "mappingVersion",
+                        ReadingCompanionFileStore.PARAGRAPH_MAPPING_VERSION,
+                    )
                     .put(
                         "comments",
                         JSONArray().apply {
@@ -129,7 +153,30 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
                                     JSONObject()
                                         .put("paragraphIndex", paragraphIndex)
                                         .put("count", values.size)
-                                        .put("preview", values.firstOrNull()?.optString("text").orEmpty()),
+                                        .put(
+                                            "preview",
+                                            values.firstOrNull()?.optString("text").orEmpty(),
+                                        )
+                                        .apply {
+                                            values.firstOrNull()?.let { first ->
+                                                first.optString(
+                                                    ReadingCompanionFileStore
+                                                        .PARAGRAPH_FINGERPRINT_FIELD,
+                                                ).takeIf(String::isNotBlank)?.let { fingerprint ->
+                                                    put(
+                                                        "paragraphFingerprint",
+                                                        fingerprint,
+                                                    )
+                                                    put(
+                                                        "sourceUnique",
+                                                        first.optBoolean(
+                                                            ReadingCompanionFileStore
+                                                                .PARAGRAPH_FINGERPRINT_UNIQUE_FIELD,
+                                                        ),
+                                                    )
+                                                }
+                                            }
+                                        },
                                 )
                             }
                         },
@@ -262,44 +309,8 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
         }
     }
 
-    private fun isTrustedLegadoPackage(packageName: String): Boolean {
-        if (packageName !in ALLOWED_LEGADO_PACKAGES) return false
-        val callerDigests = signingCertificateDigests(packageName)
-        if (callerDigests.isEmpty()) return false
-        if (packageName == LEGADO_DEBUG_PACKAGE) {
-            if (!BuildConfig.DEBUG) return false
-            val ownPackage = requireNotNull(context).packageName
-            return callerDigests.any(signingCertificateDigests(ownPackage)::contains)
-        }
-        return LEGADO_RELEASE_CERTIFICATE_SHA256 in callerDigests
-    }
-
-    @Suppress("DEPRECATION")
-    private fun signingCertificateDigests(packageName: String): Set<String> {
-        val packageManager = requireNotNull(context).packageManager
-        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val info = packageManager.getPackageInfo(
-                packageName,
-                AndroidPackageManager.GET_SIGNING_CERTIFICATES,
-            )
-            val signingInfo = info.signingInfo ?: return emptySet()
-            if (signingInfo.hasMultipleSigners()) {
-                signingInfo.apkContentsSigners
-            } else {
-                signingInfo.signingCertificateHistory
-            }
-        } else {
-            packageManager.getPackageInfo(
-                packageName,
-                AndroidPackageManager.GET_SIGNATURES,
-            ).signatures.orEmpty()
-        }
-        return signatures.mapTo(linkedSetOf()) { signature ->
-            MessageDigest.getInstance("SHA-256")
-                .digest(signature.toByteArray())
-                .joinToString("") { byte -> "%02x".format(byte) }
-        }
-    }
+    private fun isTrustedLegadoPackage(packageName: String): Boolean =
+        LegadoAnnotationTrustPolicy.isTrusted(packageName)
 
     private fun requireParameter(uri: Uri, name: String): String =
         requireNotNull(uri.getQueryParameter(name)?.takeIf(String::isNotBlank)) {
@@ -317,13 +328,5 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
         const val MATCH_DETAIL = 2
         const val RESULT_COLUMN = "result"
         const val METHOD_READING_PROGRESS_CHANGED = "reading_progress_changed"
-        const val LEGADO_DEBUG_PACKAGE = "com.legado.app.debug"
-        const val LEGADO_RELEASE_CERTIFICATE_SHA256 =
-            "93a28468b0f69e8d14c8a99ab45841cef902bbba3761bbfee02e67cba801563e"
-        val ALLOWED_LEGADO_PACKAGES = setOf(
-            "com.legado.app",
-            "com.legado.app.release",
-            LEGADO_DEBUG_PACKAGE,
-        )
     }
 }

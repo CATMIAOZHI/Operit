@@ -271,6 +271,7 @@ class ReadingCompanionFileStoreTest {
     @Test
     fun `generated annotation chapter stores source body and preserves file metadata`() {
         val content = "段落一\n段落二"
+        val contractHash = ReadingCompanionFileStore.annotationContractHash(content)
         val comment = AutoCommentRecord(
             bookId = book.id,
             chapterIndex = chapter.index,
@@ -287,7 +288,7 @@ class ReadingCompanionFileStoreTest {
             chapter = chapter,
             sourceContent = content,
             contentHash = ReadingCompanionFileStore.contentHash(content),
-            contractHash = "contract-1",
+            contractHash = contractHash,
             roleCardId = "role-1",
             roleCardName = "伴读",
             summary = "目标章摘要",
@@ -306,7 +307,244 @@ class ReadingCompanionFileStoreTest {
             ReadingCompanionFileStore.contentHash(content),
             meta.getString("contentFileHash"),
         )
-        assertEquals("contract-1", meta.getString("contractHash"))
+        assertEquals(contractHash, meta.getString("contractHash"))
+        val storedComment =
+            JSONObject(File(paths.getString("commentsPath")).readText())
+                .getJSONArray("comments")
+                .getJSONObject(0)
+        assertEquals(
+            ReadingCompanionFileStore.paragraphFingerprint("段落一"),
+            storedComment.getString(ReadingCompanionFileStore.PARAGRAPH_FINGERPRINT_FIELD),
+        )
+        assertTrue(
+            storedComment.getBoolean(
+                ReadingCompanionFileStore.PARAGRAPH_FINGERPRINT_UNIQUE_FIELD,
+            ),
+        )
+        assertEquals(
+            ReadingCompanionFileStore.PARAGRAPH_MAPPING_VERSION,
+            storedComment.getString(
+                ReadingCompanionFileStore.PARAGRAPH_MAPPING_VERSION_FIELD,
+            ),
+        )
+    }
+
+    @Test
+    fun `stale contract is exposed only for explicit fingerprint remapping`() {
+        val content = "段落一\n段落二"
+        val contractHash = ReadingCompanionFileStore.annotationContractHash(content)
+        val comment =
+            AutoCommentRecord(
+                bookId = book.id,
+                chapterIndex = chapter.index,
+                paragraphIndex = 2,
+                text = "第二段的段评",
+                kind = "reaction",
+                roleCardId = "role-1",
+                roleCardName = "伴读",
+                evidenceJson = "{}",
+                createdAt = 2L,
+            )
+        store.writeGeneratedChapter(
+            book = book,
+            chapter = chapter,
+            sourceContent = content,
+            contentHash = ReadingCompanionFileStore.contentHash(content),
+            contractHash = contractHash,
+            roleCardId = "role-1",
+            roleCardName = "伴读",
+            summary = "目标章摘要",
+            comments = listOf(comment),
+        )
+
+        val legacyResult =
+            store.readPublishedComments(
+                bookId = book.id,
+                chapterIndex = chapter.index,
+                expectedContractHash = "changed-contract",
+            ) ?: error("published comments missing")
+        assertFalse(legacyResult.getBoolean("ready"))
+        assertTrue(legacyResult.getBoolean("stale"))
+
+        val remappable =
+            store.readPublishedComments(
+                bookId = book.id,
+                chapterIndex = chapter.index,
+                expectedContractHash = "changed-contract",
+                allowStaleFingerprintMapping = true,
+            ) ?: error("published comments missing")
+        assertTrue(remappable.getBoolean("ready"))
+        assertTrue(remappable.getBoolean("remapRequired"))
+        assertEquals(contractHash, remappable.getString("contractHash"))
+    }
+
+    @Test
+    fun `paragraph fingerprint matches the cross-app fixed vector`() {
+        assertEquals(
+            "208a07e6199994f4e9e1442ba9fc8202ae30a0ed619b338c2c277ba16a8b7b8e",
+            ReadingCompanionFileStore.paragraphFingerprint("第一段"),
+        )
+    }
+
+    @Test
+    fun `old comments are fingerprinted before their source snapshot is refreshed`() {
+        val content = "保留段\n将被净化的广告"
+        val contractHash = ReadingCompanionFileStore.annotationContractHash(content)
+        val comment =
+            AutoCommentRecord(
+                bookId = book.id,
+                chapterIndex = chapter.index,
+                paragraphIndex = 1,
+                text = "保留段评",
+                kind = "reaction",
+                roleCardId = "role-1",
+                roleCardName = "伴读",
+                evidenceJson = "{}",
+                createdAt = 2L,
+            )
+        store.writeGeneratedChapter(
+            book = book,
+            chapter = chapter,
+            sourceContent = content,
+            contentHash = ReadingCompanionFileStore.contentHash(content),
+            contractHash = contractHash,
+            roleCardId = "role-1",
+            roleCardName = "伴读",
+            summary = "目标章摘要",
+            comments = listOf(comment),
+        )
+        val paths = store.chapterFilePaths(book.id, chapter.sourceId) ?: error("chapter missing")
+        val commentsFile = File(paths.getString("commentsPath"))
+        val oldRoot = JSONObject(commentsFile.readText())
+        oldRoot.getJSONArray("comments").getJSONObject(0)
+            .remove(ReadingCompanionFileStore.PARAGRAPH_FINGERPRINT_FIELD)
+        oldRoot.getJSONArray("comments").getJSONObject(0)
+            .remove(ReadingCompanionFileStore.PARAGRAPH_FINGERPRINT_UNIQUE_FIELD)
+        oldRoot.getJSONArray("comments").getJSONObject(0)
+            .remove(ReadingCompanionFileStore.PARAGRAPH_MAPPING_VERSION_FIELD)
+        commentsFile.writeText(oldRoot.toString(2))
+
+        store.writeChapterContent(
+            book = book,
+            chapter = chapter,
+            sourceContent = "保留段",
+            contentHashKind = ReadingCompanionFileStore.CONTENT_HASH_KIND_ANNOTATION,
+        )
+
+        val enriched =
+            JSONObject(commentsFile.readText())
+                .getJSONArray("comments")
+                .getJSONObject(0)
+        assertEquals(
+            ReadingCompanionFileStore.paragraphFingerprint("保留段"),
+            enriched.getString(ReadingCompanionFileStore.PARAGRAPH_FINGERPRINT_FIELD),
+        )
+        assertEquals(
+            "保留段",
+            File(paths.getString("contentPath")).readText(),
+        )
+    }
+
+    @Test
+    fun `duplicate source paragraphs are marked ambiguous`() {
+        val content = "相同段\n相同段"
+        val contractHash = ReadingCompanionFileStore.annotationContractHash(content)
+        val comment =
+            AutoCommentRecord(
+                bookId = book.id,
+                chapterIndex = chapter.index,
+                paragraphIndex = 1,
+                text = "不应猜是哪一个相同段",
+                kind = "reaction",
+                roleCardId = "role-1",
+                roleCardName = "伴读",
+                evidenceJson = "{}",
+                createdAt = 2L,
+            )
+        store.writeGeneratedChapter(
+            book = book,
+            chapter = chapter,
+            sourceContent = content,
+            contentHash = ReadingCompanionFileStore.contentHash(content),
+            contractHash = contractHash,
+            roleCardId = "role-1",
+            roleCardName = "伴读",
+            summary = "目标章摘要",
+            comments = listOf(comment),
+        )
+
+        val paths = store.chapterFilePaths(book.id, chapter.sourceId) ?: error("chapter missing")
+        val storedComment =
+            JSONObject(File(paths.getString("commentsPath")).readText())
+                .getJSONArray("comments")
+                .getJSONObject(0)
+        assertFalse(
+            storedComment.getBoolean(
+                ReadingCompanionFileStore.PARAGRAPH_FINGERPRINT_UNIQUE_FIELD,
+            ),
+        )
+        val stale =
+            store.readPublishedComments(
+                bookId = book.id,
+                chapterIndex = chapter.index,
+                expectedContractHash = "changed-contract",
+                allowStaleFingerprintMapping = true,
+            ) ?: error("published comments missing")
+        assertFalse(stale.getBoolean("ready"))
+    }
+
+    @Test
+    fun `mismatched content snapshot cannot invent fingerprints for old comments`() {
+        val content = "旧第一段\n旧第二段"
+        val contractHash = ReadingCompanionFileStore.annotationContractHash(content)
+        val comment =
+            AutoCommentRecord(
+                bookId = book.id,
+                chapterIndex = chapter.index,
+                paragraphIndex = 1,
+                text = "旧段评",
+                kind = "reaction",
+                roleCardId = "role-1",
+                roleCardName = "伴读",
+                evidenceJson = "{}",
+                createdAt = 2L,
+            )
+        store.writeGeneratedChapter(
+            book = book,
+            chapter = chapter,
+            sourceContent = content,
+            contentHash = ReadingCompanionFileStore.contentHash(content),
+            contractHash = contractHash,
+            roleCardId = "role-1",
+            roleCardName = "伴读",
+            summary = "目标章摘要",
+            comments = listOf(comment),
+        )
+        val paths = store.chapterFilePaths(book.id, chapter.sourceId) ?: error("chapter missing")
+        val commentsFile = File(paths.getString("commentsPath"))
+        val oldRoot = JSONObject(commentsFile.readText())
+        oldRoot.getJSONArray("comments").getJSONObject(0).apply {
+            remove(ReadingCompanionFileStore.PARAGRAPH_FINGERPRINT_FIELD)
+            remove(ReadingCompanionFileStore.PARAGRAPH_FINGERPRINT_UNIQUE_FIELD)
+            remove(ReadingCompanionFileStore.PARAGRAPH_MAPPING_VERSION_FIELD)
+        }
+        commentsFile.writeText(oldRoot.toString(2))
+        File(paths.getString("contentPath")).writeText("已经变化、无法证明来源的正文")
+
+        val stale =
+            store.readPublishedComments(
+                bookId = book.id,
+                chapterIndex = chapter.index,
+                expectedContractHash = "changed-contract",
+                allowStaleFingerprintMapping = true,
+            ) ?: error("published comments missing")
+
+        assertFalse(stale.getBoolean("ready"))
+        val untouched =
+            JSONObject(commentsFile.readText())
+                .getJSONArray("comments")
+                .getJSONObject(0)
+        assertFalse(untouched.has(ReadingCompanionFileStore.PARAGRAPH_FINGERPRINT_FIELD))
     }
 
     @Test
