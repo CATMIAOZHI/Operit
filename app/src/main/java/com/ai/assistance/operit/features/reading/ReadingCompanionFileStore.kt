@@ -187,6 +187,8 @@ class ReadingCompanionFileStore(
         if (shouldPublishSummary) {
             atomicWrite(summaryFile, "$publishedSummary\n")
         }
+        val paragraphFingerprints =
+            paragraphFingerprintMetadata(sourceContent, contractHash).orEmpty()
         atomicWrite(
             File(chapterDir, "comments.json"),
             JSONObject()
@@ -203,6 +205,7 @@ class ReadingCompanionFileStore(
                     "comments",
                     JSONArray().apply {
                         comments.forEach { comment ->
+                            val fingerprint = paragraphFingerprints[comment.paragraphIndex]
                             put(
                                 JSONObject()
                                     .put("paragraphIndex", comment.paragraphIndex)
@@ -213,7 +216,23 @@ class ReadingCompanionFileStore(
                                     .put("text", comment.text)
                                     .put("kind", comment.kind)
                                     .put("evidence", JSONObject(comment.evidenceJson))
-                                    .put("createdAt", comment.createdAt),
+                                    .put("createdAt", comment.createdAt)
+                                    .apply {
+                                        if (fingerprint != null) {
+                                            put(
+                                                PARAGRAPH_FINGERPRINT_FIELD,
+                                                fingerprint.value,
+                                            )
+                                            put(
+                                                PARAGRAPH_FINGERPRINT_UNIQUE_FIELD,
+                                                fingerprint.isUnique,
+                                            )
+                                            put(
+                                                PARAGRAPH_MAPPING_VERSION_FIELD,
+                                                PARAGRAPH_MAPPING_VERSION,
+                                            )
+                                        }
+                                    },
                             )
                         }
                     },
@@ -368,6 +387,13 @@ class ReadingCompanionFileStore(
         val existingContent = contentFile
             .takeIf(File::isFile)
             ?.let { runCatching { it.readText(StandardCharsets.UTF_8) }.getOrNull() }
+        if (existingContent != null && existingContent != sourceContent) {
+            backfillParagraphFingerprintsLocked(
+                chapterDir = chapterDir,
+                sourceContent = existingContent,
+                expectedContractHash = previousMeta.optString("contractHash"),
+            )
+        }
         if (
             existingContent != sourceContent ||
             previousMeta.optString(CONTENT_FILE_HASH_FIELD) != contentFileHash ||
@@ -589,14 +615,21 @@ class ReadingCompanionFileStore(
         bookId: String,
         chapterIndex: Int,
         expectedContractHash: String?,
+        allowStaleFingerprintMapping: Boolean = false,
     ): JSONObject? = withFileStoreLock {
-        readPublishedCommentsLocked(bookId, chapterIndex, expectedContractHash)
+        readPublishedCommentsLocked(
+            bookId = bookId,
+            chapterIndex = chapterIndex,
+            expectedContractHash = expectedContractHash,
+            allowStaleFingerprintMapping = allowStaleFingerprintMapping,
+        )
     }
 
     private fun readPublishedCommentsLocked(
         bookId: String,
         chapterIndex: Int,
         expectedContractHash: String?,
+        allowStaleFingerprintMapping: Boolean,
     ): JSONObject? {
         if (chapterIndex < 0) return null
         val ordinal = chapterIndex + 1
@@ -620,34 +653,101 @@ class ReadingCompanionFileStore(
             ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
             ?: return null
         val storedContractHash = meta.optString("contractHash")
-        if (
-            !expectedContractHash.isNullOrBlank() &&
-            storedContractHash != expectedContractHash
-        ) {
-            return JSONObject()
-                .put("ready", false)
-                .put("stale", true)
-                .put("contractHash", storedContractHash)
-        }
         val commentsFile = File(chapterDir, "comments.json")
-        val comments = commentsFile
+        var comments = commentsFile
             .takeIf(File::isFile)
             ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
             ?: return null
-        return JSONObject()
-            .put(
-                "ready",
-                comments.optString("status") == "ready" &&
-                    comments.optString("revision") == meta.optString("revision") &&
-                    comments.optInt("generationPolicyVersion") ==
-                        AutoCommentSupport.GENERATION_POLICY_VERSION &&
-                    meta.optInt("generationPolicyVersion") ==
-                        AutoCommentSupport.GENERATION_POLICY_VERSION,
+        comments =
+            backfillParagraphFingerprintsLocked(
+                chapterDir = chapterDir,
+                sourceContent =
+                    File(chapterDir, CONTENT_FILE_NAME)
+                        .takeIf(File::isFile)
+                        ?.let {
+                            runCatching {
+                                it.readText(StandardCharsets.UTF_8)
+                            }.getOrNull()
+                        },
+                expectedContractHash = storedContractHash,
+                comments = comments,
             )
-            .put("stale", false)
+        val isReady =
+            comments.optString("status") == "ready" &&
+                comments.optString("revision") == meta.optString("revision") &&
+                comments.optInt("generationPolicyVersion") ==
+                    AutoCommentSupport.GENERATION_POLICY_VERSION &&
+                meta.optInt("generationPolicyVersion") ==
+                    AutoCommentSupport.GENERATION_POLICY_VERSION
+        val remapRequired =
+            !expectedContractHash.isNullOrBlank() &&
+                storedContractHash != expectedContractHash
+        if (remapRequired) {
+            val hasSafeFingerprint =
+                comments.optJSONArray("comments")?.let { values ->
+                    (0 until values.length()).any { position ->
+                        values.optJSONObject(position)?.let { comment ->
+                            comment.optString(PARAGRAPH_FINGERPRINT_FIELD).isNotBlank() &&
+                                comment.optBoolean(PARAGRAPH_FINGERPRINT_UNIQUE_FIELD) &&
+                                comment.optString(PARAGRAPH_MAPPING_VERSION_FIELD) ==
+                                PARAGRAPH_MAPPING_VERSION
+                        } == true
+                    }
+                } == true
+            if (!allowStaleFingerprintMapping || !isReady || !hasSafeFingerprint) {
+                return JSONObject()
+                    .put("ready", false)
+                    .put("stale", true)
+                    .put("contractHash", storedContractHash)
+            }
+        }
+        return JSONObject()
+            .put("ready", isReady)
+            .put("stale", remapRequired)
+            .put("remapRequired", remapRequired)
             .put("contractHash", storedContractHash)
             .put("roleCardName", comments.optString("roleCardName"))
             .put("comments", comments.optJSONArray("comments") ?: JSONArray())
+    }
+
+    private fun backfillParagraphFingerprintsLocked(
+        chapterDir: File,
+        sourceContent: String?,
+        expectedContractHash: String,
+        comments: JSONObject? = null,
+    ): JSONObject {
+        val commentsFile = File(chapterDir, "comments.json")
+        val root =
+            comments
+                ?: commentsFile
+                    .takeIf(File::isFile)
+                    ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+                ?: return JSONObject()
+        if (sourceContent == null || expectedContractHash.isBlank()) return root
+        val fingerprints =
+            paragraphFingerprintMetadata(sourceContent, expectedContractHash) ?: return root
+        val values = root.optJSONArray("comments") ?: return root
+        var changed = false
+        repeat(values.length()) { position ->
+            val comment = values.optJSONObject(position) ?: return@repeat
+            val fingerprint = fingerprints[comment.optInt("paragraphIndex")] ?: return@repeat
+            if (
+                comment.optString(PARAGRAPH_FINGERPRINT_FIELD) == fingerprint.value &&
+                comment.optBoolean(PARAGRAPH_FINGERPRINT_UNIQUE_FIELD) ==
+                fingerprint.isUnique &&
+                comment.optString(PARAGRAPH_MAPPING_VERSION_FIELD) ==
+                PARAGRAPH_MAPPING_VERSION
+            ) {
+                return@repeat
+            }
+            comment
+                .put(PARAGRAPH_FINGERPRINT_FIELD, fingerprint.value)
+                .put(PARAGRAPH_FINGERPRINT_UNIQUE_FIELD, fingerprint.isUnique)
+                .put(PARAGRAPH_MAPPING_VERSION_FIELD, PARAGRAPH_MAPPING_VERSION)
+            changed = true
+        }
+        if (changed) atomicWrite(commentsFile, root.toString(2))
+        return root
     }
 
     fun publishedContractHash(
@@ -1358,6 +1458,10 @@ class ReadingCompanionFileStore(
         const val CONTENT_FILE_HASH_FIELD = "contentFileHash"
         const val CONTENT_FILE_HASH_KIND_FIELD = "contentFileHashKind"
         const val META_FILE_NAME = "meta.json"
+        const val PARAGRAPH_FINGERPRINT_FIELD = "paragraphFingerprint"
+        const val PARAGRAPH_FINGERPRINT_UNIQUE_FIELD = "paragraphFingerprintUnique"
+        const val PARAGRAPH_MAPPING_VERSION_FIELD = "anchorMappingVersion"
+        const val PARAGRAPH_MAPPING_VERSION = "paragraph-fingerprint-v1"
         const val CONTENT_HASH_KIND_ANNOTATION = "annotation_content"
         const val CONTENT_HASH_KIND_READABLE = "readable_content"
         const val CONTENT_HASH_KIND_UNKNOWN = "unknown"
@@ -1380,6 +1484,21 @@ class ReadingCompanionFileStore(
 
         fun contentHash(content: String): String = sha256Full(content)
 
+        fun paragraphFingerprint(text: String): String =
+            sha256Full("$PARAGRAPH_FINGERPRINT_VERSION\u0000$text")
+
+        fun annotationContractHash(content: String): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            digest.update(ANNOTATION_CONTRACT_VERSION.toByteArray(StandardCharsets.UTF_8))
+            content.split('\n').forEachIndexed { index, text ->
+                digest.update(0)
+                digest.update((index + 1).toString().toByteArray(StandardCharsets.UTF_8))
+                digest.update(0)
+                digest.update(text.toByteArray(StandardCharsets.UTF_8))
+            }
+            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
+
         private fun sha256(value: String): String =
             sha256Full(value).take(24)
 
@@ -1387,6 +1506,27 @@ class ReadingCompanionFileStore(
             MessageDigest.getInstance("SHA-256")
                 .digest(value.toByteArray(StandardCharsets.UTF_8))
                 .joinToString("") { "%02x".format(it) }
+
+        private fun paragraphFingerprintMetadata(
+            content: String,
+            expectedContractHash: String,
+        ): Map<Int, ParagraphFingerprintMetadata>? {
+            if (annotationContractHash(content) != expectedContractHash) return null
+            val fingerprints =
+                content.split('\n').map(::paragraphFingerprint)
+            val counts = fingerprints.groupingBy { it }.eachCount()
+            return fingerprints.mapIndexed { index, fingerprint ->
+                index + 1 to
+                    ParagraphFingerprintMetadata(
+                        value = fingerprint,
+                        isUnique = counts[fingerprint] == 1,
+                    )
+            }.toMap()
+        }
+
+        private const val ANNOTATION_CONTRACT_VERSION = "legado-review-paragraphs-v1"
+        private const val PARAGRAPH_FINGERPRINT_VERSION =
+            "operit-review-paragraph-fingerprint-v1"
     }
 
     private inline fun <T> withFileStoreLock(block: () -> T): T =
@@ -1448,3 +1588,8 @@ class ReadingCompanionFileStore(
         }
     }
 }
+
+private data class ParagraphFingerprintMetadata(
+    val value: String,
+    val isUnique: Boolean,
+)
