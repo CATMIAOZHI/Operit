@@ -13,6 +13,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.agent.SubagentCoordinator
 import com.ai.assistance.operit.data.backup.OperitBackupDirs
+import com.ai.assistance.operit.data.dao.ChatDao
+import com.ai.assistance.operit.data.dao.ChatFolderDao
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatKind
@@ -86,6 +88,35 @@ private val Context.currentChatIdDataStore by preferencesDataStore(name = "curre
 
 internal fun normalizeChatFolderId(folderId: String?): String? =
     folderId.takeUnless { it == SYSTEM_UNGROUPED_FOLDER_ID }
+
+internal suspend fun createAndPersistNewChatHistory(
+    chatDao: ChatDao,
+    chatFolderDao: ChatFolderDao,
+    folderId: String?,
+    inheritGroupFromChatId: String?,
+    buildHistory: (folderId: String?) -> ChatHistory,
+): ChatHistory {
+    val requestedFolderId = normalizeChatFolderId(folderId)
+    if (requestedFolderId != null) {
+        require(chatFolderDao.getFolder(requestedFolderId) != null) {
+            "Unknown folderId: $requestedFolderId"
+        }
+    }
+    val finalFolderId =
+        when {
+            folderId != null -> requestedFolderId
+            inheritGroupFromChatId != null ->
+                chatDao
+                    .getChatById(inheritGroupFromChatId)
+                    ?.folderId
+                    .let(::normalizeChatFolderId)
+            else -> null
+        }
+
+    val newHistory = buildHistory(finalFolderId).copy(folderId = finalFolderId)
+    chatDao.insertChat(ChatEntity.fromChatHistory(newHistory))
+    return newHistory
+}
 
 /**
  * 阅读伴侣审计聊天永久隐藏前缀。hiddenReason 以该前缀开头的聊天只能查看/删除，
@@ -3302,34 +3333,20 @@ class ChatHistoryManager private constructor(private val context: Context) {
         characterGroupId: String? = null,
         setAsCurrentChat: Boolean = true
     ): ChatHistory {
-        val requestedFolderId = normalizeChatFolderId(folderId)
-        if (requestedFolderId != null) {
-            require(chatFolderDao.getFolder(requestedFolderId) != null) {
-                "Unknown folderId: $requestedFolderId"
-            }
-        }
-        val finalFolderId = when {
-            folderId != null -> requestedFolderId
-            inheritGroupFromChatId != null -> {
-                chatDao
-                    .getChatById(inheritGroupFromChatId)
-                    ?.folderId
-                    .let(::normalizeChatFolderId)
-            }
-            else -> null
-        }
-
         val newHistory =
-            buildNewChatHistory(
-                folderId = finalFolderId,
-                characterCardName = characterCardName,
-                characterGroupId = characterGroupId,
-            )
-
-        // 保存新聊天
-        val chatEntity = ChatEntity.fromChatHistory(newHistory)
-        chatDao.insertChat(chatEntity)
-        releaseLegacyFolderReservations(listOf(finalFolderId))
+            createAndPersistNewChatHistory(
+                chatDao = chatDao,
+                chatFolderDao = chatFolderDao,
+                folderId = folderId,
+                inheritGroupFromChatId = inheritGroupFromChatId,
+            ) { finalFolderId ->
+                buildNewChatHistory(
+                    folderId = finalFolderId,
+                    characterCardName = characterCardName,
+                    characterGroupId = characterGroupId,
+                )
+            }
+        releaseLegacyFolderReservations(listOf(newHistory.folderId))
 
         // 设置为当前聊天
         if (setAsCurrentChat) {

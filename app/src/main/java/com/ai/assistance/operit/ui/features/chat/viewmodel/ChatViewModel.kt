@@ -680,10 +680,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     // 聊天历史相关方法
-    fun createNewChat(characterCardName: String? = null, characterGroupId: String? = null) {
+    fun createNewChat(
+        characterCardName: String? = null,
+        characterGroupId: String? = null,
+        inheritGroupFromCurrent: Boolean = true,
+    ) {
         chatHistoryDelegate.createNewChat(
             characterCardName = characterCardName,
             characterGroupId = characterGroupId,
+            inheritGroupFromCurrent = inheritGroupFromCurrent,
         )
     }
 

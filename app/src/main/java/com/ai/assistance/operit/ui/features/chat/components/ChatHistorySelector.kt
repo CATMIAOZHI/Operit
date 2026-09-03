@@ -576,6 +576,80 @@ private fun HistoryQuickScroller(
     }
 }
 
+@Composable
+internal fun ChatHistoryCategoryNewChatControls(
+    selectedCategory: ChatHistoryCategory,
+    canManageFolders: Boolean,
+    onSelectedCategoryChange: (ChatHistoryCategory) -> Unit,
+    onNewChat: (inheritGroupFromCurrent: Boolean) -> Unit,
+    onCreateFolder: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        listOf(
+            ChatHistoryCategory.ALL to stringResource(R.string.chat_category_all),
+            ChatHistoryCategory.RECENT to stringResource(R.string.chat_category_recent),
+            ChatHistoryCategory.FAVORITES to stringResource(R.string.chat_category_favorites),
+        ).forEach { (category, label) ->
+            FilterChip(
+                modifier = Modifier.weight(1f),
+                selected = selectedCategory == category,
+                onClick = { onSelectedCategoryChange(category) },
+                label = {
+                    Text(
+                        text = label,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+            )
+        }
+    }
+
+    Spacer(modifier = Modifier.height(8.dp))
+
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Button(
+            onClick = {
+                onNewChat(shouldInheritCurrentFolderForNewChat(selectedCategory))
+            },
+            modifier = Modifier.weight(1f),
+        ) {
+            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.new_chat))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(stringResource(R.string.new_chat))
+        }
+        if (canManageFolders) {
+            IconButton(
+                onClick = onCreateFolder,
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    Icons.Default.AddCircleOutline,
+                    contentDescription = stringResource(R.string.new_group),
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        }
+    }
+}
+
 @OptIn(
     ExperimentalFoundationApi::class,
     ExperimentalMaterial3Api::class
@@ -583,7 +657,11 @@ private fun HistoryQuickScroller(
 @Composable
 fun ChatHistorySelector(
         modifier: Modifier = Modifier,
-        onNewChat: (characterCardName: String?, characterGroupId: String?) -> Unit,
+        onNewChat: (
+            characterCardName: String?,
+            characterGroupId: String?,
+            inheritGroupFromCurrent: Boolean,
+        ) -> Unit,
         onCreateFolderWithInitialChat: (
             parentFolderId: String?,
             folderName: String,
@@ -3341,83 +3419,33 @@ fun ChatHistorySelector(
             }
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            listOf(
-                ChatHistoryCategory.ALL to stringResource(R.string.chat_category_all),
-                ChatHistoryCategory.RECENT to stringResource(R.string.chat_category_recent),
-                ChatHistoryCategory.FAVORITES to stringResource(R.string.chat_category_favorites),
-            ).forEach { (category, label) ->
-                FilterChip(
-                    modifier = Modifier.weight(1f),
-                    selected = selectedCategory == category,
-                    onClick = {
-                        onSelectedCategoryChange(category)
-                        coroutineScope.launch {
-                            actualLazyListState.scrollToItem(0)
-                        }
-                    },
-                    label = {
-                        Text(
-                            text = label,
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // 新建对话按钮
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Button(
-                onClick = { 
-                    val (characterCardName, characterGroupId) = resolveBindingForCreate(
-                        historyDisplayMode = historyDisplayMode,
-                        activePrompt = activePrompt,
-                        activeCharacterCardName = activeCharacterCardName
-                    )
-                    onNewChat(characterCardName, characterGroupId)
-                },
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.new_chat))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.new_chat))
-            }
-            if (canManageFolders) {
-                IconButton(
-                    onClick = {
-                        newFolderParentId = null
-                        newGroupName = ""
-                        showNewGroupDialog = true
-                    },
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        Icons.Default.AddCircleOutline,
-                        contentDescription = stringResource(R.string.new_group),
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
+        ChatHistoryCategoryNewChatControls(
+            selectedCategory = selectedCategory,
+            canManageFolders = canManageFolders,
+            onSelectedCategoryChange = { category ->
+                onSelectedCategoryChange(category)
+                coroutineScope.launch {
+                    actualLazyListState.scrollToItem(0)
                 }
-            }
-        }
+            },
+            onNewChat = { inheritGroupFromCurrent ->
+                val (characterCardName, characterGroupId) = resolveBindingForCreate(
+                    historyDisplayMode = historyDisplayMode,
+                    activePrompt = activePrompt,
+                    activeCharacterCardName = activeCharacterCardName
+                )
+                onNewChat(
+                    characterCardName,
+                    characterGroupId,
+                    inheritGroupFromCurrent,
+                )
+            },
+            onCreateFolder = {
+                newFolderParentId = null
+                newGroupName = ""
+                showNewGroupDialog = true
+            },
+        )
 
         // 搜索框
         if (showSearchBox) {

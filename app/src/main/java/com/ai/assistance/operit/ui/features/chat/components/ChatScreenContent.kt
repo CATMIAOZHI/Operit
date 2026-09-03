@@ -1110,8 +1110,15 @@ fun ChatHistorySelectorPanel(
         // 直接使用ChatHistorySelector
         ChatHistorySelector(
                 modifier = Modifier.fillMaxSize().padding(top = 8.dp),
-                onNewChat = { characterCardName, characterGroupId ->
-                    actualViewModel.createNewChat(characterCardName, characterGroupId)
+                onNewChat = {
+                    characterCardName,
+                    characterGroupId,
+                    inheritGroupFromCurrent ->
+                    actualViewModel.createNewChat(
+                        characterCardName = characterCardName,
+                        characterGroupId = characterGroupId,
+                        inheritGroupFromCurrent = inheritGroupFromCurrent,
+                    )
                     // 创建新对话后自动收起侧边框
                     actualViewModel.showChatHistorySelector(false)
                 },

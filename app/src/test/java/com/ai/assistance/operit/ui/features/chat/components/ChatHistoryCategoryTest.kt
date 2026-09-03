@@ -124,6 +124,13 @@ class ChatHistoryCategoryTest {
     }
 
     @Test
+    fun newChat_inRecentStartsUngroupedInsteadOfInheritingCurrentFolder() {
+        assertEquals(true, shouldInheritCurrentFolderForNewChat(ChatHistoryCategory.ALL))
+        assertEquals(false, shouldInheritCurrentFolderForNewChat(ChatHistoryCategory.RECENT))
+        assertEquals(true, shouldInheritCurrentFolderForNewChat(ChatHistoryCategory.FAVORITES))
+    }
+
+    @Test
     fun favoriteReorder_preservesHiddenChatsAndOnlySwapsVisibleSlots() {
         val firstFavorite = history("favorite-1", createdMinutes = 1, favorite = true)
         val hiddenFirst = history("hidden-1", createdMinutes = 2)
