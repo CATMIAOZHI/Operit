@@ -2,8 +2,10 @@ package com.ai.assistance.operit.services.core
 
 import com.ai.assistance.operit.data.model.ChatTurnOptions
 import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.PromptFunctionType
+import com.ai.assistance.operit.data.repository.isPermanentHiddenAuditChat
 import com.ai.assistance.operit.services.ChatServiceCore
 import com.ai.assistance.operit.util.stream.SharedStream
 import java.util.UUID
@@ -41,7 +43,14 @@ data class ChatTurnDispatchRequest(
     val responseStreamAcquireTimeoutMs: Long,
     val responseTimeoutMs: Long?,
     val turnId: String = UUID.randomUUID().toString(),
+    val allowPermanentHiddenAuditMutation: Boolean = false,
 )
+
+internal fun canDispatchChatTurnTo(
+    chat: ChatHistory,
+    allowPermanentHiddenAuditMutation: Boolean,
+): Boolean =
+    allowPermanentHiddenAuditMutation || !chat.isPermanentHiddenAuditChat()
 
 sealed interface ChatTurnTerminalSignal {
     val turnId: String
@@ -205,10 +214,11 @@ class ChatTurnDispatcher {
         }
 
         val hasTargetChat = !request.chatId.isNullOrBlank()
+        var targetChat: ChatHistory? = null
         if (hasTargetChat) {
             val targetChatId = requireNotNull(request.chatId)
-            val chatExists = core.chatExists(targetChatId)
-            if (!chatExists) {
+            targetChat = core.getChatMetadata(targetChatId)
+            if (targetChat == null) {
                 return ChatTurnDispatchResult.Failed(
                     chatId = targetChatId,
                     message = request.message,
@@ -218,6 +228,23 @@ class ChatTurnDispatcher {
         }
 
         val preflightChatId = request.chatId ?: core.currentChatId.value
+        val preflightChat =
+            targetChat
+                ?: preflightChatId?.let { chatId -> core.getChatMetadata(chatId) }
+        if (
+            preflightChat != null &&
+                !canDispatchChatTurnTo(
+                    chat = preflightChat,
+                    allowPermanentHiddenAuditMutation =
+                        request.allowPermanentHiddenAuditMutation,
+                )
+        ) {
+            return ChatTurnDispatchResult.Failed(
+                chatId = preflightChat.id,
+                message = request.message,
+                error = "Reading companion audit chats are read-only",
+            )
+        }
         val preflightResponseStream = preflightChatId?.let(core::getResponseStream)
 
         try {

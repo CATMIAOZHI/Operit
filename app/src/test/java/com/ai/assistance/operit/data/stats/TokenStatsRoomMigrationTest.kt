@@ -110,7 +110,13 @@ class TokenStatsRoomMigrationTest {
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31, AppDatabase.MIGRATION_31_32)
+                    .addMigrations(
+                        AppDatabase.MIGRATION_28_29,
+                        AppDatabase.MIGRATION_29_30,
+                        AppDatabase.MIGRATION_30_31,
+                        AppDatabase.MIGRATION_31_32,
+                        AppDatabase.MIGRATION_32_33,
+                    )
                     .allowMainThreadQueries()
                     .build()
 
@@ -129,10 +135,10 @@ class TokenStatsRoomMigrationTest {
                 assertTrue("token_stat_baselines", tables.contains("token_stat_baselines"))
 
                 // 迁移可重入（CREATE IF NOT EXISTS）：以驱动变体再跑一次；
-                // Room 打开时已应用 28→29→30→31→32，重放 28→29 不改变版本号
+                // Room 打开时已应用 28→29→30→31→32→33，重放 28→29 不改变版本号
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_28_29.migrate(connection)
-                    assertEquals(32, userVersion(connection))
+                    assertEquals(33, userVersion(connection))
                 }
             } finally {
                 database.close()
@@ -149,7 +155,13 @@ class TokenStatsRoomMigrationTest {
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31, AppDatabase.MIGRATION_31_32)
+                    .addMigrations(
+                        AppDatabase.MIGRATION_28_29,
+                        AppDatabase.MIGRATION_29_30,
+                        AppDatabase.MIGRATION_30_31,
+                        AppDatabase.MIGRATION_31_32,
+                        AppDatabase.MIGRATION_32_33,
+                    )
                     .allowMainThreadQueries()
                     .build()
 
@@ -377,7 +389,13 @@ reasoningTokens = 50L,
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31, AppDatabase.MIGRATION_31_32)
+                    .addMigrations(
+                        AppDatabase.MIGRATION_28_29,
+                        AppDatabase.MIGRATION_29_30,
+                        AppDatabase.MIGRATION_30_31,
+                        AppDatabase.MIGRATION_31_32,
+                        AppDatabase.MIGRATION_32_33,
+                    )
                     .allowMainThreadQueries()
                     .build()
 
@@ -485,7 +503,13 @@ outputTokens = 500L,
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31, AppDatabase.MIGRATION_31_32)
+                    .addMigrations(
+                        AppDatabase.MIGRATION_28_29,
+                        AppDatabase.MIGRATION_29_30,
+                        AppDatabase.MIGRATION_30_31,
+                        AppDatabase.MIGRATION_31_32,
+                        AppDatabase.MIGRATION_32_33,
+                    )
                     .allowMainThreadQueries()
                     .build()
 
@@ -599,7 +623,12 @@ outputTokens = 500L,
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31, AppDatabase.MIGRATION_31_32)
+                    .addMigrations(
+                        AppDatabase.MIGRATION_29_30,
+                        AppDatabase.MIGRATION_30_31,
+                        AppDatabase.MIGRATION_31_32,
+                        AppDatabase.MIGRATION_32_33,
+                    )
                     .allowMainThreadQueries()
                     .build()
 
@@ -632,7 +661,7 @@ totalInputTokens = 1000L,
                 // 迁移可重入（ALTER 幂等）：以驱动变体再跑一次
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_29_30.migrate(connection)
-                    assertEquals(32, userVersion(connection))
+                    assertEquals(33, userVersion(connection))
                 }
             } finally {
                 database.close()
@@ -649,7 +678,11 @@ totalInputTokens = 1000L,
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_30_31, AppDatabase.MIGRATION_31_32)
+                    .addMigrations(
+                        AppDatabase.MIGRATION_30_31,
+                        AppDatabase.MIGRATION_31_32,
+                        AppDatabase.MIGRATION_32_33,
+                    )
                     .allowMainThreadQueries()
                     .build()
 
@@ -672,7 +705,7 @@ totalInputTokens = 1000L,
                 // 迁移可重入（CREATE IF NOT EXISTS）：以驱动变体再跑一次
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_30_31.migrate(connection)
-                    assertEquals(32, userVersion(connection))
+                    assertEquals(33, userVersion(connection))
                 }
             } finally {
                 database.close()
@@ -689,7 +722,11 @@ totalInputTokens = 1000L,
             val database =
                 Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
                     .setDriver(JdbcSQLiteDriver())
-                    .addMigrations(AppDatabase.MIGRATION_30_31, AppDatabase.MIGRATION_31_32)
+                    .addMigrations(
+                        AppDatabase.MIGRATION_30_31,
+                        AppDatabase.MIGRATION_31_32,
+                        AppDatabase.MIGRATION_32_33,
+                    )
                     .allowMainThreadQueries()
                     .build()
 

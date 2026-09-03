@@ -114,8 +114,6 @@ if (localPropertiesFile.exists()) {
     localProperties.load(FileInputStream(localPropertiesFile))
 }
 val devBuildNumber = System.getenv("OPERIT_DEV_BUILD_NUMBER")?.toIntOrNull()?.takeIf { it > 0 }
-fun buildConfigString(value: String?): String =
-    "\"${value.orEmpty().trim().trim('"').replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
 android {
     namespace = "com.ai.assistance.operit"
@@ -153,8 +151,8 @@ android {
         applicationId = "com.rainy.operitry"
         minSdk = 26
         targetSdk = 34
-        versionCode = devBuildNumber?.let { 100_000 + it } ?: 44
-        versionName = "1.12.0+4-ry.1"
+        versionCode = devBuildNumber?.let { 100_000 + it } ?: 46
+        versionName = "1.12.1-ry.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -174,16 +172,6 @@ android {
             }
         }
 
-        buildConfigField(
-            "String",
-            "GITHUB_CLIENT_ID",
-            buildConfigString(localProperties.getProperty("GITHUB_CLIENT_ID"))
-        )
-        buildConfigField(
-            "String",
-            "GITHUB_OAUTH_BROKER_BASE_URL",
-            buildConfigString(localProperties.getProperty("GITHUB_OAUTH_BROKER_BASE_URL"))
-        )
         buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "false")
     }
 

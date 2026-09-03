@@ -11,7 +11,8 @@ import org.junit.Test
  * a live Legado provider or an API model.
  */
 class ReadingCompanionManualFlowStaticTest {
-    private fun source(relativePath: String): String = File(relativePath).readText()
+    private fun source(relativePath: String): String =
+        File(relativePath).readText().replace("\r\n", "\n")
 
     @Test
     fun `automatic indexing has no summary model call or knowledge-only rescheduling`() {

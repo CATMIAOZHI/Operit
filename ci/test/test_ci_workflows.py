@@ -52,6 +52,17 @@ class WorkflowContractTest(unittest.TestCase):
                         continue
                     self.assertRegex(match.group(1), r"@[0-9a-f]{40}$")
 
+    def test_stable_android_build_has_no_github_oauth_configuration(self) -> None:
+        workflow = ANDROID_BUILD_WORKFLOW.read_text(encoding="utf-8")
+        action = ANDROID_ACTION.read_text(encoding="utf-8")
+
+        for source in (workflow, action):
+            self.assertNotIn("OPERIT_GITHUB_CLIENT_ID", source)
+            self.assertNotIn("OPERIT_GITHUB_OAUTH_BROKER_BASE_URL", source)
+            self.assertNotIn("GITHUB_CLIENT_ID", source)
+            self.assertNotIn("GITHUB_OAUTH_BROKER_BASE_URL", source)
+            self.assertNotIn("GITHUB_CLIENT_SECRET", source)
+
 
 class AndroidRunnerContractTest(unittest.TestCase):
     def run_with_fake_gradle(self, *arguments: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:

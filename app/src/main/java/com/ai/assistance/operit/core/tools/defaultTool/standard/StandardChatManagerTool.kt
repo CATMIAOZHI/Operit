@@ -232,8 +232,8 @@ class StandardChatManagerTool(private val context: Context) {
             val effectiveLimit = (parsedLimit ?: 20).coerceIn(1, 200)
 
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val title = chatHistoryManager.getChatTitle(chatId)
-            if (title == null) {
+            val chat = chatHistoryManager.getChatMetadata(chatId)?.takeUnless { it.isHidden }
+            if (chat == null) {
                 return ToolResult(
                     toolName = tool.name,
                     success = false,
@@ -331,8 +331,8 @@ class StandardChatManagerTool(private val context: Context) {
             val effectiveLimit = parsedEnd - parsedStart + 1
 
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val title = chatHistoryManager.getChatTitle(chatId)
-            if (title == null) {
+            val chat = chatHistoryManager.getChatMetadata(chatId)?.takeUnless { it.isHidden }
+            if (chat == null) {
                 return ToolResult(
                     toolName = tool.name,
                     success = false,
@@ -387,8 +387,11 @@ class StandardChatManagerTool(private val context: Context) {
             }
 
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val title = chatHistoryManager.getChatTitle(chatId)
-            if (title == null) {
+            val chat =
+                chatHistoryManager
+                    .getChatMetadata(chatId)
+                    ?.takeUnless { it.isHidden }
+            if (chat == null) {
                 return ToolResult(
                     toolName = tool.name,
                     success = false,
@@ -535,7 +538,7 @@ class StandardChatManagerTool(private val context: Context) {
 
             val targetIndex = index ?: 0
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val chatHistories = chatHistoryManager.getChatHistoriesSnapshot()
+            val chatHistories = chatHistoryManager.getVisibleChatHistoriesSnapshot()
             val currentChatId = chatHistoryManager.currentChatIdFlow.first()
             val messageCounts = chatHistoryManager.getMessageCountsByChatId()
 
@@ -607,8 +610,8 @@ class StandardChatManagerTool(private val context: Context) {
             }
 
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val existingTitle = chatHistoryManager.getChatTitle(chatId)
-            if (existingTitle == null) {
+            val chat = chatHistoryManager.getChatMetadata(chatId)?.takeUnless { it.isHidden }
+            if (chat == null) {
                 return ToolResult(
                     toolName = tool.name,
                     success = false,
@@ -650,7 +653,9 @@ class StandardChatManagerTool(private val context: Context) {
             }
 
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val chat = chatHistoryManager.getChatHistoriesSnapshot().find { it.id == chatId }
+            val chat =
+                chatHistoryManager.getChatMetadata(chatId)
+                    ?.takeUnless { it.isHidden }
             if (chat == null) {
                 return ToolResult(
                     toolName = tool.name,
@@ -1154,7 +1159,7 @@ class StandardChatManagerTool(private val context: Context) {
     suspend fun listChats(tool: AITool): ToolResult {
         return try {
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val chatHistories = chatHistoryManager.getChatHistoriesSnapshot()
+            val chatHistories = chatHistoryManager.getVisibleChatHistoriesSnapshot()
             val folders =
                 chatHistoryManager.getChatFoldersSnapshot()
                     .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
@@ -1297,7 +1302,10 @@ class StandardChatManagerTool(private val context: Context) {
             }
 
             // 检查对话是否存在并获取标题
-            val targetChat = core.chatHistories.value.find { it.id == chatId }
+            val targetChat =
+                core.chatHistories.value.find { chat ->
+                    chat.id == chatId && !chat.isHidden
+                }
             if (targetChat == null) {
                 return ToolResult(
                     toolName = tool.name,
