@@ -46,6 +46,10 @@ def _run_checked_command(command: list[str], cwd: Path, *, dry_run: bool) -> Non
         raise RuntimeError(f"Command failed with exit code {completed.returncode}: {command_text}")
 
 
+def _pnpm_command() -> str:
+    return shutil.which("pnpm") or "pnpm"
+
+
 def _load_local_sync_state(path: Path) -> dict[str, dict[str, str]]:
     if not path.is_file():
         return {"prebuild": {}, "outputs": {}}
@@ -185,7 +189,7 @@ def _prebuild_examples(
             print(f"SKIP-PREBUILD(ROOT): {examples_dir}")
         else:
             _run_checked_command(
-                ["pnpm", "exec", "tsc", "-p", str(root_tsconfig)],
+                [_pnpm_command(), "exec", "tsc", "-p", str(root_tsconfig)],
                 cwd=repo_root,
                 dry_run=dry_run,
             )
@@ -217,7 +221,7 @@ def _prebuild_examples(
 
         if should_run_tsc:
             _run_checked_command(
-                ["pnpm", "exec", "tsc", "-p", str(tsconfig)],
+                [_pnpm_command(), "exec", "tsc", "-p", str(tsconfig)],
                 cwd=repo_root,
                 dry_run=dry_run,
             )
@@ -236,7 +240,7 @@ def _prebuild_examples(
         should_run_build = should_run_tsc or prebuild_state.get(build_key) != child_signature
         if package_json.is_file() and should_run_build:
             _run_checked_command(
-                ["pnpm", "build"],
+                [_pnpm_command(), "build"],
                 cwd=child_dir,
                 dry_run=dry_run,
             )
