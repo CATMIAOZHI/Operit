@@ -2,6 +2,8 @@ package com.ai.assistance.operit.services.core
 
 import android.content.Context
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.ChatUtils
+import com.ai.assistance.operit.util.findDisplayEndTagRange
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.ai.assistance.operit.R
@@ -59,6 +61,22 @@ internal fun preferToolBoundarySnapshot(
     }
     return boundarySnapshot.displayContent +
         replayCandidate.substring(boundarySnapshot.replayCharCount)
+}
+
+/** Cancellation bypasses provider EOF finalization, so close only Operit's own reasoning envelope. */
+internal fun finalizeInterruptedStreamingContent(content: String): String {
+    var searchFrom = 0
+    while (true) {
+        val openingIndex =
+            content.indexOf(ChatUtils.PROVIDER_REASONING_OPEN_TAG, startIndex = searchFrom)
+        if (openingIndex < 0) return content
+
+        val bodyStart = openingIndex + ChatUtils.PROVIDER_REASONING_OPEN_TAG.length
+        val closingRange = findDisplayEndTagRange(content, tagName = "think", fromIndex = bodyStart)
+        if (closingRange == null) return "$content</think>"
+
+        searchFrom = closingRange.last + 1
+    }
 }
 
 /** 委托类，负责处理消息处理相关功能 */
@@ -404,9 +422,11 @@ class MessageProcessingDelegate(
                     .lastOrNull { it.sender == "ai" && it.contentStream != null }
                 ?: return
         val finalContent =
-            preferToolBoundarySnapshot(
-                toolBoundarySnapshot,
-                resolveFinalContent(streamingMessage),
+            finalizeInterruptedStreamingContent(
+                preferToolBoundarySnapshot(
+                    toolBoundarySnapshot,
+                    resolveFinalContent(streamingMessage),
+                ),
             )
         streamingMessage.content = finalContent
         val completedAt = System.currentTimeMillis()
