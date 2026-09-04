@@ -6,6 +6,29 @@ import org.junit.Test
 
 class UpdateManagerTest {
     @Test
+    fun currentDevReleaseFormatOrdersBuildsWithoutPlusSuffix() {
+        assertTrue(
+            UpdateManager.compareVersions(
+                "1.12.1-ry.3-dev.204",
+                "1.12.1-ry.3-dev.203"
+            ) > 0
+        )
+        assertTrue(
+            UpdateManager.compareVersions(
+                "1.12.1-ry.3-dev.203",
+                "1.12.1-ry.3-dev.204"
+            ) < 0
+        )
+        assertEquals(
+            0,
+            UpdateManager.compareVersions(
+                "v1.12.1-ry.3-dev.204",
+                "1.12.1-ry.3-dev.204"
+            )
+        )
+    }
+
+    @Test
     fun devBuildNumberOrdersRapidIterations() {
         assertTrue(
             UpdateManager.compareVersions(

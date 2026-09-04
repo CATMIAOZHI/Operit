@@ -151,7 +151,8 @@ android {
         applicationId = "com.rainy.operitry"
         minSdk = 26
         targetSdk = 34
-        versionCode = devBuildNumber?.let { 100_000 + it } ?: 51
+        // Dev/beta releases keep this code; increment only for a new base version.
+        versionCode = 100203
         versionName = "1.12.1-ry.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

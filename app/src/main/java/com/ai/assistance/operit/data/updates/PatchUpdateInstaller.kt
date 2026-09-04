@@ -555,8 +555,8 @@ object PatchUpdateInstaller {
         }
 
         val installedInfo = packageManager.getPackageInfo(context.packageName, flags)
-        check(packageVersionCode(archiveInfo) > packageVersionCode(installedInfo)) {
-            "Update versionCode must be newer than the installed development build"
+        check(packageVersionCode(archiveInfo) >= packageVersionCode(installedInfo)) {
+            "Update versionCode must not be lower than the installed development build"
         }
         val archiveSignatures = packageSignatures(archiveInfo)
         val installedSignatures = packageSignatures(installedInfo)

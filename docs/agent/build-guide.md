@@ -13,6 +13,12 @@
 
 构建变体定义在 `app/build.gradle.kts` 的 `buildTypes` 块中。`debug` 变体自动添加 `.dev` 包名后缀和 `-dev` 版本后缀，`clone` 变体添加 `.clone` 后缀。
 
+`personal/dev` 发布 dev/beta 时固定 `versionCode = 100203`，不随 `ry.x` 修订或 CI
+构建次数递增；仅在主版本（如 `1.12.1`）更新时手动增加。`OPERIT_DEV_BUILD_NUMBER`
+只用于 `-dev.<build>` 显示版本后缀。更新检查继续依据显示版本判断新旧，安装校验允许
+同 `versionCode`，仍检查包名、签名并拒绝更低编号。旧客户端需要从 GitHub 手动安装
+采用此规则的最新版，不发布过渡递增版本。
+
 > **注意**：`debug` 变体的 `.dev` 包名后缀、应用名 `Operit Ry Dev` 和 `PERSONAL_DEV_UPDATE_CHANNEL=true` 仅在 `personal/dev` 分支存在。在 `personal/main` 上构建 `assembleDebug` 使用稳定的 `com.rainy.operitry` 包名，**不具备**与开发版共存的能力，会覆盖已安装的 Operit Ry 稳定版（官方 Operit `com.ai.assistance.operit` 包名不同，可共存）。
 
 ## 前置步骤

@@ -95,7 +95,7 @@ class UpdateManager private constructor(private val context: Context) {
                     .substringBefore('-')
                     .toIntOrNull() ?: 0
             val devBuild =
-                buildSuffix.substringAfter("-dev.", missingDelimiterValue = "")
+                s.substringAfter("-dev.", missingDelimiterValue = "")
                     .substringBefore('-')
                     .toIntOrNull() ?: 0
 
