@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.services.core
 
 import com.ai.assistance.operit.api.chat.EnhancedAIService
+import com.ai.assistance.operit.util.ChatUtils
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -69,6 +70,34 @@ class ToolBoundarySnapshotPolicyTest {
                 canonicalBoundary + "<tool_result name=\"second\">R2</tool_result>C",
             ),
         )
+    }
+
+    @Test
+    fun interruptedStreamClosesAppOwnedProviderReasoningEnvelope() {
+        val partial =
+            "可见正文\n${ChatUtils.PROVIDER_REASONING_OPEN_TAG}尚未完成的推理"
+        val finalized = finalizeInterruptedStreamingContent(partial)
+
+        assertEquals("$partial</think>", finalized)
+        assertEquals("可见正文", ChatUtils.removeThinkingContent(finalized))
+        assertEquals("尚未完成的推理", ChatUtils.extractThinkingContent(finalized).second)
+    }
+
+    @Test
+    fun interruptedStreamLeavesCompletedProviderReasoningUnchanged() {
+        val completed =
+            "${ChatUtils.PROVIDER_REASONING_OPEN_TAG}第一轮</thinking >" +
+                "\n可见正文\n" +
+                "${ChatUtils.PROVIDER_REASONING_OPEN_TAG}第二轮</think>"
+
+        assertEquals(completed, finalizeInterruptedStreamingContent(completed))
+    }
+
+    @Test
+    fun interruptedStreamDoesNotRepairProviderOrUserAuthoredThinkMarkup() {
+        val legacyMarkup = "可见正文\n<think>模型直接输出的未闭合标签"
+
+        assertEquals(legacyMarkup, finalizeInterruptedStreamingContent(legacyMarkup))
     }
 
 }
