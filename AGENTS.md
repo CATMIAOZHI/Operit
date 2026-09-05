@@ -24,12 +24,13 @@
 - 原生第三方依赖（MNN、llama.cpp、ncnn、sherpa-ncnn、WAMR、QuickJS、Saba、Bullet3、ufbx、KleidiAI）已固定到具体 commit SHA，锁定清单见 `cmake/NATIVE_DEPENDENCY_LOCK.md`；升级时更新该清单和对应 `CMakeLists.txt`，不要通过 `OPERIT_*_GIT_REF` 命令行参数覆盖（已不再生效）。
 - 根据改动范围运行最小充分验证：默认优先编译，只运行与本次修改直接相关的测试；没有直接相关测试时只做编译检查，小改动无明显回归风险时不额外补测试，已通过的测试不重复运行。不得仅为提高信心主动运行完整 `testDebugUnitTest`；全量测试和耗时的集成/UI 测试仅在用户明确要求、合并或 PR 最终验证、CI，或核心基础设施改动确有必要时运行。测试超时应覆盖 Gradle 冷启动和增量编译：聚焦 JVM 单测默认设置 10 分钟硬超时，其他任务按预计耗时设置明确上限；若连续 5 分钟没有新日志、CPU/进程活动或输出文件变化，应终止整个进程树并分析原因，不得仅因运行超过 60 秒判定失败。
 - 原生 Android 模块统一固定使用 SDK Manager 的 CMake 3.31.6（自带 Ninja 1.12.1）。Windows 必须启用 Win32 长路径，并移除指向旧版自定义 CMake 3.22.1 的 `local.properties` `cmake.dir`；构建后从 `build_command_*.bat` 或 `CMakeCache.txt` 核对 Gradle 实际使用 `cmake/3.31.6`。若支持长路径的工具链仍失败，再用 `subst` 将仓库根目录映射为短盘符并重试。第三方依赖产生的 CMake 兼容性弃用提示或 `CMAKE_OBJECT_PATH_MAX` 警告本身不等于构建失败。完整步骤见 `docs/agent/build-guide.md`。
-- 完整 APK 构建、release 构建和原生依赖升级后的验证优先使用 GitHub Actions（Nightly workflow 或手动触发），不要在本地执行完整 `assembleRelease`。本地构建仅用于快速迭代测试（`compileDebugKotlin`、`testDebugUnitTest`、`lintDebug`、`assembleDebug` 等），验证通过后再推送让 CI 做完整构建。
+- 完整 APK 构建、release 构建和原生依赖升级后的验证优先使用 GitHub Actions（Nightly workflow 或手动触发），不要在本地执行完整 `assembleRelease`。本地构建仅用于快速迭代测试（`compileDebugKotlin`、`testDebugUnitTest`、`lintDebug`、`assembleDebug` 等），验证通过且用户授权推送后，由 CI 做完整构建。
 - 原生依赖 SHA 升级必须先推送 `personal/dev`，由 Nightly 构建验证 ccache 命中率和编译成功后，再考虑合并到 `personal/main`。
 - Web Chat、ToolPkg 和仓库检查命令以 `docs/doc-src/dev-core/CONTRIBUTING.md` 与 `ci/README.md` 为准。
 - 等待 GitHub Actions workflow 时使用至少 60 秒的轮询间隔并默认静默输出（PowerShell 示例：`gh run watch <run-id> --exit-status --interval 60 *> $null`）；结束后用一次 `gh run view` 查询最终结果，仅在诊断失败时读取详细 job 日志。
 - 构建可能触碰 ObjectBox 模型或占位文件。提交前检查 `git status` 和 diff，不提交无内容的行尾变化或无关生成物。
-- 无法运行验证时，说明缺失的 SDK、依赖或环境条件，不得把“未运行”描述为“通过”。
+- 修改 Compose UI 或 Android 资源时，除必要编译/测试外，在交付前运行 `:app:lintDebug`；编译、单测通过不代表 Lint 通过。组合函数内优先用 `stringResource` 等 Compose 资源 API，事件回调引用已取得的值，不为规避新增错误更新 baseline 或禁用检查。
+- 无法运行验证时，说明缺失的 SDK、依赖或环境条件，并分别报告编译、测试、Lint 和真机验证的实际状态，不得把“未运行”描述为“通过”。
 
 ## 分支与发布
 
@@ -56,7 +57,6 @@
 
 ## 安全与 Git
 
-- API Key、令牌、Cookie、签名材料、`local.properties`、本地路径和个人信息不得进入代码、测试、日志或文档。
-- 不回退或覆盖他人的未提交改动，不使用 `git reset --hard`、`git checkout --` 等破坏性命令处理工作区。
+- 凭据与未提交改动保护遵守工作区 `AGENTS.md`；此外，不提交 `local.properties`、本机私有路径或个人信息，不使用 `git reset --hard`、`git checkout --` 清理工作区。
 - 提交前检查状态、完整差异和近期历史，只暂存本次任务文件。提交前检查清单见 `docs/agent/commit-checklist.md`。
-- 除非用户明确要求，不提交、推送、关闭 PR 或执行发布操作。
+- 提交、推送、关闭 PR、发布的授权要求遵守工作区 `AGENTS.md`；构建与验证指令本身不授予这些权限。
