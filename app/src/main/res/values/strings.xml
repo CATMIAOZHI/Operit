@@ -8661,4 +8661,11 @@
     <string name="chat_steer_turn">引导当前轮</string>
     <string name="chat_steer_pending">等待当前轮读取</string>
     <string name="chat_steer_unavailable">当前轮暂不接受引导，消息已保留在队列中</string>
+    <string name="collapse_completed_process_title">折叠回复过程</string>
+    <string name="collapse_completed_process_description">回复结束后收起前面的思考、工具调用和过程说明，只显示最后的答复；可点击展开。</string>
+    <string name="collapse_process_title">回复过程</string>
+    <string name="collapse_process_show">展开回复过程</string>
+    <string name="collapse_process_hide">收起回复过程</string>
+    <string name="collapse_process_duration_seconds">用时 %1$d秒</string>
+    <string name="collapse_process_duration_minutes">用时 %1$d分钟 %2$d秒</string>
 </resources>

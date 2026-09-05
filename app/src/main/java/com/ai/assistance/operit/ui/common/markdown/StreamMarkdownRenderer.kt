@@ -4,6 +4,11 @@ import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import android.widget.ImageView
 import androidx.collection.LruCache
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
@@ -862,6 +867,8 @@ fun StreamMarkdownRenderer(
         enableDialogs: Boolean = true,
         fillMaxWidth: Boolean = true,
         decodeProviderReasoningEntities: Boolean = false,
+        collapseCompletedProcess: Boolean = false,
+        responseDurationMs: Long = 0L,
 ) {
     // 使用传入的state或创建新的state
     val rendererState = state ?: remember(content) { StreamMarkdownRendererState() }
@@ -969,6 +976,8 @@ fun StreamMarkdownRenderer(
         ) {
             key(rendererId) {
                 UnifiedMarkdownCanvas(
+                    collapseCompletedProcess = collapseCompletedProcess,
+                    responseDurationMs = responseDurationMs,
                     nodes = renderNodes,
                     rendererId = rendererId,
                     nodeAnimationStates = nodeAnimationStates,
@@ -1065,6 +1074,8 @@ private fun UnifiedMarkdownCanvas(
     enableDialogs: Boolean,
     modifier: Modifier = Modifier,
     fillMaxWidth: Boolean = true,
+    collapseCompletedProcess: Boolean = false,
+    responseDurationMs: Long = 0L,
 ) {
     val lastRenderableIndex = run {
         val idx = nodes.indexOfLast { it.content.isNotEmpty() || it.children.isNotEmpty() }
@@ -1088,8 +1099,12 @@ private fun UnifiedMarkdownCanvas(
         remember(groupingKey, rendererId, nodeGrouper) {
             nodeGrouper.group(nodes, rendererId)
         }
-    Column(modifier = modifier) {
-        groupedItems.forEach { item ->
+    val processEnd = if (collapseCompletedProcess) completedProcessEnd(nodes) else -1
+    val expanded = androidx.compose.runtime.saveable.rememberSaveable(rendererId) {
+        androidx.compose.runtime.mutableStateOf(false)
+    }
+    val renderItems: @Composable (List<MarkdownGroupedItem>) -> Unit = { items ->
+        items.forEach { item ->
             when (item) {
                 is MarkdownGroupedItem.Single -> {
                     val index = item.index
@@ -1138,6 +1153,36 @@ private fun UnifiedMarkdownCanvas(
                     }
                 }
             }
+        }
+    }
+    Column(modifier = modifier) {
+        if (processEnd >= 0) {
+            val processItemCount = groupedItems.takeWhile { item ->
+                val itemEnd = when (item) {
+                    is MarkdownGroupedItem.Single -> item.index
+                    is MarkdownGroupedItem.Group -> item.endIndexInclusive
+                }
+                itemEnd <= processEnd
+            }.size
+            ResponseActivityHeader(
+                durationMs = responseDurationMs,
+                expanded = expanded.value,
+                textColor = textColor,
+                onClick = { expanded.value = !expanded.value },
+            )
+            // Animate the process as one region, keeping the final answer outside its lifecycle.
+            AnimatedVisibility(
+                visible = expanded.value,
+                enter = expandVertically(tween(240), expandFrom = Alignment.Top) +
+                    fadeIn(tween(180)),
+                exit = shrinkVertically(tween(240), shrinkTowards = Alignment.Top) +
+                    fadeOut(tween(180)),
+            ) {
+                Column { renderItems(groupedItems.take(processItemCount)) }
+            }
+            renderItems(groupedItems.drop(processItemCount))
+        } else {
+            renderItems(groupedItems)
         }
     }
 }

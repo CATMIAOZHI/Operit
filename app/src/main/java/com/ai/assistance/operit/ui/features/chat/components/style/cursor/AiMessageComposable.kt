@@ -65,6 +65,7 @@ fun AiMessageComposable(
     val showModelProvider by preferencesManager.showModelProvider.collectAsState(initial = true)
     val showModelName by preferencesManager.showModelName.collectAsState(initial = true)
     val showRoleName by preferencesManager.showRoleName.collectAsState(initial = true)
+    val collapseCompletedProcess by displayPreferencesManager.collapseCompletedProcess.collectAsState(initial = true)
     val toolCollapseMode by displayPreferencesManager.toolCollapseMode.collectAsState(initial = ToolCollapseMode.FULL)
 
     // 链接预览弹窗状态
@@ -208,6 +209,8 @@ fun AiMessageComposable(
                 // 共享相同的state，避免重新计算nodes等状态
                 StreamMarkdownRenderer(
                     content = message.content,
+                    collapseCompletedProcess = collapseCompletedProcess && enableDialogs,
+                    responseDurationMs = (message.waitDurationMs + message.outputDurationMs).coerceAtLeast(0L),
                     textColor = textColor,
                     backgroundColor = backgroundColor,
                     onLinkClick = rememberedOnLinkClick,
