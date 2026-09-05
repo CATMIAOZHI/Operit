@@ -3042,6 +3042,9 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                 name = toolName,
                 executor =
                     object : ToolExecutor, JsPackageToolExecutorMarker {
+                        override fun parameterNames(tool: AITool): Set<String> =
+                            packageTool.parameters.map { it.name }.toSet()
+
                         override fun invoke(tool: AITool): ToolResult {
                             return packageToolExecutor.invoke(tool)
                         }

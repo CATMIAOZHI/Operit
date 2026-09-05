@@ -378,6 +378,10 @@ data class ToolPackage(
  
      private val jsToolManager = JsToolManager.getInstance(context, packageManager)
  
+     override fun parameterNames(tool: AITool): Set<String>? =
+         toolPackage.tools.find { it.name == tool.name.substringAfter(':') }
+             ?.parameters?.map { it.name }?.toSet()
+
      override fun invoke(tool: AITool): ToolResult {
          // Parse packageName:toolName pattern
          val parts = tool.name.split(":")

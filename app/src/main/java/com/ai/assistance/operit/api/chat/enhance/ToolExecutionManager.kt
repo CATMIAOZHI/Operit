@@ -2,6 +2,7 @@ package com.ai.assistance.operit.api.chat.enhance
 
 import android.content.Context
 import android.os.SystemClock
+import com.ai.assistance.operit.core.config.SystemToolPrompts
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.protocol.ExecutableToolProtocolParser
 import com.ai.assistance.operit.core.agent.SubagentToolPolicy
@@ -20,6 +21,9 @@ import com.ai.assistance.operit.core.tools.ToolExecutor
 import com.ai.assistance.operit.core.tools.ToolExecutionLimits
 import com.ai.assistance.operit.core.tools.ToolPackage
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingRepository
+import com.ai.assistance.operit.core.tools.ToolErrorRepository
+import com.ai.assistance.operit.core.tools.createToolErrorRecord
+import com.ai.assistance.operit.core.tools.ToolParameterObservation
 import com.ai.assistance.operit.core.tools.climode.CliToolModeSupport
 import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
 import com.ai.assistance.operit.data.model.ToolInvocation
@@ -66,6 +70,22 @@ object ToolExecutionManager {
     private const val PACKAGE_CALLER_CARD_ID_PARAM = "__operit_package_caller_card_id"
     private const val SUBAGENT_EXACT_REPEAT_REVIEW_THRESHOLD = 3
     private val toolRuntimeContextThreadLocal = ThreadLocal<ToolRuntimeContext?>()
+    private val declaredSystemParameters by lazy {
+        // Include the full file-tool declaration, not the capability-filtered model prompt.
+        (SystemToolPrompts.getAllCategoriesEn().flatMap { it.tools } +
+            SystemToolPrompts.fileSystemTools.tools + CliToolModeSupport.buildCliPublicToolPrompts(true))
+            .associate { it.name to it.parametersStructured?.map { parameter -> parameter.name }?.toSet() }
+    }
+
+    internal fun observeToolParameterNames(tool: AITool, declaration: () -> Set<String>?) {
+        currentToolRuntimeContext()?.parameterObserver?.inspect(tool, declaration)
+    }
+
+    internal fun inspectToolParameters(tool: AITool, executor: ToolExecutor) {
+        observeToolParameterNames(tool) {
+            executor.parameterNames(tool) ?: if (':' !in tool.name) declaredSystemParameters[tool.name] else null
+        }
+    }
 
     // System-reserved package context parameters. They are only ever set by the host: values the
     // model supplies (at the proxy top level or inside params) must not reach a package, or the
@@ -149,6 +169,7 @@ object ToolExecutionManager {
         val batchPosition: Int = 1,
         val batchSize: Int = 1,
         val permissionCheckedToolName: String? = null,
+        val parameterObserver: ToolParameterObservation? = null,
     )
 
     internal class BoundedToolResultAccumulator(
@@ -697,6 +718,7 @@ object ToolExecutionManager {
         executor: ToolExecutor,
         toolHandler: AIToolHandler? = null
     ): Flow<ToolResult> {
+        inspectToolParameters(invocation.tool, executor)
         val validationResult = executor.validateParameters(invocation.tool)
         if (!validationResult.valid) {
             return flow {
@@ -961,6 +983,29 @@ object ToolExecutionManager {
 
         boundInvocations.forEach { invocation ->
             ToolExecutionTimingRepository.register(timingScopeId, invocation)
+        }
+
+        val errorBatchId = java.util.UUID.randomUUID().toString()
+        val parameterObservers = java.util.concurrent.ConcurrentHashMap<String, ToolParameterObservation>()
+        fun rawInvocation(invocation: ToolInvocation): ToolInvocation =
+            rawInvocations.firstOrNull {
+                it.callId == invocation.callId && it.invocationIndex == invocation.invocationIndex
+            } ?: invocation
+        fun diagnosticKey(invocation: ToolInvocation) = "$errorBatchId:${invocation.callId ?: invocation.invocationIndex}"
+        val recordDiagnostic: (ToolInvocation, ToolResult) -> Unit = { invocation, result ->
+            try {
+                // Use original parameters and the declaration captured BEFORE execution: a tool
+                // can change its package's active state while running.
+                createToolErrorRecord(
+                    id = diagnosticKey(invocation),
+                    invocation = rawInvocation(invocation),
+                    result = result,
+                    occurredAt = System.currentTimeMillis(),
+                    undeclaredParameters = parameterObservers[diagnosticKey(invocation)]?.snapshot().orEmpty(),
+                )?.let { ToolErrorRepository.getInstance(context).record(it) }
+            } catch (e: Exception) {
+                ToolErrorRepository.getInstance(context).reportRecordingFailure(e)
+            }
         }
 
         try {
@@ -1420,9 +1465,15 @@ object ToolExecutionManager {
                         batchPosition = invocation.invocationIndex + 1,
                         permissionCheckedToolName =
                             resolveToolTarget(invocation.tool).tool.name,
+                        parameterObserver = ToolParameterObservation(
+                            rawTool = rawInvocation(invocation).tool,
+                            targetTool = resolveToolTarget(rawInvocation(invocation).tool).tool,
+                            onFailure = { ToolErrorRepository.getInstance(context).reportRecordingFailure(it) },
+                        ).also { parameterObservers[diagnosticKey(invocation)] = it },
                     ),
                 timingScopeId = timingScopeId,
                 deferredResultSink = deferredResultSink,
+                recordDiagnostic = recordDiagnostic,
             )
 
         suspend fun publishResult(
@@ -1589,6 +1640,11 @@ object ToolExecutionManager {
                         durationMs = durationMs,
                         state = terminalState,
                     )
+                    if (failure !is SubagentLoopRejectedException) {
+                        recordDiagnostic(invocation, failedResult.copy(
+                            error = "Tool execution failed: ${failure.message ?: failure::class.java.simpleName}",
+                        ))
+                    }
                     try {
                         emitFinalResult(collector, failedResult)
                     } catch (emitError: Exception) {
@@ -1661,6 +1717,7 @@ object ToolExecutionManager {
         runtimeContext: ToolRuntimeContext,
         timingScopeId: String?,
         deferredResultSink: java.util.concurrent.ConcurrentMap<ToolInvocation, ToolResult>? = null,
+        recordDiagnostic: (ToolInvocation, ToolResult) -> Unit,
     ): ToolResult {
         val toolName = invocation.tool.name
         val displayToolName = resolveDisplayToolName(invocation.tool)
@@ -1668,6 +1725,7 @@ object ToolExecutionManager {
         return withContext(toolRuntimeContextElement(runtimeContext)) {
             var startedAtElapsedMs: Long? = null
             val collectedResults = BoundedToolResultAccumulator()
+            var diagnosticError: String? = null
             // Parallel group members run with a deferred result sink and publish later from the
             // single driver coroutine so the shared collector, round manager and hook
             // notifications stay strictly ordered. The sink also captures cancellation/failure
@@ -1703,6 +1761,7 @@ object ToolExecutionManager {
                         durationMs = null,
                         state = ToolExecutionState.NOT_EXECUTED,
                     )
+                    recordDiagnostic(invocation, notAvailableResult)
                     publishResult(notAvailableResult)
                     return@withContext notAvailableResult
                 }
@@ -1737,6 +1796,8 @@ object ToolExecutionManager {
                     }
 
                 executeToolSafely(executionInvocation, executor, toolHandler).collect { result ->
+                    diagnosticError = if (result.success) null
+                        else result.error?.takeIf { it.isNotBlank() } ?: result.result.toString()
                     // Intermediate emissions belong to this same invocation. Aggregate them and
                     // publish one final row so streaming tools do not create duplicate result rows.
                     collectedResults.add(result)
@@ -1764,6 +1825,7 @@ object ToolExecutionManager {
                         durationMs = durationMs,
                         state = ToolExecutionState.COMPLETED,
                     )
+                    recordDiagnostic(invocation, emptyResult)
                     publishResult(emptyResult)
                     return@withContext emptyResult
                 }
@@ -1792,6 +1854,7 @@ object ToolExecutionManager {
                     durationMs = durationMs,
                     state = ToolExecutionState.COMPLETED,
                 )
+                recordDiagnostic(invocation, finalResult.copy(error = diagnosticError))
                 publishResult(finalResult)
                 return@withContext finalResult
             } catch (cancellation: CancellationException) {
