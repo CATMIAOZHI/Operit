@@ -1069,7 +1069,7 @@ fun ChatScreenContent(
 fun ChatHistorySelectorPanel(
         actualViewModel: ChatViewModel,
         chatHistories: List<ChatHistory>,
-        allChatHistories: List<ChatHistory>,
+        orderingChatHistories: List<ChatHistory>,
         searchableChatHistories: List<ChatHistory>,
         currentChatId: String,
         showChatHistorySelector: Boolean,
@@ -1153,7 +1153,7 @@ fun ChatHistorySelectorPanel(
                     actualViewModel.updateChatCharacterBinding(chatId, characterCardName, characterGroupId)
                 },
                 chatHistories = chatHistories,
-                allChatHistories = allChatHistories,
+                orderingChatHistories = orderingChatHistories,
                 searchableChatHistories = searchableChatHistories,
                 chatFolders = chatFolders,
                 currentId = currentChatId,
