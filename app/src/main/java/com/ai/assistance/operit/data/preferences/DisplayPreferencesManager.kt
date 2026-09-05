@@ -71,6 +71,7 @@ class DisplayPreferencesManager private constructor(private val context: Context
         private val KEY_VIRTUAL_DISPLAY_BITRATE_KBPS = intPreferencesKey("virtual_display_bitrate_kbps")
 
         // 工具折叠设置（多个只读工具 / 多个任意工具 / 全部工具）
+        private val KEY_COLLAPSE_COMPLETED_PROCESS = booleanPreferencesKey("collapse_completed_process")
         private val KEY_TOOL_COLLAPSE_MODE = stringPreferencesKey("tool_collapse_mode")
     }
 
@@ -193,6 +194,9 @@ class DisplayPreferencesManager private constructor(private val context: Context
             preferences[KEY_VIRTUAL_DISPLAY_BITRATE_KBPS] ?: 3000
         }
 
+    val collapseCompletedProcess: Flow<Boolean> =
+        context.displayPreferencesDataStore.data.map { it[KEY_COLLAPSE_COMPLETED_PROCESS] ?: true }
+
     val toolCollapseMode: Flow<ToolCollapseMode> =
         context.displayPreferencesDataStore.data.map { preferences ->
             val stored = preferences[KEY_TOOL_COLLAPSE_MODE]
@@ -225,6 +229,7 @@ class DisplayPreferencesManager private constructor(private val context: Context
         screenshotScalePercent: Int? = null,
         visitWebWaitSeconds: Int? = null,
         virtualDisplayBitrateKbps: Int? = null,
+        collapseCompletedProcess: Boolean? = null,
         toolCollapseMode: ToolCollapseMode? = null
     ) {
         context.displayPreferencesDataStore.edit { preferences ->
@@ -259,6 +264,7 @@ class DisplayPreferencesManager private constructor(private val context: Context
             screenshotScalePercent?.let { preferences[KEY_SCREENSHOT_SCALE_PERCENT] = it }
             visitWebWaitSeconds?.let { preferences[KEY_VISIT_WEB_WAIT_SECONDS] = it.coerceAtLeast(0) }
             virtualDisplayBitrateKbps?.let { preferences[KEY_VIRTUAL_DISPLAY_BITRATE_KBPS] = it }
+            collapseCompletedProcess?.let { preferences[KEY_COLLAPSE_COMPLETED_PROCESS] = it }
             toolCollapseMode?.let { preferences[KEY_TOOL_COLLAPSE_MODE] = it.value }
         }
     }
@@ -321,6 +327,7 @@ class DisplayPreferencesManager private constructor(private val context: Context
             preferences.remove(KEY_SCREENSHOT_SCALE_PERCENT)
             preferences.remove(KEY_VISIT_WEB_WAIT_SECONDS)
             preferences.remove(KEY_VIRTUAL_DISPLAY_BITRATE_KBPS)
+            preferences.remove(KEY_COLLAPSE_COMPLETED_PROCESS)
             preferences.remove(KEY_TOOL_COLLAPSE_MODE)
         }
     }
