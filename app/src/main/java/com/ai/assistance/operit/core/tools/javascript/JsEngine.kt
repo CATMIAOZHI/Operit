@@ -63,7 +63,9 @@ internal fun isReadingCompanionBridgeCaller(
     containerPackageName == ReadingCompanionService.TOOLPKG_ID &&
         (
             packageName == ReadingCompanionService.SUBPACKAGE_NAME ||
-                packageName == ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME
+                packageName == ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME ||
+                packageName == "reading_companion_tasks" ||
+                packageName == "reading_companion_manage"
         )
 
 /**

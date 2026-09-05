@@ -9,6 +9,7 @@ const {
   toErrorText,
   triggerLabel,
   useEnglishLocale,
+  unwrapToolResult,
 } = require("../history_shared.js");
 
 function historyScreen(ctx) {
@@ -21,6 +22,7 @@ function historyScreen(ctx) {
   );
   const [loading, setLoading] = ctx.useState("historyLoading", true);
   const [error, setError] = ctx.useState("historyError", "");
+  const [tasks, setTasks] = ctx.useState("historyTasks", []);
   const [runs, setRuns] = ctx.useState("historyRuns", []);
 
   const load = async () => {
@@ -31,6 +33,9 @@ function historyScreen(ctx) {
         limit: 50,
       });
       setRuns(Array.isArray(result && result.runs) ? result.runs : []);
+      const taskName = ctx.resolveToolName ? await ctx.resolveToolName({ packageName: "reading_companion_tasks", toolName: "list_tasks", preferImported: true }) : "reading_companion_tasks:list_tasks";
+      const taskResult = unwrapToolResult(await ctx.callTool(taskName, { limit: 20 }));
+      setTasks(Array.isArray(taskResult.tasks) ? taskResult.tasks : []);
     } catch (loadError) {
       setError(toErrorText(loadError));
     } finally {
@@ -53,6 +58,31 @@ function historyScreen(ctx) {
   const refresh = english ? "Refresh" : "刷新";
 
   const children = [];
+  for (const task of tasks) {
+    children.push(UI.Card({ fillMaxWidth: true }, UI.Column({ padding: 12, spacing: 6 }, [
+      UI.Text({ text: `${task.kind === "summary" ? (english ? "Summary" : "摘要") : (english ? "Commentary" : "段评")} · ${({
+        queued: english ? "Queued" : "等待中",
+        running: english ? "Running" : "生成中",
+        cancelling: english ? "Cancelling" : "取消中",
+        cancelled: english ? "Cancelled" : "已取消",
+        interrupted: english ? "Interrupted" : "已中断",
+        completed: english ? "Completed" : "已完成",
+        completed_with_failures: english ? "Partially completed" : "部分完成",
+        failed: english ? "Failed" : "失败",
+      })[task.status] || task.status}`, style: "titleSmall" }),
+      UI.Text({ text: String(task.task_id), style: "bodySmall" }),
+      UI.Text({ text: `${english ? "Completed" : "已完成"}: ${Number((task.result || task.progress || {}).completedCount || 0)}` }),
+      ["queued", "running", "cancelling"].includes(task.status) ? UI.OutlinedButton({ onClick: async () => {
+        try {
+          const name = ctx.resolveToolName ? await ctx.resolveToolName({ packageName: "reading_companion_tasks", toolName: "cancel_task", preferImported: true }) : "reading_companion_tasks:cancel_task";
+          unwrapToolResult(await ctx.callTool(name, { task_id: task.task_id }));
+          await load();
+        } catch (cancelError) {
+          setError(toErrorText(cancelError));
+        }
+      } }, UI.Text({ text: english ? "Cancel task" : "取消任务" })) : null,
+    ].filter(Boolean))));
+  }
   if (loading) {
     children.push(
       UI.Row(

@@ -114,7 +114,8 @@ class ReadingCompanionService private constructor(
         return state
     }
 
-    suspend fun currentBook(): ReadingState = selectedReadingState()
+    suspend fun currentBook(bookId: String? = null): ReadingState =
+        selectedReadingState(bookId?.trim()?.takeIf(String::isNotBlank))
 
     suspend fun persistedSummaryFiles(): JSONObject {
         val fileStore = ReadingCompanionFileStore(appContext)
@@ -227,7 +228,11 @@ class ReadingCompanionService private constructor(
      * access to the ToolPkg.  A bounded best-effort catalog refresh keeps stale directories out,
      * but when Legado is unreachable the on-disk catalog membership check still protects reads.
      */
-    suspend fun readPersistedFile(path: String): JSONObject {
+    suspend fun readPersistedFile(
+        path: String,
+        offset: Int = 0,
+        maxCharacters: Int? = null,
+    ): JSONObject {
         val bookId = resolveLocalBookId()
             ?: throw IllegalArgumentException("当前没有可用的书籍，请先在 Legado 打开一本书或在阅读伴侣中选择书籍")
         val fileStore = ReadingCompanionFileStore(appContext)
@@ -240,14 +245,24 @@ class ReadingCompanionService private constructor(
                 state.book.id
             }
             if (refreshedBookId != null) {
-                return fileStore.readPersistedFile(refreshedBookId, path)
+                return fileStore.readPersistedFile(
+                    bookId = refreshedBookId,
+                    path = path,
+                    offset = offset,
+                    maxCharacters = maxCharacters,
+                )
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
             // Fall through to the local read below.
         }
-        return fileStore.readPersistedFile(bookId, path)
+        return fileStore.readPersistedFile(
+            bookId = bookId,
+            path = path,
+            offset = offset,
+            maxCharacters = maxCharacters,
+        )
     }
 
     suspend fun localBookFiles(callerRoleCardId: String?): JSONObject {
@@ -969,6 +984,8 @@ class ReadingCompanionService private constructor(
         startChapterIndex: Int?,
         endChapterIndex: Int?,
         runtime: ToolExecutionManager.ToolRuntimeContext?,
+        bookId: String? = null,
+        onProgress: ((JSONObject) -> Unit)? = null,
     ): JSONObject {
         check(manualSummaryMutex.tryLock()) { "已有手动摘要批次正在生成，请等待完成后再试" }
         manualSummaryStopRequested = false
@@ -992,7 +1009,11 @@ class ReadingCompanionService private constructor(
                     }
                 }
 
-        val state = selectedReadingState()
+        val requestedBookId = bookId?.trim()?.takeIf(String::isNotBlank)
+        val state = selectedReadingState(requestedBookId)
+        if (requestedBookId != null && state.book.id != requestedBookId) {
+            throw IllegalArgumentException("指定书籍当前不可用：$requestedBookId")
+        }
         val chapters = provider.getChapters(state.book.id)
             .sortedByDescending(ReaderChapter::index)
         val fileStore = ReadingCompanionFileStore(appContext)
@@ -1022,6 +1043,30 @@ class ReadingCompanionService private constructor(
         }
         val failures = JSONArray()
         var completedCount = 0
+        var processedCount = 0
+        fun emitProgress(chapterIndex: Int, status: String) {
+            try {
+                onProgress?.invoke(
+                    JSONObject()
+                        .put("bookId", state.book.id)
+                        .put("batchId", batchId)
+                        .put("chapterIndex", chapterIndex)
+                        .put("status", status)
+                        .put("processedCount", processedCount)
+                        .put("completedCount", completedCount)
+                        .put("failedCount", failures.length())
+                        .put("unavailableCount", unavailable.length())
+                        .put(
+                            "targetChapterIndices",
+                            JSONArray().apply { processedTargets.forEach(::put) },
+                        ),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Progress reporting is observational and must not invalidate a generated result.
+            }
+        }
         val coordinator = ReadingCompanionSubagentCoordinator.getInstance(appContext)
         for (chapter in candidates) {
             if (manualSummaryStopRequested) break
@@ -1032,6 +1077,8 @@ class ReadingCompanionService private constructor(
                     throw cancelled
                 } catch (error: Throwable) {
                     unavailable.put(unavailableBatchResult(chapter, error))
+                    processedCount += 1
+                    emitProgress(chapter.index, "unavailable")
                     continue
                 }
             if (
@@ -1047,6 +1094,8 @@ class ReadingCompanionService private constructor(
                         IllegalStateException("章节正文已变化或暂不完整"),
                     ),
                 )
+                processedCount += 1
+                emitProgress(chapter.index, "unavailable")
                 continue
             }
             processedTargets += chapter.index
@@ -1072,6 +1121,8 @@ class ReadingCompanionService private constructor(
                 }
             results.put(result)
             if (result.optString("status") == "generated") completedCount += 1
+            processedCount += 1
+            emitProgress(chapter.index, result.optString("status"))
         }
 
             val remainingMissing =
@@ -1090,6 +1141,7 @@ class ReadingCompanionService private constructor(
                     JSONArray().apply { processedTargets.forEach(::put) },
                 )
                 .put("completedCount", completedCount)
+                .put("processedCount", processedCount)
                 .put("failedCount", failures.length())
                 .put("failures", failures)
                 .put("unavailableCount", unavailable.length())
@@ -1438,43 +1490,43 @@ class ReadingCompanionService private constructor(
 
     suspend fun character(
         name: String,
-        runtime: ToolExecutionManager.ToolRuntimeContext?,
+        @Suppress("UNUSED_PARAMETER") runtime: ToolExecutionManager.ToolRuntimeContext? = null,
+        maxCharacters: Int = DEFAULT_CHARACTER_EVIDENCE_CHARACTERS,
     ): JSONObject {
-        require(name.isNotBlank()) { "人物名称不能为空" }
+        val query = name.trim()
+        require(query.isNotBlank()) { "人物名称不能为空" }
         val state = selectedReadingState()
         synchronizeBoundary(state)
-        var resultState = state
-        var hits = verifyDatabaseHits(
-            state,
-            store.getCharacterEvidence(state.book.id, name.trim(), 12)
-                .filter { SpoilerGuard.isPositionAllowed(it.chapterIndex, 0, it.endPosition, state) },
+        val chapters = provider.getChapters(state.book.id)
+        val fileStore = ReadingCompanionFileStore(appContext)
+        // Catalog sync is deliberately the only write here. It records the currently active
+        // source identities so file evidence cannot walk stale source directories.
+        fileStore.syncBookCatalog(state.book, chapters)
+        val evidence = fileStore.findCharacterEvidence(
+            bookId = state.book.id,
+            chapters = chapters,
+            query = query,
+            throughChapterIndex = state.chapterIndex,
+            currentBodyPosition = state.bodyPosition,
+            maxCharacters = maxCharacters.coerceIn(
+                MIN_CHARACTER_EVIDENCE_CHARACTERS,
+                MAX_CHARACTER_EVIDENCE_CHARACTERS,
+            ),
         )
-        if (hits.isEmpty()) {
-            refreshAndIndex(
-                maxCompletedChapters = 5,
-                maxKnowledgeChapters = 2,
-                scheduleMore = true,
-                runtime = runtime,
-            )
-            val latest = selectedReadingState(state.book.id)
-            resultState = latest
-            hits = verifyDatabaseHits(
-                latest,
-                store.getCharacterEvidence(latest.book.id, name.trim(), 12)
-                    .filter {
-                        SpoilerGuard.isPositionAllowed(it.chapterIndex, 0, it.endPosition, latest)
-                    },
-                )
-        }
-        hits = verifyDatabaseHits(resultState, hits)
-        return JSONObject().apply {
+        val hits = evidence.optJSONArray("evidence") ?: JSONArray()
+        return JSONObject(evidence.toString()).apply {
             put("book", state.book.name)
-            put("queryName", name)
+            put("bookId", state.book.id)
+            put("queryName", query)
+            put("status", if (hits.length() == 0) "not_found_in_files" else "found")
             put(
-                "evidence",
-                JSONArray().apply { hits.forEach { put(hitJson(it)) } },
+                "notice",
+                if (hits.length() == 0) {
+                    "当前 characters.md 及有效已读章节 summary/content 中没有匹配人物“$query”"
+                } else {
+                    "证据仅来自当前 characters.md 与阅读边界内已生效的章节文件"
+                },
             )
-            put("status", if (hits.isEmpty()) "not_found_in_structured_index" else "found")
         }
     }
 
@@ -2157,6 +2209,10 @@ class ReadingCompanionService private constructor(
         private const val MAX_CONTEXT_CHAPTERS = 8
         private const val MAX_CONTEXT_READER_MEMORIES = 24
         private const val MAX_CONTEXT_COMPANION_COMMENTS = 24
+        private const val MIN_CHARACTER_EVIDENCE_CHARACTERS = 1_000
+        private const val MAX_CHARACTER_EVIDENCE_CHARACTERS = 24_000
+        private const val DEFAULT_CHARACTER_EVIDENCE_CHARACTERS =
+            ReadingCompanionFileStore.DEFAULT_CHARACTER_EVIDENCE_CHARACTERS
         private const val SUMMARY_BUDGET_FRACTION = 50
         private const val MEMORY_BUDGET_FRACTION = 30
         private const val COMMENT_BUDGET_FRACTION = 20

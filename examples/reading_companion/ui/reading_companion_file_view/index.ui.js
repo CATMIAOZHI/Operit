@@ -30,6 +30,8 @@ function fileViewScreen(ctx) {
   const [loading, setLoading] = ctx.useState("fileViewLoading", true);
   const [error, setError] = ctx.useState("fileViewError", "");
   const [content, setContent] = ctx.useState("fileViewContent", "");
+  const [nextOffset, setNextOffset] = ctx.useState("fileViewNextOffset", null);
+  const [pageOffset, setPageOffset] = ctx.useState("fileViewPageOffset", 0);
   const [fontLevel, setFontLevel] = ctx.useState("fileViewFontLevel", 2);
 
   const path = String(ctx.getEnv(FILE_VIEW_PATH_ENV_KEY) || "").trim();
@@ -37,7 +39,7 @@ function fileViewScreen(ctx) {
   const relativePath = String(ctx.getEnv(FILE_VIEW_RELATIVE_ENV_KEY) || "").trim();
   const readOnly = String(ctx.getEnv(FILE_VIEW_READONLY_ENV_KEY) || "true") !== "false";
 
-  const load = async () => {
+  const load = async (offset = 0) => {
     if (!path) {
       setError(english ? "No file was selected." : "未选择要查看的文件。");
       setLoading(false);
@@ -47,9 +49,11 @@ function fileViewScreen(ctx) {
     setError("");
     try {
       const result = await callWithTimeout(
-        () => callHistoryTool(ctx, "read_persisted_file", { path }),
+        () => callHistoryTool(ctx, "read_persisted_file", { path, offset: Number(offset) || 0, max_characters: 16000 }),
         english ? "Reading timed out" : "读取超时",
       );
+      setPageOffset(Number(offset) || 0);
+      setNextOffset(result.nextOffset == null ? null : Number(result.nextOffset));
       setContent(
         prettifyContent(
           name,
@@ -159,6 +163,12 @@ function fileViewScreen(ctx) {
     );
   }
 
+  children.push(UI.Row({ fillMaxWidth: true, spacing: 10 }, [
+    UI.OutlinedButton({ enabled: !loading && pageOffset > 0, onClick: () => load(0) },
+      UI.Text({ text: english ? "First page" : "回到开头" })),
+    UI.OutlinedButton({ enabled: !loading && nextOffset !== null, onClick: () => load(nextOffset) },
+      UI.Text({ text: english ? "Next page" : "下一段" })),
+  ]));
   children.push(
     UI.Row({ fillMaxWidth: true, spacing: 10, padding: { start: 16, end: 16 } }, [
       UI.OutlinedButton(

@@ -193,7 +193,7 @@ class ReadingCompanionStage4StaticTest {
 
     @Test
     fun `main companion uses local grep and removes semantic search exposure`() {
-        val promptSource = source("../examples/reading_companion/main.js")
+        val promptSource = source("../examples/reading_companion/packages/reading_companion.js")
         val packageSource = source("../examples/reading_companion/packages/reading_companion.js")
         assertTrue(promptSource.contains("get_local_files first"))
         assertTrue(promptSource.contains("then read_file"))

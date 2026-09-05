@@ -60,7 +60,8 @@ data class HiddenToolCatalogEntry(
     val parameterHints: List<String>,
     val sourceKind: HiddenToolSourceKind,
     val keywords: List<String> = emptyList(),
-    val suggestedParamsJson: String? = null
+    val suggestedParamsJson: String? = null,
+    val usageAdvice: List<String> = emptyList()
 )
 
 object CliToolModeSupport {
@@ -400,6 +401,12 @@ object CliToolModeSupport {
                     appendLine(entry.parameterHints.joinToString("; "))
                 }
             }
+            // CLI callers discover tools without use_package, so return the package's
+            // guidance here, once per result batch rather than once per matched tool.
+            results.flatMap { it.usageAdvice }.distinct().forEach { advice ->
+                appendLine()
+                appendLine(advice)
+            }
         }.trimEnd()
     }
 
@@ -550,7 +557,7 @@ object CliToolModeSupport {
         entries.putIfAbsent("${entry.sourceKind}:${entry.targetToolName}:${entry.displayName}", entry)
     }
 
-    private fun addPackageToolEntries(
+    internal fun addPackageToolEntries(
         entries: MutableMap<String, HiddenToolCatalogEntry>,
         prefix: String,
         toolPackage: ToolPackage,
@@ -559,6 +566,8 @@ object CliToolModeSupport {
         sourceKind: HiddenToolSourceKind,
         keywordTag: String
     ) {
+        val usageAdvice =
+            toolPackage.tools.filter { it.advice }.map(descriptionResolver).filter { it.isNotBlank() }
         toolPackage.tools
             .filter { !it.advice }
             .forEach { packageTool ->
@@ -570,7 +579,8 @@ object CliToolModeSupport {
                         description = descriptionResolver(packageTool),
                         parameterHints = packageTool.parameters.map(paramHintResolver),
                         sourceKind = sourceKind,
-                        keywords = listOf(prefix, keywordTag, toolPackage.name)
+                        keywords = listOf(prefix, keywordTag, toolPackage.name),
+                        usageAdvice = usageAdvice
                     )
                 entries.putIfAbsent("${entry.sourceKind}:${entry.targetToolName}:${entry.displayName}", entry)
             }
