@@ -206,6 +206,48 @@ private fun HistorySiblingSnapshot.structure(): HistorySiblingStructure =
         displayOrder = displayOrder,
     )
 
+// Mutation snapshots include hidden normal/branch chats, matching ChatFolderRepository.siblings.
+// The displayed and searchable lists use their own visibility filters.
+internal fun buildHistorySiblingSnapshot(
+    parentFolderId: String?,
+    folders: List<ChatFolderEntity>,
+    chats: List<ChatHistory>,
+): List<HistorySiblingSnapshot> =
+    (
+        folders
+            .asSequence()
+            .filter { it.parentFolderId == parentFolderId }
+            .map(HistorySiblingSnapshot::fromFolder) +
+            chats
+                .asSequence()
+                .filter {
+                    it.folderId == parentFolderId && it.chatKind != ChatKind.SUBAGENT.name
+                }
+                .map {
+                    HistorySiblingSnapshot(
+                        kind = HistorySiblingKind.CHAT,
+                        id = it.id,
+                        parentFolderId = it.folderId,
+                        displayOrder = it.displayOrder,
+                        pinned = it.pinned,
+                        isFavorite = it.isFavorite,
+                        characterCardName = it.characterCardName,
+                        characterGroupId = it.characterGroupId,
+                    )
+                }
+    ).sortedWith(
+        compareBy<HistorySiblingSnapshot> { it.displayOrder }
+            .thenBy { it.kind }
+            .thenBy { it.id }
+    ).toList()
+
+internal fun buildVisibleHistorySiblingSnapshot(
+    parentFolderId: String?,
+    folders: List<ChatFolderEntity>,
+    chats: List<ChatHistory>,
+): List<HistorySiblingSnapshot> =
+    buildHistorySiblingSnapshot(parentFolderId, folders, chats.filterNot { it.isHidden })
+
 internal fun resolveBindingForCreate(
     historyDisplayMode: ChatHistoryDisplayMode,
     activePrompt: ActivePrompt,
@@ -674,7 +716,7 @@ fun ChatHistorySelector(
         onUpdateChatTitle: (chatId: String, newTitle: String) -> Unit,
         onUpdateChatBinding: (chatId: String, characterCardName: String?, characterGroupId: String?) -> Unit,
         chatHistories: List<ChatHistory>,
-        allChatHistories: List<ChatHistory>,
+        orderingChatHistories: List<ChatHistory>,
         searchableChatHistories: List<ChatHistory>,
         chatFolders: List<ChatFolderEntity>,
         currentId: String?,
@@ -763,31 +805,10 @@ fun ChatHistorySelector(
             }
         }
     fun historySiblingSnapshot(parentFolderId: String?): List<HistorySiblingSnapshot> =
-        (
-            chatFolders
-                .asSequence()
-                .filter { it.parentFolderId == parentFolderId }
-                .map(HistorySiblingSnapshot::fromFolder) +
-                allChatHistories
-                    .asSequence()
-                    .filter { it.folderId == parentFolderId }
-                    .map {
-                        HistorySiblingSnapshot(
-                            kind = HistorySiblingKind.CHAT,
-                            id = it.id,
-                            parentFolderId = it.folderId,
-                            displayOrder = it.displayOrder,
-                            pinned = it.pinned,
-                            isFavorite = it.isFavorite,
-                            characterCardName = it.characterCardName,
-                            characterGroupId = it.characterGroupId,
-                        )
-                    }
-        ).sortedWith(
-            compareBy<HistorySiblingSnapshot> { it.displayOrder }
-                .thenBy { it.kind }
-                .thenBy { it.id }
-        ).toList()
+        buildHistorySiblingSnapshot(parentFolderId, chatFolders, orderingChatHistories)
+
+    fun visibleHistorySiblingSnapshot(parentFolderId: String?): List<HistorySiblingSnapshot> =
+        buildVisibleHistorySiblingSnapshot(parentFolderId, chatFolders, orderingChatHistories)
 
     fun captureHistorySiblingSnapshots(): Map<String?, List<HistorySiblingSnapshot>> {
         return (listOf<String?>(null) + chatFolders.map { it.id })
@@ -1550,7 +1571,7 @@ fun ChatHistorySelector(
             mutableStateOf<Map<String?, List<HistorySiblingSnapshot>>>(emptyMap())
         }
 
-    LaunchedEffect(allChatHistories, chatFolders, pendingHistoryMoveAck) {
+    LaunchedEffect(orderingChatHistories, chatFolders, pendingHistoryMoveAck) {
         val pending = pendingHistoryMoveAck ?: return@LaunchedEffect
         if (!pending.repositoryCallCompleted) return@LaunchedEffect
         val matchesExpected =
@@ -1623,7 +1644,7 @@ fun ChatHistorySelector(
                                 ChatDragTarget(
                                     targetFolderId = null,
                                     anchorNodeKey =
-                                        historySiblingSnapshot(null)
+                                        visibleHistorySiblingSnapshot(null)
                                             .firstOrNull {
                                                 it.kind == HistorySiblingKind.CHAT
                                             }
@@ -1633,7 +1654,7 @@ fun ChatHistorySelector(
                             } else {
                                 val movingFromUngrouped = moved.history.folderId == null
                                 val targetFolderIsEmpty =
-                                    historySiblingSnapshot(targetFolder.id).isEmpty()
+                                    visibleHistorySiblingSnapshot(targetFolder.id).isEmpty()
                                 ChatDragTarget(
                                     targetFolderId =
                                         if (movingFromUngrouped) {
@@ -1714,7 +1735,7 @@ fun ChatHistorySelector(
                                         },
                                     anchorNodeKey =
                                         targetFolderId?.let { "folder:$it" }
-                                            ?: historySiblingSnapshot(null)
+                                            ?: visibleHistorySiblingSnapshot(null)
                                                 .firstOrNull {
                                                     it.stableKey != "folder:$movedFolderId"
                                                 }

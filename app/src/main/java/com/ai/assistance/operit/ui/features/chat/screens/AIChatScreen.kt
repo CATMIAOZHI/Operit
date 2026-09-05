@@ -1444,7 +1444,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 ChatHistorySelectorPanel(
                                     actualViewModel = actualViewModel,
                                     chatHistories = displayedChatHistories,
-                                    allChatHistories = visibleAllChatHistories,
+                                    orderingChatHistories = chatHistories,
                                     searchableChatHistories = visibleAllChatHistories,
                                     currentChatId = currentChatId ?: "",
                                     showChatHistorySelector = showChatHistorySelector,
