@@ -1,4 +1,5 @@
 package com.ai.assistance.operit.ui.features.chat.viewmodel
+import org.junit.Assert.assertNull
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -6,6 +7,40 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PendingMessageQueueStoreTest {
+    @Test
+    fun returningMiddleSteerPreservesOriginalQueueOrder() {
+        val store = PendingMessageQueueStore()
+        listOf("A", "B", "C").forEach { store.enqueue("chat-a", it, true) }
+        val middle = store.states.value.getValue("chat-a").messages[1]
+        store.remove("chat-a", middle.id)
+        store.restore("chat-a", middle.copy(isSteering = true))
+        store.returnSteer("chat-a", middle)
+        assertEquals(listOf("A", "B", "C"),
+            store.states.value.getValue("chat-a").messages.map { it.text })
+    }
+    @Test
+    fun submittedSteerIsNotSentAgainByTheNextTurnQueue() {
+        val store = PendingMessageQueueStore()
+        store.enqueue("chat-a", "correction", true)
+        val original = store.states.value.getValue("chat-a").messages.single()
+        store.remove("chat-a", original.id)
+        store.restore("chat-a", original.copy(isSteering = true))
+        assertFalse(store.hasPendingAutoDequeue("chat-a", false))
+        assertNull(store.takeNextAutoDequeue("chat-a"))
+    }
+
+    @Test
+    fun cancelledSteerReturnsToQueueWithoutAutomaticallyStartingAnotherTurn() {
+        val store = PendingMessageQueueStore()
+        store.enqueue("chat-a", "correction", true)
+        val original = store.states.value.getValue("chat-a").messages.single()
+        store.remove("chat-a", original.id)
+        store.restore("chat-a", original.copy(isSteering = true))
+        store.returnSteer("chat-a", original)
+        assertEquals(original, store.states.value.getValue("chat-a").messages.single())
+        assertFalse(store.hasPendingAutoDequeue("chat-a", false))
+    }
+
     @Test
     fun queueRemainsAvailableWhenAnotherChatIsVisited() {
         val store = PendingMessageQueueStore()

@@ -8677,4 +8677,7 @@
     <string name="open_audit_chat_failed">Could not open the audit chat: %1$s</string>
     <string name="reading_companion_loop_detected">The commentary subagent detected a repeated call loop; generation stopped.</string>
     <string name="reading_companion_no_progress">The commentary subagent made no effective progress; generation stopped.</string>
+    <string name="chat_steer_turn">Steer turn</string>
+    <string name="chat_steer_pending">Waiting for this turn</string>
+    <string name="chat_steer_unavailable">This turn cannot accept input now. The message remains queued.</string>
 </resources>

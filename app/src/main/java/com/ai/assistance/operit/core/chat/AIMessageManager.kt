@@ -348,6 +348,9 @@ object AIMessageManager {
         onToolInvocation: (suspend (String) -> Unit)? = null,
         onToolExecutionBoundary:
             (suspend (EnhancedAIService.ToolExecutionBoundarySnapshot) -> Unit)? = null,
+        turnInputInbox: TurnInputInbox? = null,
+        onTurnInput:
+            (suspend (List<String>, EnhancedAIService.ToolExecutionBoundarySnapshot) -> String)? = null,
         notifyReplyOverride: Boolean? = null,
         chatModelConfigIdOverride: String? = null,
         chatModelIndexOverride: Int? = null,
@@ -498,6 +501,8 @@ object AIMessageManager {
                     proxySenderName = proxySenderName,
                     onToolInvocation = onToolInvocation,
                     onToolExecutionBoundary = onToolExecutionBoundary,
+                    turnInputInbox = turnInputInbox,
+                    onTurnInput = onTurnInput,
                     notifyReplyOverride = notifyReplyOverride,
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,

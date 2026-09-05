@@ -1632,59 +1632,58 @@ class ChatHistoryDelegate(
         beforeTimestamp: Long?,
         afterTimestamp: Long?,
         chatIdOverride: String? = null,
-    ) {
-        historyUpdateMutex.withLock {
-            val chatId = chatIdOverride ?: _currentChatId.value ?: return@withLock
-            val isCurrentChat = chatId == _currentChatId.value
-            val currentDisplayStartTimestamp = currentChatWindow.currentDisplayStartTimestamp()
-            val currentDisplayEndTimestamp = currentChatWindow.currentDisplayEndTimestamp()
-            val currentPageCount = currentDisplayPageCount()
-            val persistedSummaryMessage =
-                chatHistoryManager.addSummaryMessageBetweenSliceNeighbors(
-                    chatId = chatId,
-                    message = summaryMessage,
-                    beforeTimestamp = beforeTimestamp,
-                    afterTimestamp = afterTimestamp,
-                )
-
-            if (persistedSummaryMessage == null) {
-                AppLogger.w(
-                    TAG,
-                    "总结消息插入被跳过: chatId=$chatId, before=$beforeTimestamp, after=$afterTimestamp",
-                )
-                return@withLock
-            }
-
-            AppLogger.d(
-                TAG,
-                "添加总结消息: chatId=$chatId, persistedTimestamp=${persistedSummaryMessage.timestamp}, before=$beforeTimestamp, after=$afterTimestamp",
+    ): Boolean = historyUpdateMutex.withLock {
+        val chatId = chatIdOverride ?: _currentChatId.value ?: return@withLock false
+        val isCurrentChat = chatId == _currentChatId.value
+        val currentDisplayStartTimestamp = currentChatWindow.currentDisplayStartTimestamp()
+        val currentDisplayEndTimestamp = currentChatWindow.currentDisplayEndTimestamp()
+        val currentPageCount = currentDisplayPageCount()
+        val persistedSummaryMessage =
+            chatHistoryManager.addSummaryMessageBetweenSliceNeighbors(
+                chatId = chatId,
+                message = summaryMessage,
+                beforeTimestamp = beforeTimestamp,
+                afterTimestamp = afterTimestamp,
             )
 
-            // 更新消息列表
-            if (isCurrentChat) {
-                if (
-                    currentDisplayEndTimestamp != null &&
-                    persistedSummaryMessage.timestamp > currentDisplayEndTimestamp
-                ) {
-                    applyCurrentChatDisplayWindow(
-                        chatId = chatId,
-                        messages =
-                            collectNewestDisplayPages(
-                                chatId = chatId,
-                                pageCount = currentPageCount,
-                                endTimestampInclusive = persistedSummaryMessage.timestamp,
-                            ),
-                    )
-                } else if (
-                    currentDisplayStartTimestamp != null &&
-                    persistedSummaryMessage.timestamp < currentDisplayStartTimestamp
-                ) {
-                    revealMessageForCurrentChat(persistedSummaryMessage.timestamp)
-                } else {
-                    reloadCurrentChatDisplayHistory(chatId)
-                }
+        if (persistedSummaryMessage == null) {
+            AppLogger.w(
+                TAG,
+                "总结消息插入被跳过: chatId=$chatId, before=$beforeTimestamp, after=$afterTimestamp",
+            )
+            return@withLock false
+        }
+
+        AppLogger.d(
+            TAG,
+            "添加总结消息: chatId=$chatId, persistedTimestamp=${persistedSummaryMessage.timestamp}, before=$beforeTimestamp, after=$afterTimestamp",
+        )
+
+        // 更新消息列表
+        if (isCurrentChat) {
+            if (
+                currentDisplayEndTimestamp != null &&
+                persistedSummaryMessage.timestamp > currentDisplayEndTimestamp
+            ) {
+                applyCurrentChatDisplayWindow(
+                    chatId = chatId,
+                    messages =
+                        collectNewestDisplayPages(
+                            chatId = chatId,
+                            pageCount = currentPageCount,
+                            endTimestampInclusive = persistedSummaryMessage.timestamp,
+                        ),
+                )
+            } else if (
+                currentDisplayStartTimestamp != null &&
+                persistedSummaryMessage.timestamp < currentDisplayStartTimestamp
+            ) {
+                revealMessageForCurrentChat(persistedSummaryMessage.timestamp)
+            } else {
+                reloadCurrentChatDisplayHistory(chatId)
             }
         }
+        true
     }
 
     // This function is moved to AIMessageManager

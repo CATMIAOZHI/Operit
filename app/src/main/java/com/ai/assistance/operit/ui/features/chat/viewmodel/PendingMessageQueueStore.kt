@@ -58,13 +58,25 @@ internal class PendingMessageQueueStore {
             if (message.chatGeneration != (chatGenerations[chatId] ?: 0L)) return
             updateState(chatId) { state ->
                 if (state.messages.any { it.id == message.id }) state
-                else state.copy(messages = listOf(message) + state.messages)
+                else state.copy(messages = (state.messages + message).sortedBy { it.id })
             }
         }
     }
 
     fun setExpanded(chatId: String, expanded: Boolean) {
         synchronized(lock) { updateState(chatId) { it.copy(isExpanded = expanded) } }
+    }
+
+    fun returnSteer(chatId: String, message: PendingQueueMessageItem) {
+        synchronized(lock) {
+            if (!isCurrentGeneration(chatId, message.chatGeneration)) return
+            updateState(chatId) { state ->
+                state.copy(
+                    messages = state.messages.map { if (it.id == message.id) message else it },
+                    suppressNextAutoDequeue = true,
+                )
+            }
+        }
     }
 
     fun suppressNextAutoDequeue(chatId: String) {
@@ -86,14 +98,14 @@ internal class PendingMessageQueueStore {
                 }
                 return@synchronized false
             }
-            state.wasBlocked && state.messages.isNotEmpty()
+            state.wasBlocked && state.messages.any { !it.isSteering }
         }
 
     fun takeNextAutoDequeue(chatId: String): PendingQueueMessageItem? =
         synchronized(lock) {
             val state = _states.value[chatId] ?: return@synchronized null
             if (!state.wasBlocked || state.suppressNextAutoDequeue) return@synchronized null
-            val message = state.messages.firstOrNull() ?: return@synchronized null
+            val message = state.messages.firstOrNull { !it.isSteering } ?: return@synchronized null
             updateState(chatId) {
                 it.copy(
                     messages = it.messages.filterNot { queued -> queued.id == message.id },

@@ -8658,4 +8658,7 @@
     <string name="open_audit_chat_failed">无法打开审计对话：%1$s</string>
     <string name="reading_companion_loop_detected">段评子代理检测到重复调用循环，本次生成已停止。</string>
     <string name="reading_companion_no_progress">段评子代理未检测到有效进展，本次生成已停止。</string>
+    <string name="chat_steer_turn">引导当前轮</string>
+    <string name="chat_steer_pending">等待当前轮读取</string>
+    <string name="chat_steer_unavailable">当前轮暂不接受引导，消息已保留在队列中</string>
 </resources>
