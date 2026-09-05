@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.reading_companion",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "main": "main.js",
   "display_name": {
     "zh": "AI 阅读伴侣",
     "en": "AI Reading Companion"
   },
   "description": {
-    "zh": "连接 Legado；开启后任意普通对话谈到阅读即可安全调用伴读工具，并维护章节摘要、人物事件索引和读者记忆。",
-    "en": "Connects to Legado so any ordinary chat can use spoiler-safe reading tools when the topic is reading, with chapter knowledge and reader memories."
+    "zh": "连接 Legado，按需提供阅读上下文、人物回顾和读者记忆，通过生成任务维护章节摘要与段评。",
+    "en": "Connects to Legado with on-demand reading context, character recall, reader memories, and tasks for chapter summaries and comments."
   },
   "enabled_by_default": false,
   "subpackages": [
@@ -37,6 +37,32 @@
       "description": {
         "zh": "由用户为每本书选择一个角色卡，隔离读取下一章及有限前情，一次生成少而精的角色化段评；前情上限为最近 8 章、4.8 万字并按所选模型窗口裁剪，Legado 将角色卡名字显示为段评作者。开启会产生模型 Token 消耗。",
         "en": "Uses a selected per-book character card, the next chapter, and bounded private context to write sparse in-character comments. Prior context is capped at 8 chapters / 48,000 characters and trimmed to the selected model window. Legado shows the card name as author; enabling spends model tokens."
+      }
+    },
+    {
+      "id": "reading_companion_tasks",
+      "entry": "packages/reading_companion_tasks.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "生成任务",
+        "en": "Generation tasks"
+      },
+      "description": {
+        "zh": "启动、查询和取消摘要或段评生成任务。",
+        "en": "Start, inspect, and cancel summary or commentary generation tasks."
+      }
+    },
+    {
+      "id": "reading_companion_manage",
+      "entry": "packages/reading_companion_manage.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "文件与管理",
+        "en": "Files and management"
+      },
+      "description": {
+        "zh": "浏览伴读文件、配置摘要范围、查看段评和审计记录。",
+        "en": "Browse reading files, configure summary ranges, and inspect commentary and audit history."
       }
     }
   ]

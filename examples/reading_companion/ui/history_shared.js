@@ -1,4 +1,4 @@
-const TOOL_PACKAGE = "reading_companion";
+const TOOL_PACKAGE = "reading_companion_manage";
 const RUN_ID_ENV_KEY = "OPERIT_READING_COMPANION_RUN_ID_V1";
 const HISTORY_ROUTE =
   "toolpkg:com.operit.reading_companion:ui:reading_companion_history";
@@ -71,6 +71,7 @@ function unwrapToolResult(value) {
         String(current.message || current.error || "Operation failed"),
       );
     }
+    if (typeof current.task_id === "string") return current;
     if (Object.prototype.hasOwnProperty.call(current, "data")) {
       current = parseJson(current.data);
       continue;
@@ -277,6 +278,7 @@ function modelSourceLabel(source, english) {
 }
 
 module.exports = {
+  unwrapToolResult,
   DETAIL_ROUTE,
   FILES_ROUTE,
   FILE_VIEW_ROUTE,

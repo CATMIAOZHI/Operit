@@ -207,6 +207,7 @@ class ReadingCompanionAutoCommentary private constructor(
         batchId: String? = null,
         expectedBookId: String? = null,
         runtime: ToolExecutionManager.ToolRuntimeContext? = null,
+        onProgress: ((JSONObject) -> Unit)? = null,
     ): JSONObject {
         val normalizedBatchId = batchId.orEmpty().trim().takeIf(String::isNotEmpty)
         if (normalizedBatchId != null) {
@@ -222,6 +223,7 @@ class ReadingCompanionAutoCommentary private constructor(
                 batchId = normalizedBatchId,
                 expectedBookId = expectedBookId?.trim()?.takeIf(String::isNotEmpty),
                 runtime = runtime,
+                onProgress = onProgress,
             )
         } finally {
             if (
@@ -242,6 +244,7 @@ class ReadingCompanionAutoCommentary private constructor(
         batchId: String?,
         expectedBookId: String?,
         runtime: ToolExecutionManager.ToolRuntimeContext?,
+        onProgress: ((JSONObject) -> Unit)?,
     ): JSONObject {
         require(
             count in
@@ -278,7 +281,7 @@ class ReadingCompanionAutoCommentary private constructor(
             } else {
                 count
             }
-        val state = provider.getReadingState()
+        val state = provider.getReadingState(expectedBookId ?: store.getSelectedBookId())
         require(expectedBookId == null || state.book.id == expectedBookId) {
             "当前书籍已变化，请刷新页面后重试"
         }
@@ -378,6 +381,16 @@ class ReadingCompanionAutoCommentary private constructor(
             if (result.status == STATUS_GENERATED || result.status == STATUS_CACHED) {
                 completedCount += 1
             }
+            onProgress?.invoke(
+                JSONObject()
+                    .put("completedCount", completedCount)
+                    .put("processedCount", processedTargets.size)
+                    .put("failedCount", failures.length())
+                    .put("failures", JSONArray(failures.toString()))
+                    .put("modelTaskCount", modelTaskCount)
+                    .put("targetChapterIndices", JSONArray(processedTargets.map { it.index }))
+                    .put("currentChapterNumber", chapterIndex + 1),
+            )
         }
         val stopped = isManualCommentaryStopRequested(batchId)
         return JSONObject()
@@ -457,7 +470,10 @@ class ReadingCompanionAutoCommentary private constructor(
                 .put("route", "reading/progress/query")
                 .put("providerAuthority", "${appContext.packageName}.readingCompanionAnnotations"),
         ) {
-            provider.getReadingState()
+            provider.getReadingState(
+                expectedManualBookId
+                    ?: store.getSelectedBookId().takeUnless { trigger == TRIGGER_BACKGROUND },
+            )
         }
         if (
             expectedManualBookId != null &&
@@ -701,7 +717,9 @@ class ReadingCompanionAutoCommentary private constructor(
                     .put("route", "reading/progress/query")
                     .put("purpose", "pre_save_consistency_check"),
             ) {
-                provider.getReadingState()
+                provider.getReadingState(
+                    initialState.book.id.takeUnless { trigger == TRIGGER_BACKGROUND },
+                )
             }
             val latestPersona = store.getAutoCommentPersona(initialState.book.id)
             val latestChapters = traceOperation(
@@ -1166,7 +1184,7 @@ class ReadingCompanionAutoCommentary private constructor(
     suspend fun status(): JSONObject {
         settleInterruptedRuns()
         val configuration = runCatching {
-            val state = provider.getReadingState()
+            val state = provider.getReadingState(store.getSelectedBookId())
             val persona = store.getAutoCommentPersona(state.book.id)
                 ?: return@runCatching null
             modelGateway.previewAutoCommentConfiguration(persona.roleCardId)
@@ -1700,6 +1718,14 @@ class ReadingCompanionAutoCommentary private constructor(
             context: Context,
             packageName: String,
         ) {
+            if (packageName in setOf(
+                    ReadingCompanionService.TOOLPKG_ID,
+                    ReadingCompanionService.SUBPACKAGE_NAME,
+                    "reading_companion_tasks",
+                )
+            ) {
+                ReadingCompanionTasks.getInstance(context).cancelAll()
+            }
             if (
                 packageName != ReadingCompanionService.TOOLPKG_ID &&
                 packageName != ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME

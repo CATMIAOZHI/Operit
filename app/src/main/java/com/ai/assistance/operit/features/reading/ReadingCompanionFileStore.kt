@@ -2,19 +2,34 @@ package com.ai.assistance.operit.features.reading
 
 import android.content.Context
 import com.ai.assistance.operit.util.OperitPaths
-import org.json.JSONArray
-import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.File
+import java.io.FileInputStream
+import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.util.Locale
+import kotlin.math.min
+import org.json.JSONArray
+import org.json.JSONObject
 
 internal data class LegacyMigrationRequirements(
     val summary: Boolean,
     val comments: Boolean,
     val content: Boolean,
+)
+
+private data class FileTextRange(
+    val content: String,
+    val truncated: Boolean,
+)
+
+private data class FileQueryMatch(
+    val text: String,
+    val truncated: Boolean,
 )
 
 /**
@@ -1098,11 +1113,27 @@ class ReadingCompanionFileStore(
      * Every returned document is explicitly read-only; in particular content.md is never a
      * writable editing surface.  The on-disk catalogs are also consulted so a caller cannot
      * bypass pagination and read a stale source directory that no longer belongs to the current
-     * book catalog.
+     * book catalog.  When [maxCharacters] is supplied, the body is streamed from [offset] and
+     * only that bounded range is materialized; the default null keeps the historical full-file
+     * response used by the file browser.
      */
-    fun readPersistedFile(bookId: String, path: String): JSONObject = withFileStoreLock {
+    fun readPersistedFile(
+        bookId: String,
+        path: String,
+        offset: Int = 0,
+        maxCharacters: Int? = null,
+    ): JSONObject = withFileStoreLock {
         val requested = path.trim()
         require(requested.isNotBlank()) { "文件路径不能为空" }
+        require(offset >= 0) { "文件读取偏移不能为负数" }
+        require(
+            maxCharacters == null ||
+                maxCharacters in 1..MAX_PERSISTED_FILE_READ_CHARACTERS,
+        ) {
+            "文件读取范围必须为 1～$MAX_PERSISTED_FILE_READ_CHARACTERS 字符"
+        }
+        val safeOffset = offset
+        val safeMaxCharacters = maxCharacters
         val rootDir = bookDir(bookId).canonicalFile
         val target = File(requested).canonicalFile
         val rootPath = rootDir.path
@@ -1121,12 +1152,335 @@ class ReadingCompanionFileStore(
         require(isActivePersistedPathLocked(bookId, target)) {
             "文件不属于当前书籍目录或当前章节 catalog"
         }
+        val range = readTextRange(
+            file = target,
+            offset = safeOffset,
+            maxCharacters = safeMaxCharacters,
+        )
         JSONObject()
             .put("path", target.absolutePath)
             .put("relativePath", relative)
             .put("name", target.name)
-            .put("content", target.readText(StandardCharsets.UTF_8))
+            .put("content", range.content)
             .put("readOnly", true)
+            .put("offset", safeOffset)
+            .put(
+                "maxCharacters",
+                safeMaxCharacters ?: JSONObject.NULL,
+            )
+            .put("returnedCharacters", range.content.length)
+            .put(
+                "nextOffset",
+                if (range.truncated) {
+                    safeOffset.toLong() + range.content.length
+                } else {
+                    JSONObject.NULL
+                },
+            )
+            .put("truncated", range.truncated)
+    }
+
+    /**
+     * Searches only the current book catalog for character evidence.
+     *
+     * The characters document is considered the durable profile source. Chapter evidence is
+     * limited to [throughChapterIndex] and the active catalog entries represented by [chapters];
+     * future entries and directories left behind by a source replacement are never inspected.
+     * For the current chapter, [currentBodyPosition] bounds content.md to the reader's visible
+     * prefix. The returned snippets share one [maxCharacters] budget.
+     */
+    fun findCharacterEvidence(
+        bookId: String,
+        chapters: List<ReaderChapter>,
+        query: String,
+        throughChapterIndex: Int,
+        currentBodyPosition: Int? = null,
+        maxCharacters: Int = DEFAULT_CHARACTER_EVIDENCE_CHARACTERS,
+    ): JSONObject = withFileStoreLock {
+        val normalizedQuery = query.trim()
+        val safeBudget = maxCharacters.coerceAtLeast(0)
+        val evidence = JSONArray()
+        var remaining = safeBudget
+        var truncated = false
+
+        fun addEvidence(
+            source: String,
+            path: File,
+            chapter: ReaderChapter?,
+            match: FileQueryMatch,
+        ) {
+            if (match.text.isBlank()) return
+            if (remaining <= 0) {
+                truncated = true
+                return
+            }
+            val bounded = match.text.take(remaining)
+            if (bounded.length < match.text.length || match.truncated) {
+                truncated = true
+            }
+            val item = JSONObject()
+                .put("source", source)
+                .put("path", path.absolutePath)
+                .put("text", bounded)
+                .put("truncated", bounded.length < match.text.length || match.truncated)
+            chapter?.let {
+                item
+                    .put("chapterIndex", it.index)
+                    .put("chapterNumber", it.index + 1)
+                    .put("chapterTitle", it.title)
+                    .put("sourceId", it.sourceId)
+            } ?: run {
+                item
+                    .put("chapterIndex", JSONObject.NULL)
+                    .put("chapterNumber", JSONObject.NULL)
+                    .put("chapterTitle", JSONObject.NULL)
+                    .put("sourceId", JSONObject.NULL)
+            }
+            evidence.put(item)
+            remaining -= bounded.length
+        }
+
+        if (normalizedQuery.isNotBlank() && safeBudget > 0) {
+            val rootDir = bookDir(bookId).canonicalFile
+            val charactersFile = File(rootDir, "characters.md")
+                .takeIf(File::isFile)
+            charactersFile?.let { file ->
+                findMatchingFileText(
+                    file = file,
+                    query = normalizedQuery,
+                    maxCharacters = min(CHARACTER_PROFILE_MAX_CHARACTERS, remaining),
+                    maxInputCharacters = CHARACTER_DOCUMENT_SCAN_MAX_CHARACTERS,
+                )?.let { match ->
+                    addEvidence(
+                        source = "characters",
+                        path = file,
+                        chapter = null,
+                        match = match,
+                    )
+                }
+            }
+
+            if (remaining > 0) {
+                val activeDirectories = activeChapterDirectoriesLocked(bookId, chapters)
+                chapters
+                    .asSequence()
+                    .filter { it.index in 0..throughChapterIndex }
+                    .sortedByDescending(ReaderChapter::index)
+                    .forEach { chapter ->
+                        if (remaining <= 0) {
+                            truncated = true
+                            return@forEach
+                        }
+                        val chapterDirectory =
+                            activeDirectories[chapterRef(bookId, chapter.sourceId)]
+                                ?: return@forEach
+                        // A summary is an entire-chapter artifact. It is safe only for chapters
+                        // strictly before the current reading chapter; current partial progress
+                        // is represented by the bounded content snapshot below.
+                        if (chapter.index < throughChapterIndex) {
+                            val summaryFile = File(chapterDirectory, "summary.md")
+                                .takeIf(File::isFile)
+                            summaryFile?.let { file ->
+                                findMatchingFileText(
+                                    file = file,
+                                    query = normalizedQuery,
+                                    maxCharacters = min(CHAPTER_EVIDENCE_MAX_CHARACTERS, remaining),
+                                )?.let { match ->
+                                    addEvidence(
+                                        source = "summary",
+                                        path = file,
+                                        chapter = chapter,
+                                        match = match,
+                                    )
+                                }
+                            }
+                        }
+                        val contentFile = File(chapterDirectory, CONTENT_FILE_NAME)
+                            .takeIf(File::isFile)
+                        val visibleCharacters =
+                            if (chapter.index == throughChapterIndex) {
+                                currentBodyPosition?.coerceAtLeast(0)
+                            } else {
+                                null
+                            }
+                        if (chapter.index < throughChapterIndex || visibleCharacters != null) {
+                            contentFile?.let { file ->
+                                findMatchingFileText(
+                                    file = file,
+                                    query = normalizedQuery,
+                                    maxCharacters = min(CHAPTER_EVIDENCE_MAX_CHARACTERS, remaining),
+                                    maxInputCharacters = visibleCharacters,
+                                )?.let { match ->
+                                    addEvidence(
+                                        source = "content",
+                                        path = file,
+                                        chapter = chapter,
+                                        match = match,
+                                    )
+                                }
+                            }
+                        }
+                    }
+            }
+        }
+
+        JSONObject()
+            .put("queryName", normalizedQuery)
+            .put(
+                "charactersPath",
+                File(bookDir(bookId), "characters.md")
+                    .takeIf(File::isFile)
+                    ?.canonicalPath
+                    ?: JSONObject.NULL,
+            )
+            .put("evidence", evidence)
+            .put("matchCount", evidence.length())
+            .put("truncated", truncated)
+    }
+
+    private fun readTextRange(
+        file: File,
+        offset: Int,
+        maxCharacters: Int?,
+    ): FileTextRange {
+        FileInputStream(file).use { input ->
+            InputStreamReader(input, StandardCharsets.UTF_8).buffered().use { reader ->
+                skipCharacters(reader, offset.toLong())
+                if (maxCharacters == null) {
+                    val output = StringBuilder()
+                    val buffer = CharArray(FILE_READ_BUFFER_CHARACTERS)
+                    while (true) {
+                        val count = reader.read(buffer, 0, buffer.size)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        output.append(buffer, 0, count)
+                    }
+                    return FileTextRange(content = output.toString(), truncated = false)
+                }
+
+                val output = StringBuilder(min(maxCharacters, FILE_READ_BUFFER_CHARACTERS))
+                val buffer = CharArray(min(maxCharacters, FILE_READ_BUFFER_CHARACTERS))
+                while (output.length < maxCharacters) {
+                    val count = reader.read(
+                        buffer,
+                        0,
+                        min(buffer.size, maxCharacters - output.length),
+                    )
+                    if (count < 0) break
+                    if (count == 0) continue
+                    output.append(buffer, 0, count)
+                }
+                val truncated = output.length == maxCharacters && reader.read() >= 0
+                return FileTextRange(content = output.toString(), truncated = truncated)
+            }
+        }
+    }
+
+    private fun skipCharacters(reader: BufferedReader, requested: Long) {
+        var remaining = requested.coerceAtLeast(0L)
+        while (remaining > 0) {
+            val skipped = reader.skip(remaining)
+            if (skipped > 0) {
+                remaining -= skipped
+                continue
+            }
+            if (reader.read() < 0) break
+            remaining -= 1
+        }
+    }
+
+    /**
+     * Reads one matching line/paragraph without materializing the rest of a potentially large
+     * content.md.  [maxInputCharacters] is used for the current chapter so an unread suffix cannot
+     * become evidence.
+     */
+    private fun findMatchingFileText(
+        file: File,
+        query: String,
+        maxCharacters: Int,
+        maxInputCharacters: Int? = null,
+    ): FileQueryMatch? {
+        if (!file.isFile || maxCharacters <= 0) return null
+        val normalizedQuery = query.lowercase(Locale.ROOT)
+        if (normalizedQuery.isBlank()) return null
+        var remainingInput = maxInputCharacters?.coerceAtLeast(0)?.toLong() ?: Long.MAX_VALUE
+        file.bufferedReader(StandardCharsets.UTF_8).use { reader ->
+            val buffer = CharArray(FILE_READ_BUFFER_CHARACTERS)
+            var tail = ""
+            while (remainingInput > 0) {
+                val count = reader.read(buffer, 0, minOf(buffer.size.toLong(), remainingInput).toInt())
+                if (count < 0) break
+                if (count == 0) continue
+                remainingInput -= count
+                val window = tail + String(buffer, 0, count)
+                val index = window.indexOf(query, ignoreCase = true)
+                if (index >= 0) {
+                    val context = (maxCharacters - query.length).coerceAtLeast(0) / 2
+                    val start = (index - context).coerceAtLeast(0)
+                    val end = minOf(window.length, start + maxCharacters)
+                    return FileQueryMatch(
+                        text = window.substring(start, end),
+                        truncated = start > 0 || end < window.length,
+                    )
+                }
+                // Keep enough overlap to find names split across read buffers.
+                tail = window.takeLast(maxOf(query.length - 1, maxCharacters))
+            }
+        }
+        return null
+    }
+
+    /**
+     * Resolves only catalog entries belonging to [chapters].  The directory tree may retain old
+     * source snapshots, so walking every chapter directory and trusting its name would be unsafe.
+     */
+    private fun activeChapterDirectoriesLocked(
+        bookId: String,
+        chapters: List<ReaderChapter>,
+    ): Map<String, File> {
+        if (chapters.isEmpty()) return emptyMap()
+        val byReference = chapters.associateBy { chapterRef(bookId, it.sourceId) }
+        val chapterRoot = File(bookDir(bookId), "chapters").canonicalFile
+        val chapterRootPath = chapterRoot.path
+        val resolved = mutableMapOf<String, File>()
+        chapters
+            .groupBy { it.index / CHAPTERS_PER_GROUP }
+            .toSortedMap()
+            .values
+            .forEach { group ->
+                if (group.isEmpty()) return@forEach
+                val first = (group.first().index / CHAPTERS_PER_GROUP) * CHAPTERS_PER_GROUP + 1
+                val catalog =
+                    File(
+                        File(chapterRoot, groupName(first, first + CHAPTERS_PER_GROUP - 1)),
+                        "catalog.json",
+                    )
+                if (!catalog.isFile) return@forEach
+                val parsed = runCatching { JSONObject(catalog.readText()) }.getOrNull()
+                    ?: return@forEach
+                if (parsed.optString("bookIdHash") != sha256(bookId)) return@forEach
+                val entries = parsed.optJSONArray("chapters") ?: return@forEach
+                repeat(entries.length()) { index ->
+                    val item = entries.optJSONObject(index) ?: return@repeat
+                    val reference = item.optString("chapterRef").trim()
+                    val chapter = byReference[reference] ?: return@repeat
+                    if (item.optInt("ordinal", -1) != chapter.index + 1) return@repeat
+                    val relative = item.optString("relativePath").trim()
+                    if (relative.isBlank()) return@repeat
+                    val directory =
+                        runCatching { File(chapterRoot, relative).canonicalFile }.getOrNull()
+                            ?: return@repeat
+                    if (
+                        directory.path == chapterRootPath ||
+                        !directory.path.startsWith(chapterRootPath + File.separator) ||
+                        !directory.isDirectory
+                    ) {
+                        return@repeat
+                    }
+                    resolved[reference] = directory
+                }
+            }
+        return resolved
     }
 
     /**
@@ -1465,6 +1819,12 @@ class ReadingCompanionFileStore(
         const val CONTENT_HASH_KIND_ANNOTATION = "annotation_content"
         const val CONTENT_HASH_KIND_READABLE = "readable_content"
         const val CONTENT_HASH_KIND_UNKNOWN = "unknown"
+        const val DEFAULT_CHARACTER_EVIDENCE_CHARACTERS = 12_000
+        const val MAX_PERSISTED_FILE_READ_CHARACTERS = 64_000
+        private const val CHARACTER_PROFILE_MAX_CHARACTERS = 6_000
+        private const val CHAPTER_EVIDENCE_MAX_CHARACTERS = 2_000
+        private const val CHARACTER_DOCUMENT_SCAN_MAX_CHARACTERS = 64_000
+        private const val FILE_READ_BUFFER_CHARACTERS = 8_192
         val PERSISTED_FILE_ALLOWLIST: Set<String> =
             setOf(
                 "book.md",

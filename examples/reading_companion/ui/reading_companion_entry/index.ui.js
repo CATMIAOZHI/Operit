@@ -1,3 +1,18 @@
+async function runGenerationTask(ctx, parameters, onProgress) {
+  let task = await callPackageTool(ctx, "reading_companion_tasks", "start_task", parameters);
+  while (true) {
+    if (onProgress) await onProgress(task);
+    if (["completed", "completed_with_failures", "cancelled"].includes(task.status)) {
+      return { ...(task.result || {}), status: task.status === "cancelled" ? "stopped" : ((task.result || {}).status || task.status) };
+    }
+    if (["failed", "interrupted"].includes(task.status)) {
+      throw new Error(`${task.error || task.status} (${task.task_id})`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    task = await callPackageTool(ctx, "reading_companion_tasks", "get_task", { task_id: task.task_id });
+  }
+}
+
 const TOOL_PACKAGE = "reading_companion";
 const AUTO_COMMENTARY_PACKAGE = "reading_companion_auto_commentary";
 const HISTORY_ROUTE =
@@ -56,6 +71,7 @@ function unwrapToolResult(value) {
         String(current.message || current.error || "Operation failed"),
       );
     }
+    if (typeof current.task_id === "string") return current;
     if (
       Object.prototype.hasOwnProperty.call(current, "data") &&
       current.data !== current
@@ -91,6 +107,12 @@ async function resolveToolName(ctx, packageName, toolName) {
 }
 
 async function callPackageTool(ctx, packageName, toolName, parameters) {
+  if (["summary_batch_prefs", "list_audit_chats", "auto_commentary_history",
+       "auto_commentary_run_detail", "list_summary_files", "list_persisted_files",
+       "read_persisted_file"].includes(toolName)) {
+    packageName = "reading_companion_manage";
+  }
+
   if (ctx.usePackage) {
     await ctx.usePackage(packageName);
   }
@@ -1005,7 +1027,7 @@ function readingCompanionEntryScreen(ctx) {
   };
 
   const regenerateComments = async () => {
-    if (busyState.value || !autoEnabledState.value) {
+    if (busyState.value || !basicEnabledState.value) {
       return;
     }
     if (
@@ -1023,68 +1045,20 @@ function readingCompanionEntryScreen(ctx) {
     noticeState.set("");
     errorState.set("");
     try {
-      const queued = await callPackageTool(
-        ctx,
-        AUTO_COMMENTARY_PACKAGE,
-        "queue_regenerate_next_chapter_comments",
-        {},
-      );
-      if (queued && String(queued.status || "").trim() === "already_generating") {
-        errorState.set(
-          `${text.regenerateFailed}${text.runErrors.already_generating}`,
-        );
-        busyState.set(false);
-        busyLabelState.set("");
-        return;
+      const book = readingState.value;
+      const chapter = Number(book && book.currentChapterNumber || 0) + 1;
+      const result = await runGenerationTask(ctx, {
+        kind: "commentary", mode: "regenerate", count: 1,
+        book_id: String(book && book.bookId || ""),
+        start_chapter: chapter, end_chapter: chapter,
+        request_id: `next-${Date.now()}`,
+      }, (task) => {
+        busyLabelState.set(`${text.regenerating} · ${task.task_id}`);
+      });
+      if (Number(result.failedCount || 0) > 0) {
+        throw new Error(String(result.failures && result.failures[0] && result.failures[0].error || "Generation failed"));
       }
-      const queuedAt = Number(queued && queued.queuedAt || Date.now());
-      let completedRun = null;
-      for (let attempt = 0; attempt < 190; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 900));
-        const status = await callPackageTool(
-          ctx,
-          AUTO_COMMENTARY_PACKAGE,
-          "auto_commentary_status",
-          {},
-        );
-        autoStatusState.set(status);
-        const run =
-          status && status.latestRun && typeof status.latestRun === "object"
-            ? status.latestRun
-            : null;
-        const isThisRequest =
-          !!run &&
-          String(run.trigger || "").trim() === "manual" &&
-          Number(run.startedAt || 0) >= queuedAt - 2000;
-        const runStatus = String(run && run.status || "").trim().toLowerCase();
-        if (
-          isThisRequest &&
-          runStatus !== "generating" &&
-          runStatus !== "running"
-        ) {
-          completedRun = run;
-          break;
-        }
-      }
-      if (!completedRun) {
-        throw new Error(text.runErrors.model_timeout);
-      }
-      const completedStatus = String(completedRun.status || "").toLowerCase();
-      if (
-        completedStatus === "generated" ||
-        completedStatus === "cached" ||
-        completedStatus === "no_next_chapter"
-      ) {
-        noticeState.set(text.generatedNotice);
-      } else {
-        errorState.set(
-          `${text.regenerateFailed}${autoCommentErrorLabel(
-            text,
-            completedRun.error,
-            completedRun.stage,
-          )}`,
-        );
-      }
+      noticeState.set(text.generatedNotice);
     } catch (error) {
       errorState.set(`${text.regenerateFailed}${toErrorText(error)}`);
     } finally {
@@ -1218,8 +1192,8 @@ function readingCompanionEntryScreen(ctx) {
     manualBatchStopRequested = false;
     manualBatchActiveKind = kind;
     const newBatchId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    manualCommentaryBatchId = isComments ? newBatchId : "";
-    manualSummaryBatchId = isComments ? "" : newBatchId;
+    manualCommentaryBatchId = "";
+    manualSummaryBatchId = "";
     busyLabelState.set(text.batchRunning);
     errorState.set("");
     noticeState.set("");
@@ -1234,9 +1208,6 @@ function readingCompanionEntryScreen(ctx) {
       // Manual commentary is an explicit user action and must not require enabling the
       // background auto-commentary package (which would otherwise encourage background reads).
       const packageName = TOOL_PACKAGE;
-      const action = isComments
-        ? "auto_commentary_manual_batch"
-        : "manual_batch_summaries";
       if (!isComments) {
         // Persist the current form values per book before the run so a later visit restores
         // them, and the run reads exactly what the panel is showing.
@@ -1272,21 +1243,22 @@ function readingCompanionEntryScreen(ctx) {
       let nativeStopped = false;
       let nativeSuperseded = false;
       const callCount = parameters.count;
-      const iterations = 1;
-      for (let index = 0; index < iterations; index += 1) {
-        if (manualBatchStopRequested) {
-          break;
-        }
-        const result = await callPackageTool(ctx, packageName, action, {
-          ...parameters,
+      if (!manualBatchStopRequested) {
+        const result = await runGenerationTask(ctx, {
+          kind: isComments ? "commentary" : "summary",
+          mode: isComments && commentaryScope === "read" ? "regenerate" : "fill_missing",
           count: callCount,
-          ...(isComments
-            ? {
-                scope: commentaryScope,
-                batch_id: manualCommentaryBatchId,
-                book_id: String(book && book.bookId || "").trim(),
-              }
-            : { batch_id: manualSummaryBatchId }),
+          book_id: String(book && book.bookId || ""),
+          start_chapter: parameters.start_chapter_index == null ? undefined : parameters.start_chapter_index + 1,
+          end_chapter: parameters.end_chapter_index == null ? undefined : parameters.end_chapter_index + 1,
+          request_id: newBatchId,
+        }, async (task) => {
+          if (manualBatchStopRequested && ["queued", "running"].includes(task.status)) {
+            await callPackageTool(ctx, "reading_companion_tasks", "cancel_task", { task_id: task.task_id });
+          }
+          if (isComments) manualCommentaryBatchId = task.task_id;
+          else manualSummaryBatchId = task.task_id;
+          busyLabelState.set(`${text.batchProgress(Number(task.completedCount || (task.progress || {}).completedCount || 0), parameters.count)} · ${task.task_id}`);
         });
         const resultTargets =
           result && Array.isArray(result.targetChapterIndices)
@@ -1343,7 +1315,6 @@ function readingCompanionEntryScreen(ctx) {
         }
         if (resultTargets.length === 0) {
           noMoreEligibleChapters = true;
-          break;
         }
       }
       const stopped = manualBatchStopRequested || nativeStopped;
@@ -1412,17 +1383,17 @@ function readingCompanionEntryScreen(ctx) {
     const targetBatchId = isSummaryBatch
       ? manualSummaryBatchId
       : manualCommentaryBatchId;
-    const cancelAction = isSummaryBatch
-      ? "cancel_manual_summary_batch"
-      : "cancel_manual_commentary_batch";
+    manualBatchStopRequested = true;
+    busyLabelState.set(text.batchStopQueued);
+    if (!targetBatchId) return;
     try {
       const result = await callPackageTool(
         ctx,
-        TOOL_PACKAGE,
-        cancelAction,
-        { batch_id: targetBatchId },
+        "reading_companion_tasks",
+        "cancel_task",
+        { task_id: targetBatchId },
       );
-      if (result && result.stopRequested === true) {
+      if (result && ["cancelling", "cancelled"].includes(result.status)) {
         manualBatchStopRequested = true;
         busyLabelState.set(text.batchStopQueued);
       }
@@ -2461,7 +2432,7 @@ function readingCompanionEntryScreen(ctx) {
     );
   }
 
-  if (autoEnabledState.value) {
+  if (basicEnabledState.value) {
     children.push(
       ctx.UI.OutlinedButton(
         {

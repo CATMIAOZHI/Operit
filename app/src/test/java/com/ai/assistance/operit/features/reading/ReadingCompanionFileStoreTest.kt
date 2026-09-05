@@ -698,6 +698,46 @@ class ReadingCompanionFileStoreTest {
     }
 
     @Test
+    fun `file pages reconstruct persisted text without gaps or repeated characters`() {
+        val content = "人物甲\n第二段正文".repeat(3000)
+        store.writeChapterContent(book, chapter, content)
+        val path = store.chapterFilePaths(book.id, chapter.sourceId)!!.getString("contentPath")
+        val joined = StringBuilder()
+        var offset = 0
+        do {
+            val page = store.readPersistedFile(book.id, path, offset, 113)
+            assertTrue(page.getString("content").length <= 113)
+            joined.append(page.getString("content"))
+            if (page.isNull("nextOffset")) break
+            val next = page.getInt("nextOffset")
+            assertTrue(next > offset)
+            offset = next
+        } while (true)
+        assertEquals(content, joined.toString())
+        val beyond = store.readPersistedFile(book.id, path, content.length + 20, 100)
+        assertEquals("", beyond.getString("content"))
+        assertTrue(beyond.isNull("nextOffset"))
+    }
+
+    @Test
+    fun `character evidence uses active chapter files and visible current prefix`() {
+        store.writeChapterContent(book, chapter, "人物甲在街上。\n人物乙在屋内。")
+        val evidence = store.findCharacterEvidence(
+            book.id, listOf(chapter), "人物甲", 0, currentBodyPosition = 8,
+        ).getJSONArray("evidence")
+        assertEquals(1, evidence.length())
+        assertTrue(evidence.getJSONObject(0).getString("text").contains("人物甲"))
+        assertEquals(0, store.findCharacterEvidence(
+            book.id, listOf(chapter), "人物乙", 0, currentBodyPosition = 8,
+        ).getJSONArray("evidence").length())
+        val replacement = chapter.copy(sourceId = "new-source")
+        store.syncBookCatalog(book, listOf(replacement))
+        assertEquals(0, store.findCharacterEvidence(
+            book.id, listOf(replacement), "人物甲", 1,
+        ).getJSONArray("evidence").length())
+    }
+
+    @Test
     fun `persistent browser rejects content from a stale source directory`() {
         store.writeChapterContent(book, chapter, "旧来源正文")
         val stalePath =
