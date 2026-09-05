@@ -8668,4 +8668,24 @@
     <string name="collapse_process_hide">收起回复过程</string>
     <string name="collapse_process_duration_seconds">用时 %1$d秒</string>
     <string name="collapse_process_duration_minutes">用时 %1$d分钟 %2$d秒</string>
+    <string name="tool_errors_title">工具调用问题</string>
+    <string name="tool_errors_app_logs">应用日志</string>
+    <string name="tool_errors_scope">记录 AI 对话与子代理的执行失败和未声明参数，即使工具返回成功。保留原始参数；取消和拒绝授权不计入。从此版本开始记录。</string>
+    <string name="tool_errors_recording_failed">部分错误记录保存失败，统计可能不完整，请检查存储空间。</string>
+    <string name="tool_errors_all_time">全部时间</string>
+    <string name="tool_errors_day">近 24 小时</string>
+    <string name="tool_errors_week">近 7 天</string>
+    <string name="tool_errors_totals">%1$d 条记录 · %2$d 个工具</string>
+    <string name="tool_errors_breakdown">执行失败 %1$d 次 · 参数问题 %2$d 次（同一次调用可能同时包含两类问题）</string>
+    <string name="tool_errors_failed">执行失败</string>
+    <string name="tool_errors_parameter_only">执行成功，但存在未声明参数</string>
+    <string name="tool_errors_all_tools">全部工具</string>
+    <string name="tool_errors_export">一键导出当前筛选的全部记录</string>
+    <string name="tool_errors_exporting">正在导出…</string>
+    <string name="tool_errors_empty">当前范围没有工具调用问题</string>
+    <string name="tool_errors_parameters">调用参数：%1$s</string>
+    <string name="tool_errors_previous">上一页</string>
+    <string name="tool_errors_next">下一页</string>
+    <string name="tool_errors_page">%1$d / %2$d</string>
+    <string name="tool_errors_close">关闭</string>
 </resources>

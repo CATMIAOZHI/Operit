@@ -8687,4 +8687,24 @@
     <string name="collapse_process_hide">Hide response activity</string>
     <string name="collapse_process_duration_seconds">Worked for %1$ds</string>
     <string name="collapse_process_duration_minutes">Worked for %1$dm %2$ds</string>
+    <string name="tool_errors_title">Tool call issues</string>
+    <string name="tool_errors_app_logs">App logs</string>
+    <string name="tool_errors_scope">Records execution failures and undeclared parameters in AI chats and subagents, even when tools succeed. Keeps original parameters. Cancellations and permission denials are excluded. Recording starts with this version.</string>
+    <string name="tool_errors_recording_failed">Some error records could not be saved. Statistics may be incomplete. Check available storage.</string>
+    <string name="tool_errors_all_time">All time</string>
+    <string name="tool_errors_day">Last 24 hours</string>
+    <string name="tool_errors_week">Last 7 days</string>
+    <string name="tool_errors_totals">%1$d records · %2$d tools</string>
+    <string name="tool_errors_breakdown">%1$d execution failures · %2$d parameter issues (a call may contain both)</string>
+    <string name="tool_errors_failed">Execution failed</string>
+    <string name="tool_errors_parameter_only">Succeeded with undeclared parameters</string>
+    <string name="tool_errors_all_tools">All tools</string>
+    <string name="tool_errors_export">Export all matching records</string>
+    <string name="tool_errors_exporting">Exporting…</string>
+    <string name="tool_errors_empty">No tool call issues in this range</string>
+    <string name="tool_errors_parameters">Call parameters: %1$s</string>
+    <string name="tool_errors_previous">Previous</string>
+    <string name="tool_errors_next">Next</string>
+    <string name="tool_errors_page">%1$d / %2$d</string>
+    <string name="tool_errors_close">Close</string>
 </resources>

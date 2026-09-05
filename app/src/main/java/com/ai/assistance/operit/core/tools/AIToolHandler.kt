@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.core.tools
 
 import android.content.Context
+import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.mcp.MCPManager
 import com.ai.assistance.operit.core.tools.mcp.MCPToolExecutor
@@ -449,6 +450,7 @@ class AIToolHandler private constructor(private val context: Context) {
      * invocation with the full result/error/finished lifecycle.
      */
     private fun executeResolvedTool(tool: AITool, executor: ToolExecutor): ToolResult {
+        ToolExecutionManager.inspectToolParameters(tool, executor)
         // Validate parameters
         val validationResult = executor.validateParameters(tool)
         if (!validationResult.valid) {
@@ -507,6 +509,7 @@ class AIToolHandler private constructor(private val context: Context) {
             return@flow
         }
 
+        ToolExecutionManager.inspectToolParameters(tool, executor)
         val validationResult = executor.validateParameters(tool)
         if (!validationResult.valid) {
             val validationFailedResult =
@@ -539,6 +542,9 @@ class AIToolHandler private constructor(private val context: Context) {
 
 /** Interface for tool executors */
 interface ToolExecutor {
+    /** Optional declaration for diagnostics, tied to this executor instance. */
+    fun parameterNames(tool: AITool): Set<String>? = null
+
     fun invoke(tool: AITool): ToolResult
 
     fun invokeAndStream(tool: AITool): Flow<ToolResult> = flowOf(invoke(tool))

@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.core.tools.mcp
 
 import android.content.Context
+import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.ToolExecutionLimits
@@ -326,6 +327,9 @@ class MCPToolExecutor(private val context: Context, private val mcpManager: MCPM
         }
 
         // 自动类型转换处理
+        ToolExecutionManager.observeToolParameterNames(tool) {
+            mcpDeclaredParameterNames(toolInfo?.optJSONObject("inputSchema"))
+        }
         val convertedParameters = convertParameterTypes(parameters, toolInfo)
 
         // 调用MCP工具 - 使用同步版本
