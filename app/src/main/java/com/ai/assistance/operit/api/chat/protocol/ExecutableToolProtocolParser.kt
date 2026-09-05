@@ -1698,13 +1698,58 @@ internal object ExecutableToolProtocolParser {
      * span until the next newline/fence boundary.
      */
     private object MarkdownCodeMask {
+        private val parameterCloser = Regex("</param\\s*>", RegexOption.IGNORE_CASE)
+
         fun build(content: String): BooleanArray {
             val mask = BooleanArray(content.length)
             var index = 0
             var atStartOfLine = true
             var fenceLength = 0
+            var insideTool = false
+            var parameterEnd = -1
 
             while (index < content.length) {
+                // Parameter Markdown is data. Its code spans cannot hide the protocol closer
+                // or leak into the next parameter/tool, even when the file contains an open fence.
+                if (parameterEnd >= 0 && index >= parameterEnd) {
+                    fenceLength = 0
+                    parameterEnd = -1
+                }
+                if (fenceLength == 0 && parameterEnd < 0 && content[index] == '<') {
+                    if (content.startsWith("</", index)) {
+                        val closeEnd = content.indexOf('>', index + 2)
+                        if (closeEnd >= 0 &&
+                            ChatMarkupRegex.isToolTagName(content.substring(index + 2, closeEnd).trim())
+                        ) {
+                            insideTool = false
+                        }
+                    }
+                    val opening = parseOpeningTag(content, index)
+                    if (opening != null && ChatMarkupRegex.isToolTagName(opening.name)) {
+                        insideTool = !opening.isSelfClosing
+                    } else if (insideTool && opening != null &&
+                        opening.name.equals("param", ignoreCase = true) && !opening.isSelfClosing
+                    ) {
+                        var searchStart = opening.endExclusive
+                        while (true) {
+                            val closing = parameterCloser.find(content, searchStart) ?: break
+                            var cdataStart = searchStart
+                            while (cdataStart < closing.range.first &&
+                                !content.startsWith("<![CDATA[", cdataStart)
+                            ) {
+                                cdataStart++
+                            }
+                            if (cdataStart < closing.range.first) {
+                                val cdataEnd = content.indexOf("]]>", cdataStart + 9)
+                                if (cdataEnd < 0) break
+                                searchStart = cdataEnd + 3
+                            } else {
+                                parameterEnd = closing.range.first
+                                break
+                            }
+                        }
+                    }
+                }
                 if (fenceLength > 0) {
                     if (atStartOfLine && (content[index] == ' ' || content[index] == '\t')) {
                         mask[index] = true
@@ -1746,6 +1791,7 @@ internal object ExecutableToolProtocolParser {
                             content = content,
                             fromIndex = index + runLength,
                             runLength = runLength,
+                            limitExclusive = if (parameterEnd >= 0) parameterEnd else content.length,
                         )
                     if (closing >= 0) {
                         for (position in index..(closing + runLength - 1)) {
@@ -1758,7 +1804,8 @@ internal object ExecutableToolProtocolParser {
 
                     // An unclosed inline code span is non-executable through this line.
                     var end = index + runLength
-                    while (end < content.length && content[end] != '\n') {
+                    val limit = if (parameterEnd >= 0) parameterEnd else content.length
+                    while (end < limit && content[end] != '\n') {
                         mask[end] = true
                         end++
                     }
@@ -1788,9 +1835,10 @@ internal object ExecutableToolProtocolParser {
             content: String,
             fromIndex: Int,
             runLength: Int,
+            limitExclusive: Int,
         ): Int {
             var index = fromIndex
-            while (index < content.length && content[index] != '\n') {
+            while (index < limitExclusive && content[index] != '\n') {
                 if (content[index] == '`' && backtickRunLength(content, index) == runLength) {
                     return index
                 }

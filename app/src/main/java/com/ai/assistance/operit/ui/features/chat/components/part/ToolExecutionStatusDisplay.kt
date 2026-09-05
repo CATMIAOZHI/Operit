@@ -121,6 +121,22 @@ internal fun buildSubagentTaskRowContent(
                 .joinToString(" · "),
     )
 
+@Composable
+internal fun rememberPersistedToolExecutions(
+    messageKey: Long,
+    content: String,
+): Map<Int, PersistedToolExecution> {
+    val state = remember(messageKey) {
+        androidx.compose.runtime.mutableStateOf<Map<Int, PersistedToolExecution>>(emptyMap())
+    }
+    androidx.compose.runtime.LaunchedEffect(messageKey, content) {
+        state.value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            parsePersistedToolExecutions(content)
+        }
+    }
+    return state.value
+}
+
 internal fun parsePersistedToolExecutions(content: String): Map<Int, PersistedToolExecution> {
     if (content.isBlank()) return emptyMap()
 

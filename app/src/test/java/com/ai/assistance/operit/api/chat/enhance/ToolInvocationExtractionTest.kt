@@ -11,6 +11,37 @@ import org.mockito.Mockito
 
 class ToolInvocationExtractionTest {
     @Test
+    fun parameterMarkdownCannotHideProtocolClosersOrTheNextTool() = runBlocking {
+        for (value in listOf("```kotlin\nunfinished example", "`unfinished inline", "```\ntext\n```")) {
+            val content = "<tool_write name=\"create_file\"><param name=\"content\">$value</param></tool_write>" +
+                "\n<tool_read name=\"read_file\"><param name=\"path\">test.md</param></tool_read>"
+            val inspection = ExecutableToolProtocolParser.inspectTruncation(content)
+            assertEquals(null, inspection.truncatedTool)
+            val invocations = withoutAndroidLogging {
+                ToolExecutionManager.extractExecutableToolInvocations(content)
+            }
+            assertEquals(listOf("create_file", "read_file"), invocations.map { it.tool.name })
+            assertEquals(value, invocations.first().tool.parameters.single().value)
+        }
+    }
+
+    @Test
+    fun kdocBackticksInLongFileDoNotInvalidateToolOrShiftFollowingIndices() = runBlocking {
+        val source = "/**\n * ```kotlin\n * example()\n * ```\n */\n" +
+            "// file content\n".repeat(10_000)
+        val create = "<tool_create name=\"create_file\"><param name=\"content\">$source</param></tool_create>"
+        val following = "\n<tool_edit name=\"edit_file\"><param name=\"path\">test.kt</param></tool_edit>"
+        val inspection = ExecutableToolProtocolParser.inspectTruncation(create)
+        assertEquals(null, inspection.truncatedTool)
+        assertEquals(listOf("create_file"), inspection.completeToolNames)
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(create + following)
+        }
+        assertEquals(listOf("create_file", "edit_file"), invocations.map { it.tool.name })
+        assertEquals(source, invocations.first().tool.parameters.single().value)
+    }
+
+    @Test
     fun executableExtraction_ignoresUnknownUnclosedMarkupBeforeTool() = runBlocking {
         val content =
             "usage:<bytes>, limit:<bytes>\n" +

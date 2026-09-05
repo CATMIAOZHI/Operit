@@ -436,6 +436,8 @@ fun StreamMarkdownRenderer(
         }
 
     // 创建一个中间流，用于拦截和批处理渲染更新
+    // Owned by the parser worker; publish to renderer state only after collection has joined.
+    val parsedContent = remember(markdownStream) { SmartString() }
     val interceptedStream =
             remember(markdownStream) {
                 // 移除时间计算变量和日志
@@ -449,7 +451,7 @@ fun StreamMarkdownRenderer(
                 // 设置拦截器的onEach函数
                 processor.setOnEach { char ->
                     // 收集字符到 state 的 collectedContent
-                    rendererState.collectedContent + char
+                    parsedContent + char
                     char
                 }
 
@@ -464,6 +466,7 @@ fun StreamMarkdownRenderer(
         nodes.clear()
         renderNodes.clear()
         rendererState.collectedContent.clear()
+        parsedContent.clear()
         xmlNodeStreams.clear()
         rendererState.streamParsingCompletedSuccessfully = false
 
@@ -610,6 +613,7 @@ fun StreamMarkdownRenderer(
 
                 pendingHtmlBreakCount = 0
             }
+            rendererState.collectedContent.replace(parsedContent.toString())
             rendererState.streamParsingCompletedSuccessfully = true
         } catch (e: CancellationException) {
             rendererState.streamParsingCompletedSuccessfully = false
