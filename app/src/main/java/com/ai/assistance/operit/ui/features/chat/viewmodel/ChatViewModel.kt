@@ -1553,6 +1553,25 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     }
 
+    fun steeringTurnId(chatId: String): String? = messageProcessingDelegate.steeringTurnId(chatId)
+
+    fun trySteerQueuedMessage(chatId: String, expectedTurnId: String, item: PendingQueueMessageItem): Boolean {
+        if (!pendingMessageQueueStore.isCurrentGeneration(chatId, item.chatGeneration)) return false
+        if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
+        pendingMessageQueueStore.restore(chatId, item.copy(isSteering = true))
+        val accepted = messageProcessingDelegate.trySteerMessage(
+            chatId,
+            expectedTurnId,
+            com.ai.assistance.operit.core.chat.TurnInputInbox.Input(
+                text = item.text,
+                consumed = { pendingMessageQueueStore.remove(chatId, item.id) },
+                returned = { pendingMessageQueueStore.returnSteer(chatId, item) },
+            ),
+        )
+        if (!accepted) pendingMessageQueueStore.remove(chatId, item.id)
+        return accepted
+    }
+
     fun trySendQueuedTextMessage(
         text: String,
         chatId: String,
@@ -1569,17 +1588,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             messageText = text,
         )
     }
-
-    suspend fun awaitPendingQueueTargetIdle(
-        chatId: String,
-        timeoutMillis: Long = 30_000L,
-    ): Boolean =
-        withTimeoutOrNull(timeoutMillis) {
-            while (isChatBusy(chatId)) {
-                delay(50L)
-            }
-            true
-        } ?: false
 
     private fun isChatBusy(chatId: String): Boolean {
         val summarizingThisChat =
@@ -1616,13 +1624,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun takeNextPendingQueueAutoDequeue(chatId: String): PendingQueueMessageItem? =
         pendingMessageQueueStore.takeNextAutoDequeue(chatId)
-
-    fun cancelPendingQueueTarget(chatId: String, chatGeneration: Long): Boolean {
-        if (!pendingMessageQueueStore.isCurrentGeneration(chatId, chatGeneration)) return false
-        pendingMessageQueueStore.suppressNextAutoDequeue(chatId)
-        cancelMessage(chatId)
-        return true
-    }
 
     fun isPendingQueueTargetBusy(chatId: String): Boolean = isChatBusy(chatId)
 

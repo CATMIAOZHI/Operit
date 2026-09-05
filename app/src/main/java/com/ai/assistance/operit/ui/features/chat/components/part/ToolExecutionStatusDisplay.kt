@@ -124,7 +124,7 @@ internal fun buildSubagentTaskRowContent(
 internal fun parsePersistedToolExecutions(content: String): Map<Int, PersistedToolExecution> {
     if (content.isBlank()) return emptyMap()
 
-    return buildMap {
+    val executions = buildMap {
         ChatMarkupRegex.toolResultTagWithAttrs.findAll(content).forEach { match ->
             val attrs = match.groupValues[2]
             val invocationIndex = readFinalInvocationIndex(attrs) ?: return@forEach
@@ -153,6 +153,16 @@ internal fun parsePersistedToolExecutions(content: String): Map<Int, PersistedTo
             )
         }
     }
+    // Earlier steering builds stored a turn-global index in a message-local segment.
+    // Recover only a complete contiguous result set; do not guess for partial batches.
+    val offset = executions.keys.minOrNull() ?: return executions
+    val toolCount = ChatMarkupRegex.toolCallPattern.findAll(content).count()
+    if (offset > 0 && toolCount == executions.size &&
+        executions.keys.sorted() == (offset until offset + toolCount).toList()
+    ) {
+        return executions.mapKeys { (index, _) -> index - offset }
+    }
+    return executions
 }
 
 private fun readXmlAttribute(attrs: String, name: String): String? =

@@ -243,7 +243,7 @@ fun AgentChatInputSection(
     onPendingQueueExpandedChange: (Boolean) -> Unit = {},
     onDeletePendingQueueMessage: (Long) -> Unit = {},
     onEditPendingQueueMessage: (Long) -> Unit = {},
-    onSendPendingQueueMessage: (Long) -> Unit = {},
+    onSteerPendingQueueMessage: (Long) -> Unit = {},
 ) {
     val showTokenLimitDialog = remember { mutableStateOf(false) }
     val showFullscreenInput = remember { mutableStateOf(false) }
@@ -765,7 +765,7 @@ fun AgentChatInputSection(
                 onExpandedChange = onPendingQueueExpandedChange,
                 onDeleteMessage = onDeletePendingQueueMessage,
                 onEditMessage = onEditPendingQueueMessage,
-                onSendMessage = onSendPendingQueueMessage,
+                onSteerMessage = onSteerPendingQueueMessage,
                 containerColor = queueContainerColor,
                 itemColor = queueItemColor,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
