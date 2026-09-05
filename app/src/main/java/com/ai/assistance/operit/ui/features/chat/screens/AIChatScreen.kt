@@ -2093,6 +2093,7 @@ private fun ChatInputBottomBar(
         }
     }
 
+    val queueAddedMessage = stringResource(R.string.chat_queue_added)
     fun enqueueDraftToPendingQueue() {
         val draftText = userMessage.text.trim()
         if (draftText.isBlank()) return
@@ -2104,7 +2105,7 @@ private fun ChatInputBottomBar(
             isQueueBlocked = isQueueBlocked,
         )
         actualViewModel.updateUserMessage(TextFieldValue(""))
-        actualViewModel.showToast(context.getString(R.string.chat_queue_added))
+        actualViewModel.showToast(queueAddedMessage)
     }
 
     val pleaseCreateNewChatMessage = stringResource(R.string.chat_please_create_new_chat)
