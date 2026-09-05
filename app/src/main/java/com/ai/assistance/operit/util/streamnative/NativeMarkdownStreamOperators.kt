@@ -14,6 +14,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.withContext
 
 private fun Int.toMarkdownTypeOrNull(): MarkdownProcessorType? =
     MarkdownProcessorType.entries.getOrNull(this)
@@ -41,7 +45,7 @@ private fun Stream<Char>.nativeMarkdownSplitBySession(
             coroutineScope {
                 val groupChannel = Channel<StreamGroup<MarkdownProcessorType?>>(Channel.UNLIMITED)
 
-                launch {
+                launch(Dispatchers.Default) {
                     val session = sessionFactory()
                     val fullContent = StringBuilder()
                     val deltaBuffer = StringBuilder()
@@ -192,7 +196,7 @@ private fun Stream<Char>.nativeMarkdownSplitBySession(
                         StreamLogger.e(debugTag, "nativeMarkdownSplitBy failed: ${e.message}", e)
                         throw e
                     } finally {
-                        flushJob?.cancel()
+                        withContext(NonCancellable) { flushJob?.cancelAndJoin() }
                         try {
                             closeDefaultChannel()
                             closePluginChannel()
@@ -234,7 +238,7 @@ private fun Stream<String>.nativeMarkdownSplitBySessionString(
             coroutineScope {
                 val groupChannel = Channel<StreamGroup<MarkdownProcessorType?>>(Channel.UNLIMITED)
 
-                launch {
+                launch(Dispatchers.Default) {
                     val session = sessionFactory()
                     val fullContent = StringBuilder()
                     val deltaBuffer = StringBuilder()
@@ -385,7 +389,7 @@ private fun Stream<String>.nativeMarkdownSplitBySessionString(
                         StreamLogger.e(debugTag, "nativeMarkdownSplitBy failed: ${e.message}", e)
                         throw e
                     } finally {
-                        flushJob?.cancel()
+                        withContext(NonCancellable) { flushJob?.cancelAndJoin() }
                         try {
                             closeDefaultChannel()
                             closePluginChannel()

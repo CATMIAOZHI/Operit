@@ -22,7 +22,7 @@ import com.ai.assistance.operit.ui.features.chat.components.ChatMessageHeightMem
 import com.ai.assistance.operit.ui.features.chat.components.rememberRevisableTextStream
 import com.ai.assistance.operit.ui.features.chat.components.part.CustomXmlRenderer
 import com.ai.assistance.operit.ui.features.chat.components.part.ThinkToolsXmlNodeGrouper
-import com.ai.assistance.operit.ui.features.chat.components.part.parsePersistedToolExecutions
+import com.ai.assistance.operit.ui.features.chat.components.part.rememberPersistedToolExecutions
 import com.ai.assistance.operit.ui.features.chat.components.LinkPreviewDialog
 import com.ai.assistance.operit.util.markdown.toCharStream
 import com.ai.assistance.operit.util.stream.Stream
@@ -74,7 +74,7 @@ fun AiMessageComposable(
     // 创建并保存StreamMarkdownRenderer的状态，使用message.timestamp作为key确保同一条消息共享状态
     val rendererState = remember(message.timestamp) { StreamMarkdownRendererState() }
     val persistedToolExecutions =
-        remember(message.content) { parsePersistedToolExecutions(message.content) }
+        rememberPersistedToolExecutions(message.timestamp, message.content)
 
     // 创建自定义XML渲染器
     val xmlRenderer = remember(
