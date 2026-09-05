@@ -63,7 +63,7 @@ git diff --cached --check
 
 ### 资源 / 构建输入改动
 
-- 运行 `./gradlew :app:lintDebug`
+- 本地提交不要求完整 Lint；推送前对最终版本运行一次 `./gradlew :app:lintDebug`，有效的已通过结果不重复运行。
 - 改动图标或应用身份时：同步检查 `app/src/debug/res/` 下的 DEV 资源
 - 改动 `app/build.gradle.kts` 时：确认 `PERSONAL_DEV_UPDATE_CHANNEL` 在 `debug` 为 `true`、在 `release` 为 `false`
 

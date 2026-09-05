@@ -29,7 +29,7 @@
 - Web Chat、ToolPkg 和仓库检查命令以 `docs/doc-src/dev-core/CONTRIBUTING.md` 与 `ci/README.md` 为准。
 - 等待 GitHub Actions workflow 时使用至少 60 秒的轮询间隔并默认静默输出（PowerShell 示例：`gh run watch <run-id> --exit-status --interval 60 *> $null`）；结束后用一次 `gh run view` 查询最终结果，仅在诊断失败时读取详细 job 日志。
 - 构建可能触碰 ObjectBox 模型或占位文件。提交前检查 `git status` 和 diff，不提交无内容的行尾变化或无关生成物。
-- 修改 Compose UI 或 Android 资源时，开发阶段先做必要编译和相关测试，集中处理静态检查问题；准备提交推送时，对最终版本运行一次完整 `:app:lintDebug`。已通过后不重复运行，只有可能影响检查结果的修改才需要重新验证，小调整优先做定向验证。编译、单测通过不代表 Lint 通过；分别说明本次实际验证范围。
+- 本地提交不要求运行完整 Lint。推送前对最终版本运行一次完整 `:app:lintDebug`；已通过后不重复运行，只有可能影响检查结果的修改才需要重新验证。开发阶段先做必要编译和相关测试，集中处理静态检查问题，小调整优先做定向验证。编译、单测通过不代表 Lint 通过；分别说明本次实际验证范围。
 - 组合函数内优先用 `stringResource` 等 Compose 资源 API，事件回调引用已取得的值；不为规避新增错误更新 baseline 或禁用检查。
 - 无法运行验证时，说明缺失的 SDK、依赖或环境条件，并分别报告编译、测试、Lint 和真机验证的实际状态，不得把“未运行”描述为“通过”。
 
