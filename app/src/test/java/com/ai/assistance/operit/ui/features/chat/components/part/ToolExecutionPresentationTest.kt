@@ -10,7 +10,7 @@ import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.data.model.ToolInvocation
 import com.ai.assistance.operit.data.model.ToolResult
-import com.ai.assistance.operit.ui.common.markdown.toolInvocationIndexAt
+import com.ai.assistance.operit.ui.common.markdown.toolInvocationIndices
 import com.ai.assistance.operit.util.markdown.MarkdownNodeStable
 import com.ai.assistance.operit.util.markdown.MarkdownProcessorType
 import com.ai.assistance.operit.util.stream.StreamLogger
@@ -242,10 +242,10 @@ class ToolExecutionPresentationTest {
                 node("""<tool name="read_file"></tool>"""),
             )
 
-        assertNull(toolInvocationIndexAt(nodes, 0))
-        assertEquals(0, toolInvocationIndexAt(nodes, 1))
-        assertNull(toolInvocationIndexAt(nodes, 2))
-        assertEquals(1, toolInvocationIndexAt(nodes, 3))
+        assertNull(toolInvocationIndices(nodes)[0])
+        assertEquals(0, toolInvocationIndices(nodes)[1])
+        assertNull(toolInvocationIndices(nodes)[2])
+        assertEquals(1, toolInvocationIndices(nodes)[3])
     }
 
     @Test
@@ -297,8 +297,8 @@ class ToolExecutionPresentationTest {
                 node("""<tool name="read_file"><param name="path">/real</param></tool>"""),
             )
 
-        assertNull(toolInvocationIndexAt(nodes, 0))
-        assertEquals(0, toolInvocationIndexAt(nodes, 1))
+        assertNull(toolInvocationIndices(nodes)[0])
+        assertEquals(0, toolInvocationIndices(nodes)[1])
     }
 
     @Test
@@ -499,7 +499,7 @@ class ToolExecutionPresentationTest {
             )
 
         assertEquals(2, invalidatedInvocationCount)
-        assertEquals(validInvocationIndex, toolInvocationIndexAt(nodes, 6))
+        assertEquals(validInvocationIndex, toolInvocationIndices(nodes)[6])
         assertEquals(2, validInvocationIndex)
     }
 
@@ -558,6 +558,25 @@ class ToolExecutionPresentationTest {
                 isSuccess = true,
             )
         )
+    }
+
+    @Test
+    fun longToolTranscriptBuildsInvocationIndicesInOnePass() {
+        val tool = node("""<tool name="read_file"><param name="path">a</param></tool>""")
+        val result = node("""<tool_result name="read_file"><content>done</content></tool_result>""")
+        var reads = 0
+        val nodes = object : AbstractList<MarkdownNodeStable>() {
+            override val size = 2_000
+            override fun get(index: Int): MarkdownNodeStable {
+                reads++
+                return if (index % 2 == 0) tool else result
+            }
+        }
+        val indices = toolInvocationIndices(nodes)
+        assertEquals(0, indices.first())
+        assertEquals(999, indices[1998])
+        assertNull(indices.last())
+        assertEquals(nodes.size, reads)
     }
 
     private fun node(

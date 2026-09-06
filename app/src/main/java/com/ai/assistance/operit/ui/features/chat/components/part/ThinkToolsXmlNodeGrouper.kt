@@ -28,7 +28,6 @@ import com.ai.assistance.operit.ui.common.markdown.MarkdownGroupedItem
 import com.ai.assistance.operit.ui.common.markdown.MarkdownNodeGrouper
 import com.ai.assistance.operit.ui.common.markdown.ToolXmlRenderInstanceKey
 import com.ai.assistance.operit.ui.common.markdown.XmlContentRenderer
-import com.ai.assistance.operit.ui.common.markdown.toolInvocationIndexAt
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.markdown.MarkdownNodeStable
 import com.ai.assistance.operit.util.markdown.MarkdownProcessorType
@@ -166,6 +165,7 @@ class ThinkToolsXmlNodeGrouper(
     override fun RenderGroup(
         group: MarkdownGroupedItem.Group,
         nodes: List<MarkdownNodeStable>,
+        invocationIndices: List<Int?>,
         rendererId: String,
         isVisible: Boolean,
         isLastNode: Boolean,
@@ -178,13 +178,13 @@ class ThinkToolsXmlNodeGrouper(
         fontSize: TextUnit
     ) {
         val alpha = if (forceExpandGroups) {
-            1f
+            null
         } else {
             animateFloatAsState(
                 targetValue = if (isVisible) 1f else 0f,
                 animationSpec = tween(durationMillis = 800),
                 label = "fadeIn-think-tools-$rendererId"
-            ).value
+            )
         }
         val sliceEndExclusive = (group.endIndexInclusive + 1).coerceAtMost(nodes.size)
         val slice = if (group.startIndex in 0 until sliceEndExclusive) {
@@ -266,16 +266,16 @@ class ThinkToolsXmlNodeGrouper(
                 modifier
                     .fillMaxWidth()
                     .padding(start = 0.dp, top = 0.dp, end = 0.dp, bottom = 4.dp)
-                    .graphicsLayer { this.alpha = alpha }
+                    .graphicsLayer { this.alpha = alpha?.value ?: 1f }
         ) {
             val rotation = if (forceExpandGroups) {
-                if (expanded) 90f else 0f
+                null
             } else {
                 animateFloatAsState(
                     targetValue = if (expanded) 90f else 0f,
                     animationSpec = tween(durationMillis = 300),
                     label = "arrowRotation-think-tools-$rendererId"
-                ).value
+                )
             }
 
             CanvasExpandableHeaderRow(
@@ -283,7 +283,7 @@ class ThinkToolsXmlNodeGrouper(
                 semanticDescription = if (expanded) "Collapse" else "Expand",
                 expanded = expanded,
                 titleColor = textColor.copy(alpha = 0.7f),
-                rotationDegrees = rotation,
+                rotationDegrees = { rotation?.value ?: if (expanded) 90f else 0f },
                 onClick = {
                     val newExpanded = !expanded
                     expanded = newExpanded
@@ -314,7 +314,7 @@ class ThinkToolsXmlNodeGrouper(
                                             textColor = textColor,
                                             xmlStream = xmlStreamResolver(absoluteIndex),
                                             renderInstanceKey =
-                                                toolInvocationIndexAt(nodes, absoluteIndex)
+                                                invocationIndices[absoluteIndex]
                                                     ?.let { invocationIndex ->
                                                         ToolXmlRenderInstanceKey(
                                                             innerKey,
@@ -347,7 +347,7 @@ class ThinkToolsXmlNodeGrouper(
                                             textColor = textColor,
                                             xmlStream = xmlStreamResolver(absoluteIndex),
                                             renderInstanceKey =
-                                                toolInvocationIndexAt(nodes, absoluteIndex)
+                                                invocationIndices[absoluteIndex]
                                                     ?.let { invocationIndex ->
                                                         ToolXmlRenderInstanceKey(
                                                             innerKey,

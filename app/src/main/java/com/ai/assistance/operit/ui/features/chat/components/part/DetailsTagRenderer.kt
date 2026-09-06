@@ -48,7 +48,7 @@ object DetailsTagRenderer {
                 semanticDescription = if (expanded) "Collapse" else "Expand",
                 expanded = expanded,
                 titleColor = textColor.copy(alpha = 0.85f),
-                rotationDegrees = rotation,
+                rotationDegrees = { rotation },
                 onClick = { expanded = !expanded },
             )
 

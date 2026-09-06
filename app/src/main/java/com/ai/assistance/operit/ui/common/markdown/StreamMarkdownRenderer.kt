@@ -250,27 +250,16 @@ data class ToolXmlRenderInstanceKey(
     val invocationIndex: Int,
 )
 
-internal fun toolInvocationIndexAt(
-    nodes: List<MarkdownNodeStable>,
-    nodeIndex: Int,
-): Int? {
-    val target = nodes.getOrNull(nodeIndex) ?: return null
-    if (target.type != MarkdownProcessorType.XML_BLOCK ||
-        !ChatMarkupRegex.isToolCall(target.content)
-    ) {
-        return null
-    }
-
+/** Build once for the whole message; expanding N tools must not rescan N prefixes. */
+internal fun toolInvocationIndices(nodes: List<MarkdownNodeStable>): List<Int?> {
     var invocationIndex = 0
-    for (index in 0 until nodeIndex) {
-        val node = nodes[index]
-        if (node.type == MarkdownProcessorType.XML_BLOCK &&
-            ChatMarkupRegex.isToolCall(node.content)
-        ) {
+    return nodes.map { node ->
+        if (node.type == MarkdownProcessorType.XML_BLOCK && ChatMarkupRegex.isToolCall(node.content)) {
             invocationIndex++
+        } else {
+            null
         }
     }
-    return invocationIndex
 }
 
 @Composable
@@ -1090,15 +1079,11 @@ private fun UnifiedMarkdownCanvas(
         }
     }
 
-    val tailNode = nodes.lastOrNull()
-    val groupingKey = remember(nodes.size, tailNode?.content?.length, tailNode?.type, rendererId, nodeGrouper) {
-        Triple(nodes.size, tailNode?.content?.length ?: -1, tailNode?.type)
+    val nodeSnapshot = nodes.toList()
+    val invocationIndices = remember(nodeSnapshot) { toolInvocationIndices(nodeSnapshot) }
+    val groupedItems = remember(nodeSnapshot, rendererId, nodeGrouper) {
+        nodeGrouper.group(nodeSnapshot, rendererId)
     }
-
-    val groupedItems =
-        remember(groupingKey, rendererId, nodeGrouper) {
-            nodeGrouper.group(nodes, rendererId)
-        }
     val processEnd = if (collapseCompletedProcess) completedProcessEnd(nodes) else -1
     val expanded = androidx.compose.runtime.saveable.rememberSaveable(rendererId) {
         androidx.compose.runtime.mutableStateOf(false)
@@ -1122,7 +1107,7 @@ private fun UnifiedMarkdownCanvas(
                             xmlRenderer = xmlRenderer,
                             xmlStream = xmlStreamsByIndex[index],
                             xmlRenderInstanceKey =
-                                toolInvocationIndexAt(nodes, index)?.let { invocationIndex ->
+                                invocationIndices[index]?.let { invocationIndex ->
                                     ToolXmlRenderInstanceKey(nodeKey, invocationIndex)
                                 } ?: nodeKey,
                             enableDialogs = enableDialogs,
@@ -1138,7 +1123,8 @@ private fun UnifiedMarkdownCanvas(
                     key(groupKey) {
                         nodeGrouper.RenderGroup(
                             group = item,
-                            nodes = nodes,
+                            nodes = nodeSnapshot,
+                            invocationIndices = invocationIndices,
                             rendererId = rendererId,
                             isVisible = nodeAnimationStates[firstNodeKey] ?: true,
                             isLastNode = item.endIndexInclusive == lastRenderableIndex,
