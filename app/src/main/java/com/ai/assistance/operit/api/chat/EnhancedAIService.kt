@@ -545,7 +545,7 @@ class EnhancedAIService private constructor(private val context: Context) {
     }
 
     // Coroutine management
-    private val toolProcessingScope = CoroutineScope(Dispatchers.IO)
+    private val toolProcessingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val toolExecutionJobs = ConcurrentHashMap<String, Job>()
     // private val conversationHistory = mutableListOf<Pair<String, String>>() // Moved to MessageExecutionContext
     // private val conversationMutex = Mutex() // Moved to MessageExecutionContext
@@ -1424,6 +1424,19 @@ class EnhancedAIService private constructor(private val context: Context) {
                             "跳过流完成处理：执行上下文已失效, id=${execContext.executionId}"
                         )
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Tool continuations recurse, so release foreground ownership only here,
+                    // once at the outer turn boundary rather than in each recursive handler.
+                    invalidateExecutionContext(execContext, "sendMessage.completion.failed")
+                    withContext(Dispatchers.Main) {
+                        _inputProcessingState.value = InputProcessingState.Error(
+                            context.getString(R.string.enhanced_error_with_message, e.message ?: "")
+                        )
+                    }
+                    if (!isSubTask) stopAiService(characterName, avatarUri)
+                    throw e
                 } finally {
                     unregisterExecutionContext(execContext)
                     withContext(NonCancellable) {
@@ -1768,12 +1781,13 @@ class EnhancedAIService private constructor(private val context: Context) {
                 stage = "enhanced.processStreamCompletion.complete",
                 startTimeMs = startTime
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            // Catch any exceptions in the processing flow
             AppLogger.e(TAG, "处理流完成时发生错误", e)
-            withContext(Dispatchers.Main) {
-                _inputProcessingState.value = InputProcessingState.Idle
-            }
+            // Let the turn dispatcher persist the partial response and report failure. Returning
+            // normally here would mark an interrupted/failed subagent as successfully completed.
+            throw e
         }
     }
 
@@ -2010,10 +2024,13 @@ class EnhancedAIService private constructor(private val context: Context) {
 
             if (allToolResults.isNotEmpty()) {
                 AppLogger.d(TAG, "所有工具结果收集完毕，准备最终处理。")
-                if (
-                    allToolResults.any { result -> result.interruptTurn } ||
-                        toolInvocations.singleOrNull()?.tool?.name in context.terminalToolNames
-                ) {
+                allToolResults.firstOrNull { it.interruptTurn }?.let { interrupted ->
+                    throw IllegalStateException(
+                        interrupted.error
+                            ?: "Tool execution interrupted this turn: ${interrupted.toolName}"
+                    )
+                }
+                if (toolInvocations.singleOrNull()?.tool?.name in context.terminalToolNames) {
                     finalizeAssistantResponse(
                         context = context,
                         content = context.roundManager.getDisplayContent(),
@@ -2426,10 +2443,7 @@ class EnhancedAIService private constructor(private val context: Context) {
                 throw e
             } catch (e: Exception) {
                 AppLogger.e(TAG, "处理工具执行结果时出错", e)
-                withContext(Dispatchers.Main) {
-                    _inputProcessingState.value =
-                            InputProcessingState.Error(this@EnhancedAIService.context.getString(R.string.enhanced_process_tool_result_failed, e.message ?: ""))
-                }
+                throw e
             } finally {
                 logMessageTiming(
                     stage = "enhanced.processToolResults.complete",

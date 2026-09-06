@@ -186,7 +186,9 @@ fun Stream<String>.shareRevisable(
             drainEvents()
         } catch (error: Throwable) {
             failure = error
-            throw error
+            // The closed streams deliver this cause to their consumers, including replay.
+            // Throwing it again from this root launch would also invoke the uncaught handler.
+            if (error is kotlinx.coroutines.CancellationException) throw error
         } finally {
             sharedEventStream.close(failure)
             sharedTextStream.close(failure)

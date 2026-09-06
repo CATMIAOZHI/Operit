@@ -29,6 +29,45 @@ import org.mockito.Mockito
 
 class ProviderReasoningBoundaryTest {
     @Test
+    fun deepseekStreamingNativeCallsSurviveReasoningWithQuotedMarkdownFences() = runBlocking {
+        val reasoning = "读取结果含行号：14| ```\n行 14 是 ``` 正常收尾。"
+        val sseBody = listOf(
+            JSONObject().put("choices", org.json.JSONArray().put(
+                JSONObject().put("index", 0).put("delta",
+                    JSONObject().put("reasoning_content", reasoning))
+            )).toString(),
+            """{"choices":[{"index":0,"delta":{"content":"现在激活工具包。\n","tool_calls":[{"index":0,"id":"call-a","type":"function","function":{"name":"use_package","arguments":"{\"package_name\":\"super_admin\"}"}},{"index":1,"id":"call-b","type":"function","function":{"name":"use_package","arguments":"{\"package_name\":\"code_runner\"}"}}]},"finish_reason":null}]}""",
+            """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}""",
+            "[DONE]",
+        ).joinToString("") { "data: $it\n\n" }
+        val provider = DeepseekProvider(
+            apiEndpoint = "https://example.test/v1/chat/completions",
+            apiKeyProvider = SingleApiKeyProvider("test-key"),
+            modelName = "deepseek-v4-flash",
+            client = clientForSse(sseBody),
+            enableToolCall = true,
+        )
+        val output = withoutAndroidLogging {
+            val chunks = StringBuilder()
+            provider.sendMessage(
+                context = Mockito.mock(Context::class.java),
+                chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "继续检查")),
+                modelParameters = emptyList(),
+                enableThinking = true,
+                stream = true,
+                enableRetry = false,
+            ).collect { chunks.append(it) }
+            chunks.toString()
+        }
+        val calls = withoutAndroidLoggingOnCurrentThread {
+            ToolExecutionManager.extractExecutableToolInvocations(output)
+        }
+        assertEquals(listOf("use_package", "use_package"), calls.map { it.tool.name })
+        assertEquals(listOf("super_admin", "code_runner"), calls.map { it.tool.parameters.single().value })
+        assertEquals(reasoning, ChatUtils.extractThinkingContent(output).second.trim())
+    }
+
+    @Test
     fun claudeVisionDisabled_omitsHistoricalImageLinks() = runBlocking {
         var capturedRequest: JSONObject? = null
         val provider =

@@ -11,6 +11,47 @@ import org.mockito.Mockito
 
 class ToolInvocationExtractionTest {
     @Test
+    fun providerReasoningBackticksCannotHideFollowingNativeCalls() = runBlocking {
+        // Reduced from the two reported responses: prose quoting a fence and a numbered
+        // file excerpt whose closing fence is itself part of the excerpt.
+        val reasoningBodies = listOf(
+            "The line numbers \"-1| ```\" seem odd. Let me read the file.",
+            "```\n8| diagram\n14| ```\n```\nDetails\n行 14 是 ``` 正常收尾。",
+            "`unfinished inline",
+        )
+        val calls = """
+            <tool_DV0n name="read_file"><param name="path">README.md</param></tool_DV0n>
+            <tool_Rd2k name="use_package"><param name="package_name">super_admin</param></tool_Rd2k>
+            <tool_xcoi name="use_package"><param name="package_name">code_runner</param></tool_xcoi>
+        """.trimIndent()
+        for (reasoning in reasoningBodies) {
+            val content = ChatUtils.PROVIDER_REASONING_OPEN_TAG +
+                ChatUtils.escapeProviderReasoningMarkup(reasoning) + "</think>继续检查。\n" + calls
+            val inspection = ExecutableToolProtocolParser.inspectTruncation(content)
+            assertEquals(null, inspection.truncatedTool)
+            assertEquals(listOf("read_file", "use_package", "use_package"), inspection.completeToolNames)
+            val invocations = withoutAndroidLogging {
+                ToolExecutionManager.extractExecutableToolInvocations(content)
+            }
+            assertEquals(listOf("read_file", "use_package", "use_package"), invocations.map { it.tool.name })
+            assertEquals(listOf("README.md", "super_admin", "code_runner"),
+                invocations.map { it.tool.parameters.single().value })
+            invocations.forEach { assertEquals(it.rawText, content.substring(it.responseLocation)) }
+        }
+    }
+
+    @Test
+    fun providerReasoningIsolationPreservesRealCodeExamplesAndIncompleteTools() {
+        val reasoning = ChatUtils.PROVIDER_REASONING_OPEN_TAG + "引用 ```" + "</think>\n"
+        val example = "<tool_example name=\"example\"></tool_example>"
+        val pending = "<tool_pending name=\"read_file\"><param name=\"path\">README.md</param>"
+        val content = reasoning + "```\n$example\n```\n" + pending
+        assertEquals(emptyList<String>(), ExecutableToolProtocolParser.parse(content).map { it.tool.name })
+        assertEquals("read_file", ExecutableToolProtocolParser.inspectTruncation(content)
+            .truncatedTool?.let { ExecutableToolProtocolParser.extractAttributeValue(it.fragment, "name") })
+    }
+
+    @Test
     fun parameterMarkdownCannotHideProtocolClosersOrTheNextTool() = runBlocking {
         for (value in listOf("```kotlin\nunfinished example", "`unfinished inline", "```\ntext\n```")) {
             val content = "<tool_write name=\"create_file\"><param name=\"content\">$value</param></tool_write>" +
