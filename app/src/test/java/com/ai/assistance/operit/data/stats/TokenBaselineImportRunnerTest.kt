@@ -62,6 +62,7 @@ class TokenBaselineImportRunnerTest {
 
     @Before
     fun isolate() {
+        installStatsTestCatalog()
         clearApiDataStoreSingleton()
         TokenBaselineImportRunner.databaseProvider = null
         RestoreCompletionCoordinator.markerStoreProvider = { context ->
@@ -86,6 +87,7 @@ class TokenBaselineImportRunnerTest {
         RestoreCompletionCoordinator.recoveryStateCompleter = null
         MigrationStateStore.fileIoProvider = null
         ApiPreferences.toolPkgProviderNamesProvider = null
+        clearStatsTestCatalog()
     }
 
     /** 清空 `Context.apiDataStore` 委托缓存的数据存储单例（隔离生命周期）。 */
@@ -285,6 +287,53 @@ class TokenBaselineImportRunnerTest {
                 database.close()
             }
         }
+
+    @Test
+    fun `tiered cumulative import keeps counts but cannot infer a request tier`() =
+        verifyTieredImport(manualPrices = false)
+
+    @Test
+    fun `complete legacy manual prices still price a tiered cumulative import`() =
+        verifyTieredImport(manualPrices = true)
+
+    private fun verifyTieredImport(manualPrices: Boolean) = runBlocking {
+        installStatsTestCatalog(legacyTiers = listOf(
+            com.ai.assistance.operit.data.pricing.ContextPriceTier(200_000, 3.0, 6.0, 0.3, null)
+        ))
+        val phase = kotlin.io.path.createTempDirectory("runner-tiered").toFile()
+        val seed = File(kotlin.io.path.createTempDirectory("runner-tier-seed").toFile(), "seed.preferences_pb")
+        seedPreferencesFile(seed) { prefs ->
+            prefs[ApiPreferences.getTokenInputKey(providerModel)] = 1_000_000L
+            prefs[ApiPreferences.getTokenCachedInputKey(providerModel)] = 200_000L
+            prefs[ApiPreferences.getTokenOutputKey(providerModel)] = 500_000L
+            if (manualPrices) {
+                prefs[ApiPreferences.getModelInputPriceKey(providerModel)] = 2.0f
+                prefs[ApiPreferences.getModelCachedInputPriceKey(providerModel)] = 1.0f
+                prefs[ApiPreferences.getModelOutputPriceKey(providerModel)] = 4.0f
+            }
+        }
+        restorePreferencesInto(phase, seed)
+        val context = mockContext(phase)
+        val database = openDatabase(phase)
+        TokenBaselineImportRunner.databaseProvider = { database }
+        injectApiPreferences(constructApiPreferences(context))
+        try {
+            Mockito.mockStatic(AppLogger::class.java).use {
+                TokenBaselineImportRunner.ensureMigrated(context)
+            }
+            val baseline = database.tokenStatsDao().getAllBaselines().single()
+            assertEquals(1_000_000L, baseline.inputTokens)
+            if (manualPrices) {
+                assertEquals(3.8, baseline.costInPricingCurrency!!, 1e-9)
+            } else {
+                assertNull(baseline.costInPricingCurrency)
+            }
+        } finally {
+            injectApiPreferences(null)
+            TokenBaselineImportRunner.databaseProvider = null
+            database.close()
+        }
+    }
 
     @Test
     fun `migration without custom price freezes and later price change does not reprice`() =

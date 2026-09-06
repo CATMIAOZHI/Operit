@@ -80,6 +80,7 @@ class TokenTrackingAIServiceTest {
 
     @Before
     fun setUp() {
+        com.ai.assistance.operit.data.stats.installStatsTestCatalog()
         // 流框架日志走 android.util.Log，JVM 测试不可用：关闭避免 Stub! 异常
         com.ai.assistance.operit.util.stream.StreamLogger.setEnabled(false)
         com.ai.assistance.operit.util.stream.StreamLogger.setVerboseEnabled(false)
@@ -115,6 +116,7 @@ class TokenTrackingAIServiceTest {
         TokenStatSpool.insertTimeoutMs = 5_000L
         TokenStatSpool.dirSyncForTest = null
         database.close()
+        com.ai.assistance.operit.data.stats.clearStatsTestCatalog()
     }
 
     private fun mockContext(filesDir: File): Context {
