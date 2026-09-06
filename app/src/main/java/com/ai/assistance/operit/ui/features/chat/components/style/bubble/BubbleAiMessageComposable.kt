@@ -36,7 +36,7 @@ import com.ai.assistance.operit.ui.features.chat.components.ChatMessageHeightMem
 import com.ai.assistance.operit.ui.features.chat.components.rememberRevisableTextStream
 import com.ai.assistance.operit.ui.features.chat.components.part.CustomXmlRenderer
 import com.ai.assistance.operit.ui.features.chat.components.part.ThinkToolsXmlNodeGrouper
-import com.ai.assistance.operit.ui.features.chat.components.part.parsePersistedToolExecutions
+import com.ai.assistance.operit.ui.features.chat.components.part.rememberPersistedToolExecutions
 import com.ai.assistance.operit.ui.features.chat.components.LinkPreviewDialog
 import com.ai.assistance.operit.util.markdown.toCharStream
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
@@ -122,6 +122,7 @@ fun BubbleAiMessageComposable(
     val showModelProvider by preferencesManager.showModelProvider.collectAsState(initial = true)
     val showModelName by preferencesManager.showModelName.collectAsState(initial = true)
     val showRoleName by preferencesManager.showRoleName.collectAsState(initial = true)
+    val collapseCompletedProcess by displayPreferencesManager.collapseCompletedProcess.collectAsState(initial = true)
     val toolCollapseMode by displayPreferencesManager.toolCollapseMode.collectAsState(initial = ToolCollapseMode.FULL)
     
     // 根据角色名获取头像
@@ -174,7 +175,7 @@ fun BubbleAiMessageComposable(
     // 创建并保存StreamMarkdownRenderer的状态，使用message.timestamp作为key确保同一条消息共享状态
     val rendererState = remember(message.timestamp) { StreamMarkdownRendererState() }
     val persistedToolExecutions =
-        remember(message.content) { parsePersistedToolExecutions(message.content) }
+        rememberPersistedToolExecutions(message.timestamp, message.content)
 
     val xmlRenderer = remember(
         effectiveShowThinkingProcess,
@@ -409,6 +410,8 @@ fun BubbleAiMessageComposable(
                             } else {
                                 StreamMarkdownRenderer(
                                     content = message.content,
+                                    collapseCompletedProcess = collapseCompletedProcess && enableDialogs,
+                                    responseDurationMs = (message.waitDurationMs + message.outputDurationMs).coerceAtLeast(0L),
                                     textColor = textColor,
                                     backgroundColor = backgroundColor,
                                     onLinkClick = rememberedOnLinkClick,
@@ -618,6 +621,8 @@ fun BubbleAiMessageComposable(
                                 // 共享相同的state，避免重新计算nodes等状态
                                 StreamMarkdownRenderer(
                                     content = message.content,
+                                    collapseCompletedProcess = collapseCompletedProcess && enableDialogs,
+                                    responseDurationMs = (message.waitDurationMs + message.outputDurationMs).coerceAtLeast(0L),
                                     textColor = textColor,
                                     backgroundColor = backgroundColor,
                                     onLinkClick = rememberedOnLinkClick,

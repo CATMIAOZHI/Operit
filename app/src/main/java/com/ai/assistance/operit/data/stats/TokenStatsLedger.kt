@@ -215,6 +215,10 @@ object TokenStatsLedger {
             overrides = overrides,
             legacyOverride = legacyOverride,
             defaults = DefaultModelPricingCollect.getDefaultPricing(providerModel),
+            contextInputTokens = TokenCostCalculator.contextInputTokens(
+                request.aggregatedUsage()?.toTokenUsageInput(), request.attemptCount,
+            ),
+            selectContextTier = true,
         )
     }
 

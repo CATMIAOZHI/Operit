@@ -24,6 +24,7 @@ interface MarkdownNodeGrouper {
     fun RenderGroup(
         group: MarkdownGroupedItem.Group,
         nodes: List<MarkdownNodeStable>,
+        invocationIndices: List<Int?>,
         rendererId: String,
         isVisible: Boolean,
         isLastNode: Boolean,
@@ -46,6 +47,7 @@ object NoopMarkdownNodeGrouper : MarkdownNodeGrouper {
     override fun RenderGroup(
         group: MarkdownGroupedItem.Group,
         nodes: List<MarkdownNodeStable>,
+        invocationIndices: List<Int?>,
         rendererId: String,
         isVisible: Boolean,
         isLastNode: Boolean,

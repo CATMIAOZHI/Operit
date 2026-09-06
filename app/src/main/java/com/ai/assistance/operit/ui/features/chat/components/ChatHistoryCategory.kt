@@ -109,6 +109,10 @@ internal fun canManageChatFolders(category: ChatHistoryCategory): Boolean {
     return category == ChatHistoryCategory.ALL
 }
 
+internal fun shouldInheritCurrentFolderForNewChat(category: ChatHistoryCategory): Boolean {
+    return category != ChatHistoryCategory.RECENT
+}
+
 /**
  * 将过滤视图的新顺序合并回完整列表。
  *

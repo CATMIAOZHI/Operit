@@ -50,6 +50,7 @@ import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory
 import com.ai.assistance.operit.api.chat.llmprovider.LlamaProvider
 import com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
+import com.ai.assistance.operit.api.chat.llmprovider.parseProviderCustomHeaders
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
@@ -154,6 +155,10 @@ fun ModelApiSettingsSection(
         remember(context.applicationContext) {
             OfficialModelCapabilitiesRepository(context.applicationContext)
         }
+    val multimodalCatalogUpdatedAt by officialModelCapabilitiesRepository.updatedAt.collectAsState()
+    LaunchedEffect(officialModelCapabilitiesRepository) {
+        officialModelCapabilitiesRepository.loadCatalog()
+    }
     var isSyncingMultimodalCapabilities by remember(config.id) { mutableStateOf(false) }
     var isRefreshingMultimodalCatalog by remember(config.id) { mutableStateOf(false) }
     var multimodalSyncJob by remember(config.id) { mutableStateOf<Job?>(null) }
@@ -452,7 +457,8 @@ fun ModelApiSettingsSection(
                     context,
                     apiKeyInput,
                     apiEndpointInput,
-                    selectedApiProvider ?: ApiProviderType.OPENAI_GENERIC
+                    selectedApiProvider ?: ApiProviderType.OPENAI_GENERIC,
+                    customHeaders = parseProviderCustomHeaders(config.customHeaders),
                 )
         }
     }
@@ -897,6 +903,17 @@ fun ModelApiSettingsSection(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(stringResource(R.string.model_multimodal_catalog_refresh))
                 }
+                Text(
+                    text = multimodalCatalogUpdatedAt?.let {
+                        stringResource(
+                            R.string.model_multimodal_catalog_updated_at,
+                            android.text.format.DateFormat.getDateFormat(context).format(java.util.Date(it)) +
+                                " " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(it)),
+                        )
+                    } ?: stringResource(R.string.model_multimodal_catalog_bundled),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (configuredModels.isEmpty()) {
                     Text(
                         text = stringResource(R.string.model_multimodal_capabilities_no_models),

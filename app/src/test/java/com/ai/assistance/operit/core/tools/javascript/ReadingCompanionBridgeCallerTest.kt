@@ -24,6 +24,10 @@ class ReadingCompanionBridgeCallerTest {
 
     @Test
     fun unrelatedPackageOrContainerIsRejected() {
+        for (name in listOf("reading_companion_tasks", "reading_companion_manage")) {
+            assertTrue(isReadingCompanionBridgeCaller(name, ReadingCompanionService.TOOLPKG_ID))
+            assertFalse(isReadingCompanionBridgeCaller(name, "com.example.other"))
+        }
         assertFalse(
             isReadingCompanionBridgeCaller(
                 "unrelated_package",

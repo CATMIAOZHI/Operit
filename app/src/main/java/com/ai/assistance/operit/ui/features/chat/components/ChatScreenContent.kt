@@ -1069,7 +1069,7 @@ fun ChatScreenContent(
 fun ChatHistorySelectorPanel(
         actualViewModel: ChatViewModel,
         chatHistories: List<ChatHistory>,
-        allChatHistories: List<ChatHistory>,
+        orderingChatHistories: List<ChatHistory>,
         searchableChatHistories: List<ChatHistory>,
         currentChatId: String,
         showChatHistorySelector: Boolean,
@@ -1110,8 +1110,15 @@ fun ChatHistorySelectorPanel(
         // 直接使用ChatHistorySelector
         ChatHistorySelector(
                 modifier = Modifier.fillMaxSize().padding(top = 8.dp),
-                onNewChat = { characterCardName, characterGroupId ->
-                    actualViewModel.createNewChat(characterCardName, characterGroupId)
+                onNewChat = {
+                    characterCardName,
+                    characterGroupId,
+                    inheritGroupFromCurrent ->
+                    actualViewModel.createNewChat(
+                        characterCardName = characterCardName,
+                        characterGroupId = characterGroupId,
+                        inheritGroupFromCurrent = inheritGroupFromCurrent,
+                    )
                     // 创建新对话后自动收起侧边框
                     actualViewModel.showChatHistorySelector(false)
                 },
@@ -1146,7 +1153,7 @@ fun ChatHistorySelectorPanel(
                     actualViewModel.updateChatCharacterBinding(chatId, characterCardName, characterGroupId)
                 },
                 chatHistories = chatHistories,
-                allChatHistories = allChatHistories,
+                orderingChatHistories = orderingChatHistories,
                 searchableChatHistories = searchableChatHistories,
                 chatFolders = chatFolders,
                 currentId = currentChatId,

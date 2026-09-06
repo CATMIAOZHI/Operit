@@ -55,6 +55,18 @@ data class TokenCostResult(
  */
 object TokenCostCalculator {
 
+    /** Context thresholds use input only, including cache reads and independent cache writes. */
+    fun contextInputTokens(usage: TokenUsageInput?, attemptCount: Int = 1): Long? {
+        // A logical request may sum multiple retries. That sum is not any one prompt's length.
+        if (usage == null || attemptCount != 1) return null
+        if (usage.cacheWriteSeparateBilling &&
+            (usage.cachedInputTokens == null || usage.cacheWriteTokens == null)) return null
+        usage.totalInputTokens?.let { return it }
+        val input = billedInputTokens(usage) ?: return null
+        return if (usage.cacheWriteSeparateBilling) saturatedAdd(input, usage.cacheWriteTokens!!)
+        else input
+    }
+
     fun billedOutputTokens(usage: TokenUsageInput): Long? {
         val output = usage.outputTokens ?: return null
         val separateReasoning =

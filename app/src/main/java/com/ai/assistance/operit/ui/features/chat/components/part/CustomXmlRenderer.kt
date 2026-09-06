@@ -397,7 +397,7 @@ class CustomXmlRenderer(
     private fun shouldHideHiddenMeta(content: String, tagName: String?): Boolean {
         return tagName == "meta" &&
             Regex(
-                """\bprovider\s*=\s*["'](?:gemini:thought_signature|openai:responses_reasoning)["']""",
+                """\bprovider\s*=\s*["'](?:gemini:thought_signature|gemini:content|openai:responses_reasoning)["']""",
                 RegexOption.IGNORE_CASE
             )
                 .containsMatchIn(content)
@@ -450,7 +450,7 @@ class CustomXmlRenderer(
                     if (expanded) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
                 expanded = expanded,
                 titleColor = textColor.copy(alpha = 0.7f),
-                rotationDegrees = rotation,
+                rotationDegrees = { rotation },
                 onClick = { expanded = !expanded },
             )
 
@@ -498,7 +498,7 @@ class CustomXmlRenderer(
             if (isThinkingInProgress) {
                 val titleHighlightTransition =
                     rememberInfiniteTransition(label = "thinkingTitleHighlight")
-                val highlightShift by
+                val highlightShift =
                     titleHighlightTransition.animateFloat(
                         initialValue = -140f,
                         targetValue = 220f,
@@ -591,14 +591,12 @@ class CustomXmlRenderer(
             thinkVisibilityState.currentState || thinkVisibilityState.targetState
         val isEncodedProviderReasoning =
             ChatUtils.isEncodedProviderReasoningEnvelope(content)
-        val rawThinkText =
-            if (shouldComposeThinkBody) {
-                extractContentFromXml(content, tagName).trim()
-            } else {
-                ""
-            }
-        val thinkText =
+        val rawThinkText = remember(content, tagName, shouldComposeThinkBody) {
+            if (shouldComposeThinkBody) extractContentFromXml(content, tagName).trim() else ""
+        }
+        val thinkText = remember(content, rawThinkText) {
             ChatUtils.decodeProviderReasoningForDisplay(content, rawThinkText)
+        }
         val thinkMarkdownStream =
             remember(shouldComposeThinkBody, thinkExpandSession, xmlStream, tagName) {
                 if (!shouldComposeThinkBody || thinkExpandSession <= 0) {
@@ -650,8 +648,8 @@ class CustomXmlRenderer(
                         if (expanded) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
                     expanded = expanded,
                     titleColor = thinkingTitleBaseColor,
-                    rotationDegrees = rotation,
-                    shimmerShiftPx = thinkingTitleShimmerShiftPx,
+                    rotationDegrees = { rotation },
+                    shimmerShiftPx = { thinkingTitleShimmerShiftPx?.value },
                     onClick = {
                         skipCollapseAnimationOnce = false
                         val newExpandedValue = !expanded
@@ -807,7 +805,7 @@ class CustomXmlRenderer(
     ) {
         val paramTokenEstimate = rememberToolParamTokenEstimate(content, xmlStream)
         val renderState =
-            run {
+            remember(content) {
                 val nameRegex = "name=\"([^\"]+)\"".toRegex()
                 val nameMatch = nameRegex.find(content)
                 val rawToolName = nameMatch?.groupValues?.get(1) ?: "Unknown tool"
@@ -1009,7 +1007,7 @@ class CustomXmlRenderer(
     @Composable
     private fun renderToolResult(content: String, modifier: Modifier, _textColor: Color) {
         val renderState =
-            run {
+            remember(content) {
                 val nameMatch = ChatMarkupRegex.nameAttr.find(content)
                 val toolName = nameMatch?.groupValues?.get(1) ?: ""
                 val statusMatch = ChatMarkupRegex.statusAttr.find(content)
@@ -1024,7 +1022,7 @@ class CustomXmlRenderer(
                 )
             }
         val toolName = renderState.toolName.ifBlank { stringResource(R.string.unknown_tool) }
-        val displayResult =
+        val displayResult = remember(renderState) {
             if (!renderState.isSuccess) {
                 ChatMarkupRegex.errorTag.find(renderState.resultContent)
                     ?.groupValues
@@ -1034,12 +1032,13 @@ class CustomXmlRenderer(
             } else {
                 val fileDiffRegex =
                     """<file-diff.*</file-diff>""".toRegex(RegexOption.DOT_MATCHES_ALL)
-                if (toolName in setOf("apply_file", "create_file", "edit_file")) {
+                if (renderState.toolName in setOf("apply_file", "create_file", "edit_file")) {
                     renderState.resultContent
                 } else {
                     renderState.resultContent.replace(fileDiffRegex, "").trim()
                 }
             }
+        }
         ToolExecutionResultDisplay(
             toolName = toolName,
             result = displayResult,

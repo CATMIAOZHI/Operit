@@ -948,6 +948,32 @@ class FunctionalReasoningAIServiceTest {
     }
 
     @Test
+    fun gemini37MapsFiveLevelsWithoutUnsupportedMinimal() {
+        val expectedByLevel =
+            mapOf(1 to "low", 2 to "low", 3 to "medium", 4 to "high", 5 to "high")
+
+        expectedByLevel.forEach { (level, expectedThinkingLevel) ->
+            val request =
+                buildFunctionalReasoningRequest(
+                    ApiProviderType.GOOGLE,
+                    GEMINI_37_FLASH_MODEL,
+                    emptyList(),
+                    level,
+                )
+            val thinkingConfig =
+                buildGeminiThinkingConfig(
+                    request.enableThinking,
+                    request.modelParameters,
+                    GEMINI_37_FLASH_MODEL,
+                )
+
+            assertTrue(request.enableThinking)
+            assertEquals(expectedThinkingLevel, thinkingConfig?.getString("thinkingLevel"))
+            assertFalse(thinkingConfig?.has("thinkingBudget") == true)
+        }
+    }
+
+    @Test
     fun prefixedGeminiModelIdsReceiveTheSameFunctionalControls() {
         val gemini3Request =
             buildFunctionalReasoningRequest(

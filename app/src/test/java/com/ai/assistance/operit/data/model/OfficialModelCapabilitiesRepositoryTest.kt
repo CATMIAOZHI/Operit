@@ -7,6 +7,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -19,6 +20,74 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
 class OfficialModelCapabilitiesRepositoryTest {
+    @Test
+    fun `timeout falls back and successful local update time survives restart`() = runBlocking {
+        val temp = Files.createTempDirectory("capability-timeout").toFile()
+        val context = mock<Context>()
+        whenever(context.noBackupFilesDir).thenReturn(temp)
+        val urls = mutableListOf<String>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            urls.add(chain.request().url.toString())
+            if (chain.request().url.host == "models.dev") throw java.net.SocketTimeoutException()
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                .code(200).message("OK").body(refreshedCatalog.toResponseBody()).build()
+        }.build()
+        val repository = OfficialModelCapabilitiesRepository(context, client,
+            cacheWriter = { file, bytes -> file.parentFile?.mkdirs(); file.writeBytes(bytes) },
+            fallbackUrl = "https://example.test/fallback")
+        try {
+            repository.refreshCatalog()
+            assertEquals(listOf(OfficialModelCapabilitiesRepository.LIVE_URL,
+                "https://example.test/fallback"), urls)
+            val timestamp = repository.updatedAt.value!!
+            assertTrue(timestamp > 0)
+            val reopened = OfficialModelCapabilitiesRepository(context, client)
+            reopened.loadCatalog()
+            assertEquals(timestamp, reopened.updatedAt.value)
+            assertEquals(2, urls.size)
+        } finally {
+            temp.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `canceled refresh cannot replace local catalog or timestamp after response returns`() = runBlocking {
+        val temp = Files.createTempDirectory("capability-cancel").toFile()
+        val file = temp.resolve("operit/model_catalog/model_capabilities_v1.json")
+        file.parentFile?.mkdirs()
+        file.writeText(bundledCatalog)
+        val context = mock<Context>()
+        whenever(context.noBackupFilesDir).thenReturn(temp)
+        val started = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            started.countDown()
+            check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                .code(200).message("OK").body(refreshedCatalog.toResponseBody()).build()
+        }.build()
+        val repository = OfficialModelCapabilitiesRepository(context, client,
+            cacheWriter = { target, bytes -> target.writeBytes(bytes) })
+        repository.loadCatalog()
+        val timestamp = repository.updatedAt.value
+        val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            repository.refreshCatalog()
+        }
+        try {
+            assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            job.cancel()
+            release.countDown()
+            job.join()
+            assertEquals(bundledCatalog, file.readText())
+            assertEquals(timestamp, repository.updatedAt.value)
+            assertEquals("vendor/bundled", repository.loadCatalog().models.single().officialModelId)
+        } finally {
+            release.countDown()
+            job.cancel()
+            temp.deleteRecursively()
+        }
+    }
+
     @Test
     fun `dev and stable builds use matching repository branches`() {
         assertEquals(

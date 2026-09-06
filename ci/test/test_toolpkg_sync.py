@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -16,11 +17,17 @@ from sync_example_packages import (  # noqa: E402
     _exclude_expected_incompatible,
     _manifest_runtime_files,
     _pack_toolpkg_folder,
+    _pnpm_command,
     _should_skip_copy,
 )
 
 
 class ToolPkgRuntimeFilesTest(unittest.TestCase):
+    def test_pnpm_command_uses_platform_resolved_executable(self) -> None:
+        expected = r"C:\Users\tester\AppData\Roaming\npm\pnpm.CMD"
+        with mock.patch("sync_example_packages.shutil.which", return_value=expected):
+            self.assertEqual(expected, _pnpm_command())
+
     def test_should_skip_copy_requires_matching_destination_content(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.js"

@@ -237,8 +237,6 @@ fun ChatArea(
     // 变化）都会把它复活并强制滚动到底部。显式定位请求不受此限制。
     var pendingJumpIsExplicit by remember(currentChatId) { mutableStateOf(false) }
     val lastMessage = chatHistory.lastOrNull()
-    val pendingTargetAnchor =
-        pendingJumpToMessageTimestamp?.let { targetTimestamp -> messageAnchors[targetTimestamp] }
     var hasLastAiMessageStartedStreaming by remember(lastMessage?.timestamp) {
         mutableStateOf(lastMessage?.run { sender == "ai" && content.isNotBlank() } == true)
     }
@@ -272,40 +270,20 @@ fun ChatArea(
         }
     }
 
-    LaunchedEffect(
-        pendingJumpToMessageTimestamp,
-        messagesCount,
-        chatHistory.firstOrNull()?.timestamp,
-        chatHistory.lastOrNull()?.timestamp,
-        pendingTargetAnchor,
-        scrollState.maxValue,
-    ) {
-        val targetTimestamp = pendingJumpToMessageTimestamp ?: return@LaunchedEffect
-        // 自动贴底请求在用户上滑离开底部后失效（见 pendingJumpIsExplicit 注释）。
-        if (!pendingJumpIsExplicit && !autoScrollToBottom) {
+    PendingMessageScrollEffect(
+        pendingTimestamp = pendingJumpToMessageTimestamp,
+        explicitJump = pendingJumpIsExplicit,
+        messages = chatHistory,
+        messageAnchors = messageAnchors,
+        scrollState = scrollState,
+        autoScrollToBottom = autoScrollToBottom,
+        hasNewerDisplayHistory = hasNewerDisplayHistory,
+        onAutoScrollToBottomChange = onAutoScrollToBottomChange,
+        onFinished = {
             pendingJumpIsExplicit = false
             pendingJumpToMessageTimestamp = null
-            return@LaunchedEffect
-        }
-        val targetIndex = chatHistory.indexOfFirst { it.timestamp == targetTimestamp }
-        if (targetIndex < 0) {
-            return@LaunchedEffect
-        }
-
-        val targetAnchor = pendingTargetAnchor ?: return@LaunchedEffect
-        val isActualLatestMessage = targetIndex == messagesCount - 1 && !hasNewerDisplayHistory
-        onAutoScrollToBottomChange?.invoke(isActualLatestMessage)
-
-        if (targetIndex == messagesCount - 1) {
-            scrollState.animateScrollTo(scrollState.maxValue)
-        } else {
-            val targetOffset =
-                targetAnchor.absoluteTopPx.roundToInt().coerceIn(0, scrollState.maxValue)
-            scrollState.animateScrollTo(targetOffset)
-        }
-        pendingJumpIsExplicit = false
-        pendingJumpToMessageTimestamp = null
-    }
+        },
+    )
 
     LaunchedEffect(lastMessage?.timestamp, lastMessage?.contentStream) {
         val lastAiMessageHasStaticContent =
@@ -319,10 +297,17 @@ fun ChatArea(
         val stream = lastMessage?.contentStream
 
         if (!lastAiMessageHasStaticContent && shouldAwaitFirstChunk && stream != null) {
-            stream.collect { chunk ->
-                if (!hasLastAiMessageStartedStreaming && chunk.isNotEmpty()) {
-                    hasLastAiMessageStartedStreaming = true
+            try {
+                stream.collect { chunk ->
+                    if (!hasLastAiMessageStartedStreaming && chunk.isNotEmpty()) {
+                        hasLastAiMessageStartedStreaming = true
+                    }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // This observer only controls the placeholder. The sending service reports
+                // errors and persists partial content; a failed turn must not crash Compose.
             }
         }
     }
@@ -1464,5 +1449,40 @@ private fun LoadingDotsIndicator(textColor: Color) {
                     ),
             )
         }
+    }
+}
+
+/** Layout changes during expansion should restart navigation, not recompose every message. */
+@Composable
+private fun PendingMessageScrollEffect(
+    pendingTimestamp: Long?,
+    explicitJump: Boolean,
+    messages: List<ChatMessage>,
+    messageAnchors: Map<Long, ChatScrollMessageAnchor>,
+    scrollState: ScrollState,
+    autoScrollToBottom: Boolean,
+    hasNewerDisplayHistory: Boolean,
+    onAutoScrollToBottomChange: ((Boolean) -> Unit)?,
+    onFinished: () -> Unit,
+) {
+    val targetAnchor = pendingTimestamp?.let { messageAnchors[it] }
+    LaunchedEffect(
+        pendingTimestamp, messages.size, messages.firstOrNull()?.timestamp,
+        messages.lastOrNull()?.timestamp, targetAnchor, scrollState.maxValue,
+    ) {
+        val timestamp = pendingTimestamp ?: return@LaunchedEffect
+        if (!explicitJump && !autoScrollToBottom) {
+            onFinished()
+            return@LaunchedEffect
+        }
+        val targetIndex = messages.indexOfFirst { it.timestamp == timestamp }
+        if (targetIndex < 0) return@LaunchedEffect
+        val anchor = targetAnchor ?: return@LaunchedEffect
+        val isLatest = targetIndex == messages.lastIndex && !hasNewerDisplayHistory
+        onAutoScrollToBottomChange?.invoke(isLatest)
+        val offset = if (targetIndex == messages.lastIndex) scrollState.maxValue
+            else anchor.absoluteTopPx.roundToInt().coerceIn(0, scrollState.maxValue)
+        scrollState.animateScrollTo(offset)
+        onFinished()
     }
 }

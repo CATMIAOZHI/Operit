@@ -28,8 +28,9 @@ object ReadingCompanionBridge {
     ): String {
         return try {
             require(
-                callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME ||
-                    callerPackageName == ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME
+                (callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME || callerPackageName == "reading_companion_manage") ||
+                    callerPackageName == ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME ||
+                    callerPackageName == "reading_companion_tasks"
             ) {
                 "阅读伴侣原生桥仅允许对应工具包调用"
             }
@@ -48,6 +49,44 @@ object ReadingCompanionBridge {
             val result = withContext(ToolExecutionManager.toolRuntimeContextElement(runtime)) {
                 val service = ReadingCompanionService.getInstance(context)
                 when (action.trim()) {
+                    "start_task" -> {
+                        require(callerPackageName == "reading_companion_tasks")
+                        val book = service.currentBook(
+                            parameters.optString("book_id").trim().takeIf(String::isNotBlank),
+                        )
+                        ReadingCompanionTasks.getInstance(context).start(
+                            kind = parameters.getString("kind"),
+                            bookId = book.book.id,
+                            count = parameters.getInt("count"),
+                            startChapterIndex = parameters.chapterIndex("start_chapter"),
+                            endChapterIndex = parameters.chapterIndex("end_chapter"),
+                            mode = parameters.optString("mode", "fill_missing"),
+                            runtime = runtime,
+                            requestId = parameters.optString("request_id").takeIf(String::isNotBlank),
+                        )
+                    }
+                    "get_task" -> {
+                        require(callerPackageName == "reading_companion_tasks")
+                        ReadingCompanionTasks.getInstance(context).get(parameters.getString("task_id"))
+                    }
+                    "list_tasks" -> {
+                        require(callerPackageName == "reading_companion_tasks")
+                        ReadingCompanionTasks.getInstance(context).list(parameters.optInt("limit", 20))
+                    }
+                    "cancel_task" -> {
+                        require(callerPackageName == "reading_companion_tasks")
+                        ReadingCompanionTasks.getInstance(context).cancel(parameters.getString("task_id"))
+                    }
+                    "chapter_summary" -> service.chapterSummary(
+                        chapterIndex = parameters.chapterIndex("chapter_number"),
+                        generateIfMissing = false,
+                        runtime = runtime,
+                    )
+                    "save_reader_memory" -> service.addMemory(
+                        type = parameters.optString("type", "note"),
+                        content = parameters.getString("content"),
+                        chapterIndex = parameters.chapterIndex("chapter_number"),
+                    )
                     "list_books" -> service.listBooks()
                     "select_book" -> {
                         val automatic = parameters.optBoolean("automatic", false)
@@ -91,6 +130,8 @@ object ReadingCompanionBridge {
                     )
                     "read_persisted_file" -> service.readPersistedFile(
                         path = parameters.optString("path"),
+                        offset = parameters.optInt("offset", 0),
+                        maxCharacters = parameters.optInt("max_characters", 16_000),
                     )
                     "refresh_progress" -> service.refreshAndIndex(
                         maxCompletedChapters = parameters.optInt("max_chapters", 3)
@@ -189,7 +230,7 @@ object ReadingCompanionBridge {
                     }
                     "request_next_chapter_comments" -> {
                         require(
-                            callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                            (callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME || callerPackageName == "reading_companion_manage")
                         ) { "该操作仅允许阅读伴侣主包调用" }
                         require(
                             !runtime?.callerChatId.isNullOrBlank()
@@ -206,7 +247,7 @@ object ReadingCompanionBridge {
                         require(
                             callerPackageName ==
                                 ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME ||
-                                callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                                (callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME || callerPackageName == "reading_companion_manage")
                         ) { "该操作仅允许阅读伴侣工具包调用" }
                         val batchBookId = parameters.optString("book_id").trim()
                         val lease =
@@ -247,7 +288,7 @@ object ReadingCompanionBridge {
                         require(
                             callerPackageName ==
                                 ReadingCompanionService.AUTO_COMMENTARY_SUBPACKAGE_NAME ||
-                                callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                                (callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME || callerPackageName == "reading_companion_manage")
                         ) { "该操作仅允许阅读伴侣工具包调用" }
                         val batchId = parameters.optString("batch_id").trim()
                         JSONObject()
@@ -259,7 +300,7 @@ object ReadingCompanionBridge {
                     }
                     "manual_batch_summaries" -> {
                         require(
-                            callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                            (callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME || callerPackageName == "reading_companion_manage")
                         ) { "该操作仅允许阅读伴侣主包调用" }
                         val batchBookId = parameters.optString("book_id").trim()
                         val lease =
@@ -276,6 +317,7 @@ object ReadingCompanionBridge {
                                 startChapterIndex = start,
                                 endChapterIndex = end,
                                 runtime = runtime,
+                                bookId = batchBookId,
                             )
                         } finally {
                             ManualBatchGate.release(lease)
@@ -283,7 +325,7 @@ object ReadingCompanionBridge {
                     }
                     "cancel_manual_summary_batch" -> {
                         require(
-                            callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                            (callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME || callerPackageName == "reading_companion_manage")
                         ) { "该操作仅允许阅读伴侣主包调用" }
                         val batchId = parameters.optString("batch_id").trim()
                         JSONObject()
@@ -294,7 +336,7 @@ object ReadingCompanionBridge {
                     }
                     "summary_batch_prefs" -> {
                         require(
-                            callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                            (callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME || callerPackageName == "reading_companion_manage")
                         ) { "该操作仅允许阅读伴侣主包调用" }
                         val existing = service.summaryBatchPrefs()
                         val hasAnyValue =
@@ -365,7 +407,7 @@ object ReadingCompanionBridge {
                     }
                     "list_audit_chats" -> {
                         require(
-                            callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME
+                            (callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME || callerPackageName == "reading_companion_manage")
                         ) { "该操作仅允许阅读伴侣主包调用" }
                         ReadingCompanionAutoCommentary.getInstance(context).listAuditChats(
                             parameters.optString("bookId").trim()
@@ -456,6 +498,9 @@ object ReadingCompanionBridge {
             )
         }
     }
+
+    private fun JSONObject.chapterIndex(name: String): Int? =
+        optNullableInt(name)?.also { require(it >= 1) { "$name must be one-based" } }?.minus(1)
 
     private fun JSONObject.optNullableInt(name: String): Int? =
         if (!has(name) || isNull(name)) null else getInt(name)

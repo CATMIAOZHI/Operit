@@ -1444,7 +1444,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 ChatHistorySelectorPanel(
                                     actualViewModel = actualViewModel,
                                     chatHistories = displayedChatHistories,
-                                    allChatHistories = visibleAllChatHistories,
+                                    orderingChatHistories = chatHistories,
                                     searchableChatHistories = visibleAllChatHistories,
                                     currentChatId = currentChatId ?: "",
                                     showChatHistorySelector = showChatHistorySelector,
@@ -1960,8 +1960,8 @@ private fun ChatInputBottomBar(
         return actualViewModel.removePendingQueueMessage(chatId, id)
     }
 
-    val sendQueuedItemNow: (String, PendingQueueMessageItem, Boolean) -> Unit =
-        { queueChatId, item, cancelCurrentConversation ->
+    val sendQueuedItemNow: (String, PendingQueueMessageItem) -> Unit =
+        { queueChatId, item ->
             coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
                 var queueItemResolved = false
                 try {
@@ -1995,30 +1995,6 @@ private fun ChatInputBottomBar(
                         }
                     }
                     val finalText = submitDecision.text ?: item.text
-                    if (
-                        cancelCurrentConversation &&
-                            actualViewModel.isPendingQueueTargetBusy(queueChatId)
-                    ) {
-                        if (
-                            !actualViewModel.cancelPendingQueueTarget(
-                                queueChatId,
-                                item.chatGeneration,
-                            )
-                        ) {
-                            queueItemResolved = true
-                            return@launch
-                        }
-                        if (!actualViewModel.awaitPendingQueueTargetIdle(queueChatId)) {
-                            restorePendingQueueItem(queueChatId, item)
-                            queueItemResolved = true
-                            actualViewModel.showToast(context.getString(R.string.chat_queue_send_deferred))
-                            return@launch
-                        }
-                        if (!actualViewModel.isPendingQueueItemCurrent(queueChatId, item)) {
-                            queueItemResolved = true
-                            return@launch
-                        }
-                    }
 
                     focusManager.clearFocus()
                     if (
@@ -2056,18 +2032,68 @@ private fun ChatInputBottomBar(
             }
         }
 
+    fun steerPendingQueueMessage(id: Long) {
+        val chatId = currentChatId ?: return
+        val expectedTurnId = actualViewModel.steeringTurnId(chatId)
+        if (expectedTurnId == null) {
+            actualViewModel.showToast(context.getString(R.string.chat_steer_unavailable))
+            return
+        }
+        val item = removePendingQueueMessageById(id) ?: return
+        coroutineScope.launch {
+            var resolved = false
+            try {
+                val decision = ChatInputHookRegistry.dispatchSubmitRequested(
+                    buildChatInputHookContext(
+                        eventName = ChatInputEvents.SUBMIT_REQUESTED,
+                        text = item.text, selectionStart = item.text.length,
+                        selectionEnd = item.text.length, source = "queue",
+                        submitSource = "steer", chatId = chatId,
+                    )
+                )
+                when (decision.action) {
+                    ChatInputSubmitActions.BLOCK -> {
+                        showChatInputHookMessage(decision.message)
+                        return@launch
+                    }
+                    ChatInputSubmitActions.CONSUME -> {
+                        resolved = true
+                        showChatInputHookMessage(decision.message)
+                        return@launch
+                    }
+                }
+                val finalItem = item.copy(text = decision.text ?: item.text)
+                resolved = actualViewModel.trySteerQueuedMessage(chatId, expectedTurnId, finalItem)
+                if (!resolved) {
+                    actualViewModel.showToast(context.getString(R.string.chat_steer_unavailable))
+                } else {
+                    ChatInputHookRegistry.dispatchNotification(
+                        buildChatInputHookContext(
+                            eventName = ChatInputEvents.SUBMITTED, text = finalItem.text,
+                            selectionStart = finalItem.text.length, selectionEnd = finalItem.text.length,
+                            source = "queue", submitSource = "steer", chatId = chatId,
+                        )
+                    )
+                }
+            } finally {
+                if (!resolved) restorePendingQueueItem(chatId, item)
+            }
+        }
+    }
+
     LaunchedEffect(isQueueBlocked, pendingQueueMessages.size, currentChatId) {
         val queueChatId = currentChatId ?: return@LaunchedEffect
         if (actualViewModel.hasPendingQueueAutoDequeue(queueChatId, isQueueBlocked)) {
             delay(250)
             if (!actualViewModel.isPendingQueueTargetBusy(queueChatId)) {
                 actualViewModel.takeNextPendingQueueAutoDequeue(queueChatId)?.let { item ->
-                    sendQueuedItemNow(queueChatId, item, false)
+                    sendQueuedItemNow(queueChatId, item)
                 }
             }
         }
     }
 
+    val queueAddedMessage = stringResource(R.string.chat_queue_added)
     fun enqueueDraftToPendingQueue() {
         val draftText = userMessage.text.trim()
         if (draftText.isBlank()) return
@@ -2079,7 +2105,7 @@ private fun ChatInputBottomBar(
             isQueueBlocked = isQueueBlocked,
         )
         actualViewModel.updateUserMessage(TextFieldValue(""))
-        actualViewModel.showToast(context.getString(R.string.chat_queue_added))
+        actualViewModel.showToast(queueAddedMessage)
     }
 
     val pleaseCreateNewChatMessage = stringResource(R.string.chat_please_create_new_chat)
@@ -2246,11 +2272,8 @@ private fun ChatInputBottomBar(
                         )
                     }
                 },
-                onSendPendingQueueMessage = { id ->
-                    removePendingQueueMessageById(id)?.let { queueItem ->
-                        currentChatId?.let { sendQueuedItemNow(it, queueItem, true) }
-                    }
-                },
+                onSteerPendingQueueMessage = ::steerPendingQueueMessage,
+
             )
         } else {
             ClassicChatInputSection(
@@ -2305,11 +2328,8 @@ private fun ChatInputBottomBar(
                         )
                     }
                 },
-                onSendPendingQueueMessage = { id ->
-                    removePendingQueueMessageById(id)?.let { queueItem ->
-                        currentChatId?.let { sendQueuedItemNow(it, queueItem, true) }
-                    }
-                },
+                onSteerPendingQueueMessage = ::steerPendingQueueMessage,
+
             )
         }
     }

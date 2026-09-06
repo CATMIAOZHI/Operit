@@ -14,7 +14,7 @@ import org.junit.Test
 
 class PricingCatalogResolverTest {
     @Test
-    fun `catalog exact match and explicit alias are provider scoped`() {
+    fun `official model and alias match regardless of connection provider`() {
         val document = PricingCatalogDocument(
             schemaVersion = 1,
             revision = "resolver-test",
@@ -28,8 +28,8 @@ class PricingCatalogResolverTest {
 
         assertEquals(1.0, DefaultModelPricingCollect.getDefaultPricing("provider-a:model-a").inputPricePerMillion, 0.0)
         assertEquals(1.0, DefaultModelPricingCollect.getDefaultPricing("provider-a:alias").inputPricePerMillion, 0.0)
-        // The same model name in another provider is not a valid fallback.
-        assertFalse(DefaultModelPricingCollect.getDefaultPricing("provider-b:model-a").known)
+        // A different connection provider still uses the same official price.
+        assertTrue(DefaultModelPricingCollect.getDefaultPricing("provider-b:model-a").known)
     }
 
     @Test

@@ -139,11 +139,20 @@ python3 ./tools/example_packages/sync_example_packages.py --no-hot-reload
 ### 开发版（personal/dev）
 
 ```bash
+# 完整 APK：先同步内置 ToolPkg，再构建 Debug APK
+./gradlew assembleDebugWithToolPkg
+
+# 快速 Android 构建：沿用现有 assets，不同步 ToolPkg
 ./gradlew :app:assembleDebug
 # 输出：app/build/outputs/apk/debug/app-debug.apk
 # 包名：com.rainy.operitry.dev
 # 版本后缀：-dev.<build>（CI 中由 OPERIT_DEV_BUILD_NUMBER 环境变量提供）
 ```
+
+需要安装到真机或验证最终 APK 内容时使用 `assembleDebugWithToolPkg`。该任务按 CI
+顺序执行 `build:examples:github`、`sync_example_packages.py --no-hot-reload` 和
+`:app:assembleDebug`；只验证 Android 代码且确认内置包产物已是最新时，可以继续使用
+`:app:assembleDebug`。
 
 ### 共存版（clone）
 

@@ -55,8 +55,8 @@ internal fun CanvasExpandableHeaderRow(
     titleColor: Color,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
-    rotationDegrees: Float = if (expanded) 90f else 0f,
-    shimmerShiftPx: Float? = null,
+    rotationDegrees: () -> Float = { if (expanded) 90f else 0f },
+    shimmerShiftPx: () -> Float? = { null },
     titleAlpha: Float = 1f,
 ) {
     val density = LocalDensity.current
@@ -115,7 +115,7 @@ internal fun CanvasExpandableHeaderRow(
                 val arrowTop = contentTop + (contentHeightPx - iconSizePx) / 2f
                 val arrowLeft = 0f
                 rotate(
-                    degrees = rotationDegrees,
+                    degrees = rotationDegrees(),
                     pivot = Offset(arrowLeft + iconSizePx / 2f, arrowTop + iconSizePx / 2f),
                 ) {
                     translate(left = arrowLeft, top = arrowTop) {
@@ -132,7 +132,8 @@ internal fun CanvasExpandableHeaderRow(
                 val titleY = contentTop + (contentHeightPx - titleLayout.size.height) / 2f
                 val titleTopLeft = Offset(titleX, titleY)
                 val titleSize = Size(titleLayout.size.width.toFloat(), titleLayout.size.height.toFloat())
-                val hasShimmer = shimmerShiftPx != null
+                val shimmerShift = shimmerShiftPx()
+                val hasShimmer = shimmerShift != null
 
                 if (hasShimmer) {
                     drawContext.canvas.saveLayer(
@@ -149,7 +150,7 @@ internal fun CanvasExpandableHeaderRow(
 
                 drawText(titleLayout, topLeft = titleTopLeft)
 
-                if (shimmerShiftPx != null) {
+                if (shimmerShift != null) {
                     drawRect(
                         brush =
                             Brush.linearGradient(
@@ -159,8 +160,8 @@ internal fun CanvasExpandableHeaderRow(
                                         shimmerHighlightColor,
                                         titleColor.copy(alpha = 0.20f),
                                     ),
-                                start = Offset(titleX + shimmerShiftPx - 140f, titleY),
-                                end = Offset(titleX + shimmerShiftPx + 140f, titleY + titleLayout.size.height),
+                                start = Offset(titleX + shimmerShift - 140f, titleY),
+                                end = Offset(titleX + shimmerShift + 140f, titleY + titleLayout.size.height),
                             ),
                         topLeft = titleTopLeft,
                         size = titleSize,

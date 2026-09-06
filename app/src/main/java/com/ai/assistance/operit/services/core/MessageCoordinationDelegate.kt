@@ -39,6 +39,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.LocaleUtils
 import com.ai.assistance.operit.data.repository.MemoryAutoSaveCandidateRepository
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -86,7 +87,7 @@ class MessageCoordinationDelegate(
     private val _summarizingChatId = MutableStateFlow<String?>(null)
     val summarizingChatId: StateFlow<String?> = _summarizingChatId.asStateFlow()
 
-    // 发送消息触发的异步总结状态（使用 launchAsyncSummaryForSend 时）
+    // 发送消息触发的异步总结状态（等待发送前总结时）
     private val _isSendTriggeredSummarizing = MutableStateFlow(false)
     val isSendTriggeredSummarizing: StateFlow<Boolean> = _isSendTriggeredSummarizing.asStateFlow()
 
@@ -544,6 +545,7 @@ class MessageCoordinationDelegate(
         groupParticipantNamesText: String? = null,
         turnOptions: ChatTurnOptions = ChatTurnOptions()
     ): Boolean {
+        if (_isSendTriggeredSummarizing.value || _isSummarizing.value) return false
         // 如果不是自动续写，更新当前的 promptFunctionType
         if (!isAutoContinuation && !turnOptions.isSubTask) {
             currentPromptFunctionType = promptFunctionType
@@ -680,15 +682,74 @@ class MessageCoordinationDelegate(
         }
 
         // 当前请求使用的Token使用率阈值，默认使用配置值
-        var tokenUsageThresholdForSend = chatContextSettings.summaryTokenThreshold.toDouble()
+        val tokenUsageThresholdForSend = chatContextSettings.summaryTokenThreshold.toDouble()
         val maxTokensForSend =
             (chatContextSettings.effectiveContextLength * 1024)
                 .toLong()
                 .coerceIn(0L, Int.MAX_VALUE.toLong())
                 .toInt()
 
+        val proxySenderName = proxySenderNameOverride?.takeIf { it.isNotBlank() }
+
+        // 如果是proxy sender，视为关闭记忆自动更新
+        val shouldEnableMemoryAutoUpdate = if (proxySenderName.isNullOrBlank()) {
+            apiConfigDelegate.enableMemoryAutoUpdate.value
+        } else {
+            false
+        }
+
+        val pendingText = effectiveMessageTextOverride ?: messageProcessingDelegate.userMessage.value.text
+        val pendingReply = if (shouldReadComposerState) uiBridge.getReplyToMessage() else null
+        fun sendPreparedMessage(afterSummary: Boolean = false): Boolean {
+            // 调用messageProcessingDelegate发送消息，并传递附件信息和工作区路径
+            val accepted = messageProcessingDelegate.sendUserMessage(
+                attachments = currentAttachments,
+                chatId = chatId,
+                messageTextOverride = if (afterSummary) pendingText else effectiveMessageTextOverride,
+                proxySenderNameOverride = proxySenderName,
+                workspacePath = workspacePath,
+                workspaceEnv = workspaceEnv,
+                promptFunctionType = promptFunctionType,
+                roleCardId = roleCardId,
+                enableThinking = apiConfigDelegate.enableThinkingMode.value,
+                enableMemoryAutoUpdate = shouldEnableMemoryAutoUpdate,
+                maxTokens = maxTokensForSend,
+                tokenUsageThreshold = tokenUsageThresholdForSend,
+                replyToMessage = pendingReply,
+                isAutoContinuation = isAutoContinuation,
+                enableSummary = !forceDisableSummary && !isBackgroundSend && chatContextSettings.enableSummary,
+                chatModelConfigIdOverride = resolvedChatModelConfigIdOverride,
+                chatModelIndexOverride = resolvedChatModelIndexOverride,
+                memorySpaceIdOverride = resolvedMemorySpaceIdOverride,
+                suppressUserMessageInHistory = suppressUserMessageInHistory,
+                isGroupOrchestrationTurn = isGroupOrchestrationTurn,
+                groupParticipantNamesText = groupParticipantNamesText,
+                turnOptions = turnOptions
+            )
+
+            // 只有在非续写（即用户主动发送）时才清空附件和UI状态
+            if (accepted && !isBackgroundSend && !isContinuation) {
+                if (!afterSummary || attachmentDelegate.attachments.value == currentAttachments) {
+                    if (currentAttachments.isNotEmpty()) {
+                        attachmentDelegate.clearAttachments()
+                    }
+                    uiBridge.resetAttachmentPanelState()
+                }
+                if (afterSummary && effectiveMessageTextOverride == null && messageProcessingDelegate.userMessage.value.text == pendingText) {
+                    messageProcessingDelegate.updateUserMessage("")
+                }
+                if (!afterSummary || uiBridge.getReplyToMessage() == pendingReply) {
+                    uiBridge.clearReplyToMessage()
+                }
+            }
+            return accepted
+        }
+
+        if (messageProcessingDelegate.isChatLoading(chatId)) return false
+        if (pendingText.isBlank() && currentAttachments.isEmpty() && !isAutoContinuation && !isGroupOrchestrationTurn) return false
+
         // 如果不是续写，检查是否需要总结
-        if (turnOptions.persistTurn && !isBackgroundSend && !isContinuation && !skipSummaryCheck) {
+        if (!forceDisableSummary && turnOptions.persistTurn && !isBackgroundSend && !isContinuation && !skipSummaryCheck) {
             val currentMessages = runBlocking { chatHistoryDelegate.getCurrentRuntimeChatHistorySnapshot() }
             val currentTokens = tokenStatsDelegate.currentWindowSizeFlow.value
 
@@ -708,8 +769,8 @@ class MessageCoordinationDelegate(
                 val beforeTimestamp = snapshotMessages.getOrNull(insertPosition - 1)?.timestamp
                 val afterTimestamp = snapshotMessages.getOrNull(insertPosition)?.timestamp
 
-                // 异步生成总结，不阻塞当前消息发送
-                launchAsyncSummaryForSend(
+                // 总结完成并保存后才发送；协程等待不会阻塞 UI 线程。
+                launchSummaryBeforeSend(
                     snapshotMessages = snapshotMessages,
                     beforeTimestamp = beforeTimestamp,
                     afterTimestamp = afterTimestamp,
@@ -717,58 +778,15 @@ class MessageCoordinationDelegate(
                     roleCardId = roleCardId,
                     chatModelConfigIdOverride = resolvedChatModelConfigIdOverride,
                     chatModelIndexOverride = resolvedChatModelIndexOverride,
-                    memorySpaceIdOverride = resolvedMemorySpaceIdOverride
+                    memorySpaceIdOverride = resolvedMemorySpaceIdOverride,
+                    onReady = { sendPreparedMessage(afterSummary = true) }
                 )
 
-                // 本次请求的Token阈值在原基础上增加 0.5
-                tokenUsageThresholdForSend += 0.5
+                return true
             }
         }
 
-        val proxySenderName = proxySenderNameOverride?.takeIf { it.isNotBlank() }
-
-        // 如果是proxy sender，视为关闭记忆自动更新
-        val shouldEnableMemoryAutoUpdate = if (proxySenderName.isNullOrBlank()) {
-            apiConfigDelegate.enableMemoryAutoUpdate.value
-        } else {
-            false
-        }
-
-        // 调用messageProcessingDelegate发送消息，并传递附件信息和工作区路径
-        val accepted = messageProcessingDelegate.sendUserMessage(
-            attachments = currentAttachments,
-            chatId = chatId,
-            messageTextOverride = effectiveMessageTextOverride,
-            proxySenderNameOverride = proxySenderName,
-            workspacePath = workspacePath,
-            workspaceEnv = workspaceEnv,
-            promptFunctionType = promptFunctionType,
-            roleCardId = roleCardId,
-            enableThinking = apiConfigDelegate.enableThinkingMode.value,
-            enableMemoryAutoUpdate = shouldEnableMemoryAutoUpdate,
-            maxTokens = maxTokensForSend,
-            tokenUsageThreshold = tokenUsageThresholdForSend,
-            replyToMessage = if (shouldReadComposerState) uiBridge.getReplyToMessage() else null,
-            isAutoContinuation = isAutoContinuation,
-            enableSummary = !forceDisableSummary && !isBackgroundSend && chatContextSettings.enableSummary,
-            chatModelConfigIdOverride = resolvedChatModelConfigIdOverride,
-            chatModelIndexOverride = resolvedChatModelIndexOverride,
-            memorySpaceIdOverride = resolvedMemorySpaceIdOverride,
-            suppressUserMessageInHistory = suppressUserMessageInHistory,
-            isGroupOrchestrationTurn = isGroupOrchestrationTurn,
-            groupParticipantNamesText = groupParticipantNamesText,
-            turnOptions = turnOptions
-        )
-
-        // 只有在非续写（即用户主动发送）时才清空附件和UI状态
-        if (!isBackgroundSend && !isContinuation) {
-            if (currentAttachments.isNotEmpty()) {
-                attachmentDelegate.clearAttachments()
-            }
-            uiBridge.resetAttachmentPanelState()
-            uiBridge.clearReplyToMessage()
-        }
-        return accepted
+        return sendPreparedMessage()
     }
 
     private fun shouldRunGroupOrchestration(
@@ -1799,7 +1817,7 @@ class MessageCoordinationDelegate(
         cancelSummaryInternal(chatId)
     }
 
-    private fun launchAsyncSummaryForSend(
+    private fun launchSummaryBeforeSend(
         snapshotMessages: List<ChatMessage>,
         beforeTimestamp: Long?,
         afterTimestamp: Long?,
@@ -1807,7 +1825,8 @@ class MessageCoordinationDelegate(
         roleCardId: String?,
         chatModelConfigIdOverride: String? = null,
         chatModelIndexOverride: Int? = null,
-        memorySpaceIdOverride: String? = null
+        memorySpaceIdOverride: String? = null,
+        onReady: () -> Unit
     ) {
         if (snapshotMessages.isEmpty() || originalChatId == null) {
             return
@@ -1826,7 +1845,7 @@ class MessageCoordinationDelegate(
         val asyncSummaryJob =
             coroutineScope.launch {
             try {
-                val service = getEnhancedAiService() ?: return@launch
+                val service = checkNotNull(getEnhancedAiService()) { context.getString(R.string.chat_ai_service_unavailable_summarize) }
 
                 // 检查是否是群聊
                 val currentChat = chatHistoryDelegate.chatHistories.value.firstOrNull { it.id == originalChatId }
@@ -1839,7 +1858,7 @@ class MessageCoordinationDelegate(
                     autoContinue = false,
                     isGroupChat = isGroupChat,
                     summaryCustomRules = summaryCustomRules
-                ) ?: return@launch
+                ) ?: error(context.getString(R.string.chat_summarize_failed_no_valid_summary))
 
                 val currentChatId = chatHistoryDelegate.currentChatId.value
                 if (currentChatId != originalChatId) {
@@ -1850,13 +1869,14 @@ class MessageCoordinationDelegate(
                     return@launch
                 }
 
-                chatHistoryDelegate.addSummaryMessage(
+                val saved = chatHistoryDelegate.addSummaryMessage(
                     summaryMessage = summaryMessage,
                     beforeTimestamp = beforeTimestamp,
                     afterTimestamp = afterTimestamp,
                     chatIdOverride = originalChatId,
                 )
 
+                check(saved) { context.getString(R.string.chat_summarize_failed_no_valid_summary) }
                 refreshStableContextWindow(
                     chatId = originalChatId,
                     roleCardId = roleCardId,
@@ -1867,7 +1887,9 @@ class MessageCoordinationDelegate(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                AppLogger.e(TAG, "Async summary during send failed: ${e.message}", e)
+                AppLogger.e(TAG, "Summary before send failed: ${e.message}", e)
+                uiStateDelegate.showErrorMessage(context.getString(R.string.chat_summarize_generation_failed, e.message.orEmpty()))
+                return@launch
             } finally {
                 _isSendTriggeredSummarizing.value = false
 
@@ -1893,6 +1915,9 @@ class MessageCoordinationDelegate(
                     sendTriggeredSummaryJob = null
                 }
             }
+            // Finally clears the summary UI before the normal send enters Processing.
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (chatHistoryDelegate.currentChatId.value == originalChatId) onReady()
         }
         sendTriggeredSummaryJob = asyncSummaryJob
     }

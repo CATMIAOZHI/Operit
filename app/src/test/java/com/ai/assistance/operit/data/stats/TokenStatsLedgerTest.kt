@@ -33,6 +33,7 @@ class TokenStatsLedgerTest {
 
     @Before
     fun setUp() {
+        installStatsTestCatalog()
         tempDir = kotlin.io.path.createTempDirectory("ledger-test").toFile()
         context = mockContext(tempDir)
         database =
@@ -95,6 +96,25 @@ reasoningTokens = 50L,
         firstTokenAtMs?.let { ctx.onFirstToken(it) }
         status?.let { ctx.finish(it, 2000) }
         return ctx
+    }
+
+    @Test
+    fun `tier selected at completion survives spool replay after catalog changes`() = runBlocking {
+        installStatsTestCatalog(listOf(
+            com.ai.assistance.operit.data.pricing.ContextPriceTier(200_000, 3.0, 12.0, 3.0, null)
+        ))
+        val original = request(usage = ProviderUsageSnapshot(
+            uncachedInputTokens = 200_001, cachedInputTokens = 0, cacheWriteTokens = 0,
+            outputTokens = 100, source = "test",
+        ))
+        val line = TokenStatsLedger.prepareEventLineDetached(context, original).line
+        installStatsTestCatalog()
+        TokenStatsLedger.record(context, TokenStatRequestContext.fromSpoolLine(line))
+        val event = database.tokenStatsDao().getEvent("evt-1")!!
+        assertEquals(3.0, event.inputPricePerMillion!!, 0.0)
+        assertEquals(12.0, event.outputPricePerMillion!!, 0.0)
+        assertEquals((200_001 * 3.0 + 100 * 12.0) / 1_000_000,
+            event.costInPricingCurrency!!, 1e-12)
     }
 
     @Test

@@ -10,7 +10,7 @@ import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.data.model.ToolInvocation
 import com.ai.assistance.operit.data.model.ToolResult
-import com.ai.assistance.operit.ui.common.markdown.toolInvocationIndexAt
+import com.ai.assistance.operit.ui.common.markdown.toolInvocationIndices
 import com.ai.assistance.operit.util.markdown.MarkdownNodeStable
 import com.ai.assistance.operit.util.markdown.MarkdownProcessorType
 import com.ai.assistance.operit.util.stream.StreamLogger
@@ -25,6 +25,42 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolExecutionPresentationTest {
+    @Test
+    fun steeredAssistantUsesNewScopeAndMessageLocalResultIndices() {
+        val sequence = com.ai.assistance.operit.core.chat.AssistantToolSequence("before")
+        repeat(4) { sequence.nextIndex.getAndIncrement() }
+        sequence.startMessage("after")
+        assertEquals("after", sequence.scopeId)
+        val index = sequence.nextIndex.getAndIncrement()
+        val result = ToolResult(
+            toolName = "grep_code", success = true, result = StringResultData("matching lines"),
+            callId = "after-call", invocationIndex = index, isFinal = true,
+            executionState = ToolExecutionState.COMPLETED,
+        )
+        val markup = com.ai.assistance.operit.api.chat.enhance.ConversationMarkupManager
+            .formatToolResultForMessage(result)
+        val content = """<tool name="grep_code"></tool>""" + markup
+        assertEquals(0, index)
+        assertEquals("matching lines", parsePersistedToolExecutions(content).getValue(0).resultText)
+        assertFalse(shouldRenderStandaloneToolResult(markup))
+        sequence.startMessage("third")
+        assertEquals(0, sequence.nextIndex.getAndIncrement())
+        assertEquals("third", sequence.scopeId)
+    }
+
+    @Test
+    fun previouslyStoredSteeredResultsAreMatchedWithoutChangingMessageText() {
+        val content = """
+            <tool name="grep_code"></tool>
+            <tool name="grep_code"></tool>
+            <tool_result name="grep_code" final="true" status="success" invocation_index="5"><content>B</content></tool_result>
+            <tool_result name="grep_code" final="true" status="success" invocation_index="4"><content>A</content></tool_result>
+        """.trimIndent()
+        val executions = parsePersistedToolExecutions(content)
+        assertEquals("A", executions.getValue(0).resultText)
+        assertEquals("B", executions.getValue(1).resultText)
+    }
+
     @Test
     fun reversedSameNameResults_areMatchedByInvocationIndex() {
         val content =
@@ -206,10 +242,10 @@ class ToolExecutionPresentationTest {
                 node("""<tool name="read_file"></tool>"""),
             )
 
-        assertNull(toolInvocationIndexAt(nodes, 0))
-        assertEquals(0, toolInvocationIndexAt(nodes, 1))
-        assertNull(toolInvocationIndexAt(nodes, 2))
-        assertEquals(1, toolInvocationIndexAt(nodes, 3))
+        assertNull(toolInvocationIndices(nodes)[0])
+        assertEquals(0, toolInvocationIndices(nodes)[1])
+        assertNull(toolInvocationIndices(nodes)[2])
+        assertEquals(1, toolInvocationIndices(nodes)[3])
     }
 
     @Test
@@ -261,8 +297,8 @@ class ToolExecutionPresentationTest {
                 node("""<tool name="read_file"><param name="path">/real</param></tool>"""),
             )
 
-        assertNull(toolInvocationIndexAt(nodes, 0))
-        assertEquals(0, toolInvocationIndexAt(nodes, 1))
+        assertNull(toolInvocationIndices(nodes)[0])
+        assertEquals(0, toolInvocationIndices(nodes)[1])
     }
 
     @Test
@@ -463,7 +499,7 @@ class ToolExecutionPresentationTest {
             )
 
         assertEquals(2, invalidatedInvocationCount)
-        assertEquals(validInvocationIndex, toolInvocationIndexAt(nodes, 6))
+        assertEquals(validInvocationIndex, toolInvocationIndices(nodes)[6])
         assertEquals(2, validInvocationIndex)
     }
 
@@ -522,6 +558,25 @@ class ToolExecutionPresentationTest {
                 isSuccess = true,
             )
         )
+    }
+
+    @Test
+    fun longToolTranscriptBuildsInvocationIndicesInOnePass() {
+        val tool = node("""<tool name="read_file"><param name="path">a</param></tool>""")
+        val result = node("""<tool_result name="read_file"><content>done</content></tool_result>""")
+        var reads = 0
+        val nodes = object : AbstractList<MarkdownNodeStable>() {
+            override val size = 2_000
+            override fun get(index: Int): MarkdownNodeStable {
+                reads++
+                return if (index % 2 == 0) tool else result
+            }
+        }
+        val indices = toolInvocationIndices(nodes)
+        assertEquals(0, indices.first())
+        assertEquals(999, indices[1998])
+        assertNull(indices.last())
+        assertEquals(nodes.size, reads)
     }
 
     private fun node(

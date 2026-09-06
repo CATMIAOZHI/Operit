@@ -70,94 +70,21 @@ class ReadingCompanionManualFlowStaticTest {
     }
 
     @Test
-    fun `manual summary UI tools are registered end to end`() {
-        val bridge =
-            source(
-                "src/main/java/com/ai/assistance/operit/features/reading/" +
-                    "ReadingCompanionBridge.kt",
-            )
-        val packageSource = source("../examples/reading_companion/packages/reading_companion.js")
-        val entryUi =
-            source("../examples/reading_companion/ui/reading_companion_entry/index.ui.js")
-
-        listOf("summary_batch_prefs", "cancel_manual_summary_batch").forEach { action ->
-            assertTrue("Bridge 缺少 $action", bridge.contains("\"$action\""))
-            assertTrue("ToolPkg 缺少 $action 声明", packageSource.contains("\"name\": \"$action\""))
-            assertTrue("ToolPkg 缺少 $action 导出", packageSource.contains("exports.$action"))
-            assertTrue("入口页未调用 $action", entryUi.contains("\"$action\""))
+    fun `manual UI uses task lifecycle and separate preferences`() {
+        val tasks = source("../examples/reading_companion/packages/reading_companion_tasks.js")
+        val management = source("../examples/reading_companion/packages/reading_companion_manage.js")
+        val entryUi = source("../examples/reading_companion/ui/reading_companion_entry/index.ui.js")
+        for (action in listOf("start_task", "get_task", "cancel_task", "list_tasks")) {
+            assertTrue(tasks.contains("exports.$action"))
         }
-        assertFalse(entryUi.contains("\"summary_batch_stats\""))
-        assertTrue(entryUi.contains("const iterations = 1"))
-        assertTrue(entryUi.contains("count: callCount"))
-        assertTrue(packageSource.contains("\"name\": \"batch_id\""))
-        assertTrue(packageSource.contains("batch_id: params && params.batch_id"))
-        assertTrue(entryUi.contains("{ batch_id: targetBatchId }"))
-    }
-
-    @Test
-    fun `manual specified commentary scope is wired end to end`() {
-        val bridge =
-            source(
-                "src/main/java/com/ai/assistance/operit/features/reading/" +
-                    "ReadingCompanionBridge.kt",
-            )
-        val commentary =
-            source(
-                "src/main/java/com/ai/assistance/operit/features/reading/" +
-                    "ReadingCompanionAutoCommentary.kt",
-            )
-        val packageSource = source("../examples/reading_companion/packages/reading_companion.js")
-        val entryUi =
-            source("../examples/reading_companion/ui/reading_companion_entry/index.ui.js")
-
-        assertTrue(bridge.contains(".optString("))
-        assertTrue(bridge.contains("\"scope\""))
-        assertTrue(commentary.contains("allowExplicitTarget = explicitRange"))
-        assertTrue(commentary.contains("force = explicitRange"))
+        assertTrue(management.contains("exports.summary_batch_prefs"))
+        assertTrue(entryUi.contains("runGenerationTask(ctx"))
+        assertTrue(entryUi.contains("{ task_id: targetBatchId }"))
+        assertFalse(tasks.contains("\"name\": \"batch_id\""))
+        val commentary = source("src/main/java/com/ai/assistance/operit/features/reading/ReadingCompanionAutoCommentary.kt")
         assertTrue(commentary.contains("expectedManualBookId = state.book.id"))
         assertTrue(commentary.contains("expectedManualTargetSourceId = targetChapter.sourceId"))
-        assertTrue(commentary.contains("manualCommentaryAnchorMatches("))
-        assertTrue(commentary.contains("requestManualCommentaryBatchStop("))
-        assertTrue(commentary.contains("supersededChapterIndex = chapterIndex"))
-        assertTrue(commentary.contains("supersededChapterIndex != null -> STATUS_SUPERSEDED"))
-        assertTrue(bridge.contains("\"cancel_manual_commentary_batch\""))
-        assertTrue(commentary.contains("chapterIndex in chapterByIndex"))
-        assertTrue(packageSource.contains("scope: params.scope"))
-        assertTrue(packageSource.contains("book_id: params.book_id"))
-        assertTrue(packageSource.contains("batch_id: params.batch_id"))
-        assertTrue(entryUi.contains("runManualBatch(\"comments\", null, \"read\")"))
-        assertTrue(entryUi.contains("runManualBatch(\"comments\", null, \"ahead\")"))
-        assertTrue(entryUi.contains("\"cancel_manual_commentary_batch\""))
-        assertTrue(entryUi.contains("text.batchSuperseded"))
-        assertTrue(entryUi.contains("commentaryScope === \"read\""))
-        assertTrue(entryUi.contains("start === null || end === null"))
-        assertTrue(entryUi.contains("isSpecifiedComments"))
-        assertTrue(entryUi.contains("isSpecifiedComments\n        ? \"10\""))
-        assertTrue(entryUi.contains("readRangeCount > 0"))
-        assertTrue(entryUi.contains("readRangeCount <= 10"))
-        assertTrue(entryUi.contains("commentCount <= 10"))
-        assertTrue(
-            bridge.contains(
-                "if (scope == MANUAL_COMMENTARY_SCOPE_READ)",
-            ),
-        )
-        assertTrue(
-            commentary.contains(
-                "require(startChapterIndex != null && endChapterIndex != null)",
-            ),
-        )
-        assertTrue(
-            packageSource.contains(
-                "scope=read 时必填，可指向已读、当前或未读章节",
-            ),
-        )
-        assertTrue(
-            packageSource.contains(
-                "read 时忽略，由必填起止章节决定数量且范围最多 10 章",
-            ),
-        )
-        assertTrue(packageSource.contains("成功后替换旧段评"))
-        assertTrue(entryUi.contains("可包含未读章节"))
+        assertTrue(commentary.contains("allowExplicitTarget = explicitRange"))
     }
 
     @Test

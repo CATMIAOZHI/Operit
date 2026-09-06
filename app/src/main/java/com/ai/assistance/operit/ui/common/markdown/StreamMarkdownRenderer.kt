@@ -4,6 +4,11 @@ import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import android.widget.ImageView
 import androidx.collection.LruCache
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
@@ -245,27 +250,16 @@ data class ToolXmlRenderInstanceKey(
     val invocationIndex: Int,
 )
 
-internal fun toolInvocationIndexAt(
-    nodes: List<MarkdownNodeStable>,
-    nodeIndex: Int,
-): Int? {
-    val target = nodes.getOrNull(nodeIndex) ?: return null
-    if (target.type != MarkdownProcessorType.XML_BLOCK ||
-        !ChatMarkupRegex.isToolCall(target.content)
-    ) {
-        return null
-    }
-
+/** Build once for the whole message; expanding N tools must not rescan N prefixes. */
+internal fun toolInvocationIndices(nodes: List<MarkdownNodeStable>): List<Int?> {
     var invocationIndex = 0
-    for (index in 0 until nodeIndex) {
-        val node = nodes[index]
-        if (node.type == MarkdownProcessorType.XML_BLOCK &&
-            ChatMarkupRegex.isToolCall(node.content)
-        ) {
+    return nodes.map { node ->
+        if (node.type == MarkdownProcessorType.XML_BLOCK && ChatMarkupRegex.isToolCall(node.content)) {
             invocationIndex++
+        } else {
+            null
         }
     }
-    return invocationIndex
 }
 
 @Composable
@@ -436,6 +430,8 @@ fun StreamMarkdownRenderer(
         }
 
     // 创建一个中间流，用于拦截和批处理渲染更新
+    // Owned by the parser worker; publish to renderer state only after collection has joined.
+    val parsedContent = remember(markdownStream) { SmartString() }
     val interceptedStream =
             remember(markdownStream) {
                 // 移除时间计算变量和日志
@@ -449,7 +445,7 @@ fun StreamMarkdownRenderer(
                 // 设置拦截器的onEach函数
                 processor.setOnEach { char ->
                     // 收集字符到 state 的 collectedContent
-                    rendererState.collectedContent + char
+                    parsedContent + char
                     char
                 }
 
@@ -464,6 +460,7 @@ fun StreamMarkdownRenderer(
         nodes.clear()
         renderNodes.clear()
         rendererState.collectedContent.clear()
+        parsedContent.clear()
         xmlNodeStreams.clear()
         rendererState.streamParsingCompletedSuccessfully = false
 
@@ -610,6 +607,7 @@ fun StreamMarkdownRenderer(
 
                 pendingHtmlBreakCount = 0
             }
+            rendererState.collectedContent.replace(parsedContent.toString())
             rendererState.streamParsingCompletedSuccessfully = true
         } catch (e: CancellationException) {
             rendererState.streamParsingCompletedSuccessfully = false
@@ -858,6 +856,8 @@ fun StreamMarkdownRenderer(
         enableDialogs: Boolean = true,
         fillMaxWidth: Boolean = true,
         decodeProviderReasoningEntities: Boolean = false,
+        collapseCompletedProcess: Boolean = false,
+        responseDurationMs: Long = 0L,
 ) {
     // 使用传入的state或创建新的state
     val rendererState = state ?: remember(content) { StreamMarkdownRendererState() }
@@ -965,6 +965,8 @@ fun StreamMarkdownRenderer(
         ) {
             key(rendererId) {
                 UnifiedMarkdownCanvas(
+                    collapseCompletedProcess = collapseCompletedProcess,
+                    responseDurationMs = responseDurationMs,
                     nodes = renderNodes,
                     rendererId = rendererId,
                     nodeAnimationStates = nodeAnimationStates,
@@ -1061,6 +1063,8 @@ private fun UnifiedMarkdownCanvas(
     enableDialogs: Boolean,
     modifier: Modifier = Modifier,
     fillMaxWidth: Boolean = true,
+    collapseCompletedProcess: Boolean = false,
+    responseDurationMs: Long = 0L,
 ) {
     val lastRenderableIndex = run {
         val idx = nodes.indexOfLast { it.content.isNotEmpty() || it.children.isNotEmpty() }
@@ -1075,17 +1079,17 @@ private fun UnifiedMarkdownCanvas(
         }
     }
 
-    val tailNode = nodes.lastOrNull()
-    val groupingKey = remember(nodes.size, tailNode?.content?.length, tailNode?.type, rendererId, nodeGrouper) {
-        Triple(nodes.size, tailNode?.content?.length ?: -1, tailNode?.type)
+    val nodeSnapshot = nodes.toList()
+    val invocationIndices = remember(nodeSnapshot) { toolInvocationIndices(nodeSnapshot) }
+    val groupedItems = remember(nodeSnapshot, rendererId, nodeGrouper) {
+        nodeGrouper.group(nodeSnapshot, rendererId)
     }
-
-    val groupedItems =
-        remember(groupingKey, rendererId, nodeGrouper) {
-            nodeGrouper.group(nodes, rendererId)
-        }
-    Column(modifier = modifier) {
-        groupedItems.forEach { item ->
+    val processEnd = if (collapseCompletedProcess) completedProcessEnd(nodes) else -1
+    val expanded = androidx.compose.runtime.saveable.rememberSaveable(rendererId) {
+        androidx.compose.runtime.mutableStateOf(false)
+    }
+    val renderItems: @Composable (List<MarkdownGroupedItem>) -> Unit = { items ->
+        items.forEach { item ->
             when (item) {
                 is MarkdownGroupedItem.Single -> {
                     val index = item.index
@@ -1103,7 +1107,7 @@ private fun UnifiedMarkdownCanvas(
                             xmlRenderer = xmlRenderer,
                             xmlStream = xmlStreamsByIndex[index],
                             xmlRenderInstanceKey =
-                                toolInvocationIndexAt(nodes, index)?.let { invocationIndex ->
+                                invocationIndices[index]?.let { invocationIndex ->
                                     ToolXmlRenderInstanceKey(nodeKey, invocationIndex)
                                 } ?: nodeKey,
                             enableDialogs = enableDialogs,
@@ -1119,7 +1123,8 @@ private fun UnifiedMarkdownCanvas(
                     key(groupKey) {
                         nodeGrouper.RenderGroup(
                             group = item,
-                            nodes = nodes,
+                            nodes = nodeSnapshot,
+                            invocationIndices = invocationIndices,
                             rendererId = rendererId,
                             isVisible = nodeAnimationStates[firstNodeKey] ?: true,
                             isLastNode = item.endIndexInclusive == lastRenderableIndex,
@@ -1134,6 +1139,36 @@ private fun UnifiedMarkdownCanvas(
                     }
                 }
             }
+        }
+    }
+    Column(modifier = modifier) {
+        if (processEnd >= 0) {
+            val processItemCount = groupedItems.takeWhile { item ->
+                val itemEnd = when (item) {
+                    is MarkdownGroupedItem.Single -> item.index
+                    is MarkdownGroupedItem.Group -> item.endIndexInclusive
+                }
+                itemEnd <= processEnd
+            }.size
+            ResponseActivityHeader(
+                durationMs = responseDurationMs,
+                expanded = expanded.value,
+                textColor = textColor,
+                onClick = { expanded.value = !expanded.value },
+            )
+            // Animate the process as one region, keeping the final answer outside its lifecycle.
+            AnimatedVisibility(
+                visible = expanded.value,
+                enter = expandVertically(tween(240), expandFrom = Alignment.Top) +
+                    fadeIn(tween(180)),
+                exit = shrinkVertically(tween(240), shrinkTowards = Alignment.Top) +
+                    fadeOut(tween(180)),
+            ) {
+                Column { renderItems(groupedItems.take(processItemCount)) }
+            }
+            renderItems(groupedItems.drop(processItemCount))
+        } else {
+            renderItems(groupedItems)
         }
     }
 }

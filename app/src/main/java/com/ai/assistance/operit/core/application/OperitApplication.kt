@@ -250,6 +250,14 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             "【启动计时】旧版存储兼容开关初始化完成 - ${System.currentTimeMillis() - legacyStartTime}ms"
         )
 
+        // Local prices must be available before workers/plugins can freeze token costs.
+        // Initialization reads bundled/applied files only; cloud refresh remains manual.
+        runCatching {
+            runBlocking(Dispatchers.IO) {
+                ModelPricingCatalogRepository.getInstance(applicationContext)
+            }
+        }.onFailure { AppLogger.w(TAG, "Pricing catalog initialization failed", it) }
+
         ensureWorkManagerInitialized()
 
         if (isCrashReportRecoveryStartup) {
@@ -304,13 +312,6 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         AppLogger.d(TAG, "【启动计时】全局异常处理器设置完成 - ${System.currentTimeMillis() - startTime}ms")
 
         AppLogger.d(TAG, "【启动计时】JSON序列化器初始化完成 - ${System.currentTimeMillis() - startTime}ms")
-
-        // Pricing is loaded and refreshed off the startup/request hot path. Until this finishes,
-        // DefaultModelPricingCollect safely serves its bundled JVM-visible fallback table.
-        applicationScope.launch(Dispatchers.IO) {
-            runCatching { ModelPricingCatalogRepository.getInstance(applicationContext) }
-                .onFailure { AppLogger.w(TAG, "Pricing catalog initialization failed", it) }
-        }
 
         memoryAutoSaveScheduler = MemoryAutoSaveScheduler(applicationContext, applicationScope)
             .also { it.start() }

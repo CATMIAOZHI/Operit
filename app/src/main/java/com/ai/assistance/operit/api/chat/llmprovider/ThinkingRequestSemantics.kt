@@ -167,7 +167,11 @@ object ThinkingRequestSemantics {
 
                     ApiProviderType.GOOGLE,
                     ApiProviderType.GEMINI_GENERIC ->
-                        resolveGeminiNativeThinkingConfigOverride(modelParameters)
+                        if (isGemini37FlashModel(modelName)) {
+                            ThinkingRequestSummary.Effort("low")
+                        } else {
+                            resolveGeminiNativeThinkingConfigOverride(modelParameters)
+                        }
 
                     ApiProviderType.LLAMA_CPP -> ThinkingRequestSummary.NotSent
 
