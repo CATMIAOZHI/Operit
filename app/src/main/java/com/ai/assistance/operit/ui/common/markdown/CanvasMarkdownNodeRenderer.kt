@@ -6,6 +6,7 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.style.ForegroundColorSpan
 import android.text.style.ImageSpan
+import android.text.style.ReplacementSpan
 import android.text.style.StyleSpan
 import android.text.style.URLSpan
 import android.text.style.UnderlineSpan
@@ -373,6 +374,49 @@ private data class LayoutResult(
     val instructions: List<DrawInstruction>
 )
 
+private data class MarkdownLayoutKey(
+    val node: MarkdownNodeStable,
+    val textColor: Color,
+    val primaryColor: Color,
+    val fontSizes: FontSizes,
+    val normalTypeface: Typeface,
+    val boldTypeface: Typeface,
+    val density: Float,
+    val fontScale: Float,
+    val width: Int,
+    val isLastNode: Boolean,
+    val lineHeight: Float,
+    val letterSpacing: Float,
+    val paragraphSpacing: Float,
+)
+
+private object CompletedMarkdownLayoutCache {
+    private data class Entry(val layout: LayoutResult, val estimatedBytes: Int)
+    // Minimum entry weight also bounds the number of entries to 128.
+    private val cache = object : LruCache<MarkdownLayoutKey, Entry>(8 * 1024 * 1024) {
+        override fun sizeOf(key: MarkdownLayoutKey, value: Entry) = value.estimatedBytes
+    }
+
+    fun get(key: MarkdownLayoutKey): LayoutResult? = cache.get(key)?.layout
+
+    fun put(key: MarkdownLayoutKey, layout: LayoutResult) {
+        fun nodeBytes(node: MarkdownNodeStable): Long =
+            128L + node.content.length * 2L + node.children.sumOf { nodeBytes(it) }
+        var bytes = nodeBytes(key.node)
+        for (instruction in layout.instructions) {
+            bytes += 128L
+            if (instruction is DrawInstruction.TextLayout) {
+                val text = instruction.layout.text
+                // Drawable spans have separate lifetimes and potentially large native allocations.
+                if (text is Spanned && text.getSpans(0, text.length, ReplacementSpan::class.java).isNotEmpty()) return
+                bytes += text.length * 2L + instruction.layout.lineCount * 48L
+            }
+        }
+        if (bytes > 1024 * 1024) return
+        cache.put(key, Entry(layout, bytes.toInt().coerceAtLeast(64 * 1024)))
+    }
+}
+
 /**
  * 从绘制指令中提取文本内容用于无障碍朗读
  */
@@ -552,8 +596,8 @@ private fun renderNodeContent(
     fillMaxWidth: Boolean,
     isLastNode: Boolean = false
 ) {
-    // 【关键优化】只要节点内容不变，就记住原始节点实例，防止不必要的重组
-    val stableNode = remember(content) { node }
+    // Inline structure can change without changing the raw text.
+    val stableNode = node
 
     when (stableNode.type) {
         // ========== 简单文本类型：使用单个大 Canvas 绘制 ==========
@@ -863,41 +907,39 @@ private fun UnifiedCanvasRenderer(
                         node.type == MarkdownProcessorType.ORDERED_LIST ||
                         node.type == MarkdownProcessorType.UNORDERED_LIST)
 
-        val contentKey = node.content.length
-
-        // 计算布局和绘制指令（用于稳定高度/宽度）
-        val layoutResult = remember(
-            contentKey,
-            textColor,
-            availableWidthPx,
-            node.type,
-            normalTypeface,
-            boldTypeface,
-            isLastNode,
-            node.children,
-            textLayoutSettings.lineHeightMultiplier,
-            textLayoutSettings.letterSpacingSp
-        ) {
-            calculateLayout(
-                node = node,
-                textColor = textColor,
-                primaryColor = primaryColor,
-                bodyMediumSize = bodyMediumSize,
-                headlineLargeSize = headlineLargeSize,
-                headlineMediumSize = headlineMediumSize,
-                headlineSmallSize = headlineSmallSize,
-                titleLargeSize = titleLargeSize,
-                titleMediumSize = titleMediumSize,
-                titleSmallSize = titleSmallSize,
-                normalTypeface = normalTypeface,
-                boldTypeface = boldTypeface,
-                density = localDensity,
-                availableWidthPx = availableWidthPx,
-                isLastNode = isLastNode,
-                globalLineHeightMultiplier = textLayoutSettings.lineHeightMultiplier,
-                globalLetterSpacingSp = textLayoutSettings.letterSpacingSp,
-                globalParagraphSpacingDp = textLayoutSettings.paragraphSpacingDp
-            )
+        val layoutKey = MarkdownLayoutKey(
+            node, textColor, primaryColor,
+            FontSizes(bodyMediumSize, headlineLargeSize, headlineMediumSize, headlineSmallSize,
+                titleLargeSize, titleMediumSize, titleSmallSize),
+            normalTypeface, boldTypeface, localDensity.density, localDensity.fontScale,
+            availableWidthPx, isLastNode, textLayoutSettings.lineHeightMultiplier,
+            textLayoutSettings.letterSpacingSp, textLayoutSettings.paragraphSpacingDp,
+        )
+        // A collapsed body leaves composition. Keep completed text layouts across re-expansion;
+        // live tail versions remain local so token updates cannot evict the transcript cache.
+        val layoutResult = remember(layoutKey) {
+            val useCache = nodeKey.startsWith("static-node-")
+            (if (useCache) CompletedMarkdownLayoutCache.get(layoutKey) else null)
+                ?: calculateLayout(
+                    node = node,
+                    textColor = textColor,
+                    primaryColor = primaryColor,
+                    bodyMediumSize = bodyMediumSize,
+                    headlineLargeSize = headlineLargeSize,
+                    headlineMediumSize = headlineMediumSize,
+                    headlineSmallSize = headlineSmallSize,
+                    titleLargeSize = titleLargeSize,
+                    titleMediumSize = titleMediumSize,
+                    titleSmallSize = titleSmallSize,
+                    normalTypeface = normalTypeface,
+                    boldTypeface = boldTypeface,
+                    density = localDensity,
+                    availableWidthPx = availableWidthPx,
+                    isLastNode = isLastNode,
+                    globalLineHeightMultiplier = textLayoutSettings.lineHeightMultiplier,
+                    globalLetterSpacingSp = textLayoutSettings.letterSpacingSp,
+                    globalParagraphSpacingDp = textLayoutSettings.paragraphSpacingDp,
+                ).also { if (useCache) CompletedMarkdownLayoutCache.put(layoutKey, it) }
         }
 
         val revealInstruction = layoutResult.instructions.filterIsInstance<DrawInstruction.TextLayout>().singleOrNull()
@@ -939,14 +981,6 @@ private fun UnifiedCanvasRenderer(
             }
         }
 
-        val revealValue = if (shouldAnimateTypewriter) revealAnim.value else targetLength.toFloat()
-        val baseLen = floor(revealValue).toInt().coerceIn(0, targetLength)
-        val partial = if (shouldAnimateTypewriter) {
-            (revealValue - baseLen.toFloat()).coerceIn(0f, 1f)
-        } else {
-            1f
-        }
-        
         // 提取文本内容用于无障碍朗读
         val accessibleText = remember(layoutResult.instructions) {
             extractAccessibleText(layoutResult.instructions)
@@ -1040,6 +1074,14 @@ private fun UnifiedCanvasRenderer(
                     }
                 }
             ) {
+        val revealValue = if (shouldAnimateTypewriter) revealAnim.value else targetLength.toFloat()
+        val baseLen = floor(revealValue).toInt().coerceIn(0, targetLength)
+        val partial = if (shouldAnimateTypewriter) {
+            (revealValue - baseLen.toFloat()).coerceIn(0f, 1f)
+        } else {
+            1f
+        }
+
                 drawIntoCanvas { canvas ->
                     // 获取可见区域（屏幕内区域）
                     val clipBounds = android.graphics.Rect()
