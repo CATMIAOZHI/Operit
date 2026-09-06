@@ -1451,21 +1451,34 @@ class MessageProcessingDelegate(
                             val autoReadJob =
                                 autoReadStream?.let { stream ->
                                     launch {
-                                        stream.collect { char ->
-                                            autoReadBuffer.append(char)
-                                            tryFlushAutoRead()
+                                        try {
+                                            stream.collect { char ->
+                                                autoReadBuffer.append(char)
+                                                tryFlushAutoRead()
+                                            }
+                                        } catch (e: kotlinx.coroutines.CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            // The primary collector reports the turn failure.
+                                            AppLogger.d(TAG, "自动朗读流结束: ${e.message}")
                                         }
                                     }
                                 }
                             val waifuSegmentsJob =
                                 if (isWaifuModeEnabled) {
                                     launch {
-                                        WaifuMessageProcessor.streamSegmentsWithTypingQueue(
-                                            sourceStream = sharedCharStream,
-                                            removePunctuation = waifuRemovePunctuation,
-                                            charDelayMs = waifuCharDelay
-                                        ).collect { segment ->
-                                            emitWaifuSegment(segment)
+                                        try {
+                                            WaifuMessageProcessor.streamSegmentsWithTypingQueue(
+                                                sourceStream = sharedCharStream,
+                                                removePunctuation = waifuRemovePunctuation,
+                                                charDelayMs = waifuCharDelay
+                                            ).collect { segment ->
+                                                emitWaifuSegment(segment)
+                                            }
+                                        } catch (e: kotlinx.coroutines.CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            AppLogger.d(TAG, "Waifu 展示流结束: ${e.message}")
                                         }
                                     }
                                 } else {
@@ -1542,7 +1555,9 @@ class MessageProcessingDelegate(
                             if (!streamCollectionResult.isCompleted) {
                                 streamCollectionResult.complete(t)
                             }
-                            throw t
+                            // The sending coroutine awaits this result and owns failure reporting
+                            // and partial-message persistence. Do not also crash this launch.
+                            if (t is kotlinx.coroutines.CancellationException) throw t
                         } finally {
                             if (!streamCollectionResult.isCompleted) {
                                 streamCollectionResult.complete(null)

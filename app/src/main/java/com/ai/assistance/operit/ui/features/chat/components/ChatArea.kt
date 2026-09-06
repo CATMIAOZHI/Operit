@@ -319,10 +319,17 @@ fun ChatArea(
         val stream = lastMessage?.contentStream
 
         if (!lastAiMessageHasStaticContent && shouldAwaitFirstChunk && stream != null) {
-            stream.collect { chunk ->
-                if (!hasLastAiMessageStartedStreaming && chunk.isNotEmpty()) {
-                    hasLastAiMessageStartedStreaming = true
+            try {
+                stream.collect { chunk ->
+                    if (!hasLastAiMessageStartedStreaming && chunk.isNotEmpty()) {
+                        hasLastAiMessageStartedStreaming = true
+                    }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // This observer only controls the placeholder. The sending service reports
+                // errors and persists partial content; a failed turn must not crash Compose.
             }
         }
     }

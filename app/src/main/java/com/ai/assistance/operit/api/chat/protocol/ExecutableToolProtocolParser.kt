@@ -1715,6 +1715,21 @@ internal object ExecutableToolProtocolParser {
                     fenceLength = 0
                     parameterEnd = -1
                 }
+                // Providers escape the reasoning body and own its envelope. Markdown inside
+                // that body must not open a fence spanning the following native tool calls.
+                // Keep the envelope visible to the markup scanner, which still excludes its
+                // contents from execution. Never reinterpret envelopes inside code or parameters.
+                if (fenceLength == 0 && parameterEnd < 0 &&
+                    content.startsWith(ChatUtils.PROVIDER_REASONING_OPEN_TAG, index)
+                ) {
+                    val bodyStart = index + ChatUtils.PROVIDER_REASONING_OPEN_TAG.length
+                    val bodyEnd = content.indexOf("</think>", bodyStart)
+                        .takeIf { it >= 0 } ?: content.length
+                    mask.fill(true, bodyStart, bodyEnd)
+                    index = bodyEnd
+                    atStartOfLine = false
+                    continue
+                }
                 if (fenceLength == 0 && parameterEnd < 0 && content[index] == '<') {
                     if (content.startsWith("</", index)) {
                         val closeEnd = content.indexOf('>', index + 2)
