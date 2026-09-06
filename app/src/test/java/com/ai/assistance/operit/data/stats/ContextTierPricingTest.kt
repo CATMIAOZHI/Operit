@@ -9,12 +9,23 @@ import com.ai.assistance.operit.data.pricing.PricingCatalogJson
 import org.junit.Assert.*
 import org.junit.Test
 
-internal fun installStatsTestCatalog(tiers: List<ContextPriceTier> = emptyList()) {
+internal fun installStatsTestCatalog(
+    tiers: List<ContextPriceTier> = emptyList(),
+    legacyTiers: List<ContextPriceTier> = emptyList(),
+) {
     DefaultModelPricingCollect.installCatalog(PricingCatalogDocument(
         1, "test-defaults", "2026-09-06T00:00:00Z",
         listOf(PricingCatalogEntry("openai", "openai/gpt-4o-2024-11-20", "TOKEN", "USD",
-            1.5, 1.5, null, 6.0, null, emptyList(), null, null, tiers)),
+            1.5, 1.5, null, 6.0, null, emptyList(), null, null, tiers),
+            PricingCatalogEntry("deepseek", "deepseek/deepseek-chat", "TOKEN", "CNY",
+                1.0, 0.02, null, 2.0, null, emptyList(), null, null, legacyTiers)),
     ))
+}
+
+internal fun clearStatsTestCatalog() {
+    DefaultModelPricingCollect.installCatalog(
+        PricingCatalogDocument(1, "empty-test-catalog", "2026-09-06T00:00:00Z", emptyList())
+    )
 }
 
 class ContextTierPricingTest {

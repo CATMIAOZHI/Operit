@@ -307,6 +307,9 @@ object TokenBaselineImportRunner {
             overrides = emptyList(),
             legacyOverride = snapshot.providerModels[providerModel]?.priceSettings,
             defaults = DefaultModelPricingCollect.getDefaultPricing(providerModel),
+            // Lifetime totals cannot identify the context length of individual requests.
+            contextInputTokens = null,
+            selectContextTier = true,
         )
     }
 }
