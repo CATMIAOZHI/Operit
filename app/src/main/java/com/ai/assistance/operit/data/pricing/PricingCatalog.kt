@@ -34,6 +34,16 @@ data class PricingCatalogEntry(
     val aliases: List<String>,
     val sourceUrl: String?,
     val verifiedAt: String?,
+    val contextTiers: List<ContextPriceTier> = emptyList(),
+)
+
+@Serializable
+data class ContextPriceTier(
+    val minInputTokens: Long,
+    val input: Double,
+    val output: Double,
+    val cacheRead: Double?,
+    val cacheWrite: Double?,
 )
 
 object PricingCatalogJson {
@@ -43,6 +53,7 @@ object PricingCatalogJson {
         ignoreUnknownKeys = false
         isLenient = false
         explicitNulls = true
+        encodeDefaults = true
         coerceInputValues = false
     }
 
@@ -60,7 +71,7 @@ object PricingCatalogJson {
                 "provider", "model", "billingMode", "currency", "input", "cacheRead",
                 "cacheWrite", "output", "perRequest", "aliases", "sourceUrl", "verifiedAt",
             )
-            require(keys == expected) { "entry[$index] has unexpected or missing fields" }
+            require(keys - "contextTiers" == expected) { "entry[$index] has unexpected or missing fields" }
         }
         val document = strict.decodeFromString<PricingCatalogDocument>(raw)
         validate(document)
@@ -104,6 +115,14 @@ object PricingCatalogJson {
                         "entry[$index] contains an invalid price"
                     }
                 }
+            require(entry.contextTiers.map { it.minInputTokens }.distinct().size == entry.contextTiers.size) {
+                "entry[$index] has duplicate context thresholds"
+            }
+            entry.contextTiers.forEach { tier ->
+                require(entry.billingMode == "TOKEN" && tier.minInputTokens >= 0)
+                require(listOf(tier.input, tier.output, tier.cacheRead, tier.cacheWrite)
+                    .all { it == null || (it.isFinite() && it >= 0) })
+            }
             if (entry.billingMode == BillingMode.COUNT.name) {
                 require(entry.input == null && entry.cacheRead == null && entry.cacheWrite == null && entry.output == null) {
                     "COUNT entries cannot contain token prices"
@@ -146,6 +165,7 @@ object PricingCatalogJson {
             hasCachedInputPrice = entry.cacheRead != null,
             hasOutputPrice = entry.output != null,
             hasPricePerRequest = entry.perRequest != null,
+            contextTiers = entry.contextTiers,
         )
     }
 }

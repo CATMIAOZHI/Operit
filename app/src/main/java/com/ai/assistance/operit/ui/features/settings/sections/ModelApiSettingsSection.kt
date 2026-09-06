@@ -155,6 +155,10 @@ fun ModelApiSettingsSection(
         remember(context.applicationContext) {
             OfficialModelCapabilitiesRepository(context.applicationContext)
         }
+    val multimodalCatalogUpdatedAt by officialModelCapabilitiesRepository.updatedAt.collectAsState()
+    LaunchedEffect(officialModelCapabilitiesRepository) {
+        officialModelCapabilitiesRepository.loadCatalog()
+    }
     var isSyncingMultimodalCapabilities by remember(config.id) { mutableStateOf(false) }
     var isRefreshingMultimodalCatalog by remember(config.id) { mutableStateOf(false) }
     var multimodalSyncJob by remember(config.id) { mutableStateOf<Job?>(null) }
@@ -899,6 +903,17 @@ fun ModelApiSettingsSection(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(stringResource(R.string.model_multimodal_catalog_refresh))
                 }
+                Text(
+                    text = multimodalCatalogUpdatedAt?.let {
+                        stringResource(
+                            R.string.model_multimodal_catalog_updated_at,
+                            android.text.format.DateFormat.getDateFormat(context).format(java.util.Date(it)) +
+                                " " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(it)),
+                        )
+                    } ?: stringResource(R.string.model_multimodal_catalog_bundled),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (configuredModels.isEmpty()) {
                     Text(
                         text = stringResource(R.string.model_multimodal_capabilities_no_models),

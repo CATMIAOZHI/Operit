@@ -58,6 +58,7 @@ class TokenStatsQueryServiceRoomTest {
 
     @Before
     fun setUp() {
+        installStatsTestCatalog()
         tempDir = kotlin.io.path.createTempDirectory("query-service-test").toFile()
         context = mockContext(tempDir)
         recordingDriver = RecordingSQLiteDriver()

@@ -699,7 +699,7 @@ object TokenStatsAggregator {
         params: TokenStatsQueryParams,
     ): Pair<Double?, PricingCurrency> =
         if (params.mode == TokenStatsCostMode.REVALUED) {
-            val resolved = identity?.let { pricing.pricingFor(it) }
+            val resolved = identity?.let { pricing.pricingFor(it, event) }
             if (resolved == null || !resolved.known) {
                 null to parseCurrency(event.pricingCurrency)
             } else {
@@ -855,14 +855,18 @@ object TokenStatsAggregator {
         private val legacyPrices: Map<String, LegacyPriceSettings?>,
         private val params: TokenStatsQueryParams,
     ) {
-        private val cache = HashMap<String, ResolvedPricing>()
+        private val cache = HashMap<Pair<String, Long?>, ResolvedPricing>()
 
-        fun pricingFor(identity: TokenStatIdentityEntity): ResolvedPricing? {
+        fun pricingFor(identity: TokenStatIdentityEntity, event: TokenStatEventEntity): ResolvedPricing? {
             if (params.mode != TokenStatsCostMode.REVALUED) return null
-            return cache.getOrPut(identity.identityId) { resolveCurrent(identity) }
+            val attempts = event.diagnosticsJson?.let {
+                runCatching { org.json.JSONObject(it).optInt("attemptCount", 1) }.getOrDefault(1)
+            } ?: 1
+            val contextTokens = TokenCostCalculator.contextInputTokens(event.toUsageInput(), attempts)
+            return cache.getOrPut(identity.identityId to contextTokens) { resolveCurrent(identity, contextTokens) }
         }
 
-        private fun resolveCurrent(identity: TokenStatIdentityEntity): ResolvedPricing {
+        private fun resolveCurrent(identity: TokenStatIdentityEntity, contextTokens: Long?): ResolvedPricing {
             val providerModel = identity.providerModel
             return TokenPriceResolver.resolve(
                 provider = identity.provider,
@@ -871,6 +875,8 @@ object TokenStatsAggregator {
                 overrides = overrides,
                 legacyOverride = legacyPrices[providerModel],
                 defaults = DefaultModelPricingCollect.getDefaultPricing(providerModel),
+                contextInputTokens = contextTokens,
+                selectContextTier = true,
             )
         }
     }
@@ -896,7 +902,7 @@ object TokenStatsAggregator {
     ): TokenStatsPricingInfo? {
         if (latestEvent == null) return null
         return if (params.mode == TokenStatsCostMode.REVALUED) {
-            pricing.pricingFor(identity)?.toPricingInfo()
+            pricing.pricingFor(identity, latestEvent)?.toPricingInfo()
         } else {
             TokenStatsPricingInfo(
                 billingMode = BillingMode.fromString(latestEvent.billingMode),
