@@ -22,6 +22,8 @@ import org.junit.Test
  */
 class TokenStatsAggregatorTest {
 
+    @org.junit.Before fun installCatalog() = installStatsTestCatalog()
+
     private val shanghai = ZoneId.of("Asia/Shanghai")
     private val params = TokenStatsQueryParams()
 
@@ -140,6 +142,30 @@ class TokenStatsAggregatorTest {
             zone = shanghai,
             params = params,
         ).summary
+
+    @Test
+    fun `same model events revalue at their own tier and retries stay unknown`() {
+        installStatsTestCatalog(listOf(
+            com.ai.assistance.operit.data.pricing.ContextPriceTier(200_000, 3.0, 12.0, 3.0, null)
+        ))
+        val model = identity("id", provider = "custom-proxy", model = "gpt-4o-2024-11-20")
+        val events = listOf(
+            event("low", "id", 1000, uncached = 100_000, output = 0, cost = 0.1),
+            event("high", "id", 2000, uncached = 300_000, output = 0, cost = 0.2),
+            event("retry", "id", 3000, uncached = 300_000, output = 0, cost = 0.3)
+                .copy(diagnosticsJson = """{"attemptCount":2}"""),
+        )
+        fun totals(mode: TokenStatsCostMode) = TokenStatsAggregator.lifetime(
+            events, emptyList(), mapOf("id" to model), emptyList(), emptyMap(),
+            params.copy(mode = mode),
+        ).eventTotals
+        val current = totals(TokenStatsCostMode.REVALUED)
+        assertEquals((0.15 + 0.9) * 7, current.cost.knownAmount, 1e-9)
+        assertFalse(current.cost.isFullyKnown)
+        val historical = totals(TokenStatsCostMode.HISTORICAL)
+        assertEquals(0.6 * 7, historical.cost.knownAmount, 1e-9)
+        assertTrue(historical.cost.isFullyKnown)
+    }
 
     @Test
     fun `reasoning aggregate counts only separately billed reasoning`() {

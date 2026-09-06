@@ -138,7 +138,8 @@ fun TokenStatsManagementScreen(initialPricingTab: Boolean = false) {
                     onSave = viewModel::savePriceOverride,
                     onResetConfig = viewModel::resetPrice,
                     onRestoreBuiltIn = viewModel::restoreBuiltInPrice,
-                    onRefreshCatalog = { ModelPricingCatalogRepository.refresh(force = true) },
+                    onRefreshCatalog = { ModelPricingCatalogRepository.refresh() },
+                    onApplyCatalog = { ModelPricingCatalogRepository.applyDownloaded() },
                 )
             }
         }
@@ -406,6 +407,7 @@ private fun PricingManagementTab(
     onResetConfig: (TokenStatPriceOverrideEntity) -> Unit,
     onRestoreBuiltIn: (TokenStatPriceOverrideEntity?, String?) -> Unit,
     onRefreshCatalog: () -> Unit,
+    onApplyCatalog: () -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var selectedProvider by rememberSaveable { mutableStateOf<String?>(null) }
@@ -441,19 +443,25 @@ private fun PricingManagementTab(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        PricingCatalogStatusCard(catalogState, onRefreshCatalog)
-        SearchField(
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item(key = "catalog") { PricingCatalogStatusCard(catalogState, onRefreshCatalog, onApplyCatalog) }
+        item(key = "search") { SearchField(
             value = query,
             onValueChange = { query = it },
             placeholder = stringResource(R.string.token_stats_pricing_search_hint),
         )
-        ProviderDropdown(
+        }
+        item(key = "provider") { ProviderDropdown(
             providers = providers,
             selected = selectedProvider,
             onSelect = { selectedProvider = it },
         )
-        Row(
+        }
+        item(key = "filters") { Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -475,23 +483,19 @@ private fun PricingManagementTab(
                 )
             }
         }
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
+        }
             items(visible, key = { "${it.provider}:${it.model}" }) { option ->
-                PricingModelCard(
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) { PricingModelCard(
                     option = option,
                     overrides = overrides,
+                    pricingRevision = catalogState?.revision,
                     onEdit = { existing, draft -> editor = PricingEditor(existing, draft) },
                     onResetConfig = { resetConfigTarget = it },
                     onRestoreBuiltIn = { override, legacyKey ->
                         restoreBuiltInTarget = override to legacyKey
                     },
-                )
+                ) }
             }
-        }
     }
 
     editor?.let { target ->
@@ -545,6 +549,7 @@ private fun PricingManagementTab(
 private fun PricingModelCard(
     option: TokenStatsPricingModelOption,
     overrides: List<TokenStatPriceOverrideEntity>,
+    pricingRevision: String?,
     onEdit: (TokenStatPriceOverrideEntity?, TokenStatsPriceOverrideDraft) -> Unit,
     onResetConfig: (TokenStatPriceOverrideEntity) -> Unit,
     onRestoreBuiltIn: (TokenStatPriceOverrideEntity?, String?) -> Unit,
@@ -553,7 +558,12 @@ private fun PricingModelCard(
         it.scope == PriceOverrideScope.PROVIDER_MODEL.name &&
             it.provider.equals(option.provider, true) && it.model.equals(option.model, true)
     }
-    val providerDraft = providerDraftFor(option, overrides)
+    val providerDraft = remember(option, overrides, pricingRevision) {
+        providerDraftFor(option, overrides)
+    }
+    val hasContextTiers = remember(option.provider, option.model, pricingRevision) {
+        DefaultModelPricingCollect.getDefaultPricing("${option.provider}:${option.model}").contextTiers.isNotEmpty()
+    }
     val providerSourceRes = when {
         providerOverride != null -> R.string.token_stats_pricing_source_override
         option.legacyPricing != null -> R.string.token_stats_pricing_source_legacy
@@ -569,6 +579,13 @@ private fun PricingModelCard(
             }
 
             HorizontalDivider()
+            if (hasContextTiers) {
+                Text(
+                    stringResource(R.string.token_stats_pricing_context_tiers),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TokenStatsCardMuted,
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -904,68 +921,67 @@ internal fun mergePricingDraft(
 private fun PricingCatalogStatusCard(
     state: PricingCatalogState?,
     onRefresh: () -> Unit,
+    onApply: () -> Unit,
 ) {
-    TokenStatsWhiteCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val busy = state == null || state.refreshing || state.applying
+    TokenStatsWhiteCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.token_stats_pricing_catalog_title), fontWeight = FontWeight.Bold)
                     Text(
-                        text = stringResource(R.string.token_stats_pricing_catalog_title),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = stringResource(
-                            if (state == null) {
-                                R.string.token_stats_pricing_catalog_loading
-                            } else if (state.source == PricingCatalogSource.CACHED_REMOTE) {
-                                R.string.token_stats_pricing_catalog_remote
-                            } else {
-                                R.string.token_stats_pricing_catalog_bundled
-                            }
-                        ),
+                        stringResource(when {
+                            state == null -> R.string.token_stats_pricing_catalog_loading
+                            state.refreshing -> R.string.token_stats_pricing_catalog_downloading
+                            state.applying -> R.string.token_stats_pricing_catalog_applying
+                            state.source == PricingCatalogSource.APPLIED_REMOTE -> R.string.token_stats_pricing_catalog_remote
+                            else -> R.string.token_stats_pricing_catalog_bundled
+                        }),
                         style = MaterialTheme.typography.bodySmall,
-                        color = LocalTokenStatsColors.current.chartAccent,
+                        color = TokenStatsCardMuted,
                     )
                 }
-                if (state == null || state.refreshing) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                } else {
-                    TextButton(onClick = onRefresh) {
-                        Text(stringResource(R.string.token_stats_pricing_catalog_refresh))
+                IconButton(onClick = { expanded = !expanded }) {
+                    Icon(
+                        if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        stringResource(R.string.token_stats_pricing_catalog_details),
+                    )
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onRefresh, enabled = !busy) {
+                    Text(stringResource(R.string.token_stats_pricing_catalog_refresh))
+                }
+                TextButton(onClick = onApply, enabled = state?.canApply == true) {
+                    Text(stringResource(
+                        if (state?.source == PricingCatalogSource.APPLIED_REMOTE &&
+                            state.downloadedRevision == state.revision) R.string.token_stats_pricing_catalog_applied
+                        else R.string.token_stats_pricing_catalog_apply
+                    ))
+                }
+            }
+            androidx.compose.animation.AnimatedVisibility(visible = expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(stringResource(R.string.token_stats_pricing_catalog_hint), style = MaterialTheme.typography.bodySmall)
+                    state?.let { loaded ->
+                        Text(stringResource(R.string.token_stats_pricing_catalog_revision, loaded.revision,
+                            loaded.generatedAt.substringBefore('T')), style = MaterialTheme.typography.bodySmall)
+                        loaded.downloadedRevision?.let {
+                            Text(stringResource(R.string.token_stats_pricing_catalog_downloaded, it,
+                                loaded.downloadedGeneratedAt.orEmpty().substringBefore('T')),
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text(loaded.lastCheckedAt?.let {
+                            stringResource(R.string.token_stats_pricing_catalog_checked, formatCatalogCheckedAt(it))
+                        } ?: stringResource(R.string.token_stats_pricing_catalog_not_checked),
+                            style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
-            state?.let { loaded ->
-                Text(
-                    text = stringResource(
-                        R.string.token_stats_pricing_catalog_revision,
-                        loaded.revision,
-                        loaded.generatedAt.substringBefore('T'),
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TokenStatsCardMuted,
-                )
-                Text(
-                    text = loaded.lastCheckedAt?.let {
-                        stringResource(
-                            R.string.token_stats_pricing_catalog_checked,
-                            formatCatalogCheckedAt(it),
-                        )
-                    } ?: stringResource(R.string.token_stats_pricing_catalog_not_checked),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TokenStatsCardMuted,
-                )
-                loaded.lastError?.let { error ->
-                    Text(
-                        text = stringResource(R.string.token_stats_pricing_catalog_refresh_failed, error),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
+            state?.lastError?.let {
+                Text(stringResource(R.string.token_stats_pricing_catalog_refresh_failed, it),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
         }
     }

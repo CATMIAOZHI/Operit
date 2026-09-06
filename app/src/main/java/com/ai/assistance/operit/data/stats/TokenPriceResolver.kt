@@ -101,6 +101,8 @@ object TokenPriceResolver {
         overrides: List<TokenStatPriceOverrideEntity>,
         legacyOverride: LegacyPriceSettings?,
         defaults: ModelPricingDefaults,
+        contextInputTokens: Long? = null,
+        selectContextTier: Boolean = false,
     ): ResolvedPricing {
         val canonicalProvider = TokenStatIdentityResolver.normalizeProvider(provider)
         val canonicalModel = TokenStatIdentityResolver.normalizeModelName(model)
@@ -119,7 +121,9 @@ object TokenPriceResolver {
                 it.configId.trim() == canonicalConfigId
         } else null
 
-        var pricing = MutablePricing.fromDefaults(defaults)
+        var pricing = MutablePricing.fromDefaults(
+            if (selectContextTier) defaults.forContext(contextInputTokens) else defaults
+        )
         var source = if (pricing.baseKnown) PricingSource.DEFAULT else PricingSource.UNKNOWN
         if (legacyOverride != null && legacyOverride.hasAnyUserSetting()) {
             pricing.applyLegacy(legacyOverride)

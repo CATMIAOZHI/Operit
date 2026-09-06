@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,9 +27,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.util.concurrent.TimeUnit
 
-enum class PricingCatalogSource { BUNDLED, CACHED_REMOTE }
+enum class PricingCatalogSource { BUNDLED, APPLIED_REMOTE }
 
 data class PricingCatalogState(
     val source: PricingCatalogSource,
@@ -37,7 +39,14 @@ data class PricingCatalogState(
     val lastCheckedAt: Long?,
     val refreshing: Boolean,
     val lastError: String?,
-)
+    val downloadedRevision: String? = null,
+    val downloadedGeneratedAt: String? = null,
+    val applying: Boolean = false,
+) {
+    val canApply: Boolean
+        get() = !refreshing && !applying && downloadedRevision != null &&
+            (source != PricingCatalogSource.APPLIED_REMOTE || downloadedRevision != revision)
+}
 
 typealias ModelPricingCatalogStatus = PricingCatalogState
 
@@ -50,19 +59,23 @@ class PricingCatalogRepository(
     private val httpClient: OkHttpClient = defaultHttpClient(),
     private val nowMillis: () -> Long = { System.currentTimeMillis() },
     private val remoteUrl: String = defaultRemoteUrl(),
+    private val cacheWriter: (File, ByteArray) -> Unit = ::writeAtomically,
+    private val modelsUrl: String = ModelsDevPricingCatalog.MODELS_URL,
+    private val pricesUrl: String = ModelsDevPricingCatalog.PRICES_URL,
 ) {
     companion object {
         const val MAIN_REMOTE_URL =
             "https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/main/" +
-                "app/src/main/assets/pricing/model_pricing_v1.json"
+                "app/src/main/assets/pricing/official_model_pricing_v1.json"
         const val DEV_REMOTE_URL =
             "https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/dev/" +
-                "app/src/main/assets/pricing/model_pricing_v1.json"
-        const val TTL_MILLIS = 24L * 60L * 60L * 1000L
+                "app/src/main/assets/pricing/official_model_pricing_v1.json"
         const val MAX_RESPONSE_BYTES = 1024 * 1024
+        private const val MAX_SOURCE_BYTES = 8 * 1024 * 1024
         private const val CACHE_DIR = "operit/pricing"
-        private const val CACHE_FILE = "model_pricing_v1.json"
-        private const val BUNDLED_PATH = "pricing/model_pricing_v1.json"
+        private const val CACHE_FILE = "official_model_pricing_v1.json"
+        private const val APPLIED_FILE = "applied_official_model_pricing_v1.json"
+        private const val BUNDLED_PATH = "pricing/official_model_pricing_v1.json"
 
         private fun defaultHttpClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
@@ -76,14 +89,28 @@ class PricingCatalogRepository(
 
         private fun defaultRemoteUrl(): String =
             remoteUrlFor(BuildConfig.PERSONAL_DEV_UPDATE_CHANNEL)
+
+        private fun writeAtomically(file: File, bytes: ByteArray) {
+            file.parentFile?.mkdirs()
+            val atomic = AtomicFile(file)
+            val stream = atomic.startWrite()
+            try {
+                stream.write(bytes)
+                atomic.finishWrite(stream)
+            } catch (error: Throwable) {
+                atomic.failWrite(stream)
+                throw error
+            }
+        }
     }
 
     private val lock = Mutex()
+    private var downloadedDocument: PricingCatalogDocument? = null
     private val stateMutable = MutableStateFlow(loadInitial())
     val state: StateFlow<PricingCatalogState> = stateMutable.asStateFlow()
     @Volatile
     private var snapshotMutable: PricingCatalogDocument = currentDocument
-    private var refreshJob: Job? = null
+    private var operationJob: Job? = null
 
     init {
         install(snapshotMutable)
@@ -92,42 +119,39 @@ class PricingCatalogRepository(
     val snapshot: PricingCatalogDocument
         get() = snapshotMutable
 
-    fun refreshIfStale(scope: CoroutineScope): Job? {
-        val checked = stateMutable.value.lastCheckedAt
-        if (checked != null && nowMillis() - checked < TTL_MILLIS) return null
-        return refresh(scope, force = false)
-    }
+    fun refresh(scope: CoroutineScope): Job = startOperation(scope, apply = false)
 
-    /** Coalesces startup and manual refreshes into one active download. */
+    fun applyDownloaded(scope: CoroutineScope): Job = startOperation(scope, apply = true)
+
+    /** A click cannot apply a different download while an operation is still running. */
     @Synchronized
-    fun refresh(scope: CoroutineScope, force: Boolean = false): Job {
-        refreshJob?.takeIf { it.isActive }?.let { return it }
-        val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) { refreshNow(force) }
-        refreshJob = job
+    private fun startOperation(scope: CoroutineScope, apply: Boolean): Job {
+        operationJob?.takeIf { it.isActive }?.let { return it }
+        val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            if (apply) applyNow() else refreshNow()
+        }
+        operationJob = job
         job.invokeOnCompletion {
             synchronized(this) {
-                if (refreshJob === job) refreshJob = null
+                if (operationJob === job) operationJob = null
             }
         }
         job.start()
         return job
     }
 
-    private suspend fun refreshNow(force: Boolean) {
+    private suspend fun refreshNow() {
         lock.withLock {
             val current = stateMutable.value
-            if (!force && current.lastCheckedAt != null && nowMillis() - current.lastCheckedAt < TTL_MILLIS) {
-                return
-            }
             stateMutable.value = current.copy(refreshing = true, lastError = null)
             try {
                 val document = fetchRemote()
-                writeCache(document)
-                install(document)
-                stateMutable.value = PricingCatalogState(
-                    source = PricingCatalogSource.CACHED_REMOTE,
-                    revision = document.revision,
-                    generatedAt = document.generatedAt,
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                writeCache(cacheFile(), document)
+                downloadedDocument = document
+                stateMutable.value = current.copy(
+                    downloadedRevision = document.revision,
+                    downloadedGeneratedAt = document.generatedAt,
                     lastCheckedAt = nowMillis(),
                     refreshing = false,
                     lastError = null,
@@ -146,13 +170,54 @@ class PricingCatalogRepository(
         }
     }
 
+    private suspend fun applyNow() {
+        lock.withLock {
+            val current = stateMutable.value
+            if (!current.canApply) return
+            val document = downloadedDocument ?: return
+            stateMutable.value = current.copy(applying = true, lastError = null)
+            try {
+                // Persist only the explicitly selected snapshot, independently of future downloads.
+                writeCache(appliedFile(), document)
+                install(document)
+                stateMutable.value = current.copy(
+                    source = PricingCatalogSource.APPLIED_REMOTE,
+                    revision = document.revision,
+                    generatedAt = document.generatedAt,
+                    applying = false,
+                    lastError = null,
+                )
+            } catch (error: CancellationException) {
+                stateMutable.value = current.copy(applying = false)
+                throw error
+            } catch (error: Exception) {
+                stateMutable.value = current.copy(applying = false, lastError = error.message ?: error.javaClass.simpleName)
+            }
+        }
+    }
+
     private suspend fun fetchRemote(): PricingCatalogDocument = withContext(Dispatchers.IO) {
-        val request = Request.Builder().url(remoteUrl).get().build()
+        try {
+            val models = fetchJson(modelsUrl, MAX_SOURCE_BYTES)
+            val prices = fetchJson(pricesUrl, MAX_SOURCE_BYTES)
+            val sources = context.assets.open(ModelsDevPricingCatalog.SOURCES_ASSET).use {
+                it.readBytes().toString(Charsets.UTF_8)
+            }
+            ModelsDevPricingCatalog.build(models, prices, sources)
+        } catch (error: InterruptedIOException) {
+            // Timeout of either live source falls back to one complete repository snapshot.
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            PricingCatalogJson.parse(fetchJson(remoteUrl, MAX_RESPONSE_BYTES))
+        }
+    }
+
+    private fun fetchJson(url: String, maxBytes: Int): String {
+        val request = Request.Builder().url(url).get().build()
         httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("pricing catalog HTTP ${response.code}")
             val body = response.body ?: throw IOException("pricing catalog has no response body")
-            if (body.contentLength() > MAX_RESPONSE_BYTES) {
-                throw IOException("pricing catalog response exceeds $MAX_RESPONSE_BYTES bytes")
+            if (body.contentLength() > maxBytes) {
+                throw IOException("pricing catalog response exceeds $maxBytes bytes")
             }
             val bytes = body.byteStream().use { input ->
                 val output = java.io.ByteArrayOutputStream()
@@ -162,27 +227,31 @@ class PricingCatalogRepository(
                     val count = input.read(buffer)
                     if (count < 0) break
                     total += count
-                    if (total > MAX_RESPONSE_BYTES) throw IOException("pricing catalog response too large")
+                    if (total > maxBytes) throw IOException("pricing catalog response too large")
                     output.write(buffer, 0, count)
                 }
                 output.toByteArray()
             }
-            PricingCatalogJson.parse(bytes.toString(Charsets.UTF_8))
+            return bytes.toString(Charsets.UTF_8)
         }
     }
 
     private fun loadInitial(): PricingCatalogState {
         val bundled = loadBundled()
-        val cached = runCatching { readCache() }.getOrNull()
-        val selected = cached ?: bundled
+        // Only the official-price files can enter this index; old channel prices stay separate.
+        downloadedDocument = runCatching { readCache(cacheFile()) }.getOrNull()
+        val applied = runCatching { readCache(appliedFile()) }.getOrNull()
+        val selected = applied ?: bundled
         currentDocument = selected
         return PricingCatalogState(
-            source = if (cached != null) PricingCatalogSource.CACHED_REMOTE else PricingCatalogSource.BUNDLED,
+            source = if (applied != null) PricingCatalogSource.APPLIED_REMOTE else PricingCatalogSource.BUNDLED,
             revision = selected.revision,
             generatedAt = selected.generatedAt,
-            lastCheckedAt = if (cached != null) cacheLastModified() else null,
+            lastCheckedAt = if (downloadedDocument != null) cacheLastModified() else null,
             refreshing = false,
             lastError = null,
+            downloadedRevision = downloadedDocument?.revision,
+            downloadedGeneratedAt = downloadedDocument?.generatedAt,
         )
     }
 
@@ -193,29 +262,19 @@ class PricingCatalogRepository(
     }
 
     private fun cacheFile(): File = File(context.noBackupFilesDir, "$CACHE_DIR/$CACHE_FILE")
+    private fun appliedFile(): File = File(context.noBackupFilesDir, "$CACHE_DIR/$APPLIED_FILE")
 
     private fun cacheLastModified(): Long? = cacheFile().takeIf { it.isFile }?.lastModified()
 
-    private fun readCache(): PricingCatalogDocument {
-        val file = cacheFile()
+    private fun readCache(file: File): PricingCatalogDocument {
         require(file.length() <= MAX_RESPONSE_BYTES) { "pricing cache is too large" }
         return PricingCatalogJson.parse(file.readText(Charsets.UTF_8))
     }
 
-    private fun writeCache(document: PricingCatalogDocument) {
-        val file = cacheFile()
-        file.parentFile?.mkdirs()
-        val atomic = AtomicFile(file)
+    private fun writeCache(file: File, document: PricingCatalogDocument) {
         val bytes = PricingCatalogJson.strict.encodeToString(PricingCatalogDocument.serializer(), document)
         require(bytes.toByteArray(Charsets.UTF_8).size <= MAX_RESPONSE_BYTES) { "pricing catalog is too large" }
-        val stream = atomic.startWrite()
-        try {
-            stream.write(bytes.toByteArray(Charsets.UTF_8))
-            atomic.finishWrite(stream)
-        } catch (error: Throwable) {
-            atomic.failWrite(stream)
-            throw error
-        }
+        cacheWriter(file, bytes.toByteArray(Charsets.UTF_8))
     }
 
     private fun install(document: PricingCatalogDocument) {
@@ -229,12 +288,11 @@ object PricingCatalogRuntime {
     private val repositoryMutable = MutableStateFlow<PricingCatalogRepository?>(null)
     val repositoryState: StateFlow<PricingCatalogRepository?> = repositoryMutable.asStateFlow()
 
-    fun initialize(context: Context, scope: CoroutineScope): PricingCatalogRepository {
+    fun initialize(context: Context): PricingCatalogRepository {
         return repository ?: synchronized(this) {
             repository ?: PricingCatalogRepository(context.applicationContext).also {
                 repository = it
                 repositoryMutable.value = it
-                it.refreshIfStale(scope)
             }
         }
     }
@@ -252,12 +310,14 @@ object ModelPricingCatalogRepository {
         .stateIn(scope, SharingStarted.Eagerly, null)
 
     fun getInstance(context: Context): PricingCatalogRepository =
-        PricingCatalogRuntime.initialize(context, scope)
+        PricingCatalogRuntime.initialize(context)
 
     val snapshot: PricingCatalogDocument
         get() = requireNotNull(PricingCatalogRuntime.get()) {
             "ModelPricingCatalogRepository is not initialized"
         }.snapshot
 
-    fun refresh(force: Boolean = true): Job? = PricingCatalogRuntime.get()?.refresh(scope, force)
+    fun refresh(): Job? = PricingCatalogRuntime.get()?.refresh(scope)
+
+    fun applyDownloaded(): Job? = PricingCatalogRuntime.get()?.applyDownloaded(scope)
 }
