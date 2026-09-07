@@ -31,7 +31,7 @@
     <string name="pet_dock_hint">气泡始终朝屏幕内侧：贴上边时在下方，贴下边时在上方。拖动时暂时隐藏气泡，松手后恢复。</string>
     <string name="pet_size_value">宠物大小：%1$d%%</string>
     <string name="pet_transparency_value">透明度：%1$d%%</string>
-    <string name="pet_builtin_name">内置 · 水晴喵</string>
+    <string name="pet_builtin_name">内置 · Rainy</string>
     <string name="pet_library_count">我的宠物（%1$d）</string>
     <string name="pet_library_item">%1$d · %2$s</string>
     <string name="pet_create">新增宠物配置</string>
@@ -45,7 +45,7 @@
     <string name="pet_animation_files">配置动画文件</string>
     <string name="pet_collapse_animation_files">收起动画配置</string>
     <string name="pet_animation_files_hint">先配置休息动画，其余状态可选；未配置的状态使用休息动画。打招呼播放一次后返回当前状态。</string>
-    <string name="pet_codex_pack_hint">整套导入 Codex v2 宠物包，状态动画由图集提供。清除后使用内置水晴喵。</string>
+    <string name="pet_codex_pack_hint">整套导入 Codex v2 宠物包，状态动画由图集提供。清除后使用内置 Rainy。</string>
     <string name="pet_choose_file">选择文件</string>
     <string name="pet_clear_animation">清除此动画文件</string>
     <string name="pet_idle_required">请先选择休息动画文件</string>
