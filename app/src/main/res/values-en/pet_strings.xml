@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="pet_title">Pet companion</string>
-    <string name="pet_description">Drag and release to snap your pet to the nearest screen edge. Tap your pet to show or hide task bubbles, or tap a bubble for actions. The cross-app overlay hides when you return to Operit.</string>
+    <string name="pet_description">Drag and release to dock at the nearest screen edge. Tap your pet to show or hide its bubble and open floating chat. The overlay pet hides when you return to the app.</string>
     <string name="pet_in_app">Show inside the app</string>
     <string name="pet_overlay">Show over other apps</string>
     <string name="pet_animation">Animate pet</string>

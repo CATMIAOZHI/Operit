@@ -221,7 +221,7 @@ class PetCompanionService : Service() {
         val settings = preferences.settings.value
         viewport = availableBounds()
         val petSize = settings.sizeDp * density
-        val hasBubble = model.visibleTasks.value.isNotEmpty() && settings.showBubble && !dragging
+        val hasBubble = settings.showBubble && !dragging
         placement = placePet(
             viewport.first, viewport.second,
             petWidth(viewport.first, petSize, PET_BUBBLE_WIDTH_DP * density, settings.edge, hasBubble),

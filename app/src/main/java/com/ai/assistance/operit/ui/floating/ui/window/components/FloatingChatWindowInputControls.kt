@@ -99,6 +99,10 @@ private fun BottomInputBar(
     // 检测 AI 是否正在处理消息 - 使用 chatService 的 isLoading 状态
     val isProcessing = floatContext.chatService?.getChatCore()?.isLoading?.collectAsState()?.value ?: false
     
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { AIForegroundService.setWakeListeningSuspendedForIme(context, false) }
+    }
+
     // 监听焦点状态变化，通知服务更新窗口焦点
     LaunchedEffect(isInputFocused) {
         floatContext.onInputFocusRequest?.invoke(isInputFocused)
@@ -108,7 +112,7 @@ private fun BottomInputBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 6.dp, vertical = 4.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         // 附件列表
         if (floatContext.attachments.isNotEmpty()) {
@@ -140,7 +144,7 @@ private fun BottomInputBar(
                 placeholder = {
                     Text(
                         text = stringResource(R.string.chat_input_hint),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp)
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 },
                 modifier = Modifier
@@ -149,18 +153,14 @@ private fun BottomInputBar(
                     .onFocusChanged { focusState ->
                         isInputFocused = focusState.isFocused
                     },
-                textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                maxLines = 2,
+                textStyle = MaterialTheme.typography.bodyMedium,
+                maxLines = 4,
                 singleLine = false,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(
                     onSend = {
                         when {
-                            isProcessing -> {
-                                // 与右侧“取消”按钮行为保持一致：取消生成，不清空当前输入
-                                floatContext.onCancelMessage?.invoke()
-                            }
-                            hasContent || floatContext.attachments.isNotEmpty() -> {
+                            !isProcessing && (hasContent || floatContext.attachments.isNotEmpty()) -> {
                                 floatContext.onSendMessage?.invoke(
                                     floatContext.userMessage,
                                     PromptFunctionType.CHAT
@@ -185,7 +185,7 @@ private fun BottomInputBar(
             // 附件按钮 (+)
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .background(
                         if (floatContext.showAttachmentPanel)
@@ -217,7 +217,7 @@ private fun BottomInputBar(
             // 发送/取消按钮
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .background(
                         when {

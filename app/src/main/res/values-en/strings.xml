@@ -8717,4 +8717,18 @@
     <string name="tool_errors_next">Next</string>
     <string name="tool_errors_page">%1$d / %2$d</string>
     <string name="tool_errors_close">Close</string>
+    <string name="pet_drag_animation">Sway while dragging</string>
+    <string name="pet_ready_to_chat">What’s on your mind?</string>
+    <string name="pet_open_floating">Open floating chat</string>
+    <string name="floating_drag_hint">Drag title to move window</string>
+    <string name="floating_more_actions">More actions</string>
+    <string name="floating_compact">Switch to compact window</string>
+    <string name="floating_voice_mode">Voice conversation</string>
+    <string name="floating_empty_title">Start a conversation</string>
+    <string name="floating_empty_body">Ask a question or attach your screen, files, and more.</string>
+    <string name="floating_resize_hint">Drag to resize window</string>
+    <string name="floating_return_to_text">Back to text chat</string>
+    <string name="floating_voice_answering">Responding…</string>
+    <string name="floating_voice_starting">Starting voice chat…</string>
+    <string name="screen_ocr_capturing">Capturing screen…</string>
 </resources>

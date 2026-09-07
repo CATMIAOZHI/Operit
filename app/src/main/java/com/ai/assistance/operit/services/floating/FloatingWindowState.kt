@@ -20,8 +20,8 @@ class FloatingWindowState(context: Context) {
     // Window size
     val windowWidth = mutableStateOf(300.dp)
     val windowHeight = mutableStateOf(400.dp)
-    val windowScale = mutableStateOf(0.8f)
-    var lastWindowScale: Float = 0.8f
+    val windowScale = mutableStateOf(1f)
+    var lastWindowScale: Float = 1f
 
     // Mode state
     val currentMode = mutableStateOf(FloatingMode.WINDOW)
@@ -59,7 +59,7 @@ class FloatingWindowState(context: Context) {
             putInt("window_y", y)
             putFloat(
                 "window_width",
-                windowWidth.value.value.coerceIn(200f, screenWidthDp.value * 0.8f)
+                windowWidth.value.value.coerceIn(minOf(300f, screenWidthDp.value - 16f), screenWidthDp.value - 16f)
             )
             putFloat(
                 "window_height",
@@ -79,11 +79,11 @@ class FloatingWindowState(context: Context) {
         x = prefs.getInt("window_x", defaultX)
         y = prefs.getInt("window_y", defaultY)
 
-        val defaultWidth = (screenWidthDp.value * 0.8f).coerceAtLeast(200f)
+        val defaultWidth = (screenWidthDp.value - 16f).coerceAtLeast(200f)
         val defaultHeight = (screenHeightDp.value * 0.5f).coerceAtLeast(250f)
         val storedWidth = prefs.getFloat("window_width", defaultWidth)
         val storedHeight = prefs.getFloat("window_height", defaultHeight)
-        windowWidth.value = storedWidth.coerceIn(200f, screenWidthDp.value * 0.8f).dp
+        windowWidth.value = storedWidth.coerceIn(minOf(300f, screenWidthDp.value - 16f), screenWidthDp.value - 16f).dp
         windowHeight.value = storedHeight.coerceIn(250f, screenHeightDp.value * 0.8f).dp
 
         val modeName = prefs.getString("current_mode", FloatingMode.WINDOW.name)
@@ -100,9 +100,7 @@ class FloatingWindowState(context: Context) {
             FloatingMode.WINDOW
         }
 
-        val storedScale = prefs.getFloat("window_scale", 0.8f)
-        val storedLastScale = prefs.getFloat("last_window_scale", 0.8f)
-        windowScale.value = storedScale.coerceIn(0.3f, 1.0f)
-        lastWindowScale = storedLastScale.coerceIn(0.3f, 1.0f)
+        windowScale.value = 1f
+        lastWindowScale = 1f
     }
 }

@@ -9,6 +9,7 @@ data class PetSettings(
     val inApp: Boolean = false,
     val overlay: Boolean = false,
     val animated: Boolean = true,
+    val dragAnimation: Boolean = true,
     val x: Float = 0f,
     val y: Float = 0.55f,
     val sizeDp: Float = 80f,

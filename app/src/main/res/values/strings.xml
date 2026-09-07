@@ -8698,4 +8698,18 @@
     <string name="tool_errors_next">下一页</string>
     <string name="tool_errors_page">%1$d / %2$d</string>
     <string name="tool_errors_close">关闭</string>
+    <string name="pet_drag_animation">拖动时轻盈摆动</string>
+    <string name="pet_ready_to_chat">想聊点什么？</string>
+    <string name="pet_open_floating">打开悬浮聊天</string>
+    <string name="floating_drag_hint">拖动标题移动窗口</string>
+    <string name="floating_more_actions">更多操作</string>
+    <string name="floating_compact">切换为小窗</string>
+    <string name="floating_voice_mode">语音对话</string>
+    <string name="floating_empty_title">随时聊一聊</string>
+    <string name="floating_empty_body">输入问题，或添加屏幕、文件等内容。</string>
+    <string name="floating_resize_hint">拖动调整窗口大小</string>
+    <string name="floating_return_to_text">返回文字对话</string>
+    <string name="floating_voice_answering">正在回答…</string>
+    <string name="floating_voice_starting">正在启动语音…</string>
+    <string name="screen_ocr_capturing">正在截取屏幕…</string>
 </resources>

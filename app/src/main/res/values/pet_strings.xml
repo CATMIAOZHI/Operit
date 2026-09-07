@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="pet_title">宠物陪伴</string>
-    <string name="pet_description">拖动后松手，宠物会吸附到最近的屏幕边缘；点击宠物显示或隐藏任务气泡，点击气泡展开操作。返回应用时会自动隐藏跨应用悬浮层。</string>
+    <string name="pet_description">拖动后松手，宠物会吸附到最近的屏幕边缘。点击宠物显示或隐藏气泡，可从气泡打开悬浮聊天。返回应用时会自动隐藏跨应用宠物。</string>
     <string name="pet_in_app">在应用内显示</string>
     <string name="pet_overlay">在其他应用上方显示</string>
     <string name="pet_animation">播放宠物动画</string>

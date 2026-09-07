@@ -3,6 +3,8 @@ package com.ai.assistance.operit.data.model
 import android.os.Parcelable
 import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import com.ai.assistance.operit.ui.theme.rainyBaseColorScheme
 import kotlinx.parcelize.Parcelize
 
 @Parcelize
@@ -73,7 +75,7 @@ fun ColorScheme.toSerializable(): SerializableColorScheme {
 }
 
 fun SerializableColorScheme.toComposeColorScheme(): ColorScheme {
-    return ColorScheme(
+    return rainyBaseColorScheme(Color(this.surface.toULong()).luminance() < 0.5f).copy(
         primary = Color(this.primary.toULong()),
         onPrimary = Color(this.onPrimary.toULong()),
         primaryContainer = Color(this.primaryContainer.toULong()),
