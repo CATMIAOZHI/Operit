@@ -209,7 +209,7 @@ fun AiMessageComposable(
                 // 共享相同的state，避免重新计算nodes等状态
                 StreamMarkdownRenderer(
                     content = message.content,
-                    collapseCompletedProcess = collapseCompletedProcess && enableDialogs,
+                    collapseCompletedProcess = collapseCompletedProcess,
                     responseDurationMs = (message.waitDurationMs + message.outputDurationMs).coerceAtLeast(0L),
                     textColor = textColor,
                     backgroundColor = backgroundColor,

@@ -25,6 +25,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -62,24 +63,20 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import io.github.fletchmckee.liquid.liquefiable
 import io.github.fletchmckee.liquid.rememberLiquidState
 
+// Overlay hosts can suspend media while retaining their conversation composition.
+val LocalBackgroundPlaybackEnabled = staticCompositionLocalOf { true }
+
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
-fun OperitTheme(content: @Composable () -> Unit) {
+fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Unit) {
     val context = LocalContext.current
     val preferencesManager = remember { UserPreferencesManager.getInstance(context) }
     val coroutineScope = rememberCoroutineScope()
 
-    // 获取主题设置
-    val useSystemTheme by preferencesManager.useSystemTheme.collectAsState(initial = true)
-    val themeMode by
-            preferencesManager.themeMode.collectAsState(
-                    initial = UserPreferencesManager.THEME_MODE_LIGHT
-            )
-    val useCustomColors by preferencesManager.useCustomColors.collectAsState(initial = false)
-    val customPrimaryColor by preferencesManager.customPrimaryColor.collectAsState(initial = null)
-    val customSecondaryColor by
-            preferencesManager.customSecondaryColor.collectAsState(initial = null)
-    val onColorMode by preferencesManager.onColorMode.collectAsState(initial = ON_COLOR_MODE_AUTO)
+    val appThemeStyle = rememberAppThemeStyle()
+    val colorScheme = appThemeStyle.colorScheme
+    val customTypography = appThemeStyle.typography
+    val darkTheme = appThemeStyle.darkTheme
 
     // 获取背景图片设置
     val useBackgroundImage by preferencesManager.useBackgroundImage.collectAsState(initial = false)
@@ -110,53 +107,8 @@ fun OperitTheme(content: @Composable () -> Unit) {
     val useBackgroundBlur by preferencesManager.useBackgroundBlur.collectAsState(initial = false)
     val backgroundBlurRadius by preferencesManager.backgroundBlurRadius.collectAsState(initial = 10f)
 
-    // 获取字体设置
-    val useCustomFont by preferencesManager.useCustomFont.collectAsState(initial = false)
-    val fontType by preferencesManager.fontType.collectAsState(initial = UserPreferencesManager.FONT_TYPE_SYSTEM)
-    val systemFontName by preferencesManager.systemFontName.collectAsState(initial = UserPreferencesManager.SYSTEM_FONT_DEFAULT)
-    val customFontPath by preferencesManager.customFontPath.collectAsState(initial = null)
-    val fontScale by preferencesManager.fontScale.collectAsState(initial = 1.0f)
-
-    // 创建自定义 Typography
-    val customTypography = remember(useCustomFont, fontType, systemFontName, customFontPath, fontScale) {
-        createCustomTypography(
-            context = context,
-            useCustomFont = useCustomFont,
-            fontType = fontType,
-            systemFontName = systemFontName,
-            customFontPath = customFontPath,
-            fontScale = fontScale
-        )
-    }
-
-    // 确定是否使用暗色主题
-    val systemDarkTheme = isSystemInDarkTheme()
-    val darkTheme =
-            if (useSystemTheme) {
-                systemDarkTheme
-            } else {
-                themeMode == UserPreferencesManager.THEME_MODE_DARK
-            }
-
-    // Rainy is the product default. System settings only choose light or dark mode.
-    var colorScheme = rainyBaseColorScheme(darkTheme)
-
-    // 应用自定义颜色和文本颜色
-    if (useCustomColors) {
-        customPrimaryColor?.let { primaryArgb ->
-            val primary = Color(primaryArgb)
-            val secondary = customSecondaryColor?.let { Color(it) } ?: colorScheme.secondary
-
-            colorScheme = if (darkTheme) {
-                generateDarkColorScheme(primary, secondary, onColorMode)
-                    } else {
-                generateLightColorScheme(primary, secondary, onColorMode)
-                    }
-        }
-    }
-
     val view = LocalView.current
-    if (!view.isInEditMode) {
+    if (updateSystemBars && !view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
             val insetsController = window.decorView.let { decorView ->
@@ -251,7 +203,7 @@ fun OperitTheme(content: @Composable () -> Unit) {
                                         else Player.REPEAT_MODE_OFF
                                 // 设置静音
                                 volume = if (videoBackgroundMuted) 0f else 1f
-                                playWhenReady = true
+                                playWhenReady = false
 
                                 // 加载视频
                                 try {
@@ -280,7 +232,7 @@ fun OperitTheme(content: @Composable () -> Unit) {
             }
 
     // 释放ExoPlayer资源
-    DisposableEffect(key1 = Unit) { 
+    DisposableEffect(exoPlayer) {
         onDispose { 
             try {
                 exoPlayer?.stop()
@@ -292,24 +244,22 @@ fun OperitTheme(content: @Composable () -> Unit) {
         } 
     }
 
-    // 监听应用生命周期，控制视频播放
+    // Visibility and lifecycle both own playback; a hidden overlay keeps its composition.
+    val backgroundPlaybackEnabled = LocalBackgroundPlaybackEnabled.current
     if (exoPlayer != null) {
         val lifecycleOwner = LocalLifecycleOwner.current
-        DisposableEffect(lifecycleOwner) {
-            val observer = LifecycleEventObserver { _, event ->
-                when (event) {
-                    Lifecycle.Event.ON_PAUSE -> {
-                        exoPlayer.pause()
-                    }
-                    Lifecycle.Event.ON_RESUME -> {
-                        exoPlayer.play()
-                    }
-                    else -> {}
-                }
+        DisposableEffect(lifecycleOwner, exoPlayer, backgroundPlaybackEnabled) {
+            fun updatePlayback() {
+                exoPlayer.playWhenReady = backgroundPlaybackEnabled &&
+                    lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
             }
-
+            val observer = LifecycleEventObserver { _, _ -> updatePlayback() }
             lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            updatePlayback()
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+                exoPlayer.pause()
+            }
         }
     }
 
@@ -500,7 +450,7 @@ fun OperitTheme(content: @Composable () -> Unit) {
 }
 
 /** 为亮色主题生成基于主色的完整颜色方案 */
-private fun generateLightColorScheme(
+internal fun generateLightColorScheme(
         primaryColor: Color,
     secondaryColor: Color,
     onColorMode: String
@@ -539,7 +489,7 @@ private fun generateLightColorScheme(
 }
 
 /** 为暗色主题生成基于主色的完整颜色方案 */
-private fun generateDarkColorScheme(
+internal fun generateDarkColorScheme(
         primaryColor: Color,
     secondaryColor: Color,
     onColorMode: String

@@ -18,11 +18,13 @@ import com.ai.assistance.operit.ui.theme.rainyBaseColorScheme
 fun FloatingWindowTheme(
     colorScheme: ColorScheme? = null,
     typography: Typography? = null,
+    followAppTheme: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val finalColorScheme = colorScheme ?: rainyBaseColorScheme(darkTheme = androidx.compose.foundation.isSystemInDarkTheme())
+    val appStyle = if (followAppTheme) com.ai.assistance.operit.ui.theme.rememberAppThemeStyle() else null
+    val finalColorScheme = appStyle?.colorScheme ?: colorScheme ?: rainyBaseColorScheme(darkTheme = androidx.compose.foundation.isSystemInDarkTheme())
     
-    val finalTypography = typography ?: com.ai.assistance.operit.ui.theme.Typography
+    val finalTypography = appStyle?.typography ?: typography ?: com.ai.assistance.operit.ui.theme.Typography
 
     MaterialTheme(
         colorScheme = finalColorScheme,

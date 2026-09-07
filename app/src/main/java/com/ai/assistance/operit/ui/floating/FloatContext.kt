@@ -181,7 +181,7 @@ class FloatContext(
     val transitionFeedback = Animatable(0f)
 
     // 大小调整相关状态
-    var isEdgeResizing: Boolean = false
+    var isEdgeResizing by mutableStateOf(false)
     var activeEdge: ResizeEdge = ResizeEdge.NONE
     var initialWindowWidth: Float = 0f
     var initialWindowHeight: Float = 0f

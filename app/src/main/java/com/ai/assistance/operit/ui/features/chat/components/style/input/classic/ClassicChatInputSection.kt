@@ -1,5 +1,9 @@
 package com.ai.assistance.operit.ui.features.chat.components.style.input.classic
 
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerShape
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerColor
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerTextStyle
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -158,7 +162,7 @@ fun ClassicChatInputSection(
             }
         )
     }
-    val modernTextStyle = TextStyle(fontSize = 13.sp, lineHeight = 16.sp)
+    val modernTextStyle = chatComposerTextStyle(agent = false)
     val mentionVisualTransformation = rememberMentionVisualTransformation(modernTextStyle)
     val colorScheme = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography
@@ -237,11 +241,7 @@ fun ClassicChatInputSection(
         setShowAttachmentPanel(false)
     }
 
-    val surfaceColor = when {
-        chatInputTransparent -> MaterialTheme.colorScheme.surface.copy(alpha = 0f)
-        hasBackgroundImage -> MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
-        else -> MaterialTheme.colorScheme.surface
-    }
+    val surfaceColor = chatComposerColor(false, chatInputTransparent, hasBackgroundImage)
     val queueContainerColor = when {
         chatInputTransparent -> MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
         else -> surfaceColor
@@ -255,7 +255,7 @@ fun ClassicChatInputSection(
         chatInputTransparent && chatInputLiquidGlass && !chatInputWaterGlass && isLiquidGlassSupported()
     val inputWaterGlassEnabled =
         chatInputTransparent && chatInputWaterGlass && isWaterGlassSupported()
-    val containerShape = if (chatInputFloating) RoundedCornerShape(22.dp) else RoundedCornerShape(0.dp)
+    val containerShape = chatComposerShape(agent = false, floating = chatInputFloating)
     val containerModifier =
         if (chatInputFloating) {
             modifier.padding(horizontal = 8.dp, vertical = 6.dp)

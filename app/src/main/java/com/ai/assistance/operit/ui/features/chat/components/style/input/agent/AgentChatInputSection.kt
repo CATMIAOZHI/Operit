@@ -1,5 +1,9 @@
 package com.ai.assistance.operit.ui.features.chat.components.style.input.agent
 
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerShape
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerColor
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerTextStyle
+
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -363,7 +367,7 @@ fun AgentChatInputSection(
         },
     )
 
-    val inputTextStyle = TextStyle(fontSize = 14.sp, lineHeight = 20.sp)
+    val inputTextStyle = chatComposerTextStyle(agent = true)
     val mentionVisualTransformation = rememberMentionVisualTransformation(inputTextStyle)
     val colorScheme = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography
@@ -562,14 +566,7 @@ fun AgentChatInputSection(
             0.08f,
         )
 
-    val inputContainerColor =
-        when {
-            chatInputTransparent -> Color.Transparent
-            isDarkTheme && hasBackgroundImage -> darkModeInputColor.copy(alpha = 0.82f)
-            isDarkTheme -> darkModeInputColor
-            hasBackgroundImage -> MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
-            else -> MaterialTheme.colorScheme.surface
-        }
+    val inputContainerColor = chatComposerColor(true, chatInputTransparent, hasBackgroundImage)
     val popupContainerColor =
         when {
             isDarkTheme && chatInputTransparent -> darkModeInputColor
@@ -810,12 +807,7 @@ fun AgentChatInputSection(
                 }
             }
 
-            val inputCardShape =
-                if (chatInputFloating) {
-                    RoundedCornerShape(22.dp)
-                } else {
-                    RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
-                }
+            val inputCardShape = chatComposerShape(agent = true, floating = chatInputFloating)
             val inputLiquidGlassEnabled =
                 chatInputTransparent && chatInputLiquidGlass && !chatInputWaterGlass && isLiquidGlassSupported()
             val inputWaterGlassEnabled =

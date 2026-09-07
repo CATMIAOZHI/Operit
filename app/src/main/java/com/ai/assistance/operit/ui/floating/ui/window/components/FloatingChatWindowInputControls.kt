@@ -1,5 +1,19 @@
 package com.ai.assistance.operit.ui.floating.ui.window.components
 
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.ui.draw.shadow
+import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerShape
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerColor
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerTextStyle
+import com.ai.assistance.operit.ui.theme.liquidGlass
+import com.ai.assistance.operit.ui.theme.waterGlass
+import com.ai.assistance.operit.ui.theme.isLiquidGlassSupported
+import com.ai.assistance.operit.ui.theme.isWaterGlassSupported
+
+
 import android.annotation.SuppressLint
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -90,172 +104,150 @@ private fun BottomInputBar(
     viewModel: FloatingChatWindowModeViewModel
 ) {
     val context = LocalContext.current
+    val preferences = remember(context) { UserPreferencesManager.getInstance(context) }
+    val inputStyle by preferences.inputStyle.collectAsState(initial = UserPreferencesManager.INPUT_STYLE_CLASSIC)
+    val floating by preferences.chatInputFloating.collectAsState(initial = true)
+    val transparent by preferences.chatInputTransparent.collectAsState(initial = false)
+    val liquid by preferences.chatInputLiquidGlass.collectAsState(initial = false)
+    val water by preferences.chatInputWaterGlass.collectAsState(initial = false)
+    val useBackgroundImage by preferences.useBackgroundImage.collectAsState(initial = false)
+    val backgroundImageUri by preferences.backgroundImageUri.collectAsState(initial = null)
+    val agent = inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT
+    val liquidEnabled = transparent && liquid && !water && isLiquidGlassSupported()
+    val waterEnabled = transparent && water && isWaterGlassSupported()
+    val shape = chatComposerShape(agent, floating)
+    val surface = chatComposerColor(agent, transparent, useBackgroundImage && backgroundImageUri != null)
+    val textStyle = chatComposerTextStyle(agent)
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
-    val focusRequester = remember { FocusRequester() }
-    val hasContent = floatContext.userMessage.isNotBlank()
     var isInputFocused by remember { mutableStateOf(false) }
-    
-    // 检测 AI 是否正在处理消息 - 使用 chatService 的 isLoading 状态
+    val hasContent = floatContext.userMessage.isNotBlank() || floatContext.attachments.isNotEmpty()
     val isProcessing = floatContext.chatService?.getChatCore()?.isLoading?.collectAsState()?.value ?: false
-    
+
+    fun releaseFocus() {
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+        floatContext.onInputFocusRequest?.invoke(false)
+    }
+    fun send() {
+        if (isProcessing || !hasContent) return
+        floatContext.onSendMessage?.invoke(floatContext.userMessage, PromptFunctionType.CHAT)
+        floatContext.userMessage = ""
+        floatContext.showAttachmentPanel = false
+        releaseFocus()
+    }
     androidx.compose.runtime.DisposableEffect(Unit) {
         onDispose { AIForegroundService.setWakeListeningSuspendedForIme(context, false) }
     }
-
-    // 监听焦点状态变化，通知服务更新窗口焦点
     LaunchedEffect(isInputFocused) {
         floatContext.onInputFocusRequest?.invoke(isInputFocused)
         AIForegroundService.setWakeListeningSuspendedForIme(context, isInputFocused)
     }
 
+    @Composable
+    fun InputField(modifier: Modifier) {
+        val fieldShape = RoundedCornerShape(14.dp)
+        BasicTextField(
+            value = floatContext.userMessage,
+            onValueChange = { floatContext.userMessage = it },
+            modifier = modifier.heightIn(min = 44.dp)
+                .onFocusChanged { isInputFocused = it.isFocused },
+            textStyle = textStyle.copy(color = MaterialTheme.colorScheme.onSurface),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+            maxLines = if (agent) 6 else 4,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            keyboardActions = KeyboardActions(onSend = { send() }),
+            decorationBox = { inner ->
+                Box(
+                    Modifier.fillMaxWidth()
+                        .then(if (agent) Modifier else Modifier.border(
+                            1.dp,
+                            MaterialTheme.colorScheme.outline.copy(alpha = if (hasContent) 1f else 0.72f),
+                            fieldShape,
+                        ))
+                        .clip(fieldShape)
+                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (floatContext.userMessage.isEmpty()) {
+                        Text(stringResource(R.string.input_question_hint), style = textStyle,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    inner()
+                }
+            },
+        )
+    }
+    @Composable
+    fun AttachmentButton() {
+        IconButton(onClick = {
+            releaseFocus()
+            viewModel.toggleAttachmentPanel()
+        }, modifier = Modifier.size(48.dp).clip(CircleShape).background(
+            if (floatContext.showAttachmentPanel) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+        )) {
+            Icon(Icons.Default.Add, stringResource(R.string.floating_add_attachment),
+                tint = if (floatContext.showAttachmentPanel) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(22.dp))
+        }
+    }
+    @Composable
+    fun SendButton() {
+        IconButton(onClick = {
+            when {
+                isProcessing -> floatContext.onCancelMessage?.invoke()
+                hasContent -> send()
+                else -> {
+                    releaseFocus()
+                    floatContext.voiceAutoTimeout = false
+                    floatContext.voiceMode = true
+                    floatContext.onModeChange(FloatingMode.FULLSCREEN)
+                }
+            }
+        }, modifier = Modifier.size(48.dp).clip(CircleShape).background(
+            if (isProcessing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+        )) {
+            Icon(
+                if (isProcessing) Icons.Default.Close else if (hasContent) Icons.Default.Send else Icons.Default.Mic,
+                stringResource(if (isProcessing) R.string.floating_cancel else if (hasContent)
+                    R.string.floating_send else R.string.floating_voice_mode),
+                tint = if (isProcessing) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(24.dp),
+            )
+        }
+    }
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+        Modifier.fillMaxWidth()
+            .padding(horizontal = if (floating) 8.dp else 0.dp, vertical = if (floating) 6.dp else 0.dp)
+            .then(if (floating && !liquidEnabled && !waterEnabled) Modifier.shadow(4.dp, shape) else Modifier)
+            .waterGlass(enabled = waterEnabled, shape = shape, containerColor = MaterialTheme.colorScheme.surface)
+            .liquidGlass(enabled = liquidEnabled, shape = shape, containerColor = MaterialTheme.colorScheme.surface)
+            .clip(shape).background(if (liquidEnabled || waterEnabled) Color.Transparent else surface)
+            .padding(horizontal = if (agent) 12.dp else 14.dp, vertical = 6.dp),
     ) {
-        // 附件列表
         if (floatContext.attachments.isNotEmpty()) {
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 3.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                items(floatContext.attachments) { attachmentInfo ->
-                    AttachmentChip(
-                        attachmentInfo = attachmentInfo,
-                        onInsert = {},
-                        onRemove = { floatContext.onRemoveAttachment?.invoke(attachmentInfo.filePath) }
-                    )
+            LazyRow(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(floatContext.attachments) { attachment ->
+                    AttachmentChip(attachmentInfo = attachment, onInsert = {},
+                        onRemove = { floatContext.onRemoveAttachment?.invoke(attachment.filePath) })
                 }
             }
         }
-        
-        // 输入栏（参考 ChatInputSection 的布局）
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // 输入框
-            OutlinedTextField(
-                value = floatContext.userMessage,
-                onValueChange = { floatContext.userMessage = it },
-                placeholder = {
-                    Text(
-                        text = stringResource(R.string.chat_input_hint),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                },
-                modifier = Modifier
-                    .weight(1f)
-                    .focusRequester(focusRequester)
-                    .onFocusChanged { focusState ->
-                        isInputFocused = focusState.isFocused
-                    },
-                textStyle = MaterialTheme.typography.bodyMedium,
-                maxLines = 4,
-                singleLine = false,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(
-                    onSend = {
-                        when {
-                            !isProcessing && (hasContent || floatContext.attachments.isNotEmpty()) -> {
-                                floatContext.onSendMessage?.invoke(
-                                    floatContext.userMessage,
-                                    PromptFunctionType.CHAT
-                                )
-                                floatContext.userMessage = ""
-                                floatContext.showAttachmentPanel = false
-                                focusManager.clearFocus()
-                                keyboardController?.hide()
-                            }
-                        }
-                    }
-                ),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                ),
-                shape = RoundedCornerShape(12.dp)
-            )
-            
-            Spacer(modifier = Modifier.width(8.dp))
-            
-            // 附件按钮 (+)
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (floatContext.showAttachmentPanel)
-                            MaterialTheme.colorScheme.primary
-                        else
-                            MaterialTheme.colorScheme.surfaceVariant
-                    )
-                    .clickable {
-                        focusManager.clearFocus(force = true)
-                        keyboardController?.hide()
-                        floatContext.onInputFocusRequest?.invoke(false)
-                        viewModel.toggleAttachmentPanel()
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = stringResource(R.string.floating_add_attachment),
-                    tint = if (floatContext.showAttachmentPanel)
-                        MaterialTheme.colorScheme.onPrimary
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
+        if (agent) {
+            InputField(Modifier.fillMaxWidth())
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                AttachmentButton()
+                Spacer(Modifier.weight(1f))
+                SendButton()
             }
-            
-            Spacer(modifier = Modifier.width(8.dp))
-            
-            // 发送/取消按钮
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(
-                        when {
-                            isProcessing -> MaterialTheme.colorScheme.error
-                            hasContent || floatContext.attachments.isNotEmpty() -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.surfaceVariant
-                        }
-                    )
-                    .clickable(
-                        enabled = isProcessing || hasContent || floatContext.attachments.isNotEmpty()
-                    ) {
-                        when {
-                            isProcessing -> {
-                                // 取消当前消息处理
-                                floatContext.onCancelMessage?.invoke()
-                            }
-                            else -> {
-                                // 发送消息
-                                floatContext.onSendMessage?.invoke(floatContext.userMessage, PromptFunctionType.CHAT)
-                                floatContext.userMessage = ""
-                                floatContext.showAttachmentPanel = false
-                                focusManager.clearFocus()
-                                keyboardController?.hide()
-                            }
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = if (isProcessing) Icons.Default.Close else Icons.Default.Send,
-                    contentDescription = if (isProcessing) stringResource(R.string.floating_cancel) else stringResource(R.string.floating_send),
-                    tint = when {
-                        isProcessing -> MaterialTheme.colorScheme.onError
-                        hasContent || floatContext.attachments.isNotEmpty() -> MaterialTheme.colorScheme.onPrimary
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    modifier = Modifier.size(16.dp)
-                )
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                InputField(Modifier.weight(1f))
+                AttachmentButton()
+                SendButton()
             }
         }
     }

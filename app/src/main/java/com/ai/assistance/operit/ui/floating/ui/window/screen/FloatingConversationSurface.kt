@@ -10,6 +10,9 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -58,18 +61,17 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
         floatContext.onModeChange(mode)
     }
 
-    LaunchedEffect(floatContext.windowWidthState, floatContext.windowHeightState, floatContext.windowScale) {
-        viewModel.syncWindowState()
-    }
     Surface(
         modifier = Modifier.fillMaxSize(),
         shape = if (fullscreen) RoundedCornerShape(0.dp) else RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface,
+        color = MaterialTheme.colorScheme.background,
         shadowElevation = if (fullscreen) 0.dp else 8.dp,
         border = if (fullscreen) null else androidx.compose.foundation.BorderStroke(
             1.dp, MaterialTheme.colorScheme.outlineVariant
         ),
     ) {
+        // Reuse the main background and glass backdrop without touching an Activity window.
+        com.ai.assistance.operit.ui.theme.OperitTheme(updateSystemBars = false) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {
                 Row(
@@ -171,6 +173,11 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                ResizeStableChatViewport(
+                    resizing = floatContext.isEdgeResizing,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                ) {
+                Column(Modifier.fillMaxSize()) {
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     if (floatContext.messages.isEmpty()) {
                         Column(
@@ -191,26 +198,49 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                 }
                 ProcessingStatusIndicator(floatContext)
                 FloatingChatWindowInputControls(floatContext, viewModel)
+                }
+                }
                 if (!fullscreen) {
                     Box(
                         Modifier.fillMaxWidth().height(24.dp)
                             .semantics { contentDescription = resizeHint }
                             .pointerInput(density, configuration.screenWidthDp, configuration.screenHeightDp) {
-                                detectDragGestures(
-                                    onDragEnd = { floatContext.saveWindowState?.invoke() },
-                                    onDragCancel = { floatContext.saveWindowState?.invoke() },
-                                ) { change, amount ->
-                                    change.consume()
-                                    with(density) {
-                                        floatContext.onResize(
-                                            (floatContext.windowWidthState + amount.x.toDp()).coerceIn(
+                                var width = 0.dp
+                                var height = 0.dp
+                                try {
+                                    detectDragGestures(
+                                        onDragStart = {
+                                            width = floatContext.windowWidthState
+                                            height = floatContext.windowHeightState
+                                            floatContext.isEdgeResizing = true
+                                        },
+                                        onDragEnd = {
+                                            floatContext.saveWindowState?.invoke()
+                                            floatContext.isEdgeResizing = false
+                                        },
+                                        onDragCancel = {
+                                            floatContext.saveWindowState?.invoke()
+                                            floatContext.isEdgeResizing = false
+                                        },
+                                    ) { change, amount ->
+                                        change.consume()
+                                        with(density) {
+                                            // Accumulate locally: composition may not yet contain the
+                                            // last frame's size when the next touch event arrives.
+                                            width = (width + amount.x.toDp()).coerceIn(
                                                 minOf(300.dp, (configuration.screenWidthDp - 16).dp),
                                                 (configuration.screenWidthDp - 16).dp,
-                                            ),
-                                            (floatContext.windowHeightState + amount.y.toDp()).coerceIn(
+                                            )
+                                            height = (height + amount.y.toDp()).coerceIn(
                                                 300.dp, maxOf(300.dp, (configuration.screenHeightDp * 0.8f).dp)
-                                            ),
-                                        )
+                                            )
+                                            floatContext.onResize(width, height)
+                                        }
+                                    }
+                                } finally {
+                                    if (floatContext.isEdgeResizing) {
+                                        floatContext.saveWindowState?.invoke()
+                                        floatContext.isEdgeResizing = false
                                     }
                                 }
                             },
@@ -223,6 +253,25 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                 }
             }
             RecentChatSelectorOverlay(floatContext, history) { history = false }
+        }
+        }
+    }
+}
+
+/** Keep paragraph/table measurement stable during a drag; reflow once at the final size. */
+@Composable
+private fun ResizeStableChatViewport(
+    resizing: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val measuredConstraints = remember { arrayOfNulls<Constraints>(1) }
+    Layout(content = content, modifier = modifier.clipToBounds()) { measurables, constraints ->
+        if (!resizing || measuredConstraints[0] == null) measuredConstraints[0] = constraints
+        val child = measurables.single().measure(measuredConstraints[0]!!)
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            // Anchor the latest messages to the composer while the surrounding window moves.
+            child.placeRelative(0, constraints.maxHeight - child.height)
         }
     }
 }
