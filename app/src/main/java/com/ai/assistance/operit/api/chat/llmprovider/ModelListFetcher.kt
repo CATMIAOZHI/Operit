@@ -76,6 +76,7 @@ object ModelListFetcher {
                     ApiProviderType.ZHIPU -> "${extractBaseUrl(apiEndpoint)}/v4/models"
                     ApiProviderType.DEEPSEEK -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.OPENROUTER -> "${extractBaseUrl(apiEndpoint)}/v1/models"
+                    ApiProviderType.OPENCODE_GO -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.FOUR_ROUTER -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.NOUS_PORTAL -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.MOONSHOT -> "${extractBaseUrl(apiEndpoint)}/v1/models"
@@ -254,6 +255,7 @@ object ModelListFetcher {
         AppLogger.d(TAG, "开始获取模型列表: 端点=${sanitizeUrlForLog(apiEndpoint, apiKey)}, 提供商=${apiProviderType.name}")
 
         return withContext(Dispatchers.IO) {
+            val goHeaders = OpenCodeGoHeaders()
             val maxRetries = 2
             var retryCount = 0
             var lastException: Exception? = null
@@ -359,6 +361,9 @@ object ModelListFetcher {
                         }
                     }
 
+                    if (apiProviderType == ApiProviderType.OPENCODE_GO) {
+                        goHeaders.applyTo(requestBuilder)
+                    }
                     val request = requestBuilder.get().build()
 
                     AppLogger.d(TAG, "发送HTTP请求: ${sanitizeUrlForLog(request.url.toString(), apiKey)}")

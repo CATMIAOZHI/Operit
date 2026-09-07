@@ -18,6 +18,21 @@ class ModelProtocolResolverTest {
     )
 
     @Test
+    fun openCodeGoProviderKeepsAccountIdentityAndSupportsPerModelProtocols() {
+        val account = config().copy(
+            apiProviderType = ApiProviderType.OPENCODE_GO,
+            apiProviderTypeId = ApiProviderType.OPENCODE_GO.name,
+        )
+        val restored = Json.decodeFromString<ModelConfigData>(Json.encodeToString(account))
+        assertEquals(ApiProviderType.OPENCODE_GO, restored.apiProviderType)
+        assertEquals(ApiProviderType.OPENCODE_GO.name, restored.apiProviderTypeId)
+        assertTrue(supportsModelProtocolOverrides(restored.apiProviderTypeId))
+        assertEquals(ApiProviderType.OPENAI_RESPONSES_GENERIC, restored.forSelectedModel(1).apiProviderType)
+        assertEquals("https://opencode.ai/zen/go/v1/responses", restored.forSelectedModel(1).apiEndpoint)
+        assertEquals("https://opencode.ai/zen/go/v1/messages", restored.forSelectedModel(2).apiEndpoint)
+    }
+
+    @Test
     fun selectedModelsResolveDifferentProtocolsWithoutChangingAccount() {
         val account = config()
         val response = account.forSelectedModel(1)

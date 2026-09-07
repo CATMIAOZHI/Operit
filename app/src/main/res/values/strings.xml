@@ -4127,6 +4127,8 @@
     <string name="provider_siliconflow">硅基流动</string>
     <string name="provider_iflow">iFlow</string>
     <string name="provider_openrouter">OpenRouter (多模型聚合)</string>
+    <string name="provider_opencode_go">OpenCode Go</string>
+    <string name="provider_opencode_go_protocol_hint">OpenCode Go 的模型使用不同接口。选择模型后，请点击“自动配置协议”，也可逐个手动设置。</string>
     <string name="provider_4router">4Router</string>
     <string name="provider_nous_portal">Nous Portal</string>
     <string name="provider_infiniai">无问芯穹</string>
