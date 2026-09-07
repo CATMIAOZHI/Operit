@@ -4172,6 +4172,8 @@
     <string name="provider_siliconflow">SiliconFlow</string>
     <string name="provider_iflow">iFlow</string>
     <string name="provider_openrouter">OpenRouter (Multi-model Hub)</string>
+    <string name="provider_opencode_go">OpenCode Go</string>
+    <string name="provider_opencode_go_protocol_hint">OpenCode Go models use different APIs. After selecting models, tap Auto-configure protocols, or configure each model manually.</string>
     <string name="provider_4router">4Router</string>
     <string name="provider_nous_portal">Nous Portal</string>
     <string name="provider_infiniai">InfiniAI</string>

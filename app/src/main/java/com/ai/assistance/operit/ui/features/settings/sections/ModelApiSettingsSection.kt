@@ -924,7 +924,11 @@ fun ModelApiSettingsSection(
                         Text(stringResource(R.string.model_protocol_auto_configure))
                     }
                     Text(
-                        stringResource(R.string.model_protocol_auto_desc),
+                        stringResource(
+                            if (selectedApiProvider == ApiProviderType.OPENCODE_GO)
+                                R.string.provider_opencode_go_protocol_hint
+                            else R.string.model_protocol_auto_desc
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 12.dp),
@@ -1544,6 +1548,7 @@ private fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: an
         ApiProviderType.SILICONFLOW -> context.getString(R.string.provider_siliconflow)
         ApiProviderType.IFLOW -> context.getString(R.string.provider_iflow)
         ApiProviderType.OPENROUTER -> context.getString(R.string.provider_openrouter)
+        ApiProviderType.OPENCODE_GO -> context.getString(R.string.provider_opencode_go)
         ApiProviderType.FOUR_ROUTER -> context.getString(R.string.provider_4router)
         ApiProviderType.NOUS_PORTAL -> context.getString(R.string.provider_nous_portal)
         ApiProviderType.INFINIAI -> context.getString(R.string.provider_infiniai)
@@ -2320,6 +2325,7 @@ private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphi
         ApiProviderType.SILICONFLOW -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.6f)
         ApiProviderType.IFLOW -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)
         ApiProviderType.OPENROUTER -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)
+        ApiProviderType.OPENCODE_GO -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
         ApiProviderType.FOUR_ROUTER -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.56f)
         ApiProviderType.NOUS_PORTAL -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.52f)
         ApiProviderType.INFINIAI -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
