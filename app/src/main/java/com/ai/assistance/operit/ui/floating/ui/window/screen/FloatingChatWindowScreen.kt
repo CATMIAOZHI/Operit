@@ -56,6 +56,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import com.ai.assistance.operit.ui.features.chat.components.ChatAppearance
+import com.ai.assistance.operit.ui.features.chat.components.ChatStyle
+import com.ai.assistance.operit.ui.features.chat.components.rememberChatAppearance
+import com.ai.assistance.operit.ui.features.chat.components.MessageFooterBar
+import com.ai.assistance.operit.ui.features.chat.components.style.bubble.BubbleStyleChatMessage
 import com.ai.assistance.operit.ui.features.chat.components.AttachmentChip
 import com.ai.assistance.operit.ui.features.chat.components.ChatMessageHeightMemory
 import com.ai.assistance.operit.ui.features.chat.components.ScrollToBottomButton
@@ -699,14 +704,12 @@ internal fun ChatMessagesView(
     val messageHeightMemory = rememberChatMessageHeightMemory(displayMessages)
     val coroutineScope = rememberCoroutineScope()
     val lastMessage = floatContext.messages.lastOrNull()
-    val userMessageColor = MaterialTheme.colorScheme.primaryContainer
-    val aiMessageColor = MaterialTheme.colorScheme.surface
-    val userTextColor = MaterialTheme.colorScheme.onPrimaryContainer
-    val aiTextColor = MaterialTheme.colorScheme.onSurface
-    val systemMessageColor = MaterialTheme.colorScheme.surfaceVariant
-    val systemTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val thinkingBackgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-    val thinkingTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val appearance = rememberChatAppearance()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val preferences = remember(context) { UserPreferencesManager.getInstance(context) }
+    val showTokenStats by preferences.showMessageTokenStats.collectAsState(initial = true)
+    val showTimingStats by preferences.showMessageTimingStats.collectAsState(initial = true)
+    val showTimestamp by preferences.showMessageTimestamp.collectAsState(initial = true)
 
     // 滚动状态
     val autoScrollToBottom = floatContext.autoScrollToBottom
@@ -768,7 +771,7 @@ internal fun ChatMessagesView(
                 .fillMaxSize(),
             state = scrollState,
             reverseLayout = true,
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)
+            contentPadding = PaddingValues(horizontal = appearance.chatAreaHorizontalPadding.dp, vertical = 16.dp)
         ) {
             itemsIndexed(
                 items = renderItems,
@@ -837,16 +840,11 @@ internal fun ChatMessagesView(
                         FloatingMessageItem(
                             index = actualIndex,
                             message = item,
-                            userMessageColor = userMessageColor,
-                            aiMessageColor = aiMessageColor,
-                            userTextColor = userTextColor,
-                            aiTextColor = aiTextColor,
-                            systemMessageColor = systemMessageColor,
-                            systemTextColor = systemTextColor,
-                            thinkingBackgroundColor = thinkingBackgroundColor,
-                            thinkingTextColor = thinkingTextColor,
+                            appearance = appearance,
                             heightMemory = messageHeightMemory,
-                            onSelectMessageToEdit = null,
+                            showTokenStats = showTokenStats,
+                            showTimingStats = showTimingStats,
+                            showTimestamp = showTimestamp,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                     }
@@ -896,34 +894,69 @@ private data object FloatingLoadingItem
 private fun FloatingMessageItem(
     index: Int,
     message: ChatMessage,
-    userMessageColor: Color,
-    aiMessageColor: Color,
-    userTextColor: Color,
-    aiTextColor: Color,
-    systemMessageColor: Color,
-    systemTextColor: Color,
-    thinkingBackgroundColor: Color,
-    thinkingTextColor: Color,
+    appearance: ChatAppearance,
     heightMemory: ChatMessageHeightMemory,
-    onSelectMessageToEdit: ((Int, ChatMessage, String) -> Unit)?,
+    showTokenStats: Boolean,
+    showTimingStats: Boolean,
+    showTimestamp: Boolean,
 ) {
-    CursorStyleChatMessage(
-        message = message,
-        userMessageColor = userMessageColor,
-        aiMessageColor = aiMessageColor,
-        userTextColor = userTextColor,
-        aiTextColor = aiTextColor,
-        systemMessageColor = systemMessageColor,
-        systemTextColor = systemTextColor,
-        thinkingBackgroundColor = thinkingBackgroundColor,
-        thinkingTextColor = thinkingTextColor,
-        heightMemory = heightMemory,
-        index = index,
-        enableDialogs = false,
-        onEditSummary = { summaryMessage ->
-            onSelectMessageToEdit?.invoke(index, summaryMessage, "summary")
-        },
-    )
+    // A reverse LazyColumn reverses separate roots within an item as well.
+    Column(Modifier.fillMaxWidth()) {
+        with(appearance) {
+            when (chatStyle) {
+                ChatStyle.CURSOR -> CursorStyleChatMessage(
+                    message = message,
+                    userMessageColor = userMessageColor,
+                    aiMessageColor = aiMessageColor,
+                    userTextColor = userTextColor,
+                    aiTextColor = aiTextColor,
+                    systemMessageColor = systemMessageColor,
+                    systemTextColor = systemTextColor,
+                    thinkingBackgroundColor = thinkingBackgroundColor,
+                    thinkingTextColor = thinkingTextColor,
+                    userMessageLiquidGlassEnabled = cursorUserBubbleLiquidGlass,
+                    userMessageWaterGlassEnabled = cursorUserBubbleWaterGlass,
+                    heightMemory = heightMemory,
+                    index = index,
+                    enableDialogs = false,
+                )
+                ChatStyle.BUBBLE -> BubbleStyleChatMessage(
+                    message = message,
+                    userMessageColor = userMessageColor,
+                    aiMessageColor = aiMessageColor,
+                    userTextColor = userTextColor,
+                    aiTextColor = aiTextColor,
+                    systemMessageColor = systemMessageColor,
+                    systemTextColor = systemTextColor,
+                    userMessageLiquidGlassEnabled = bubbleUserBubbleLiquidGlass,
+                    userMessageWaterGlassEnabled = bubbleUserBubbleWaterGlass,
+                    aiMessageLiquidGlassEnabled = bubbleAiBubbleLiquidGlass,
+                    aiMessageWaterGlassEnabled = bubbleAiBubbleWaterGlass,
+                    userBubbleImageStyle = bubbleUserImageStyle,
+                    aiBubbleImageStyle = bubbleAiImageStyle,
+                    bubbleUserRoundedCornersEnabled = bubbleUserRoundedCornersEnabled,
+                    bubbleAiRoundedCornersEnabled = bubbleAiRoundedCornersEnabled,
+                    bubbleUserContentPaddingLeft = bubbleUserContentPaddingLeft,
+                    bubbleUserContentPaddingRight = bubbleUserContentPaddingRight,
+                    bubbleAiContentPaddingLeft = bubbleAiContentPaddingLeft,
+                    bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
+                    heightMemory = heightMemory,
+                    index = index,
+                    enableDialogs = false,
+                )
+            }
+        }
+        if (message.sender == "ai") {
+            MessageFooterBar(
+                message = message,
+                showMessageTokenStats = showTokenStats,
+                showMessageTimingStats = showTimingStats,
+                showMessageTimestamp = showTimestamp,
+                allowVariantSelection = false,
+                onSelectVariant = {},
+            )
+        }
+    }
 }
 
 /** 输入对话框视图 */

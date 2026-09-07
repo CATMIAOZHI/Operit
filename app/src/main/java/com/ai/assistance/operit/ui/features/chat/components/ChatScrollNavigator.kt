@@ -339,7 +339,6 @@ internal fun ChatScrollNavigator(
     var currentMessageIndex by remember(chatHistory) {
         mutableStateOf(chatHistory.lastIndex.takeIf { it >= 0 })
     }
-    val currentAutoScrollToBottom by rememberUpdatedState(autoScrollToBottom)
     val currentHasNewerDisplayHistory by rememberUpdatedState(hasNewerDisplayHistory)
     val currentOnRequestLatestMessages by rememberUpdatedState(onRequestLatestMessages)
     val currentOnAutoScrollToBottomChange by rememberUpdatedState(onAutoScrollToBottomChange)
@@ -384,30 +383,6 @@ internal fun ChatScrollNavigator(
                 userScrollSessionActive = false
             }
         }
-    }
-
-    LaunchedEffect(scrollState) {
-        var lastPosition = scrollState.value
-        snapshotFlow { scrollState.value }
-            .distinctUntilChanged()
-            .collectLatest { currentPosition ->
-                if (scrollState.isScrollInProgress) {
-                    val movedAwayFromBottom = currentPosition < lastPosition
-                    if (movedAwayFromBottom) {
-                        if (currentAutoScrollToBottom) {
-                            currentOnAutoScrollToBottomChange?.invoke(false)
-                        }
-                    } else {
-                        val isAtBottom =
-                            scrollState.value >= scrollState.maxValue &&
-                                !currentHasNewerDisplayHistory
-                        if (isAtBottom && !currentAutoScrollToBottom) {
-                            currentOnAutoScrollToBottomChange?.invoke(true)
-                        }
-                    }
-                }
-                lastPosition = currentPosition
-            }
     }
 
     val activeMessageIndex = currentMessageIndex

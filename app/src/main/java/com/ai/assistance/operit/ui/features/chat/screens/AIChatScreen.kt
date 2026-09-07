@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.chat.screens
 
+import com.ai.assistance.operit.ui.features.chat.components.rememberChatAppearance
+
 import android.os.Build
 import android.provider.Settings
 import androidx.annotation.RequiresApi
@@ -198,107 +200,32 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val hasBackgroundImageFromPrefs = useBackgroundImage && backgroundImageUri != null
     val effectiveHasBackgroundImage = hasBackgroundImage || hasBackgroundImageFromPrefs
 
-    // Collect chat style from preferences
-    val chatStyleSetting by preferencesManager.chatStyle.collectAsState(initial = UserPreferencesManager.CHAT_STYLE_BUBBLE)
-    val chatStyle = remember(chatStyleSetting) {
-        when (chatStyleSetting) {
-            UserPreferencesManager.CHAT_STYLE_BUBBLE -> ChatStyle.BUBBLE
-            else -> ChatStyle.CURSOR
-        }
-    }
-    val inputStyle by
-        preferencesManager.inputStyle.collectAsState(
-            initial = UserPreferencesManager.INPUT_STYLE_CLASSIC,
-        )
-    val cursorUserBubbleFollowTheme by
-        preferencesManager.cursorUserBubbleFollowTheme.collectAsState(initial = true)
-    val cursorUserBubbleLiquidGlassRaw by
-        preferencesManager.cursorUserBubbleLiquidGlass.collectAsState(initial = false)
-    val cursorUserBubbleWaterGlass by
-        preferencesManager.cursorUserBubbleWaterGlass.collectAsState(initial = false)
-    val cursorUserBubbleLiquidGlass = cursorUserBubbleLiquidGlassRaw && !cursorUserBubbleWaterGlass
-    val bubbleUserBubbleLiquidGlassRaw by
-        preferencesManager.bubbleUserBubbleLiquidGlass.collectAsState(initial = false)
-    val bubbleUserBubbleWaterGlass by
-        preferencesManager.bubbleUserBubbleWaterGlass.collectAsState(initial = false)
-    val bubbleUserBubbleLiquidGlass =
-        bubbleUserBubbleLiquidGlassRaw && !bubbleUserBubbleWaterGlass
-    val bubbleAiBubbleLiquidGlassRaw by
-        preferencesManager.bubbleAiBubbleLiquidGlass.collectAsState(initial = false)
-    val bubbleAiBubbleWaterGlass by
-        preferencesManager.bubbleAiBubbleWaterGlass.collectAsState(initial = false)
-    val bubbleAiBubbleLiquidGlass =
-        bubbleAiBubbleLiquidGlassRaw && !bubbleAiBubbleWaterGlass
-    val cursorUserBubbleColorValue by
-        preferencesManager.cursorUserBubbleColor.collectAsState(initial = null)
-    val bubbleUserBubbleColorValue by
-        preferencesManager.bubbleUserBubbleColor.collectAsState(initial = null)
-    val bubbleAiBubbleColorValue by
-        preferencesManager.bubbleAiBubbleColor.collectAsState(initial = null)
-    val bubbleUserTextColorValue by
-        preferencesManager.bubbleUserTextColor.collectAsState(initial = null)
-    val bubbleAiTextColorValue by
-        preferencesManager.bubbleAiTextColor.collectAsState(initial = null)
-    val bubbleUserUseImage by
-        preferencesManager.bubbleUserUseImage.collectAsState(initial = false)
-    val bubbleAiUseImage by
-        preferencesManager.bubbleAiUseImage.collectAsState(initial = false)
-    val bubbleUserImageUri by preferencesManager.bubbleUserImageUri.collectAsState(initial = null)
-    val bubbleAiImageUri by preferencesManager.bubbleAiImageUri.collectAsState(initial = null)
-    val bubbleUserImageCropLeft by
-        preferencesManager.bubbleUserImageCropLeft.collectAsState(initial = 0f)
-    val bubbleUserImageCropTop by
-        preferencesManager.bubbleUserImageCropTop.collectAsState(initial = 0f)
-    val bubbleUserImageCropRight by
-        preferencesManager.bubbleUserImageCropRight.collectAsState(initial = 0f)
-    val bubbleUserImageCropBottom by
-        preferencesManager.bubbleUserImageCropBottom.collectAsState(initial = 0f)
-    val bubbleUserImageRepeatStart by
-        preferencesManager.bubbleUserImageRepeatStart.collectAsState(initial = 0.35f)
-    val bubbleUserImageRepeatEnd by
-        preferencesManager.bubbleUserImageRepeatEnd.collectAsState(initial = 0.65f)
-    val bubbleUserImageRepeatYStart by
-        preferencesManager.bubbleUserImageRepeatYStart.collectAsState(initial = 0.35f)
-    val bubbleUserImageRepeatYEnd by
-        preferencesManager.bubbleUserImageRepeatYEnd.collectAsState(initial = 0.65f)
-    val bubbleUserImageScale by
-        preferencesManager.bubbleUserImageScale.collectAsState(initial = 1f)
-    val bubbleAiImageCropLeft by
-        preferencesManager.bubbleAiImageCropLeft.collectAsState(initial = 0f)
-    val bubbleAiImageCropTop by
-        preferencesManager.bubbleAiImageCropTop.collectAsState(initial = 0f)
-    val bubbleAiImageCropRight by
-        preferencesManager.bubbleAiImageCropRight.collectAsState(initial = 0f)
-    val bubbleAiImageCropBottom by
-        preferencesManager.bubbleAiImageCropBottom.collectAsState(initial = 0f)
-    val bubbleAiImageRepeatStart by
-        preferencesManager.bubbleAiImageRepeatStart.collectAsState(initial = 0.35f)
-    val bubbleAiImageRepeatEnd by
-        preferencesManager.bubbleAiImageRepeatEnd.collectAsState(initial = 0.65f)
-    val bubbleAiImageRepeatYStart by
-        preferencesManager.bubbleAiImageRepeatYStart.collectAsState(initial = 0.35f)
-    val bubbleAiImageRepeatYEnd by
-        preferencesManager.bubbleAiImageRepeatYEnd.collectAsState(initial = 0.65f)
-    val bubbleAiImageScale by
-        preferencesManager.bubbleAiImageScale.collectAsState(initial = 1f)
-    val bubbleImageRenderMode by
-        preferencesManager.bubbleImageRenderMode.collectAsState(
-            initial = UserPreferencesManager.BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
-        )
-    val bubbleUserRoundedCornersEnabled by
-        preferencesManager.bubbleUserRoundedCornersEnabled.collectAsState(initial = false)
-    val bubbleAiRoundedCornersEnabled by
-        preferencesManager.bubbleAiRoundedCornersEnabled.collectAsState(initial = false)
-    val bubbleUserContentPaddingLeft by
-        preferencesManager.bubbleUserContentPaddingLeft.collectAsState(initial = 12f)
-    val bubbleUserContentPaddingRight by
-        preferencesManager.bubbleUserContentPaddingRight.collectAsState(initial = 12f)
-    val bubbleAiContentPaddingLeft by
-        preferencesManager.bubbleAiContentPaddingLeft.collectAsState(initial = 12f)
-    val bubbleAiContentPaddingRight by
-        preferencesManager.bubbleAiContentPaddingRight.collectAsState(initial = 12f)
-    // Collect chat area horizontal padding from preferences
-    val chatAreaHorizontalPadding by preferencesManager.chatAreaHorizontalPadding.collectAsState(initial = 16f)
+    val chatAppearance = rememberChatAppearance()
+    val chatStyle = chatAppearance.chatStyle
+    val inputStyle = chatAppearance.inputStyle
+    val cursorUserBubbleLiquidGlass = chatAppearance.cursorUserBubbleLiquidGlass
+    val cursorUserBubbleWaterGlass = chatAppearance.cursorUserBubbleWaterGlass
+    val bubbleUserBubbleLiquidGlass = chatAppearance.bubbleUserBubbleLiquidGlass
+    val bubbleUserBubbleWaterGlass = chatAppearance.bubbleUserBubbleWaterGlass
+    val bubbleAiBubbleLiquidGlass = chatAppearance.bubbleAiBubbleLiquidGlass
+    val bubbleAiBubbleWaterGlass = chatAppearance.bubbleAiBubbleWaterGlass
+    val bubbleUserRoundedCornersEnabled = chatAppearance.bubbleUserRoundedCornersEnabled
+    val bubbleAiRoundedCornersEnabled = chatAppearance.bubbleAiRoundedCornersEnabled
+    val userMessageColor = chatAppearance.userMessageColor
+    val aiMessageColor = chatAppearance.aiMessageColor
+    val userTextColor = chatAppearance.userTextColor
+    val aiTextColor = chatAppearance.aiTextColor
+    val systemMessageColor = chatAppearance.systemMessageColor
+    val systemTextColor = chatAppearance.systemTextColor
+    val thinkingBackgroundColor = chatAppearance.thinkingBackgroundColor
+    val thinkingTextColor = chatAppearance.thinkingTextColor
+    val bubbleUserImageStyle = chatAppearance.bubbleUserImageStyle
+    val bubbleAiImageStyle = chatAppearance.bubbleAiImageStyle
+    val bubbleUserContentPaddingLeft = chatAppearance.bubbleUserContentPaddingLeft
+    val bubbleUserContentPaddingRight = chatAppearance.bubbleUserContentPaddingRight
+    val bubbleAiContentPaddingLeft = chatAppearance.bubbleAiContentPaddingLeft
+    val bubbleAiContentPaddingRight = chatAppearance.bubbleAiContentPaddingRight
+    val chatAreaHorizontalPadding = chatAppearance.chatAreaHorizontalPadding
 
     // 添加编辑按钮和编辑状态
     val editingMessageIndex = remember { mutableStateOf<Int?>(null) }
@@ -437,7 +364,6 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         }
     }
     // 收集滚动事件
-    val scrollToBottomEvent = actualViewModel.scrollToBottomEvent
     // 从ViewModel收集新的状态
     val shouldShowConfigDialog by actualViewModel.shouldShowConfigDialog.collectAsState()
     val isWorkspaceOpen by actualViewModel.isWorkspaceOpen.collectAsState()
@@ -754,140 +680,6 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     
 
 
-    val defaultUserMessageColor = MaterialTheme.colorScheme.primaryContainer
-    val defaultAiMessageColor = MaterialTheme.colorScheme.surface
-    val cursorCustomUserMessageColor = cursorUserBubbleColorValue?.let(::Color)
-    val bubbleCustomUserMessageColor = bubbleUserBubbleColorValue?.let(::Color)
-    val bubbleCustomAiMessageColor = bubbleAiBubbleColorValue?.let(::Color)
-    val bubbleCustomUserTextColor = bubbleUserTextColorValue?.let(::Color)
-    val bubbleCustomAiTextColor = bubbleAiTextColorValue?.let(::Color)
-
-    val userMessageColor =
-        when (chatStyle) {
-            ChatStyle.CURSOR -> {
-                if (cursorUserBubbleFollowTheme) {
-                    defaultUserMessageColor
-                } else {
-                    cursorCustomUserMessageColor ?: defaultUserMessageColor
-                }
-            }
-
-            ChatStyle.BUBBLE -> bubbleCustomUserMessageColor ?: defaultUserMessageColor
-        }
-    val aiMessageColor =
-        when (chatStyle) {
-            ChatStyle.BUBBLE -> bubbleCustomAiMessageColor ?: defaultAiMessageColor
-            ChatStyle.CURSOR -> defaultAiMessageColor
-        }
-    val userTextColor =
-        when {
-            chatStyle == ChatStyle.CURSOR && cursorUserBubbleFollowTheme ->
-                MaterialTheme.colorScheme.onPrimaryContainer
-            chatStyle == ChatStyle.BUBBLE && bubbleCustomUserTextColor != null ->
-                bubbleCustomUserTextColor
-            else -> getTextColorForBackground(userMessageColor.copy(alpha = 1f))
-        }
-    val aiTextColor =
-        when {
-            chatStyle == ChatStyle.BUBBLE && bubbleCustomAiTextColor != null ->
-                bubbleCustomAiTextColor
-            chatStyle == ChatStyle.BUBBLE ->
-                getTextColorForBackground(aiMessageColor.copy(alpha = 1f))
-            else -> MaterialTheme.colorScheme.onSurface
-        }
-    val systemMessageColor = MaterialTheme.colorScheme.surfaceVariant
-    val systemTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val thinkingBackgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-    val thinkingTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-
-    val bubbleUserImageStyle =
-        remember(
-            chatStyle,
-            bubbleUserBubbleLiquidGlass,
-            bubbleUserBubbleWaterGlass,
-            bubbleUserUseImage,
-            bubbleUserImageUri,
-            bubbleUserImageCropLeft,
-            bubbleUserImageCropTop,
-            bubbleUserImageCropRight,
-            bubbleUserImageCropBottom,
-            bubbleUserImageRepeatStart,
-            bubbleUserImageRepeatEnd,
-            bubbleUserImageRepeatYStart,
-            bubbleUserImageRepeatYEnd,
-            bubbleUserImageScale,
-            bubbleImageRenderMode,
-        ) {
-            val imageUri = bubbleUserImageUri
-            if (
-                chatStyle == ChatStyle.BUBBLE &&
-                    !bubbleUserBubbleLiquidGlass &&
-                    !bubbleUserBubbleWaterGlass &&
-                    bubbleUserUseImage &&
-                    !imageUri.isNullOrBlank()
-            ) {
-                BubbleImageStyleConfig(
-                    imageUri = imageUri,
-                    cropLeftRatio = bubbleUserImageCropLeft,
-                    cropTopRatio = bubbleUserImageCropTop,
-                    cropRightRatio = bubbleUserImageCropRight,
-                    cropBottomRatio = bubbleUserImageCropBottom,
-                    repeatXStartRatio = bubbleUserImageRepeatStart,
-                    repeatXEndRatio = bubbleUserImageRepeatEnd,
-                    repeatYStartRatio = bubbleUserImageRepeatYStart,
-                    repeatYEndRatio = bubbleUserImageRepeatYEnd,
-                    imageScale = bubbleUserImageScale,
-                    renderMode = bubbleImageRenderMode,
-                )
-            } else {
-                null
-            }
-        }
-
-    val bubbleAiImageStyle =
-        remember(
-            chatStyle,
-            bubbleAiUseImage,
-            bubbleAiBubbleLiquidGlass,
-            bubbleAiBubbleWaterGlass,
-            bubbleAiImageUri,
-            bubbleAiImageCropLeft,
-            bubbleAiImageCropTop,
-            bubbleAiImageCropRight,
-            bubbleAiImageCropBottom,
-            bubbleAiImageRepeatStart,
-            bubbleAiImageRepeatEnd,
-            bubbleAiImageRepeatYStart,
-            bubbleAiImageRepeatYEnd,
-            bubbleAiImageScale,
-            bubbleImageRenderMode,
-        ) {
-            val imageUri = bubbleAiImageUri
-            if (
-                chatStyle == ChatStyle.BUBBLE &&
-                    !bubbleAiBubbleLiquidGlass &&
-                    !bubbleAiBubbleWaterGlass &&
-                    bubbleAiUseImage &&
-                    !imageUri.isNullOrBlank()
-            ) {
-                BubbleImageStyleConfig(
-                    imageUri = imageUri,
-                    cropLeftRatio = bubbleAiImageCropLeft,
-                    cropTopRatio = bubbleAiImageCropTop,
-                    cropRightRatio = bubbleAiImageCropRight,
-                    cropBottomRatio = bubbleAiImageCropBottom,
-                    repeatXStartRatio = bubbleAiImageRepeatStart,
-                    repeatXEndRatio = bubbleAiImageRepeatEnd,
-                    repeatYStartRatio = bubbleAiImageRepeatYStart,
-                    repeatYEndRatio = bubbleAiImageRepeatYEnd,
-                    imageScale = bubbleAiImageScale,
-                    renderMode = bubbleImageRenderMode,
-                )
-            } else {
-                null
-            }
-        }
-
     // 滚动状态
     var chatAutoScrollStates by rememberSaveable {
         mutableStateOf<Map<String, Boolean>>(emptyMap())
@@ -923,30 +715,6 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         chatAutoScrollStates = chatAutoScrollStates.filterKeys(validChatIds::contains)
     }
     val imeBottomPx = WindowInsets.ime.getBottom(density)
-    val latestChatHistory by rememberUpdatedState(chatHistory)
-    val latestAutoScrollToBottom by rememberUpdatedState(autoScrollToBottom)
-    val latestHasNewerDisplayHistory by rememberUpdatedState(hasNewerDisplayHistory)
-    val latestIsLoadingDisplayWindow by rememberUpdatedState(isLoadingDisplayWindow)
-    val latestScrollState by rememberUpdatedState(scrollState)
-
-    // 处理来自ViewModel的滚动事件（流式输出时）
-    LaunchedEffect(Unit) {
-        scrollToBottomEvent.collect {
-            if (
-                latestAutoScrollToBottom &&
-                    !latestHasNewerDisplayHistory &&
-                    !latestIsLoadingDisplayWindow
-            ) {
-                try {
-                    if (latestChatHistory.isNotEmpty()) {
-                        latestScrollState.animateScrollTo(latestScrollState.maxValue)
-                    }
-                } catch (e: Exception) {
-                    // AppLogger.e("AIChatScreen", "自动滚动失败", e)
-                }
-            }
-        }
-    }
 
     // 移除原有的 snackbar 错误处理
     val snackbarHostState = remember { SnackbarHostState() }

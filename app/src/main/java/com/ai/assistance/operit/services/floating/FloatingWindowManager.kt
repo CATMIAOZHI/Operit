@@ -39,6 +39,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.ai.assistance.operit.ui.theme.LocalBackgroundPlaybackEnabled
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -112,9 +116,11 @@ class FloatingWindowManager(
     private var sizeAnimator: ValueAnimator? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingImeFocusRunnable: Runnable? = null
+    private var pendingWindowSize: Pair<androidx.compose.ui.unit.Dp, androidx.compose.ui.unit.Dp>? = null
+    private val resizeFrame = Runnable { applyPendingWindowSize() }
     private var focusDismissOverlayRequested: Boolean = false
-    private var windowDisplayEnabled: Boolean = true
-    private var windowPersistentHidden: Boolean = false
+    private var windowDisplayEnabled by mutableStateOf(true)
+    private var windowPersistentHidden by mutableStateOf(false)
     private var indicatorDisplayEnabled: Boolean = true
     private var indicatorPersistentEnabled: Boolean = false
 
@@ -175,8 +181,12 @@ class FloatingWindowManager(
                         setViewTreeViewModelStoreOwner(viewModelStoreOwner)
                         setViewTreeSavedStateRegistryOwner(savedStateRegistryOwner)
 
+                        viewTreeObserver.addOnGlobalLayoutListener {
+                            fitWindowHeightAboveIme(this)
+                        }
                         setContent {
                             FloatingWindowTheme(
+                                    followAppTheme = true,
                                     colorScheme = callback.getColorScheme(),
                                     typography = callback.getTypography()
                             ) { FloatingChatUi() }
@@ -195,6 +205,7 @@ class FloatingWindowManager(
     }
 
     fun destroy() {
+        finishWindowResize()
         hideStatusIndicator()
         if (isViewAdded) {
             composeView?.let {
@@ -268,6 +279,9 @@ class FloatingWindowManager(
 
     @Composable
     private fun FloatingChatUi() {
+        CompositionLocalProvider(
+            LocalBackgroundPlaybackEnabled provides (!windowPersistentHidden && windowDisplayEnabled)
+        ) {
         FloatingChatWindow(
                 messages = callback.getMessages(),
                 width = state.windowWidth.value,
@@ -283,17 +297,14 @@ class FloatingWindowManager(
                     callback.onClose()
                 },
                 onResize = { newWidth, newHeight ->
-                    state.windowWidth.value = newWidth
-                    state.windowHeight.value = newHeight
-                    updateWindowSizeInLayoutParams()
-                    callback.saveState()
+                    queueWindowResize(newWidth, newHeight)
                 },
                 currentMode = state.currentMode.value,
                 previousMode = state.previousMode,
                 ballSize = state.ballSize.value,
                 onModeChange = { newMode -> switchMode(newMode) },
                 onMove = { dx, dy, scale -> onMove(dx, dy, scale) },
-                saveWindowState = { callback.saveState() },
+                saveWindowState = { finishWindowResize(); callback.saveState() },
                 onSendMessage = { message, promptType ->
                     callback.onSendMessage(message, promptType)
                 },
@@ -306,6 +317,7 @@ class FloatingWindowManager(
                 windowState = state,
                 inputProcessingState = callback.getInputProcessingState()
         )
+        }
     }
 
     private var minimizedToPet = false
@@ -418,6 +430,7 @@ class FloatingWindowManager(
 
             setContent {
                 FloatingWindowTheme(
+                    followAppTheme = true,
                     colorScheme = callback.getColorScheme(),
                     typography = callback.getTypography()
                 ) {
@@ -670,6 +683,46 @@ class FloatingWindowManager(
         return x <= tolerance || x >= screenWidth - width - tolerance
     }
 
+    private fun fitWindowHeightAboveIme(view: View) {
+        if (state.currentMode.value != FloatingMode.WINDOW || state.isTransitioning) return
+        val params = view.layoutParams as? WindowManager.LayoutParams ?: return
+        val preferredHeight = (state.windowHeight.value.value *
+            context.resources.displayMetrics.density * state.windowScale.value).toInt()
+        val imeVisible = androidx.core.view.ViewCompat.getRootWindowInsets(view)
+            ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true
+        val visibleFrame = android.graphics.Rect()
+        view.getWindowVisibleDisplayFrame(visibleFrame)
+        // A fixed-size overlay can be clipped by WM's IME fitting without remeasuring its
+        // content. Resize the actual host temporarily, leaving the saved window size intact.
+        val height = if (imeVisible && !visibleFrame.isEmpty) {
+            minOf(preferredHeight, visibleFrame.height())
+        } else preferredHeight
+        if (params.height != height) {
+            params.height = height
+            windowManager.updateViewLayout(view, params)
+        }
+    }
+
+    private fun queueWindowResize(width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp) {
+        val view = composeView ?: return
+        if (pendingWindowSize == null) view.postOnAnimation(resizeFrame)
+        pendingWindowSize = width to height
+    }
+
+    private fun applyPendingWindowSize() {
+        val size = pendingWindowSize ?: return
+        pendingWindowSize = null
+        if (state.windowWidth.value == size.first && state.windowHeight.value == size.second) return
+        state.windowWidth.value = size.first
+        state.windowHeight.value = size.second
+        updateWindowSizeInLayoutParams()
+    }
+
+    private fun finishWindowResize() {
+        composeView?.removeCallbacks(resizeFrame)
+        applyPendingWindowSize()
+    }
+
     private fun updateWindowSizeInLayoutParams() {
         updateViewLayout { params ->
             val density = context.resources.displayMetrics.density
@@ -677,7 +730,15 @@ class FloatingWindowManager(
             val widthDp = state.windowWidth.value
             val heightDp = state.windowHeight.value
             params.width = (widthDp.value * density * scale).toInt()
-            params.height = (heightDp.value * density * scale).toInt()
+            val preferredHeight = (heightDp.value * density * scale).toInt()
+            val view = composeView
+            val visibleFrame = android.graphics.Rect()
+            view?.getWindowVisibleDisplayFrame(visibleFrame)
+            val imeVisible = view != null && androidx.core.view.ViewCompat.getRootWindowInsets(view)
+                ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true
+            params.height = if (state.currentMode.value == FloatingMode.WINDOW && imeVisible && !visibleFrame.isEmpty) {
+                minOf(preferredHeight, visibleFrame.height())
+            } else preferredHeight
         }
     }
 
@@ -706,6 +767,7 @@ class FloatingWindowManager(
 
     fun switchMode(newMode: FloatingMode) {
         if (state.isTransitioning || state.currentMode.value == newMode) return
+        finishWindowResize()
         state.isTransitioning = true
 
         if (newMode == FloatingMode.BALL || newMode == FloatingMode.VOICE_BALL) {
