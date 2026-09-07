@@ -12,6 +12,8 @@ import com.ai.assistance.operit.api.chat.enhance.ConversationService
 import com.ai.assistance.operit.api.chat.enhance.FileBindingService
 import com.ai.assistance.operit.api.chat.enhance.MultiServiceManager
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.api.chat.enhance.ToolTurnSignal
+import com.ai.assistance.operit.api.chat.enhance.resolveToolTurnSignal
 import com.ai.assistance.operit.api.chat.llmprovider.AIService
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
@@ -2024,13 +2026,18 @@ class EnhancedAIService private constructor(private val context: Context) {
 
             if (allToolResults.isNotEmpty()) {
                 AppLogger.d(TAG, "所有工具结果收集完毕，准备最终处理。")
-                allToolResults.firstOrNull { it.interruptTurn }?.let { interrupted ->
+                val turnSignal = resolveToolTurnSignal(allToolResults)
+                if (turnSignal == ToolTurnSignal.INTERRUPTED) {
+                    val interrupted = allToolResults.first { it.interruptTurn && !it.success }
                     throw IllegalStateException(
                         interrupted.error
                             ?: "Tool execution interrupted this turn: ${interrupted.toolName}"
                     )
                 }
-                if (toolInvocations.singleOrNull()?.tool?.name in context.terminalToolNames) {
+                if (
+                    turnSignal == ToolTurnSignal.COMPLETE ||
+                    toolInvocations.singleOrNull()?.tool?.name in context.terminalToolNames
+                ) {
                     finalizeAssistantResponse(
                         context = context,
                         content = context.roundManager.getDisplayContent(),

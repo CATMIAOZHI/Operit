@@ -1,6 +1,8 @@
 package com.ai.assistance.operit.features.reading
 
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.api.chat.enhance.ToolTurnSignal
+import com.ai.assistance.operit.api.chat.enhance.resolveToolTurnSignal
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.model.ToolResult
@@ -14,6 +16,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReadingCompanionSubagentToolsTest {
+
+    @Test
+    fun `long submitted commentary keeps its ending and completes the tool turn`() {
+        val session = registerSession("long-comment", FakeBackend())
+        val commentary = "这是一条需要保留完整分析的段评。".repeat(20) + "结尾仍需保留🙂"
+        try {
+            stageSummary("long-comment", "客观摘要")
+            val comments = org.json.JSONArray().put(
+                JSONObject().put("anchorId", "p0001").put("text", commentary)
+                    .put("evidenceIds", org.json.JSONArray().put("p0001"))
+            ).toString()
+            val result = withCaller("long-comment") {
+                ReadingCompanionSubagentTools.execute(
+                    tool(ReadingCompanionSubagentTools.TOOL_SUBMIT_COMMENTS, "comments" to comments)
+                )
+            }
+            assertTrue(result.success)
+            assertEquals(commentary, session.candidateDrafts.single().text)
+            assertEquals(ToolTurnSignal.COMPLETE, resolveToolTurnSignal(listOf(result)))
+        } finally {
+            ReadingCompanionSubagentSessionRegistry.unregister("long-comment")
+        }
+    }
 
     private class FakeBackend : ReadingCompanionSubagentBackend {
         val heartbeats = AtomicInteger(0)
@@ -563,6 +588,7 @@ class ReadingCompanionSubagentToolsTest {
             val result = stageSummary("child-summary-only", "只保存客观摘要")
             assertTrue(result.success)
             assertTrue("summary-only submit_summary 是终止工具", result.interruptTurn)
+            assertEquals(ToolTurnSignal.COMPLETE, resolveToolTurnSignal(listOf(result)))
             assertEquals("summary_submitted", JSONObject(result.result.toString()).getString("code"))
             assertTrue(session.submissionFinalized)
             assertTrue(session.candidateDrafts.isEmpty())
