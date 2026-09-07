@@ -24,7 +24,7 @@ fun rememberFloatContext(
         width: Dp,
         height: Dp,
         onClose: () -> Unit,
-        onResize: (Dp, Dp) -> Unit,
+        onResize: (Dp, Dp, Boolean) -> Unit,
         ballSize: Dp = 48.dp,
         windowScale: Float = 1.0f,
         onScaleChange: (Float) -> Unit,
@@ -151,7 +151,7 @@ class FloatContext(
 ) {
     // 回调函数使用 var 以便通过 SideEffect 更新
     var onClose: () -> Unit = {}
-    var onResize: (Dp, Dp) -> Unit = { _, _ -> }
+    var onResize: (Dp, Dp, Boolean) -> Unit = { _, _, _ -> }
     var onScaleChange: (Float) -> Unit = {}
     var onModeChange: (FloatingMode) -> Unit = {}
     var onMove: (Float, Float, Float) -> Unit = { _, _, _ -> }
@@ -203,6 +203,7 @@ class FloatContext(
     var voiceAutoTimeout: Boolean = false
     var contentVisible: Boolean by mutableStateOf(true)
     var showAttachmentPanel: Boolean by mutableStateOf(false)
+    var showPackageSelector: Boolean by mutableStateOf(false)
     
      // 标识是否刚完成了屏幕圈选，用于返回全屏模式时自动勾选"屏幕内容"
     var pendingScreenSelection: Boolean by mutableStateOf(false)

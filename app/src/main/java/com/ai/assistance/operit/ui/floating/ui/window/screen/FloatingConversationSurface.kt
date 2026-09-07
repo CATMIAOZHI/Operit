@@ -3,6 +3,7 @@ package com.ai.assistance.operit.ui.floating.ui.window.screen
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -10,6 +11,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.unit.Constraints
@@ -61,11 +63,12 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
         floatContext.onModeChange(mode)
     }
 
+    val windowShape = if (fullscreen) RoundedCornerShape(0.dp) else RoundedCornerShape(24.dp)
     Surface(
-        modifier = Modifier.fillMaxSize(),
-        shape = if (fullscreen) RoundedCornerShape(0.dp) else RoundedCornerShape(24.dp),
+        modifier = Modifier.fillMaxSize().clip(windowShape),
+        shape = windowShape,
         color = MaterialTheme.colorScheme.background,
-        shadowElevation = if (fullscreen) 0.dp else 8.dp,
+        shadowElevation = 0.dp,
         border = if (fullscreen) null else androidx.compose.foundation.BorderStroke(
             1.dp, MaterialTheme.colorScheme.outlineVariant
         ),
@@ -207,9 +210,15 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                             .pointerInput(density, configuration.screenWidthDp, configuration.screenHeightDp) {
                                 var width = 0.dp
                                 var height = 0.dp
+                                var anchorRight = false
+                                var scale = 1f
                                 try {
                                     detectDragGestures(
-                                        onDragStart = {
+                                        onDragStart = { start ->
+                                            // Lock the corner for the whole gesture, even if the
+                                            // finger crosses the midpoint as the window shrinks.
+                                            anchorRight = start.x < size.width / 2f
+                                            scale = floatContext.windowScale
                                             width = floatContext.windowWidthState
                                             height = floatContext.windowHeightState
                                             floatContext.isEdgeResizing = true
@@ -227,14 +236,15 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                                         with(density) {
                                             // Accumulate locally: composition may not yet contain the
                                             // last frame's size when the next touch event arrives.
-                                            width = (width + amount.x.toDp()).coerceIn(
+                                            val dx = (amount.x / scale).toDp()
+                                            width = (width + if (anchorRight) -dx else dx).coerceIn(
                                                 minOf(300.dp, (configuration.screenWidthDp - 16).dp),
                                                 (configuration.screenWidthDp - 16).dp,
                                             )
-                                            height = (height + amount.y.toDp()).coerceIn(
+                                            height = (height + (amount.y / scale).toDp()).coerceIn(
                                                 300.dp, maxOf(300.dp, (configuration.screenHeightDp * 0.8f).dp)
                                             )
-                                            floatContext.onResize(width, height)
+                                            floatContext.onResize(width, height, anchorRight)
                                         }
                                     }
                                 } finally {
@@ -253,6 +263,47 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                 }
             }
             RecentChatSelectorOverlay(floatContext, history) { history = false }
+            if (floatContext.showPackageSelector) {
+                fun dismissPackages() {
+                    releaseFocus()
+                    floatContext.showPackageSelector = false
+                }
+                Box(
+                    Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier.matchParentSize()
+                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.35f))
+                            .pointerInput(Unit) { detectTapGestures { dismissPackages() } },
+                    )
+                    Surface(
+                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                        shape = RoundedCornerShape(24.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                    ) {
+                        Column(Modifier.padding(20.dp)) {
+                            Text(stringResource(R.string.attachment_package_select_title),
+                                style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(12.dp))
+                            com.ai.assistance.operit.ui.features.chat.components.PackageSelectorContent(
+                                modifier = Modifier.weight(1f, fill = false),
+                                onSearchFocusChanged = {
+                                    floatContext.onInputFocusRequest?.invoke(it)
+                                },
+                                onPackageSelected = { packageName ->
+                                    floatContext.onAttachmentRequest?.invoke("package_attach:$packageName")
+                                    dismissPackages()
+                                },
+                            )
+                            TextButton(
+                                onClick = { dismissPackages() },
+                                modifier = Modifier.align(Alignment.End),
+                            ) { Text(stringResource(R.string.cancel)) }
+                        }
+                    }
+                }
+            }
         }
         }
     }

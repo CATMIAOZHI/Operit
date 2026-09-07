@@ -79,7 +79,6 @@ import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.zIndex
 import androidx.compose.animation.core.tween
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.core.animateFloat
@@ -703,16 +702,16 @@ fun AppContent(
                                     }
                                 }
 
-                                Box(
+                                NavigationTransform(
                                     modifier =
                                         Modifier.fillMaxSize()
-                                            .zIndex(if (isCurrentScreen) 1f else 0f)
-                                            .graphicsLayer {
-                                                this.alpha = alpha
-                                                this.translationX = translationX
-                                                scaleX = scale
-                                                scaleY = scale
-                                            }
+                                            .zIndex(if (isCurrentScreen) 1f else 0f),
+                                    layerBlock = {
+                                        this.alpha = alpha
+                                        this.translationX = translationX
+                                        scaleX = scale
+                                        scaleY = scale
+                                    },
                                 ) {
                                     Box(modifier = Modifier.fillMaxSize()) {
                                         screenStateHolder.SaveableStateProvider(screenKey) {

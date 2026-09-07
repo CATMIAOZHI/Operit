@@ -15,9 +15,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -53,6 +55,8 @@ class PetCompanionService : Service() {
     private var x by mutableFloatStateOf(0f)
     private var y by mutableFloatStateOf(0.55f)
     private var dragging by mutableStateOf(false)
+    private data class DragLayout(val width: Int, val height: Int, val petOffset: IntOffset)
+    private var dragLayout by mutableStateOf<DragLayout?>(null)
     private var viewport by mutableStateOf(0f to 0f)
     private var rowHeight = 0
     private var savedPosition: PetAnchor? = null
@@ -141,18 +145,22 @@ class PetCompanionService : Service() {
             setViewTreeSavedStateRegistryOwner(owner)
             setContent {
                 val currentSettings by preferences.settings.collectAsState()
+                val contentWidth by remember { derivedStateOf { placement.width } }
+                val frozen = dragLayout
                 MaterialTheme(colorScheme = PetTheme.colors, typography = PetTheme.typography) {
                     PetCompanion(
                         currentSettings,
                         onToggleBubble = { preferences.update { it.copy(showBubble = !it.showBubble) } },
-                        anchorX = this@PetCompanionService.x,
-                        anchorY = this@PetCompanionService.y,
+                        anchorX = if (frozen == null) this@PetCompanionService.x else 0f,
+                        anchorY = if (frozen == null) this@PetCompanionService.y else 0f,
+                        dragPetOffset = frozen?.petOffset,
                         dragging = dragging,
                         onDragStart = ::startDrag,
                         onDrag = ::movePet,
                         onDragEnd = ::savePosition,
-                        modifier = Modifier.width((placement.width / resources.displayMetrics.density).dp)
-                            .heightIn(max = (viewport.second / resources.displayMetrics.density).dp)
+                        modifier = Modifier.width((contentWidth / resources.displayMetrics.density).dp)
+                            .then(if (frozen != null) Modifier.height((frozen.height / resources.displayMetrics.density).dp)
+                                else Modifier.heightIn(max = (viewport.second / resources.displayMetrics.density).dp))
                             .onSizeChanged {
                                 if (rowHeight != it.height) {
                                     rowHeight = it.height
@@ -178,6 +186,13 @@ class PetCompanionService : Service() {
     }
 
     private fun startDrag() {
+        val petSize = (preferences.settings.value.sizeDp * resources.displayMetrics.density).roundToInt()
+        // Preserve the child's pixel offset and WM bounds together. Shrinking the window
+        // before Compose removes the bubble changes the pet's position under the pointer.
+        dragLayout = DragLayout(placement.width.roundToInt(), rowHeight, IntOffset(
+            ((placement.width - petSize) * x).roundToInt(),
+            ((rowHeight - petSize) * y).roundToInt(),
+        ))
         dragging = true
         updatePlacement()
     }
@@ -199,6 +214,7 @@ class PetCompanionService : Service() {
         y = snapped.y
         preferences.update { it.copy(x = snapped.x, y = snapped.y, edge = snapped.edge) }
         dragging = false
+        dragLayout = null
         updatePlacement()
     }
 
@@ -221,12 +237,20 @@ class PetCompanionService : Service() {
         val settings = preferences.settings.value
         viewport = availableBounds()
         val petSize = settings.sizeDp * density
-        val hasBubble = settings.showBubble && !dragging
-        placement = placePet(
-            viewport.first, viewport.second,
-            petWidth(viewport.first, petSize, PET_BUBBLE_WIDTH_DP * density, settings.edge, hasBubble),
-            if (hasBubble) rowHeight.toFloat() else petSize, x, y,
-        )
+        val frozen = dragLayout
+        placement = if (frozen != null) {
+            PetPlacement(
+                x * (viewport.first - petSize).coerceAtLeast(0f) - frozen.petOffset.x,
+                y * (viewport.second - petSize).coerceAtLeast(0f) - frozen.petOffset.y,
+                frozen.width.toFloat(),
+            )
+        } else {
+            placePet(
+                viewport.first, viewport.second,
+                petWidth(viewport.first, petSize, PET_BUBBLE_WIDTH_DP * density, settings.edge, settings.showBubble),
+                if (settings.showBubble) rowHeight.toFloat() else petSize, x, y,
+            )
+        }
         view?.let {
             try {
                 windows.updateViewLayout(it, layoutParams())
@@ -239,9 +263,11 @@ class PetCompanionService : Service() {
     }
 
     private fun layoutParams() = WindowManager.LayoutParams(
-        placement.width.roundToInt(), WindowManager.LayoutParams.WRAP_CONTENT,
+        placement.width.roundToInt(), dragLayout?.height ?: WindowManager.LayoutParams.WRAP_CONTENT,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            // Hidden bubble space may extend offscreen; the pet itself stays in bounds.
+            (if (dragging) WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS else 0),
         PixelFormat.TRANSLUCENT,
     ).apply {
         gravity = Gravity.TOP or Gravity.LEFT
@@ -256,6 +282,7 @@ class PetCompanionService : Service() {
         // retain a free-floating drag position or keep task bubbles suppressed on its return.
         if (dragging) {
             dragging = false
+            dragLayout = null
             val settings = preferences.settings.value
             val docked = dockPet(settings.edge, settings.x, settings.y)
             x = docked.x
@@ -273,6 +300,7 @@ class PetCompanionService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (dragging) savePosition()
         updatePlacement()
     }
 

@@ -16,7 +16,6 @@ import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.AttachmentInfo
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.skill.SkillRepository
-import com.ai.assistance.operit.util.OCRUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,7 +35,6 @@ import java.util.Locale
 class AttachmentDelegate(private val context: Context, private val toolHandler: AIToolHandler) {
     companion object {
         private const val TAG = "AttachmentDelegate"
-        private const val OCR_INLINE_INSTRUCTION = "Do not read the file, answer the user\'s question directly based on the attachment content and the user\'s question."
         private const val PACKAGE_ATTACHMENT_PREFIX = "package_attach:"
         private const val WORKSPACE_MENTION_ATTACHMENT_PREFIX = "workspace_mention:"
     }
@@ -572,80 +570,66 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
         }
     }
 
-    /**
-     * Captures the current screen content and attaches it to the message Uses the get_page_info
-     * AITool to retrieve UI structure 确保在IO线程中执行
-     */
-    suspend fun captureScreenContent() =
-            withContext(Dispatchers.IO) {
-                try {
-                    val screenshotTool = AITool(name = "capture_screenshot", parameters = emptyList())
-                    val screenshotResult = toolHandler.executeTool(screenshotTool)
-                    if (!screenshotResult.success) {
-                        _toastEvent.emit(context.getString(R.string.attachment_screen_content_failed, screenshotResult.error ?: context.getString(R.string.attachment_screenshot_failed)))
-                        return@withContext
-                    }
-
-                    val screenshotPath = screenshotResult.result.toString().trim()
-                    if (screenshotPath.isBlank()) {
-                        _toastEvent.emit(context.getString(R.string.attachment_screen_content_failed, context.getString(R.string.attachment_screenshot_failed)))
-                        return@withContext
-                    }
-
-                    val imageOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeFile(screenshotPath, imageOptions)
-                    val screenshotWidth = imageOptions.outWidth
-                    val screenshotHeight = imageOptions.outHeight
-                    val positionInfo =
-                        if (screenshotWidth > 0 && screenshotHeight > 0) {
-                            context.getString(R.string.attachment_location_full_screen, screenshotWidth, screenshotHeight)
-                        } else {
-                            context.getString(R.string.attachment_location_full_screen_simple)
-                        }
-
-                    val ocrText = OCRUtils.recognizeText(
-                        context = context,
-                        uri = Uri.fromFile(File(screenshotPath)),
-                        quality = OCRUtils.Quality.HIGH
-                    ).trim()
-
-                    if (ocrText.isBlank()) {
-                        _toastEvent.emit(context.getString(R.string.attachment_no_screen_text))
-                        return@withContext
-                    }
-
-                    val captureId = "screen_ocr_${System.currentTimeMillis()}"
-                    val content =
-                        buildString {
-                            append(context.getString(R.string.attachment_screen_content))
-                            append(positionInfo)
-                            append("\n\n")
-                            append(ocrText)
-                            append("\n\n")
-                            append(OCR_INLINE_INSTRUCTION)
-                        }
-                    val attachmentInfo =
-                        AttachmentInfo(
-                            filePath = captureId,
-                            fileName = "screen_content.txt",
-                            mimeType = "text/plain",
-                            fileSize = content.length.toLong(),
-                            content = content
-                        )
-
-                    appendAttachment(attachmentInfo)
-
-                    _toastEvent.emit(context.getString(R.string.attachment_screen_content_added))
-
-                    // 清理临时截图文件
-                    try {
-                        File(screenshotPath).delete()
-                    } catch (_: Exception) {}
-                } catch (e: Exception) {
-                    _toastEvent.emit(context.getString(R.string.attachment_screen_content_failed, e.message ?: ""))
-                    AppLogger.e(TAG, "Error capturing screen content", e)
-                }
+    /** Captures the screen as an image attachment, using the same image path as selected regions. */
+    suspend fun captureScreenContent() = withContext(Dispatchers.IO) {
+        var capturedFile: File? = null
+        var attachmentFile: File? = null
+        try {
+            val screenshotResult = toolHandler.executeTool(AITool(name = "capture_screenshot"))
+            if (!screenshotResult.success) {
+                _toastEvent.emit(context.getString(
+                    R.string.attachment_screen_content_failed,
+                    screenshotResult.error ?: context.getString(R.string.attachment_screenshot_failed)
+                ))
+                return@withContext
             }
+
+            val screenshotPath = screenshotResult.result.toString().trim()
+            if (screenshotPath.isBlank()) {
+                _toastEvent.emit(context.getString(
+                    R.string.attachment_screen_content_failed,
+                    context.getString(R.string.attachment_screenshot_failed)
+                ))
+                return@withContext
+            }
+            val file = File(screenshotPath)
+            capturedFile = file
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(screenshotPath, options)
+            if (options.outWidth <= 0 || options.outHeight <= 0) {
+                _toastEvent.emit(context.getString(
+                    R.string.attachment_screen_content_failed,
+                    context.getString(R.string.screen_ocr_load_failed)
+                ))
+                return@withContext
+            }
+            // Some capture backends reuse short filenames. An attachment must keep its own
+            // snapshot until the model reads it, even after subsequent screen captures.
+            val snapshot = File.createTempFile(
+                "screen_attachment_", ".png", OperitPaths.cleanOnExitInternalDir(context)
+            )
+            attachmentFile = snapshot
+            file.inputStream().use { input ->
+                snapshot.outputStream().use { output -> input.copyTo(output) }
+            }
+            appendAttachment(AttachmentInfo(
+                filePath = snapshot.absolutePath,
+                fileName = "screenshot.png",
+                mimeType = "image/png",
+                fileSize = snapshot.length()
+            ))
+            attachmentFile = null
+            _toastEvent.emit(context.getString(R.string.attachment_screen_content_added))
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            _toastEvent.emit(context.getString(R.string.attachment_screen_content_failed, e.message ?: ""))
+            AppLogger.e(TAG, "Error capturing screen content", e)
+        } finally {
+            attachmentFile?.delete()
+            capturedFile?.delete()
+        }
+    }
 
     /** 获取设备当前通知并作为附件添加到消息 使用get_notifications AITool获取通知数据 确保在IO线程中执行 */
     suspend fun captureNotifications(limit: Int = 10) =

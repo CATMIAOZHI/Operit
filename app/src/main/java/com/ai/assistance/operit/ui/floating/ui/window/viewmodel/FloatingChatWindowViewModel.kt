@@ -97,7 +97,7 @@ class FloatingChatWindowModeViewModel(
             width = constrainedWidth,
             height = constrainedHeight
         )
-        floatContext.onResize(constrainedWidth, constrainedHeight)
+        floatContext.onResize(constrainedWidth, constrainedHeight, false)
     }
 
     /**

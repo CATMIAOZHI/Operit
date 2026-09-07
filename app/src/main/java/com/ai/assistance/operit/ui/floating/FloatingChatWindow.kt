@@ -69,7 +69,7 @@ fun FloatingChatWindow(
         width: Dp,
         height: Dp,
         onClose: () -> Unit,
-        onResize: (Dp, Dp) -> Unit,
+        onResize: (Dp, Dp, Boolean) -> Unit,
         ballSize: Dp = 48.dp,
         windowScale: Float = 1.0f,
         onScaleChange: (Float) -> Unit = {},
