@@ -11,7 +11,7 @@ class PetLibraryTest {
                 animations = PetAnimation.entries.associateWith { PetArtwork("asset-$index-${it.name}", "${it.name}.file") },
                 sizeDp = 48f + index * 20f, opacity = 0.3f + index * 0.1f,
                 edge = PetEdge.entries[index], x = index * 0.2f, y = index * 0.3f,
-                animated = index % 2 == 0, showBubble = index % 2 != 0,
+                animated = index % 2 == 0, dragAnimation = index % 2 != 0, showBubble = index % 2 != 0,
             ))
         }
         assertEquals(pets, decodePetLibrary(encodePetLibrary(pets)))

@@ -31,6 +31,7 @@ internal fun encodePetLibrary(pets: List<PetProfile>): String = JSONArray().appl
             put("id", pet.id)
             with(pet.settings) {
                 put("animated", animated)
+                put("dragAnimation", dragAnimation)
                 put("x", x); put("y", y); put("size", sizeDp); put("opacity", opacity)
                 put("bubble", showBubble); put("edge", edge.name)
                 put("name", name); put("mediaType", mediaType.name)
@@ -52,6 +53,7 @@ internal fun decodePetLibrary(json: String): List<PetProfile> {
             pet.getString("id"),
             PetSettings(
                 animated = pet.getBoolean("animated"),
+                dragAnimation = pet.optBoolean("dragAnimation", true),
                 x = pet.getDouble("x").toFloat(), y = pet.getDouble("y").toFloat(),
                 sizeDp = pet.getDouble("size").toFloat(), opacity = pet.getDouble("opacity").toFloat(),
                 showBubble = pet.getBoolean("bubble"), edge = PetEdge.valueOf(pet.getString("edge")),

@@ -93,24 +93,27 @@ import java.util.UUID
 /** 渲染悬浮窗的窗口模式界面 - 简化版 */
 @Composable
 fun FloatingChatWindowMode(floatContext: FloatContext) {
-    val viewModel = rememberFloatingChatWindowModeViewModel(floatContext)
     ReportFloatingChatViewEffect(floatContext)
-
-    LaunchedEffect(
-        floatContext.windowWidthState,
-        floatContext.windowHeightState,
-        floatContext.windowScale
-    ) {
-        viewModel.syncWindowState()
+    val fullscreen = floatContext.currentMode == FloatingMode.FULLSCREEN
+    val pendingVoice = floatContext.chatService?.hasPendingVoiceChat() == true
+    LaunchedEffect(fullscreen, pendingVoice) {
+        if (fullscreen && pendingVoice) {
+            floatContext.voiceAutoTimeout = true
+            floatContext.voiceMode = true
+            floatContext.chatService?.consumeAutoEnterVoiceChat()
+        }
     }
-
-    FloatingChatWindowContent(floatContext, viewModel)
+    if (fullscreen && floatContext.voiceMode) {
+        com.ai.assistance.operit.ui.floating.ui.fullscreen.FloatingFullscreenMode(floatContext)
+    } else {
+        FloatingConversationSurface(floatContext, fullscreen)
+    }
 }
 
 @Composable
 private fun ReportFloatingChatViewEffect(floatContext: FloatContext) {
     val service = floatContext.chatService ?: return
-    val chatCore = remember(service) { service.getChatCore() }
+    val chatCore = service.getChatCore()
     val chatHistories = chatCore.chatHistories.collectAsState(initial = emptyList()).value
     val currentChatId = chatCore.currentChatId.collectAsState(initial = null).value
     val currentChat = remember(chatHistories, currentChatId) {
@@ -212,16 +215,14 @@ private fun FloatingChatWindowContent(
 }
 
 @Composable
-private fun RecentChatSelectorOverlay(
+internal fun RecentChatSelectorOverlay(
     floatContext: FloatContext,
     visible: Boolean,
     onDismiss: () -> Unit
 ) {
     if (!visible) return
 
-    val chatCore = remember(floatContext.chatService) {
-        floatContext.chatService?.getChatCore()
-    }
+    val chatCore = floatContext.chatService?.getChatCore()
     val chatHistoriesState = chatCore?.chatHistories?.collectAsState(initial = emptyList())
     val currentChatIdState = chatCore?.currentChatId?.collectAsState(initial = null)
     val chatHistories = chatHistoriesState?.value ?: emptyList()
@@ -668,13 +669,11 @@ private fun ColumnScope.ChatContentArea(
 /** 聊天消息视图 */
 @SuppressLint("SuspiciousIndentation")
 @Composable
-private fun ChatMessagesView(
+internal fun ChatMessagesView(
     floatContext: FloatContext,
     _viewModel: FloatingChatWindowModeViewModel
 ) {
-    val chatCore = remember(floatContext.chatService) {
-        floatContext.chatService?.getChatCore()
-    }
+    val chatCore = floatContext.chatService?.getChatCore()
     val currentChatIdState =
         chatCore?.currentChatId?.collectAsState(initial = null)
             ?: remember { mutableStateOf<String?>(null) }
@@ -691,7 +690,7 @@ private fun ChatMessagesView(
     val hasOlderDisplayHistory = hasOlderDisplayHistoryState.value
     val hasNewerDisplayHistory = hasNewerDisplayHistoryState.value
     val isLoadingDisplayWindow = isLoadingDisplayWindowState.value
-    val scrollState = rememberLazyListState()
+    val scrollState = floatContext.messageListState
     val messagesCount = floatContext.messages.size
     val displayMessages =
         floatContext.messages
@@ -710,8 +709,15 @@ private fun ChatMessagesView(
     val thinkingTextColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     // 滚动状态
-    var autoScrollToBottom by remember { mutableStateOf(true) }
-    val onAutoScrollToBottomChange = remember { { it: Boolean -> autoScrollToBottom = it } }
+    val autoScrollToBottom = floatContext.autoScrollToBottom
+    val onAutoScrollToBottomChange = remember { { it: Boolean -> floatContext.autoScrollToBottom = it } }
+    LaunchedEffect(currentChatId) {
+        if (floatContext.displayedChatId != currentChatId) {
+            floatContext.displayedChatId = currentChatId
+            floatContext.autoScrollToBottom = true
+            scrollState.scrollToItem(0)
+        }
+    }
 
     LaunchedEffect(
         messagesCount,
@@ -732,6 +738,7 @@ private fun ChatMessagesView(
     val inputProcessingState = floatContext.inputProcessingState.value
     val isLoading =
         inputProcessingState !is InputProcessingState.Idle &&
+            inputProcessingState !is InputProcessingState.Error &&
             inputProcessingState !is InputProcessingState.Completed
     val showLoadingIndicator =
         isLoading &&
@@ -767,7 +774,7 @@ private fun ChatMessagesView(
                 items = renderItems,
                 key = { renderIndex, item ->
                     when (item) {
-                        is com.ai.assistance.operit.data.model.ChatMessage -> "${renderIndex}_${item.timestamp}"
+                        is com.ai.assistance.operit.data.model.ChatMessage -> "${item.sender}:${item.timestamp}"
                         FloatingLoadOlderItem -> "floating_load_older_history"
                         FloatingLoadNewerItem -> "floating_load_newer_history"
                         FloatingLoadingItem -> "floating_loading_indicator"
@@ -825,7 +832,7 @@ private fun ChatMessagesView(
                             (if (hasNewerDisplayHistory) 1 else 0) +
                                 (if (showLoadingIndicator) 1 else 0)
                         val displayIndex = renderIndex - messageListOffset
-                        val actualIndex = messagesCount - 1 - displayIndex
+                        val actualIndex = floatContext.messages.indexOfFirst { it.timestamp == item.timestamp && it.sender == item.sender }
 
                         FloatingMessageItem(
                             index = actualIndex,
@@ -1340,7 +1347,7 @@ private fun BoxScope.BottomResizeHandle(
 }
 
 @Composable
-private fun ProcessingStatusIndicator(floatContext: FloatContext) {
+internal fun ProcessingStatusIndicator(floatContext: FloatContext) {
     val state = floatContext.inputProcessingState.value
     
     if (state !is InputProcessingState.Idle && state !is InputProcessingState.Completed) {
@@ -1370,7 +1377,7 @@ private fun ProcessingStatusIndicator(floatContext: FloatContext) {
             modifier = Modifier
                 .fillMaxWidth()
                 .background(backgroundColor)
-                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -1385,9 +1392,10 @@ private fun ProcessingStatusIndicator(floatContext: FloatContext) {
                 }
                 Text(
                     text = text,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelMedium,
                     color = contentColor,
-                    maxLines = 1
+                    maxLines = if (state is InputProcessingState.Error) 3 else 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

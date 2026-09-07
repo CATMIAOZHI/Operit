@@ -699,7 +699,7 @@ class MessageCoordinationDelegate(
         }
 
         val pendingText = effectiveMessageTextOverride ?: messageProcessingDelegate.userMessage.value.text
-        val pendingReply = if (shouldReadComposerState) uiBridge.getReplyToMessage() else null
+        val pendingReply = if (shouldReadComposerState && turnOptions.useComposerReply) uiBridge.getReplyToMessage() else null
         fun sendPreparedMessage(afterSummary: Boolean = false): Boolean {
             // 调用messageProcessingDelegate发送消息，并传递附件信息和工作区路径
             val accepted = messageProcessingDelegate.sendUserMessage(
@@ -738,7 +738,7 @@ class MessageCoordinationDelegate(
                 if (afterSummary && effectiveMessageTextOverride == null && messageProcessingDelegate.userMessage.value.text == pendingText) {
                     messageProcessingDelegate.updateUserMessage("")
                 }
-                if (!afterSummary || uiBridge.getReplyToMessage() == pendingReply) {
+                if (turnOptions.useComposerReply && (!afterSummary || uiBridge.getReplyToMessage() == pendingReply)) {
                     uiBridge.clearReplyToMessage()
                 }
             }

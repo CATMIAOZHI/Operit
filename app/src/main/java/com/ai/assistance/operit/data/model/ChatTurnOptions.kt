@@ -4,6 +4,8 @@ data class ChatTurnOptions(
     val persistTurn: Boolean = true,
     val notifyReply: Boolean? = null,
     val hideUserMessage: Boolean = false,
+    /** Floating composers can share a runtime without consuming the main screen's reply selection. */
+    val useComposerReply: Boolean = true,
     val disableWarning: Boolean = false,
     /** Stable in-process identity for callers that need the terminal result of this exact turn. */
     val turnId: String? = null,

@@ -188,7 +188,19 @@ class FloatContext(
 
     // 对话框与内容显示状态
     var showInputDialog: Boolean by mutableStateOf(false)
-    var userMessage: String by mutableStateOf("")
+    private companion object {
+        // A window can be closed while the app/runtime stays alive. Its unsent drafts survive it.
+        val drafts = mutableStateMapOf<String, String>()
+    }
+    var draftKey by mutableStateOf("")
+    var userMessage: String
+        get() = drafts[draftKey].orEmpty()
+        set(value) { if (value.isEmpty()) drafts.remove(draftKey) else drafts[draftKey] = value }
+    var displayedChatId: String? = null
+    val messageListState = androidx.compose.foundation.lazy.LazyListState()
+    var autoScrollToBottom by mutableStateOf(true)
+    var voiceMode by mutableStateOf(false)
+    var voiceAutoTimeout: Boolean = false
     var contentVisible: Boolean by mutableStateOf(true)
     var showAttachmentPanel: Boolean by mutableStateOf(false)
     

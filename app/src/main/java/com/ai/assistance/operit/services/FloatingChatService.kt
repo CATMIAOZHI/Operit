@@ -17,6 +17,8 @@ import android.os.PowerManager
 import android.view.View
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.Typography
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.NotificationCompat
@@ -84,7 +86,11 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     private val inputProcessingState = mutableStateOf<InputProcessingState>(InputProcessingState.Idle)
 
     // 聊天服务核心 - 整合所有业务逻辑
-    private lateinit var chatCore: ChatServiceCore
+    private var selectedCore by mutableStateOf<ChatServiceCore?>(null)
+    private val boundCore: ChatServiceCore get() = checkNotNull(selectedCore)
+    var currentChatSlot: ChatRuntimeSlot = ChatRuntimeSlot.FLOATING
+        private set
+    private var coreObservation: kotlinx.coroutines.Job? = null
 
     private var lastCrashTime = 0L
     private var crashCount = 0
@@ -112,6 +118,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         const val EXTRA_AUTO_ENTER_VOICE_CHAT = "AUTO_ENTER_VOICE_CHAT"
         const val EXTRA_WAKE_LAUNCHED = "WAKE_LAUNCHED"
         const val EXTRA_AUTO_EXIT_AFTER_MS = "AUTO_EXIT_AFTER_MS"
+        const val EXTRA_CHAT_SLOT = "PET_CHAT_SLOT"
+        const val EXTRA_CHAT_ID = "PET_CHAT_ID"
         const val EXTRA_KEEP_IF_EXISTS = "KEEP_IF_EXISTS"
 
         fun getInstance(): FloatingChatService? = instance
@@ -124,6 +132,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     private var autoExitRunnable: Runnable? = null
 
     private val wakePrefs by lazy { WakeWordPreferences(applicationContext) }
+
+    fun hasPendingVoiceChat(): Boolean = autoEnterVoiceChat.value
 
     fun consumeAutoEnterVoiceChat(): Boolean {
         val value = autoEnterVoiceChat.value
@@ -157,7 +167,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         private val closeCallbacks = mutableListOf<() -> Unit>()
 
         fun getService(): FloatingChatService = this@FloatingChatService
-        fun getChatCore(): ChatServiceCore = chatCore
+        fun getChatCore(): ChatServiceCore = boundCore
 
         fun setCloseCallback(callback: () -> Unit) {
             closeCallbacks.add(callback)
@@ -255,53 +265,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         try {
             acquireWakeLock()
 
-            chatCore = ChatRuntimeHolder.getInstance(applicationContext).getCore(ChatRuntimeSlot.FLOATING)
-            chatCore.setUiBridge(EmptyChatServiceUiBridge)
-            AppLogger.d(TAG, "ChatServiceCore 已初始化")
-
-            // 订阅聊天历史更新
-            serviceScope.launch {
-                chatCore.chatHistory.collect { messages ->
-                    chatMessages.value = messages
-                    AppLogger.d(TAG, "聊天历史已更新: ${messages.size} 条消息")
-                }
-            }
-            
-            // 订阅附件列表更新
-            serviceScope.launch {
-                chatCore.attachments.collect { newAttachments ->
-                    attachments.value = newAttachments
-                    AppLogger.d(TAG, "附件列表已更新: ${newAttachments.size} 个附件")
-                }
-            }
-
-            // 订阅输入处理状态更新
-            serviceScope.launch {
-                combine(
-                    chatCore.currentChatId,
-                    chatCore.inputProcessingStateByChatId
-                ) { chatId, stateMap ->
-                    if (chatId == null) InputProcessingState.Idle
-                    else stateMap[chatId] ?: InputProcessingState.Idle
-                }.collect { state ->
-                    inputProcessingState.value = state
-                    AppLogger.d(TAG, "输入处理状态已更新: $state")
-                }
-            }
-            
-            // 设置 EnhancedAIService 就绪回调，以便监听输入处理状态
-            chatCore.setOnEnhancedAiServiceReady { aiService ->
-                AppLogger.d(TAG, "EnhancedAIService 已就绪，开始监听输入处理状态")
-                serviceScope.launch {
-                    try {
-                        aiService.inputProcessingState.collect { _ -> }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        AppLogger.d(TAG, "输入处理状态监听已取消")
-                    } catch (e: Exception) {
-                        AppLogger.e(TAG, "监听输入处理状态失败", e)
-                    }
-                }
-            }
+            bindChatCore(ChatRuntimeSlot.FLOATING)
 
             lifecycleOwner = ServiceLifecycleOwner()
             lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
@@ -398,6 +362,27 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         )
     }
 
+    /** Observe the existing runtime; opening a window must not restart or copy an active turn. */
+    private fun bindChatCore(slot: ChatRuntimeSlot) {
+        val core = ChatRuntimeHolder.getInstance(applicationContext).getCore(slot)
+        if (selectedCore === core) return
+        coreObservation?.cancel()
+        selectedCore = core
+        currentChatSlot = slot
+        inputProcessingState.value = core.inputProcessingStateByChatId.value[core.currentChatId.value] ?: InputProcessingState.Idle
+        chatMessages.value = core.chatHistory.value
+        attachments.value = core.attachments.value
+        coreObservation = serviceScope.launch {
+            launch { core.chatHistory.collect { chatMessages.value = it } }
+            launch { core.attachments.collect { attachments.value = it } }
+            launch {
+                combine(core.currentChatId, core.inputProcessingStateByChatId) { id, states ->
+                    states[id] ?: InputProcessingState.Idle
+                }.collect { inputProcessingState.value = it }
+            }
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         AppLogger.d(TAG, "onStartCommand")
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_START)
@@ -405,6 +390,14 @@ class FloatingChatService : Service(), FloatingWindowCallback {
 
         try {
             acquireWakeLock()
+
+            intent?.getStringExtra(EXTRA_CHAT_SLOT)?.let { name ->
+                ChatRuntimeSlot.entries.firstOrNull { it.name == name }?.let(::bindChatCore)
+                intent.getStringExtra(EXTRA_CHAT_ID)?.takeIf { it != boundCore.currentChatId.value }?.let {
+                    boundCore.switchChatLocal(it)
+                }
+                if (intent.getStringExtra(EXTRA_CHAT_ID).isNullOrBlank() && boundCore.currentChatId.value == null) boundCore.createNewChat()
+            }
 
             val keepIfExists = intent?.getBooleanExtra(EXTRA_KEEP_IF_EXISTS, false) == true
             val isFirstStart = !hasHandledStartCommand
@@ -415,7 +408,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                 intent?.getStringExtra("INITIAL_MODE")?.let { modeName ->
                     try {
                         val mode = FloatingMode.valueOf(modeName)
-                        windowState.currentMode.value = mode
+                        if (isFirstStart) windowState.currentMode.value = mode
+                        else switchToMode(mode)
                         AppLogger.d(TAG, "Set mode from intent: $mode")
                     } catch (e: IllegalArgumentException) {
                         AppLogger.w(TAG, "Invalid mode name in intent: $modeName")
@@ -450,14 +444,14 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                 serviceScope.launch {
                     val enabled = wakePrefs.wakeCreateNewChatOnWakeEnabledFlow.first()
                     if (enabled) {
-                        val currentChatId = chatCore.currentChatId.value
+                        val currentChatId = boundCore.currentChatId.value
                         if (currentChatId != null) {
-                            var history = chatCore.chatHistory.value
+                            var history = boundCore.chatHistory.value
                             var waitCount = 0
                             while (history.isEmpty() && waitCount < 6) {
                                 kotlinx.coroutines.delay(80)
                                 waitCount++
-                                history = chatCore.chatHistory.value
+                                history = boundCore.chatHistory.value
                             }
 
                             val hasAnyUserMessage = history.any { it.sender == "user" }
@@ -485,7 +479,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                         val folderId =
                             ChatHistoryManager.getInstance(applicationContext)
                                 .resolveOrCreateLegacyFolderId(group, activeCard?.name)
-                        chatCore.createNewChat(
+                        boundCore.createNewChat(
                             folderId = folderId,
                             inheritGroupFromCurrent = false,
                             characterCardId = activeCard?.id,
@@ -563,6 +557,10 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                 }
             }
             val windowShown = windowManager.show()
+            if (windowShown) {
+                windowManager.setFloatingWindowPersistentHidden(false)
+                windowManager.setFloatingWindowVisible(true)
+            }
             sendLifecycleBroadcast(
                 if (windowShown) ACTION_FLOATING_CHAT_WINDOW_SHOWN
                 else ACTION_FLOATING_CHAT_WINDOW_SHOW_FAILED
@@ -611,8 +609,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         AppLogger.d(TAG, "Attachment request received: $request")
         serviceScope.launch {
             try {
-                // 直接使用 chatCore 的 AttachmentDelegate 处理附件
-                chatCore.handleAttachment(request)
+                // 直接使用 boundCore 的 AttachmentDelegate 处理附件
+                boundCore.handleAttachment(request)
                 AppLogger.d(TAG, "附件已添加: $request")
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Error handling attachment request", e)
@@ -622,8 +620,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
 
     fun removeAttachment(filePath: String) {
         AppLogger.d(TAG, "移除附件: $filePath")
-        // 直接使用 chatCore 的 AttachmentDelegate 移除附件
-        chatCore.removeAttachment(filePath)
+        // 直接使用 boundCore 的 AttachmentDelegate 移除附件
+        boundCore.removeAttachment(filePath)
     }
 
     override fun onDestroy() {
@@ -640,15 +638,6 @@ class FloatingChatService : Service(), FloatingWindowCallback {
             } catch (_: Exception) {
             }
 
-            try {
-                chatCore.setUiBridge(EmptyChatServiceUiBridge)
-            } catch (_: Exception) {
-            }
-
-            try {
-                chatCore.cancelCurrentMessage()
-            } catch (_: Exception) {
-            }
 
             try {
                 CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
@@ -698,7 +687,6 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                 applicationContext,
                 false
             )
-            chatCore.cancelCurrentMessage()
         } catch (_: Exception) {
         }
         try {
@@ -734,16 +722,18 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     override fun onSendMessage(message: String, promptType: PromptFunctionType) {
         AppLogger.d(TAG, "onSendMessage: $message, promptType: $promptType")
         
-        // 直接使用 chatCore 发送消息，不再通过 SharedFlow
+        // 直接使用 boundCore 发送消息，不再通过 SharedFlow
+        val targetCore = boundCore
         serviceScope.launch {
             try {
-                // 发送消息（包含总结逻辑）
-                chatCore.sendUserMessage(
+                // Capture the selected runtime before suspending.
+                targetCore.sendUserMessage(
                     promptFunctionType = promptType,
-                    messageTextOverride = message
+                    messageTextOverride = message,
+                    turnOptions = com.ai.assistance.operit.data.model.ChatTurnOptions(useComposerReply = false),
                 )
                 
-                AppLogger.d(TAG, "消息已通过 chatCore 发送")
+                AppLogger.d(TAG, "消息已通过 boundCore 发送")
             } catch (e: Exception) {
                 AppLogger.e(TAG, "发送消息时出错", e)
             }
@@ -753,8 +743,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     override fun onCancelMessage() {
         AppLogger.d(TAG, "onCancelMessage")
         
-        // 直接使用 chatCore 取消消息，不再通过 SharedFlow
-        chatCore.cancelCurrentMessage()
+        // 直接使用 boundCore 取消消息，不再通过 SharedFlow
+        boundCore.cancelCurrentMessage()
     }
 
     override fun onAttachmentRequest(request: String) {
@@ -808,8 +798,13 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     }
 
     fun switchToMode(mode: FloatingMode) {
-        windowState.currentMode.value = mode
+        windowManager.switchMode(mode)
         AppLogger.d(TAG, "Switching to mode: $mode")
+    }
+
+    fun minimizeToPet() {
+        windowManager.prepareForExit()
+        windowManager.minimizeToPet()
     }
 
     suspend fun setFloatingWindowVisible(visible: Boolean) {
@@ -860,6 +855,6 @@ class FloatingChatService : Service(), FloatingWindowCallback {
      * 获取 ChatServiceCore 实例
      * @return ChatServiceCore 聊天服务核心实例
      */
-    fun getChatCore(): ChatServiceCore = chatCore
+    fun getChatCore(): ChatServiceCore = boundCore
 
 }

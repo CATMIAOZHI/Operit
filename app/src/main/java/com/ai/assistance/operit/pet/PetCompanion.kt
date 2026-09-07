@@ -1,6 +1,9 @@
 package com.ai.assistance.operit.pet
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
@@ -62,20 +65,29 @@ internal fun PetCompanion(
     } else {
         tasks.firstOrNull { it.key == selectedKey } ?: tasks.firstOrNull { it.active } ?: tasks.lastOrNull()
     }
-    var expanded by remember(task?.key) { mutableStateOf(false) }
     var interaction by remember { mutableIntStateOf(0) }
+    val lift by animateFloatAsState(
+        if (dragging && settings.dragAnimation) 1f else 0f,
+        animationSpec = if (settings.dragAnimation) spring(dampingRatio = 0.65f) else snap(),
+        label = "petDragLift",
+    )
     val petDescription = stringResource(R.string.pet_interact)
     val dragStartCallback by rememberUpdatedState(onDragStart)
     val dragCallback by rememberUpdatedState(onDrag)
     val dragEndCallback by rememberUpdatedState(onDragEnd)
 
-    val hasBubble = task != null && settings.showBubble && !dragging
+    val hasBubble = settings.showBubble && !dragging
     Layout(
         modifier = modifier.graphicsLayer { alpha = settings.opacity },
         content = {
             PetSprite(
                 task?.activity ?: PetActivity.IDLE, settings, interaction,
                 Modifier.size(settings.sizeDp.dp)
+                    .graphicsLayer {
+                        scaleX = 1f - 0.08f * lift
+                        scaleY = 1f - 0.03f * lift
+                        rotationZ = -7f * lift
+                    }
                     .semantics { contentDescription = petDescription }
                     .then(if (preview) Modifier else Modifier.pointerInput(Unit) {
                         detectDragGestures(
@@ -92,11 +104,10 @@ internal fun PetCompanion(
                         indication = null,
                     ) {
                         interaction++
-                        expanded = false
                         onToggleBubble()
                     },
             )
-            if (task != null && hasBubble) {
+            if (hasBubble) {
                 Box(Modifier.padding(4.dp)) {
                     Surface(
                         shape = RoundedCornerShape(22.dp),
@@ -107,16 +118,16 @@ internal fun PetCompanion(
                     ) {
                         Column(Modifier.verticalScroll(rememberScrollState())) {
                             Column(
-                                Modifier.fillMaxWidth().clickable(enabled = !preview) { expanded = !expanded }
+                                Modifier.fillMaxWidth()
                                     .padding(horizontal = 14.dp, vertical = 10.dp)
                             ) {
                                 Text(
-                                    task.title.ifBlank { stringResource(R.string.pet_task) },
+                                    task?.title?.takeIf { it.isNotBlank() } ?: stringResource(R.string.pet_ready_to_chat),
                                     style = MaterialTheme.typography.labelLarge,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    stringResource(task.activity.label()),
+                                    stringResource((task?.activity ?: PetActivity.IDLE).label()),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -124,7 +135,7 @@ internal fun PetCompanion(
                             }
                             if (tasks.size > 1) {
                                 TextButton(onClick = {
-                                    val index = tasks.indexOfFirst { it.key == task.key }
+                                    val index = tasks.indexOfFirst { it.key == task?.key }
                                     model?.selectedKey?.value = tasks[(index + 1) % tasks.size].key
                                 }, modifier = Modifier.fillMaxWidth()) {
                                     Text(
@@ -133,16 +144,14 @@ internal fun PetCompanion(
                                     )
                                 }
                             }
-                            if (expanded) {
-                                Row(
-                                    Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                                    horizontalArrangement = Arrangement.End,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    IconButton(onClick = { model?.open(task) }, modifier = Modifier.weight(1f)) {
-                                        Icon(Icons.AutoMirrored.Filled.OpenInNew, stringResource(R.string.pet_open_task))
-                                    }
-                                }
+                            TextButton(
+                                onClick = { model?.openFloating(task) },
+                                enabled = !preview,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.pet_open_floating))
                             }
                         }
                     }

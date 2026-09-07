@@ -208,6 +208,9 @@ fun PetSettingsSection() {
         PetToggle(stringResource(R.string.pet_animation), settings.animated) {
             preferences.update { value -> value.copy(animated = it) }
         }
+        PetToggle(stringResource(R.string.pet_drag_animation), settings.dragAnimation) {
+            preferences.update { value -> value.copy(dragAnimation = it) }
+        }
         PetToggle(stringResource(R.string.pet_show_bubble), settings.showBubble) {
             preferences.update { value -> value.copy(showBubble = it) }
         }

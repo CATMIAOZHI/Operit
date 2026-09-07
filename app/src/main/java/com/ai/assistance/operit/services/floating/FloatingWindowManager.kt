@@ -154,7 +154,7 @@ class FloatingWindowManager(
 
     private fun resolveSoftInputModeForMode(mode: FloatingMode): Int {
         return when (mode) {
-            FloatingMode.FULLSCREEN -> WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+            FloatingMode.FULLSCREEN, FloatingMode.WINDOW -> WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
             else -> WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED
         }
     }
@@ -308,7 +308,16 @@ class FloatingWindowManager(
         )
     }
 
+    private var minimizedToPet = false
+
+    fun minimizeToPet() {
+        minimizedToPet = true
+        windowDisplayEnabled = false
+        refreshWindowAndIndicatorVisibility()
+    }
+
     fun setFloatingWindowVisible(visible: Boolean) {
+        minimizedToPet = false
         windowDisplayEnabled = visible
         refreshWindowAndIndicatorVisibility()
         AppLogger.d(TAG, "Floating window visibility set to: $visible.")
@@ -337,6 +346,10 @@ class FloatingWindowManager(
         val view = composeView
 
         val windowVisible = !windowPersistentHidden && windowDisplayEnabled
+        AIForegroundService.setWakeListeningSuspendedForFloatingFullscreen(
+            context.applicationContext,
+            windowVisible && (currentMode == FloatingMode.FULLSCREEN || currentMode == FloatingMode.SCREEN_OCR),
+        )
 
         view?.let { v ->
             v.visibility = if (windowVisible) View.VISIBLE else View.GONE
@@ -352,7 +365,7 @@ class FloatingWindowManager(
         val indicatorShouldShow = when {
             !indicatorDisplayEnabled && !indicatorPersistentEnabled -> false
             indicatorPersistentEnabled -> true
-            else -> !windowVisible &&
+            else -> !windowVisible && !minimizedToPet &&
                     (currentMode == FloatingMode.FULLSCREEN || currentMode == FloatingMode.WINDOW)
         }
 
@@ -591,6 +604,22 @@ class FloatingWindowManager(
         params: WindowManager.LayoutParams,
         enabled: Boolean
     ) {
+        val conversation = state.currentMode.value == FloatingMode.WINDOW || state.currentMode.value == FloatingMode.FULLSCREEN
+        if (conversation) {
+            // Fit the actual overlay to system bars and IME once. Compose must not subtract
+            // the same overlay insets again (on-device this collapsed the entire composer).
+            params.flags = params.flags and WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS.inv() and
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN.inv()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                params.setFitInsetsTypes(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.ime())
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // OCR uses screen coordinates; do not carry the chat window's IME fitting into it.
+            params.setFitInsetsTypes(
+                if (state.currentMode.value == FloatingMode.SCREEN_OCR) 0
+                else android.view.WindowInsets.Type.systemBars()
+            )
+        }
         if (!enabled) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             params.layoutInDisplayCutoutMode =
@@ -675,7 +704,7 @@ class FloatingWindowManager(
         return Pair(newX, newY)
     }
 
-    private fun switchMode(newMode: FloatingMode) {
+    fun switchMode(newMode: FloatingMode) {
         if (state.isTransitioning || state.currentMode.value == newMode) return
         state.isTransitioning = true
 
@@ -851,8 +880,8 @@ class FloatingWindowManager(
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                         WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                 TargetParams(
-                    screenWidth,
-                    screenHeight,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
                     0,
                     0,
                     flags,

@@ -2,6 +2,11 @@ package com.ai.assistance.operit.pet
 
 import android.content.Context
 import android.content.Intent
+import com.ai.assistance.operit.data.model.toSerializable
+import android.net.Uri
+import android.provider.Settings
+import androidx.core.content.ContextCompat
+import com.ai.assistance.operit.services.FloatingChatService
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.data.model.InputProcessingState
@@ -148,6 +153,24 @@ class PetTasks private constructor(private val context: Context) {
             action = ACTION_OPEN_CHAT
             putExtra(EXTRA_CHAT_ID, task.chatId)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        })
+    }
+
+    fun openFloating(task: PetTask?) {
+        if (!Settings.canDrawOverlays(context)) {
+            context.startActivity(Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        }
+        val slot = task?.slot ?: FloatingChatService.getInstance()?.currentChatSlot ?: ChatRuntimeSlot.MAIN
+        val chatId = task?.chatId
+            ?: ChatRuntimeHolder.getInstance(context).getCore(slot).currentChatId.value
+        ContextCompat.startForegroundService(context, Intent(context, FloatingChatService::class.java).apply {
+            putExtra(FloatingChatService.EXTRA_CHAT_SLOT, slot.name)
+            putExtra(FloatingChatService.EXTRA_CHAT_ID, chatId)
+            putExtra("INITIAL_MODE", "WINDOW")
+            putExtra("COLOR_SCHEME", PetTheme.colors.toSerializable())
         })
     }
 
