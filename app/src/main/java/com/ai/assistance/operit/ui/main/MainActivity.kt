@@ -582,6 +582,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?): Boolean {
+        if (intent?.action == com.ai.assistance.operit.pet.PetTasks.ACTION_OPEN_CHAT) {
+            val chatId = intent.getStringExtra(com.ai.assistance.operit.pet.PetTasks.EXTRA_CHAT_ID)
+            if (!chatId.isNullOrBlank()) {
+                lifecycleScope.launch {
+                    val core = com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(this@MainActivity)
+                        .getCore(com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN)
+                    if (core.chatExists(chatId)) core.switchChat(chatId)
+                }
+                pendingShortcutNavItem = NavItem.AiChat
+                pendingShortcutRequestId = System.currentTimeMillis()
+                currentMainNavItem = NavItem.AiChat
+                return true
+            }
+        }
         if (intent?.action == ACTION_OPEN_SETTINGS_SHORTCUT) {
             pendingShortcutNavItem = NavItem.Settings
             pendingShortcutRequestId = System.currentTimeMillis()
