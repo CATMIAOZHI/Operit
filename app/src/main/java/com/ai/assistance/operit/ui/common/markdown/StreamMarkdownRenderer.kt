@@ -863,7 +863,7 @@ fun StreamMarkdownRenderer(
     val rendererState = state ?: remember(content) { StreamMarkdownRendererState() }
     
     // 使用流式版本相同的渲染器ID生成逻辑
-    val rendererId = remember(content) { 
+    val rendererId = remember(content, rendererState) {
         val id = "static-renderer-${content.hashCode()}"
         rendererState.updateRendererId(id)
         id
@@ -874,85 +874,58 @@ fun StreamMarkdownRenderer(
     val renderNodes = rendererState.renderNodes
     // 添加节点动画状态映射表，与流式版本保持一致
     val nodeAnimationStates = rendererState.nodeAnimationStates
-    val scope = rememberCoroutineScope()
     // 缓存转换后的稳定节点，避免不必要的对象创建
     val conversionCache = rendererState.conversionCache
     // XML 节点子流映射（静态渲染通常为空）
     val xmlNodeStreams = rendererState.xmlNodeStreams
 
-    // 当content字符串变化时，一次性完成解析
-    LaunchedEffect(content) {
-        // 先检查内容是否与流式渲染收集的内容一致，如果一致则跳过解析
-        val collectedContentStr = rendererState.collectedContent.toString()
-        val streamParsingCompleted = rendererState.streamParsingCompletedSuccessfully
+    fun replaceStaticNodes(parsedNodes: List<MarkdownNode>) {
+        rendererState.reset()
+        nodes.addAll(parsedNodes)
+        renderNodes.addAll(parsedNodes.map { it.toStableNode() })
+        parsedNodes.indices.forEach { index ->
+            nodeAnimationStates["static-node-$rendererId-$index"] = true
+        }
+    }
+
+    // Lazy lists may measure a returning message before effects run. Restore cached
+    // nodes during initialization so that its first measurement includes the body.
+    val staticNodesReady = remember(content, rendererState) {
         val shouldReuseExistingNodes =
-            collectedContentStr == content &&
-                areRenderNodesSynchronized(nodes, renderNodes, conversionCache) &&
-                streamParsingCompleted
-
+            rendererState.collectedContent.toString() == content &&
+                rendererState.streamParsingCompletedSuccessfully &&
+                areRenderNodesSynchronized(nodes, renderNodes, conversionCache)
         if (shouldReuseExistingNodes) {
-            // 从流式渲染切到静态渲染时，避免沿用已结束的 XML 子流导致子节点渲染异常
             xmlNodeStreams.clear()
-            // 内容一致且已有节点，跳过解析
-            return@LaunchedEffect
-        }
-
-        xmlNodeStreams.clear()
-        
-        // 移除时间计算相关变量
-        val cachedNodes = MarkdownNodeCache.get(content)
-
-        if (cachedNodes != null) {
-            // 移除时间计算相关的日志
-            // 移除时间计算变量
-            nodes.clear()
-            nodes.addAll(cachedNodes)
-            renderNodes.clear()
-            renderNodes.addAll(cachedNodes.map { it.toStableNode() })
-            // 确保动画状态也被设置
-            val newStates = mutableMapOf<String, Boolean>()
-            cachedNodes.forEachIndexed { index, node ->
-                val nodeKey = "static-node-$rendererId-$index"
-                newStates[nodeKey] = true
+            // Cache a snapshot, not the mutable list cleared by the next stream.
+            MarkdownNodeCache.put(content, nodes.toList())
+            true
+        } else {
+            val cachedNodes = MarkdownNodeCache.get(content)
+            if (cachedNodes != null) {
+                replaceStaticNodes(cachedNodes)
+                true
+            } else {
+                // A finishing/cancelled stream may already have visible nodes even
+                // though its final parse is incomplete. Keep them until replacement.
+                xmlNodeStreams.clear()
+                false
             }
-            nodeAnimationStates.putAll(newStates)
-            // 移除应用缓存节点相关时间日志
-            return@LaunchedEffect
         }
+    }
 
-        launch(Dispatchers.IO) {
+    LaunchedEffect(content, rendererState) {
+        if (!staticNodesReady) {
             try {
-                val parsedNodes = parseMarkdownToNodes(content)
-
-                // 将解析完成的节点添加到节点列表，并更新动画状态
-                withContext(Dispatchers.Main) {
-                    // 保存到缓存，这样下次渲染同样内容时可以直接使用
-                    MarkdownNodeCache.put(content, parsedNodes)
-
-                    // 更新UI状态
-                    // 清除现有节点
-                    nodes.clear()
-                    // 批量添加所有节点以减少UI重组次数
-                    nodes.addAll(parsedNodes)
-                    renderNodes.clear()
-                    renderNodes.addAll(parsedNodes.map { it.toStableNode() })
-                    // 清理转换缓存，因为内容已完全改变
-                    conversionCache.clear()
-
-                    // 更新所有节点的动画状态为可见
-                    val newStates = mutableMapOf<String, Boolean>()
-                    parsedNodes.forEachIndexed { index, node ->
-                        val nodeKey = "static-node-$rendererId-$index"
-                        newStates[nodeKey] = true
-                    }
-                    nodeAnimationStates.putAll(newStates)
-
-                    // 移除UI更新时间相关日志
+                val parsedNodes = withContext(Dispatchers.IO) {
+                    parseMarkdownToNodes(content)
                 }
+                MarkdownNodeCache.put(content, parsedNodes)
+                replaceStaticNodes(parsedNodes)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                AppLogger.e(TAG, "【静态渲染】解析Markdown内容出错: ${e.message}", e)
+                AppLogger.e(TAG, "Failed to parse static Markdown: ${e.message}", e)
             }
         }
     }

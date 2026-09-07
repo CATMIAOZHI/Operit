@@ -68,6 +68,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -660,6 +662,23 @@ fun PackageSelectorDialog(
 ) {
     if (!visible) return
 
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.attachment_package_select_title)) },
+        text = { PackageSelectorContent(onPackageSelected = onPackageSelected) },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        }
+    )
+}
+
+/** Shared picker content; floating hosts render this inside their existing window. */
+@Composable
+fun PackageSelectorContent(
+    onPackageSelected: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onSearchFocusChanged: (Boolean) -> Unit = {},
+) {
     val context = LocalContext.current
     val toolHandler = remember { AIToolHandler.getInstance(context.applicationContext) }
     val packageManager = remember {
@@ -682,125 +701,108 @@ fun PackageSelectorDialog(
                 }
             }
 
-    LaunchedEffect(visible) {
-        if (visible) {
-            searchQuery = ""
-            packageOptions =
-                buildAttachmentPackageOptions(
-                    context = context.applicationContext,
-                    packageManager = packageManager,
-                    skillRepository = skillRepository
-                )
-        }
+    LaunchedEffect(Unit) {
+        packageOptions = buildAttachmentPackageOptions(
+            context = context.applicationContext,
+            packageManager = packageManager,
+            skillRepository = skillRepository
+        )
     }
 
-    AlertDialog(
-            onDismissRequest = onDismiss,
-            title = {
+    Box(modifier) {
+        if (packageOptions.isEmpty()) {
+            Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    contentAlignment = Alignment.Center
+            ) {
                 Text(
-                        text = context.getString(R.string.attachment_package_select_title),
-                        style = MaterialTheme.typography.titleMedium
+                        text = stringResource(R.string.attachment_package_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            },
-            text = {
-                if (packageOptions.isEmpty()) {
+            }
+        } else {
+            Column(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp).verticalScroll(rememberScrollState())
+            ) {
+                OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        singleLine = true,
+                        placeholder = {
+                            Text(stringResource(R.string.attachment_package_search_placeholder))
+                        },
+                        leadingIcon = {
+                            Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = stringResource(R.string.search)
+                            )
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(
+                                            imageVector = Icons.Default.Clear,
+                                            contentDescription = stringResource(R.string.clear_search)
+                                    )
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                            .onFocusChanged { onSearchFocusChanged(it.isFocused) }
+                )
+
+                if (filteredPackageOptions.isEmpty()) {
                     Box(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
                             contentAlignment = Alignment.Center
                     ) {
                         Text(
-                                text = context.getString(R.string.attachment_package_empty),
+                                text = stringResource(R.string.attachment_package_search_empty),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 } else {
-                    Column(
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp).verticalScroll(rememberScrollState())
-                    ) {
-                        OutlinedTextField(
-                                value = searchQuery,
-                                onValueChange = { searchQuery = it },
-                                singleLine = true,
-                                placeholder = {
-                                    Text(context.getString(R.string.attachment_package_search_placeholder))
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                            imageVector = Icons.Default.Search,
-                                            contentDescription = context.getString(R.string.search)
-                                    )
-                                },
-                                trailingIcon = {
-                                    if (searchQuery.isNotEmpty()) {
-                                        IconButton(onClick = { searchQuery = "" }) {
-                                            Icon(
-                                                    imageVector = Icons.Default.Clear,
-                                                    contentDescription = context.getString(R.string.clear_search)
-                                            )
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-                        )
-
-                        if (filteredPackageOptions.isEmpty()) {
-                            Box(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-                                    contentAlignment = Alignment.Center
+                    filteredPackageOptions.forEach { option ->
+                        Surface(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.Transparent,
+                                onClick = { onPackageSelected(option.packageName) }
+                        ) {
+                            Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                        text = context.getString(R.string.attachment_package_search_empty),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
                                 )
-                            }
-                        } else {
-                            filteredPackageOptions.forEach { option ->
-                                Surface(
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color.Transparent,
-                                        onClick = { onPackageSelected(option.packageName) }
-                                ) {
-                                    Row(
-                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                                imageVector = Icons.Default.AutoAwesome,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(20.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                    text = option.title,
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                            Text(
-                                                    text = buildAttachmentPackageSubtitle(option),
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 2,
-                                                    overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                    }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                            text = option.title,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                            text = buildAttachmentPackageSubtitle(option),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                             }
                         }
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = onDismiss) {
-                    Text(context.getString(R.string.cancel))
-                }
             }
-    )
+        }
+    }
 }
 
 private fun buildAttachmentPackageOptions(

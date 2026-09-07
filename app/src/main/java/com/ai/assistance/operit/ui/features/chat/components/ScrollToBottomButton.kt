@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
@@ -166,6 +167,12 @@ fun ScrollToBottomButton(
     var showScrollButton by remember { mutableStateOf(false) }
     val isDragged by scrollState.interactionSource.collectIsDraggedAsState()
 
+    val currentAutoScroll by rememberUpdatedState(autoScrollToBottom)
+    val currentHasNewerHistory by rememberUpdatedState(hasNewerDisplayHistory)
+    val currentReverseLayout by rememberUpdatedState(reverseLayout)
+    val currentOnFollowingChange by rememberUpdatedState(onAutoScrollToBottomChange)
+
+    // Keep direction tracking alive, but read the current follow state after toggles.
     LaunchedEffect(scrollState) {
         var lastIndex = scrollState.firstVisibleItemIndex
         var lastOffset = scrollState.firstVisibleItemScrollOffset
@@ -180,7 +187,7 @@ fun ScrollToBottomButton(
             .collect { (currentIndex, currentOffset, _) ->
                 if (scrollState.isScrollInProgress) {
                     val movedAwayFromBottom =
-                        if (reverseLayout) {
+                        if (currentReverseLayout) {
                             currentIndex > lastIndex ||
                                 (currentIndex == lastIndex && currentOffset > lastOffset)
                         } else {
@@ -188,16 +195,16 @@ fun ScrollToBottomButton(
                                 (currentIndex == lastIndex && currentOffset < lastOffset)
                         }
                     if (movedAwayFromBottom) {
-                        if (autoScrollToBottom && isDragged) {
-                            onAutoScrollToBottomChange(false)
+                        if (currentAutoScroll && isDragged) {
+                            currentOnFollowingChange(false)
                             showScrollButton = true
                         }
                     } else {
                         val isAtBottom =
-                            scrollState.isAtBottom(reverseLayout = reverseLayout) &&
-                                !hasNewerDisplayHistory
-                        if (isAtBottom && !autoScrollToBottom) {
-                            onAutoScrollToBottomChange(true)
+                            scrollState.isAtBottom(reverseLayout = currentReverseLayout) &&
+                                !currentHasNewerHistory
+                        if (isAtBottom && !currentAutoScroll) {
+                            currentOnFollowingChange(true)
                             showScrollButton = false
                         }
                     }

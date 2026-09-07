@@ -54,6 +54,7 @@ internal fun PetCompanion(
     onDragStart: () -> Unit = {},
     anchorX: Float = settings.x,
     anchorY: Float = settings.y,
+    dragPetOffset: IntOffset? = null,
 ) {
     val context = LocalContext.current
     val model = remember(preview) { if (preview) null else PetTasks.get(context) }
@@ -76,18 +77,14 @@ internal fun PetCompanion(
     val dragCallback by rememberUpdatedState(onDrag)
     val dragEndCallback by rememberUpdatedState(onDragEnd)
 
-    val hasBubble = settings.showBubble && !dragging
+    // The overlay keeps its measured window while dragging; only WM moves it.
+    val hasBubble = settings.showBubble && (!dragging || dragPetOffset != null)
     Layout(
         modifier = modifier.graphicsLayer { alpha = settings.opacity },
         content = {
             PetSprite(
                 task?.activity ?: PetActivity.IDLE, settings, interaction,
                 Modifier.size(settings.sizeDp.dp)
-                    .graphicsLayer {
-                        scaleX = 1f - 0.08f * lift
-                        scaleY = 1f - 0.03f * lift
-                        rotationZ = -7f * lift
-                    }
                     .semantics { contentDescription = petDescription }
                     .then(if (preview) Modifier else Modifier.pointerInput(Unit) {
                         detectDragGestures(
@@ -105,6 +102,13 @@ internal fun PetCompanion(
                     ) {
                         interaction++
                         onToggleBubble()
+                    }
+                    // Pointer deltas must stay in screen-aligned coordinates; rotating
+                    // the gesture layer turns a horizontal drag into diagonal movement.
+                    .graphicsLayer {
+                        scaleX = 1f - 0.08f * lift
+                        scaleY = 1f - 0.03f * lift
+                        rotationZ = -7f * lift
                     },
             )
             if (hasBubble) {
@@ -168,14 +172,16 @@ internal fun PetCompanion(
             maxWidth = if (vertical) width else (width - petSize).coerceAtLeast(0),
             maxHeight = (constraints.maxHeight - if (vertical) petSize else 0).coerceAtLeast(0),
         ))
-        val height = if (vertical) petSize + (bubble?.height ?: 0) else maxOf(petSize, bubble?.height ?: 0)
+        val height = (if (vertical) petSize + (bubble?.height ?: 0) else maxOf(petSize, bubble?.height ?: 0))
+            .coerceIn(constraints.minHeight, constraints.maxHeight)
         layout(width, height) {
             // Keep the pet in the same composition slot when orientation or bubble visibility changes.
             pet.place(
-                ((width - pet.width) * anchorX).roundToInt(),
-                ((height - pet.height) * anchorY).roundToInt(),
+                dragPetOffset?.x ?: ((width - pet.width) * anchorX).roundToInt(),
+                dragPetOffset?.y ?: ((height - pet.height) * anchorY).roundToInt(),
             )
-            bubble?.place(
+            // An unplaced bubble keeps its measurement/state without drawing or hits.
+            if (!dragging) bubble?.place(
                 if (vertical || settings.edge == PetEdge.RIGHT) 0 else petSize,
                 if (!vertical) ((height - bubble.height) * anchorY).roundToInt()
                 else if (settings.edge == PetEdge.TOP) petSize else 0,

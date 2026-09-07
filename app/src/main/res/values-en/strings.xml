@@ -56,7 +56,7 @@
     <string name="floating_notification">Notification</string>
     <string name="floating_position">Position</string>
     <string name="floating_ocr_selected">Selected</string>
-    <string name="floating_ocr_select">Select to Recognize</string>
+    <string name="floating_ocr_select">Capture region</string>
     <string name="floating_input_or_hold_voice">Input or hold for voice</string>
     <string name="floating_voice_call">Voice Call</string>
     <string name="floating_send">Send</string>
@@ -75,7 +75,7 @@
     <string name="floating_back_to_main">Back to Main App</string>
     <string name="floating_minimize">Minimize</string>
     <string name="floating_close">Close</string>
-    <string name="floating_enter_your_question">Enter your question...</string>
+    <string name="floating_enter_your_question">Type anything</string>
     <string name="floating_using_tool">Using tool: %1$s</string>
     <string name="floating_processing_tool_result">Processing tool result: %1$s</string>
     <string name="floating_error">Error: %1$s</string>
@@ -344,7 +344,7 @@
     <string name="screen_content">Screen Content</string>
     <string name="current_notifications">Current Notifications</string>
     <string name="current_location">Current Location</string>
-    <string name="screen_ocr_select">Select OCR</string>
+    <string name="screen_ocr_select">Capture region</string>
     
     <!-- Model Suggestion Dialog -->
     <string name="model_suggestion_title">Model Suggestion</string>
@@ -5241,7 +5241,7 @@
     <string name="microphone_permission_denied_toast">Microphone permission denied</string>
     <string name="executing_tool">Executing tool: %1$s</string>
     <string name="processing_tool_result">Processing tool result: %1$s</string>
-    <string name="input_question_hint">Enter your question...</string>
+    <string name="input_question_hint">Type anything</string>
     <string name="input_question_with_workspace">Enter question, use @ to reference files</string>
     <string name="add_attachment">Add Attachment</string>
     <string name="user_uploaded_image">User uploaded image</string>
@@ -6120,7 +6120,7 @@
     <string name="screen_ocr_no_text_recognized">No text recognized</string>
     <string name="screen_ocr_selection_ocr_header">[Selection OCR]\n</string>
     <string name="screen_ocr_inline_instruction" formatted="false">Please do not read the file. Answer directly based on the attachment content and the user question.</string>
-    <string name="screen_ocr_selection_content_captured">Selection content captured</string>
+    <string name="screen_ocr_selection_content_captured">Selected image attached</string>
     <string name="screen_ocr_error_prefix">Error: %1$s</string>
 
     <!-- Memory Module -->
@@ -6802,7 +6802,7 @@
     <string name="attachment_screen_content_failed">Failed to get screen content: %1$s</string>
     <string name="attachment_screenshot_failed">Screenshot failed</string>
     <string name="attachment_no_screen_text">No screen text recognized</string>
-    <string name="attachment_screen_content_added">Screen content added</string>
+    <string name="attachment_screen_content_added">Screenshot attached</string>
     <string name="attachment_notifications_added">Current notifications added</string>
     <string name="attachment_notifications_failed">Failed to get notifications: %1$s</string>
     <string name="attachment_unknown_error">Unknown error</string>

@@ -47,7 +47,7 @@
     <string name="floating_notification">通知</string>
     <string name="floating_position">位置</string>
     <string name="floating_ocr_selected">已圈选</string>
-    <string name="floating_ocr_select">圈选识别</string>
+    <string name="floating_ocr_select">圈选截图</string>
     <string name="floating_input_or_hold_voice">输入或者长按语音</string>
     <string name="floating_voice_call">语音通话</string>
     <string name="floating_send">发送</string>
@@ -66,7 +66,7 @@
     <string name="floating_back_to_main">返回主应用</string>
     <string name="floating_minimize">最小化</string>
     <string name="floating_close">关闭</string>
-    <string name="floating_enter_your_question">请输入您的问题...</string>
+    <string name="floating_enter_your_question">随心输入</string>
     <string name="floating_using_tool">正在使用工具: %1$s</string>
     <string name="floating_processing_tool_result">正在处理工具结果: %1$s</string>
     <string name="floating_error">错误: %1$s</string>
@@ -336,7 +336,7 @@
     <string name="screen_content">屏幕内容</string>
     <string name="current_notifications">当前通知</string>
     <string name="current_location">当前位置</string>
-    <string name="screen_ocr_select">圈选识别</string>
+    <string name="screen_ocr_select">圈选截图</string>
     
     <!-- 模型建议对话框 -->
     <string name="model_suggestion_title">模型建议</string>
@@ -5656,7 +5656,7 @@
     <string name="microphone_permission_denied_toast">麦克风权限被拒绝</string>
     <string name="executing_tool">正在执行工具: %1$s</string>
     <string name="processing_tool_result">正在处理工具结果: %1$s</string>
-    <string name="input_question_hint">请输入您的问题...</string>
+    <string name="input_question_hint">随心输入</string>
     <string name="input_question_with_workspace">输入问题，使用@来引用文件</string>
     <string name="add_attachment">添加附件</string>
     <string name="user_uploaded_image">用户上传的图片</string>
@@ -6436,7 +6436,7 @@
     <string name="screen_ocr_no_text_recognized">未识别到文字</string>
     <string name="screen_ocr_selection_ocr_header">【圈选识别】\n</string>
     <string name="screen_ocr_inline_instruction">请你不要读取文件，直接根据该附件内容和用户提问回答用户问题</string>
-    <string name="screen_ocr_selection_content_captured">已获取圈选内容</string>
+    <string name="screen_ocr_selection_content_captured">已添加圈选图片</string>
     <string name="screen_ocr_error_prefix">错误：%1$s</string>
 
     <!-- Memory Module -->
@@ -7281,7 +7281,7 @@
     <string name="attachment_screen_content_failed">获取屏幕内容失败: %1$s</string>
     <string name="attachment_screenshot_failed">截图失败</string>
     <string name="attachment_no_screen_text">未识别到屏幕文字</string>
-    <string name="attachment_screen_content_added">已添加屏幕内容</string>
+    <string name="attachment_screen_content_added">已添加屏幕截图</string>
     <string name="attachment_notifications_added">已添加当前通知</string>
     <string name="attachment_notifications_failed">获取通知失败: %1$s</string>
     <string name="attachment_unknown_error">未知错误</string>

@@ -75,16 +75,14 @@ import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.AttachmentInfo
 import com.ai.assistance.operit.ui.floating.FloatContext
-import com.ai.assistance.operit.util.OCRUtils
+import com.ai.assistance.operit.util.OperitPaths
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import java.io.File
-import java.io.FileOutputStream
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.min
-import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.hypot
 
@@ -355,8 +353,13 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
                 return@LaunchedEffect
             }
 
-            val bitmap = withContext(Dispatchers.IO) {
-                BitmapFactory.decodeFile(path)
+            val bitmap = try {
+                withContext(Dispatchers.IO) {
+                    BitmapFactory.decodeFile(path)
+                }
+            } finally {
+                // The selection uses the decoded bitmap; only the final crop becomes an attachment.
+                File(path).delete()
             }
 
             if (bitmap == null) {
@@ -757,67 +760,39 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
                             val srcBitmap = screenshotBitmap ?: return@FloatingActionButton
                             val bounds = computeCropBounds(srcBitmap, rect, overlaySize) ?: return@FloatingActionButton
 
-                            fun fmt4(v: Float): String {
-                                val scaled = (v * 10000f).roundToInt() / 10000f
-                                return scaled.toString()
-                            }
-                            val cropRight = bounds.left + bounds.width
-                            val cropBottom = bounds.top + bounds.height
-                            val imgW = srcBitmap.width.toFloat().coerceAtLeast(1f)
-                            val imgH = srcBitmap.height.toFloat().coerceAtLeast(1f)
-                            val positionInfo =
-                                buildString {
-                                    append(context.getString(R.string.screen_ocr_position, "screen_selection"))
-                                    append("; image_px=${srcBitmap.width}x${srcBitmap.height}")
-                                    append(
-                                        "; rect_norm=${fmt4(bounds.left / imgW)},${fmt4(bounds.top / imgH)},${fmt4(cropRight / imgW)},${fmt4(cropBottom / imgH)}"
-                                    )
-                                }
-
+                            val attachmentDelegate = floatContext.chatService
+                                ?.getChatCore()?.getAttachmentDelegate() ?: return@FloatingActionButton
                             isBusy = true
                             floatContext.coroutineScope.launch {
+                                var imageFile: File? = null
                                 try {
-                                    val croppedBitmap = withContext(Dispatchers.Default) {
-                                        Bitmap.createBitmap(srcBitmap, bounds.left, bounds.top, bounds.width, bounds.height)
-                                    }
-
-                                    val ocrText = withContext(Dispatchers.IO) {
-                                        OCRUtils.recognizeText(
-                                            context = context,
-                                            bitmap = croppedBitmap,
-                                            quality = OCRUtils.Quality.HIGH
-                                        ).trim()
-                                    }
-
-                                    if (ocrText.isBlank()) {
-                                        showToast(context.getString(R.string.screen_ocr_no_text_recognized))
-                                    }
-
-                                    val content =
-                                        buildString {
-                                            append(context.getString(R.string.screen_ocr_selection_ocr_header))
-                                            append(positionInfo)
-                                            append("\n\n")
-                                            if (ocrText.isBlank()) {
-                                                append(context.getString(R.string.screen_ocr_no_text_recognized))
-                                            } else {
-                                                append(ocrText)
+                                    val file = withContext(Dispatchers.IO) {
+                                        val cropped = Bitmap.createBitmap(
+                                            srcBitmap, bounds.left, bounds.top, bounds.width, bounds.height
+                                        )
+                                        try {
+                                            File.createTempFile(
+                                                "screen_selection_", ".png",
+                                                OperitPaths.cleanOnExitInternalDir(context)
+                                            ).also { target ->
+                                                imageFile = target
+                                                target.outputStream().use { output ->
+                                                    check(cropped.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                                                        "Failed to save selected screenshot"
+                                                    }
+                                                }
                                             }
-                                            append("\n\n")
-                                            append(context.getString(R.string.screen_ocr_inline_instruction))
+                                        } finally {
+                                            if (cropped !== srcBitmap) cropped.recycle()
                                         }
-                                    val textAttachment = AttachmentInfo(
-                                        filePath = "screen_ocr_${System.currentTimeMillis()}",
-                                        fileName = "screen_ocr.txt",
-                                        mimeType = "text/plain",
-                                        fileSize = content.length.toLong(),
-                                        content = content
-                                    )
-
-                                    floatContext.chatService
-                                        ?.getChatCore()
-                                        ?.getAttachmentDelegate()
-                                        ?.addAttachments(listOf(textAttachment))
+                                    }
+                                    attachmentDelegate.addAttachments(listOf(AttachmentInfo(
+                                        filePath = file.absolutePath,
+                                        fileName = "screen_selection.png",
+                                        mimeType = "image/png",
+                                        fileSize = file.length()
+                                    )))
+                                    imageFile = null
 
                                     showToast(context.getString(R.string.screen_ocr_selection_content_captured))
 
@@ -825,9 +800,12 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
                                     floatContext.pendingScreenSelection = true
 
                                     floatContext.onModeChange(floatContext.previousMode)
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
                                 } catch (e: Exception) {
                                     showToast(context.getString(R.string.screen_ocr_error_prefix, e.message ?: ""))
                                 } finally {
+                                    imageFile?.delete()
                                     isBusy = false
                                 }
                             }

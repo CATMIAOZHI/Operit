@@ -116,7 +116,12 @@ class FloatingWindowManager(
     private var sizeAnimator: ValueAnimator? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingImeFocusRunnable: Runnable? = null
-    private var pendingWindowSize: Pair<androidx.compose.ui.unit.Dp, androidx.compose.ui.unit.Dp>? = null
+    private data class WindowResize(
+        val width: androidx.compose.ui.unit.Dp,
+        val height: androidx.compose.ui.unit.Dp,
+        val anchorRight: Boolean,
+    )
+    private var pendingWindowSize: WindowResize? = null
     private val resizeFrame = Runnable { applyPendingWindowSize() }
     private var focusDismissOverlayRequested: Boolean = false
     private var windowDisplayEnabled by mutableStateOf(true)
@@ -296,8 +301,8 @@ class FloatingWindowManager(
                     cancelFocusBeforeExit()
                     callback.onClose()
                 },
-                onResize = { newWidth, newHeight ->
-                    queueWindowResize(newWidth, newHeight)
+                onResize = { newWidth, newHeight, anchorRight ->
+                    queueWindowResize(newWidth, newHeight, anchorRight)
                 },
                 currentMode = state.currentMode.value,
                 previousMode = state.previousMode,
@@ -703,19 +708,23 @@ class FloatingWindowManager(
         }
     }
 
-    private fun queueWindowResize(width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp) {
+    private fun queueWindowResize(
+        width: androidx.compose.ui.unit.Dp,
+        height: androidx.compose.ui.unit.Dp,
+        anchorRight: Boolean,
+    ) {
         val view = composeView ?: return
         if (pendingWindowSize == null) view.postOnAnimation(resizeFrame)
-        pendingWindowSize = width to height
+        pendingWindowSize = WindowResize(width, height, anchorRight)
     }
 
     private fun applyPendingWindowSize() {
         val size = pendingWindowSize ?: return
         pendingWindowSize = null
-        if (state.windowWidth.value == size.first && state.windowHeight.value == size.second) return
-        state.windowWidth.value = size.first
-        state.windowHeight.value = size.second
-        updateWindowSizeInLayoutParams()
+        if (state.windowWidth.value == size.width && state.windowHeight.value == size.height) return
+        state.windowWidth.value = size.width
+        state.windowHeight.value = size.height
+        updateWindowSizeInLayoutParams(anchorRight = size.anchorRight)
     }
 
     private fun finishWindowResize() {
@@ -723,13 +732,19 @@ class FloatingWindowManager(
         applyPendingWindowSize()
     }
 
-    private fun updateWindowSizeInLayoutParams() {
+    private fun updateWindowSizeInLayoutParams(anchorRight: Boolean = false) {
         updateViewLayout { params ->
+            val oldWidth = params.width
             val density = context.resources.displayMetrics.density
             val scale = state.windowScale.value
             val widthDp = state.windowWidth.value
             val heightDp = state.windowHeight.value
             params.width = (widthDp.value * density * scale).toInt()
+            if (anchorRight) {
+                // Move the left edge with the size update in the same WM frame.
+                params.x += oldWidth - params.width
+                state.x = params.x
+            }
             val preferredHeight = (heightDp.value * density * scale).toInt()
             val view = composeView
             val visibleFrame = android.graphics.Rect()

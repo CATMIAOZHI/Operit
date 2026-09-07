@@ -6,6 +6,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Base64
+import android.util.Base64InputStream
 import java.io.File
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.SimplifiedUINode
@@ -494,35 +496,39 @@ open class DebuggerUITools(context: Context) : AccessibilityUITools(context) {
     }
 
     override suspend fun captureScreenshotToFile(tool: AITool): Pair<String?, Pair<Int, Int>?> {
+        var capturedFile: File? = null
         return try {
-            val screenshotDir = OperitPaths.cleanOnExitDir()
-
-            val shortName = System.currentTimeMillis().toString().takeLast(4)
-            val file = File(screenshotDir, "$shortName.png")
-
-            // 1) Debugger 模式下优先尝试 Shell 模式 (ADB) 截图
+            // Shell-created files in shared Downloads can be visible but unreadable to the app
+            // under scoped storage. Transfer through stdout and let the app own the cached PNG.
             AppLogger.d(TAG, "captureScreenshotToFile: Attempting shell screencap")
-            val command = "screencap -p ${file.absolutePath}"
-            val result = executeUiShellCommand(command)
+            val result = executeUiShellCommand("screencap -p | base64")
 
-            if (result.success && file.exists()) {
+            if (result.success && result.stdout.isNotBlank()) {
+                val file = File.createTempFile(
+                    "screenshot_", ".png", OperitPaths.cleanOnExitInternalDir(context)
+                )
+                capturedFile = file
+                Base64InputStream(result.stdout.byteInputStream(Charsets.US_ASCII), Base64.DEFAULT).use { input ->
+                    file.outputStream().use { output -> input.copyTo(output) }
+                }
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(file.absolutePath, options)
-                val dimensions = if (options.outWidth > 0 && options.outHeight > 0) {
-                    Pair(options.outWidth, options.outHeight)
-                } else {
-                    null
+                if (options.outWidth > 0 && options.outHeight > 0) {
+                    AppLogger.d(TAG, "captureScreenshotToFile: Shell screencap success")
+                    capturedFile = null
+                    return Pair(file.absolutePath, Pair(options.outWidth, options.outHeight))
                 }
-                AppLogger.d(TAG, "captureScreenshotToFile: Shell screencap success")
-                return Pair(file.absolutePath, dimensions)
             }
 
-            // 2) 如果 Shell 失败，作为回退尝试无障碍截图 (调用父类)
             AppLogger.w(TAG, "captureScreenshotToFile: Shell screencap failed, falling back to accessibility")
             super.captureScreenshotToFile(tool)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             AppLogger.e(TAG, "captureScreenshotToFile failed in Debugger", e)
             Pair(null, null)
+        } finally {
+            capturedFile?.delete()
         }
     }
 
