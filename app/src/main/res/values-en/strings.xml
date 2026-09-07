@@ -8731,4 +8731,23 @@
     <string name="floating_voice_answering">Responding…</string>
     <string name="floating_voice_starting">Starting voice chat…</string>
     <string name="screen_ocr_capturing">Capturing screen…</string>
+    <string name="model_protocol_title">Protocol handling</string>
+    <string name="model_protocol_desc">Applies only to this model. Inherits the provider by default.</string>
+    <string name="model_protocol_inherit">Inherit provider</string>
+    <string name="model_protocol_chat">Chat Completions (standard)</string>
+    <string name="model_protocol_chat_reasoning">Chat Completions (replay reasoning_content)</string>
+    <string name="model_protocol_responses">OpenAI Responses</string>
+    <string name="model_protocol_anthropic">Anthropic Messages</string>
+    <string name="model_protocol_gemini">Gemini native</string>
+    <string name="model_protocol_deepseek">DeepSeek (thinking controls and replay)</string>
+    <string name="model_protocol_kimi">Kimi (thinking controls and replay)</string>
+    <string name="model_protocol_mimo">MiMo (thinking controls and replay)</string>
+    <string name="model_protocol_endpoint">Model endpoint (optional)</string>
+    <string name="model_protocol_endpoint_desc">Leave blank to use the provider URL with the standard path adjusted for this protocol. Enter custom endpoints here.</string>
+    <string name="model_protocol_auto_configure">Auto-configure protocols</string>
+    <string name="model_protocol_auto_desc">Matches the provider and model in models.dev. Updates matched protocols, keeps custom endpoints, and leaves unmatched settings unchanged.</string>
+    <string name="model_protocol_auto_changed">Configuration changed. Please run auto-configuration again.</string>
+    <string name="model_protocol_auto_result">Configured %1$d models; skipped %2$d (online catalog).</string>
+    <string name="model_protocol_auto_local_result">Online catalog unavailable. Configured %1$d models from the local catalog; skipped %2$d.</string>
+    <string name="model_protocol_auto_failed">Could not read the protocol catalog. Settings were not changed.</string>
 </resources>

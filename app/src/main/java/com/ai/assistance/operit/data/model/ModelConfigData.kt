@@ -178,6 +178,7 @@ data class ModelConfigData(
         val enableDirectAudioProcessing: Boolean = false, // 是否启用直接音频处理
         val enableDirectVideoProcessing: Boolean = false, // 是否启用直接视频处理
         val modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities> = emptyMap(),
+        val modelProtocolSettings: Map<String, ModelProtocolSettings> = emptyMap(),
 
         // Gemini特定配置
         val enableGoogleSearch: Boolean = false, // 是否启用Google Search Grounding (仅Gemini支持)
@@ -281,7 +282,7 @@ fun ModelConfigData.forSelectedModel(modelIndex: Int): ModelConfigData {
         enableDirectImageProcessing = capabilities.image,
         enableDirectAudioProcessing = capabilities.audio,
         enableDirectVideoProcessing = capabilities.video,
-    )
+    ).withModelProtocol()
 }
 
 /** 更新模型列表，并让新增模型的图片、音频、视频能力默认关闭。 */
@@ -298,6 +299,7 @@ fun ModelConfigData.withModelNames(updatedModelNames: String): ModelConfigData {
     return copy(
         modelName = updatedModelNames,
         modelMultimodalCapabilities = updatedCapabilities,
+        modelProtocolSettings = modelProtocolSettings.filterKeys { it in getModelList(updatedModelNames) },
     )
 }
 

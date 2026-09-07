@@ -1,5 +1,10 @@
 package com.ai.assistance.operit.api.chat.llmprovider
 
+import com.ai.assistance.operit.data.model.withModelProtocol
+import com.ai.assistance.operit.data.model.ModelProtocol
+import com.ai.assistance.operit.data.model.protocolSettingsForModel
+import com.ai.assistance.operit.data.model.supportsModelProtocolOverrides
+
 import android.content.Context
 import com.ai.assistance.llama.LlamaSession
 import com.ai.assistance.operit.data.model.ApiProviderType
@@ -266,7 +271,7 @@ object AIServiceFactory {
         modelConfigManager: ModelConfigManager,
         context: Context
     ): AIService {
-        val rawService = buildService(config, modelConfigManager, context)
+        val rawService = buildService(config.withModelProtocol(), modelConfigManager, context)
         return TokenTrackingAIService(
             delegate = rawService,
             context = context,
@@ -309,6 +314,24 @@ object AIServiceFactory {
         val supportsVideo = config.enableDirectVideoProcessing
         // Tool Call支持标志
         val enableToolCall = config.enableToolCall
+
+        if (supportsModelProtocolOverrides(config.apiProviderTypeId) &&
+            config.protocolSettingsForModel(config.modelName).protocol == ModelProtocol.CHAT_REASONING
+        ) {
+            return KimiProvider(
+                apiEndpoint = config.apiEndpoint,
+                apiKeyProvider = apiKeyProvider,
+                modelName = config.modelName,
+                client = httpClient,
+                customHeaders = customHeaders,
+                providerType = providerType,
+                supportsVision = supportsVision,
+                supportsAudio = supportsAudio,
+                supportsVideo = supportsVideo,
+                enableToolCall = enableToolCall,
+                configureThinking = false,
+            )
+        }
         
         return when (providerType) {
             // OpenAI格式，支持原生和兼容OpenAI API的服务

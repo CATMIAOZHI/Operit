@@ -29,7 +29,8 @@ open class KimiProvider(
     supportsVision: Boolean = false,
     supportsAudio: Boolean = false,
     supportsVideo: Boolean = false,
-    enableToolCall: Boolean = false
+    enableToolCall: Boolean = false,
+    private val configureThinking: Boolean = true,
 ) : OpenAIProvider(
     apiEndpoint = apiEndpoint,
     apiKeyProvider = apiKeyProvider,
@@ -53,6 +54,8 @@ open class KimiProvider(
         preserveThinkInHistory: Boolean
     ): RequestBody {
         fun applyThinkingParams(jsonObject: JSONObject) {
+            // Generic reasoning_content endpoints do not share Kimi's thinking switch.
+            if (!configureThinking) return
             jsonObject.put(
                 "thinking",
                 JSONObject().apply {
@@ -61,7 +64,7 @@ open class KimiProvider(
             )
         }
 
-        if (!enableThinking) {
+        if (!enableThinking && configureThinking) {
             val baseRequestBodyJson =
                 super.createRequestBodyInternal(context, chatHistory, modelParameters, stream, availableTools, preserveThinkInHistory)
             val jsonObject = JSONObject(baseRequestBodyJson)

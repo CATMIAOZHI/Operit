@@ -1788,6 +1788,8 @@ open class OpenAIProvider(
     }
 
     // 创建请求
+    private val openCodeGoHeaders = OpenCodeGoHeaders()
+
     private suspend fun createRequest(
         requestBody: RequestBody,
         requestTraceId: String,
@@ -1817,6 +1819,7 @@ open class OpenAIProvider(
             builder.addHeader(key, value)
         }
 
+        openCodeGoHeaders.applyTo(builder)
         val request = builder.post(requestBody).build()
         val bodyBytes = runCatching { requestBody.contentLength() }.getOrDefault(-1L)
         AppLogger.d(

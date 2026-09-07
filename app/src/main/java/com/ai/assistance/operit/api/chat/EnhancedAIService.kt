@@ -109,7 +109,10 @@ internal fun resolveImageRecognitionAvailability(
  * Enhanced AI service that provides advanced conversational capabilities by integrating various
  * components like tool execution, conversation management, user preferences, and problem library.
  */
-class EnhancedAIService private constructor(private val context: Context) {
+class EnhancedAIService private constructor(
+    private val context: Context,
+    private val providerSessionId: String = java.util.UUID.randomUUID().toString(),
+) {
     data class TurnTokenSnapshot(
         val inputTokens: Int,
         val outputTokens: Int,
@@ -145,7 +148,7 @@ class EnhancedAIService private constructor(private val context: Context) {
             return CHAT_INSTANCES[chatId]
                 ?: synchronized(CHAT_INSTANCES) {
                     CHAT_INSTANCES[chatId]
-                        ?: EnhancedAIService(appContext).also { CHAT_INSTANCES[chatId] = it }
+                        ?: EnhancedAIService(appContext, chatId).also { CHAT_INSTANCES[chatId] = it }
                 }
         }
 
@@ -1447,7 +1450,15 @@ class EnhancedAIService private constructor(private val context: Context) {
                 }
             }
         }
-        return wrappedStream.withEventChannel(eventChannel)
+        val sessionContext = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
+            chatId?.takeIf { it.isNotBlank() } ?: providerSessionId
+        )
+        val sessionStream = object : Stream<String> by wrappedStream {
+            override suspend fun collect(collector: StreamCollector<String>) {
+                withContext(sessionContext) { wrappedStream.collect(collector) }
+            }
+        }
+        return sessionStream.withEventChannel(eventChannel)
     }
 
     private data class TruncatedToolRoundRecovery(
@@ -1945,7 +1956,13 @@ class EnhancedAIService private constructor(private val context: Context) {
             }
         }
 
-        val processToolJob = toolProcessingScope.async(start = CoroutineStart.LAZY) {
+        // This independent scope must retain the conversation identity for tool continuations.
+        val processToolJob = toolProcessingScope.async(
+            context = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
+                chatId?.takeIf { it.isNotBlank() } ?: providerSessionId
+            ),
+            start = CoroutineStart.LAZY,
+        ) {
             val chatHistoryManager =
                 ChatHistoryManager.getInstance(this@EnhancedAIService.context)
             val childChatTitle =
@@ -2554,7 +2571,9 @@ class EnhancedAIService private constructor(private val context: Context) {
             customRules: String? = null
     ): String {
         // 调用ConversationService中的方法
-        return conversationService.generateSummaryFromPromptTurns(messages, previousSummary, multiServiceManager, customRules)
+        return withContext(com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(providerSessionId)) {
+            conversationService.generateSummaryFromPromptTurns(messages, previousSummary, multiServiceManager, customRules)
+        }
     }
 
 
@@ -2563,11 +2582,13 @@ class EnhancedAIService private constructor(private val context: Context) {
         userText: String,
         attachmentFileNames: List<String> = emptyList()
     ): String {
-        return conversationService.generateConversationTitle(
-            userText = userText,
-            attachmentFileNames = attachmentFileNames,
-            multiServiceManager = multiServiceManager
-        )
+        return withContext(com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(providerSessionId)) {
+            conversationService.generateConversationTitle(
+                userText = userText,
+                attachmentFileNames = attachmentFileNames,
+                multiServiceManager = multiServiceManager
+            )
+        }
     }
 
     /**
