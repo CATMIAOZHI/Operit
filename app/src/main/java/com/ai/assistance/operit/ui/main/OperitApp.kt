@@ -533,6 +533,7 @@ fun OperitApp(
                 )
             }
         }
+        com.ai.assistance.operit.pet.PetCompanionHost()
         PermissionCircuitBreakerDialogHost()
     }
 }
