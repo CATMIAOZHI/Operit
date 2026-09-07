@@ -102,6 +102,7 @@ fun AssistantConfigScreen() {
     var autoNewChatGroupInput by remember { mutableStateOf("") }
 
     var selectedConfigTab by rememberSaveable { mutableStateOf(0) }
+    val petScrollState = rememberScrollState()
     var isAvatarPreviewCollapsed by rememberSaveable { mutableStateOf(false) }
 
     var personalWakeConfigDialogVisible by rememberSaveable { mutableStateOf(false) }
@@ -207,11 +208,16 @@ fun AssistantConfigScreen() {
                     Tab(
                         selected = selectedConfigTab == 0,
                         onClick = { selectedConfigTab = 0 },
-                        text = { Text(text = stringResource(R.string.avatar_config)) }
+                        text = { Text(text = stringResource(R.string.pet_title)) }
                     )
                     Tab(
                         selected = selectedConfigTab == 1,
                         onClick = { selectedConfigTab = 1 },
+                        text = { Text(text = stringResource(R.string.avatar_config)) }
+                    )
+                    Tab(
+                        selected = selectedConfigTab == 2,
+                        onClick = { selectedConfigTab = 2 },
                         text = { Text(text = stringResource(R.string.voice_wakeup_section_title)) }
                     )
                 }
@@ -219,6 +225,10 @@ fun AssistantConfigScreen() {
                 Spacer(modifier = Modifier.height(6.dp))
 
                 if (selectedConfigTab == 0) {
+                    Box(Modifier.fillMaxWidth().weight(1f).verticalScroll(petScrollState)) {
+                        com.ai.assistance.operit.pet.PetSettingsSection()
+                    }
+                } else if (selectedConfigTab == 1) {
                     // Avatar预览区域
                     if (!isAvatarPreviewCollapsed) {
                         Box(

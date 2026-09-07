@@ -401,6 +401,15 @@
             tools:ignore="ExportedContentProvider" />
 
         <service
+            android:name=".pet.PetCompanionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled animated companion overlay displaying ongoing chat task status across apps." />
+        </service>
+
+        <service
             android:name=".services.UIDebuggerService"
             android:enabled="true"
             android:exported="false"
