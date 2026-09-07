@@ -54,6 +54,9 @@ import com.ai.assistance.operit.api.chat.llmprovider.parseProviderCustomHeaders
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
+import com.ai.assistance.operit.data.model.ModelProtocolCatalogRepository
+import com.ai.assistance.operit.data.model.ModelProtocolSettings
+import com.ai.assistance.operit.data.model.supportsModelProtocolOverrides
 import com.ai.assistance.operit.data.model.ModelMultimodalCapabilities
 import com.ai.assistance.operit.data.model.ModelOption
 import com.ai.assistance.operit.data.model.OfficialModelCapabilitiesRepository
@@ -143,6 +146,15 @@ fun ModelApiSettingsSection(
             }
         )
     }
+    var modelProtocolSettingsInput by remember(config.id) { mutableStateOf(config.modelProtocolSettings) }
+    var isConfiguringProtocols by remember(config.id) { mutableStateOf(false) }
+    var protocolSyncJob by remember(config.id) { mutableStateOf<Job?>(null) }
+    val protocolCatalogRepository = remember(context.applicationContext) {
+        ModelProtocolCatalogRepository(context.applicationContext)
+    }
+    DisposableEffect(config.id) {
+        onDispose { protocolSyncJob?.cancel() }
+    }
     var showMultimodalModelPicker by remember { mutableStateOf(false) }
     var selectedMultimodalModel by remember(config.id) {
         mutableStateOf(getModelList(config.modelName).firstOrNull().orEmpty())
@@ -195,6 +207,7 @@ fun ModelApiSettingsSection(
         val enableDirectAudioProcessing: Boolean,
         val enableDirectVideoProcessing: Boolean,
         val modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities>,
+        val modelProtocolSettings: Map<String, ModelProtocolSettings>,
         val enableGoogleSearch: Boolean,
         val enableClaude1hPromptCache: Boolean,
         val enableToolCall: Boolean,
@@ -220,6 +233,7 @@ fun ModelApiSettingsSection(
                     enableDirectAudioProcessing = state.enableDirectAudioProcessing,
                     enableDirectVideoProcessing = state.enableDirectVideoProcessing,
                     modelMultimodalCapabilities = state.modelMultimodalCapabilities,
+                    modelProtocolSettings = state.modelProtocolSettings,
                     enableGoogleSearch = state.enableGoogleSearch,
                     enableClaude1hPromptCache = state.enableClaude1hPromptCache,
                     enableToolCall = state.enableToolCall,
@@ -253,6 +267,7 @@ fun ModelApiSettingsSection(
                     modelMultimodalCapabilitiesInput[modelName]
                         ?: ModelMultimodalCapabilities()
                 },
+            modelProtocolSettings = modelProtocolSettingsInput.filterKeys { it in configuredModelNames },
             enableGoogleSearch = enableGoogleSearchInput,
             enableClaude1hPromptCache = enableClaude1hPromptCacheInput,
             enableToolCall = enableToolCallInput,
@@ -460,6 +475,44 @@ fun ModelApiSettingsSection(
                     selectedApiProvider ?: ApiProviderType.OPENAI_GENERIC,
                     customHeaders = parseProviderCustomHeaders(config.customHeaders),
                 )
+        }
+    }
+
+    fun configureModelProtocols() {
+        if (isConfiguringProtocols) return
+        val names = getModelList(modelNameInput)
+        val endpoint = apiEndpointInput
+        val providerId = selectedProviderTypeId
+        val previous = modelProtocolSettingsInput
+        isConfiguringProtocols = true
+        protocolSyncJob = scope.launch {
+            try {
+                val result = protocolCatalogRepository.refreshOrLoad()
+                if (apiEndpointInput != endpoint || selectedProviderTypeId != providerId ||
+                    getModelList(modelNameInput) != names) {
+                    showNotification(context.getString(R.string.model_protocol_auto_changed))
+                    return@launch
+                }
+                val matched = result.catalog.matchAll(endpoint, names)
+                    .filter { (model, _) -> modelProtocolSettingsInput[model] == previous[model] }
+                    .mapValues { (model, settings) ->
+                        settings.copy(endpoint = previous[model]?.endpoint?.takeIf { it.isNotBlank() }
+                            ?: settings.endpoint)
+                    }
+                modelProtocolSettingsInput = modelProtocolSettingsInput + matched
+                showNotification(context.getString(
+                    if (result.usedLocalCopy) R.string.model_protocol_auto_local_result
+                    else R.string.model_protocol_auto_result,
+                    matched.size, names.size - matched.size,
+                ))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                showNotification(context.getString(R.string.model_protocol_auto_failed))
+            } finally {
+                isConfiguringProtocols = false
+                protocolSyncJob = null
+            }
         }
     }
 
@@ -858,6 +911,25 @@ fun ModelApiSettingsSection(
                 SettingsInfoBanner(
                     text = stringResource(R.string.model_multimodal_capabilities_desc)
                 )
+                if (supportsModelProtocolOverrides(selectedProviderTypeId)) {
+                    OutlinedButton(
+                        onClick = { configureModelProtocols() },
+                        enabled = configuredModels.isNotEmpty() && !isConfiguringProtocols,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (isConfiguringProtocols) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(stringResource(R.string.model_protocol_auto_configure))
+                    }
+                    Text(
+                        stringResource(R.string.model_protocol_auto_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                }
                 OutlinedButton(
                     onClick = { syncOfficialModelCapabilities() },
                     enabled =
@@ -935,6 +1007,16 @@ fun ModelApiSettingsSection(
                             modelMultimodalCapabilitiesInput[modelName]
                                 ?: ModelMultimodalCapabilities()
                         Column {
+                            if (supportsModelProtocolOverrides(selectedProviderTypeId)) {
+                                ModelProtocolSettingsEditor(
+                                    modelName = modelName,
+                                    settings = modelProtocolSettingsInput[modelName] ?: ModelProtocolSettings(),
+                                    onChange = { settings ->
+                                        modelProtocolSettingsInput = modelProtocolSettingsInput +
+                                            (modelName to settings)
+                                    },
+                                )
+                            }
                             SettingsSwitchRow(
                                 title = stringResource(R.string.enable_direct_image_processing),
                                 subtitle = stringResource(R.string.enable_direct_image_processing_desc),
@@ -1687,7 +1769,7 @@ internal fun SettingsTextField(
 }
 
 @Composable
-private fun SettingsSelectorRow(
+internal fun SettingsSelectorRow(
         title: String,
         subtitle: String,
         value: String,

@@ -8712,4 +8712,23 @@
     <string name="floating_voice_answering">正在回答…</string>
     <string name="floating_voice_starting">正在启动语音…</string>
     <string name="screen_ocr_capturing">正在截取屏幕…</string>
+    <string name="model_protocol_title">协议处理</string>
+    <string name="model_protocol_desc">仅应用到当前模型，默认继承提供商配置。</string>
+    <string name="model_protocol_inherit">继承提供商</string>
+    <string name="model_protocol_chat">Chat Completions（标准）</string>
+    <string name="model_protocol_chat_reasoning">Chat Completions（回传 reasoning_content）</string>
+    <string name="model_protocol_responses">OpenAI Responses</string>
+    <string name="model_protocol_anthropic">Anthropic Messages</string>
+    <string name="model_protocol_gemini">Gemini 原生</string>
+    <string name="model_protocol_deepseek">DeepSeek（思考参数与回传）</string>
+    <string name="model_protocol_kimi">Kimi（思考参数与回传）</string>
+    <string name="model_protocol_mimo">MiMo（思考参数与回传）</string>
+    <string name="model_protocol_endpoint">此模型的端点（可选）</string>
+    <string name="model_protocol_endpoint_desc">留空使用提供商地址，并按协议转换标准路径；非标准地址可在此单独填写。</string>
+    <string name="model_protocol_auto_configure">自动配置协议</string>
+    <string name="model_protocol_auto_desc">按提供商和模型匹配 models.dev 目录。更新匹配模型的协议，保留手填端点；未匹配的设置不变。</string>
+    <string name="model_protocol_auto_changed">配置已变化，请重新点击自动配置协议</string>
+    <string name="model_protocol_auto_result">已配置 %1$d 个模型，跳过 %2$d 个（云端目录）</string>
+    <string name="model_protocol_auto_local_result">云端目录不可用，已用本地目录配置 %1$d 个模型，跳过 %2$d 个</string>
+    <string name="model_protocol_auto_failed">协议目录读取失败，设置未更改</string>
 </resources>

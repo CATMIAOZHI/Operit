@@ -1728,6 +1728,8 @@ open class GeminiProvider(
     }
 
     /** 创建HTTP请求 */
+    private val openCodeGoHeaders = OpenCodeGoHeaders()
+
     private suspend fun createRequest(
             context: Context,
             requestBody: RequestBody,
@@ -1764,7 +1766,9 @@ open class GeminiProvider(
             builder.addHeader(key, value)
         }
 
-        val request = builder.url(requestUrl)
+        builder.url(requestUrl)
+        openCodeGoHeaders.applyTo(builder)
+        val request = builder
                 .post(requestBody)
                 .addHeader("Content-Type", "application/json")
                 .build()
