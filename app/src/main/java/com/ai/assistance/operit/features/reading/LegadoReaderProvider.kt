@@ -82,44 +82,50 @@ class LegadoReaderProvider(
             chapters
         }
 
+    override suspend fun getCachedReadableChapterContent(bookId: String, chapterIndex: Int): ReadableChapterContent? =
+        getReadableChapterContentInternal(bookId, chapterIndex, null, cachedOnly = true)
+
     override suspend fun getReadableChapterContent(
         bookId: String,
         chapterIndex: Int,
     ): ReadableChapterContent =
-        getReadableChapterContentInternal(
+        requireNotNull(getReadableChapterContentInternal(
             bookId = bookId,
             chapterIndex = chapterIndex,
             catalogSnapshotSourceId = null,
-        )
+        ))
 
     override suspend fun getReadableChapterContentForCatalogSnapshot(
         bookId: String,
         chapterIndex: Int,
         expectedSourceId: String,
     ): ReadableChapterContent =
-        getReadableChapterContentInternal(
+        requireNotNull(getReadableChapterContentInternal(
             bookId = bookId,
             chapterIndex = chapterIndex,
             catalogSnapshotSourceId = expectedSourceId,
-        )
+        ))
 
     private suspend fun getReadableChapterContentInternal(
         bookId: String,
         chapterIndex: Int,
         catalogSnapshotSourceId: String?,
-    ): ReadableChapterContent = withContext(Dispatchers.IO) {
+        cachedOnly: Boolean = false,
+    ): ReadableChapterContent? = withContext(Dispatchers.IO) {
         val sourceIdBeforeContent =
             catalogSnapshotSourceId?.takeIf(String::isNotBlank)
                 ?: chapterSourceIdBeforeContent(bookId, chapterIndex)
         val data = try {
             query(
-                path = "book/readableContent/query",
+                path = if (cachedOnly) "book/cachedReadableContent/query" else "book/readableContent/query",
                 parameters = mapOf(
                     "url" to bookId,
                     "index" to chapterIndex.toString(),
                 ),
             )
         } catch (error: ReaderProviderException) {
+            if (cachedOnly) throw ReaderProviderException(error.reason,
+                "无法读取 Legado 本地正文接口，请确认 Legado 已更新且可连接：${error.message}", error)
             val reason = if (
                 error.message.orEmpty().contains("拒绝") ||
                 error.message.orEmpty().contains("安全正文位置")
@@ -132,6 +138,7 @@ class LegadoReaderProvider(
         }
         val item = data as? JSONObject
             ?: throw invalidResponse("Legado 安全正文响应不是对象")
+        if (cachedOnly && item.has("cached") && !item.getBoolean("cached")) return@withContext null
         val content = item.getString("content")
         val readableUntil = item.getInt("readableUntil")
         val responseBookId = item.getString("bookUrl")

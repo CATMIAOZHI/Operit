@@ -54,6 +54,10 @@ interface ReaderProvider {
 
     suspend fun getChapters(bookId: String): List<ReaderChapter>
 
+    /** Local-only capability; implementations must never fall back to a network-capable endpoint. */
+    suspend fun getCachedReadableChapterContent(bookId: String, chapterIndex: Int): ReadableChapterContent? =
+        throw ReaderProviderException(ReaderProviderException.Reason.INVALID_RESPONSE, "Legado 尚不支持只读本地正文，请更新 Legado")
+
     suspend fun getReadableChapterContent(
         bookId: String,
         chapterIndex: Int,

@@ -101,6 +101,14 @@ class ReadingCompanionRunSession(
         stoppedReason = reason
     }
 
+    private val deliveredEvidence = hashSetOf<String>()
+
+    @Synchronized
+    fun recordEvidence(identity: String): Boolean = deliveredEvidence.add(
+        java.security.MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    )
+
     /** 目标章段落列表（锚点校验与候选校验共用）。 */
     fun targetParagraphs(): List<String> = AutoCommentSupport.paragraphs(targetContent)
 
@@ -145,16 +153,8 @@ interface ReadingCompanionSubagentBackend {
     /** 阅读侧 run 的模型轮次计数（可观测的模型轮次边界；不是上限）。 */
     fun incrementRunModelRound(runId: Long): Boolean
 
-    fun hasPersistedSummary(bookId: String, sourceId: String): Boolean
-
-    suspend fun readPersistedSummary(
-        bookId: String,
-        sourceId: String,
-        chapterIndex: Int,
-    ): String?
-
-    /** 已读范围内检索（三级检索 + 读者记忆，单独返回）。 */
-    suspend fun search(query: String): JSONObject
+    fun readFile(bookId: String, path: String, offset: Int, maxCharacters: Int): JSONObject
+    suspend fun grep(bookId: String, query: String, offset: Int, limit: Int): JSONObject
 }
 
 /**

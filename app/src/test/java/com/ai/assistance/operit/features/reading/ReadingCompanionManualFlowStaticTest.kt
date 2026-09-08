@@ -25,7 +25,7 @@ class ReadingCompanionManualFlowStaticTest {
         assertFalse(
             service.contains("scheduleMore && (remainingText > 0 || remainingKnowledge > 0)"),
         )
-        assertTrue(service.contains("if (scheduleMore && remainingText > 0)"))
+        assertTrue(service.contains("if (scheduleMore && remainingText > 0 && indexed > 0)"))
     }
 
     @Test
@@ -41,7 +41,7 @@ class ReadingCompanionManualFlowStaticTest {
     }
 
     @Test
-    fun `summary-only subagent path has a dedicated terminal submit`() {
+    fun `summary-only subagent terminates through successful submission`() {
         val coordinator =
             source(
                 "src/main/java/com/ai/assistance/operit/features/reading/" +
@@ -58,15 +58,11 @@ class ReadingCompanionManualFlowStaticTest {
                     "ToolExecutionManager.kt",
             )
         assertTrue(coordinator.contains("summaryOnly"))
-        assertTrue(coordinator.contains("TOOL_SUBMIT_SUMMARY"))
         assertTrue(tools.contains("session.summaryOnly"))
         assertTrue(tools.contains("\"summary_submitted\""))
-        assertTrue(
-            toolExecutionManager.contains(
-                "!readingSession.summaryOnly &&\n" +
-                    "                    !readingSession.backend.heartbeatClaimIfOwned(",
-            ),
-        )
+        val observer = source("src/main/java/com/ai/assistance/operit/features/reading/ReadingRunObserver.kt")
+        assertTrue(observer.contains("!session.summaryOnly && !session.backend.heartbeatClaimIfOwned"))
+        assertTrue(toolExecutionManager.contains("runObserver?.beforeToolBatch") || toolExecutionManager.contains("runObserver.beforeToolBatch"))
     }
 
     @Test
@@ -78,8 +74,8 @@ class ReadingCompanionManualFlowStaticTest {
             assertTrue(tasks.contains("exports.$action"))
         }
         assertTrue(management.contains("exports.summary_batch_prefs"))
-        assertTrue(entryUi.contains("runGenerationTask(ctx"))
-        assertTrue(entryUi.contains("{ task_id: targetBatchId }"))
+        assertTrue(entryUi.contains("readingTools.tasks.start(ctx"))
+        assertTrue(entryUi.contains("readingTools.tasks.cancel(ctx"))
         assertFalse(tasks.contains("\"name\": \"batch_id\""))
         val commentary = source("src/main/java/com/ai/assistance/operit/features/reading/ReadingCompanionAutoCommentary.kt")
         assertTrue(commentary.contains("expectedManualBookId = state.book.id"))

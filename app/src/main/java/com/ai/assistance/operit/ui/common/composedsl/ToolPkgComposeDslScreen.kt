@@ -24,6 +24,10 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.net.http.SslError
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
@@ -1157,17 +1161,44 @@ fun ToolPkgComposeDslToolScreen(
                     ToolPkgComposeDslParser.extractActionId(node.props["onLoad"])
                 }
             }
+        val resumeAction by rememberUpdatedState(rootNode?.let {
+            ToolPkgComposeDslParser.extractActionId(it.props["onResume"])
+        })
+        val pauseAction by rememberUpdatedState(rootNode?.let {
+            ToolPkgComposeDslParser.extractActionId(it.props["onPause"])
+        })
+        var previouslyActive by remember { mutableStateOf(false) }
+        val lifecycleOwner = LocalLifecycleOwner.current
+        var resumed by remember(lifecycleOwner) {
+            mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+        }
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, _ ->
+                resumed = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+        LaunchedEffect(isCurrentScreen, resumed) {
+            val active = isCurrentScreen && resumed
+            if (active && hasDispatchedInitialOnLoad) {
+                resumeAction?.takeIf(String::isNotBlank)?.let { dispatchAction(actionId = it, payload = null) }
+            } else if (!active && previouslyActive) {
+                pauseAction?.takeIf(String::isNotBlank)?.let { dispatchAction(actionId = it, payload = null) }
+            }
+            previouslyActive = active
+        }
         val contentModifier =
             Modifier
                 .padding(paddingValues)
                 .fillMaxSize()
 
-        LaunchedEffect(rootNode, rootOnLoadActionId, hasDispatchedInitialOnLoad) {
-            if (rootNode == null || rootOnLoadActionId.isNullOrBlank() || hasDispatchedInitialOnLoad) {
+        LaunchedEffect(rootNode, rootOnLoadActionId, hasDispatchedInitialOnLoad, isCurrentScreen, resumed) {
+            if (!isCurrentScreen || !resumed || rootNode == null || rootOnLoadActionId.isNullOrBlank() || hasDispatchedInitialOnLoad) {
                 return@LaunchedEffect
             }
             withFrameNanos { }
-            if (hasDispatchedInitialOnLoad) {
+            if (!isCurrentScreen || !resumed || hasDispatchedInitialOnLoad) {
                 return@LaunchedEffect
             }
             hasDispatchedInitialOnLoad = true

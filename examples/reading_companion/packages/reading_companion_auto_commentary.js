@@ -6,8 +6,8 @@
     "en": "AI Auto Commentary"
   },
   "description": {
-    "zh": "使用当前书籍所选角色卡，隔离读取后续章节（默认提前 5 章，可在 1～10 章调整）及最近最多 8 章、总计最多 4.8 万字的前情，生成少而精、按段落解锁的个性段评；Legado 将角色卡名字显示为作者。过程中会产生模型 Token 消耗。",
-    "en": "Uses the selected per-book character card, the chapters ahead (default 5, adjustable from 1 to 10) and up to 8 recent chapters of private context (48,000 characters total) to pre-generate sparse in-character comments. Legado shows the card name as author. This spends model tokens."
+    "zh": "使用当前书籍所选角色卡，隔离读取后续章节（默认提前 5 章，可在 1～10 章调整）及前四章正文，通过多轮子代理按需读取，生成少而精、按段落解锁的个性段评；Legado 将角色卡名字显示为作者。过程中会产生模型 Token 消耗。",
+    "en": "Uses the selected per-book character card, the chapters ahead (default 5, adjustable from 1 to 10) and the four preceding chapters through an on-demand multi-turn subagent to pre-generate sparse in-character comments. Legado shows the card name as author. This spends model tokens."
   },
   "category": "AI Reading Companion",
   "enabledByDefault": false,

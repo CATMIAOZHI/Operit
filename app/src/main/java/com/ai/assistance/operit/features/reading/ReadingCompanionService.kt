@@ -12,6 +12,7 @@ import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -118,7 +119,7 @@ class ReadingCompanionService private constructor(
         selectedReadingState(bookId?.trim()?.takeIf(String::isNotBlank))
 
     suspend fun persistedSummaryFiles(): JSONObject {
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         // The summaries page is a local browse surface and must never block on a live Legado
         // connection. Read everything from the persisted catalogs first; when Legado is
         // reachable, refresh the catalog so chapter inserts/moves are reflected next time.
@@ -170,7 +171,7 @@ class ReadingCompanionService private constructor(
         limit: Int = PERSISTED_FILES_DEFAULT_LIMIT,
         callerRoleCardId: String? = null,
     ): JSONObject {
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         // Keep the browser's stable book-level documents visible even on a freshly selected book.
         // This mirrors get_local_files and does not expose any writable content surface.
         val bookId = resolveLocalBookId()
@@ -235,7 +236,7 @@ class ReadingCompanionService private constructor(
     ): JSONObject {
         val bookId = resolveLocalBookId()
             ?: throw IllegalArgumentException("当前没有可用的书籍，请先在 Legado 打开一本书或在阅读伴侣中选择书籍")
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         try {
             val refreshedBookId = withTimeoutOrNull(READ_FILE_CATALOG_REFRESH_BUDGET_MS) {
                 val state = selectedReadingState()
@@ -268,13 +269,14 @@ class ReadingCompanionService private constructor(
     suspend fun localBookFiles(callerRoleCardId: String?): JSONObject {
         val state = selectedReadingState()
         val chapters = provider.getChapters(state.book.id)
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         fileStore.syncBookCatalog(state.book, chapters)
         val roleCardId = callerRoleCardId?.trim()?.takeIf(String::isNotBlank)
         return JSONObject()
             .put("book", state.book.name)
             .put("author", state.book.author)
             .put("currentChapterNumber", state.chapterIndex + 1)
+            .put("cacheCoverage", fileStore.chapterCacheCoverage(state.book.id, state.chapterIndex))
             .put("bookRootPath", fileStore.bookRootPath(state.book.id))
             .put("bookMetadataPath", fileStore.bookMetadataPath(state.book.id))
             .put("chaptersRootPath", fileStore.chaptersRootPath(state.book.id))
@@ -317,6 +319,7 @@ class ReadingCompanionService private constructor(
         callerRoleCardId: String? = null,
     ): JSONObject {
         val state = selectedReadingState()
+        ReadingCompanionTasks.getInstance(appContext).cacheForAdvancedProgress(state)
         synchronizeBoundary(state)
         val content = provider.getReadableChapterContent(state.book.id, state.chapterIndex)
         val safeEnd = content.readableUntil.coerceIn(0, content.content.length)
@@ -350,7 +353,7 @@ class ReadingCompanionService private constructor(
         val latestState = selectedReadingState(state.book.id)
         failIfBoundaryChanged(state, latestState)
         synchronizeBoundary(latestState)
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         val chapters = provider.getChapters(state.book.id)
         val chapterByIndex = chapters.associateBy(ReaderChapter::index)
         require(chapterByIndex[content.chapterIndex]?.sourceId == content.sourceId) {
@@ -788,15 +791,37 @@ class ReadingCompanionService private constructor(
         }
     }
 
+    /** Copies only complete, already-downloaded old chapters. Never invokes a model or download endpoint. */
+    suspend fun cacheDownloadedChapters(bookId: String, onProgress: (JSONObject) -> Unit): JSONObject = withContext(Dispatchers.IO) {
+        val state = selectedReadingState(bookId)
+        val chapters = provider.getChapters(bookId)
+        val files = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
+        files.syncBookCatalog(state.book, chapters)
+        synchronizeBoundary(state)
+        val old = chapters.filter { it.index < state.chapterIndex }.sortedBy { it.index }
+        cacheDownloadedChapterSnapshots(old,
+            hasCompleteSnapshot = { chapter -> store.isCompleteChapterIndexed(bookId, chapter.index) &&
+                files.chapterFilePaths(bookId, chapter.sourceId)?.optString("contentPath")?.let { java.io.File(it).isFile } == true },
+            readLocal = { provider.getCachedReadableChapterContent(bookId, it.index) },
+            save = { chapter, content ->
+                validateContentBeforeStore(state, content, chapter.sourceId)
+                files.writeChapterContent(state.book, chapter, content.content,
+                    ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE)
+                store.replaceChapter(content)
+            }, onProgress = onProgress,
+        ).put("throughChapterIndex", state.chapterIndex - 1)
+    }
+
     suspend fun refreshAndIndex(
         maxCompletedChapters: Int,
         @Suppress("UNUSED_PARAMETER") maxKnowledgeChapters: Int,
         scheduleMore: Boolean,
         runtime: ToolExecutionManager.ToolRuntimeContext? = null,
+        bookId: String? = null,
     ): ReadingRefreshResult = withContext(Dispatchers.IO) {
-        val state = selectedReadingState()
+        val state = selectedReadingState(bookId)
         val chapters = provider.getChapters(state.book.id)
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         fileStore.syncBookCatalog(state.book, chapters)
         synchronizeBoundary(state)
 
@@ -832,8 +857,10 @@ class ReadingCompanionService private constructor(
             .filterNot { store.isCompleteChapterIndexed(state.book.id, it.index) }
             .sortedByDescending(ReaderChapter::index)
             .toList()
-        for (chapter in missingCompleted.take(maxCompletedChapters.coerceAtLeast(0))) {
-            val content = provider.getReadableChapterContent(state.book.id, chapter.index)
+        for (chapter in missingCompleted) {
+            if (indexed >= maxCompletedChapters.coerceAtLeast(0)) break
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val content = provider.getCachedReadableChapterContent(state.book.id, chapter.index) ?: continue
             validateContentBeforeStore(state, content, chapter.sourceId)
             fileStore.writeChapterContent(
                 book = state.book,
@@ -843,6 +870,18 @@ class ReadingCompanionService private constructor(
             )
             store.replaceChapter(content)
             indexed += 1
+        }
+        val summaries = fileStore.listSummaryFiles(state.book.id).getJSONArray("summaries")
+        repeat(summaries.length()) { index ->
+            val item = summaries.getJSONObject(index)
+            val chapterIndex = item.getInt("chapterNumber") - 1
+            if (chapterIndex <= state.chapterIndex) {
+                val text = item.getString("summary")
+                store.indexPublishedSummary(state.book.id, chapterIndex, PublishedSummary(
+                    text, item.optString("contentHash"), item.optString("contentHashKind"),
+                    ReadingCompanionFileStore.contentHash(text), "file", false,
+                ))
+            }
         }
         val remainingText = (missingCompleted.size - indexed).coerceAtLeast(0)
 
@@ -859,7 +898,7 @@ class ReadingCompanionService private constructor(
         synchronizeBoundary(finalState)
         // Knowledge/summary rows are intentionally never a background scheduling reason.  They
         // are generated only by an explicit manual summary batch;正文增量索引仍可继续后台运行。
-        if (scheduleMore && remainingText > 0) {
+        if (scheduleMore && remainingText > 0 && indexed > 0) {
             scheduleBackgroundIndex()
         }
         ReadingRefreshResult(
@@ -884,7 +923,7 @@ class ReadingCompanionService private constructor(
         val chapters = provider.getChapters(state.book.id)
         val targetChapter = chapters.firstOrNull { it.index == targetIndex }
             ?: error("目标章节已不在目录中")
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         fileStore.syncBookCatalog(state.book, chapters)
         readFreshFileSummary(
             state = state,
@@ -1016,7 +1055,7 @@ class ReadingCompanionService private constructor(
         }
         val chapters = provider.getChapters(state.book.id)
             .sortedByDescending(ReaderChapter::index)
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         fileStore.syncBookCatalog(state.book, chapters)
 
         val rangeStart = startChapterIndex ?: 0
@@ -1181,22 +1220,23 @@ class ReadingCompanionService private constructor(
     }
 
     /** Saved per-book summary-batch preferences for the current book, or null when never set. */
-    suspend fun summaryBatchPrefs(): SummaryBatchPrefs? =
-        store.getSummaryBatchPrefs(selectedReadingState().book.id)
+    suspend fun summaryBatchPrefs(bookId: String? = null): SummaryBatchPrefs? =
+        store.getSummaryBatchPrefs(selectedReadingState(bookId).book.id)
 
     /** Persists the per-book summary-batch preferences for the current book. */
     suspend fun saveSummaryBatchPrefs(
         startChapter: Int?,
         endChapter: Int?,
         budget: Int,
+        bookId: String? = null,
     ): SummaryBatchPrefs {
-        val bookId = selectedReadingState().book.id
+        val selectedBookId = selectedReadingState(bookId).book.id
         val prefs = SummaryBatchPrefs(
             startChapter = startChapter,
             endChapter = endChapter,
             budget = budget,
         )
-        store.setSummaryBatchPrefs(bookId, prefs)
+        store.setSummaryBatchPrefs(selectedBookId, prefs)
         return prefs
     }
 
@@ -1398,7 +1438,7 @@ class ReadingCompanionService private constructor(
                 ),
             )
             validateContentBeforeStore(state, content, chapter.sourceId)
-            fileStore.writeSummary(
+            val published = fileStore.writeSummary(
                 book = state.book,
                 chapter = chapter,
                 sourceContent = content.content,
@@ -1407,21 +1447,7 @@ class ReadingCompanionService private constructor(
             // Keep the summary discoverable by the existing FTS-backed search/knowledge APIs
             // without invoking the legacy direct model gateway or fabricating structured facts.
             store.replaceChapter(content)
-            store.storeKnowledge(
-                content = content,
-                knowledge =
-                    ChapterKnowledge(
-                        summary = outcome.summary,
-                        characters = emptyList(),
-                        events = emptyList(),
-                        locations = emptyList(),
-                        items = emptyList(),
-                        relationshipChanges = emptyList(),
-                        possibleForeshadowing = emptyList(),
-                        keywords = emptyList(),
-                    ),
-                structuredJson = JSONObject().toString(),
-            )
+            store.indexPublishedSummary(state.book.id, chapter.index, published)
             store.finishAutoCommentRun(
                 runId = runId,
                 status = ReadingCompanionStore.AUTO_COMMENT_RUN_STATUS_GENERATED,
@@ -1432,7 +1458,9 @@ class ReadingCompanionService private constructor(
                 .put("chapterNumber", chapter.index + 1)
                 .put("chapterTitle", chapter.title)
                 .put("status", "generated")
-                .put("summary", outcome.summary)
+                .put("summary", published.text)
+                .put("summaryRevision", published.revision)
+                .put("preservedManualSummary", !published.wasReplaced)
                 .put("runId", runId)
         } catch (cancelled: CancellationException) {
             store.markRunInterrupted(runId, errorMessage = "cancelled")
@@ -1498,7 +1526,7 @@ class ReadingCompanionService private constructor(
         val state = selectedReadingState()
         synchronizeBoundary(state)
         val chapters = provider.getChapters(state.book.id)
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         // Catalog sync is deliberately the only write here. It records the currently active
         // source identities so file evidence cannot walk stale source directories.
         fileStore.syncBookCatalog(state.book, chapters)
@@ -1563,6 +1591,7 @@ class ReadingCompanionService private constructor(
     suspend fun search(
         query: String,
         runtime: ToolExecutionManager.ToolRuntimeContext?,
+        bookId: String? = null,
     ): JSONObject {
         require(query.isNotBlank()) { "搜索问题不能为空" }
         var refresh = refreshAndIndex(
@@ -1570,6 +1599,7 @@ class ReadingCompanionService private constructor(
             maxKnowledgeChapters = 0,
             scheduleMore = true,
             runtime = runtime,
+            bookId = bookId,
         )
         val plan = runOptionalSearchModelStep {
             modelGateway.analyzeQuery(query, runtime)
@@ -1593,6 +1623,7 @@ class ReadingCompanionService private constructor(
                 maxKnowledgeChapters = 0,
                 scheduleMore = true,
                 runtime = runtime,
+                bookId = searchState.book.id,
             )
             searchState = selectedReadingState(searchState.book.id)
             synchronizeBoundary(searchState)
@@ -1740,7 +1771,7 @@ class ReadingCompanionService private constructor(
         sourceId: String,
         chapterIndex: Int,
     ): String? {
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         val kind = fileStore.summaryContentHashKind(bookId, sourceId) ?: return null
         val chapter = ReaderChapter(bookId, sourceId, chapterIndex, "")
         val currentHash = try {
@@ -1763,7 +1794,7 @@ class ReadingCompanionService private constructor(
         fileStoreOverride: ReadingCompanionFileStore? = null,
     ): List<FreshFileSummary> {
         val chapters = chaptersOverride ?: provider.getChapters(state.book.id)
-        val fileStore = fileStoreOverride ?: ReadingCompanionFileStore(appContext)
+        val fileStore = fileStoreOverride ?: ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         fileStore.syncBookCatalog(state.book, chapters)
         val candidates = chapters
             .asSequence()
@@ -1852,7 +1883,7 @@ class ReadingCompanionService private constructor(
         if (hits.isEmpty()) return emptyList()
         val chapters = provider.getChapters(state.book.id)
         val chapterByIndex = chapters.associateBy(ReaderChapter::index)
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         fileStore.syncBookCatalog(state.book, chapters)
         val verifiedTextIndices = mutableSetOf<Int>()
         val verifiedKnowledgeIndices = mutableSetOf<Int>()
@@ -1925,7 +1956,7 @@ class ReadingCompanionService private constructor(
         val safeLimit = limit.coerceIn(0, MAX_CONTEXT_COMPANION_COMMENTS)
         if (safeLimit == 0) return emptyList()
         val chapters = provider.getChapters(state.book.id)
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         fileStore.syncBookCatalog(state.book, chapters)
         val sourceByIndex = mutableMapOf<Int, String>()
         val contractByIndex = mutableMapOf<Int, String>()
@@ -2262,7 +2293,7 @@ class ReadingCompanionIndexWorker(
                 maxKnowledgeChapters = 2,
                 scheduleMore = false,
             )
-            if (refresh.remainingCompletedChapters > 0) {
+            if (refresh.remainingCompletedChapters > 0 && refresh.indexedChapters > 0) {
                 service.scheduleBackgroundIndexContinuation()
             }
             Result.success()

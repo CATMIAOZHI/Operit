@@ -93,7 +93,9 @@ object ReadingCompanionBridge {
                         service.selectBook(parameters.optString("book"), automatic)
                             .toJson()
                     }
-                    "get_current_book" -> service.currentBook().toJson()
+                    "get_current_book" -> service.currentBook().also {
+                        ReadingCompanionTasks.getInstance(context).cacheForAdvancedProgress(it)
+                    }.toJson()
                     "get_context" -> service.currentContext(
                         parameters.optInt("max_characters", 16_000),
                         runtime?.callerCardId,
@@ -338,7 +340,8 @@ object ReadingCompanionBridge {
                         require(
                             (callerPackageName == ReadingCompanionService.SUBPACKAGE_NAME || callerPackageName == "reading_companion_manage")
                         ) { "该操作仅允许阅读伴侣主包调用" }
-                        val existing = service.summaryBatchPrefs()
+                        val bookId = parameters.optString("book_id").trim().takeIf(String::isNotBlank)
+                        val existing = service.summaryBatchPrefs(bookId)
                         val hasAnyValue =
                             parameters.has("start_chapter") ||
                                 parameters.has("end_chapter") ||
@@ -399,6 +402,7 @@ object ReadingCompanionBridge {
                                 startChapter = startChapter,
                                 endChapter = endChapter,
                                 budget = budget,
+                                bookId = bookId,
                             )
                         JSONObject()
                             .put("startChapter", saved.startChapter ?: JSONObject.NULL)

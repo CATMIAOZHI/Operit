@@ -1245,6 +1245,7 @@ class EnhancedAIService private constructor(
                     // 使用新的Stream API
                     AppLogger.d(TAG, "sendMessage请求前准备耗时: ${tAfterGetTools - startTime}ms, 流式输出: $stream")
                     val requestStartTime = messageTimingNow()
+                    com.ai.assistance.operit.core.agent.AgentRunObservers.forChat(chatId)?.onModelRequest()
                     val responseStream =
                             serviceForFunction.sendMessage(
                                     context = this@EnhancedAIService.context,
@@ -2324,6 +2325,7 @@ class EnhancedAIService private constructor(
             try {
                 // 发送消息并获取响应流
                 val aiStartTime = messageTimingNow()
+                com.ai.assistance.operit.core.agent.AgentRunObservers.forChat(chatId)?.onModelRequest()
                 val responseStream =
                         serviceForFunction.sendMessage(
                                 context = this@EnhancedAIService.context,
