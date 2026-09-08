@@ -45,6 +45,161 @@ class ReadingCompanionFileStoreTest {
     }
 
     @Test
+    fun `coverage distinguishes missing past snapshots and excludes future catalog entries`() {
+        val old = chapter.copy(sourceId = "old-2", index = 1)
+        val future = chapter.copy(sourceId = "future", index = 2)
+        store.syncBookCatalog(book, listOf(chapter, old, future))
+        store.writeChapterContent(book, chapter, "cached text")
+        val coverage = store.chapterCacheCoverage(book.id, 2)
+        assertEquals(2, coverage.getInt("pastChapterCount"))
+        assertEquals(1, coverage.getInt("localSnapshotCount"))
+        assertEquals(1, coverage.getInt("missingSnapshotCount"))
+    }
+
+    @Test
+    fun `grep locates evidence beyond the beginning of a long line`() {
+        store.writeChapterContent(book, chapter, "x".repeat(2000) + "needle tail")
+        val hit = store.grepPersistedFiles(book.id, "needle").getJSONArray("results").getJSONObject(0)
+        assertEquals(2000, hit.getInt("offset"))
+        assertTrue(hit.getString("text").contains("needle"))
+        assertEquals("needle", store.readPersistedFile(book.id, hit.getString("path"), hit.getInt("offset"), 6).getString("content"))
+    }
+
+    @Test
+    fun `summary result reports preserved human text instead of discarded model text`() {
+        store.writeSummary(book, chapter, "source", "model summary")
+        val paths = store.chapterFilePaths(book.id, chapter.sourceId)!!
+        File(paths.getString("summaryPath")).writeText("human correction")
+        val published = store.writeSummary(book, chapter, "source", "discarded candidate")
+        assertEquals("human correction", published.text)
+        assertFalse(published.wasReplaced)
+        assertEquals(ReadingCompanionFileStore.contentHash("source"), published.sourceHash)
+    }
+
+    @Test
+    fun `prepared commentary is invisible until publication snapshot selects its revision`() {
+        fun prepare(text: String, staged: Boolean): PreparedReadingPublication = store.writeGeneratedChapter(
+            book, chapter, "paragraph", ReadingCompanionFileStore.contentHash("paragraph"),
+            "contract", "role", "reader", "summary", listOf(AutoCommentRecord(
+                bookId = book.id, chapterIndex = chapter.index, paragraphIndex = 0,
+                text = text, kind = "reaction", roleCardId = "role", roleCardName = "reader",
+                evidenceJson = "{}", createdAt = 1L,
+            )), prepareOnly = staged,
+        )
+        prepare("old published", false)
+        val next = prepare("new staged", true)
+        fun text(reader: ReadingCompanionFileStore): String = reader.readPublishedComments(book.id, 0, "contract")!!
+            .getJSONArray("comments").getJSONObject(0).getString("text")
+        assertEquals("old published", text(store))
+        val published = ReadingCompanionFileStore(mock(Context::class.java), root,
+            publicationSnapshot = mapOf(next.chapterRef to next.revision))
+        assertEquals("new staged", text(published))
+        assertEquals("old published", text(store))
+        val visibleFiles = published.allCurrentChapterSearchPaths(book.id, listOf(chapter))
+        val visiblePaths = (0 until visibleFiles.length()).map(visibleFiles::getString)
+        assertTrue(visiblePaths.all { File(it).isFile })
+        assertTrue(visiblePaths.any { it.contains(next.revision) })
+        val oldFiles = store.allCurrentChapterSearchPaths(book.id, listOf(chapter))
+        assertFalse((0 until oldFiles.length()).any { oldFiles.getString(it).contains(next.revision) })
+        val activePath = published.chapterFilePaths(book.id, chapter.sourceId)!!.getString("commentsPath")
+        assertTrue(activePath.contains(next.revision))
+        assertTrue(runCatching { store.readPersistedFile(book.id, activePath, 0, 100) }.isFailure)
+        assertTrue(published.readPersistedFile(book.id, activePath, 0, 100).getString("content").isNotBlank())
+    }
+
+    @Test
+    fun `grep pages actual original text offsets and excludes other books`() {
+        store.writeChapterContent(book, chapter, "first\r\nneedle one\r\nneedle two")
+        val other = book.copy(id = "other-book")
+        val otherChapter = chapter.copy(bookId = other.id)
+        store.syncBookCatalog(other, listOf(otherChapter))
+        store.writeChapterContent(other, otherChapter, "needle secret")
+        val first = store.grepPersistedFiles(book.id, "needle", 0, 1)
+        val hit = first.getJSONArray("results").getJSONObject(0)
+        val read = store.readPersistedFile(book.id, hit.getString("path"), hit.getInt("offset"), 10)
+        assertTrue(read.getString("content").startsWith("needle"))
+        assertEquals(1, first.getInt("nextOffset"))
+        val second = store.grepPersistedFiles(book.id, "needle", 1, 1)
+        assertTrue(second.getJSONArray("results").getJSONObject(0).getString("text").contains("two"))
+        assertTrue(second.isNull("nextOffset"))
+        val forbidden = store.grepPersistedFiles(other.id, "secret").getJSONArray("results").getJSONObject(0)
+        assertTrue(runCatching { store.readPersistedFile(book.id, forbidden.getString("path"), 0, 10) }.isFailure)
+    }
+
+    @Test
+    fun `installation migration copies legacy files once and isolates later writes`() {
+        val legacy = File(root, "legacy/books").apply { mkdirs() }
+        File(legacy, "memory.md").writeText("original")
+        val stable = ReadingCompanionFileStore.migrateInstallationRoot(legacy, "app.stable")
+        val dev = ReadingCompanionFileStore.migrateInstallationRoot(legacy, "app.dev")
+        File(dev, "memory.md").writeText("dev edit")
+        assertEquals("original", File(stable, "memory.md").readText())
+        assertEquals("original", File(legacy, "memory.md").readText())
+        assertEquals(dev, ReadingCompanionFileStore.migrateInstallationRoot(legacy, "app.dev"))
+        assertEquals("dev edit", File(dev, "memory.md").readText())
+    }
+
+    private fun stageSummaryPublication(directory: File, previous: String = "") {
+        val meta = JSONObject(File(directory, "meta.json").readText())
+            .put("contentHash", ReadingCompanionFileStore.contentHash("new content"))
+            .put("contentHashKind", ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE)
+            .put("summaryHash", ReadingCompanionFileStore.contentHash("new summary"))
+            .put("editor", "summary_model")
+        File(directory, ".summary-publication.json").writeText(JSONObject()
+            .put("previousSummaryHash", ReadingCompanionFileStore.contentHash(previous))
+            .put("summary", "new summary").put("metadata", meta).toString())
+    }
+
+    @Test
+    fun `pending publication recovers through metadata browser and annotation entry points`() {
+        store.writeChapterContent(book, chapter, "new content")
+        val directory = File(store.chapterFilePaths(book.id, chapter.sourceId)!!.getString("chapterDirectory"))
+        val metadata = File(directory, "meta.json").readText()
+        val readers: List<() -> Unit> = listOf(
+            { store.summaryContentHashKind(book.id, chapter.sourceId); Unit },
+            { store.summaryContentHash(book.id, chapter.sourceId); Unit },
+            { store.hasSummary(book.id, chapter.sourceId); Unit },
+            { store.listPersistedFiles(book, listOf(chapter)); Unit },
+            { store.listPersistedFilesFromCatalogs(book.id); Unit },
+            { store.readPersistedFile(book.id, File(directory, "summary.md").path); Unit },
+            { store.readPublishedComments(book.id, chapter.index, null); Unit },
+        )
+        readers.forEachIndexed { index, read ->
+            File(directory, "summary.md").delete()
+            File(directory, "meta.json").writeText(metadata)
+            stageSummaryPublication(directory)
+            read()
+            assertFalse("Reader $index must recover", File(directory, ".summary-publication.json").exists())
+            assertEquals("new summary", File(directory, "summary.md").readText().trim())
+            assertEquals("summary_model", JSONObject(File(directory, "meta.json").readText()).getString("editor"))
+        }
+    }
+
+    @Test
+    fun `published summary with interrupted metadata recovers before body refresh`() {
+        store.writeChapterContent(book, chapter, "new content")
+        val directory = File(store.chapterFilePaths(book.id, chapter.sourceId)!!.getString("chapterDirectory"))
+        stageSummaryPublication(directory)
+        File(directory, "summary.md").writeText("new summary\n")
+        store.writeChapterContent(book, chapter, "refreshed body")
+        val meta = JSONObject(File(directory, "meta.json").readText())
+        assertEquals(ReadingCompanionFileStore.contentHash("refreshed body"), meta.getString("contentFileHash"))
+        assertEquals(ReadingCompanionFileStore.contentHash("new content"), meta.getString("contentHash"))
+        assertEquals("new summary", store.readSummary(book.id, chapter.sourceId, ReadingCompanionFileStore.contentHash("new content")))
+        assertFalse(File(directory, ".summary-publication.json").exists())
+    }
+
+    @Test
+    fun `manual edit after interrupted summary publication is preserved`() {
+        store.writeChapterContent(book, chapter, "new content")
+        val directory = File(store.chapterFilePaths(book.id, chapter.sourceId)!!.getString("chapterDirectory"))
+        stageSummaryPublication(directory)
+        File(directory, "summary.md").writeText("manual correction")
+        assertEquals("manual correction", store.readPersistedFile(book.id, File(directory, "summary.md").path).getString("content"))
+        assertFalse(File(directory, ".summary-publication.json").exists())
+    }
+
+    @Test
     fun `content file is persisted with independent hash metadata and path`() {
         val content = "第一段\n第二段"
         store.writeChapterContent(book, chapter, content)
@@ -564,7 +719,7 @@ class ReadingCompanionFileStoreTest {
     }
 
     @Test
-    fun `safe search paths exclude prefetched future chapters without listing every past chapter`() {
+    fun `safe search paths return exact active files and exclude prefetched future chapters`() {
         val chapters =
             (0..101).map { index ->
                 ReaderChapter(
@@ -592,7 +747,8 @@ class ReadingCompanionFileStoreTest {
                 ?.getString("chapterDirectory")
                 ?: error("future chapter missing")
 
-        assertEquals(listOf(firstGroupDirectory), returned)
+        assertTrue(returned.isNotEmpty())
+        assertTrue(returned.all { File(it).isFile && it.startsWith(firstGroupDirectory + File.separator) })
         assertFalse(currentPrefetchedDirectory in returned)
         assertFalse(futureChapterDirectory in returned)
     }

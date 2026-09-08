@@ -1,18 +1,4 @@
-async function runGenerationTask(ctx, parameters, onProgress) {
-  let task = await callPackageTool(ctx, "reading_companion_tasks", "start_task", parameters);
-  while (true) {
-    if (onProgress) await onProgress(task);
-    if (["completed", "completed_with_failures", "cancelled"].includes(task.status)) {
-      return { ...(task.result || {}), status: task.status === "cancelled" ? "stopped" : ((task.result || {}).status || task.status) };
-    }
-    if (["failed", "interrupted"].includes(task.status)) {
-      throw new Error(`${task.error || task.status} (${task.task_id})`);
-    }
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    task = await callPackageTool(ctx, "reading_companion_tasks", "get_task", { task_id: task.task_id });
-  }
-}
-
+const readingTools = require("../reading_client.js");
 const TOOL_PACKAGE = "reading_companion";
 const AUTO_COMMENTARY_PACKAGE = "reading_companion_auto_commentary";
 const HISTORY_ROUTE =
@@ -21,10 +7,6 @@ const SUMMARIES_ROUTE =
   "toolpkg:com.operit.reading_companion:ui:reading_companion_summaries";
 const FILES_ROUTE =
   "toolpkg:com.operit.reading_companion:ui:reading_companion_files";
-let manualBatchStopRequested = false;
-let manualBatchActiveKind = "";
-let manualCommentaryBatchId = "";
-let manualSummaryBatchId = "";
 
 function useStateValue(ctx, key, initialValue) {
   const pair = ctx.useState(key, initialValue);
@@ -45,94 +27,7 @@ function toErrorText(error) {
   return String(error || "");
 }
 
-function parseJson(value) {
-  if (typeof value !== "string") {
-    return value;
-  }
-  const raw = value.trim();
-  if (!raw) {
-    return "";
-  }
-  try {
-    return JSON.parse(raw);
-  } catch (_error) {
-    return value;
-  }
-}
-
-function unwrapToolResult(value) {
-  let current = parseJson(value);
-  for (let depth = 0; depth < 6; depth += 1) {
-    if (!current || typeof current !== "object" || Array.isArray(current)) {
-      return current;
-    }
-    if (current.success === false) {
-      throw new Error(
-        String(current.message || current.error || "Operation failed"),
-      );
-    }
-    if (typeof current.task_id === "string") return current;
-    if (
-      Object.prototype.hasOwnProperty.call(current, "data") &&
-      current.data !== current
-    ) {
-      current = parseJson(current.data);
-      continue;
-    }
-    if (
-      Object.prototype.hasOwnProperty.call(current, "result") &&
-      current.result !== current
-    ) {
-      current = parseJson(current.result);
-      continue;
-    }
-    return current;
-  }
-  return current;
-}
-
-async function resolveToolName(ctx, packageName, toolName) {
-  if (ctx.resolveToolName) {
-    const resolved = await ctx.resolveToolName({
-      packageName,
-      toolName,
-      preferImported: true,
-    });
-    const value = String(resolved || "").trim();
-    if (value) {
-      return value;
-    }
-  }
-  return `${packageName}:${toolName}`;
-}
-
-async function callPackageTool(ctx, packageName, toolName, parameters) {
-  if (["summary_batch_prefs", "list_audit_chats", "auto_commentary_history",
-       "auto_commentary_run_detail", "list_summary_files", "list_persisted_files",
-       "read_persisted_file"].includes(toolName)) {
-    packageName = "reading_companion_manage";
-  }
-
-  if (ctx.usePackage) {
-    await ctx.usePackage(packageName);
-  }
-  const resolved = await resolveToolName(ctx, packageName, toolName);
-  const candidates = [
-    resolved,
-    `${packageName}:${toolName}`,
-  ].filter((item, index, values) => item && values.indexOf(item) === index);
-  let lastError = "";
-  for (let index = 0; index < candidates.length; index += 1) {
-    try {
-      return unwrapToolResult(
-        await ctx.callTool(candidates[index], parameters || {}),
-      );
-    } catch (error) {
-      lastError = toErrorText(error);
-    }
-  }
-  throw new Error(lastError || `${toolName} failed`);
-}
+const unwrapToolResult = readingTools.unwrapToolResult;
 
 function getText(useEnglish) {
   if (useEnglish) {
@@ -159,7 +54,7 @@ function getText(useEnglish) {
       configTrigger:
         "Trigger · about 20 seconds after reading progress changes, or manually below",
       configReading:
-        "Reads · the complete next chapter plus up to 8 recent chapters / 48,000 characters, trimmed to the model window",
+        "Reads · target chapter and four preceding chapters on demand through a multi-turn subagent",
       configDensity:
         "Density · usually 0–3 comments; hard limit 6; silence is allowed",
       configDelivery:
@@ -339,9 +234,9 @@ function getText(useEnglish) {
     configTitle: "当前段评设置",
     configCharacter: "作者",
     configModel: "模型",
-    configTrigger: "触发 · 阅读进度变化约 20 秒后自动生成，也可在下方手动生成",
+    configTrigger: "触发 · 阅读进度变化约 20 秒后自动生成，也可在“生成”页手动生成",
     configReading:
-      "读取 · 下一章全文 + 最近最多 8 章/4.8 万字前情，实际按模型窗口裁剪",
+      "读取 · 多轮子代理按需查阅目标章及前四章全文",
     configDensity: "频率 · 普通章节通常 0～3 条，硬上限 6 条，允许完全沉默",
     configDelivery: "展示 · 提前写入 Legado，读到对应段落时才显示",
     modelSourceCaller: "发起本次调用的普通对话模型",
@@ -673,6 +568,7 @@ function readingCompanionEntryScreen(ctx) {
   const initializedState = useStateValue(ctx, "initialized", false);
   const loadingState = useStateValue(ctx, "loading", true);
   const busyState = useStateValue(ctx, "busy", false);
+  const refreshingState = useStateValue(ctx, "refreshing", false);
   const busyLabelState = useStateValue(ctx, "busyLabel", "");
   const basicEnabledState = useStateValue(ctx, "basicEnabled", false);
   const autoEnabledState = useStateValue(ctx, "autoEnabled", false);
@@ -698,11 +594,18 @@ function readingCompanionEntryScreen(ctx) {
   const batchSummaryCountState = useStateValue(ctx, "batchSummaryCount", "20");
   const batchSummaryStartState = useStateValue(ctx, "batchSummaryStart", "");
   const batchSummaryEndState = useStateValue(ctx, "batchSummaryEnd", "");
-  const batchResultState = useStateValue(ctx, "batchResult", null);
-  const manualBatchActiveState = useStateValue(ctx, "manualBatchActive", false);
+  const tasksState = useStateValue(ctx, "tasks", []);
+  const pageState = useStateValue(ctx, "dashboardPage", "reading");
+  const page = pageState.value;
+  const watchTasks = () => readingTools.watch(ctx, "entry", tasksState.set, error => errorState.set(toErrorText(error)));
 
-  const loadDashboard = async (showNotice) => {
-    loadingState.set(true);
+  const isBusy = () => busyState.value || refreshingState.value;
+
+  const loadDashboard = async (showNotice, resuming = false) => {
+    if (refreshingState.value) return;
+    refreshingState.set(true);
+    const previousBookId = String(readingState.value && readingState.value.bookId || "");
+    if (!resuming) loadingState.set(true);
     errorState.set("");
     try {
       const basicEnabled = ctx.isPackageImported
@@ -713,67 +616,56 @@ function readingCompanionEntryScreen(ctx) {
         : false;
       basicEnabledState.set(basicEnabled);
       autoEnabledState.set(autoEnabled);
-      readingState.set(null);
-      autoStatusState.set(null);
-      historyState.set(null);
-      auditGroupsState.set({
-        groups: [],
-        totalRunChats: 0,
-        shownRunChats: 0,
-      });
-      selectedPersonaState.set(null);
+      if (!resuming) {
+        readingState.set(null);
+        autoStatusState.set(null);
+        historyState.set(null);
+        auditGroupsState.set({
+          groups: [],
+          totalRunChats: 0,
+          shownRunChats: 0,
+        });
+        selectedPersonaState.set(null);
+      }
 
       const errors = [];
-      let currentBook = null;
       if (basicEnabled) {
         try {
-          currentBook = await callPackageTool(
-            ctx,
-            TOOL_PACKAGE,
-            "get_current_book",
-            {},
-          );
-          readingState.set(currentBook);
+          const currentBook = await readingTools.call(ctx, "get_current_book", {});
           const bookId = String(currentBook && currentBook.bookId || "").trim();
-          if (bookId) {
-            if (!ctx.getReadingCompanionCommentaryCharacter) {
-              throw new Error("Commentary character selection is unavailable");
-            }
-            selectedPersonaState.set(
-              await ctx.getReadingCompanionCommentaryCharacter(bookId),
-            );
+          if (!bookId) throw new Error(text.loadFailed);
+          if (!ctx.getReadingCompanionCommentaryCharacter) {
+            throw new Error("Commentary character selection is unavailable");
           }
-        } catch (error) {
-          errors.push(toErrorText(error));
-        }
-        try {
-          const prefsResult = await callPackageTool(
-            ctx,
-            TOOL_PACKAGE,
-            "summary_batch_prefs",
-            {},
+          const persona = await ctx.getReadingCompanionCommentaryCharacter(bookId);
+          const prefsResult = await readingTools.call(ctx, "summary_batch_prefs", { book_id: bookId },
           );
-          const savedStart = Number(prefsResult && prefsResult.startChapter);
-          const savedEnd = Number(prefsResult && prefsResult.endChapter);
-          const savedBudget = Number(prefsResult && prefsResult.budget);
-          batchSummaryStartState.set(
-            Number.isFinite(savedStart) && savedStart >= 1 ? String(savedStart) : "",
-          );
-          batchSummaryEndState.set(
-            Number.isFinite(savedEnd) && savedEnd >= 1 ? String(savedEnd) : "",
-          );
-          if (Number.isFinite(savedBudget) && savedBudget >= 1) {
-            batchSummaryCountState.set(String(savedBudget));
+          // Publish the book and its controls together; resumed screens keep same-book drafts.
+          readingState.set(currentBook);
+          selectedPersonaState.set(persona);
+          if (!resuming || previousBookId !== bookId) {
+            const savedStart = Number(prefsResult && prefsResult.startChapter);
+            const savedEnd = Number(prefsResult && prefsResult.endChapter);
+            const savedBudget = Number(prefsResult && prefsResult.budget);
+            batchSummaryStartState.set(
+              Number.isFinite(savedStart) && savedStart >= 1 ? String(savedStart) : "",
+            );
+            batchSummaryEndState.set(
+              Number.isFinite(savedEnd) && savedEnd >= 1 ? String(savedEnd) : "",
+            );
+            batchSummaryCountState.set(
+              Number.isFinite(savedBudget) && savedBudget >= 1 ? String(savedBudget) : "20",
+            );
+            batchCommentStartState.set("");
+            batchCommentEndState.set("");
+            batchCommentCountState.set("");
           }
         } catch (error) {
           errors.push(toErrorText(error));
         }
         try {
           historyState.set(
-            await callPackageTool(
-              ctx,
-              TOOL_PACKAGE,
-              "auto_commentary_history",
+            await readingTools.call(ctx, "auto_commentary_history",
               { limit: 10 },
             ),
           );
@@ -781,10 +673,7 @@ function readingCompanionEntryScreen(ctx) {
           errors.push(toErrorText(error));
         }
         try {
-          const auditResult = await callPackageTool(
-            ctx,
-            TOOL_PACKAGE,
-            "list_audit_chats",
+          const auditResult = await readingTools.call(ctx, "list_audit_chats",
             {},
           );
           auditGroupsState.set(
@@ -799,10 +688,7 @@ function readingCompanionEntryScreen(ctx) {
       if (autoEnabled) {
         try {
           autoStatusState.set(
-            await callPackageTool(
-              ctx,
-              AUTO_COMMENTARY_PACKAGE,
-              "auto_commentary_status",
+            await readingTools.call(ctx, "auto_commentary_status",
               {},
             ),
           );
@@ -810,10 +696,7 @@ function readingCompanionEntryScreen(ctx) {
           errors.push(toErrorText(error));
         }
         try {
-          const configResult = await callPackageTool(
-            ctx,
-            AUTO_COMMENTARY_PACKAGE,
-            "auto_commentary_get_config",
+          const configResult = await readingTools.call(ctx, "auto_commentary_get_config",
             {},
           );
           const configured = Number(
@@ -835,6 +718,7 @@ function readingCompanionEntryScreen(ctx) {
       errorState.set(`${text.loadFailed}${toErrorText(error)}`);
     } finally {
       loadingState.set(false);
+      refreshingState.set(false);
     }
   };
 
@@ -909,7 +793,7 @@ function readingCompanionEntryScreen(ctx) {
   const selectCommentaryCharacter = async (card) => {
     const book = readingState.value;
     if (
-      busyState.value ||
+      isBusy() ||
       !book ||
       !card ||
       !String(card.id || "").trim()
@@ -939,7 +823,7 @@ function readingCompanionEntryScreen(ctx) {
   };
 
   const toggleBasic = async (checked) => {
-    if (busyState.value) {
+    if (isBusy()) {
       return;
     }
     busyState.set(true);
@@ -961,7 +845,7 @@ function readingCompanionEntryScreen(ctx) {
   };
 
   const toggleAuto = async (checked) => {
-    if (busyState.value) {
+    if (isBusy()) {
       return;
     }
     if (
@@ -994,7 +878,7 @@ function readingCompanionEntryScreen(ctx) {
   };
 
   const changePrefetch = async (delta) => {
-    if (busyState.value) {
+    if (isBusy()) {
       return;
     }
     const next = Math.min(
@@ -1008,10 +892,7 @@ function readingCompanionEntryScreen(ctx) {
     noticeState.set("");
     errorState.set("");
     try {
-      const result = await callPackageTool(
-        ctx,
-        AUTO_COMMENTARY_PACKAGE,
-        "auto_commentary_set_config",
+      const result = await readingTools.call(ctx, "auto_commentary_set_config",
         { prefetchAheadChapters: next },
       );
       const updated = Number(
@@ -1027,7 +908,7 @@ function readingCompanionEntryScreen(ctx) {
   };
 
   const regenerateComments = async () => {
-    if (busyState.value || !basicEnabledState.value) {
+    if (isBusy() || !basicEnabledState.value) {
       return;
     }
     if (
@@ -1047,18 +928,14 @@ function readingCompanionEntryScreen(ctx) {
     try {
       const book = readingState.value;
       const chapter = Number(book && book.currentChapterNumber || 0) + 1;
-      const result = await runGenerationTask(ctx, {
+      await readingTools.tasks.start(ctx, {
         kind: "commentary", mode: "regenerate", count: 1,
-        book_id: String(book && book.bookId || ""),
-        start_chapter: chapter, end_chapter: chapter,
+        book_id: String(book && book.bookId || ""), start_chapter: chapter, end_chapter: chapter,
         request_id: `next-${Date.now()}`,
-      }, (task) => {
-        busyLabelState.set(`${text.regenerating} · ${task.task_id}`);
       });
-      if (Number(result.failedCount || 0) > 0) {
-        throw new Error(String(result.failures && result.failures[0] && result.failures[0].error || "Generation failed"));
-      }
-      noticeState.set(text.generatedNotice);
+      await watchTasks();
+      pageState.set("reading");
+      noticeState.set(useEnglish ? "Task started." : "任务已启动。");
     } catch (error) {
       errorState.set(`${text.regenerateFailed}${toErrorText(error)}`);
     } finally {
@@ -1161,7 +1038,7 @@ function readingCompanionEntryScreen(ctx) {
     overrides = null,
     commentaryScope = "ahead",
   ) => {
-    if (busyState.value || !book) {
+    if (isBusy() || !book) {
       return;
     }
     const isComments = kind === "comments";
@@ -1188,12 +1065,7 @@ function readingCompanionEntryScreen(ctx) {
           ? ""
           : batchSummaryEndState.value;
     busyState.set(true);
-    manualBatchActiveState.set(true);
-    manualBatchStopRequested = false;
-    manualBatchActiveKind = kind;
     const newBatchId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    manualCommentaryBatchId = "";
-    manualSummaryBatchId = "";
     busyLabelState.set(text.batchRunning);
     errorState.set("");
     noticeState.set("");
@@ -1214,6 +1086,7 @@ function readingCompanionEntryScreen(ctx) {
         const savedStart = optionalChapterNumber(startValue);
         const savedEnd = optionalChapterNumber(endValue);
         const saveParameters = {
+          book_id: String(book && book.bookId || ""),
           budget: parameters.count,
         };
         if (savedStart === null) {
@@ -1226,132 +1099,31 @@ function readingCompanionEntryScreen(ctx) {
         } else {
           saveParameters.end_chapter = savedEnd;
         }
-        await callPackageTool(
-          ctx,
-          packageName,
-          "summary_batch_prefs",
+        await readingTools.call(ctx, "summary_batch_prefs",
           saveParameters,
         );
       }
-      const targetChapterIndices = [];
-      const failures = [];
-      let modelTaskCount = 0;
-      let completedRequests = 0;
-      let noMoreEligibleChapters = false;
-      let lastRemainingMissing = null;
-      let unavailableCount = 0;
-      let nativeStopped = false;
-      let nativeSuperseded = false;
-      const callCount = parameters.count;
-      if (!manualBatchStopRequested) {
-        const result = await runGenerationTask(ctx, {
-          kind: isComments ? "commentary" : "summary",
-          mode: isComments && commentaryScope === "read" ? "regenerate" : "fill_missing",
-          count: callCount,
-          book_id: String(book && book.bookId || ""),
-          start_chapter: parameters.start_chapter_index == null ? undefined : parameters.start_chapter_index + 1,
-          end_chapter: parameters.end_chapter_index == null ? undefined : parameters.end_chapter_index + 1,
-          request_id: newBatchId,
-        }, async (task) => {
-          if (manualBatchStopRequested && ["queued", "running"].includes(task.status)) {
-            await callPackageTool(ctx, "reading_companion_tasks", "cancel_task", { task_id: task.task_id });
-          }
-          if (isComments) manualCommentaryBatchId = task.task_id;
-          else manualSummaryBatchId = task.task_id;
-          busyLabelState.set(`${text.batchProgress(Number(task.completedCount || (task.progress || {}).completedCount || 0), parameters.count)} · ${task.task_id}`);
-        });
-        const resultTargets =
-          result && Array.isArray(result.targetChapterIndices)
-            ? result.targetChapterIndices
-            : [];
-        resultTargets.forEach((chapterIndex) => {
-          if (!targetChapterIndices.includes(chapterIndex)) {
-            targetChapterIndices.push(chapterIndex);
-          }
-        });
-        modelTaskCount += Number(result && result.modelTaskCount || resultTargets.length);
-        const resultFailures =
-          result && Array.isArray(result.failures) ? result.failures : [];
-        resultFailures.forEach((failure) => failures.push(failure));
-        completedRequests += Number(result && result.completedCount || 0);
-        const remaining = Number(result && result.remainingMissing);
-        if (Number.isFinite(remaining)) {
-          lastRemainingMissing = remaining;
-        }
-        unavailableCount += Number(result && result.unavailableCount || 0);
-        nativeStopped =
-          nativeStopped ||
-          String(result && result.status || "").trim().toLowerCase() === "stopped";
-        const nativeStatus = String(result && result.status || "").trim();
-        nativeSuperseded =
-          nativeSuperseded || nativeStatus.toLowerCase() === "superseded";
-        batchResultState.set({
-          kind,
-          targetChapterIndices: [...targetChapterIndices],
-          modelTaskCount,
-          completedRequests,
-          requestedCount: parameters.count,
-          failedCount: failures.length,
-          failures: [...failures],
-          unavailableCount,
-          remainingMissing: isComments ? null : lastRemainingMissing,
-          scanComplete: isComments ? true : result && result.scanComplete !== false,
-          status:
-            nativeStatus ||
-            (failures.length > 0 ? "completed_with_failures" : "completed"),
-        });
-        busyLabelState.set(text.batchProgress(completedRequests, parameters.count));
-        if (
-          isComments &&
-          (resultFailures.length > 0 || Number(result && result.failedCount || 0) > 0)
-        ) {
-          const firstFailure = resultFailures[0] || {};
-          throw new Error(
-            text.batchFailureLine(
-              Number(firstFailure.chapterNumber || 0),
-              String(firstFailure.error || "unknown_error"),
-            ),
-          );
-        }
-        if (resultTargets.length === 0) {
-          noMoreEligibleChapters = true;
-        }
-      }
-      const stopped = manualBatchStopRequested || nativeStopped;
-      const loopedFullBudget = !stopped && !noMoreEligibleChapters;
-      if (stopped) {
-        noticeState.set(text.batchStopped);
-      } else if (nativeSuperseded) {
-        noticeState.set(text.batchSuperseded);
-      } else if (failures.length > 0) {
-        noticeState.set(text.batchPartial);
-      } else if (isComments) {
-        noticeState.set(noMoreEligibleChapters ? text.batchNoMore : text.batchDone);
-      } else if (lastRemainingMissing === 0 && unavailableCount > 0) {
-        noticeState.set(text.batchReadableDoneWithUnavailable(unavailableCount));
-      } else if (lastRemainingMissing === 0) {
-        noticeState.set(text.batchSummaryDone);
-      } else if (loopedFullBudget && lastRemainingMissing > 0) {
-        noticeState.set(text.batchBudgetExhausted(parameters.count, lastRemainingMissing));
-      } else {
-        noticeState.set(text.batchNoMore);
-      }
-      await loadDashboard(false);
+      await readingTools.tasks.start(ctx, {
+        kind: isComments ? "commentary" : "summary",
+        mode: isComments && commentaryScope === "read" ? "regenerate" : "fill_missing",
+        count: parameters.count, book_id: String(book.bookId),
+        start_chapter: parameters.start_chapter_index == null ? undefined : parameters.start_chapter_index + 1,
+        end_chapter: parameters.end_chapter_index == null ? undefined : parameters.end_chapter_index + 1,
+        request_id: newBatchId,
+      });
+      await watchTasks();
+      pageState.set("reading");
+      noticeState.set(useEnglish ? "Task started." : "任务已启动。");
     } catch (error) {
       errorState.set(`${text.batchFailed}${toErrorText(error)}`);
     } finally {
       busyState.set(false);
-      manualBatchActiveState.set(false);
-      manualBatchStopRequested = false;
-      manualBatchActiveKind = "";
-      manualCommentaryBatchId = "";
-      manualSummaryBatchId = "";
       busyLabelState.set("");
     }
   };
 
   const fillAllReadChapters = async () => {
-    if (busyState.value || !book) {
+    if (isBusy() || !book) {
       return;
     }
     errorState.set("");
@@ -1378,29 +1150,6 @@ function readingCompanionEntryScreen(ctx) {
     }
   };
 
-  const requestManualBatchStop = async () => {
-    const isSummaryBatch = manualBatchActiveKind === "summaries";
-    const targetBatchId = isSummaryBatch
-      ? manualSummaryBatchId
-      : manualCommentaryBatchId;
-    manualBatchStopRequested = true;
-    busyLabelState.set(text.batchStopQueued);
-    if (!targetBatchId) return;
-    try {
-      const result = await callPackageTool(
-        ctx,
-        "reading_companion_tasks",
-        "cancel_task",
-        { task_id: targetBatchId },
-      );
-      if (result && ["cancelling", "cancelled"].includes(result.status)) {
-        manualBatchStopRequested = true;
-        busyLabelState.set(text.batchStopQueued);
-      }
-    } catch (error) {
-      errorState.set(`${text.batchFailed}${toErrorText(error)}`);
-    }
-  };
 
   const openAuditChatByRunId = async (runId) => {
     const normalizedRunId = Number(runId || 0);
@@ -1459,40 +1208,18 @@ function readingCompanionEntryScreen(ctx) {
       "",
   ).trim();
 
-  const children = [
-    ctx.UI.Card(
-      {
-        fillMaxWidth: true,
-        containerColor: colors.surface,
-        elevation: 1,
-      },
-      ctx.UI.Column(
-        {
-          fillMaxWidth: true,
-          padding: 20,
-          spacing: 12,
-          horizontalAlignment: "center",
-        },
-        [
-          ctx.UI.Icon({
-            name: "Book",
-            size: 42,
-            tint: colors.primary,
-          }),
-          ctx.UI.Text({
-            text: text.title,
-            style: "headlineSmall",
-            color: colors.onSurface,
-          }),
-          ctx.UI.Text({
-            text: text.description,
-            style: "bodyMedium",
-            color: colors.onSurfaceVariant,
-          }),
-        ],
-      ),
-    ),
-    ctx.UI.Card(
+  const pages = [["reading", useEnglish ? "Reading" : "阅读"],
+    ["generate", useEnglish ? "Generate" : "生成"],
+    ["settings", useEnglish ? "Settings" : "设置"],
+    ["records", useEnglish ? "Records" : "记录"]];
+  const tabs = ctx.UI.Row({ fillMaxWidth: true }, pages.map(([id, label]) =>
+    ctx.UI.Tab({ weight: 1, selected: page === id, onClick: () => pageState.set(id),
+      selectedContentColor: colors.primary, unselectedContentColor: colors.onSurfaceVariant,
+    }, [ctx.UI.Text({ text: label, padding: 12, fontWeight: page === id ? "bold" : "normal" }),
+      ctx.UI.HorizontalDivider({ thickness: 2, color: page === id ? colors.primary : colors.surface })])));
+  const children = [];
+
+  if (page === "settings") children.push(ctx.UI.Card(
       {
         fillMaxWidth: true,
         containerColor: colors.surfaceVariant,
@@ -1503,7 +1230,7 @@ function readingCompanionEntryScreen(ctx) {
           text.basicTitle,
           basicEnabledState.value ? text.basicOn : text.basicOff,
           basicEnabledState.value,
-          !busyState.value,
+          !isBusy(),
           toggleBasic,
         ),
         settingRow(
@@ -1511,7 +1238,7 @@ function readingCompanionEntryScreen(ctx) {
           text.autoTitle,
           autoEnabledState.value ? text.autoOn : text.autoOff,
           autoEnabledState.value,
-          !busyState.value,
+          !isBusy(),
           toggleAuto,
         ),
         autoEnabledState.value
@@ -1541,7 +1268,7 @@ function readingCompanionEntryScreen(ctx) {
                   ctx.UI.OutlinedButton(
                     {
                       enabled:
-                        !busyState.value &&
+                        !isBusy() &&
                         Number(prefetchState.value || 5) > 1,
                       onClick: () => changePrefetch(-1),
                     },
@@ -1555,7 +1282,7 @@ function readingCompanionEntryScreen(ctx) {
                   ctx.UI.OutlinedButton(
                     {
                       enabled:
-                        !busyState.value &&
+                        !isBusy() &&
                         Number(prefetchState.value || 5) < 10,
                       onClick: () => changePrefetch(1),
                     },
@@ -1566,8 +1293,8 @@ function readingCompanionEntryScreen(ctx) {
             )
           : ctx.UI.Spacer({ height: 0 }),
       ]),
-    ),
-  ];
+    ));
+
 
   if (loadingState.value) {
     children.push(
@@ -1598,7 +1325,7 @@ function readingCompanionEntryScreen(ctx) {
         ),
       ),
     );
-  } else if (book) {
+  } else if (book && (page === "reading" || page === "generate")) {
     const chapterText = useEnglish
       ? `${text.chapterPrefix} ${book.currentChapterNumber || "?"}`
       : `${text.chapterPrefix}${book.currentChapterNumber || "?"}章`;
@@ -1616,7 +1343,7 @@ function readingCompanionEntryScreen(ctx) {
           }),
           ctx.UI.Text({
             text: String(book.book || ""),
-            style: "titleLarge",
+            style: "titleMedium",
             color: colors.onPrimaryContainer,
           }),
           ctx.UI.Text({
@@ -1634,7 +1361,7 @@ function readingCompanionEntryScreen(ctx) {
         ]),
       ),
     );
-  } else if (basicEnabledState.value) {
+  } else if (!book && basicEnabledState.value) {
     children.push(
       ctx.UI.Card(
         {
@@ -1657,7 +1384,58 @@ function readingCompanionEntryScreen(ctx) {
     );
   }
 
-  if (book) {
+  if (book && page === "reading") children.push(ctx.UI.OutlinedButton({ fillMaxWidth: true,
+    enabled: !isBusy() && !tasksState.value.some(task => readingTools.active(task)),
+    onClick: async () => {
+      try {
+        await readingTools.tasks.start(ctx, { kind: "cache", book_id: book.bookId, count: 1 });
+        await watchTasks();
+      } catch (error) { errorState.set(toErrorText(error)); }
+    },
+  }, ctx.UI.Text({ text: useEnglish ? "Cache downloaded past chapters / Resume" : "缓存已下载旧章 / 继续缓存" })));
+
+  const bookTasks = tasksState.value.filter(task => book && task.bookId === book.bookId);
+  const activeTasks = bookTasks.filter(task => readingTools.active(task));
+  const shownTasks = page === "records" ? bookTasks.slice(0, 10)
+    : page === "reading" ? (activeTasks.length ? activeTasks : bookTasks.slice(0, 1)) : [];
+  for (const task of shownTasks) {
+    children.push(ctx.UI.Card({ fillMaxWidth: true }, ctx.UI.Column({ padding: 12, spacing: 6 }, [
+      ctx.UI.Text({ text: page === "reading" ? (task.kind === "cache" ? (useEnglish ? "Past chapter cache" : "旧章缓存") : readingTools.taskLabel(task, useEnglish)) : readingTools.taskLabel(task, useEnglish), style: "titleSmall" }),
+      ctx.UI.Text({ text: `${readingTools.taskStatusLabel(task, useEnglish)} · ${readingTools.taskProgress(task, useEnglish)}` }),
+      ...(readingTools.taskErrors(task, useEnglish) ? [ctx.UI.Text({ text: readingTools.taskErrors(task, useEnglish) })] : []),
+      ...(readingTools.active(task) ? [ctx.UI.OutlinedButton({ onClick: async () => {
+        try { await readingTools.tasks.cancel(ctx, task.task_id); await watchTasks(); }
+        catch (error) { errorState.set(toErrorText(error)); }
+      } }, ctx.UI.Text({ text: task.kind === "cache" ? (useEnglish ? "Pause caching" : "暂停缓存") : (useEnglish ? "Cancel task" : "取消任务") }))] : []),
+    ])));
+  }
+
+  if (page === "reading") {
+    if (!loadingState.value && !basicEnabledState.value) {
+      children.push(ctx.UI.Button({ enabled: !isBusy(), onClick: () => toggleBasic(true) },
+        ctx.UI.Text({ text: useEnglish ? "Enable Reading Companion" : "开启阅读伴侣" })));
+    }
+    children.push(ctx.UI.Row({ fillMaxWidth: true, spacing: 8 }, [
+      ctx.UI.OutlinedButton({ weight: 1, enabled: !!book && !isBusy(), onClick: openSummaries }, ctx.UI.Text({ text: useEnglish ? "Summaries" : "章节摘要" })),
+      ctx.UI.OutlinedButton({ weight: 1, enabled: !!book && !isBusy(), onClick: openFiles }, ctx.UI.Text({ text: useEnglish ? "Book files" : "书籍文件" })),
+    ]));
+    children.push(ctx.UI.Card({ fillMaxWidth: true, containerColor: colors.surfaceVariant },
+      ctx.UI.Column({ padding: 12, spacing: 6 }, [
+        ctx.UI.Text({ text: useEnglish
+          ? "Reading Companion only supports the Legado build maintained by CATMIAOZHI. Official Legado and other unadapted builds are not supported."
+          : "阅读伴侣仅支持我们维护的 Legado 适配版，不支持官方版及其他未适配版本。", style: "bodySmall" }),
+        ctx.UI.OutlinedButton({ onClick: async () => {
+          try {
+            readingTools.unwrapToolResult(await ctx.callTool("execute_intent", {
+              type: "activity", action: "android.intent.action.VIEW",
+              uri: "https://github.com/CATMIAOZHI/legado/releases/latest",
+            }));
+          } catch (error) { errorState.set(toErrorText(error)); }
+        } }, ctx.UI.Text({ text: useEnglish ? "Download our Legado build" : "下载 Legado 适配版" })),
+      ])));
+  }
+
+  if (book && page === "settings") {
     children.push(
       ctx.UI.Card(
         {
@@ -1674,7 +1452,7 @@ function readingCompanionEntryScreen(ctx) {
             ctx.UI.OutlinedButton(
               {
                 fillMaxWidth: true,
-                enabled: !busyState.value,
+                enabled: !isBusy(),
                 onClick: loadCardPicker,
               },
               [
@@ -1806,7 +1584,7 @@ function readingCompanionEntryScreen(ctx) {
     );
   }
 
-  if (book) {
+  if (book && page === "generate") {
     const commentCount = Number(batchCommentCountState.value || 0);
     const summaryCount = Number(batchSummaryCountState.value || 0);
     const commentStart = String(batchCommentStartState.value || "").trim();
@@ -1869,7 +1647,7 @@ function readingCompanionEntryScreen(ctx) {
               value: batchCommentStartState.value,
               onValueChange: batchCommentStartState.set,
               singleLine: true,
-              enabled: !busyState.value,
+              enabled: !isBusy(),
             }),
             ctx.UI.TextField({
               weight: 1,
@@ -1877,7 +1655,7 @@ function readingCompanionEntryScreen(ctx) {
               value: batchCommentEndState.value,
               onValueChange: batchCommentEndState.set,
               singleLine: true,
-              enabled: !busyState.value,
+              enabled: !isBusy(),
             }),
           ]),
           ctx.UI.Text({
@@ -1897,7 +1675,7 @@ function readingCompanionEntryScreen(ctx) {
               !!selectedRoleCardId &&
               readRangeCount > 0 &&
               readRangeCount <= 10 &&
-              !busyState.value,
+              !isBusy(),
             onClick: () => runManualBatch("comments", null, "read"),
           }, ctx.UI.Text({ text: text.manualReadComments })),
           ctx.UI.Text({
@@ -1916,7 +1694,7 @@ function readingCompanionEntryScreen(ctx) {
             value: batchCommentCountState.value,
             onValueChange: batchCommentCountState.set,
             singleLine: true,
-            enabled: !busyState.value,
+            enabled: !isBusy(),
           }),
           ctx.UI.Text({
             text:
@@ -1936,7 +1714,7 @@ function readingCompanionEntryScreen(ctx) {
               Number.isInteger(commentCount) &&
               commentCount >= 1 &&
               commentCount <= 10 &&
-              !busyState.value,
+              !isBusy(),
             onClick: () => runManualBatch("comments", null, "ahead"),
           }, ctx.UI.Text({ text: text.manualComments })),
           ctx.UI.Text({
@@ -1955,7 +1733,7 @@ function readingCompanionEntryScreen(ctx) {
             value: batchSummaryCountState.value,
             onValueChange: batchSummaryCountState.set,
             singleLine: true,
-            enabled: !busyState.value,
+            enabled: !isBusy(),
           }),
           ctx.UI.Row({ fillMaxWidth: true, spacing: 8 }, [
             ctx.UI.TextField({
@@ -1964,7 +1742,7 @@ function readingCompanionEntryScreen(ctx) {
               value: batchSummaryStartState.value,
               onValueChange: batchSummaryStartState.set,
               singleLine: true,
-              enabled: !busyState.value,
+              enabled: !isBusy(),
             }),
             ctx.UI.TextField({
               weight: 1,
@@ -1972,7 +1750,7 @@ function readingCompanionEntryScreen(ctx) {
               value: batchSummaryEndState.value,
               onValueChange: batchSummaryEndState.set,
               singleLine: true,
-              enabled: !busyState.value,
+              enabled: !isBusy(),
             }),
           ]),
           ctx.UI.Text({
@@ -1982,73 +1760,20 @@ function readingCompanionEntryScreen(ctx) {
           }),
           ctx.UI.OutlinedButton({
             fillMaxWidth: true,
-            enabled: !busyState.value,
+            enabled: !isBusy(),
             onClick: () => runManualBatch("summaries"),
           }, ctx.UI.Text({ text: text.manualSummaries })),
           ctx.UI.OutlinedButton({
             fillMaxWidth: true,
-            enabled: !busyState.value,
+            enabled: !isBusy(),
             onClick: () => fillAllReadChapters(),
           }, ctx.UI.Text({ text: text.fillAllRead })),
-          batchResultState.value
-            ? ctx.UI.Column({ fillMaxWidth: true, spacing: 4 }, [
-                ctx.UI.Text({
-                  text: `${
-                    String(batchResultState.value.status || "").toLowerCase() ===
-                      "stopped"
-                      ? text.batchStopped
-                      : String(batchResultState.value.status || "").toLowerCase() ===
-                          "superseded"
-                        ? text.batchSuperseded
-                      : Number(batchResultState.value.failedCount || 0) > 0
-                        ? text.batchPartial
-                      : batchResultState.value.kind === "summaries" &&
-                        Number(batchResultState.value.remainingMissing) === 0 &&
-                        Number(batchResultState.value.unavailableCount || 0) === 0 &&
-                        batchResultState.value.scanComplete !== false
-                        ? text.batchSummaryDone
-                        : text.batchDone
-                  } ${
-                    Array.isArray(batchResultState.value.targetChapterIndices)
-                      ? batchResultState.value.targetChapterIndices
-                          .map((index) => Number(index) + 1)
-                          .join(", ")
-                      : ""
-                  } · ${text.batchCalls(
-                    Number(batchResultState.value.modelTaskCount || 0),
-                  )}`,
-                  style: "bodySmall",
-                  color: colors.onTertiaryContainer,
-                }),
-                Number(batchResultState.value.unavailableCount || 0) > 0
-                  ? ctx.UI.Text({
-                      text: text.batchUnavailable(
-                        Number(batchResultState.value.unavailableCount || 0),
-                      ),
-                      style: "bodySmall",
-                      color: colors.onTertiaryContainer,
-                    })
-                  : ctx.UI.Spacer({ height: 0 }),
-                ...(Array.isArray(batchResultState.value.failures)
-                  ? batchResultState.value.failures.map((failure) =>
-                      ctx.UI.Text({
-                        text: text.batchFailureLine(
-                          Number(failure && failure.chapterNumber || 0),
-                          String(failure && failure.error || "unknown_error"),
-                        ),
-                        style: "bodySmall",
-                        color: colors.error,
-                      }),
-                    )
-                  : []),
-              ])
-            : ctx.UI.Spacer({ height: 0 }),
         ]),
       ),
     );
   }
 
-  if (autoEnabledState.value && book) {
+  if (page === "settings" && autoEnabledState.value && book) {
     const configuredModel = commentaryConfiguration
       ? `${modelSourceLabel(
           text,
@@ -2111,7 +1836,7 @@ function readingCompanionEntryScreen(ctx) {
     );
   }
 
-  if (autoEnabledState.value || latestRun) {
+  if (page === "records" && (autoEnabledState.value || latestRun)) {
     const flowRows = generationFlowRows(ctx, text, colors, latestRun);
     const durationText = latestRun
       ? formatDuration(text, latestRun.durationMs)
@@ -2220,7 +1945,7 @@ function readingCompanionEntryScreen(ctx) {
           ctx.UI.OutlinedButton(
             {
               fillMaxWidth: true,
-              enabled: !busyState.value,
+              enabled: !isBusy(),
               onClick: openHistory,
             },
             [
@@ -2231,7 +1956,7 @@ function readingCompanionEntryScreen(ctx) {
           ctx.UI.OutlinedButton(
             {
               fillMaxWidth: true,
-              enabled: !busyState.value,
+              enabled: !isBusy(),
               onClick: openSummaries,
             },
             [
@@ -2242,7 +1967,7 @@ function readingCompanionEntryScreen(ctx) {
           ctx.UI.OutlinedButton(
             {
               fillMaxWidth: true,
-              enabled: !busyState.value,
+              enabled: !isBusy(),
               onClick: openFiles,
             },
             [
@@ -2255,10 +1980,15 @@ function readingCompanionEntryScreen(ctx) {
     );
   }
 
+  if (page === "records" && !autoEnabledState.value && !latestRun) {
+    children.push(ctx.UI.OutlinedButton({ fillMaxWidth: true, enabled: basicEnabledState.value && !isBusy(), onClick: openHistory },
+      ctx.UI.Text({ text: text.history })));
+  }
+
   const auditPayload = auditGroupsState.value;
   const auditGroups =
     auditPayload && Array.isArray(auditPayload.groups) ? auditPayload.groups : [];
-  if (auditGroups.length > 0) {
+  if (page === "records" && auditGroups.length > 0) {
     const auditTotal = Number(
       auditPayload.totalRunChats || 0,
     );
@@ -2394,7 +2124,7 @@ function readingCompanionEntryScreen(ctx) {
     );
   }
 
-  if (busyState.value && busyLabelState.value) {
+  if (isBusy() && busyLabelState.value) {
     children.push(
       ctx.UI.Column(
         { fillMaxWidth: true, spacing: 8 },
@@ -2418,26 +2148,18 @@ function readingCompanionEntryScreen(ctx) {
               }),
             ],
           ),
-          manualBatchActiveState.value
-            ? ctx.UI.OutlinedButton(
-                {
-                  fillMaxWidth: true,
-                  onClick: () => requestManualBatchStop(),
-                },
-                ctx.UI.Text({ text: text.batchStop }),
-              )
-            : ctx.UI.Spacer({ height: 0 }),
+
         ],
       ),
     );
   }
 
-  if (basicEnabledState.value) {
+  if (page === "generate" && basicEnabledState.value) {
     children.push(
       ctx.UI.OutlinedButton(
         {
           fillMaxWidth: true,
-          enabled: !!book && !busyState.value,
+          enabled: !!book && !isBusy(),
           onClick: regenerateComments,
         },
         [
@@ -2455,7 +2177,7 @@ function readingCompanionEntryScreen(ctx) {
         ctx.UI.OutlinedButton(
           {
             weight: 1,
-            enabled: !busyState.value,
+            enabled: !isBusy(),
             onClick: () => loadDashboard(true),
           },
           [
@@ -2463,7 +2185,7 @@ function readingCompanionEntryScreen(ctx) {
             ctx.UI.Text({ text: text.refresh }),
           ],
         ),
-        ctx.UI.OutlinedButton(
+        ...(page === "settings" ? [ctx.UI.OutlinedButton(
           {
             weight: 1,
             onClick: () => ctx.navigate("native.packages"),
@@ -2472,29 +2194,39 @@ function readingCompanionEntryScreen(ctx) {
             ctx.UI.Icon({ name: "Extension", size: 18 }),
             ctx.UI.Text({ text: text.manage }),
           ],
-        ),
+        )] : []),
       ],
     ),
-    ctx.UI.Text({
+    ...(page === "settings" ? [ctx.UI.Text({
       text: text.hint,
       style: "bodySmall",
       color: colors.onSurfaceVariant,
-    }),
+    })] : []),
   );
 
-  return ctx.UI.LazyColumn(
+  return ctx.UI.Column(
     {
       onLoad: async () => {
+        readingTools.activate("entry");
         if (!initializedState.value) {
           initializedState.set(true);
           await loadDashboard(false);
+          await watchTasks();
         }
       },
+      onResume: async () => {
+        readingTools.activate("entry");
+        await watchTasks();
+        if (initializedState.value && !isBusy() && !loadingState.value) { await loadDashboard(false, true); await watchTasks(); }
+      },
+      onPause: () => readingTools.pause("entry"),
       fillMaxSize: true,
-      padding: 16,
-      spacing: 14,
+      spacing: 0,
     },
-    children,
+    [tabs, ctx.UI.Box({ fillMaxWidth: true, weight: 1 }, pages.map(([id]) =>
+      // Distinct slots dispose the previous list so each tab opens at the top; drafts live above.
+      page === id ? ctx.UI.LazyColumn({ fillMaxSize: true, padding: 16, spacing: 12 }, children)
+        : ctx.UI.Spacer({ width: 0, height: 0 })))],
   );
 }
 

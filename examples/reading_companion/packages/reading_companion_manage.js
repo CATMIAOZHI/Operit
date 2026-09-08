@@ -2,8 +2,8 @@
 {
   "name": "reading_companion_manage",
   "display_name": {
-    "zh": "阅读伴侣管理：书籍文件、摘要设置与段评审计记录。",
-    "en": "Reading companion management: persisted files, summary settings and commentary audit history."
+    "zh": "阅读伴侣：文件与管理",
+    "en": "Reading Companion: Files and Settings"
   },
   "description": {
     "zh": "阅读伴侣管理：书籍文件、摘要设置与段评审计记录。",
@@ -27,6 +27,7 @@
         "en": "Read or save the current book's manual-summary range and per-run budget. No parameters reads; supplied parameters save. Chapter numbers are one-based."
       },
       "parameters": [
+        {"name": "book_id", "description": {"zh": "明确指定书籍，省略时使用当前书籍", "en": "Explicit book ID; defaults to the current book"}, "type": "string", "required": false},
         {
           "name": "start_chapter",
           "description": {

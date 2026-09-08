@@ -21,23 +21,18 @@ import org.json.JSONObject
 class ReadingCompanionTasks private constructor(context: Context) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val records = linkedMapOf<String, JSONObject>()
+    private val repository = ReadingTaskRepository(ReadingCompanionStore(appContext))
     private val jobs = mutableMapOf<String, Job>()
     private val file = AtomicFile(File(appContext.filesDir, "reading_companion_tasks.json"))
 
     init {
-        if (file.baseFile.exists() || File(file.baseFile.path + ".bak").exists()) {
-            val saved = file.openRead().use { JSONArray(it.readBytes().toString(Charsets.UTF_8)) }
-            for (index in 0 until saved.length()) {
-                val record = saved.getJSONObject(index)
-                if (record.optString("status") in ACTIVE) {
-                    record.put("status", "interrupted")
-                    record.put("updatedAt", System.currentTimeMillis())
-                }
-                records[record.getString("task_id")] = record
-            }
-            persist()
+        if (!repository.hasImportedLegacy()) {
+            val legacy = if (file.baseFile.exists() || File(file.baseFile.path + ".bak").exists()) {
+                file.openRead().use { JSONArray(it.readBytes().toString(Charsets.UTF_8)) }
+            } else JSONArray()
+            repository.importLegacy(legacy)
         }
+        repository.recoverInterrupted()
     }
 
     @Synchronized
@@ -51,7 +46,7 @@ class ReadingCompanionTasks private constructor(context: Context) {
         runtime: ToolExecutionManager.ToolRuntimeContext? = null,
         requestId: String? = null,
     ): JSONObject {
-        require(kind == "summary" || kind == "commentary") { "kind must be summary or commentary" }
+        require(kind in setOf("summary", "commentary", "cache")) { "kind must be summary, commentary or cache" }
         require(bookId.isNotBlank()) { "book_id is required" }
         val maxCount = if (kind == "summary") ReadingCompanionService.MAX_MANUAL_BATCH_BUDGET
             else AutoCommentSupport.MAX_PREFETCH_AHEAD_CHAPTERS
@@ -70,7 +65,7 @@ class ReadingCompanionTasks private constructor(context: Context) {
             .put("endChapterIndex", endChapterIndex ?: JSONObject.NULL)
         val normalizedRequestId = requestId?.trim()?.takeIf(String::isNotEmpty)
         if (normalizedRequestId != null) {
-            records.values.firstOrNull { it.optString("requestId") == normalizedRequestId }?.let {
+            repository.findRequest(normalizedRequestId)?.let {
                 val old = it.getJSONObject("request")
                 require(request.keys().asSequence().all { key -> request.get(key) == old.get(key) }) {
                     "request_id already belongs to a different request"
@@ -87,17 +82,18 @@ class ReadingCompanionTasks private constructor(context: Context) {
             .put("requestId", normalizedRequestId ?: JSONObject.NULL)
             .put("createdAt", System.currentTimeMillis()).put("updatedAt", System.currentTimeMillis())
         try {
-            records[id] = record
-            persist()
+            repository.save(record)
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
                     ensureActive()
                     update(id) { it.put("status", "running") }
-                    val result = withContext(ToolExecutionManager.toolRuntimeContextElement(runtime)) {
+                    val result = withContext(ToolExecutionManager.toolRuntimeContextElement(runtime) + ReadingTaskContext.element(id)) {
                         val progress: (JSONObject) -> Unit = { value ->
                             update(id) { it.put("progress", value) }
                         }
-                        if (kind == "summary") {
+                        if (kind == "cache") {
+                            ReadingCompanionService.getInstance(appContext).cacheDownloadedChapters(bookId, progress)
+                        } else if (kind == "summary") {
                             ReadingCompanionService.getInstance(appContext).manualBatchSummaries(
                                 batchId = id, count = count, startChapterIndex = startChapterIndex,
                                 endChapterIndex = endChapterIndex, runtime = runtime, bookId = bookId,
@@ -117,6 +113,7 @@ class ReadingCompanionTasks private constructor(context: Context) {
                     update(id) {
                         val status = when {
                             it.optBoolean("cancelRequested") || result.optString("status") == "stopped" -> "cancelled"
+                            result.optString("status") == "superseded" -> "superseded"
                             result.optInt("failedCount") > 0 -> "completed_with_failures"
                             else -> "completed"
                         }
@@ -139,7 +136,7 @@ class ReadingCompanionTasks private constructor(context: Context) {
             job.invokeOnCompletion {
                 synchronized(this) {
                     try {
-                        if (records[id]?.optString("status") in ACTIVE) {
+                        if (repository.get(id)?.optString("status") in ACTIVE) {
                             update(id) { it.put("status", "cancelled") }
                         }
                     } finally {
@@ -151,58 +148,58 @@ class ReadingCompanionTasks private constructor(context: Context) {
             job.start()
             return copy(record)
         } catch (error: Exception) {
-            records.remove(id)
+            repository.remove(id)
             ManualBatchGate.release(lease)
             throw error
         }
     }
 
+    /** Opt in by completing a manual cache task; cancellation/interruption leaves automatic copying paused. */
+    @Synchronized
+    fun cacheForAdvancedProgress(state: ReadingState) {
+        val latest = repository.listRecords().firstOrNull {
+            it.optString("kind") == "cache" && it.optString("bookId") == state.book.id
+        } ?: return
+        if (latest.optString("status") != "completed") return
+        if ((latest.optJSONObject("result")?.optInt("throughChapterIndex", -1) ?: -1) >= state.chapterIndex - 1) return
+        runCatching { start("cache", state.book.id, 1, null, null) }
+    }
+
     @Synchronized
     fun get(taskId: String): JSONObject =
-        copy(requireNotNull(records[taskId]) { "Unknown task_id" })
+        repository.view(requireNotNull(repository.get(taskId)) { "Unknown task_id" })
 
     @Synchronized
     fun list(limit: Int = 20): JSONObject = JSONObject().put(
-        "tasks", JSONArray(records.values.toList().asReversed().take(limit.coerceIn(1, 100)).map(::copy)),
+        "tasks", JSONArray(repository.listRecords(limit).map(repository::view)),
     )
 
     @Synchronized
     fun cancel(taskId: String): JSONObject {
-        val record = requireNotNull(records[taskId]) { "Unknown task_id" }
+        val record = requireNotNull(repository.get(taskId)) { "Unknown task_id" }
         if (record.optString("status") in ACTIVE) {
             update(taskId) { it.put("status", "cancelling").put("cancelRequested", true) }
             if (record.getString("kind") == "summary") {
                 ReadingCompanionService.getInstance(appContext).requestManualSummaryBatchStop(taskId)
-            } else {
+            } else if (record.getString("kind") == "commentary") {
                 ReadingCompanionAutoCommentary.getInstance(appContext).requestManualCommentaryBatchStop(taskId)
             }
             jobs[taskId]?.cancel()
         }
-        return copy(record)
+        return get(taskId)
     }
 
     @Synchronized
     fun cancelAll() {
-        records.keys.toList().forEach(::cancel)
+        repository.listRecords().map { it.getString("task_id") }.forEach(::cancel)
     }
 
     @Synchronized
     private fun update(id: String, change: (JSONObject) -> Unit) {
-        val record = records.getValue(id)
+        val record = requireNotNull(repository.get(id))
         change(record)
         record.put("updatedAt", System.currentTimeMillis())
-        persist()
-    }
-
-    private fun persist() {
-        val stream = file.startWrite()
-        try {
-            stream.write(JSONArray(records.values.toList()).toString().toByteArray(Charsets.UTF_8))
-            file.finishWrite(stream)
-        } catch (error: Exception) {
-            file.failWrite(stream)
-            throw error
-        }
+        repository.save(record)
     }
 
     private fun copy(record: JSONObject) = JSONObject(record.toString())
@@ -214,6 +211,7 @@ class ReadingCompanionTasks private constructor(context: Context) {
                 "status", "targetChapterIndices", "modelTaskCount", "completedCount",
                 "processedCount", "failedCount", "failures", "remainingMissing",
                 "unavailableCount", "scanComplete", "supersededChapterIndex",
+                "totalCount", "copiedCount", "existingCount", "throughChapterIndex",
             )) {
                 if (result.has(key)) put(key, result.get(key))
             }

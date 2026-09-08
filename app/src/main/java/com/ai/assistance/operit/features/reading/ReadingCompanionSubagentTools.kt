@@ -21,8 +21,8 @@ import org.json.JSONObject
 object ReadingCompanionSubagentTools {
     const val TOOL_LIST_CHAPTERS = "reading_commentary_list_chapters"
     const val TOOL_READ_CHAPTER = "reading_commentary_read_chapter"
-    const val TOOL_GET_CHAPTER_SUMMARIES = "reading_commentary_get_chapter_summaries"
-    const val TOOL_SEARCH = "reading_commentary_search"
+    const val TOOL_READ_FILE = "reading_commentary_read_file"
+    const val TOOL_GREP = "reading_commentary_grep"
     const val TOOL_SUBMIT_SUMMARY = "reading_commentary_submit_summary"
     const val TOOL_SUBMIT_COMMENTS = "reading_commentary_submit_comments"
     const val CODE_PARTIAL_CANDIDATES_REJECTED = "partial_candidates_rejected"
@@ -32,8 +32,8 @@ object ReadingCompanionSubagentTools {
         setOf(
             TOOL_LIST_CHAPTERS,
             TOOL_READ_CHAPTER,
-            TOOL_GET_CHAPTER_SUMMARIES,
-            TOOL_SEARCH,
+            TOOL_READ_FILE,
+            TOOL_GREP,
             TOOL_SUBMIT_SUMMARY,
             TOOL_SUBMIT_COMMENTS,
         )
@@ -79,22 +79,27 @@ object ReadingCompanionSubagentTools {
                     ),
             ),
             ToolPrompt(
-                name = TOOL_GET_CHAPTER_SUMMARIES,
-                description =
-                    "Read persisted summaries for chapters before the five-chapter raw-text " +
-                        "window. Missing summaries are omitted.",
+                name = TOOL_READ_FILE,
+                description = "Read a file returned by grep; use character offset and maxCharacters for pagination.",
+                parametersStructured = listOf(
+                    ToolParameterSchema(name = "path", description = "Exact file path returned by grep."),
+                    ToolParameterSchema(name = "offset", description = "Character offset, default 0."),
+                    ToolParameterSchema(name = "maxCharacters", description = "Page size, default 12000 characters."),
+                ),
             ),
             ToolPrompt(
-                name = TOOL_SEARCH,
+                name = TOOL_GREP,
                 description =
-                    "Search the strictly read portion of the book (structured knowledge, chapter " +
-                    "summaries, read text) plus reader memories, and return evidence for the " +
+                    "Grep literal text in this task book directory. Return paths, offsets and " +
+                    "line numbers, then read original text to verify facts for the " +
                     "commentary. Never invents facts beyond the returned evidence.",
                 parametersStructured =
                     listOf(
+                        ToolParameterSchema(name = "offset", description = "Match offset, default 0."),
+                        ToolParameterSchema(name = "limit", description = "Page size, 1 to 100, default 30."),
                         ToolParameterSchema(
                             name = "query",
-                            description = "Question or description of what to recall.",
+                            description = "Literal text to locate.",
                         ),
                     ),
             ),
@@ -126,7 +131,7 @@ object ReadingCompanionSubagentTools {
                         "and every evidenceId must be less than or equal to anchorId. If a comment " +
                         "depends on a later paragraph, move anchorId to that later paragraph. The whole " +
                         "array is rejected for correction if any candidate is invalid; a fully valid " +
-                        "submission atomically finalizes the summary and comments, then ends the turn.",
+                        "submission hands the summary and comments to the publisher, then ends the turn.",
                 parametersStructured =
                     listOf(
                         ToolParameterSchema(
@@ -156,7 +161,7 @@ object ReadingCompanionSubagentTools {
             )
         }
         val stopped = session.stoppedReason
-        if (stopped != null) return failure(tool, "生成已停止（$stopped）")
+        if (stopped != null) return failure(tool, "生成已停止（$stopped）").copy(interruptTurn = true)
         if (
             !session.summaryOnly &&
             !session.backend.heartbeatClaimIfOwned(
@@ -204,7 +209,11 @@ object ReadingCompanionSubagentTools {
         )
         session.backend.incrementRunToolInvocation(session.runId)
         val evidenceAdvanced =
-            tool.name in setOf(TOOL_SUBMIT_SUMMARY, TOOL_SUBMIT_COMMENTS) && executed.success
+            executed.success && (
+                tool.name in setOf(TOOL_SUBMIT_SUMMARY, TOOL_SUBMIT_COMMENTS) ||
+                    (tool.name in setOf(TOOL_READ_CHAPTER, TOOL_READ_FILE, TOOL_GREP) &&
+                        recordReturnedEvidence(tool.name, executed.result.toString(), session))
+                )
         return when (
             session.loopGuard.recordResult(
                 toolName = tool.name,
@@ -216,6 +225,8 @@ object ReadingCompanionSubagentTools {
             ReadingCompanionProgressVerdict.NO_PROGRESS -> {
                 session.stop("no_progress")
                 executed.copy(
+                    success = false,
+                    interruptTurn = true,
                     error =
                         (executed.error?.let { "$it；" } ?: "") +
                             "no_progress：同一调用与结果重复 3 次且无新增证据，本 run 停止",
@@ -225,6 +236,27 @@ object ReadingCompanionSubagentTools {
         }
     }
 
+    private fun recordReturnedEvidence(name: String, result: String, session: ReadingCompanionRunSession): Boolean {
+        val payload = JSONObject(result)
+        var advanced = false
+        fun record(kind: String, item: JSONObject) {
+            val identity = listOf(kind, item.optString("id"), item.optString("source"),
+                item.optString("chapterRef"), item.optString("path"), item.optString("offset"),
+                item.optString("lineNumber"), item.optString("text"),
+                item.optString("content"), item.optString("summary")).joinToString("\u0001")
+            advanced = session.recordEvidence(identity) || advanced
+        }
+        if (name == TOOL_READ_CHAPTER || name == TOOL_READ_FILE) record("file", payload)
+        val arrays = if (name == TOOL_GREP) listOf("results", "readerMemories") else listOf("summaries")
+        for (key in arrays) {
+            val entries = payload.optJSONArray(key) ?: continue
+            repeat(entries.length()) { index ->
+                entries.optJSONObject(index)?.let { record(key, it) }
+            }
+        }
+        return advanced
+    }
+
     private fun dispatch(
         tool: AITool,
         session: ReadingCompanionRunSession,
@@ -232,8 +264,8 @@ object ReadingCompanionSubagentTools {
         when (tool.name) {
             TOOL_LIST_CHAPTERS -> listChapters(tool, session)
             TOOL_READ_CHAPTER -> readChapter(tool, session)
-            TOOL_GET_CHAPTER_SUMMARIES -> getChapterSummaries(tool, session)
-            TOOL_SEARCH -> search(tool, session)
+            TOOL_READ_FILE -> readFile(tool, session)
+            TOOL_GREP -> grep(tool, session)
             TOOL_SUBMIT_SUMMARY -> submitSummary(tool, session)
             TOOL_SUBMIT_COMMENTS -> submitComments(tool, session)
             else -> failure(tool, "未知的阅读伴读审计工具：${tool.name}")
@@ -311,70 +343,21 @@ object ReadingCompanionSubagentTools {
         return success(tool, payload)
     }
 
-    private fun getChapterSummaries(
-        tool: AITool,
-        session: ReadingCompanionRunSession,
-    ): ToolResult {
-        val rawWindowSources = requiredWindow(session).mapTo(hashSetOf(), ReaderChapter::sourceId)
-        val candidates =
-            session.chapters
-                .asSequence()
-                .filter { it.index < session.chapterIndex && it.sourceId !in rawWindowSources }
-                .filter {
-                    session.backend.hasPersistedSummary(session.bookId, it.sourceId)
-                }
-                .sortedByDescending(ReaderChapter::index)
-                .take(MAX_SUMMARY_FRESHNESS_CANDIDATES)
-                .toList()
-        val deadline = System.nanoTime() + SUMMARY_FRESHNESS_BUDGET_NS
-        val freshSummaries = mutableListOf<Pair<ReaderChapter, String>>()
-        for (chapter in candidates) {
-            if (
-                freshSummaries.size >= MAX_RETURNED_SUMMARIES ||
-                System.nanoTime() >= deadline
-            ) {
-                break
-            }
-            val summary =
-                runBlockingIoPreservingToolRuntimeContext {
-                    session.backend.readPersistedSummary(
-                        session.bookId,
-                        chapter.sourceId,
-                        chapter.index,
-                    )
-                }
-            if (summary != null) freshSummaries += chapter to summary
-        }
-        val summaries =
-            JSONArray().apply {
-                freshSummaries
-                    .asReversed()
-                    .forEach { (chapter, summary) ->
-                        put(
-                            JSONObject()
-                                .put(
-                                    "chapterRef",
-                                    ReadingCompanionFileStore.chapterRef(
-                                        session.bookId,
-                                        chapter.sourceId,
-                                    ),
-                                )
-                                .put("chapterNumber", chapter.index + 1)
-                                .put("chapterTitle", chapter.title)
-                                .put("summary", summary),
-                        )
-                    }
-            }
-        return success(tool, JSONObject().put("summaries", summaries))
+    private fun readFile(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
+        fun parameter(name: String) = tool.parameters.firstOrNull { it.name == name }?.value
+        return success(tool, session.backend.readFile(session.bookId, parameter("path").orEmpty(),
+            parameter("offset")?.toInt() ?: 0, parameter("maxCharacters")?.toInt() ?: 12000))
     }
 
-    private fun search(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
+    private fun grep(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
         val query = tool.parameters.firstOrNull { it.name == "query" }?.value?.trim()
         if (query.isNullOrBlank()) {
-            return failure(tool, "search 需要非空 query 参数")
+            return failure(tool, "grep 需要非空 query 参数")
         }
         val result = runBlockingIoPreservingToolRuntimeContext {
-            session.backend.search(query)
+            session.backend.grep(session.bookId, query,
+                tool.parameters.firstOrNull { it.name == "offset" }?.value?.toInt() ?: 0,
+                tool.parameters.firstOrNull { it.name == "limit" }?.value?.toInt() ?: 30)
         }
         return success(tool, result)
     }
@@ -569,17 +552,14 @@ object ReadingCompanionSubagentTools {
             error = message,
         )
 
-    private const val MAX_RETURNED_SUMMARIES = 12
-    private const val MAX_SUMMARY_FRESHNESS_CANDIDATES = 36
-    private const val SUMMARY_FRESHNESS_BUDGET_NS = 8_000_000_000L
     private const val MAX_SUMMARY_CHARS = 4_000
 }
 
-/** 生产实现：包装 reading.db 与伴读服务（search 走同一兼容模型）。 */
+/** 生产实现：读取任务绑定书籍的本地文件；检索不调用模型。 */
 class ProductionReadingCompanionSubagentBackend(
     private val store: ReadingCompanionStore,
-    private val service: ReadingCompanionService,
     private val fileStore: ReadingCompanionFileStore,
+    private val targetChapterIndex: Int,
 ) : ReadingCompanionSubagentBackend {
     override fun heartbeatClaimIfOwned(bookId: String, chapterIndex: Int, runId: Long): Boolean =
         store.heartbeatClaimIfOwned(bookId, chapterIndex, runId)
@@ -608,16 +588,10 @@ class ProductionReadingCompanionSubagentBackend(
     override fun incrementRunModelRound(runId: Long): Boolean =
         store.incrementRunModelRound(runId)
 
-    override fun hasPersistedSummary(bookId: String, sourceId: String): Boolean =
-        fileStore.hasSummary(bookId, sourceId)
+    override fun readFile(bookId: String, path: String, offset: Int, maxCharacters: Int): JSONObject =
+        fileStore.readPersistedFile(bookId, path, offset, maxCharacters)
 
-    override suspend fun readPersistedSummary(
-        bookId: String,
-        sourceId: String,
-        chapterIndex: Int,
-    ): String? =
-        service.readFreshPersistedSummary(bookId, sourceId, chapterIndex)
-
-    override suspend fun search(query: String): JSONObject =
-        service.search(query, ToolExecutionManager.currentToolRuntimeContext())
+    override suspend fun grep(bookId: String, query: String, offset: Int, limit: Int): JSONObject =
+        fileStore.grepPersistedFiles(bookId, query, offset, limit)
+            .put("coverage", fileStore.chapterCacheCoverage(bookId, targetChapterIndex))
 }

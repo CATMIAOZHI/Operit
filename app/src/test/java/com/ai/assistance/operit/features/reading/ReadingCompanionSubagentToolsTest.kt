@@ -18,6 +18,23 @@ import org.junit.Test
 class ReadingCompanionSubagentToolsTest {
 
     @Test
+    fun `generation prompt includes fixed material and isolated tools exclude delegation and model search`() {
+        val prompt = ReadingCompanionSubagentCoordinator.buildSubagentTaskPrompt(
+            "book", 4, "reader", "persona detail", targetContent = "target evidence",
+            previousContext = listOf(AutoCommentContextChapter("old", 3, "previous chapter", "previous evidence", false)),
+        )
+        assertTrue(prompt.contains("target evidence"))
+        assertTrue(prompt.contains("previous evidence"))
+        assertTrue(prompt.contains("previous chapter"))
+        assertTrue(prompt.contains("persona detail"))
+        val names = ReadingCompanionSubagentTools.prompts().map { it.name }.toSet()
+        assertFalse(names.contains("task"))
+        assertFalse(names.contains("reading_commentary_search"))
+        assertTrue(names.contains("reading_commentary_grep"))
+        assertTrue(names.contains("reading_commentary_read_file"))
+    }
+
+    @Test
     fun `long submitted commentary keeps its ending and completes the tool turn`() {
         val session = registerSession("long-comment", FakeBackend())
         val commentary = "这是一条需要保留完整分析的段评。".repeat(20) + "结尾仍需保留🙂"
@@ -40,12 +57,52 @@ class ReadingCompanionSubagentToolsTest {
         }
     }
 
+    @Test
+    fun `search always uses session book and metadata changes are not new evidence`() {
+        val backend = FakeBackend()
+        val session = registerSession("search-bound", backend)
+        try {
+            fun search(q: String) = withCaller("search-bound") {
+                ReadingCompanionSubagentTools.execute(tool(ReadingCompanionSubagentTools.TOOL_GREP, "query" to q))
+            }
+            search("A"); search("B"); search("A"); search("B")
+            val stopped = search("A")
+            assertFalse(stopped.success)
+            assertTrue(stopped.interruptTurn)
+            assertEquals("no_progress", session.stoppedReason)
+            assertTrue(backend.searchBooks.all { it == "book-A" })
+            assertTrue(search("C").interruptTurn)
+        } finally { ReadingCompanionSubagentSessionRegistry.unregister("search-bound") }
+    }
+
+    @Test
+    fun `new chapters reset progress and invalid summary can be corrected`() {
+        val session = registerSession("new-evidence", FakeBackend(), summaryOnly = true)
+        try {
+            for (index in listOf(3, 2, 3, 1, 3)) {
+                val result = withCaller("new-evidence") {
+                    ReadingCompanionSubagentTools.execute(tool(ReadingCompanionSubagentTools.TOOL_READ_CHAPTER,
+                        "chapterRef" to ReadingCompanionFileStore.chapterRef("book-A", "source-$index")))
+                }
+                assertTrue(result.success)
+            }
+            assertEquals(null, session.stoppedReason)
+            val invalid = stageSummary("new-evidence", "")
+            assertFalse(invalid.success)
+            assertFalse(invalid.interruptTurn)
+            val valid = stageSummary("new-evidence", "Corrected summary")
+            assertTrue(valid.success)
+            assertTrue(valid.interruptTurn)
+        } finally { ReadingCompanionSubagentSessionRegistry.unregister("new-evidence") }
+    }
+
     private class FakeBackend : ReadingCompanionSubagentBackend {
         val heartbeats = AtomicInteger(0)
         val toolInvocations = AtomicInteger(0)
         val replaceAttempts = AtomicInteger(0)
         val traces = mutableListOf<String>()
         val searchQueries = mutableListOf<String>()
+        val searchBooks = mutableListOf<String>()
         val summaries = mutableMapOf<String, String>()
         @Volatile var heartbeatResult = true
 
@@ -76,19 +133,13 @@ class ReadingCompanionSubagentToolsTest {
 
         override fun incrementRunModelRound(runId: Long): Boolean = true
 
-        override fun hasPersistedSummary(bookId: String, sourceId: String): Boolean =
-            sourceId in summaries
+        override fun readFile(bookId: String, path: String, offset: Int, maxCharacters: Int): JSONObject =
+            JSONObject().put("path", path).put("offset", offset).put("content", "original text")
 
-        override suspend fun readPersistedSummary(
-            bookId: String,
-            sourceId: String,
-            chapterIndex: Int,
-        ): String? =
-            summaries[sourceId]
-
-        override suspend fun search(query: String): JSONObject =
+        override suspend fun grep(bookId: String, query: String, offset: Int, limit: Int): JSONObject =
             JSONObject().apply {
                 searchQueries += query
+                searchBooks += bookId
                 put("hits", 1)
                 put("query", query)
             }
@@ -242,21 +293,16 @@ class ReadingCompanionSubagentToolsTest {
     }
 
     @Test
-    fun `chapter summaries read only persisted summaries before raw window`() {
-        val backend = FakeBackend()
-        backend.summaries["source--2"] = "旧章摘要"
-        backend.summaries["source-3"] = "目标不应返回"
-        registerSession("child-summaries", backend)
+    fun `file tool passes the bound book and requested range`() {
+        registerSession("child-files", FakeBackend())
         try {
-            val result = withCaller("child-summaries") {
-                ReadingCompanionSubagentTools.execute(tool(ReadingCompanionSubagentTools.TOOL_GET_CHAPTER_SUMMARIES))
+            val result = withCaller("child-files") {
+                ReadingCompanionSubagentTools.execute(tool(ReadingCompanionSubagentTools.TOOL_READ_FILE,
+                    "path" to "/book/content.md", "offset" to "12", "maxCharacters" to "30"))
             }
-            val summaries = JSONObject(result.result.toString()).getJSONArray("summaries")
-            assertEquals(1, summaries.length())
-            assertEquals("旧章摘要", summaries.getJSONObject(0).getString("summary"))
-        } finally {
-            ReadingCompanionSubagentSessionRegistry.unregister("child-summaries")
-        }
+            assertTrue(result.success)
+            assertEquals(12, JSONObject(result.result.toString()).getInt("offset"))
+        } finally { ReadingCompanionSubagentSessionRegistry.unregister("child-files") }
     }
 
     @Test
@@ -759,7 +805,7 @@ class ReadingCompanionSubagentToolsTest {
             val result =
                 withCaller("child-6") {
                     ReadingCompanionSubagentTools.execute(
-                        tool(ReadingCompanionSubagentTools.TOOL_SEARCH, "query" to "主角"),
+                        tool(ReadingCompanionSubagentTools.TOOL_GREP, "query" to "主角"),
                     )
                 }
             assertTrue(result.success)
