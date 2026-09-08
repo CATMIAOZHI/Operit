@@ -163,7 +163,10 @@ fun FloatingChatWindow(
                     (initialMode == FloatingMode.WINDOW && (targetMode == FloatingMode.FULLSCREEN || targetMode == FloatingMode.SCREEN_OCR)) ||
                     ((initialMode == FloatingMode.FULLSCREEN || initialMode == FloatingMode.SCREEN_OCR) && targetMode == FloatingMode.WINDOW)
 
-                if (isWindowFullscreenTransition) {
+                if (windowState?.petModeTransition?.value == true &&
+                    (targetMode == FloatingMode.BALL || initialMode == FloatingMode.BALL)) {
+                    EnterTransition.None.togetherWith(ExitTransition.None)
+                } else if (isWindowFullscreenTransition) {
                     // 窗口 ↔ 全屏：使用简洁的缩放 + 淡入淡出动画
                     (fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
                      scaleIn(initialScale = 0.92f, animationSpec = tween(220, easing = FastOutSlowInEasing)))

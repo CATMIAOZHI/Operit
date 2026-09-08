@@ -60,6 +60,15 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
+import androidx.core.content.ContextCompat
+import com.ai.assistance.operit.pet.FloatingPetEntry
+import com.ai.assistance.operit.pet.FloatingPetEntryMode
+import com.ai.assistance.operit.pet.PetCompanionService
+import com.ai.assistance.operit.pet.PetPreferences
+import com.ai.assistance.operit.pet.isReady
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -129,6 +138,13 @@ class FloatingWindowManager(
     private var indicatorDisplayEnabled: Boolean = true
     private var indicatorPersistentEnabled: Boolean = false
 
+    private val petPreferences = PetPreferences.get(context)
+    private val entryObserver = lifecycleOwner.lifecycleScope.launch {
+        combine(petPreferences.usePetEntry, petPreferences.settings) { _, _ -> Unit }.collect {
+            if (isViewAdded) refreshWindowAndIndicatorVisibility()
+        }
+    }
+
     private fun cancelFocusBeforeExit() {
         val view = composeView ?: return
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
@@ -182,6 +198,7 @@ class FloatingWindowManager(
 
             composeView =
                     ComposeView(context).apply {
+                        visibility = View.GONE
                         setViewTreeLifecycleOwner(lifecycleOwner)
                         setViewTreeViewModelStoreOwner(viewModelStoreOwner)
                         setViewTreeSavedStateRegistryOwner(savedStateRegistryOwner)
@@ -201,6 +218,7 @@ class FloatingWindowManager(
             val params = createLayoutParams()
             windowManager.addView(composeView, params)
             isViewAdded = true
+            refreshWindowAndIndicatorVisibility()
             AppLogger.d(TAG, "Floating view added at (${params.x}, ${params.y})")
             return true
         } catch (e: Exception) {
@@ -210,6 +228,8 @@ class FloatingWindowManager(
     }
 
     fun destroy() {
+        entryObserver.cancel()
+        FloatingPetEntry.mode.value = FloatingPetEntryMode.NONE
         finishWindowResize()
         hideStatusIndicator()
         if (isViewAdded) {
@@ -325,16 +345,12 @@ class FloatingWindowManager(
         }
     }
 
-    private var minimizedToPet = false
 
     fun minimizeToPet() {
-        minimizedToPet = true
-        windowDisplayEnabled = false
-        refreshWindowAndIndicatorVisibility()
+        switchMode(FloatingMode.BALL)
     }
 
     fun setFloatingWindowVisible(visible: Boolean) {
-        minimizedToPet = false
         windowDisplayEnabled = visible
         refreshWindowAndIndicatorVisibility()
         AppLogger.d(TAG, "Floating window visibility set to: $visible.")
@@ -362,13 +378,38 @@ class FloatingWindowManager(
         val currentMode = state.currentMode.value
         val view = composeView
 
-        val windowVisible = !windowPersistentHidden && windowDisplayEnabled
+        val entryRequested = isViewAdded && !windowPersistentHidden && windowDisplayEnabled
+        var usePet = entryRequested && currentMode == FloatingMode.BALL &&
+            petPreferences.usePetEntry.value && petPreferences.settings.value.isReady
+        if (usePet && FloatingPetEntry.mode.value != FloatingPetEntryMode.PET) {
+            try {
+                // Set the state before starting the service so its first reconcile keeps it alive.
+                FloatingPetEntry.mode.value = FloatingPetEntryMode.PET
+                ContextCompat.startForegroundService(context, android.content.Intent(context, PetCompanionService::class.java))
+            } catch (error: RuntimeException) {
+                AppLogger.e(TAG, "Unable to show pet entry", error)
+                usePet = false
+            }
+        }
+        FloatingPetEntry.mode.value = when {
+            !isViewAdded -> FloatingPetEntryMode.NONE
+            !entryRequested -> FloatingPetEntryMode.HIDDEN
+            usePet -> FloatingPetEntryMode.PET
+            currentMode == FloatingMode.BALL || currentMode == FloatingMode.VOICE_BALL -> FloatingPetEntryMode.LEGACY_BALL
+            else -> FloatingPetEntryMode.CHAT_WINDOW
+        }
+        val windowVisible = entryRequested && !usePet
         AIForegroundService.setWakeListeningSuspendedForFloatingFullscreen(
             context.applicationContext,
             windowVisible && (currentMode == FloatingMode.FULLSCREEN || currentMode == FloatingMode.SCREEN_OCR),
         )
 
         view?.let { v ->
+            if (usePet) {
+                // GONE does not dispose Compose. Cancel the outgoing conversation's
+                // focus/scroll jobs before hiding and resizing its unplaced parent.
+                v.disposeComposition()
+            }
             v.visibility = if (windowVisible) View.VISIBLE else View.GONE
             if (windowVisible) {
                 updateViewLayout { params ->
@@ -382,7 +423,7 @@ class FloatingWindowManager(
         val indicatorShouldShow = when {
             !indicatorDisplayEnabled && !indicatorPersistentEnabled -> false
             indicatorPersistentEnabled -> true
-            else -> !windowVisible && !minimizedToPet &&
+            else -> !windowVisible && !usePet &&
                     (currentMode == FloatingMode.FULLSCREEN || currentMode == FloatingMode.WINDOW)
         }
 
@@ -838,7 +879,11 @@ class FloatingWindowManager(
             }
         }
 
+        val petTransition = FloatingPetEntry.mode.value == FloatingPetEntryMode.PET ||
+            (newMode == FloatingMode.BALL && petPreferences.usePetEntry.value && petPreferences.settings.value.isReady)
+        state.petModeTransition.value = petTransition
         state.currentMode.value = newMode
+        if (newMode == FloatingMode.BALL && petTransition) refreshWindowAndIndicatorVisibility()
         if (newMode != FloatingMode.WINDOW) {
             pendingImeFocusRunnable?.let { mainHandler.removeCallbacks(it) }
             pendingImeFocusRunnable = null
@@ -1002,7 +1047,7 @@ class FloatingWindowManager(
                                 state.previousMode == FloatingMode.VOICE_BALL) ||
                                (newMode == FloatingMode.BALL || newMode == FloatingMode.VOICE_BALL)
         
-        if (isBallTransition) {
+        if (isBallTransition && !petTransition) {
             // 球模式切换：需要与 Compose AnimatedContent 动画同步
             val isToBall = newMode == FloatingMode.BALL || newMode == FloatingMode.VOICE_BALL
             val isFromBall = state.previousMode == FloatingMode.BALL || state.previousMode == FloatingMode.VOICE_BALL
@@ -1099,6 +1144,7 @@ class FloatingWindowManager(
             // 立即标记过渡完成
             state.isTransitioning = false
         }
+        refreshWindowAndIndicatorVisibility()
     }
 
     private fun onMove(dx: Float, dy: Float, scale: Float) {

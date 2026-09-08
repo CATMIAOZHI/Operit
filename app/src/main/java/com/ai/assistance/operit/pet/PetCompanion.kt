@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.BrokenImage
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Pets
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.ui.theme.RainySuccess
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -121,21 +123,50 @@ internal fun PetCompanion(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Column(Modifier.verticalScroll(rememberScrollState())) {
-                            Column(
-                                Modifier.fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(
-                                    task?.title?.takeIf { it.isNotBlank() } ?: stringResource(R.string.pet_ready_to_chat),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    stringResource((task?.activity ?: PetActivity.IDLE).label()),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                )
+                                Column(
+                                    Modifier.weight(1f)
+                                        .padding(start = 14.dp, top = 10.dp, bottom = 10.dp)
+                                ) {
+                                    Text(
+                                        task?.title?.takeIf { it.isNotBlank() } ?: stringResource(R.string.pet_ready_to_chat),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        if (task?.activity == PetActivity.COMPLETE) {
+                                            Icon(
+                                                Icons.Default.CheckCircle,
+                                                contentDescription = null,
+                                                tint = RainySuccess,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                        Text(
+                                            stringResource((task?.activity ?: PetActivity.IDLE).label()),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { model?.openFloating(task) },
+                                    enabled = !preview,
+                                    modifier = Modifier.size(48.dp),
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.OpenInNew,
+                                        contentDescription = stringResource(R.string.pet_open_floating),
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
                             }
                             if (tasks.size > 1) {
                                 TextButton(onClick = {
@@ -148,15 +179,7 @@ internal fun PetCompanion(
                                     )
                                 }
                             }
-                            TextButton(
-                                onClick = { model?.openFloating(task) },
-                                enabled = !preview,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text(stringResource(R.string.pet_open_floating))
-                            }
+
                         }
                     }
                 }

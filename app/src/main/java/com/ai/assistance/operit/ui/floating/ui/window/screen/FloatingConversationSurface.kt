@@ -27,9 +27,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
-import com.ai.assistance.operit.pet.PetPreferences
-import com.ai.assistance.operit.pet.PetTasks
-import com.ai.assistance.operit.pet.isReady
 import com.ai.assistance.operit.ui.floating.FloatContext
 import com.ai.assistance.operit.ui.floating.FloatingMode
 import com.ai.assistance.operit.ui.floating.ui.window.components.FloatingChatWindowInputControls
@@ -131,22 +128,6 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text(stringResource(R.string.floating_minimize)) },
-                                leadingIcon = { Icon(Icons.Default.KeyboardArrowDown, null) },
-                                onClick = {
-                                    menu = false
-                                    val service = floatContext.chatService
-                                    val pet = service?.let { PetPreferences.get(it).settings.value }
-                                    val petVisible = pet?.isReady == true && service != null &&
-                                        if (PetTasks.get(service).appVisible.value) pet.inApp else pet.overlay
-                                    if (petVisible) {
-                                        releaseFocus()
-                                        service?.minimizeToPet()
-                                    }
-                                    else changeMode(FloatingMode.BALL)
-                                },
-                            )
-                            DropdownMenuItem(
                                 text = { Text(stringResource(R.string.floating_back_to_main)) },
                                 leadingIcon = { Icon(Icons.Default.Home, null) },
                                 onClick = {
@@ -171,8 +152,8 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                             stringResource(if (fullscreen) R.string.floating_compact else R.string.floating_fullscreen),
                         )
                     }
-                    IconButton(onClick = floatContext.onClose, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Default.Close, stringResource(R.string.floating_close))
+                    IconButton(onClick = { changeMode(FloatingMode.BALL) }, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.Close, stringResource(R.string.floating_collapse))
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))

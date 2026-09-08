@@ -24,6 +24,13 @@ data class PetSettings(
 /** Small UI preferences shared by the Activity and the independent overlay host. */
 class PetPreferences private constructor(context: Context) {
     private val preferences = context.getSharedPreferences("pet_companion", Context.MODE_PRIVATE)
+    private val mutableUsePetEntry = MutableStateFlow(preferences.getBoolean("use_pet_entry", true))
+    val usePetEntry = mutableUsePetEntry.asStateFlow()
+
+    fun setUsePetEntry(enabled: Boolean) {
+        preferences.edit().putBoolean("use_pet_entry", enabled).apply()
+        mutableUsePetEntry.value = enabled
+    }
     private val initialSettings =
         PetSettings(
             inApp = preferences.getBoolean("in_app", false),
