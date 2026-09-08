@@ -8,10 +8,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.kotlin.kapt)
     alias(libs.plugins.kotlin.parcelize)
-    id("io.objectbox")
-    id("kotlin-kapt")
 }
 
 val verifyScriptExecutionReceiverManifests =
@@ -290,13 +287,19 @@ kotlin {
     }
 }
 
-kapt {
-    arguments {
-        arg("room.schemaLocation", "$projectDir/schemas")
-    }
-}
-
 dependencies {
+    implementation(project(":chat-parser"))
+    implementation(project(":chat-storage"))
+    implementation(project(":memory-storage"))
+    val objectBoxTestPlatform = when {
+        System.getProperty("os.name").contains("Windows", ignoreCase = true) -> "windows"
+        System.getProperty("os.name").contains("Mac", ignoreCase = true) -> "macos"
+        System.getProperty("os.name").contains("Linux", ignoreCase = true) -> "linux"
+        else -> null
+    }
+    objectBoxTestPlatform?.let { platform ->
+        testRuntimeOnly("io.objectbox:objectbox-$platform:${libs.versions.objectbox.get()}")
+    }
     implementation("com.github.jelmerk:hnswlib-core:1.2.1")
     implementation(project(":dragonbones"))
     implementation(project(":terminal"))
@@ -428,11 +431,9 @@ dependencies {
     // Room 数据库
     implementation(libs.room.runtime)
     implementation(libs.room.ktx) // Kotlin扩展和协程支持
-    kapt(libs.room.compiler) // 使用kapt代替ksp
 
     // ObjectBox
     implementation(libs.objectbox.kotlin)
-    kapt(libs.objectbox.processor)
     implementation(libs.commons.compress.v2)
     implementation(libs.junrar)
 
@@ -580,4 +581,5 @@ dependencies {
 // actual merged manifest, so keep that artifact fresh whenever the debug JVM suite runs.
 tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
     dependsOn("processDebugMainManifest")
+    dependsOn(":chat-parser:test")
 }

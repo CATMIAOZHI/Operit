@@ -41,6 +41,7 @@ TOOLPKG_PATTERNS = (
     "tools/sandboxpackage_dev_install_or_update.js",
 )
 ANDROID_JVM_PATTERNS = (
+    "chat-parser/**",
     "tools/adb/execute_js.bat",
     "tools/adb/execute_js.sh",
     "tools/adb/execute_js_dir.bat",
@@ -67,6 +68,8 @@ ANDROID_FULL_PATTERNS = (
     "tools/native_ripgrep/**",
 )
 ANDROID_MODULE_ROOTS = (
+    "chat-storage",
+    "memory-storage",
     "dragonbones",
     "fbx",
     "llama",

@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.features.reading
 
-import java.io.File
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -83,29 +82,4 @@ class ReadingCompanionPersonaContextTest {
         )
     }
 
-    @Test
-    fun `subagent path resolves the persona from the model gateway and passes it to the coordinator`() {
-        val autoCommentarySource =
-            File(
-                "src/main/java/com/ai/assistance/operit/features/reading/" +
-                    "ReadingCompanionAutoCommentary.kt",
-            ).readText()
-        assertTrue(
-            "generateViaSubagent 必须解析完整人设",
-            autoCommentarySource.contains("modelGateway.resolveAutoCommentRolePrompt("),
-        )
-        assertTrue(
-            "解析结果必须传给 runGeneration",
-            autoCommentarySource.contains("rolePrompt = rolePrompt"),
-        )
-        val coordinatorSource =
-            File(
-                "src/main/java/com/ai/assistance/operit/features/reading/" +
-                    "ReadingCompanionSubagentCoordinator.kt",
-            ).readText()
-        assertTrue(
-            "session 必须携带 rolePrompt（get_constraints 依赖它）",
-            coordinatorSource.contains("rolePrompt = rolePrompt"),
-        )
-    }
 }

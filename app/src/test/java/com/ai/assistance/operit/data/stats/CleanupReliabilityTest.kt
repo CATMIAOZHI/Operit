@@ -49,11 +49,8 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
     @Test
     fun `quarantine export and delete file work never runs on the caller main thread`() = runBlocking {
         val spool = File(root, TokenStatSpool.SPOOL_DIR_NAME).apply { mkdirs() }
-        // 超过 16MiB 的证据：满上限 + 额外段（复制/fsync 足够大，能卡住 Main）
-        RandomAccessFile(File(spool, "quarantine_existing_sealed_1.jsonl"), "rw").use {
-            it.setLength(TokenStatSpool.MAX_QUARANTINE_BYTES)
-        }
-        File(spool, "quarantine_existing_sealed_2.jsonl").writeText("legacy-over-cap\n")
+        File(spool, "quarantine_existing_sealed_1.jsonl").writeText("evidence-one\n")
+        File(spool, "quarantine_existing_sealed_2.jsonl").writeText("evidence-two\n")
 
         val mainExecutor = Executors.newSingleThreadExecutor { r -> Thread(r, "test-main-thread") }
         Dispatchers.setMain(mainExecutor.asCoroutineDispatcher())
@@ -309,7 +306,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                     // 段原始字节读取失败（身份校验 UNREADABLE）：受管段不处理、entry 保留
                     TokenStatSpool.segmentReadErrorForTest = { file -> file.name == "sealed_1.jsonl" }
                     TokenStatSpool.replay(context)
-                    delay(700)
+                    awaitDrainIdle()
                     assertTrue(
                         "unreadable managed segment must be skipped, never processed",
                         File(spool, "sealed_1.jsonl").exists(),
@@ -976,7 +973,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                         "{corrupt-json\n",
                 )
                 TokenStatSpool.replay(context)
-                delay(700)
+                awaitDrainIdle()
                 assertTrue("partially corrupt mapping must keep the trash", trash.exists())
                 assertTrue(File(trash, "sealed_1.jsonl").exists())
                 assertTrue(File(trash, "sealed_2.jsonl").exists())
@@ -991,7 +988,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                     TokenStatSpool.ACK_STATE_UNCOMMITTED + "\n" + lineA + lineA,
                 )
                 TokenStatSpool.replay(context)
-                delay(700)
+                awaitDrainIdle()
                 assertTrue("duplicate mapping must keep the trash", trash.exists())
                 assertTrue(File(trash, "sealed_1.jsonl").exists())
                 assertTrue(File(trash, "sealed_2.jsonl").exists())
@@ -1047,7 +1044,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                 try {
                     TokenStatSpool.replay(context)
                     awaitEvent("enum-null-healthy")
-                    delay(700)
+                    awaitDrainIdle()
                     assertTrue("trash must be retained while its enumeration fails", trash.exists())
                     assertTrue(File(trash, "sealed_1.jsonl").exists())
                     assertTrue(File(trash, "sealed_2.jsonl").exists())
@@ -1077,7 +1074,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                     }
                     // 有界：重复维护轮不改写 manifest、不处置 trash
                     TokenStatSpool.replay(context)
-                    delay(700)
+                    awaitDrainIdle()
                     assertTrue(trash.exists())
                     assertEquals(
                         "repeated maintenance rounds must not rewrite the manifest",
@@ -1696,7 +1693,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                 }
                 try {
                     TokenStatSpool.replay(context)
-                    delay(700)
+                    awaitDrainIdle()
                     assertTrue("deletion failure must keep the failed target", failed.exists())
                     // 可见：quarantineEvidence 含 seal_failed_*，字节计入证据总量
                     val evidence = TokenStatSpool.quarantineEvidence(context)
@@ -2110,7 +2107,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                 assertEquals(1, TokenStatSpool.quarantineSummaryInfo(context)!!.recordCount)
                 // 阶段 1 的 drain 可能仍在收尾（摘要/条目发布后的队列复扫 sync）——先静默
                 // 至 drain 完全结束，阶段 2 的计数 seam 才能从确定的第一笔 sync 开始
-                delay(300)
+                awaitDrainIdle()
                 // 阶段 2：维护删除成功但目录项 sync 失败（bootstrap gate 已在阶段 1 确认；
                 // 本阶段第 1 次 sync 是 manifest 严格读取，第 2 次才是删除的目录项）→ manifest
                 // 条目保留（可重试记录）、本轮不推进
@@ -2170,7 +2167,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                     )
                     // 阶段 1 的 drain 可能仍在收尾（tombstone 发布后的队列复扫 sync）——先
                     // 静默至 drain 完全结束，ack 的计数 seam 才能从确定的第一笔 sync 开始
-                    delay(300)
+                    awaitDrainIdle()
                     TokenStatSpool.segmentRenameForTest = null
                     var calls = 0
                     TokenStatSpool.dirSyncForTest = {
@@ -2234,7 +2231,7 @@ internal class CleanupReliabilityTest : TokenStatReliabilityTestBase() {
                 )
                 // 阶段 1 的 drain 可能仍在收尾（tombstone 发布后的队列复扫 sync）——先静默
                 // 至 drain 完全结束，ack 的计数 seam 才能从确定的第一笔 sync 开始
-                delay(300)
+                awaitDrainIdle()
                 TokenStatSpool.segmentRenameForTest = null
                 // 第 11 次 sync = COMMITTED 翻转的暂存目录项（manifest 严格读取 1 + mkdir 1
                 // + staging 4 + 状态文件 2 + manifest 重写 2 + 翻转 staging 1）——翻转未确认

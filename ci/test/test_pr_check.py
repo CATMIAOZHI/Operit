@@ -76,6 +76,17 @@ class ScopeClassificationTest(unittest.TestCase):
 
         self.assertTrue(plan.android_jvm)
 
+    def test_parser_module_changes_run_jvm_checks(self) -> None:
+        for path in (
+            "chat-parser/src/main/kotlin/com/ai/assistance/operit/util/ChatMarkupRegex.kt",
+            "chat-parser/src/test/kotlin/com/ai/assistance/operit/util/ChatMarkupRegexTest.kt",
+            "chat-parser/build.gradle.kts",
+        ):
+            with self.subTest(path=path):
+                plan = classify_paths([path])
+                self.assertTrue(plan.android_jvm)
+                self.assertFalse(plan.android_full)
+
     def test_issue_form_yaml_uses_yaml_lane(self) -> None:
         plan = classify_paths([".github/ISSUE_TEMPLATE/bug.yml"])
 
@@ -87,6 +98,13 @@ class ScopeClassificationTest(unittest.TestCase):
 
         self.assertTrue(plan.web)
         self.assertTrue(plan.toolpkg)
+
+    def test_storage_modules_use_full_android_checks(self) -> None:
+        for module in ("chat-storage", "memory-storage"):
+            for suffix in ("build.gradle.kts", "src/main/java/Example.kt", "objectbox-models/default.json"):
+                with self.subTest(module=module, suffix=suffix):
+                    plan = classify_paths([f"{module}/{suffix}"])
+                    self.assertTrue(plan.android_full)
 
     def test_android_test_source_uses_instrumentation_compile(self) -> None:
         plan = classify_paths(["app/src/androidTest/java/com/example/ExampleTest.kt"])

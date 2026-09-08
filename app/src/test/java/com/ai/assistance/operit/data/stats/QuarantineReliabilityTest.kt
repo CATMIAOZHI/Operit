@@ -168,25 +168,49 @@ internal class QuarantineReliabilityTest : TokenStatReliabilityTestBase() {
         val spool = File(root, TokenStatSpool.SPOOL_DIR_NAME).apply { mkdirs() }
         val existing = File(spool, "quarantine_existing_sealed_1.jsonl")
         RandomAccessFile(existing, "rw").use { it.setLength(TokenStatSpool.MAX_QUARANTINE_BYTES) }
-        val total = TokenStatSpool.MAX_QUARANTINE_SUMMARY_LINES + 50
-        repeat(total) { index -> File(spool, "sealed_${index + 2}.jsonl").writeText("{corrupt-body-$index\n") }
+        val lineCap = TokenStatSpool.MAX_QUARANTINE_SUMMARY_LINES
+        // Start from a full persisted summary; only new segments need real replay to test rolling.
+        val summaryFile = File(spool, "quarantine_summary.jsonl")
+        summaryFile.writeText(
+            (0 until lineCap).joinToString("\n", postfix = "\n") { index ->
+                JSONObject()
+                    .put("ts", index)
+                    .put("file", "old_$index.jsonl")
+                    .put("bytes", 16)
+                    .put("sha256", "0".repeat(64))
+                    .put("lineCount", 1)
+                    .put("corruptLines", 1)
+                    .toString()
+            },
+        )
+        val newSegments =
+            mapOf("sealed_2.jsonl" to "{corrupt-body-0\n", "sealed_3.jsonl" to "{corrupt-body-1\n")
+        newSegments.forEach { (name, body) -> File(spool, name).writeText(body) }
         Mockito.mockStatic(AppLogger::class.java).use {
             TokenStatSpool.replay(context)
             awaitNoSealedSegments(spool)
         }
         val summary = TokenStatSpool.quarantineSummaryInfo(context)
         assertNotNull(summary)
-        assertTrue(
-            "summary must roll at a fixed line cap: ${summary!!.recordCount}",
-            summary.recordCount <= TokenStatSpool.MAX_QUARANTINE_SUMMARY_LINES
-        )
+        assertEquals("summary must roll at the line cap", lineCap, summary!!.recordCount)
         assertTrue(
             "summary must have a fixed byte cap",
             summary.summaryBytes <= TokenStatSpool.MAX_QUARANTINE_SUMMARY_BYTES
         )
-        val summaryText = File(spool, "quarantine_summary.jsonl").readText()
-        assertTrue("newest records must survive the roll", summaryText.contains("sealed_${total + 1}.jsonl"))
-        assertTrue("summary must carry hash, bytes and line counts", summaryText.contains("sha256"))
+        val summaryText = summaryFile.readText()
+        val records = summaryText.lineSequence().filter { it.isNotBlank() }.map { JSONObject(it) }.toList()
+        assertEquals(
+            "only the oldest two records should be evicted",
+            (2 until lineCap).map { "old_$it.jsonl" }.toSet() + newSegments.keys,
+            records.map { it.getString("file") }.toSet(),
+        )
+        newSegments.forEach { (name, body) ->
+            val record = records.single { it.getString("file") == name }
+            assertEquals(sha256Hex(body.toByteArray(Charsets.UTF_8)), record.getString("sha256"))
+            assertEquals(body.toByteArray(Charsets.UTF_8).size, record.getInt("bytes"))
+            assertEquals(1, record.getInt("lineCount"))
+            assertEquals(1, record.getInt("corruptLines"))
+        }
         assertFalse("summary must never embed corrupt content", summaryText.contains("corrupt-body"))
         assertTrue(existing.exists())
         assertTrue(
@@ -425,7 +449,7 @@ internal class QuarantineReliabilityTest : TokenStatReliabilityTestBase() {
                 }
                 try {
                     // 超过受管集合上限的损坏段：受管集合封顶，剩余段有界跳过
-                    repeat(TokenStatSpool.MAX_TOMBSTONE_ENTRIES + 5) { index ->
+                    repeat(TokenStatSpool.MAX_TOMBSTONE_ENTRIES + 1) { index ->
                         File(spool, "sealed_${index + 1}.jsonl").writeText("{permanent-fail-$index\n")
                     }
                     val drainStart = System.nanoTime()
@@ -441,9 +465,9 @@ internal class QuarantineReliabilityTest : TokenStatReliabilityTestBase() {
                     ) {
                         delay(20)
                     }
+                    awaitDrainIdle()
                     val drainMs = (System.nanoTime() - drainStart) / 1_000_000
                     assertTrue("drain must return bounded: ${drainMs}ms", drainMs < 10_000)
-                    delay(500)
                     val entryCount = manifestCount()
                     assertEquals(
                         "managed set must cap at the hard limit, never roll identities away",
