@@ -60,6 +60,15 @@ class PetTasks private constructor(private val context: Context) {
         selectedKey.value = current.key
     }
 
+    fun acknowledgeViewedChat(chatId: String) {
+        // Viewing one conversation must not select it over another active task.
+        val viewed = tasks.value.filter { shouldAcknowledgeViewedPetTask(it, chatId) }
+        if (viewed.isNotEmpty()) {
+            acknowledgedRuns.value = acknowledgedRuns.value +
+                viewed.associate { it.key to it.startedOrder }
+        }
+    }
+
     init {
         scope.launch {
             combine(PetPreferences.get(context).settings, FloatingPetEntry.mode) { settings, entry ->
@@ -196,3 +205,7 @@ internal fun acknowledgedPetTask(task: PetTask, acknowledgedOrder: Long?): PetTa
     if (!task.active && task.activity == PetActivity.COMPLETE && task.startedOrder == acknowledgedOrder) {
         task.copy(activity = PetActivity.IDLE)
     } else task
+
+internal fun shouldAcknowledgeViewedPetTask(task: PetTask, chatId: String): Boolean =
+    task.slot == ChatRuntimeSlot.MAIN && task.chatId == chatId &&
+        !task.active && task.activity == PetActivity.COMPLETE

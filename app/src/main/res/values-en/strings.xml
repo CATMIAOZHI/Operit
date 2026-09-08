@@ -5246,7 +5246,7 @@
     <string name="executing_tool">Executing tool: %1$s</string>
     <string name="processing_tool_result">Processing tool result: %1$s</string>
     <string name="input_question_hint">Type anything</string>
-    <string name="input_question_with_workspace">Enter question, use @ to reference files</string>
+    <string name="input_question_with_workspace">Type anything, use @ to reference files</string>
     <string name="add_attachment">Add Attachment</string>
     <string name="user_uploaded_image">User uploaded image</string>
     <string name="decode_image_failed">Failed to decode image: %1$s</string>
