@@ -114,6 +114,7 @@ fun ModelApiSettingsSection(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val codexLogoutSuccessText = stringResource(R.string.codex_logout_success)
+    val codexLoginSuccessText = stringResource(R.string.codex_login_success)
     val codexAuthManager = remember { CodexAuthManager.getInstance(context) }
     val codexAuthState by codexAuthManager.authState.collectAsState()
     val persistedCodexUsage by codexAuthManager.usageSnapshotFlow.collectAsState(initial = null)
@@ -1385,7 +1386,7 @@ fun ModelApiSettingsSection(
                 showCodexLoginDialog = false
                 scope.launch {
                     EnhancedAIService.refreshAllServices(configManager.appContext)
-                    showNotification(context.getString(R.string.codex_login_success))
+                    showNotification(codexLoginSuccessText)
                 }
             },
         )
