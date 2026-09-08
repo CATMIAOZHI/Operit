@@ -702,7 +702,7 @@ internal class RestoreReliabilityTest : TokenStatReliabilityTestBase() {
                 assertEquals(1, database.tokenStatsDao().countEvents())
                 // 阶段 1 的 drain 可能仍在收尾（tombstone 发布后的队列复扫 sync）——先静默
                 // 至 drain 完全结束，阶段 2 的计数 seam 才能从确定的第一笔 sync 开始
-                delay(300)
+                awaitDrainIdle()
                 // 阶段 2：恢复 rename 成功但目录项 sync 失败（bootstrap gate 已在阶段 1 确认；
                 // 本阶段第 1 次 sync 是 manifest 严格读取、第 2 次是容量判定读取、第 3 次才是
                 // restore rename 的目录项）→ 条目保留、本轮不推进

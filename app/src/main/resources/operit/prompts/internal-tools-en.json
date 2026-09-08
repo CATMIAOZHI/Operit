@@ -1,0 +1,4535 @@
+[
+  {
+    "categoryName": "Internal Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "execute_shell",
+        "description": "Execute a device shell command.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "command",
+            "type": "string",
+            "description": "shell command to execute",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "apply_file",
+        "description": "Applies edits to a file by finding and replacing/deleting a matched content block.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "file path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "environment",
+            "type": "string",
+            "description": "optional, same as read_file environment",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "type",
+            "type": "string",
+            "description": "operation type: replace | delete | create",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "old",
+            "type": "string",
+            "description": "the exact content to be matched and replaced/deleted (required for replace/delete)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "new",
+            "type": "string",
+            "description": "the new content to insert (required for replace/create)",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "\n  - **How it works**:\n    - The tool finds the best fuzzy match of `old` in the current file content (not by line numbers) and applies the requested operation.\n    - You can call this tool multiple times to apply multiple independent edits.\n\n  - **Parameters**:\n    - `type`:\n      - `replace`: replace the matched `old` content with `new`\n      - `delete`: delete the matched `old` content\n      - `create`: create the file when it does not exist (write `new` as full file content)\n    - `old`: required for `replace` / `delete`\n    - `new`: required for `replace` / `create`\n\n  - **CRITICAL RULES**:\n    1. **If you need to rewrite a whole existing file**: do **NOT** use apply_file to overwrite it. Instead, call `delete_file` first, then use `apply_file` with `type=create`.\n    2. **If you need to modify an existing file**: you **MUST** use `type=replace` (or `type=delete`) and provide `old` / `new`. Do **NOT** delete the whole file and rewrite it.\n",
+        "notes": ""
+      },
+      {
+        "name": "create_terminal_session",
+        "description": "Create or get a terminal session.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_name",
+            "type": "string",
+            "description": "terminal session name",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "execute_in_terminal_session",
+        "description": "Execute a command in a terminal session and collect full output.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "terminal session id",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "command",
+            "type": "string",
+            "description": "command to execute",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "timeout_ms",
+            "type": "integer",
+            "description": "optional, command timeout in milliseconds",
+            "required": false,
+            "default": "1800000"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "execute_hidden_terminal_command",
+        "description": "Execute a command in a hidden non-PTY terminal executor. Commands using the same executor_key reuse the same hidden login context and are not shown in the visible terminal UI.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "command",
+            "type": "string",
+            "description": "command to execute",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "executor_key",
+            "type": "string",
+            "description": "optional, hidden executor key used to reuse the same background shell context",
+            "required": false,
+            "default": "default"
+          },
+          {
+            "name": "timeout_ms",
+            "type": "integer",
+            "description": "optional, command timeout in milliseconds",
+            "required": false,
+            "default": "120000"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "input_in_terminal_session",
+        "description": "Write input to a terminal session. At least one of input or control is required. Typical usage is sending input first, then control=enter to submit.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "terminal session id",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "input",
+            "type": "string",
+            "description": "text to write to the terminal (can include newlines)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "control",
+            "type": "string",
+            "description": "control key or modifier (e.g. enter/tab/esc/up/down/left/right/home/end/pageup/pagedown, or ctrl with input=c for Ctrl+C)",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "close_terminal_session",
+        "description": "Close a terminal session.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "terminal session id",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "get_terminal_session_screen",
+        "description": "Get only the current visible PTY screen content for a terminal session (single screen, no scrollback/history).",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "terminal session id",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "music_play",
+        "description": "Play audio inside the app using the built-in music player.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "source",
+            "type": "string",
+            "description": "audio source",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "source_type",
+            "type": "string",
+            "description": "source type: path | url | uri",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "type": "string",
+            "description": "optional display title",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "artist",
+            "type": "string",
+            "description": "optional display artist",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "loop",
+            "type": "boolean",
+            "description": "optional, repeat this track",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "volume",
+            "type": "number",
+            "description": "optional, 0 to 1",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "start_position_ms",
+            "type": "integer",
+            "description": "optional start position in milliseconds",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "music_play_queue",
+        "description": "Play an audio queue inside the app using the built-in music player.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "items",
+            "type": "array",
+            "description": "track objects with source, source_type, optional title, optional artist",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "loop",
+            "type": "boolean",
+            "description": "optional, repeat the queue",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "volume",
+            "type": "number",
+            "description": "optional, 0 to 1",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "start_index",
+            "type": "integer",
+            "description": "optional zero-based queue start index",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "start_position_ms",
+            "type": "integer",
+            "description": "optional start position in milliseconds for the first track",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "music_pause",
+        "description": "Pause the current app music playback.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "music_resume",
+        "description": "Resume the current app music playback.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "music_stop",
+        "description": "Stop the current app music playback.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "music_seek",
+        "description": "Seek the current app music playback.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "position_ms",
+            "type": "integer",
+            "description": "target position in milliseconds",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "music_set_volume",
+        "description": "Set the current app music playback volume.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "volume",
+            "type": "number",
+            "description": "volume from 0 to 1",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "music_status",
+        "description": "Get the current app music playback status.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_click",
+        "description": "Click an element on the current page by browser_snapshot ref, including refs inside same-origin iframes.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "ref",
+            "type": "string",
+            "description": "target element ref from browser_snapshot output; provide ref or selector",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "selector",
+            "type": "string",
+            "description": "optional CSS selector fallback when ref is not available",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "element",
+            "type": "string",
+            "description": "optional, human-readable element description",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "doubleClick",
+            "type": "boolean",
+            "description": "optional, perform a double click instead of a single click",
+            "required": false,
+            "default": "false"
+          },
+          {
+            "name": "button",
+            "type": "string",
+            "description": "optional mouse button: left/right/middle",
+            "required": false,
+            "default": "left"
+          },
+          {
+            "name": "modifiers",
+            "type": "array",
+            "description": "optional modifier keys array: Alt/Control/ControlOrMeta/Meta/Shift",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_close",
+        "description": "Close the current browser tab. Closing the last tab also closes the browser overlay.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_close_all",
+        "description": "Close all browser tabs. This also closes the browser overlay.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_console_messages",
+        "description": "Read browser console messages for the current page.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "level",
+            "type": "string",
+            "description": "optional console level: error/warning/info/debug",
+            "required": false,
+            "default": "info"
+          },
+          {
+            "name": "filename",
+            "type": "string",
+            "description": "optional output file name for large results",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_drag",
+        "description": "Perform drag and drop between two page elements.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "startElement",
+            "type": "string",
+            "description": "human-readable source element description",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "startRef",
+            "type": "string",
+            "description": "source element ref from browser_snapshot output",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "endElement",
+            "type": "string",
+            "description": "human-readable target element description",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "endRef",
+            "type": "string",
+            "description": "target element ref from browser_snapshot output",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_evaluate",
+        "description": "Evaluate a JavaScript function on the page or on a target element.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "function",
+            "type": "string",
+            "description": "() => { ... } or (element) => { ... }",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "element",
+            "type": "string",
+            "description": "optional, human-readable element description",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "ref",
+            "type": "string",
+            "description": "optional target element ref; required when element is provided",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_file_upload",
+        "description": "Upload one or multiple files to the active file chooser. Omit paths to cancel the chooser.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "paths",
+            "type": "array",
+            "description": "optional absolute file paths",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_fill_form",
+        "description": "Fill multiple form fields on the current page.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "fields",
+            "type": "array",
+            "description": "array of field objects with name/type/value plus ref or selector",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_handle_dialog",
+        "description": "Accept or dismiss the currently open dialog.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "accept",
+            "type": "boolean",
+            "description": "true to accept, false to dismiss",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "promptText",
+            "type": "string",
+            "description": "optional prompt text when handling a prompt dialog",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_hover",
+        "description": "Hover over an element on the current page.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "element",
+            "type": "string",
+            "description": "optional, human-readable element description",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "ref",
+            "type": "string",
+            "description": "target element ref from browser_snapshot output",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_navigate",
+        "description": "Navigate the active browser tab to a URL. If no tab exists yet, the first tab is created automatically.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "url",
+            "type": "string",
+            "description": "target URL",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_navigate_back",
+        "description": "Go back in the current tab history.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_network_requests",
+        "description": "Read network requests recorded for the current page.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "includeStatic",
+            "type": "boolean",
+            "description": "optional, include static asset requests",
+            "required": false,
+            "default": "false"
+          },
+          {
+            "name": "filename",
+            "type": "string",
+            "description": "optional output file name for large results",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_press_key",
+        "description": "Press a keyboard key in the current page.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "key",
+            "type": "string",
+            "description": "key name, for example ArrowLeft or a",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_resize",
+        "description": "Resize the browser viewport.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "width",
+            "type": "number",
+            "description": "viewport width",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "height",
+            "type": "number",
+            "description": "viewport height",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_run_code",
+        "description": "Run a Playwright-style code snippet against the current tab.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "code",
+            "type": "string",
+            "description": "Playwright-style JavaScript snippet",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_select_option",
+        "description": "Select option values in a dropdown element.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "element",
+            "type": "string",
+            "description": "optional, human-readable element description",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "ref",
+            "type": "string",
+            "description": "target select element ref from browser_snapshot output",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "values",
+            "type": "array",
+            "description": "option values or visible texts to select",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_snapshot",
+        "description": "Capture a structured accessibility-style snapshot of the current page, including same-origin iframe content.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "filename",
+            "type": "string",
+            "description": "optional output snapshot file name",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "selector",
+            "type": "string",
+            "description": "optional root element selector for a partial snapshot",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "depth",
+            "type": "integer",
+            "description": "optional snapshot tree depth limit",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_take_screenshot",
+        "description": "Take a screenshot of the current page or of a specific element.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "type",
+            "type": "string",
+            "description": "optional image type: png or jpeg",
+            "required": false,
+            "default": "png"
+          },
+          {
+            "name": "filename",
+            "type": "string",
+            "description": "optional output file name",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "element",
+            "type": "string",
+            "description": "optional element description; when present ref is required",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "ref",
+            "type": "string",
+            "description": "optional element ref; when present element is required",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "fullPage",
+            "type": "boolean",
+            "description": "optional full-page capture; cannot be used with element screenshots",
+            "required": false,
+            "default": "false"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_type",
+        "description": "Type text into an editable element.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "element",
+            "type": "string",
+            "description": "optional, human-readable element description",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "ref",
+            "type": "string",
+            "description": "target element ref from browser_snapshot output",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "text",
+            "type": "string",
+            "description": "text to type",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "submit",
+            "type": "boolean",
+            "description": "optional, press Enter after typing",
+            "required": false,
+            "default": "false"
+          },
+          {
+            "name": "slowly",
+            "type": "boolean",
+            "description": "optional, type character by character",
+            "required": false,
+            "default": "false"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_wait_for",
+        "description": "Wait for text to appear, disappear, or for a duration to pass.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "time",
+            "type": "number",
+            "description": "optional wait duration in seconds",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "text",
+            "type": "string",
+            "description": "optional text that must appear",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "textGone",
+            "type": "string",
+            "description": "optional text that must disappear",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_tabs",
+        "description": "List, create, select, or close browser tabs using 0-based indexes.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "action",
+            "type": "string",
+            "description": "one of: list, create, select, close",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "index",
+            "type": "integer",
+            "description": "optional tab index used by select or close",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "calculate",
+        "description": "Evaluate a math expression.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "expression",
+            "type": "string",
+            "description": "math expression, e.g. \"(1+2)*3\"",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "execute_intent",
+        "description": "Execute an Android Intent (activity/broadcast/service).",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "action",
+            "type": "string",
+            "description": "optional, intent action",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "uri",
+            "type": "string",
+            "description": "optional, data URI",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "package",
+            "type": "string",
+            "description": "optional, package name",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "component",
+            "type": "string",
+            "description": "optional, component in \"package/class\" format",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "type",
+            "type": "string",
+            "description": "optional, one of activity/broadcast/service",
+            "required": false,
+            "default": "activity"
+          },
+          {
+            "name": "flags",
+            "type": "string",
+            "description": "optional, JSON array string of int flags (or a single int)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "extras",
+            "type": "string",
+            "description": "optional, JSON object string for extras",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "send_broadcast",
+        "description": "Send a broadcast intent.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "action",
+            "type": "string",
+            "description": "required, broadcast action",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "uri",
+            "type": "string",
+            "description": "optional, data URI",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "package",
+            "type": "string",
+            "description": "optional, package name",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "component",
+            "type": "string",
+            "description": "optional, component in \"package/class\" format",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "extras",
+            "type": "string",
+            "description": "optional, JSON object string for extras",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "extra_key",
+            "type": "string",
+            "description": "optional, a single string extra key",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "extra_value",
+            "type": "string",
+            "description": "optional, a single string extra value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "extra_key2",
+            "type": "string",
+            "description": "optional, second string extra key",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "extra_value2",
+            "type": "string",
+            "description": "optional, second string extra value",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "device_info",
+        "description": "Get device information.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  },
+  {
+    "categoryName": "Extended Memory Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "create_memory",
+        "description": "Creates a new memory node in the library. Use this when you want to save important information for future reference.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "title",
+            "type": "string",
+            "description": "required, string",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "content",
+            "type": "string",
+            "description": "required, string",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "content_type",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": "\"text/plain\""
+          },
+          {
+            "name": "source",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": "\"ai_created\""
+          },
+          {
+            "name": "folder_path",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": "\"\""
+          },
+          {
+            "name": "tags",
+            "type": "string",
+            "description": "optional, comma-separated string",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "update_memory",
+        "description": "Updates an existing memory node by title. Use this to modify an existing memory's content or metadata.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "old_title",
+            "type": "string",
+            "description": "required, string to identify the memory",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "new_title",
+            "type": "string",
+            "description": "optional, string, new title if renaming",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "content",
+            "type": "string",
+            "description": "optional, string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "content_type",
+            "type": "string",
+            "description": "optional, string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "source",
+            "type": "string",
+            "description": "optional, string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "credibility",
+            "type": "number",
+            "description": "optional, float 0-1",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "importance",
+            "type": "number",
+            "description": "optional, float 0-1",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "folder_path",
+            "type": "string",
+            "description": "optional, string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tags",
+            "type": "string",
+            "description": "optional, comma-separated string",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "delete_memory",
+        "description": "Deletes a memory node from the library by title. Use with caution as this operation is irreversible.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "title",
+            "type": "string",
+            "description": "required, string to identify the memory",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "link_memories",
+        "description": "Creates a semantic link between two memories in the library. Use this to establish relationships between related concepts, facts, or pieces of information. This helps build a knowledge graph structure for better memory retrieval and understanding.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "source_title",
+            "type": "string",
+            "description": "required, string, the title of the source memory",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "target_title",
+            "type": "string",
+            "description": "required, string, the title of the target memory",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "link_type",
+            "type": "string",
+            "description": "optional, string, the type of relationship such as \"related\", \"causes\", \"explains\", \"part_of\", \"contradicts\", etc.",
+            "required": false,
+            "default": "\"related\""
+          },
+          {
+            "name": "weight",
+            "type": "number",
+            "description": "optional, float 0.0-1.0, the strength of the link with 1.0 being strongest",
+            "required": false,
+            "default": "0.7"
+          },
+          {
+            "name": "description",
+            "type": "string",
+            "description": "optional, string, additional context about the relationship",
+            "required": false,
+            "default": "\"\""
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "query_memory_links",
+        "description": "Queries links in the memory graph. Supports filtering by link_id, source_title, target_title, and link_type. Use this before updating/deleting links to precisely identify targets.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "link_id",
+            "type": "integer",
+            "description": "optional, exact link id",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "source_title",
+            "type": "string",
+            "description": "optional, exact source memory title",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "target_title",
+            "type": "string",
+            "description": "optional, exact target memory title",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "link_type",
+            "type": "string",
+            "description": "optional, relation type filter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "limit",
+            "type": "integer",
+            "description": "optional, int 1-200, maximum links to return",
+            "required": false,
+            "default": "20"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "update_user_profile",
+        "description": "Replaces the private user.md profile after the user approves the tool call. Preserve useful existing content and write the complete Markdown document.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "markdown",
+            "type": "string",
+            "description": "required, complete contents of user.md, maximum 12000 characters",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  },
+  {
+    "categoryName": "Extended HTTP Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "http_request",
+        "description": "Send HTTP request.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "url",
+            "type": "string",
+            "description": "url",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "method",
+            "type": "string",
+            "description": "GET/POST/PUT/DELETE",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "headers",
+            "type": "string",
+            "description": "headers",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "body",
+            "type": "string",
+            "description": "body",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "body_type",
+            "type": "string",
+            "description": "json/form/text/xml",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "ignore_ssl",
+            "type": "boolean",
+            "description": "ignore https certificate verification, true/false",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "multipart_request",
+        "description": "Upload files.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "url",
+            "type": "string",
+            "description": "url",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "method",
+            "type": "string",
+            "description": "POST/PUT",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "headers",
+            "type": "string",
+            "description": "headers",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "form_data",
+            "type": "string",
+            "description": "form_data",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "files",
+            "type": "string",
+            "description": "JSON array string. Each item is an object: {\"field_name\": string, \"file_path\": string, \"content_type\"?: string, \"file_name\"?: string}",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "ignore_ssl",
+            "type": "boolean",
+            "description": "ignore https certificate verification, true/false",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "manage_cookies",
+        "description": "Manage cookies.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "action",
+            "type": "string",
+            "description": "get/set/clear",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "domain",
+            "type": "string",
+            "description": "domain",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "cookies",
+            "type": "string",
+            "description": "cookies",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  },
+  {
+    "categoryName": "Extended File Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "file_exists",
+        "description": "Check if a file or directory exists.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "target path",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "move_file",
+        "description": "Move or rename a file or directory.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "source",
+            "type": "string",
+            "description": "source path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "destination",
+            "type": "string",
+            "description": "destination path",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "copy_file",
+        "description": "Copy a file or directory. Supports cross-environment copying between Android and Linux.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "source",
+            "type": "string",
+            "description": "source path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "destination",
+            "type": "string",
+            "description": "destination path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "recursive",
+            "type": "boolean",
+            "description": "boolean",
+            "required": false,
+            "default": "false"
+          },
+          {
+            "name": "source_environment",
+            "type": "string",
+            "description": "optional, \"android\" or \"linux\"",
+            "required": false,
+            "default": "\"android\""
+          },
+          {
+            "name": "dest_environment",
+            "type": "string",
+            "description": "optional, \"android\" or \"linux\". For cross-environment copy (e.g., Android → Linux or Linux → Android), specify both source_environment and dest_environment",
+            "required": false,
+            "default": "\"android\""
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "file_info",
+        "description": "Get detailed information about a file or directory including type, size, permissions, owner, group, and last modified time.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "target path",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "zip_files",
+        "description": "Compress files or directories.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "source",
+            "type": "string",
+            "description": "path to compress",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "destination",
+            "type": "string",
+            "description": "output zip file",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "unzip_files",
+        "description": "Extract a zip file.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "source",
+            "type": "string",
+            "description": "zip file path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "destination",
+            "type": "string",
+            "description": "extract path",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "open_file",
+        "description": "Open a file using the system's default application.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "file path",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "share_file",
+        "description": "Share a file with other applications.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "file path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "type": "string",
+            "description": "optional share title",
+            "required": false,
+            "default": "\"Share File\""
+          }
+        ],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  },
+  {
+    "categoryName": "Tasker Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "trigger_tasker_event",
+        "description": "Trigger a Tasker event.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "task_type",
+            "type": "string",
+            "description": "Tasker event type",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "arg1",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "arg2",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "arg3",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "arg4",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "arg5",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "args_json",
+            "type": "string",
+            "description": "optional, JSON object string",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  },
+  {
+    "categoryName": "Workflow Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "get_all_workflows",
+        "description": "Get all workflows.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "create_workflow",
+        "description": "Create a workflow.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": "workflow name",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "description",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "nodes",
+            "type": "string",
+            "description": "optional, nodes JSON array string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "connections",
+            "type": "string",
+            "description": "optional, connections JSON array string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enabled",
+            "type": "boolean",
+            "description": "optional",
+            "required": false,
+            "default": "true"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "get_workflow",
+        "description": "Get workflow detail.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "workflow_id",
+            "type": "string",
+            "description": "workflow id",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "update_workflow",
+        "description": "Update a workflow.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "workflow_id",
+            "type": "string",
+            "description": "workflow id",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "name",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "description",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "nodes",
+            "type": "string",
+            "description": "optional, nodes JSON array string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "connections",
+            "type": "string",
+            "description": "optional, connections JSON array string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enabled",
+            "type": "boolean",
+            "description": "optional",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "patch_workflow",
+        "description": "Patch a workflow incrementally.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "workflow_id",
+            "type": "string",
+            "description": "workflow id",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "name",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "description",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enabled",
+            "type": "boolean",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "node_patches",
+            "type": "string",
+            "description": "optional, node patch JSON array string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "connection_patches",
+            "type": "string",
+            "description": "optional, connection patch JSON array string",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "enable_workflow",
+        "description": "Enable a workflow.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "workflow_id",
+            "type": "string",
+            "description": "workflow id",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "disable_workflow",
+        "description": "Disable a workflow.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "workflow_id",
+            "type": "string",
+            "description": "workflow id",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "delete_workflow",
+        "description": "Delete a workflow.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "workflow_id",
+            "type": "string",
+            "description": "workflow id",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "trigger_workflow",
+        "description": "Trigger a workflow execution.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "workflow_id",
+            "type": "string",
+            "description": "workflow id",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  },
+  {
+    "categoryName": "Chat Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "start_chat_service",
+        "description": "Start the floating chat service.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "initial_mode",
+            "type": "string",
+            "description": "optional, initial floating mode: WINDOW, BALL, VOICE_BALL, FULLSCREEN, RESULT_DISPLAY, SCREEN_OCR",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "auto_enter_voice_chat",
+            "type": "boolean",
+            "description": "optional, if true then enter voice mode automatically when opening FULLSCREEN",
+            "required": false,
+            "default": "false"
+          },
+          {
+            "name": "wake_launched",
+            "type": "boolean",
+            "description": "optional, true if launched by wake word so UI can adjust behavior",
+            "required": false,
+            "default": "false"
+          },
+          {
+            "name": "timeout_ms",
+            "type": "integer",
+            "description": "optional, auto close the floating window after this timeout (milliseconds). <=0 disables auto-exit.",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "keep_if_exists",
+            "type": "boolean",
+            "description": "optional, if true and service already running, do not force floating window mode change",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "stop_chat_service",
+        "description": "Stop the floating chat service.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "create_new_chat",
+        "description": "Create a new chat.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "folder_id",
+            "type": "string",
+            "description": "optional stable folder ID for the new chat",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "set_as_current_chat",
+            "type": "boolean",
+            "description": "optional, whether to switch to the new chat (default true)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "character_card_id",
+            "type": "string",
+            "description": "optional, character card id to bind for the new chat",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "list_chats",
+        "description": "List chats (supports filtering and sorting).",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "query",
+            "type": "string",
+            "description": "optional, title keyword filter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "match",
+            "type": "string",
+            "description": "optional, contains | exact | regex (default contains)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "limit",
+            "type": "integer",
+            "description": "optional, max results (default 50)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "sort_by",
+            "type": "string",
+            "description": "optional, updatedAt | createdAt | messageCount (default updatedAt)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "sort_order",
+            "type": "string",
+            "description": "optional, asc | desc (default desc)",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "find_chat",
+        "description": "Find a chat by title and return its info.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "query",
+            "type": "string",
+            "description": "title keyword/regex",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "match",
+            "type": "string",
+            "description": "optional, contains | exact | regex (default contains)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "index",
+            "type": "integer",
+            "description": "optional, pick Nth match (default 0)",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "agent_status",
+        "description": "Check a chat's input processing status.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "chat_id",
+            "type": "string",
+            "description": "target chat id",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "switch_chat",
+        "description": "Switch to a chat.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "chat_id",
+            "type": "string",
+            "description": "target chat id",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "update_chat_title",
+        "description": "Update a chat title.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "chat_id",
+            "type": "string",
+            "description": "target chat id",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "type": "string",
+            "description": "new chat title",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "delete_chat",
+        "description": "Delete a chat by id.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "chat_id",
+            "type": "string",
+            "description": "target chat id",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "send_message_to_ai",
+        "description": "Send a user message to AI.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "message",
+            "type": "string",
+            "description": "message content",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "chat_id",
+            "type": "string",
+            "description": "optional, target chat id",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "runtime",
+            "type": "string",
+            "description": "optional, runtime slot for this send: main | floating (default floating)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "role_card_id",
+            "type": "string",
+            "description": "optional, role card id to use for this send",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "sender_name",
+            "type": "string",
+            "description": "optional, display name of the sender when AI sends as user",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "persist_turn",
+            "type": "boolean",
+            "description": "optional, whether this user/AI turn should be persisted to chat history; default true",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "notify_reply",
+            "type": "boolean",
+            "description": "optional, override whether this turn sends reply-completed notification",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "hide_user_message",
+            "type": "boolean",
+            "description": "optional, hide user message content in UI and show a placeholder marker while keeping original content in history/context",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "disable_warning",
+            "type": "boolean",
+            "description": "optional, suppress AI-generated warning markup for this turn; when true, warning-driven retry branches stop instead of continuing",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "timeout_ms",
+            "type": "integer",
+            "description": "optional, maximum wait time in milliseconds for this send, including response-stream acquisition and AI reply; default 180000",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "list_character_cards",
+        "description": "List all role cards.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "get_chat_messages",
+        "description": "Get messages from a specific chat (cross-chat history read).",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "chat_id",
+            "type": "string",
+            "description": "target chat id",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "order",
+            "type": "string",
+            "description": "optional, asc/desc (default desc)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "limit",
+            "type": "integer",
+            "description": "optional, number of messages to return (default 20, max 200)",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "get_chat_messages_range",
+        "description": "Get messages from a specific chat by zero-based message index range.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "chat_id",
+            "type": "string",
+            "description": "target chat id",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "order",
+            "type": "string",
+            "description": "optional, asc/desc (default asc)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "start",
+            "type": "integer",
+            "description": "zero-based start message index in the selected order, inclusive",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "end",
+            "type": "integer",
+            "description": "zero-based end message index in the selected order, inclusive",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  },
+  {
+    "categoryName": "Internal File Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "read_file_full",
+        "description": "Read the full content of a file without enforcing size limit.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "file path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "environment",
+            "type": "string",
+            "description": "optional, \"android\" (default) or \"linux\"",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "text_only",
+            "type": "boolean",
+            "description": "optional",
+            "required": false,
+            "default": "false"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "read_file_binary",
+        "description": "Read binary file and return base64 content.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "file path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "environment",
+            "type": "string",
+            "description": "optional, \"android\" (default) or \"linux\"",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "write_file",
+        "description": "Write content to a file.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "file path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "content",
+            "type": "string",
+            "description": "file content",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "append",
+            "type": "boolean",
+            "description": "optional",
+            "required": false,
+            "default": "false"
+          },
+          {
+            "name": "environment",
+            "type": "string",
+            "description": "optional, \"android\" (default) or \"linux\"",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "write_file_binary",
+        "description": "Write base64 content to a binary file.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "file path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "base64Content",
+            "type": "string",
+            "description": "base64 encoded content",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "environment",
+            "type": "string",
+            "description": "optional, \"android\" (default) or \"linux\"",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  },
+  {
+    "categoryName": "Internal UI Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "get_page_info",
+        "description": "Get current page/window UI information.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "format",
+            "type": "string",
+            "description": "optional, xml/json",
+            "required": false,
+            "default": "xml"
+          },
+          {
+            "name": "detail",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": "summary"
+          },
+          {
+            "name": "display",
+            "type": "string",
+            "description": "optional, display id for multi-display",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "tap",
+        "description": "Tap at screen coordinates.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "x",
+            "type": "integer",
+            "description": "x coordinate",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "y",
+            "type": "integer",
+            "description": "y coordinate",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "display",
+            "type": "string",
+            "description": "optional, display id",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "long_press",
+        "description": "Long press at screen coordinates.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "x",
+            "type": "integer",
+            "description": "x coordinate",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "y",
+            "type": "integer",
+            "description": "y coordinate",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "display",
+            "type": "string",
+            "description": "optional, display id",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "swipe",
+        "description": "Swipe from start to end coordinates.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "start_x",
+            "type": "integer",
+            "description": "start x",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "start_y",
+            "type": "integer",
+            "description": "start y",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "end_x",
+            "type": "integer",
+            "description": "end x",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "end_y",
+            "type": "integer",
+            "description": "end y",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "duration",
+            "type": "integer",
+            "description": "optional, duration in ms",
+            "required": false,
+            "default": "300"
+          },
+          {
+            "name": "display",
+            "type": "string",
+            "description": "optional, display id",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "click_element",
+        "description": "Click a UI element by resource id / class name / content description / bounds.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "resourceId",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "className",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "contentDesc",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "bounds",
+            "type": "string",
+            "description": "optional, format: [left,top][right,bottom]",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "partialMatch",
+            "type": "boolean",
+            "description": "optional, enable partial match for selectors",
+            "required": false,
+            "default": "false"
+          },
+          {
+            "name": "index",
+            "type": "integer",
+            "description": "optional",
+            "required": false,
+            "default": "0"
+          },
+          {
+            "name": "display",
+            "type": "string",
+            "description": "optional, display id",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "set_input_text",
+        "description": "Set input text in focused field.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "text",
+            "type": "string",
+            "description": "text to input (can be empty to clear)",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "display",
+            "type": "string",
+            "description": "optional, display id",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "press_key",
+        "description": "Press a key via keyevent.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "key_code",
+            "type": "string",
+            "description": "key code, e.g. KEYCODE_HOME",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "display",
+            "type": "string",
+            "description": "optional, display id",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "capture_screenshot",
+        "description": "Capture a screenshot and return a file path.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "run_ui_subagent",
+        "description": "Run a lightweight UI automation subagent.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "intent",
+            "type": "string",
+            "description": "task description",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "max_steps",
+            "type": "integer",
+            "description": "optional",
+            "required": false,
+            "default": "20"
+          },
+          {
+            "name": "agent_id",
+            "type": "string",
+            "description": "optional, reuse agent session id. If omitted or 'default', uses the main screen. If provided and not 'default', the requested virtual screen session must be active/available; otherwise the run fails.",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "target_app",
+            "type": "string",
+            "description": "optional, target app package name",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  },
+  {
+    "categoryName": "Software Settings Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "read_environment_variable",
+        "description": "Read current value of an environment variable by key.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "key",
+            "type": "string",
+            "description": "environment variable key",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "write_environment_variable",
+        "description": "Write an environment variable by key; empty value clears it.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "key",
+            "type": "string",
+            "description": "environment variable key",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "value",
+            "type": "string",
+            "description": "optional, value to write; empty clears the key",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "list_sandbox_packages",
+        "description": "List sandbox packages (built-in and external) with current enabled states and management paths.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "set_sandbox_package_enabled",
+        "description": "Enable or disable a sandbox package by package_name.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "package_name",
+            "type": "string",
+            "description": "sandbox package name",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "enabled",
+            "type": "boolean",
+            "description": "true to enable, false to disable",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "restart_mcp_with_logs",
+        "description": "Restart MCP plugin startup flow and return per-plugin startup logs.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "timeout_ms",
+            "type": "integer",
+            "description": "optional, max wait time in milliseconds",
+            "required": false,
+            "default": "120000"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "get_speech_services_config",
+        "description": "Get current TTS/STT speech services configuration.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "set_speech_services_config",
+        "description": "Update TTS/STT speech services configuration fields.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "tts_service_type",
+            "type": "string",
+            "description": "optional, SIMPLE_TTS/HTTP_TTS/OPENAI_WS_TTS/SILICONFLOW_TTS/MINIMAX_TTS/MIMO_TTS/DOUBAO_TTS/OPENAI_TTS/VITS_TTS",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_url_template",
+            "type": "string",
+            "description": "optional, endpoint URL template for HTTP-style TTS providers",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_api_key",
+            "type": "string",
+            "description": "optional, TTS API key",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_headers",
+            "type": "string",
+            "description": "optional, HTTP-style TTS headers JSON object string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_http_method",
+            "type": "string",
+            "description": "optional, GET/POST",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_request_body",
+            "type": "string",
+            "description": "optional, TTS POST body template",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_content_type",
+            "type": "string",
+            "description": "optional, TTS content type",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_locale",
+            "type": "string",
+            "description": "optional, TTS locale tag such as zh-CN or en-US",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_voice_id",
+            "type": "string",
+            "description": "optional, TTS voice id. For MIMO voiceclone, this may be the full data:audio/...;base64,... audio sample",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_model_name",
+            "type": "string",
+            "description": "optional, TTS model name",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_response_pipeline",
+            "type": "string",
+            "description": "optional, HTTP TTS response pipeline JSON array string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_vits_package_path",
+            "type": "string",
+            "description": "optional, local VITS/Piper TTS package path; accepts a .zip file or extracted package directory",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_vits_speaker_id",
+            "type": "string",
+            "description": "optional, numeric speaker id for VITS/Piper TTS packages that require it",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_vits_options",
+            "type": "string",
+            "description": "optional, VITS/Piper TTS package options JSON object string, such as sample_rate/frontend/text_mode/input names",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_cleaner_regexs",
+            "type": "string",
+            "description": "optional, TTS cleaner regex list JSON array string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_speech_rate",
+            "type": "number",
+            "description": "optional, TTS speech rate",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "tts_pitch",
+            "type": "number",
+            "description": "optional, TTS pitch",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "stt_service_type",
+            "type": "string",
+            "description": "optional, SHERPA_NCNN/OPENAI_STT/DEEPGRAM_STT",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "stt_endpoint_url",
+            "type": "string",
+            "description": "optional, STT endpoint URL",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "stt_api_key",
+            "type": "string",
+            "description": "optional, STT API key",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "stt_model_name",
+            "type": "string",
+            "description": "optional, STT model name",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "test_tts_playback",
+        "description": "Play one TTS test utterance using the current speech-service configuration.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "text",
+            "type": "string",
+            "description": "required, text to play once via the current TTS service",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "interrupt",
+            "type": "boolean",
+            "description": "optional, whether to interrupt current playback first",
+            "required": false,
+            "default": "true"
+          },
+          {
+            "name": "speech_rate",
+            "type": "number",
+            "description": "optional, override speech rate for this test only",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "pitch",
+            "type": "number",
+            "description": "optional, override pitch for this test only",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "list_model_configs",
+        "description": "List all model configs and function-to-config bindings.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "create_model_config",
+        "description": "Create a model config. Optional fields can be provided at creation.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": "optional, config display name",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "api_provider_type",
+            "type": "string",
+            "description": "optional, provider enum name (e.g. OPENAI_GENERIC/OPENAI_LOCAL/OPENAI_RESPONSES_GENERIC/DEEPSEEK/MIMO/GEMINI_GENERIC/LMSTUDIO/OLLAMA/MNN/LLAMA_CPP)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "api_endpoint",
+            "type": "string",
+            "description": "optional, API endpoint URL",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "api_key",
+            "type": "string",
+            "description": "optional, API key",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "model_name",
+            "type": "string",
+            "description": "optional, model name; multiple models can be comma-separated",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "max_tokens_enabled",
+            "type": "boolean",
+            "description": "optional, enable max_tokens parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "max_tokens",
+            "type": "integer",
+            "description": "optional, max_tokens value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "temperature_enabled",
+            "type": "boolean",
+            "description": "optional, enable temperature parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "temperature",
+            "type": "number",
+            "description": "optional, temperature value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "top_p_enabled",
+            "type": "boolean",
+            "description": "optional, enable top_p parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "top_p",
+            "type": "number",
+            "description": "optional, top_p value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "top_k_enabled",
+            "type": "boolean",
+            "description": "optional, enable top_k parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "top_k",
+            "type": "integer",
+            "description": "optional, top_k value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "presence_penalty_enabled",
+            "type": "boolean",
+            "description": "optional, enable presence_penalty parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "presence_penalty",
+            "type": "number",
+            "description": "optional, presence_penalty value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "frequency_penalty_enabled",
+            "type": "boolean",
+            "description": "optional, enable frequency_penalty parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "frequency_penalty",
+            "type": "number",
+            "description": "optional, frequency_penalty value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "repetition_penalty_enabled",
+            "type": "boolean",
+            "description": "optional, enable repetition_penalty parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "repetition_penalty",
+            "type": "number",
+            "description": "optional, repetition_penalty value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "context_length",
+            "type": "number",
+            "description": "optional, base context length",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "max_context_length",
+            "type": "number",
+            "description": "optional, max context length",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_max_context_mode",
+            "type": "boolean",
+            "description": "optional, use max_context_length as active context",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "summary_token_threshold",
+            "type": "number",
+            "description": "optional, token-ratio threshold for context summary trigger (0~1)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_summary",
+            "type": "boolean",
+            "description": "optional, enable context summary",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_summary_by_message_count",
+            "type": "boolean",
+            "description": "optional, enable summary trigger by message count",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "summary_message_count_threshold",
+            "type": "integer",
+            "description": "optional, message-count threshold for summary trigger",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "custom_parameters",
+            "type": "string",
+            "description": "optional, custom parameters JSON array string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "custom_headers",
+            "type": "string",
+            "description": "optional, custom request headers JSON object string",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "update_model_config",
+        "description": "Update fields of an existing model config by config_id.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "config_id",
+            "type": "string",
+            "description": "target model config id",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "name",
+            "type": "string",
+            "description": "optional, config display name",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "api_provider_type",
+            "type": "string",
+            "description": "optional, provider enum name",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "api_endpoint",
+            "type": "string",
+            "description": "optional, API endpoint URL",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "api_key",
+            "type": "string",
+            "description": "optional, API key",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "model_name",
+            "type": "string",
+            "description": "optional, model name; multiple models can be comma-separated",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "max_tokens_enabled",
+            "type": "boolean",
+            "description": "optional, enable max_tokens parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "max_tokens",
+            "type": "integer",
+            "description": "optional, max_tokens value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "temperature_enabled",
+            "type": "boolean",
+            "description": "optional, enable temperature parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "temperature",
+            "type": "number",
+            "description": "optional, temperature value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "top_p_enabled",
+            "type": "boolean",
+            "description": "optional, enable top_p parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "top_p",
+            "type": "number",
+            "description": "optional, top_p value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "top_k_enabled",
+            "type": "boolean",
+            "description": "optional, enable top_k parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "top_k",
+            "type": "integer",
+            "description": "optional, top_k value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "presence_penalty_enabled",
+            "type": "boolean",
+            "description": "optional, enable presence_penalty parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "presence_penalty",
+            "type": "number",
+            "description": "optional, presence_penalty value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "frequency_penalty_enabled",
+            "type": "boolean",
+            "description": "optional, enable frequency_penalty parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "frequency_penalty",
+            "type": "number",
+            "description": "optional, frequency_penalty value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "repetition_penalty_enabled",
+            "type": "boolean",
+            "description": "optional, enable repetition_penalty parameter",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "repetition_penalty",
+            "type": "number",
+            "description": "optional, repetition_penalty value",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "context_length",
+            "type": "number",
+            "description": "optional, base context length",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "max_context_length",
+            "type": "number",
+            "description": "optional, max context length",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_max_context_mode",
+            "type": "boolean",
+            "description": "optional, use max_context_length as active context",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "summary_token_threshold",
+            "type": "number",
+            "description": "optional, token-ratio threshold for context summary trigger (0~1)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_summary",
+            "type": "boolean",
+            "description": "optional, enable context summary",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_summary_by_message_count",
+            "type": "boolean",
+            "description": "optional, enable summary trigger by message count",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "summary_message_count_threshold",
+            "type": "integer",
+            "description": "optional, message-count threshold for summary trigger",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "custom_parameters",
+            "type": "string",
+            "description": "optional, custom parameters JSON array string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "custom_headers",
+            "type": "string",
+            "description": "optional, custom request headers JSON object string",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_direct_image_processing",
+            "type": "boolean",
+            "description": "optional, enable direct image processing",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_direct_audio_processing",
+            "type": "boolean",
+            "description": "optional, enable direct audio processing",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_direct_video_processing",
+            "type": "boolean",
+            "description": "optional, enable direct video processing",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_google_search",
+            "type": "boolean",
+            "description": "optional, Gemini grounding switch",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_claude_1h_prompt_cache",
+            "type": "boolean",
+            "description": "optional, Claude 1-hour prompt cache switch",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "enable_tool_call",
+            "type": "boolean",
+            "description": "optional, enable provider-native tool call",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "mnn_forward_type",
+            "type": "integer",
+            "description": "optional, MNN forward type",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "mnn_thread_count",
+            "type": "integer",
+            "description": "optional, MNN thread count",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "llama_thread_count",
+            "type": "integer",
+            "description": "optional, llama.cpp thread count",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "llama_context_size",
+            "type": "integer",
+            "description": "optional, llama.cpp context size",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "llama_gpu_layers",
+            "type": "integer",
+            "description": "optional, llama.cpp GPU layer count",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "request_limit_per_minute",
+            "type": "integer",
+            "description": "optional, requests-per-minute limit (0 = unlimited)",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "max_concurrent_requests",
+            "type": "integer",
+            "description": "optional, max concurrent requests (0 = unlimited)",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "delete_model_config",
+        "description": "Delete a model config by config_id (default config cannot be deleted).",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "config_id",
+            "type": "string",
+            "description": "target model config id",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "list_function_model_configs",
+        "description": "List function model bindings only (function_type -> config_id + model_index).",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "get_function_model_config",
+        "description": "Get the single model config bound to one function_type.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "function_type",
+            "type": "string",
+            "description": "function type enum name (CHAT/SUMMARY/MEMORY/UI_CONTROLLER/TRANSLATION/GREP/IMAGE_RECOGNITION/AUDIO_RECOGNITION/VIDEO_RECOGNITION)",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "set_function_model_config",
+        "description": "Bind one function type to a model config (and optional model_index).",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "function_type",
+            "type": "string",
+            "description": "function type enum name (CHAT/SUMMARY/MEMORY/UI_CONTROLLER/TRANSLATION/GREP/IMAGE_RECOGNITION/AUDIO_RECOGNITION/VIDEO_RECOGNITION)",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "config_id",
+            "type": "string",
+            "description": "target model config id",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "model_index",
+            "type": "integer",
+            "description": "optional, selected model index when model_name contains multiple models",
+            "required": false,
+            "default": "0"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "test_model_config_connection",
+        "description": "Run the same model-config connection checks as settings UI for a given config_id.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "config_id",
+            "type": "string",
+            "description": "target model config id",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "model_index",
+            "type": "integer",
+            "description": "optional, selected model index when model_name contains multiple models",
+            "required": false,
+            "default": "0"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  },
+  {
+    "categoryName": "Internal System Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "close_all_virtual_displays",
+        "description": "Close all virtual display overlays.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "modify_system_setting",
+        "description": "Modify a system setting.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "setting",
+            "type": "string",
+            "description": "setting key (alias: key)",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "value",
+            "type": "string",
+            "description": "setting value",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "namespace",
+            "type": "string",
+            "description": "optional, system/secure/global",
+            "required": false,
+            "default": "system"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "get_system_setting",
+        "description": "Get a system setting.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "setting",
+            "type": "string",
+            "description": "setting key (alias: key)",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "namespace",
+            "type": "string",
+            "description": "optional, system/secure/global",
+            "required": false,
+            "default": "system"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "install_app",
+        "description": "Request installing an APK.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "APK file path (alias: path)",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "uninstall_app",
+        "description": "Request uninstalling an app.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "package_name",
+            "type": "string",
+            "description": "app package name",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "list_installed_apps",
+        "description": "List installed apps.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "include_system_apps",
+            "type": "boolean",
+            "description": "optional",
+            "required": false,
+            "default": "false"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "start_app",
+        "description": "Start an app.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "package_name",
+            "type": "string",
+            "description": "app package name",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "activity",
+            "type": "string",
+            "description": "optional, activity class name",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "stop_app",
+        "description": "Stop an app background process.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "package_name",
+            "type": "string",
+            "description": "app package name",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "get_notifications",
+        "description": "Get device notifications.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "limit",
+            "type": "integer",
+            "description": "optional",
+            "required": false,
+            "default": "10"
+          },
+          {
+            "name": "include_ongoing",
+            "type": "boolean",
+            "description": "optional",
+            "required": false,
+            "default": "false"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "get_app_usage_time",
+        "description": "Get foreground app usage time from Android Usage Access. If permission is missing, ask the user to grant Usage Access first.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "package_name",
+            "type": "string",
+            "description": "optional, exact app package name to query",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "since_hours",
+            "type": "integer",
+            "description": "optional, look back this many hours",
+            "required": false,
+            "default": "24"
+          },
+          {
+            "name": "limit",
+            "type": "integer",
+            "description": "optional, max apps to return when package_name is not provided",
+            "required": false,
+            "default": "10"
+          },
+          {
+            "name": "include_system_apps",
+            "type": "boolean",
+            "description": "optional, include system apps when package_name is not provided",
+            "required": false,
+            "default": "false"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "toast",
+        "description": "Show a short toast message on the device.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "message",
+            "type": "string",
+            "description": "toast text",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "send_notification",
+        "description": "Send a notification using the AI reply completion notification channel.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "title",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "message",
+            "type": "string",
+            "description": "notification body",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "get_device_location",
+        "description": "Get device location.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "timeout",
+            "type": "integer",
+            "description": "optional, seconds",
+            "required": false,
+            "default": "10"
+          },
+          {
+            "name": "high_accuracy",
+            "type": "boolean",
+            "description": "optional",
+            "required": false,
+            "default": "false"
+          },
+          {
+            "name": "include_address",
+            "type": "boolean",
+            "description": "optional",
+            "required": false,
+            "default": "true"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "request_bluetooth_permission",
+        "description": "Request Bluetooth nearby devices permission.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "get_bluetooth_state",
+        "description": "Get Bluetooth adapter state.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "request_enable_bluetooth",
+        "description": "Open the system dialog to enable Bluetooth.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "list_bluetooth_bonded_devices",
+        "description": "List bonded Bluetooth devices.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "scan_bluetooth_devices",
+        "description": "Scan nearby Bluetooth classic and BLE devices.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "duration_ms",
+            "type": "integer",
+            "description": "optional, scan duration in milliseconds",
+            "required": false,
+            "default": "10000"
+          },
+          {
+            "name": "include_ble",
+            "type": "boolean",
+            "description": "optional, include BLE scan",
+            "required": false,
+            "default": "true"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_connect",
+        "description": "Connect to a Bluetooth classic device.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "address",
+            "type": "string",
+            "description": "Bluetooth MAC address",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "uuid",
+            "type": "string",
+            "description": "optional RFCOMM UUID",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_listen",
+        "description": "Listen for another device connecting to this phone over Bluetooth classic.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": "optional service name",
+            "required": false,
+            "default": "Operit Bluetooth"
+          },
+          {
+            "name": "uuid",
+            "type": "string",
+            "description": "optional RFCOMM UUID",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_accept",
+        "description": "Accept an incoming Bluetooth classic connection from a listener session.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "listener_session_id",
+            "type": "string",
+            "description": "listener session ID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "timeout_ms",
+            "type": "integer",
+            "description": "optional wait time in milliseconds",
+            "required": false,
+            "default": "30000"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_send",
+        "description": "Send text or base64 bytes to a Bluetooth classic session.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "Bluetooth session ID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "text",
+            "type": "string",
+            "description": "UTF-8 text to send",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "data_base64",
+            "type": "string",
+            "description": "base64 bytes to send",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_read",
+        "description": "Read text or bytes from a Bluetooth classic session.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "Bluetooth session ID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "max_bytes",
+            "type": "integer",
+            "description": "optional maximum bytes to read",
+            "required": false,
+            "default": "4096"
+          },
+          {
+            "name": "timeout_ms",
+            "type": "integer",
+            "description": "optional wait time in milliseconds",
+            "required": false,
+            "default": "3000"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_send_and_read",
+        "description": "Send text or bytes to a Bluetooth classic session and read the response.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "Bluetooth session ID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "text",
+            "type": "string",
+            "description": "UTF-8 text to send",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "data_base64",
+            "type": "string",
+            "description": "base64 bytes to send",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "max_bytes",
+            "type": "integer",
+            "description": "optional maximum bytes to read",
+            "required": false,
+            "default": "4096"
+          },
+          {
+            "name": "timeout_ms",
+            "type": "integer",
+            "description": "optional wait time in milliseconds",
+            "required": false,
+            "default": "3000"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_close",
+        "description": "Close a Bluetooth classic, listener, or BLE session.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "Bluetooth session ID",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_ble_connect",
+        "description": "Connect to a BLE device.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "address",
+            "type": "string",
+            "description": "Bluetooth MAC address",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "auto_connect",
+            "type": "boolean",
+            "description": "optional BLE autoConnect flag",
+            "required": false,
+            "default": "false"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_ble_discover_services",
+        "description": "Discover BLE services and characteristics.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "BLE session ID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "timeout_ms",
+            "type": "integer",
+            "description": "optional wait time in milliseconds",
+            "required": false,
+            "default": "10000"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_ble_read_characteristic",
+        "description": "Read a BLE characteristic.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "BLE session ID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "service_uuid",
+            "type": "string",
+            "description": "service UUID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "characteristic_uuid",
+            "type": "string",
+            "description": "characteristic UUID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "timeout_ms",
+            "type": "integer",
+            "description": "optional wait time in milliseconds",
+            "required": false,
+            "default": "5000"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_ble_write_characteristic",
+        "description": "Write text or base64 bytes to a BLE characteristic.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "BLE session ID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "service_uuid",
+            "type": "string",
+            "description": "service UUID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "characteristic_uuid",
+            "type": "string",
+            "description": "characteristic UUID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "text",
+            "type": "string",
+            "description": "UTF-8 text to write",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "data_base64",
+            "type": "string",
+            "description": "base64 bytes to write",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_ble_write_and_read_characteristic",
+        "description": "Write text or base64 bytes to a BLE characteristic and read another characteristic response.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "BLE session ID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "write_service_uuid",
+            "type": "string",
+            "description": "write service UUID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "write_characteristic_uuid",
+            "type": "string",
+            "description": "write characteristic UUID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "read_service_uuid",
+            "type": "string",
+            "description": "read service UUID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "read_characteristic_uuid",
+            "type": "string",
+            "description": "read characteristic UUID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "text",
+            "type": "string",
+            "description": "UTF-8 text to write",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "data_base64",
+            "type": "string",
+            "description": "base64 bytes to write",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "timeout_ms",
+            "type": "integer",
+            "description": "optional wait time in milliseconds",
+            "required": false,
+            "default": "5000"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_ble_subscribe_characteristic",
+        "description": "Subscribe or unsubscribe BLE characteristic notifications.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "BLE session ID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "service_uuid",
+            "type": "string",
+            "description": "service UUID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "characteristic_uuid",
+            "type": "string",
+            "description": "characteristic UUID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "enable",
+            "type": "boolean",
+            "description": "optional subscription state",
+            "required": false,
+            "default": "true"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "bluetooth_ble_read_notifications",
+        "description": "Read received BLE notifications.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "session_id",
+            "type": "string",
+            "description": "BLE session ID",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "limit",
+            "type": "integer",
+            "description": "optional notification count",
+            "required": false,
+            "default": "20"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  },
+  {
+    "categoryName": "FFmpeg Tools",
+    "categoryHeader": "",
+    "tools": [
+      {
+        "name": "ffmpeg_execute",
+        "description": "Execute an FFmpeg command (arguments only; do not include the leading ffmpeg).",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "command",
+            "type": "string",
+            "description": "FFmpeg command arguments only, without the leading ffmpeg",
+            "required": true,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "ffmpeg_info",
+        "description": "Get FFmpeg information.",
+        "parameters": "",
+        "parametersStructured": [],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "ffmpeg_convert",
+        "description": "Convert a video file using FFmpeg.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "input_path",
+            "type": "string",
+            "description": "input file path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "output_path",
+            "type": "string",
+            "description": "output file path",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "format",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "resolution",
+            "type": "string",
+            "description": "optional, e.g. 1280x720",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "bitrate",
+            "type": "string",
+            "description": "optional, e.g. 1000k",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "audio_codec",
+            "type": "string",
+            "description": "optional",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "video_codec",
+            "type": "string",
+            "description": "optional, use h264 for H.264 encoding",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      }
+    ],
+    "categoryFooter": ""
+  }
+]
