@@ -1062,7 +1062,8 @@ private fun UnifiedMarkdownCanvas(
         androidx.compose.runtime.mutableStateOf(false)
     }
     val renderItems: @Composable (List<MarkdownGroupedItem>) -> Unit = { items ->
-        items.forEach { item ->
+        ProgressiveMarkdownItems(items) { visibleItems ->
+        visibleItems.forEach { item ->
             when (item) {
                 is MarkdownGroupedItem.Single -> {
                     val index = item.index
@@ -1113,6 +1114,7 @@ private fun UnifiedMarkdownCanvas(
                 }
             }
         }
+    }
     }
     Column(modifier = modifier) {
         if (processEnd >= 0) {

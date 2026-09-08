@@ -110,6 +110,8 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
+import com.ai.assistance.operit.util.stream.asFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 
 /**
@@ -326,10 +328,8 @@ fun ChatArea(
 
         if (!lastAiMessageHasStaticContent && shouldAwaitFirstChunk && stream != null) {
             try {
-                stream.collect { chunk ->
-                    if (!hasLastAiMessageStartedStreaming && chunk.isNotEmpty()) {
-                        hasLastAiMessageStartedStreaming = true
-                    }
+                if (stream.asFlow().firstOrNull { it.isNotEmpty() } != null) {
+                    hasLastAiMessageStartedStreaming = true
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -425,6 +425,15 @@ fun ChatArea(
                                     )
                             },
                     ) {
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            com.ai.assistance.operit.ui.common.markdown.LocalProgressiveTranscript provides (onAutoScrollToBottomChange != null),
+                            com.ai.assistance.operit.ui.common.markdown.LocalTranscriptFollowing provides autoScrollToBottom,
+                            com.ai.assistance.operit.ui.common.markdown.LocalTranscriptUserScrolling provides followScrollConnection.userScrollInProgress,
+                            com.ai.assistance.operit.ui.common.markdown.LocalRevealTranscriptHistory provides {
+                                followScrollConnection.followingAllowed = false
+                                onAutoScrollToBottomChange?.invoke(false)
+                            },
+                        ) {
                         MessageItem(
                             index = actualIndex,
                             message = message,
@@ -478,6 +487,7 @@ fun ChatArea(
                             bubbleAiContentPaddingLeft = bubbleAiContentPaddingLeft,
                             bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
                         )
+                        }
                     }
                 }
 

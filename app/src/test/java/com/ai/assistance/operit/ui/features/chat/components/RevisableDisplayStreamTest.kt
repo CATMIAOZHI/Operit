@@ -2,6 +2,7 @@ package com.ai.assistance.operit.ui.features.chat.components
 
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.stream.MutableSharedStreamImpl
+import com.ai.assistance.operit.util.stream.DisplayTextStream
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.TextStreamEvent
 import com.ai.assistance.operit.util.stream.TextStreamEventCarrier
@@ -24,7 +25,7 @@ class RevisableDisplayStreamTest {
         val source = MutableSharedStreamImpl<String>(replay = Int.MAX_VALUE)
         val events = MutableSharedStreamImpl<TextStreamEvent>(replay = Int.MAX_VALUE)
         val input = source.withEventChannel(events)
-        val display = MutableSharedStreamImpl<String>(replay = Int.MAX_VALUE)
+        val display = DisplayTextStream()
         val visible = async(start = CoroutineStart.UNDISPATCHED) { display.readText() }
         val copying = launch(start = CoroutineStart.UNDISPATCHED) {
             collectRevisableDisplayStream(input, input as TextStreamEventCarrier, display) {
@@ -55,7 +56,7 @@ class RevisableDisplayStreamTest {
         source.emit("good")
         source.close()
         val input = source.withEventChannel(events)
-        val initial = MutableSharedStreamImpl<String>(replay = Int.MAX_VALUE)
+        val initial = DisplayTextStream()
         val oldParser = async(start = CoroutineStart.UNDISPATCHED) { initial.readText() }
         var replacement: Stream<String>? = null
 
@@ -79,7 +80,7 @@ class RevisableDisplayStreamTest {
             val failure = IllegalStateException("Tool interrupted this turn")
             source.emit("Partial answer")
             source.close(failure)
-            val display = MutableSharedStreamImpl<String>(replay = Int.MAX_VALUE)
+            val display = DisplayTextStream()
             collectRevisableDisplayStream(input, input as TextStreamEventCarrier, display) {}
             var replay = ""
             val caught = withTimeout(2_000) {
@@ -97,7 +98,7 @@ class RevisableDisplayStreamTest {
         val input = source.withEventChannel(
             MutableSharedStreamImpl<TextStreamEvent>(replay = Int.MAX_VALUE)
         )
-        val display = MutableSharedStreamImpl<String>(replay = Int.MAX_VALUE)
+        val display = DisplayTextStream()
         val copying = launch(start = CoroutineStart.UNDISPATCHED) {
             collectRevisableDisplayStream(input, input as TextStreamEventCarrier, display) {}
         }
