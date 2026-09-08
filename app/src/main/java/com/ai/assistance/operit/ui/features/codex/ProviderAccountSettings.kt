@@ -25,6 +25,10 @@ import kotlinx.coroutines.withTimeout
 fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> Unit) {
     val context = LocalContext.current
     val manager = remember(provider) { ProviderAccountManager.get(context, provider) }
+    if (provider == AccountProvider.COMMAND_CODE) {
+        CommandCodeAccountSettings(manager, onAccountChanged)
+        return
+    }
     val account by manager.account.collectAsState()
     val scope = rememberCoroutineScope()
     var login by remember(provider) { mutableStateOf(false) }

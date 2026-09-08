@@ -512,6 +512,9 @@ fun ModelApiSettingsSection(
 
     suspend fun fetchAvailableModels(): Result<List<ModelOption>> {
         return when {
+            browserAccountType == AccountProvider.COMMAND_CODE -> runCatching {
+                requireNotNull(browserAccountManager).availableCommandCodeModels()
+            }
             browserAccountType == AccountProvider.ANTIGRAVITY -> runCatching {
                 AntigravityTransport(requireNotNull(browserAccountManager), "").models()
             }
@@ -1870,6 +1873,7 @@ private fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: an
         ApiProviderType.OPENAI -> context.getString(R.string.provider_openai)
         ApiProviderType.OPENAI_RESPONSES -> context.getString(R.string.provider_openai_responses)
         ApiProviderType.GROK_ACCOUNT -> context.getString(R.string.provider_grok_account)
+        ApiProviderType.COMMAND_CODE -> context.getString(R.string.provider_command_code)
         ApiProviderType.GOOGLE_ANTIGRAVITY -> context.getString(R.string.provider_google_antigravity)
         ApiProviderType.OPENAI_CODEX -> context.getString(R.string.provider_openai_codex)
         ApiProviderType.OPENAI_RESPONSES_GENERIC -> context.getString(R.string.provider_openai_responses_generic)
@@ -2650,6 +2654,7 @@ private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphi
         ApiProviderType.OPENAI -> MaterialTheme.colorScheme.primary
         ApiProviderType.OPENAI_RESPONSES -> MaterialTheme.colorScheme.primary.copy(alpha = 0.92f)
         ApiProviderType.GROK_ACCOUNT,
+        ApiProviderType.COMMAND_CODE,
         ApiProviderType.GOOGLE_ANTIGRAVITY,
         ApiProviderType.OPENAI_CODEX -> MaterialTheme.colorScheme.primary.copy(alpha = 0.98f)
         ApiProviderType.OPENAI_RESPONSES_GENERIC -> MaterialTheme.colorScheme.primary.copy(alpha = 0.88f)

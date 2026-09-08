@@ -35,6 +35,11 @@ object ApiProviderConfigs {
             requiresApiKey = false,
         ),
         ProviderApiConfig(
+            providerType = ApiProviderType.COMMAND_CODE,
+            defaultApiEndpoint = "https://api.commandcode.ai/alpha/generate",
+            requiresApiKey = false,
+        ),
+        ProviderApiConfig(
             providerType = ApiProviderType.GOOGLE_ANTIGRAVITY,
             defaultModelName = "",
             defaultApiEndpoint = "https://cloudcode-pa.googleapis.com",

@@ -1,4 +1,8 @@
- <resources>
+<resources>
+    <string name="provider_command_code">Command Code (account login)</string>
+    <string name="command_code_login_hint">Sign in through your browser or enter a Command Code API key. The verified key is encrypted on this device and can be used to fetch models.</string>
+    <string name="command_code_save_key">Verify and save</string>
+    <string name="command_code_login_failed">Sign-in or verification failed. Check your API key and network, then try again.</string>
     <string name="app_name">Operit Ry</string>
     <string name="accessibility_service_description">Used to obtain the UI hierarchy, providing faster interface analysis capabilities for AI assistants, and does not collect or store any personal information.</string>
     
