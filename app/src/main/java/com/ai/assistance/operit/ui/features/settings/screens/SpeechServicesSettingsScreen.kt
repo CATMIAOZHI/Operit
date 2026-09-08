@@ -715,164 +715,54 @@ fun SpeechServicesSettingsScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         AnimatedVisibility(visible = ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.HTTP_TTS) {
-                            Column(modifier = Modifier.padding(top = 16.dp)) {
-                                Text(
-                                    text = stringResource(R.string.speech_services_http_tts_config),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                OutlinedTextField(
-                                    value = ttsUrlTemplateInput,
-                                    onValueChange = { ttsUrlTemplateInput = it },
-                                    label = { Text(stringResource(R.string.speech_services_http_url_template)) },
-                                    placeholder = { Text(stringResource(R.string.speech_services_http_url_placeholder)) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                OutlinedTextField(
-                                    value = ttsApiKeyInput,
-                                    onValueChange = { ttsApiKeyInput = it },
-                                    label = { Text(stringResource(R.string.speech_services_http_api_key)) },
-                                    placeholder = { Text(stringResource(R.string.speech_services_http_api_key_placeholder)) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                OutlinedTextField(
-                                    value = ttsHeadersInput,
-                                    onValueChange = { 
-                                        ttsHeadersInput = it
-                                        try {
-                                            Json.decodeFromString<Map<String, String>>(it)
+                            HttpTtsSettingsFields(
+                                ttsUrlTemplateInput = ttsUrlTemplateInput,
+                                onTtsUrlTemplateInputChange = { ttsUrlTemplateInput = it },
+                                ttsApiKeyInput = ttsApiKeyInput,
+                                onTtsApiKeyInputChange = { ttsApiKeyInput = it },
+                                ttsHeadersInput = ttsHeadersInput,
+                                onTtsHeadersInputChange = {
+                                    ttsHeadersInput = it
+                                    try {
+                                        Json.decodeFromString<Map<String, String>>(it)
+                                        ttsHeadersJsonError = null
+                                    } catch (e: Exception) {
+                                        if (it.isNotBlank() && it != "{}") {
+                                            ttsHeadersJsonError = context.getString(R.string.speech_services_http_headers_error)
+                                        } else {
                                             ttsHeadersJsonError = null
-                                        } catch (e: Exception) {
-                                            if (it.isNotBlank() && it != "{}") {
-                                                ttsHeadersJsonError = context.getString(R.string.speech_services_http_headers_error)
-                                            } else {
-                                                ttsHeadersJsonError = null
-                                            }
                                         }
-                                    },
-                                    label = { Text(stringResource(R.string.speech_services_http_headers)) },
-                                    placeholder = { Text(stringResource(R.string.speech_services_http_headers_placeholder)) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    minLines = 2,
-                                    isError = ttsHeadersJsonError != null
-                                )
-
-                                if (ttsHeadersJsonError != null) {
-                                    Text(
-                                        text = ttsHeadersJsonError!!,
-                                        color = MaterialTheme.colorScheme.error,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.padding(top = 4.dp)
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Row(modifier = Modifier.fillMaxWidth()) {
-                                    OutlinedTextField(
-                                        value = ttsHttpMethodInput,
-                                        onValueChange = { },
-                                        label = { Text(stringResource(R.string.speech_services_http_method)) },
-                                        readOnly = true,
-                                        modifier = Modifier.weight(1f),
-                                        trailingIcon = {
-                                            DropdownMenu(
-                                                expanded = httpMethodDropdownExpanded,
-                                                onDismissRequest = { httpMethodDropdownExpanded = false }
-                                            ) {
-                                                listOf("GET", "POST").forEach { method ->
-                                                    DropdownMenuItem(
-                                                        text = { Text(method) },
-                                                        onClick = {
-                                                            ttsHttpMethodInput = method
-                                                            httpMethodDropdownExpanded = false
-                                                        }
-                                                    )
-                                                }
-                                            }
-                                            IconButton(onClick = { httpMethodDropdownExpanded = true }) {
-                                                Icon(Icons.Default.ArrowDropDown, stringResource(R.string.speech_services_http_method_select))
-                                            }
-                                        }
-                                    )
-
-                                    Spacer(modifier = Modifier.width(8.dp))
-
-                                    OutlinedTextField(
-                                        value = ttsContentTypeInput,
-                                        onValueChange = { ttsContentTypeInput = it },
-                                        label = { Text(stringResource(R.string.speech_services_http_content_type)) },
-                                        placeholder = { Text(stringResource(R.string.speech_services_http_content_type_placeholder)) },
-                                        modifier = Modifier.weight(1f),
-                                        singleLine = true
-                                    )
-                                }
-
-                                if (ttsHttpMethodInput == "POST") {
-                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                    OutlinedTextField(
-                                        value = ttsRequestBodyInput,
-                                        onValueChange = { ttsRequestBodyInput = it },
-                                        label = { Text(stringResource(R.string.speech_services_http_request_body)) },
-                                        placeholder = { Text(stringResource(R.string.speech_services_http_request_body_placeholder)) },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        minLines = 3
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                OutlinedTextField(
-                                    value = ttsResponsePipelineInput,
-                                    onValueChange = {
-                                        ttsResponsePipelineInput = it
-                                        try {
-                                            HttpTtsResponsePipelineStep.parseList(it)
-                                            ttsResponsePipelineJsonError = null
-                                        } catch (e: Exception) {
-                                            ttsResponsePipelineJsonError =
-                                                if (it.isBlank() || it.trim() == "[]") {
-                                                    null
-                                                } else {
-                                                    context.getString(R.string.speech_services_http_response_pipeline_error)
-                                                }
-                                        }
-                                    },
-                                    label = { Text(stringResource(R.string.speech_services_http_response_pipeline)) },
-                                    placeholder = { Text(stringResource(R.string.speech_services_http_response_pipeline_placeholder)) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    minLines = 6,
-                                    isError = ttsResponsePipelineJsonError != null,
-                                    supportingText = {
-                                        Text(
-                                            text = stringResource(R.string.speech_services_http_response_pipeline_hint),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
                                     }
-                                )
-
-                                if (ttsResponsePipelineJsonError != null) {
-                                    Text(
-                                        text = ttsResponsePipelineJsonError!!,
-                                        color = MaterialTheme.colorScheme.error,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.padding(top = 4.dp)
-                                    )
-                                }
-                            }
+                                },
+                                ttsContentTypeInput = ttsContentTypeInput,
+                                onTtsContentTypeInputChange = { ttsContentTypeInput = it },
+                                ttsRequestBodyInput = ttsRequestBodyInput,
+                                onTtsRequestBodyInputChange = { ttsRequestBodyInput = it },
+                                ttsResponsePipelineInput = ttsResponsePipelineInput,
+                                onTtsResponsePipelineInputChange = {
+                                    ttsResponsePipelineInput = it
+                                    try {
+                                        HttpTtsResponsePipelineStep.parseList(it)
+                                        ttsResponsePipelineJsonError = null
+                                    } catch (e: Exception) {
+                                        ttsResponsePipelineJsonError =
+                                            if (it.isBlank() || it.trim() == "[]") {
+                                                null
+                                            } else {
+                                                context.getString(R.string.speech_services_http_response_pipeline_error)
+                                            }
+                                    }
+                                },
+                                ttsHttpMethodInput = ttsHttpMethodInput,
+                                onHttpMethodChange = {
+                                    ttsHttpMethodInput = it
+                                    httpMethodDropdownExpanded = false
+                                },
+                                httpMethodDropdownExpanded = httpMethodDropdownExpanded,
+                                onHttpMethodDropdownExpandedChange = { httpMethodDropdownExpanded = it },
+                                ttsHeadersJsonError = ttsHeadersJsonError,
+                                ttsResponsePipelineJsonError = ttsResponsePipelineJsonError,
+                            )
                         }
 
                         AnimatedVisibility(visible = ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.VITS_TTS) {

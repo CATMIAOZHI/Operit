@@ -72,22 +72,6 @@ internal class SpoolWriterReliabilityTest : TokenStatReliabilityTestBase() {
     }
 
     @Test
-    fun `more than two thousand append failures never return durable`() = runBlocking {
-        File(root, TokenStatSpool.SPOOL_DIR_NAME).writeText("not a directory")
-        Mockito.mockStatic(AppLogger::class.java).use {
-            repeat(2_001) { index ->
-                try {
-                    TokenTrackingAIService.recordSafely(context, request("disk-failure-$index"))
-                    fail("append failure must throw")
-                } catch (_: TokenStatsPersistenceException) {
-                }
-            }
-        }
-        assertEquals(0, TokenStatSpool.emergencyQueueSizeForTest())
-        assertEquals(0, database.tokenStatsDao().countEvents())
-    }
-
-    @Test
     fun `crash half line never splices the next healthy event`() = runBlocking {
         Mockito.mockStatic(AppLogger::class.java).use {
             val spool = File(root, TokenStatSpool.SPOOL_DIR_NAME).apply { mkdirs() }

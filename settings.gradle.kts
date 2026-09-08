@@ -19,6 +19,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "Operit"
 include(":app")
+include(":chat-parser")
 include(":dragonbones")
 include(":terminal")
 include(":mnn")
@@ -27,3 +28,6 @@ include(":mmd")
 include(":fbx")
 include(":showerclient")
 include(":quickjs")
+
+include(":chat-storage")
+include(":memory-storage")

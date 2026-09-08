@@ -14,19 +14,6 @@ data class TokenActivityRecord(
     val tokens: Long,
 )
 
-data class TokenActivityEventRow(
-    val eventId: String = "",
-    val startedAtMs: Long,
-    val uncachedInputTokens: Long?,
-    val cachedInputTokens: Long?,
-    val cacheWriteTokens: Long?,
-    val totalInputTokens: Long?,
-    val outputTokens: Long?,
-    val reasoningTokens: Long?,
-    val reasoningIncludedInOutput: Boolean?,
-    /** null = 旧行未声明，按保守默认 true（独立计费）处理。 */
-    val cacheWriteSeparateBilling: Boolean? = null,
-)
 
 internal class TokenActivitySnapshot(
     val zone: ZoneId,

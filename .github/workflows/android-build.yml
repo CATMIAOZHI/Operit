@@ -32,6 +32,9 @@ on:
       - .gitmodules
       - .npmrc
       - app/**
+      - chat-parser/**
+      - chat-storage/**
+      - memory-storage/**
       - build.gradle.kts
       - ci/script/download_android_dependencies.sh
       - ci/script/prepare_android_dependencies.py
@@ -243,6 +246,9 @@ jobs:
           name: operit-android-reports-${{ github.run_number }}
           path: |
             app/build/reports/**
+            chat-parser/build/reports/**
+            chat-storage/build/reports/**
+            memory-storage/build/reports/**
             build/reports/**
           if-no-files-found: warn
           retention-days: 14

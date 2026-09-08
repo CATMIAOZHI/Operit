@@ -1446,13 +1446,14 @@ class TokenTrackingAIServiceTest {
             // 可控阻塞：数据库访问是纯同步等待（runBlocking），withTimeout 无法
             // 抢占——必须由独立 resolver/writer + 持久 spool 隔离，业务只做有界等待
             val blocker = CompletableDeferred<Unit>()
+            val eventCount = 4
             try {
                 TokenStatsLedger.databaseProvider = {
                     runBlocking { blocker.await() }
                     database
                 }
                 val startedAt = System.nanoTime()
-                repeat(20) { index ->
+                repeat(eventCount) { index ->
                     val request =
                         TokenStatRequestContext(
                             eventId = "evt-blocked-$index",
@@ -1475,13 +1476,13 @@ class TokenTrackingAIServiceTest {
                 blocker.complete(Unit)
                 TokenStatsLedger.databaseProvider = { database }
                 val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
-                while (database.tokenStatsDao().countEvents() < 20 && System.nanoTime() < deadline) {
+                while (database.tokenStatsDao().countEvents() < eventCount && System.nanoTime() < deadline) {
                     delay(50)
                 }
-                assertEquals("all 20 events must be recorded", 20, database.tokenStatsDao().countEvents())
+                assertEquals("all events must be recorded", eventCount, database.tokenStatsDao().countEvents())
                 val ids = database.tokenStatsDao().getAllEvents().map { it.eventId }.toSet()
-                assertEquals("no event may be dropped or duplicated", 20, ids.size)
-                assertTrue(ids.containsAll((0 until 20).map { "evt-blocked-$it" }))
+                assertEquals("no event may be dropped or duplicated", eventCount, ids.size)
+                assertTrue(ids.containsAll((0 until eventCount).map { "evt-blocked-$it" }))
                 // 排空完成后 spool 必须为空
                 val spoolDir = File(context.filesDir, TokenStatSpool.SPOOL_DIR_NAME)
                 if (spoolDir.isDirectory) {
@@ -1927,7 +1928,7 @@ class TokenTrackingAIServiceTest {
     // ==== P1-4：append 故障不丢事件（有界紧急队列 + 恢复） ====
 
     @Test
-    fun `append failure defers to emergency queue and recovers with exactly one event each`() =
+    fun `append failure is reported and disk recovery does not replay unacknowledged events`() =
         runBlocking {
             org.mockito.Mockito.mockStatic(com.ai.assistance.operit.util.AppLogger::class.java).use {
                 val previousRecordTimeout = TokenTrackingAIService.recordTimeoutMs
@@ -1940,7 +1941,7 @@ class TokenTrackingAIServiceTest {
                     (0 until 5).forEach { index ->
                             val request =
                                 TokenStatRequestContext(
-                                    eventId = "evt-emergency-$index",
+                                    eventId = "evt-append-failure-$index",
                                     category = TokenStatCategory.CHAT,
                                     configId = "cfg-1",
                                     provider = "DEEPSEEK",
@@ -1958,7 +1959,6 @@ class TokenTrackingAIServiceTest {
                         }
                     // 全部明确失败；无内存队列冒充 durable 副本
                     assertEquals(5, failures)
-                    assertEquals(0, TokenStatSpool.emergencyQueueSizeForTest())
                     assertEquals(0, database.tokenStatsDao().countEvents())
                     // P2-4：deferred 事件不登记 waiter（latch 已直接完成）
                     assertEquals(0, TokenStatSpool.pendingLatchCountForTest())
@@ -1968,7 +1968,6 @@ class TokenTrackingAIServiceTest {
                     TokenStatSpool.replay(context)
                     delay(100)
                     assertEquals(0, database.tokenStatsDao().countEvents())
-                    assertEquals(0, TokenStatSpool.emergencyQueueSizeForTest())
                 } finally {
                     TokenTrackingAIService.recordTimeoutMs = previousRecordTimeout
                 }

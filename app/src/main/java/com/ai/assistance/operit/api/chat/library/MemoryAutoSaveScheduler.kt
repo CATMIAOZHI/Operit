@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.api.chat.library
 
+import com.ai.assistance.operit.data.model.toChatMessage
+
 import android.content.Context
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.core.tools.AIToolHandler
