@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.disableMoveAnimation
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -171,8 +172,6 @@ class FloatingWindowManager(
     }
 
     companion object {
-        // Private flag to disable window move animations
-        private const val PRIVATE_FLAG_NO_MOVE_ANIMATION = 0x00000040
         private const val FULLSCREEN_BLUR_RADIUS_DP = 48
         private const val IME_FOCUS_DELAY_MS = 200L
         private const val IME_FOCUS_RETRY_DELAY_MS = 50L
@@ -576,7 +575,7 @@ class FloatingWindowManager(
         params.gravity = Gravity.TOP or Gravity.START
 
         // Disable system move animations to allow custom animations to take full control
-        setPrivateFlag(params, PRIVATE_FLAG_NO_MOVE_ANIMATION)
+        params.disableMoveAnimation()
 
         when (state.currentMode.value) {
             FloatingMode.FULLSCREEN, FloatingMode.SCREEN_OCR -> {
@@ -683,15 +682,6 @@ class FloatingWindowManager(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             params.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-    }
-
-    private fun setPrivateFlag(params: WindowManager.LayoutParams, flags: Int) {
-        try {
-            val field = params.javaClass.getField("privateFlags")
-            field.setInt(params, field.getInt(params) or flags)
-        } catch (e: Exception) {
-            AppLogger.e(TAG, "Failed to set privateFlags", e)
         }
     }
 

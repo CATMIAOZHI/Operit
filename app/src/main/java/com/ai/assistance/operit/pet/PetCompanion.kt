@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.pet
 
+import android.os.SystemClock
 import androidx.compose.foundation.Canvas
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -9,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -57,6 +59,8 @@ internal fun PetCompanion(
     anchorX: Float = settings.x,
     anchorY: Float = settings.y,
     dragPetOffset: IntOffset? = null,
+    bubbleOnly: Boolean = false,
+    previewAnimation: PetAnimation = PetAnimation.THINKING,
 ) {
     val context = LocalContext.current
     val model = remember(preview) { if (preview) null else PetTasks.get(context) }
@@ -71,6 +75,15 @@ internal fun PetCompanion(
             ?: tasks.firstOrNull { it.active } ?: selected ?: tasks.lastOrNull()
     }
     var interaction by remember { mutableIntStateOf(0) }
+    val recentTaps = remember(settings.animations, settings.mediaType) { ArrayDeque<Long>() }
+    var dizzyUntil by remember(settings.animations, settings.mediaType) { mutableLongStateOf(0L) }
+    val dizzy = dizzyUntil != 0L
+    LaunchedEffect(dizzyUntil) {
+        if (dizzyUntil != 0L) {
+            delay((dizzyUntil - SystemClock.elapsedRealtime()).coerceAtLeast(0L))
+            dizzyUntil = 0L
+        }
+    }
     val lift by animateFloatAsState(
         if (dragging && settings.dragAnimation) 1f else 0f,
         animationSpec = if (settings.dragAnimation) spring(dampingRatio = 0.65f) else snap(),
@@ -82,30 +95,54 @@ internal fun PetCompanion(
     val dragCallback by rememberUpdatedState(onDrag)
     val dragEndCallback by rememberUpdatedState(onDragEnd)
 
-    // The overlay keeps its measured window while dragging; only WM moves it.
-    val hasBubble = settings.showBubble && (!dragging || dragPetOffset != null)
+    val dragModifier = if (preview) Modifier else Modifier.pointerInput(Unit) {
+        detectDragGestures(
+            onDragStart = { dragStartCallback() },
+            onDragEnd = { dragEndCallback() },
+            onDragCancel = { dragEndCallback() },
+        ) { change, amount ->
+            change.consume()
+            dragCallback(amount)
+        }
+    }
+    val hasBubble = settings.showBubble
+    val bubbleScroll = rememberScrollState()
+    // In a height-constrained window, leave vertical gestures to content scrolling.
+    val bubbleDragModifier = if (bubbleScroll.maxValue == 0) dragModifier else if (preview) Modifier else Modifier.pointerInput(Unit) {
+        detectHorizontalDragGestures(
+            onDragStart = { dragStartCallback() },
+            onDragEnd = { dragEndCallback() },
+            onDragCancel = { dragEndCallback() },
+        ) { change, amount ->
+            change.consume()
+            dragCallback(Offset(amount, 0f))
+        }
+    }
     Layout(
         modifier = modifier.graphicsLayer { alpha = settings.opacity },
         content = {
-            PetSprite(
-                task?.activity ?: PetActivity.IDLE, settings, interaction,
+            if (!bubbleOnly) PetSprite(
+                if (dizzy) PetActivity.ERROR else task?.activity ?: PetActivity.IDLE, settings, interaction,
                 Modifier.size(settings.sizeDp.dp)
                     .semantics { contentDescription = petDescription }
-                    .then(if (preview) Modifier else Modifier.pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragStart = { dragStartCallback() },
-                            onDragEnd = { dragEndCallback() },
-                            onDragCancel = { dragEndCallback() },
-                        ) { change, amount ->
-                            change.consume()
-                            dragCallback(amount)
-                        }
-                    })
+                    .then(dragModifier)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                     ) {
-                        interaction++
+                        if (!dizzy) {
+                            val now = SystemClock.elapsedRealtime()
+                            while (recentTaps.isNotEmpty() && now - recentTaps.first() > 1500L) {
+                                recentTaps.removeFirst()
+                            }
+                            recentTaps.addLast(now)
+                            if (recentTaps.size >= 5) {
+                                recentTaps.clear()
+                                dizzyUntil = now + 3000L
+                            } else {
+                                interaction++
+                            }
+                        }
                         onToggleBubble()
                     }
                     // Pointer deltas must stay in screen-aligned coordinates; rotating
@@ -115,6 +152,8 @@ internal fun PetCompanion(
                         scaleY = 1f - 0.03f * lift
                         rotationZ = -7f * lift
                     },
+                dizzy = dizzy,
+                animationOverride = if (preview && !dizzy) previewAnimation else null,
             )
             if (hasBubble) {
                 Box(Modifier.padding(4.dp)) {
@@ -125,7 +164,7 @@ internal fun PetCompanion(
                         shadowElevation = 2.dp,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Column(Modifier.verticalScroll(rememberScrollState())) {
+                        Column(Modifier.verticalScroll(bubbleScroll).then(bubbleDragModifier)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -157,7 +196,7 @@ internal fun PetCompanion(
                                             )
                                         }
                                         Text(
-                                            stringResource((task?.activity ?: PetActivity.IDLE).label()),
+                                            stringResource(if (preview) previewAnimation.label() else (task?.activity ?: PetActivity.IDLE).label()),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -194,6 +233,10 @@ internal fun PetCompanion(
             }
         },
     ) { measurables, constraints ->
+        if (bubbleOnly) {
+            val bubble = measurables.single().measure(constraints.copy(minHeight = 0))
+            return@Layout layout(bubble.width, bubble.height) { bubble.place(0, 0) }
+        }
         val petSize = minOf(settings.sizeDp.dp.roundToPx(), constraints.maxWidth, constraints.maxHeight)
         val pet = measurables[0].measure(Constraints.fixed(petSize, petSize))
         val width = constraints.maxWidth
@@ -211,8 +254,7 @@ internal fun PetCompanion(
                 dragPetOffset?.x ?: ((width - pet.width) * anchorX).roundToInt(),
                 dragPetOffset?.y ?: ((height - pet.height) * anchorY).roundToInt(),
             )
-            // An unplaced bubble keeps its measurement/state without drawing or hits.
-            if (!dragging) bubble?.place(
+            bubble?.place(
                 if (vertical || settings.edge == PetEdge.RIGHT) 0 else petSize,
                 if (!vertical) ((height - bubble.height) * anchorY).roundToInt()
                 else if (settings.edge == PetEdge.TOP) petSize else 0,
@@ -222,7 +264,10 @@ internal fun PetCompanion(
 }
 
 @Composable
-private fun PetSprite(activity: PetActivity, settings: PetSettings, interaction: Int, modifier: Modifier) {
+private fun PetSprite(
+    activity: PetActivity, settings: PetSettings, interaction: Int, modifier: Modifier,
+    dizzy: Boolean = false, animationOverride: PetAnimation? = null,
+) {
     val context = LocalContext.current.applicationContext
     val owner = LocalLifecycleOwner.current
     var resumed by remember(owner) {
@@ -242,8 +287,11 @@ private fun PetSprite(activity: PetActivity, settings: PetSettings, interaction:
     }
     var greeting by remember(settings.animations) { mutableStateOf(false) }
     var handledInteraction by remember(settings.animations) { mutableIntStateOf(interaction) }
-    LaunchedEffect(interaction) {
-        if (interaction != handledInteraction) {
+    LaunchedEffect(interaction, dizzy, animationOverride) {
+        if (dizzy || animationOverride != null) {
+            greeting = false
+            handledInteraction = interaction
+        } else if (interaction != handledInteraction) {
             greeting = settings.animated && settings.animations.containsKey(PetAnimation.GREETING)
             handledInteraction = interaction
         }
@@ -255,14 +303,15 @@ private fun PetSprite(activity: PetActivity, settings: PetSettings, interaction:
             greeting = false
         }
     }
-    val animation = if (greeting) PetAnimation.GREETING else activity.animation()
+    val transientGreeting = greeting && animationOverride == null && !dizzy
+    val animation = animationOverride ?: if (transientGreeting) PetAnimation.GREETING else activity.animation()
     val assetId = settings.artwork(if (settings.mediaType == PetMediaType.ATLAS) PetAnimation.IDLE else animation)?.id.orEmpty()
     if (settings.mediaType == PetMediaType.GIF) {
-        PetGif(assetId, animate, !greeting, if (greeting) interaction else 0, { greeting = false }, modifier)
+        PetGif(assetId, animate, !transientGreeting, if (transientGreeting) interaction else 0, { greeting = false }, modifier)
         return
     }
     if (settings.mediaType == PetMediaType.VIDEO) {
-        PetVideo(assetId, animate, !greeting, if (greeting) interaction else 0, { greeting = false }, modifier)
+        PetVideo(assetId, animate, !transientGreeting, if (transientGreeting) interaction else 0, { greeting = false }, modifier)
         return
     }
     val loaded by produceState<Result<PetImage>?>(null, assetId, settings.mediaType) {
@@ -279,19 +328,20 @@ private fun PetSprite(activity: PetActivity, settings: PetSettings, interaction:
     // The encoded row/column is intentionally not read by composition or layout.
     val cell = remember { mutableIntStateOf(0) }
     var playedInteraction by remember(settings.animations) { mutableIntStateOf(interaction) }
-    LaunchedEffect(activity, animate, interaction, image) {
+    val atlasAnimation = animationOverride ?: activity.animation()
+    LaunchedEffect(atlasAnimation, animate, interaction, image, dizzy) {
         cell.intValue = 0
         if (image?.atlas != true) return@LaunchedEffect
-        if (!animate) playedInteraction = interaction
+        if (!animate || dizzy || animationOverride != null) playedInteraction = interaction
         if (animate && interaction > playedInteraction) {
             playedInteraction = interaction
             repeat(4) { frame -> cell.intValue = 3 * 8 + frame; delay(140) }
         }
-        val row = when (activity) {
-            PetActivity.TOOL -> 7
-            PetActivity.THINKING, PetActivity.SUMMARIZING -> 8
-            PetActivity.COMPLETE -> 3
-            PetActivity.ERROR -> 5
+        val row = when (atlasAnimation) {
+            PetAnimation.TOOL -> 7
+            PetAnimation.THINKING, PetAnimation.SUMMARIZING -> 8
+            PetAnimation.COMPLETE, PetAnimation.GREETING -> 3
+            PetAnimation.ERROR -> 5
             else -> 0
         }
         val count = when (row) { 3 -> 4; 5 -> 8; else -> 6 }
