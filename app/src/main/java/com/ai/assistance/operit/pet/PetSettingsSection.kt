@@ -26,6 +26,7 @@ fun PetSettingsSection() {
     val context = LocalContext.current
     val preferences = remember { PetPreferences.get(context) }
     val settings by preferences.settings.collectAsState()
+    val enabled by preferences.enabled.collectAsState()
     val usePetEntry by preferences.usePetEntry.collectAsState()
     val pets by preferences.pets.collectAsState()
     val selectedId by preferences.selectedId.collectAsState()
@@ -84,6 +85,7 @@ fun PetSettingsSection() {
     }
     Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
         Text(stringResource(R.string.pet_title), style = MaterialTheme.typography.titleMedium)
+        PetToggle(stringResource(R.string.pet_master_switch), enabled) { preferences.setEnabled(it) }
         Text(
             stringResource(R.string.pet_description),
             style = MaterialTheme.typography.bodySmall,
