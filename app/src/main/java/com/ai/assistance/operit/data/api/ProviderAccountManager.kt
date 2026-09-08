@@ -1,0 +1,303 @@
+package com.ai.assistance.operit.data.api
+
+import android.content.Context
+import android.net.Uri
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import com.ai.assistance.operit.data.model.ApiProviderType
+import com.ai.assistance.operit.ui.features.codex.CodexOAuthLoopbackCallbackServer
+import java.io.IOException
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import okhttp3.FormBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaType
+import org.json.JSONObject
+import org.json.JSONException
+
+internal class AccountHttpException(val status: Int) : IOException("Account request failed: HTTP $status")
+
+enum class AccountProvider(val type: ApiProviderType, val port: Int) {
+    GROK(ApiProviderType.GROK_ACCOUNT, 56121),
+    ANTIGRAVITY(ApiProviderType.GOOGLE_ANTIGRAVITY, 51121);
+
+    companion object {
+        fun from(type: ApiProviderType?) = entries.firstOrNull { it.type == type }
+    }
+}
+
+data class ProviderAccount(
+    val accessToken: String,
+    val refreshToken: String,
+    val expiresAt: Long,
+    val projectId: String = "",
+    val email: String = "",
+    val identity: String = UUID.randomUUID().toString(),
+)
+
+internal data class ProviderLoginSession(
+    val server: CodexOAuthLoopbackCallbackServer,
+    val authorizationUrl: String,
+    val state: String,
+    val verifier: String,
+    val tokenEndpoint: String,
+    val clientId: String,
+    val clientSecret: String,
+)
+
+/** Account credentials never share the API-key configuration or its export format. */
+class ProviderAccountManager private constructor(context: Context, val provider: AccountProvider) {
+    private val appContext = context.applicationContext
+    private val storeName = "provider_oauth_${provider.name.lowercase()}"
+    private fun createPreferences() = EncryptedSharedPreferences.create(
+        appContext, storeName,
+        MasterKey.Builder(appContext).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+    private var preferences = try { createPreferences() } catch (_: java.security.GeneralSecurityException) {
+        // Restoring Android backup cannot restore the device-bound Keystore key.
+        appContext.deleteSharedPreferences(storeName)
+        createPreferences()
+    }
+    private val mutex = Mutex()
+    private val mutableAccount = MutableStateFlow(readAccount())
+    val account = mutableAccount.asStateFlow()
+    private val client = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
+
+    private fun readAccount(): ProviderAccount? {
+        return try { readStoredAccount() } catch (_: SecurityException) {
+            appContext.deleteSharedPreferences(storeName)
+            preferences = createPreferences()
+            null
+        } catch (_: JSONException) {
+            preferences.edit().remove("account").apply()
+            null
+        }
+    }
+
+    private fun readStoredAccount(): ProviderAccount? {
+        val raw = preferences.getString("account", null) ?: return null
+        val json = JSONObject(raw)
+        return ProviderAccount(
+            json.getString("access"), json.getString("refresh"), json.getLong("expires"),
+            json.optString("project"), json.optString("email"), json.getString("identity"),
+        )
+    }
+
+    private fun save(value: ProviderAccount) {
+        preferences.edit().putString("account", JSONObject().apply {
+            put("access", value.accessToken); put("refresh", value.refreshToken)
+            put("expires", value.expiresAt); put("project", value.projectId)
+            put("email", value.email); put("identity", value.identity)
+        }.toString()).apply()
+        mutableAccount.value = value
+    }
+
+    suspend fun logout() = mutex.withLock {
+        preferences.edit().remove("account").apply()
+        mutableAccount.value = null
+    }
+
+    internal suspend fun startLogin(
+        googleClientId: String = "",
+        googleClientSecret: String = "",
+    ): ProviderLoginSession {
+        val discovery = if (provider == AccountProvider.GROK) discoverXai() else null
+        val id = if (provider == AccountProvider.GROK) XAI_CLIENT_ID else
+            googleClientId.trim().ifBlank { preferences.getString("client_id", "").orEmpty() }
+                .ifBlank { AntigravityClientConfig.CLIENT_ID }
+        val secret = if (provider == AccountProvider.GROK) "" else
+            googleClientSecret.ifBlank { preferences.getString("client_secret", "").orEmpty() }
+                .ifBlank { AntigravityClientConfig.CLIENT_SECRET }
+        require(id.isNotBlank() && (provider != AccountProvider.ANTIGRAVITY || secret.isNotBlank())) {
+            "Antigravity OAuth client ID and client secret are required"
+        }
+        val pkce = CodexOAuthProtocol.generatePkce()
+        val state = CodexOAuthProtocol.generateState()
+        val server = CodexOAuthLoopbackCallbackServer.open(provider.port, "/callback", "127.0.0.1")
+        try {
+            val endpoint = discovery?.first ?: "https://accounts.google.com/o/oauth2/v2/auth"
+            val url = Uri.parse(endpoint).buildUpon()
+                .appendQueryParameter("response_type", "code")
+                .appendQueryParameter("client_id", id)
+                .appendQueryParameter("redirect_uri", server.redirectUri)
+                .appendQueryParameter("scope", if (provider == AccountProvider.GROK) XAI_SCOPE else GOOGLE_SCOPE)
+                .appendQueryParameter("code_challenge", pkce.challenge)
+                .appendQueryParameter("code_challenge_method", "S256")
+                .appendQueryParameter("state", state)
+                .apply {
+                    if (provider == AccountProvider.GROK) appendQueryParameter("nonce", UUID.randomUUID().toString())
+                    else {
+                        appendQueryParameter("access_type", "offline")
+                        appendQueryParameter("prompt", "consent select_account")
+                    }
+                }.build().toString()
+            return ProviderLoginSession(server, url, state, pkce.verifier,
+                discovery?.second ?: GOOGLE_TOKEN, id, secret)
+        } catch (error: Throwable) {
+            server.close()
+            throw error
+        }
+    }
+
+    internal suspend fun completeLogin(session: ProviderLoginSession, callback: Uri) = mutex.withLock {
+        require(callback.getQueryParameter("state") == session.state) { "OAuth state mismatch" }
+        check(callback.getQueryParameter("error") == null) { "OAuth authorization was declined" }
+        val code = requireNotNull(callback.getQueryParameter("code")) { "Missing OAuth authorization code" }
+        val form = tokenForm(session.clientId, session.clientSecret).apply {
+            add("grant_type", "authorization_code"); add("code", code)
+            add("redirect_uri", session.server.redirectUri); add("code_verifier", session.verifier)
+        }.build()
+        val tokens = requestJson(session.tokenEndpoint, form)
+        val value = parseTokens(tokens)
+        val complete = if (provider == AccountProvider.ANTIGRAVITY) {
+            value.copy(projectId = discoverProject(value.accessToken))
+        } else value
+        currentCoroutineContext().ensureActive()
+        preferences.edit().putString("client_id", session.clientId)
+            .putString("client_secret", session.clientSecret).apply()
+        save(complete)
+    }
+
+    suspend fun validAccount(): ProviderAccount = mutex.withLock {
+        val current = account.value ?: throw IOException("Account is not logged in")
+        if (current.expiresAt - System.currentTimeMillis() > 120_000) return@withLock current
+        val endpoint = if (provider == AccountProvider.GROK) discoverXai().second else GOOGLE_TOKEN
+        val form = tokenForm(
+            if (provider == AccountProvider.GROK) XAI_CLIENT_ID else preferences.getString("client_id", "").orEmpty(),
+            preferences.getString("client_secret", "").orEmpty(),
+        ).add("grant_type", "refresh_token").add("refresh_token", current.refreshToken).build()
+        val updated = withContext(NonCancellable) {
+            // Refresh grants can rotate. Persist the successful response even if the caller stops.
+            parseTokens(requestJson(endpoint, form), current).also(::save)
+        }
+        currentCoroutineContext().ensureActive()
+        updated
+    }
+
+    private fun tokenForm(id: String, secret: String) = FormBody.Builder().add("client_id", id).apply {
+        if (secret.isNotBlank()) add("client_secret", secret)
+    }
+
+    private fun parseTokens(json: JSONObject, previous: ProviderAccount? = null): ProviderAccount {
+        val access = json.optString("access_token").also { require(it.isNotBlank()) { "Missing access token" } }
+        val refresh = json.optString("refresh_token").ifBlank { previous?.refreshToken.orEmpty() }
+            .also { require(it.isNotBlank()) { "Missing refresh token" } }
+        val seconds = json.optLong("expires_in", 3600).also { require(it in 1..31_536_000) }
+        return ProviderAccount(access, refresh, System.currentTimeMillis() + seconds * 1000,
+            previous?.projectId.orEmpty(),
+            CodexOAuthProtocol.parseJwtClaims(json.optString("id_token"))?.email ?: previous?.email.orEmpty(),
+            previous?.identity ?: UUID.randomUUID().toString())
+    }
+
+    private suspend fun discoverXai(): Pair<String, String> {
+        val json = requestJson("https://auth.x.ai/.well-known/openid-configuration")
+        return validateXaiEndpoint(json.getString("authorization_endpoint")) to
+            validateXaiEndpoint(json.getString("token_endpoint"))
+    }
+
+    private suspend fun discoverProject(token: String): String {
+        val loaded = try { requestJson("$CCA/v1internal:loadCodeAssist",
+            JSONObject("""{"metadata":{"ideType":"ANTIGRAVITY"}}""").toBody(), token)
+        } catch (_: AccountHttpException) { null }
+        extractProject(loaded)?.let { return it }
+        repeat(5) {
+            val result = try {
+                requestJson("https://daily-cloudcode-pa.googleapis.com/v1internal:onboardUser",
+                    JSONObject().put("tier_id", "free-tier").put("metadata", JSONObject()
+                        .put("ide_type", "ANTIGRAVITY").put("ide_name", "antigravity")
+                        .put("ide_version", ANTIGRAVITY_UA)).toBody(), token)
+            } catch (failure: AccountHttpException) {
+                if (failure.status != 429 && failure.status < 500) throw failure
+                delay(2000)
+                return@repeat
+            }
+            if (result.optBoolean("done")) extractProject(result.optJSONObject("response"))?.let { return it }
+            delay(2000)
+        }
+        throw IOException("No Cloud Code Assist project is available for this account")
+    }
+
+    suspend fun availableModels(): JSONObject {
+        val value = validAccount()
+        return requestJson("$CCA/v1internal:fetchAvailableModels",
+            JSONObject().put("project", value.projectId).toBody(), value.accessToken)
+    }
+
+    suspend fun availableGrokModels(): List<com.ai.assistance.operit.data.model.ModelOption> {
+        val value = validAccount()
+        val root = requestJson("https://cli-chat-proxy.grok.com/v1/models", token = value.accessToken)
+        val models = root.optJSONArray("data") ?: throw IOException("Grok model list is missing")
+        return (0 until models.length()).mapNotNull { index ->
+            val model = models.optJSONObject(index) ?: return@mapNotNull null
+            val id = model.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            // The Grok OAuth chat-completions route does not support this Responses-only model.
+            if (id == "grok-4.20-multi-agent-0309") return@mapNotNull null
+            com.ai.assistance.operit.data.model.ModelOption(id, model.optString("name").ifBlank { id })
+        }
+    }
+
+    private suspend fun requestJson(url: String, body: RequestBody? = null, token: String? = null): JSONObject =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder().url(url).header("Accept", "application/json").apply {
+                if (body != null) post(body)
+                if (token != null) {
+                    header("Authorization", "Bearer $token")
+                    if (provider == AccountProvider.ANTIGRAVITY) header("User-Agent", ANTIGRAVITY_UA)
+                    else GROK_HEADERS.forEach { (key, value) -> header(key, value) }
+                }
+            }.build()
+            client.newCall(request).execute().use { response ->
+                currentCoroutineContext().ensureActive()
+                if (!response.isSuccessful) throw AccountHttpException(response.code)
+                try { JSONObject(response.body?.string() ?: throw IOException("Empty account response")) }
+                catch (_: JSONException) { throw IOException("Invalid account response") }
+            }
+        }
+
+    companion object {
+        const val CCA = "https://cloudcode-pa.googleapis.com"
+        const val ANTIGRAVITY_UA = "antigravity/ide/2.5.5 (aidev_client; os_type=windows; arch=amd64)"
+        val GROK_HEADERS = mapOf(
+            "x-grok-client-identifier" to "operit", "x-grok-client-version" to "0.2.93",
+            "x-xai-token-auth" to "xai-grok-cli", "x-authenticateresponse" to "authenticate-response",
+            "User-Agent" to "Operit/${com.ai.assistance.operit.BuildConfig.VERSION_NAME}",
+        )
+        private const val GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
+        private const val XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
+        private const val XAI_SCOPE = "openid profile email offline_access grok-cli:access api:access"
+        private val GOOGLE_SCOPE = listOf("cloud-platform", "userinfo.email", "userinfo.profile",
+            "cclog", "experimentsandconfigs").joinToString(" ") { "https://www.googleapis.com/auth/$it" }
+        private val instances = mutableMapOf<AccountProvider, ProviderAccountManager>()
+        @Synchronized fun get(context: Context, provider: AccountProvider): ProviderAccountManager =
+            instances.getOrPut(provider) { ProviderAccountManager(context.applicationContext, provider) }
+        internal fun validateXaiEndpoint(url: String): String {
+            val uri = java.net.URI(url)
+            require(uri.scheme == "https" && uri.userInfo == null &&
+                (uri.host == "x.ai" || uri.host?.endsWith(".x.ai") == true)) { "Unexpected xAI OAuth endpoint" }
+            return url
+        }
+        internal fun extractProject(json: JSONObject?): String? =
+            listOf("cloudaicompanionProject", "projectId", "project").firstNotNullOfOrNull { key ->
+                when (val value = json?.opt(key)) {
+                    is String -> value.takeIf { it.isNotBlank() }
+                    is JSONObject -> value.optString("id").takeIf { it.isNotBlank() }
+                    else -> null
+                }
+            }
+        private fun JSONObject.toBody() = toString().toRequestBody("application/json".toMediaType())
+    }
+}

@@ -79,13 +79,14 @@ object ChatUtils {
 
     fun isGeminiProviderModel(providerModel: String): Boolean {
         return when (providerModel.substringBefore(":").uppercase()) {
-            "GOOGLE", "GEMINI_GENERIC" -> true
+            "GOOGLE", "GEMINI_GENERIC", "GOOGLE_ANTIGRAVITY" -> true
             else -> false
         }
     }
 
     fun isOpenAIResponsesProviderModel(providerModel: String): Boolean {
-        return providerModel.substringBefore(":").uppercase() == "OPENAI_RESPONSES"
+        return providerModel.substringBefore(":").uppercase() in
+            setOf("OPENAI_RESPONSES", "OPENAI_RESPONSES_GENERIC", "OPENAI_CODEX")
     }
 
     /**

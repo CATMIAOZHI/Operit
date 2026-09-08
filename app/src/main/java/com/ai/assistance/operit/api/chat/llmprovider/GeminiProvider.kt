@@ -36,6 +36,7 @@ import java.security.MessageDigest
 import java.util.Base64
 import java.util.UUID
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -247,7 +248,8 @@ open class GeminiProvider(
     private val supportsVision: Boolean = true,
     private val supportsAudio: Boolean = true,
     private val supportsVideo: Boolean = true,
-    private val enableToolCall: Boolean = false // 是否启用Tool Call接口（预留，Gemini有原生tool支持）
+    private val enableToolCall: Boolean = false, // 是否启用Tool Call接口
+    private val antigravity: AntigravityTransport? = null,
 ) : AIService {
     companion object {
         private const val TAG = "GeminiProvider"
@@ -450,7 +452,7 @@ open class GeminiProvider(
     private fun extractGeminiThoughtSignaturePayload(content: String): GeminiThoughtSignaturePayload {
         val signatureBase64 = ChatMarkupRegex.extractGeminiThoughtSignature(content)
         val contentWithoutMeta = ChatMarkupRegex.removeGeminiThoughtSignatureMeta(content)
-        val thoughtSignature = signatureBase64?.let { decodeGeminiThoughtSignature(it) }
+        val thoughtSignature = if (antigravity == null) signatureBase64?.let { decodeGeminiThoughtSignature(it) } else null
         return GeminiThoughtSignaturePayload(
             contentWithoutMeta = contentWithoutMeta,
             thoughtSignature = thoughtSignature
@@ -458,15 +460,18 @@ open class GeminiProvider(
     }
 
     private fun encodeGeminiContent(content: JSONObject): String {
+        val encodedContent = JSONObject(content.toString())
+        antigravity?.let { encodedContent.put("_operit_account_scope", it.activeReplayScope) }
         return Base64.getEncoder()
-            .encodeToString(content.toString().toByteArray(Charsets.UTF_8))
+            .encodeToString(encodedContent.toString().toByteArray(Charsets.UTF_8))
     }
 
     private fun decodeGeminiContents(content: String): List<JSONObject> {
         return ChatMarkupRegex.extractGeminiContentPayloads(content).mapNotNull { payload ->
             try {
                 val decoded = String(Base64.getMimeDecoder().decode(payload), Charsets.UTF_8)
-                hydrateGeminiReplayContent(JSONObject(decoded))
+                val value = prepareAccountReplay(JSONObject(decoded), antigravity?.currentReplayScope().orEmpty())
+                hydrateGeminiReplayContent(value)
             } catch (e: ReplayMediaException) {
                 throw e
             } catch (e: Exception) {
@@ -1663,7 +1668,6 @@ open class GeminiProvider(
             generationConfig.put("thinkingConfig", thinkingConfig)
             logDebug("已应用Gemini思考配置: $thinkingConfig")
         }
-
         // 添加模型参数
         for (param in modelParameters) {
             if (param.isEnabled) {
@@ -1712,6 +1716,14 @@ open class GeminiProvider(
             }
         }
 
+        if (antigravity != null) {
+            val selectedQuality = kotlinx.coroutines.runBlocking {
+                com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(context)
+                    .thinkingQualityLevelFlow.first()
+            }
+            generationConfig.put("thinkingConfig", JSONObject().put("thinkingLevel",
+                antigravityThinkingEffort(modelName, selectedQuality, enableThinking, modelParameters)))
+        }
         json.put("generationConfig", generationConfig)
 
         val jsonString = json.toString()
@@ -1736,6 +1748,7 @@ open class GeminiProvider(
             isStreaming: Boolean,
             requestId: String
     ): Request {
+        antigravity?.let { return it.request(requestBody, isStreaming) }
         val currentApiKey = apiKeyProvider.getApiKey()
         val requestUrl =
             buildGeminiGenerateContentUrl(
@@ -1808,7 +1821,7 @@ open class GeminiProvider(
         suspend fun extractStreamingContent(json: JSONObject): String {
             return extractContentFromJson(
                 context = context,
-                json = json,
+                json = antigravity?.unwrap(json) ?: json,
                 requestId = requestId,
                 onTokensUpdated = onTokensUpdated,
                 onUsageReported = onUsageReported,
@@ -2047,7 +2060,8 @@ open class GeminiProvider(
             logDebug("收到完整响应，长度: ${responseText.length}")
             
             // 解析JSON响应
-            val json = JSONObject(responseText)
+            val envelope = JSONObject(responseText)
+            val json = antigravity?.unwrap(envelope) ?: envelope
             
             // 提取内容
             val content = extractContentFromJson(context, json, requestId, onTokensUpdated, onUsageReported, attemptNumber)
@@ -2373,6 +2387,9 @@ open class GeminiProvider(
 
     /** 获取模型列表 */
     override suspend fun getModelsList(context: Context): Result<List<ModelOption>> {
+        if (antigravity != null) return try { Result.success(antigravity.models()) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { Result.failure(error) }
         return ModelListFetcher.getModelsList(
             context = context,
             apiKey = apiKeyProvider.getApiKey(),
