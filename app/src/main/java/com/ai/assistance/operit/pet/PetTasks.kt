@@ -48,7 +48,17 @@ class PetTasks private constructor(private val context: Context) {
     val tasks = mutableTasks.asStateFlow()
     val appVisible = MutableStateFlow(false)
     val selectedKey = MutableStateFlow<String?>(null)
-    val visibleTasks = tasks
+    private val acknowledgedRuns = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val visibleTasks = combine(tasks, acknowledgedRuns) { current, acknowledged ->
+        current.map { task -> acknowledgedPetTask(task, acknowledged[task.key]) }
+    }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    fun acknowledgeCompletion(task: PetTask) {
+        val current = tasks.value.firstOrNull { it.key == task.key } ?: return
+        if (current.startedOrder != task.startedOrder || current.active || current.activity != PetActivity.COMPLETE) return
+        acknowledgedRuns.value = acknowledgedRuns.value + (current.key to current.startedOrder)
+        selectedKey.value = current.key
+    }
 
     init {
         scope.launch {
@@ -56,6 +66,7 @@ class PetTasks private constructor(private val context: Context) {
                 (settings.inApp || settings.overlay || entry != FloatingPetEntryMode.NONE) && settings.isReady
             }.distinctUntilChanged().collectLatest { enabled ->
                     mutableTasks.value = emptyList()
+                    acknowledgedRuns.value = emptyMap()
                     if (!enabled) return@collectLatest
                     coroutineScope {
                         val holder = ChatRuntimeHolder.getInstance(context)
@@ -70,6 +81,9 @@ class PetTasks private constructor(private val context: Context) {
                                 fun publish() {
                                     bySlot[slot] = runs.values.toList()
                                     mutableTasks.value = bySlot.values.flatten().sortedBy { it.startedOrder }
+                                    acknowledgedRuns.value = acknowledgedRuns.value.filter { (key, order) ->
+                                        mutableTasks.value.any { it.key == key && it.startedOrder == order }
+                                    }
                                 }
                                 val metadataFlow = core.chatHistories.map { histories ->
                                     histories.associate { it.id to PetChatMetadata(it.title, it.isHidden) }
@@ -177,3 +191,8 @@ class PetTasks private constructor(private val context: Context) {
         }
     }
 }
+
+internal fun acknowledgedPetTask(task: PetTask, acknowledgedOrder: Long?): PetTask =
+    if (!task.active && task.activity == PetActivity.COMPLETE && task.startedOrder == acknowledgedOrder) {
+        task.copy(activity = PetActivity.IDLE)
+    } else task

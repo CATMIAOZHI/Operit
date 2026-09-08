@@ -66,7 +66,9 @@ internal fun PetCompanion(
         PetTask("preview", "", com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN,
             stringResource(R.string.pet_preview_task), PetActivity.THINKING, true)
     } else {
-        tasks.firstOrNull { it.key == selectedKey } ?: tasks.firstOrNull { it.active } ?: tasks.lastOrNull()
+        val selected = tasks.firstOrNull { it.key == selectedKey }
+        selected?.takeUnless { it.activity == PetActivity.IDLE }
+            ?: tasks.firstOrNull { it.active } ?: selected ?: tasks.lastOrNull()
     }
     var interaction by remember { mutableIntStateOf(0) }
     val lift by animateFloatAsState(
@@ -75,6 +77,7 @@ internal fun PetCompanion(
         label = "petDragLift",
     )
     val petDescription = stringResource(R.string.pet_interact)
+    val acknowledgeDescription = stringResource(R.string.pet_acknowledge_completion)
     val dragStartCallback by rememberUpdatedState(onDragStart)
     val dragCallback by rememberUpdatedState(onDrag)
     val dragEndCallback by rememberUpdatedState(onDragEnd)
@@ -132,11 +135,16 @@ internal fun PetCompanion(
                                         .padding(start = 14.dp, top = 10.dp, bottom = 10.dp)
                                 ) {
                                     Text(
-                                        task?.title?.takeIf { it.isNotBlank() } ?: stringResource(R.string.pet_ready_to_chat),
+                                        task?.takeUnless { it.activity == PetActivity.IDLE }?.title?.takeIf { it.isNotBlank() } ?: stringResource(R.string.pet_ready_to_chat),
                                         style = MaterialTheme.typography.labelLarge,
                                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     )
                                     Row(
+                                        modifier = if (!preview && task?.activity == PetActivity.COMPLETE) {
+                                            Modifier.clickable(onClickLabel = acknowledgeDescription) {
+                                                task?.let { model?.acknowledgeCompletion(it) }
+                                            }.padding(vertical = 4.dp)
+                                        } else Modifier,
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                                     ) {
