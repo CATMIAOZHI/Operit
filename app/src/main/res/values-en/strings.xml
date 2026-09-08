@@ -8756,4 +8756,9 @@
     <string name="model_protocol_catalog_updated_at">Local protocol catalog updated: %1$s</string>
     <string name="model_protocol_catalog_bundled">Local protocol catalog: bundled with the app, not yet updated</string>
     <string name="model_protocol_auto_failed">Could not read the protocol catalog. Settings were not changed.</string>
+    <string name="pet_floating_entry">Floating chat entry</string>
+    <string name="pet_entry_pet">Pet</string>
+    <string name="pet_entry_legacy">Classic ball</string>
+    <string name="pet_entry_hint">Use the selected entry when chat is minimized. The voice ball keeps its existing behavior.</string>
+    <string name="floating_collapse">Collapse floating chat</string>
 </resources>

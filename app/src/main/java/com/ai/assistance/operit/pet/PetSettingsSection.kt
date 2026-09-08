@@ -26,6 +26,7 @@ fun PetSettingsSection() {
     val context = LocalContext.current
     val preferences = remember { PetPreferences.get(context) }
     val settings by preferences.settings.collectAsState()
+    val usePetEntry by preferences.usePetEntry.collectAsState()
     val pets by preferences.pets.collectAsState()
     val selectedId by preferences.selectedId.collectAsState()
     val scope = rememberCoroutineScope()
@@ -195,6 +196,14 @@ fun PetSettingsSection() {
             value = 1f - opacity, onValueChange = { opacity = 1f - it }, valueRange = 0f..0.7f,
             onValueChangeFinished = { preferences.update { it.copy(opacity = opacity) } },
         )
+        Text(stringResource(R.string.pet_floating_entry), style = MaterialTheme.typography.labelLarge)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = usePetEntry, onClick = { preferences.setUsePetEntry(true) },
+                label = { Text(stringResource(R.string.pet_entry_pet)) })
+            FilterChip(selected = !usePetEntry, onClick = { preferences.setUsePetEntry(false) },
+                label = { Text(stringResource(R.string.pet_entry_legacy)) })
+        }
+        Text(stringResource(R.string.pet_entry_hint), style = MaterialTheme.typography.bodySmall)
         PetToggle(stringResource(R.string.pet_in_app), settings.inApp) {
             preferences.update { value -> value.copy(inApp = it) }
         }

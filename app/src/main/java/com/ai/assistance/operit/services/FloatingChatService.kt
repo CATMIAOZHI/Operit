@@ -20,6 +20,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.State
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.Lifecycle
@@ -107,6 +108,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     private var hasHandledStartCommand = false
 
     companion object {
+        private const val ACTION_CLOSE = "com.ai.assistance.operit.action.CLOSE_FLOATING_CHAT"
         @Volatile
         private var instance: FloatingChatService? = null
 
@@ -263,7 +265,6 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         }
 
         try {
-            acquireWakeLock()
 
             bindChatCore(ChatRuntimeSlot.FLOATING)
 
@@ -279,6 +280,17 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                             lifecycleOwner,
                             this
                     )
+            serviceScope.launch {
+                val holder = ChatRuntimeHolder.getInstance(applicationContext)
+                val activeRuns = combine(ChatRuntimeSlot.entries.map { holder.getCore(it).activeStreamingChatIds }) { runs ->
+                    runs.any { it.isNotEmpty() }
+                }
+                combine(activeRuns, snapshotFlow { windowState.currentMode.value }) { active, mode ->
+                    active || mode == FloatingMode.VOICE_BALL || mode == FloatingMode.FULLSCREEN
+                }.collect { needsWakeLock ->
+                    if (needsWakeLock) acquireWakeLock() else releaseWakeLock()
+                }
+            }
             createNotificationChannel()
             val notification = createNotification()
             ForegroundServiceCompat.startForeground(
@@ -349,6 +361,14 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                     .setOngoing(true)
                     .setCategory(NotificationCompat.CATEGORY_SERVICE)
                     .setContentIntent(getPendingIntent())
+                    .addAction(
+                        android.R.drawable.ic_menu_close_clear_cancel,
+                        getString(R.string.floating_close_floating_window),
+                        PendingIntent.getService(
+                            this, 2, Intent(this, FloatingChatService::class.java).setAction(ACTION_CLOSE),
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                        ),
+                    )
                     .build()
 
     private fun getPendingIntent(): PendingIntent {
@@ -384,12 +404,15 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_CLOSE) {
+            onClose()
+            return START_NOT_STICKY
+        }
         AppLogger.d(TAG, "onStartCommand")
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
 
         try {
-            acquireWakeLock()
 
             intent?.getStringExtra(EXTRA_CHAT_SLOT)?.let { name ->
                 ChatRuntimeSlot.entries.firstOrNull { it.name == name }?.let(::bindChatCore)

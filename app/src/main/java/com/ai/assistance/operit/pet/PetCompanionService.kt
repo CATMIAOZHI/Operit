@@ -107,7 +107,7 @@ class PetCompanionService : Service() {
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         scope.launch {
-            combine(preferences.settings, model.appVisible, model.visibleTasks) { settings, _, _ -> settings }
+            combine(preferences.settings, model.appVisible, model.visibleTasks, FloatingPetEntry.mode) { settings, _, _, _ -> settings }
                 .collect { settings ->
                     val position = dockPet(settings.edge, settings.x, settings.y)
                     if (position != savedPosition) {
@@ -121,19 +121,23 @@ class PetCompanionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_HIDE) preferences.update { it.copy(overlay = false) }
+        if (intent?.action == ACTION_HIDE) {
+            preferences.update { it.copy(overlay = false) }
+            if (FloatingPetEntry.mode.value == FloatingPetEntryMode.PET) preferences.setUsePetEntry(false)
+        }
         reconcile()
         return START_NOT_STICKY
     }
 
     private fun reconcile() {
         val settings = preferences.settings.value
-        if (!settings.overlay || !Settings.canDrawOverlays(this)) {
+        val entry = FloatingPetEntry.mode.value
+        if ((!settings.overlay && entry != FloatingPetEntryMode.PET) || !Settings.canDrawOverlays(this)) {
             removeWindow()
             stopSelf()
             return
         }
-        if (!screenOn || model.appVisible.value || !settings.isReady) {
+        if (!screenOn || model.appVisible.value || !settings.isReady || entry == FloatingPetEntryMode.LEGACY_BALL || entry == FloatingPetEntryMode.HIDDEN) {
             removeWindow()
             return
         }
@@ -180,6 +184,7 @@ class PetCompanionService : Service() {
             composeView.disposeComposition()
             AppLogger.e("PetCompanion", "Unable to attach overlay", error)
             preferences.update { it.copy(overlay = false) }
+            if (FloatingPetEntry.mode.value == FloatingPetEntryMode.PET) preferences.setUsePetEntry(false)
             android.widget.Toast.makeText(this, R.string.pet_overlay_failed, android.widget.Toast.LENGTH_LONG).show()
             stopSelf()
         }

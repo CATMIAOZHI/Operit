@@ -25,6 +25,7 @@ data class PetTask(
     val title: String,
     val activity: PetActivity,
     val active: Boolean,
+    val startedOrder: Long = 0,
 )
 
 internal fun petActivity(state: InputProcessingState?, active: Boolean): PetActivity = when {
@@ -51,24 +52,24 @@ class PetTasks private constructor(private val context: Context) {
 
     init {
         scope.launch {
-            PetPreferences.get(context).settings
-                .map { (it.inApp || it.overlay) && it.isReady }.distinctUntilChanged().collectLatest { enabled ->
+            combine(PetPreferences.get(context).settings, FloatingPetEntry.mode) { settings, entry ->
+                (settings.inApp || settings.overlay || entry != FloatingPetEntryMode.NONE) && settings.isReady
+            }.distinctUntilChanged().collectLatest { enabled ->
                     mutableTasks.value = emptyList()
                     if (!enabled) return@collectLatest
                     coroutineScope {
                         val holder = ChatRuntimeHolder.getInstance(context)
                         val bySlot = mutableMapOf<ChatRuntimeSlot, List<PetTask>>()
+                        var sequence = 0L
                         for (slot in ChatRuntimeSlot.values()) {
                             launch {
                                 val core = holder.getCore(slot)
-                                var sequence = 0L
                                 val runs = linkedMapOf<String, PetTask>()
-                                val expiry = mutableMapOf<String, Job>()
                                 val metadataCache = mutableMapOf<String, PetChatMetadata>()
                                 var previousMetadata: Map<String, PetChatMetadata>? = null
                                 fun publish() {
                                     bySlot[slot] = runs.values.toList()
-                                    mutableTasks.value = bySlot.values.flatten()
+                                    mutableTasks.value = bySlot.values.flatten().sortedBy { it.startedOrder }
                                 }
                                 val metadataFlow = core.chatHistories.map { histories ->
                                     histories.associate { it.id to PetChatMetadata(it.title, it.isHidden) }
@@ -90,15 +91,16 @@ class PetTasks private constructor(private val context: Context) {
                                         // Internal audit chats are intentionally absent from ordinary UI.
                                         if (metadata == null || metadata.hidden) {
                                             runs.remove(chatId)
-                                            expiry.remove(chatId)?.cancel()
                                             continue
                                         }
                                         if (previous == null || !previous.active) {
-                                            expiry.remove(chatId)?.cancel()
+                                            // Keep one entry per conversation, ordered by its latest run.
+                                            runs.remove(chatId)
                                             runs[chatId] = PetTask(
                                                 "$slot:$chatId:${++sequence}", chatId, slot,
                                                 metadata.title,
                                                 petActivity(states[chatId], true), true,
+                                                startedOrder = sequence,
                                             )
                                         } else {
                                             runs[chatId] = previous.copy(
@@ -115,7 +117,6 @@ class PetTasks private constructor(private val context: Context) {
                                         )?.also { metadataCache[chatId] = it }
                                         if (metadata == null || metadata.hidden) {
                                             runs.remove(chatId)
-                                            expiry.remove(chatId)?.cancel()
                                             return@forEach
                                         }
                                         val refreshed = previous.copy(title = metadata.title)
@@ -124,13 +125,6 @@ class PetTasks private constructor(private val context: Context) {
                                             runs[chatId] = refreshed.copy(
                                                 active = false, activity = petActivity(states[chatId], false)
                                             )
-                                            expiry[chatId] = launch {
-                                                delay(20_000)
-                                                runs.remove(chatId)
-                                                metadataCache.remove(chatId)
-                                                expiry.remove(chatId)
-                                                publish()
-                                            }
                                         } else if (!previous.active && (
                                             states[chatId] is InputProcessingState.Completed ||
                                                 states[chatId] is InputProcessingState.Error

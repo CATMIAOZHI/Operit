@@ -8737,4 +8737,9 @@
     <string name="model_protocol_catalog_updated_at">本地协议目录更新时间：%1$s</string>
     <string name="model_protocol_catalog_bundled">本地协议目录：应用内置，尚未更新</string>
     <string name="model_protocol_auto_failed">协议目录读取失败，设置未更改</string>
+    <string name="pet_floating_entry">悬浮窗入口</string>
+    <string name="pet_entry_pet">宠物</string>
+    <string name="pet_entry_legacy">旧版悬浮球</string>
+    <string name="pet_entry_hint">最小化聊天窗口时使用所选入口。语音悬浮球保持原有行为。</string>
+    <string name="floating_collapse">收起悬浮窗</string>
 </resources>
