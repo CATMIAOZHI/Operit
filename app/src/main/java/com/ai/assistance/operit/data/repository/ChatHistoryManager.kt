@@ -1,5 +1,11 @@
 package com.ai.assistance.operit.data.repository
 
+import com.ai.assistance.operit.data.model.toChatHistory
+import com.ai.assistance.operit.data.model.fromChatHistory
+import com.ai.assistance.operit.data.model.toChatMessage
+import com.ai.assistance.operit.data.model.fromChatMessage
+import com.ai.assistance.operit.data.model.applyTo
+
 import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase

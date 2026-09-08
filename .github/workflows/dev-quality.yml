@@ -113,7 +113,11 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: operit-dev-quality-reports-${{ github.run_number }}
-          path: app/build/reports/**
+          path: |
+            app/build/reports/**
+            chat-parser/build/reports/**
+            chat-storage/build/reports/**
+            memory-storage/build/reports/**
           if-no-files-found: warn
           retention-days: 14
 

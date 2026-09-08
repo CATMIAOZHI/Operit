@@ -1360,7 +1360,6 @@ internal object TokenStatSpool {
         resetExecutorsForTest()
     }
 
-    internal fun emergencyQueueSizeForTest(): Int = 0
     internal fun pendingLatchCountForTest(): Int = synchronized(stateLock) { insertionWaiters.size }
     internal fun activeInsertCountForTest(): Int = synchronized(stateLock) { activeInserts.size }
     internal fun drainRequestPendingForTest(): Boolean = synchronized(stateLock) { drainRequested }

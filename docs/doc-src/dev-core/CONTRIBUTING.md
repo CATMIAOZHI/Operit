@@ -89,12 +89,19 @@ python3 ./tools/example_packages/sync_example_packages.py --mode test --no-hot-r
 python3 ./tools/example_packages/sync_example_packages.py --no-hot-reload
 
 # Android JVM 单测、lint 和构建
+# 仅修改聊天标记解析、消息处理、提示轮次、语音分段或流式 JSON/XML 转换时，可独立运行，不需要 Android SDK：
+./gradlew :chat-parser:test
+# 应用单测入口同时包含 chat-parser 测试：
 ./gradlew :app:testDebugUnitTest
 ./gradlew :app:lintDebug
 ./gradlew assembleDebug
 ```
 
 本地构建需要手动依赖时，按 [Android 编译指南](./BUILDING.md) 下载并放置 `models.zip`、`subpack.zip`、`jniLibs.zip` 和 `libs.zip`，不要将这些文件提交到 Git。
+
+内置工具提示词在 `app/src/main/resources/operit/prompts/internal-tools-en.json` 和
+`internal-tools-zh.json` 中维护。文件包含分类、工具和参数的完整字段（含空字符串与
+`null` 默认值），由 `SystemToolPromptsInternal` 加载；修改文案无需改动 Kotlin 初始化代码。
 
 ## 创建 Pull Request
 
@@ -153,3 +160,5 @@ PR 会进入 [PR Check workflow](../../../.github/workflows/pr-check.yml)，并�
 ## 社区项目与衍生项目
 
 欢迎基于 Operit 开发衍生项目。请在公开代码托管平台发布源代码，在项目文档中注明 Operit 的来源并链接回本仓库，方便社区审查、学习和继续贡献。
+
+数据库源码分别位于 `chat-storage`（Room）和 `memory-storage`（ObjectBox）；主应用消费库产物，不再运行 kapt。Room schema 历史继续集中保存在 `app/schemas`，已有 DAO、迁移和集成测试继续通过 `:app:testDebugUnitTest` 执行。ObjectBox 模型身份文件位于 `memory-storage/objectbox-models`，移动模块时不得重新生成实体或属性 ID。

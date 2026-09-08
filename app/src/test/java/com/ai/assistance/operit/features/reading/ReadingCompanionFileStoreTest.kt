@@ -855,7 +855,7 @@ class ReadingCompanionFileStoreTest {
 
     @Test
     fun `file pages reconstruct persisted text without gaps or repeated characters`() {
-        val content = "人物甲\n第二段正文".repeat(3000)
+        val content = (1..30).joinToString("\n") { "第${it}段：人物甲与人物乙讨论章节内容。" }
         store.writeChapterContent(book, chapter, content)
         val path = store.chapterFilePaths(book.id, chapter.sourceId)!!.getString("contentPath")
         val joined = StringBuilder()
