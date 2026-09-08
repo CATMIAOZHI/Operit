@@ -24,6 +24,7 @@ fun PetCompanionHost() {
     val preferences = remember { PetPreferences.get(context) }
     val model = remember { PetTasks.get(context) }
     val settings by preferences.settings.collectAsState()
+    val enabled by preferences.enabled.collectAsState()
     val entry by FloatingPetEntry.mode.collectAsState()
     val tasks by model.visibleTasks.collectAsState()
     val colors = MaterialTheme.colorScheme
@@ -50,8 +51,8 @@ fun PetCompanionHost() {
     }
     // Start while foreground; starting a foreground service for the first time in onStop is
     // restricted by Android. The service hides its window while this host is visible.
-    LaunchedEffect(settings.overlay, settings.isReady, resumed) {
-        if (resumed && settings.overlay && settings.isReady) {
+    LaunchedEffect(enabled, settings.overlay, settings.isReady, resumed) {
+        if (enabled && resumed && settings.overlay && settings.isReady) {
             if (!Settings.canDrawOverlays(context)) {
                 preferences.update { it.copy(overlay = false) }
             } else {
@@ -65,7 +66,7 @@ fun PetCompanionHost() {
             }
         }
     }
-    if ((!settings.inApp && entry != FloatingPetEntryMode.PET) ||
+    if (!enabled || (!settings.inApp && entry != FloatingPetEntryMode.PET) ||
         entry == FloatingPetEntryMode.LEGACY_BALL || entry == FloatingPetEntryMode.HIDDEN || !resumed || !settings.isReady) return
     BoxWithConstraints(
         Modifier.fillMaxSize().safeDrawingPadding().imePadding()

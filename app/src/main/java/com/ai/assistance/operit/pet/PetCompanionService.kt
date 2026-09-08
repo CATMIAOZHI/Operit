@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
-import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -29,7 +28,6 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.application.ForegroundServiceCompat
 import com.ai.assistance.operit.services.ServiceLifecycleOwner
-import com.ai.assistance.operit.ui.main.MainActivity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import com.ai.assistance.operit.ui.theme.rainyBaseColorScheme
@@ -83,27 +81,8 @@ class PetCompanionService : Service() {
         owner = ServiceLifecycleOwner()
         owner.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         screenOn = (getSystemService(POWER_SERVICE) as PowerManager).isInteractive
-        val notifications = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        notifications.createNotificationChannel(
-            NotificationChannel(CHANNEL, getString(R.string.pet_title), NotificationManager.IMPORTANCE_LOW)
-        )
-        val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val hide = PendingIntent.getService(
-            this, 1, Intent(this, PetCompanionService::class.java).setAction(ACTION_HIDE),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val notification = NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_launcher_simple_foreground)
-            .setContentTitle(getString(R.string.pet_title))
-            .setContentText(getString(R.string.pet_notification))
-            .setContentIntent(open)
-            .addAction(0, getString(R.string.pet_disable_overlay), hide)
-            .setOngoing(true).setSilent(true).build()
-        ForegroundServiceCompat.startForeground(
-            this, 1027, notification,
+        com.ai.assistance.operit.core.application.CompanionNotification.startForeground(
+            this, 1027, com.ai.assistance.operit.core.application.CompanionNotification.fallback(this),
             ForegroundServiceCompat.buildTypes(dataSync = false, specialUse = true),
         )
         ContextCompat.registerReceiver(
@@ -112,7 +91,7 @@ class PetCompanionService : Service() {
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         scope.launch {
-            combine(preferences.settings, model.appVisible, model.visibleTasks, FloatingPetEntry.mode) { settings, _, _, _ -> settings }
+            combine(preferences.settings, model.appVisible, model.visibleTasks, FloatingPetEntry.mode, preferences.enabled) { settings, _, _, _, _ -> settings }
                 .collect { settings ->
                     val position = dockPet(settings.edge, settings.x, settings.y)
                     if (position != savedPosition) {
@@ -137,7 +116,7 @@ class PetCompanionService : Service() {
     private fun reconcile() {
         val settings = preferences.settings.value
         val entry = FloatingPetEntry.mode.value
-        if ((!settings.overlay && entry != FloatingPetEntryMode.PET) || !Settings.canDrawOverlays(this)) {
+        if (!preferences.enabled.value || (!settings.overlay && entry != FloatingPetEntryMode.PET) || !Settings.canDrawOverlays(this)) {
             removeWindow()
             stopSelf()
             return
@@ -429,14 +408,13 @@ class PetCompanionService : Service() {
         scope.cancel()
         owner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         owner.viewModelStore.clear()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        com.ai.assistance.operit.core.application.CompanionNotification.release(this)
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
-        private const val CHANNEL = "pet_companion"
         private const val ACTION_HIDE = "pet_hide_overlay"
     }
 }
