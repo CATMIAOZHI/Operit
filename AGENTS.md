@@ -38,7 +38,7 @@
 - `origin` 指向个人 fork，默认分支为 `personal/main`；`upstream` 指向官方仓库，默认分支为 `main`。
 - 除非用户明确要求同步上游、分析上游或向上游贡献，否则所有规划、开发、审查和验证只以个人版当前目标分支为基线，不主动拉取、对比、合并或兼容 `upstream/main`。
 - `personal/main` 更新后由 `.github/workflows/sync-main-mirror.yml` 单向快进到 `main`，供仅支持 `main` 的安全工具读取。镜像使用仅授权本仓库 **Contents: read and write** 与 **Workflows: read and write** 的 `MAIN_MIRROR_TOKEN`，因为内置 `GITHUB_TOKEN` 不能推进包含 workflow 变更的提交。`main` 是只读兼容镜像，不得直接提交、合并 PR、强推或用作上游贡献分支；同步失败时先排查分叉，不得覆盖历史。
-- 上游贡献以最新 `upstream/main` 为基线，使用独立的 `contrib/<topic>` 分支，并显式目标官方 `main`；不得混入 Operit Ry 的品牌、服务路由或发布配置。
+- 上游贡献以最新 `upstream/dev` 为基线，PR 显式目标官方 `dev`；官方 `main` 用于稳定发布和维护者执行的发布同步。新建贡献分支按上游当前 `docs/doc-src/dev-core/CONTRIBUTING.md` 使用 `feat/`、`fix/`、`docs/`、`ci/`、`refactor/` 或 `test/` 前缀加简短描述，不使用 `contrib/`、代理、模型或个人身份前缀；已有分支维持原名。不得混入 Operit Ry 的品牌、服务路由或发布配置。
 - `personal/main` 是 Operit Ry 稳定发行分支，受规则保护；改动必须通过 PR 和必需检查，稳定 APK 与 `v*` Release tag 只从该分支发布。
 - `personal/dev` 是所有新功能的集成与测试分支。新功能必须先进入该分支，构建并实际测试可共存的 debug APK；测试通过后，经用户同意再以只包含通用功能提交的 PR 晋升到 `personal/main`。晋升操作手册见 `docs/agent/dev-to-main-promotion.md`。不得绕过开发版验证直接向稳定分支加入新功能，也不得把开发版专属配置带入晋升 PR。
 - 上游更新先整合进 `personal/dev` 构建并测试，确认不破坏现有功能后再合并到 `personal/main`；不要用上游分支重置或覆盖任一个人分支。
