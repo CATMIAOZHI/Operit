@@ -8761,6 +8761,5 @@
     <string name="pet_entry_legacy">Classic ball</string>
     <string name="pet_entry_hint">Use the selected entry when chat is minimized. The voice ball keeps its existing behavior.</string>
     <string name="floating_collapse">Collapse floating chat</string>
-    <string name="chat_show_earlier_response_blocks">Show earlier content (%1$d sections remaining)</string>
     <string name="pet_acknowledge_completion">Acknowledge completion and return to idle</string>
 </resources>
