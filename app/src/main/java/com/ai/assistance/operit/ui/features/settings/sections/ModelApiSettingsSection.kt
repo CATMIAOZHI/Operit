@@ -817,6 +817,8 @@ fun ModelApiSettingsSection(
                         },
                     enabled = !isMnnProvider && !isLlamaProvider && canEditModelName,
                     trailingContent = {
+                val fillEndpointKeyText = stringResource(R.string.fill_endpoint_and_key)
+                val modelsListSuccessText = stringResource(R.string.models_list_success)
                 IconButton(
                         onClick = {
                             AppLogger.d(
@@ -827,8 +829,6 @@ fun ModelApiSettingsSection(
                             val unknownErrorText = context.getString(R.string.unknown_error)
                             val getModelsFailedText = context.getString(R.string.get_models_list_failed)
                             val defaultConfigNoModelsText = context.getString(R.string.default_config_no_models_list)
-                            val fillEndpointKeyText = context.getString(R.string.fill_endpoint_and_key)
-                            val modelsListSuccessText = context.getString(R.string.models_list_success)
                             
                             showNotification(gettingModelsText)
 
