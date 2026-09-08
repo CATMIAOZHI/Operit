@@ -18,20 +18,34 @@ import org.junit.Test
 class ReadingCompanionSubagentToolsTest {
 
     @Test
-    fun `generation prompt includes fixed material and isolated tools exclude delegation and model search`() {
+    fun `generation prompt requests chapter tools and isolated tools exclude delegation and model search`() {
         val prompt = ReadingCompanionSubagentCoordinator.buildSubagentTaskPrompt(
-            "book", 4, "reader", "persona detail", targetContent = "target evidence",
-            previousContext = listOf(AutoCommentContextChapter("old", 3, "previous chapter", "previous evidence", false)),
+            "book", 4, "reader", "persona detail",
         )
-        assertTrue(prompt.contains("target evidence"))
-        assertTrue(prompt.contains("previous evidence"))
-        assertTrue(prompt.contains("previous chapter"))
+        assertTrue(prompt.contains("reading_commentary_list_chapters"))
+        assertTrue(prompt.contains("reading_commentary_read_chapter"))
+        assertTrue(prompt.contains("前四章"))
+        assertFalse(prompt.contains("\"targetChapter\""))
+        assertFalse(prompt.contains("\"recentChapters\""))
         assertTrue(prompt.contains("persona detail"))
         val names = ReadingCompanionSubagentTools.prompts().map { it.name }.toSet()
         assertFalse(names.contains("task"))
         assertFalse(names.contains("reading_commentary_search"))
         assertTrue(names.contains("reading_commentary_grep"))
         assertTrue(names.contains("reading_commentary_read_file"))
+    }
+
+    @Test
+    fun `summary only prompt requests target chapter through tools without persona or inline material`() {
+        val prompt = ReadingCompanionSubagentCoordinator.buildSubagentTaskPrompt(
+            "book", 4, "reader", "persona detail", summaryOnly = true,
+        )
+        assertTrue(prompt.contains("reading_commentary_list_chapters"))
+        assertTrue(prompt.contains("reading_commentary_read_chapter"))
+        assertTrue(prompt.contains("reading_commentary_submit_summary"))
+        assertFalse(prompt.contains("persona detail"))
+        assertFalse(prompt.contains("\"targetChapter\""))
+        assertFalse(prompt.contains("\"recentChapters\""))
     }
 
     @Test
