@@ -7,27 +7,33 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.stream.DisplayTextStream
 import com.ai.assistance.operit.util.stream.MutableSharedStreamImpl
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.TextStreamEventCarrier
+import com.ai.assistance.operit.util.stream.TextStreamEvent
 import com.ai.assistance.operit.util.stream.TextStreamEventType
 import com.ai.assistance.operit.util.stream.TextStreamRevisionTracker
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun rememberRevisableTextStream(sourceStream: Stream<String>?): Stream<String>? {
     val carrier = sourceStream as? TextStreamEventCarrier ?: return sourceStream
 
     val initialDisplayStream = remember(sourceStream) {
-        MutableSharedStreamImpl<String>(replay = Int.MAX_VALUE)
+        DisplayTextStream()
     }
     var displayStream by remember(sourceStream) {
         mutableStateOf<Stream<String>>(initialDisplayStream)
     }
 
     LaunchedEffect(sourceStream) {
-        collectRevisableDisplayStream(sourceStream, carrier, initialDisplayStream) {
-            displayStream = it
+        withContext(Dispatchers.Default) {
+            collectRevisableDisplayStream(sourceStream, carrier, initialDisplayStream) {
+                withContext(Dispatchers.Main.immediate) { displayStream = it }
+            }
         }
     }
 
@@ -39,8 +45,8 @@ fun rememberRevisableTextStream(sourceStream: Stream<String>?): Stream<String>? 
 internal suspend fun collectRevisableDisplayStream(
     sourceStream: Stream<String>,
     carrier: TextStreamEventCarrier,
-    initialDisplayStream: MutableSharedStreamImpl<String>,
-    onReplacement: (Stream<String>) -> Unit,
+    initialDisplayStream: DisplayTextStream,
+    onReplacement: suspend (Stream<String>) -> Unit,
 ) {
     val tracker = TextStreamRevisionTracker()
     var currentDisplayStream = initialDisplayStream
@@ -48,9 +54,11 @@ internal suspend fun collectRevisableDisplayStream(
     var processedReplayCharCount = 0
 
     suspend fun drainDueRevisionEvents() {
-        val events = carrier.eventChannel.replayCache
-        while (processedRevisionEventCount < events.size) {
-            val event = events[processedRevisionEventCount]
+        val channel = carrier.eventChannel
+        val events = (channel as? MutableSharedStreamImpl<TextStreamEvent>)
+            ?.replayFrom(processedRevisionEventCount)
+            ?: channel.replayCache.drop(processedRevisionEventCount)
+        for (event in events) {
             if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
                 break
             }
@@ -61,7 +69,7 @@ internal suspend fun collectRevisableDisplayStream(
                     val snapshot = tracker.rollback(event.id)?.toString() ?: continue
                     val previousDisplayStream = currentDisplayStream
                     val replacementStream =
-                        MutableSharedStreamImpl<String>(replay = Int.MAX_VALUE)
+                        DisplayTextStream()
                     if (snapshot.isNotEmpty()) {
                         replacementStream.emit(snapshot)
                     }
