@@ -371,12 +371,13 @@ class ConversationService(
     suspend fun generateConversationTitle(
         userText: String,
         attachmentFileNames: List<String>,
-        multiServiceManager: MultiServiceManager
+        multiServiceManager: MultiServiceManager,
+        fromRecentConversation: Boolean = false,
     ): String {
         return try {
             val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
-            val systemPrompt = FunctionalPrompts.conversationTitleSystemPrompt(useEnglish)
-            val userPrompt = FunctionalPrompts.conversationTitleUserPrompt(
+            val systemPrompt = FunctionalPrompts.conversationTitleSystemPrompt(useEnglish, fromRecentConversation)
+            val userPrompt = if (fromRecentConversation) userText else FunctionalPrompts.conversationTitleUserPrompt(
                 userText = userText,
                 attachmentFileNames = attachmentFileNames,
                 useEnglish = useEnglish
@@ -408,6 +409,7 @@ class ConversationService(
 
             title
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e(TAG, "生成对话标题时出错", e)
             ""
         }

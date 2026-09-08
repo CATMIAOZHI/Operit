@@ -1106,6 +1106,7 @@ fun ChatHistorySelectorPanel(
                             )
     ) {
         val activeStreamingChatIds by actualViewModel.activeStreamingChatIds.collectAsState()
+        val regeneratingTitleIds by actualViewModel.regeneratingTitleIds.collectAsState()
         val chatFolders by actualViewModel.chatFolders.collectAsState()
         // 直接使用ChatHistorySelector
         ChatHistorySelector(
@@ -1149,6 +1150,8 @@ fun ChatHistorySelectorPanel(
                 onUpdateChatTitle = { chatId, newTitle ->
                     actualViewModel.updateChatTitle(chatId, newTitle)
                 },
+                onRegenerateChatTitle = actualViewModel::regenerateChatTitle,
+                regeneratingTitleIds = regeneratingTitleIds,
                 onUpdateChatBinding = { chatId, characterCardName, characterGroupId ->
                     actualViewModel.updateChatCharacterBinding(chatId, characterCardName, characterGroupId)
                 },
