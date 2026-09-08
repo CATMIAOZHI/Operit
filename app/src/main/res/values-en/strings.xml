@@ -1,4 +1,8 @@
  <resources>
+    <string name="chat_title_regenerate">Regenerate title from recent conversation</string>
+    <string name="chat_title_generating">Generating title…</string>
+    <string name="chat_title_no_content">No conversation content available for a title</string>
+    <string name="chat_title_generation_failed">Title generation failed. The original title was kept.</string>
     <string name="app_name">Operit Ry</string>
     <string name="accessibility_service_description">Used to obtain the UI hierarchy, providing faster interface analysis capabilities for AI assistants, and does not collect or store any personal information.</string>
     

@@ -1,4 +1,8 @@
 <resources>
+    <string name="chat_title_regenerate">根据最近对话重新生成标题</string>
+    <string name="chat_title_generating">正在生成标题…</string>
+    <string name="chat_title_no_content">暂无可用于生成标题的对话内容</string>
+    <string name="chat_title_generation_failed">标题生成失败，已保留原标题</string>
     <string name="app_name">Operit Ry</string>
     <string name="accessibility_service_description">用于获取UI层次结构，为AI助手提供更快速的界面分析能力，不会收集或存储任何个人信息。</string>
     
