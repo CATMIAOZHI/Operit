@@ -4077,8 +4077,8 @@
     <string name="model_multimodal_catalog_refresh">刷新本地模型目录</string>
     <string name="model_multimodal_catalog_refresh_success">本地模型目录已更新，共 %1$d 个官方模型</string>
     <string name="model_multimodal_catalog_refresh_failed">目录更新失败，已保留原本地目录及更新时间</string>
-    <string name="model_multimodal_catalog_updated_at">本地目录更新时间：%1$s</string>
-    <string name="model_multimodal_catalog_bundled">本地目录：应用内置，尚未更新</string>
+    <string name="model_multimodal_catalog_updated_at">本地多模态目录更新时间：%1$s</string>
+    <string name="model_multimodal_catalog_bundled">本地多模态目录：应用内置，尚未更新</string>
     <string name="enable_direct_audio_processing">模型支持音频解析</string>
     <string name="enable_direct_audio_processing_desc">启用后，音频将直接发送给AI处理，而不是通过工具返回文本转写/描述</string>
     <string name="enable_direct_video_processing">模型支持视频解析</string>
@@ -4128,7 +4128,7 @@
     <string name="provider_iflow">iFlow</string>
     <string name="provider_openrouter">OpenRouter (多模型聚合)</string>
     <string name="provider_opencode_go">OpenCode Go</string>
-    <string name="provider_opencode_go_protocol_hint">OpenCode Go 的模型使用不同接口。选择模型后，请点击“自动配置协议”，也可逐个手动设置。</string>
+    <string name="provider_opencode_go_protocol_hint">OpenCode Go 的模型使用不同接口。“自动配置协议”使用本地目录，需要更新时请手动刷新目录，也可逐个手动设置。</string>
     <string name="provider_4router">4Router</string>
     <string name="provider_nous_portal">Nous Portal</string>
     <string name="provider_infiniai">无问芯穹</string>
@@ -8728,9 +8728,13 @@
     <string name="model_protocol_endpoint">此模型的端点（可选）</string>
     <string name="model_protocol_endpoint_desc">留空使用提供商地址，并按协议转换标准路径；非标准地址可在此单独填写。</string>
     <string name="model_protocol_auto_configure">自动配置协议</string>
-    <string name="model_protocol_auto_desc">按提供商和模型匹配 models.dev 目录。更新匹配模型的协议，保留手填端点；未匹配的设置不变。</string>
+    <string name="model_protocol_auto_desc">按提供商和模型匹配本地目录，不联网刷新。更新匹配模型的协议，保留手填端点；未匹配的设置不变。</string>
     <string name="model_protocol_auto_changed">配置已变化，请重新点击自动配置协议</string>
-    <string name="model_protocol_auto_result">已配置 %1$d 个模型，跳过 %2$d 个（云端目录）</string>
-    <string name="model_protocol_auto_local_result">云端目录不可用，已用本地目录配置 %1$d 个模型，跳过 %2$d 个</string>
+    <string name="model_protocol_auto_result">已用本地目录配置 %1$d 个模型，跳过 %2$d 个</string>
+    <string name="model_catalog_refresh_success">本地模型目录已更新，包含多模态能力和协议；点击对应自动配置按钮应用</string>
+    <string name="model_catalog_refresh_protocol_failed">多模态目录已更新；协议目录更新失败，保留原目录及更新时间</string>
+    <string name="model_catalog_refresh_multimodal_failed">协议目录已更新；多模态目录更新失败，保留原目录及更新时间</string>
+    <string name="model_protocol_catalog_updated_at">本地协议目录更新时间：%1$s</string>
+    <string name="model_protocol_catalog_bundled">本地协议目录：应用内置，尚未更新</string>
     <string name="model_protocol_auto_failed">协议目录读取失败，设置未更改</string>
 </resources>

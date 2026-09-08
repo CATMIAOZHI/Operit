@@ -43,6 +43,7 @@ import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.forSelectedModel
+import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.ExternalHttpApiPreferences
@@ -701,7 +702,12 @@ class EnhancedAIService private constructor(
             chatModelConfigIdOverride = chatModelConfigIdOverride,
             chatModelIndexOverride = chatModelIndexOverride
         )
-        return Pair("$provider/${config.name}", modelName)
+        // The service reports its wire adapter (e.g. DEEPSEEK), not necessarily the account
+        // supplying the model. Keep the account identity in the persisted message label.
+        val account = multiServiceManager.getModelConfigForConfig(config.id)
+        val displayProvider =
+            ApiProviderType.fromProviderTypeId(account.apiProviderTypeId)?.name ?: provider
+        return Pair("$displayProvider/${account.name}", modelName)
     }
 
     suspend fun getModelConfigForFunction(

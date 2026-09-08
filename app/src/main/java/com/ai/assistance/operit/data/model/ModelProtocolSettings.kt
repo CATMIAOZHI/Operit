@@ -20,6 +20,7 @@ enum class ModelProtocol(val providerType: ApiProviderType?) {
 data class ModelProtocolSettings(
     val protocol: ModelProtocol = ModelProtocol.INHERIT,
     val endpoint: String = "",
+    val reasoningEfforts: List<String>? = null,
 )
 
 fun ModelConfigData.protocolSettingsForModel(model: String): ModelProtocolSettings =

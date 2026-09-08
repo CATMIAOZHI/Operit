@@ -52,7 +52,15 @@ class ModelProtocolCatalog private constructor(private val providers: List<Provi
                         npm == "@ai-sdk/openai-compatible" && field == null -> ModelProtocol.CHAT_COMPLETIONS
                         else -> return@model null
                     }
-                    modelId to ModelProtocolSettings(protocol, override?.text("api").orEmpty())
+                    val reasoningEfforts = (model["reasoning_options"] as? JsonArray)?.flatMap { option ->
+                        val objectOption = option as? JsonObject
+                        if (objectOption?.text("type") == "effort") {
+                            (objectOption["values"] as? JsonArray)?.mapNotNull {
+                                (it as? JsonPrimitive)?.contentOrNull
+                            }.orEmpty()
+                        } else emptyList()
+                    }
+                    modelId to ModelProtocolSettings(protocol, override?.text("api").orEmpty(), reasoningEfforts)
                 }?.toMap().orEmpty()
                 if (models.isEmpty()) null else Provider(id, endpoint, models)
             }

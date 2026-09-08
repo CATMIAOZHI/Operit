@@ -204,7 +204,8 @@ data class ModelConfigSummary(
         val apiEndpoint: String = "",
         val apiProviderType: ApiProviderType = ApiProviderType.DEEPSEEK,
         val apiProviderTypeId: String = apiProviderType.name,
-        val modelIndex: Int = 0 // 当modelName包含多个模型（逗号分隔）时，选择第几个模型（从0开始）
+        val modelIndex: Int = 0, // 当modelName包含多个模型（逗号分隔）时，选择第几个模型（从0开始）
+        val modelProtocolSettings: Map<String, ModelProtocolSettings> = emptyMap(),
 )
 
 /** 从逗号分隔的模型名称字符串中根据索引获取具体模型 */

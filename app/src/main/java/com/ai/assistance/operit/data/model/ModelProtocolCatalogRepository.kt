@@ -7,17 +7,42 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-class ModelProtocolCatalogRepository(private val context: Context) {
-    data class Result(val catalog: ModelProtocolCatalog, val usedLocalCopy: Boolean)
+class ModelProtocolCatalogRepository(
+    private val context: Context,
+    private val httpClient: OkHttpClient = client,
+    private val cacheWriter: (File, ByteArray) -> Unit = ::writeAtomically,
+) {
+    private val lock = Mutex()
+    private val updatedAtMutable = MutableStateFlow<Long?>(null)
+    val updatedAt = updatedAtMutable.asStateFlow()
 
-    suspend fun refreshOrLoad(): Result = withContext(Dispatchers.IO) {
-        val file = File(context.noBackupFilesDir, "operit/model_catalog/model_protocols_v1.json")
-        val fresh = runCatching {
-            val bytes = client.newCall(
+    /** Applying protocols never refreshes the directory or requires network access. */
+    suspend fun loadCatalog(): ModelProtocolCatalog = withContext(Dispatchers.IO) {
+        lock.withLock {
+            val file = cacheFile()
+            val cached = runCatching {
+                check(file.isFile && file.length() <= MAX_BYTES)
+                ModelProtocolCatalog.parse(file.readText(Charsets.UTF_8))
+            }.getOrNull()
+            updatedAtMutable.value = if (cached != null) file.lastModified() else null
+            cached ?: context.assets.open(BUNDLED_PATH).use {
+                ModelProtocolCatalog.parse(it.readBytes().toString(Charsets.UTF_8))
+            }
+        }
+    }
+
+    /** A failed manual refresh leaves the previously usable directory and timestamp intact. */
+    suspend fun refreshCatalog(): ModelProtocolCatalog = withContext(Dispatchers.IO) {
+        lock.withLock {
+            val bytes = httpClient.newCall(
                 Request.Builder().url(SOURCE_URL).get().build()
             ).execute().use { response ->
                 check(response.isSuccessful) { "Model protocol catalog HTTP ${response.code}" }
@@ -27,6 +52,22 @@ class ModelProtocolCatalogRepository(private val context: Context) {
             }
             currentCoroutineContext().ensureActive()
             val catalog = ModelProtocolCatalog.parse(bytes.toString(Charsets.UTF_8))
+            currentCoroutineContext().ensureActive()
+            val file = cacheFile()
+            cacheWriter(file, bytes)
+            updatedAtMutable.value = file.lastModified()
+            catalog
+        }
+    }
+
+    private fun cacheFile() =
+        File(context.noBackupFilesDir, "operit/model_catalog/model_protocols_v1.json")
+
+    companion object {
+        const val SOURCE_URL = "https://models.dev/api.json"
+        private const val BUNDLED_PATH = "model_catalog/model_protocols_v1.json"
+        private const val MAX_BYTES = 10L * 1024 * 1024
+        private fun writeAtomically(file: File, bytes: ByteArray) {
             file.parentFile?.mkdirs()
             val atomic = AtomicFile(file)
             val output = atomic.startWrite()
@@ -37,23 +78,8 @@ class ModelProtocolCatalogRepository(private val context: Context) {
                 atomic.failWrite(output)
                 throw error
             }
-            catalog
-        }.getOrNull()
-        currentCoroutineContext().ensureActive()
-        if (fresh != null) return@withContext Result(fresh, false)
-        val cached = runCatching {
-            check(file.isFile && file.length() <= MAX_BYTES)
-            ModelProtocolCatalog.parse(file.readText())
-        }.getOrNull()
-        val catalog = cached ?: context.assets.open("model_catalog/model_protocols_v1.json").use {
-            ModelProtocolCatalog.parse(it.readBytes().toString(Charsets.UTF_8))
         }
-        Result(catalog, true)
-    }
 
-    companion object {
-        const val SOURCE_URL = "https://models.dev/api.json"
-        private const val MAX_BYTES = 10L * 1024 * 1024
         private val client = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)

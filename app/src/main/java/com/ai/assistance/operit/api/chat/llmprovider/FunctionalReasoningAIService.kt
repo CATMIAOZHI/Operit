@@ -5,6 +5,8 @@ import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.ModelProtocol
+import com.ai.assistance.operit.data.model.protocolSettingsForModel
 import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.model.ToolPrompt
@@ -53,6 +55,7 @@ internal class FunctionalReasoningAIService(
     private val providerType: ApiProviderType?,
     private val modelName: String,
     private val thinkingQualityLevel: Int,
+    private val reasoningEfforts: List<String>? = null,
 ) : AIService by delegate {
 
     override suspend fun sendMessage(
@@ -75,6 +78,7 @@ internal class FunctionalReasoningAIService(
                 modelName = modelName,
                 modelParameters = modelParameters,
                 thinkingQualityLevel = thinkingQualityLevel,
+                reasoningEfforts = reasoningEfforts,
             )
         return delegate.sendMessage(
             context = context,
@@ -103,6 +107,9 @@ internal fun AIService.withFunctionalReasoning(
         providerType = providerType,
         modelName = config.modelName,
         thinkingQualityLevel = thinkingQualityLevel,
+        reasoningEfforts = config.protocolSettingsForModel(config.modelName)
+            .takeIf { it.protocol == ModelProtocol.CHAT_REASONING }
+            ?.let { it.reasoningEfforts.orEmpty() },
     )
 }
 
@@ -111,8 +118,25 @@ internal fun buildFunctionalReasoningRequest(
     modelName: String,
     modelParameters: List<ModelParameter<*>>,
     thinkingQualityLevel: Int,
+    reasoningEfforts: List<String>? = null,
 ): FunctionalReasoningRequest {
     val effectiveLevel = normalizeFunctionalThinkingQualityLevel(thinkingQualityLevel)
+    if (providerType == ApiProviderType.OPENAI_GENERIC && reasoningEfforts != null) {
+        val effort = ThinkingRequestSemantics.catalogReasoningEffort(
+            ApiPreferences.thinkingQualityEffort(effectiveLevel), reasoningEfforts,
+        )
+        if (effort != null) {
+            // Generic endpoints keep explicit account parameters; otherwise use this
+            // function's choice, so the provider never falls back to the chat slider.
+            val explicit = modelParameters.any { it.apiName == "reasoning_effort" && it.isEnabled }
+            return FunctionalReasoningRequest(
+                enableThinking = true,
+                modelParameters = modelParameters +
+                    (if (explicit) emptyList() else listOf(functionalStringParameter("reasoning_effort", effort))) +
+                    functionalAutomaticReasoningSuppressionParameter(),
+            )
+        }
+    }
     val parametersWithoutConflictingControls =
         modelParameters.filterNot {
             it.apiName in

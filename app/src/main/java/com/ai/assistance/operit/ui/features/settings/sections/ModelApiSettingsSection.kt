@@ -152,6 +152,10 @@ fun ModelApiSettingsSection(
     val protocolCatalogRepository = remember(context.applicationContext) {
         ModelProtocolCatalogRepository(context.applicationContext)
     }
+    val protocolCatalogUpdatedAt by protocolCatalogRepository.updatedAt.collectAsState()
+    LaunchedEffect(protocolCatalogRepository) {
+        protocolCatalogRepository.loadCatalog()
+    }
     DisposableEffect(config.id) {
         onDispose { protocolSyncJob?.cancel() }
     }
@@ -172,7 +176,7 @@ fun ModelApiSettingsSection(
         officialModelCapabilitiesRepository.loadCatalog()
     }
     var isSyncingMultimodalCapabilities by remember(config.id) { mutableStateOf(false) }
-    var isRefreshingMultimodalCatalog by remember(config.id) { mutableStateOf(false) }
+    var isRefreshingModelCatalog by remember(config.id) { mutableStateOf(false) }
     var multimodalSyncJob by remember(config.id) { mutableStateOf<Job?>(null) }
 
     DisposableEffect(config.id) {
@@ -479,7 +483,7 @@ fun ModelApiSettingsSection(
     }
 
     fun configureModelProtocols() {
-        if (isConfiguringProtocols) return
+        if (isConfiguringProtocols || isRefreshingModelCatalog) return
         val names = getModelList(modelNameInput)
         val endpoint = apiEndpointInput
         val providerId = selectedProviderTypeId
@@ -487,13 +491,13 @@ fun ModelApiSettingsSection(
         isConfiguringProtocols = true
         protocolSyncJob = scope.launch {
             try {
-                val result = protocolCatalogRepository.refreshOrLoad()
+                val catalog = protocolCatalogRepository.loadCatalog()
                 if (apiEndpointInput != endpoint || selectedProviderTypeId != providerId ||
                     getModelList(modelNameInput) != names) {
                     showNotification(context.getString(R.string.model_protocol_auto_changed))
                     return@launch
                 }
-                val matched = result.catalog.matchAll(endpoint, names)
+                val matched = catalog.matchAll(endpoint, names)
                     .filter { (model, _) -> modelProtocolSettingsInput[model] == previous[model] }
                     .mapValues { (model, settings) ->
                         settings.copy(endpoint = previous[model]?.endpoint?.takeIf { it.isNotBlank() }
@@ -501,8 +505,7 @@ fun ModelApiSettingsSection(
                     }
                 modelProtocolSettingsInput = modelProtocolSettingsInput + matched
                 showNotification(context.getString(
-                    if (result.usedLocalCopy) R.string.model_protocol_auto_local_result
-                    else R.string.model_protocol_auto_result,
+                    R.string.model_protocol_auto_result,
                     matched.size, names.size - matched.size,
                 ))
             } catch (e: CancellationException) {
@@ -517,7 +520,7 @@ fun ModelApiSettingsSection(
     }
 
     fun syncOfficialModelCapabilities() {
-        if (isSyncingMultimodalCapabilities || isRefreshingMultimodalCatalog) return
+        if (isSyncingMultimodalCapabilities || isRefreshingModelCatalog) return
         val configuredModelNames = getModelList(modelNameInput)
         if (configuredModelNames.isEmpty()) return
         isSyncingMultimodalCapabilities = true
@@ -560,27 +563,30 @@ fun ModelApiSettingsSection(
         }
     }
 
-    fun refreshOfficialModelCapabilitiesCatalog() {
-        if (isSyncingMultimodalCapabilities || isRefreshingMultimodalCatalog) return
-        isRefreshingMultimodalCatalog = true
+    fun refreshLocalModelCatalogs() {
+        if (isConfiguringProtocols || isSyncingMultimodalCapabilities || isRefreshingModelCatalog) return
+        isRefreshingModelCatalog = true
         multimodalSyncJob = scope.launch {
-            try {
-                val catalog = officialModelCapabilitiesRepository.refreshCatalog()
-                showNotification(
-                    context.getString(
-                        R.string.model_multimodal_catalog_refresh_success,
-                        catalog.models.size,
-                    )
-                )
+            suspend fun refresh(block: suspend () -> Unit): Boolean = try {
+                block()
+                true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                AppLogger.e(TAG, "刷新本地模型能力目录失败: ${e.message}", e)
-                showNotification(
-                    context.getString(R.string.model_multimodal_catalog_refresh_failed)
-                )
+                AppLogger.e(TAG, "Local model catalog refresh failed", e)
+                false
+            }
+            try {
+                val capabilitiesUpdated = refresh { officialModelCapabilitiesRepository.refreshCatalog() }
+                val protocolsUpdated = refresh { protocolCatalogRepository.refreshCatalog() }
+                showNotification(context.getString(when {
+                    capabilitiesUpdated && protocolsUpdated -> R.string.model_catalog_refresh_success
+                    capabilitiesUpdated -> R.string.model_catalog_refresh_protocol_failed
+                    protocolsUpdated -> R.string.model_catalog_refresh_multimodal_failed
+                    else -> R.string.model_multimodal_catalog_refresh_failed
+                }))
             } finally {
-                isRefreshingMultimodalCatalog = false
+                isRefreshingModelCatalog = false
                 multimodalSyncJob = null
             }
         }
@@ -914,7 +920,8 @@ fun ModelApiSettingsSection(
                 if (supportsModelProtocolOverrides(selectedProviderTypeId)) {
                     OutlinedButton(
                         onClick = { configureModelProtocols() },
-                        enabled = configuredModels.isNotEmpty() && !isConfiguringProtocols,
+                        enabled = configuredModels.isNotEmpty() &&
+                            !isConfiguringProtocols && !isRefreshingModelCatalog,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (isConfiguringProtocols) {
@@ -939,7 +946,7 @@ fun ModelApiSettingsSection(
                     enabled =
                         configuredModels.isNotEmpty() &&
                             !isSyncingMultimodalCapabilities &&
-                            !isRefreshingMultimodalCatalog,
+                            !isRefreshingModelCatalog,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     if (isSyncingMultimodalCapabilities) {
@@ -958,13 +965,13 @@ fun ModelApiSettingsSection(
                     Text(stringResource(R.string.model_multimodal_auto_sync))
                 }
                 TextButton(
-                    onClick = { refreshOfficialModelCapabilitiesCatalog() },
+                    onClick = { refreshLocalModelCatalogs() },
                     enabled =
-                        !isSyncingMultimodalCapabilities &&
-                            !isRefreshingMultimodalCatalog,
+                        !isConfiguringProtocols && !isSyncingMultimodalCapabilities &&
+                            !isRefreshingModelCatalog,
                     modifier = Modifier.align(Alignment.End),
                 ) {
-                    if (isRefreshingMultimodalCatalog) {
+                    if (isRefreshingModelCatalog) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
@@ -990,6 +997,19 @@ fun ModelApiSettingsSection(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (supportsModelProtocolOverrides(selectedProviderTypeId)) {
+                    Text(
+                        text = protocolCatalogUpdatedAt?.let {
+                            stringResource(
+                                R.string.model_protocol_catalog_updated_at,
+                                android.text.format.DateFormat.getDateFormat(context).format(java.util.Date(it)) +
+                                    " " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(it)),
+                            )
+                        } ?: stringResource(R.string.model_protocol_catalog_bundled),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (configuredModels.isEmpty()) {
                     Text(
                         text = stringResource(R.string.model_multimodal_capabilities_no_models),

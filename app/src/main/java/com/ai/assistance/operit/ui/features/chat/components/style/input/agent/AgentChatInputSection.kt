@@ -454,11 +454,8 @@ fun AgentChatInputSection(
         ) {
             activeConfigSummary?.let { config ->
                 ThinkingRequestSemantics.resolve(
-                    providerType = config.apiProviderType,
-                    providerTypeId = config.apiProviderTypeId,
+                    config = config,
                     isToolPkgProvider = currentIsToolPkgProvider,
-                    configId = config.id,
-                    apiEndpoint = config.apiEndpoint,
                     modelName = mappedModelName.orEmpty(),
                     qualityLevel = thinkingQualityLevel,
                     modelParameters = currentModelParameters,

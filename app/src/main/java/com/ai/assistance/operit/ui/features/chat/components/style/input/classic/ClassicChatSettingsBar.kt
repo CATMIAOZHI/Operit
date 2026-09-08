@@ -282,11 +282,8 @@ fun ClassicChatSettingsBar(
         ) {
             currentConfig?.let { config ->
                 ThinkingRequestSemantics.resolve(
-                    providerType = config.apiProviderType,
-                    providerTypeId = config.apiProviderTypeId,
+                    config = config,
                     isToolPkgProvider = currentIsToolPkgProvider,
-                    configId = config.id,
-                    apiEndpoint = config.apiEndpoint,
                     modelName = currentModelName,
                     qualityLevel = thinkingQualityLevel,
                     modelParameters = currentModelParameters,
