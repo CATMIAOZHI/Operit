@@ -41,7 +41,7 @@ cd Operit
 git submodule update --init --recursive terminal
 git remote add upstream https://github.com/AAswordman/Operit.git
 git fetch upstream
-git switch -c fix/short-description upstream/main
+git switch -c fix/short-description upstream/dev
 ```
 
 不要提交 `local.properties`、本地密钥、手动下载的模型和二进制依赖。修改 WebChat 或示例包时，先按照编译指南准备根目录和 `web-chat` 的依赖。
@@ -60,8 +60,8 @@ git switch -c fix/short-description upstream/main
 在仓库根目录可以复现主要的快速检查：
 
 ```bash
-git fetch upstream main
-BASE_SHA="$(git merge-base upstream/main HEAD)"
+git fetch upstream dev
+BASE_SHA="$(git merge-base upstream/dev HEAD)"
 CANDIDATE_SHA="HEAD"
 
 python3 -B -m unittest discover -s ci/test -p 'test_*.py'
@@ -105,7 +105,7 @@ python3 ./tools/example_packages/sync_example_packages.py --no-hot-reload
 
 ## 创建 Pull Request
 
-所有上游 PR 的目标分支是 `main`，不再使用旧的 `pr-branch` 流程。建议使用以下分支前缀：
+日常开发的上游 PR 默认目标分支是长期集成分支 `dev`；`main` 仅用于稳定发布和由维护者执行的发布同步，不再使用旧的 `pr-branch` 流程。新建贡献分支必须使用以下前缀加简短描述：
 
 - `feat/`：新功能
 - `fix/`：问题修复
@@ -114,11 +114,13 @@ python3 ./tools/example_packages/sync_example_packages.py --no-hot-reload
 - `refactor/`：不改变行为的重构
 - `test/`：测试改动
 
+分支名描述改动内容，不使用 `contrib/`、代理、模型或个人身份作为前缀。已有分支维持原名，只有新建分支适用此规则。
+
 推送个人分支并创建 PR：
 
 ```bash
 git fetch upstream
-git rebase upstream/main
+git rebase upstream/dev
 git push --set-upstream origin fix/short-description
 ```
 
@@ -146,7 +148,7 @@ ci: add localization checks
 
 ## CI 检查
 
-PR 会进入 [PR Check workflow](../../../.github/workflows/pr-check.yml)，并只生成一个 `Candidate checks` 技术状态。检查运行在 GitHub 为 PR 与当前 `main` 生成的 merge candidate 上：
+PR 会进入 [PR Check workflow](../../../.github/workflows/pr-check.yml)，并只生成一个 `Candidate checks` 技术状态。上游检查运行在 GitHub 为 PR 与当前 `dev` 生成的 merge candidate 上：
 
 - 快速检查：差异空白、冲突标记、JSON/XML/YAML、Actions、本地 Markdown 链接和门禁单元测试
 - 本地化：按 locale 和资源 key 归责类型、重复项、占位符及 locale 配置错误
