@@ -9,6 +9,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatConfigReadinessTest {
+    @Test fun accountProvidersRequireLoginInsteadOfApiKey() {
+        for (provider in listOf(ApiProviderType.GROK_ACCOUNT, ApiProviderType.GOOGLE_ANTIGRAVITY)) {
+            val config = remoteConfig(provider, apiKey = "")
+            assertIssue(ChatConfigReadinessIssue.ACCOUNT_LOGIN_REQUIRED, config)
+            assertTrue(ChatConfigReadiness.evaluate(config, 0, emptySet(), accountAuthenticated = true).isReady)
+        }
+    }
     @Test
     fun deepSeekWithValidKey_isReady() {
         assertReady(remoteConfig(ApiProviderType.DEEPSEEK, apiKey = "sk-valid"))
@@ -28,6 +35,33 @@ class ChatConfigReadinessTest {
             ChatConfigReadinessIssue.API_KEY_MISSING,
             remoteConfig(ApiProviderType.OPENAI, apiKey = "")
         )
+    }
+
+    @Test
+    fun codexWithoutOAuthLogin_isRejected() {
+        assertIssue(
+            ChatConfigReadinessIssue.CODEX_LOGIN_REQUIRED,
+            remoteConfig(
+                ApiProviderType.OPENAI_CODEX,
+                apiKey = "",
+                endpoint = "https://chatgpt.com/backend-api/codex/responses",
+            ),
+        )
+    }
+
+    @Test
+    fun codexWithOAuthLogin_doesNotRequireApiKey() {
+        val result = ChatConfigReadiness.evaluate(
+            config = remoteConfig(
+                ApiProviderType.OPENAI_CODEX,
+                apiKey = "",
+                endpoint = "https://chatgpt.com/backend-api/codex/responses",
+            ),
+            modelIndex = 0,
+            registeredPluginProviderIds = emptySet(),
+            codexAuthenticated = true,
+        )
+        assertTrue(result.isReady)
     }
 
     @Test

@@ -24,6 +24,9 @@ data class ModelConfigBackup(
 enum class ApiProviderType {
         OPENAI, // OpenAI (GPT系列)
         OPENAI_RESPONSES, // OpenAI Responses API
+        OPENAI_CODEX, // OpenAI Codex（ChatGPT OAuth）
+        GROK_ACCOUNT, // Grok 账户 OAuth
+        GOOGLE_ANTIGRAVITY, // Google Antigravity 账户 OAuth
         OPENAI_RESPONSES_GENERIC, // OpenAI Responses通用（自定义端点）
         OPENAI_GENERIC, // OpenAI通用（自定义端点）
         ANTHROPIC, // Anthropic (Claude系列)
