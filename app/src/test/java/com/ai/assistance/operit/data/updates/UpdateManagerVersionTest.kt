@@ -9,8 +9,8 @@ class UpdateManagerVersionTest {
     fun personalReleaseOnNewUpstreamBaseIsNewerThanPreviousRelease() {
         assertTrue(
             UpdateManager.compareVersions(
-                "1.12.1-ry.1",
-                "1.12.0+4-ry.1"
+                "1.12.1-ry.2",
+                "1.12.0+4-ry.6"
             ) > 0
         )
     }
@@ -20,8 +20,29 @@ class UpdateManagerVersionTest {
         assertEquals(
             0,
             UpdateManager.compareVersions(
-                "v1.12.1-ry.1",
-                "1.12.1-ry.1"
+                "v1.12.1-ry.2",
+                "1.12.1-ry.2"
+            )
+        )
+    }
+
+    @Test
+    fun compatibilityBridgeIsNewerThanLegacyPersonalRelease() {
+        assertTrue(
+            UpdateManager.compareVersions(
+                "1.12.1+0-ry.2",
+                "1.12.0+4-ry.6"
+            ) > 0
+        )
+    }
+
+    @Test
+    fun compatibilityBridgeMatchesPackagedPersonalVersion() {
+        assertEquals(
+            0,
+            UpdateManager.compareVersions(
+                "1.12.1+0-ry.2",
+                "1.12.1-ry.2"
             )
         )
     }
@@ -30,8 +51,8 @@ class UpdateManagerVersionTest {
     fun personalRevisionOrdersReleasesOnSameUpstreamBase() {
         assertTrue(
             UpdateManager.compareVersions(
-                "1.12.1-ry.2",
-                "1.12.1-ry.1"
+                "1.12.1-ry.3",
+                "1.12.1-ry.2"
             ) > 0
         )
     }
