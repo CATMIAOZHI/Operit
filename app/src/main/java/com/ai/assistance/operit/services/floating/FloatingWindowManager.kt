@@ -39,6 +39,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.ai.assistance.operit.ui.theme.LocalBackgroundPlaybackEnabled
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -56,6 +60,15 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
+import androidx.core.content.ContextCompat
+import com.ai.assistance.operit.pet.FloatingPetEntry
+import com.ai.assistance.operit.pet.FloatingPetEntryMode
+import com.ai.assistance.operit.pet.PetCompanionService
+import com.ai.assistance.operit.pet.PetPreferences
+import com.ai.assistance.operit.pet.isReady
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -112,11 +125,25 @@ class FloatingWindowManager(
     private var sizeAnimator: ValueAnimator? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingImeFocusRunnable: Runnable? = null
+    private data class WindowResize(
+        val width: androidx.compose.ui.unit.Dp,
+        val height: androidx.compose.ui.unit.Dp,
+        val anchorRight: Boolean,
+    )
+    private var pendingWindowSize: WindowResize? = null
+    private val resizeFrame = Runnable { applyPendingWindowSize() }
     private var focusDismissOverlayRequested: Boolean = false
-    private var windowDisplayEnabled: Boolean = true
-    private var windowPersistentHidden: Boolean = false
+    private var windowDisplayEnabled by mutableStateOf(true)
+    private var windowPersistentHidden by mutableStateOf(false)
     private var indicatorDisplayEnabled: Boolean = true
     private var indicatorPersistentEnabled: Boolean = false
+
+    private val petPreferences = PetPreferences.get(context)
+    private val entryObserver = lifecycleOwner.lifecycleScope.launch {
+        combine(petPreferences.usePetEntry, petPreferences.settings) { _, _ -> Unit }.collect {
+            if (isViewAdded) refreshWindowAndIndicatorVisibility()
+        }
+    }
 
     private fun cancelFocusBeforeExit() {
         val view = composeView ?: return
@@ -154,7 +181,7 @@ class FloatingWindowManager(
 
     private fun resolveSoftInputModeForMode(mode: FloatingMode): Int {
         return when (mode) {
-            FloatingMode.FULLSCREEN -> WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+            FloatingMode.FULLSCREEN, FloatingMode.WINDOW -> WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
             else -> WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED
         }
     }
@@ -171,12 +198,17 @@ class FloatingWindowManager(
 
             composeView =
                     ComposeView(context).apply {
+                        visibility = View.GONE
                         setViewTreeLifecycleOwner(lifecycleOwner)
                         setViewTreeViewModelStoreOwner(viewModelStoreOwner)
                         setViewTreeSavedStateRegistryOwner(savedStateRegistryOwner)
 
+                        viewTreeObserver.addOnGlobalLayoutListener {
+                            fitWindowHeightAboveIme(this)
+                        }
                         setContent {
                             FloatingWindowTheme(
+                                    followAppTheme = true,
                                     colorScheme = callback.getColorScheme(),
                                     typography = callback.getTypography()
                             ) { FloatingChatUi() }
@@ -186,6 +218,7 @@ class FloatingWindowManager(
             val params = createLayoutParams()
             windowManager.addView(composeView, params)
             isViewAdded = true
+            refreshWindowAndIndicatorVisibility()
             AppLogger.d(TAG, "Floating view added at (${params.x}, ${params.y})")
             return true
         } catch (e: Exception) {
@@ -195,6 +228,9 @@ class FloatingWindowManager(
     }
 
     fun destroy() {
+        entryObserver.cancel()
+        FloatingPetEntry.mode.value = FloatingPetEntryMode.NONE
+        finishWindowResize()
         hideStatusIndicator()
         if (isViewAdded) {
             composeView?.let {
@@ -268,6 +304,9 @@ class FloatingWindowManager(
 
     @Composable
     private fun FloatingChatUi() {
+        CompositionLocalProvider(
+            LocalBackgroundPlaybackEnabled provides (!windowPersistentHidden && windowDisplayEnabled)
+        ) {
         FloatingChatWindow(
                 messages = callback.getMessages(),
                 width = state.windowWidth.value,
@@ -282,18 +321,15 @@ class FloatingWindowManager(
                     cancelFocusBeforeExit()
                     callback.onClose()
                 },
-                onResize = { newWidth, newHeight ->
-                    state.windowWidth.value = newWidth
-                    state.windowHeight.value = newHeight
-                    updateWindowSizeInLayoutParams()
-                    callback.saveState()
+                onResize = { newWidth, newHeight, anchorRight ->
+                    queueWindowResize(newWidth, newHeight, anchorRight)
                 },
                 currentMode = state.currentMode.value,
                 previousMode = state.previousMode,
                 ballSize = state.ballSize.value,
                 onModeChange = { newMode -> switchMode(newMode) },
                 onMove = { dx, dy, scale -> onMove(dx, dy, scale) },
-                saveWindowState = { callback.saveState() },
+                saveWindowState = { finishWindowResize(); callback.saveState() },
                 onSendMessage = { message, promptType ->
                     callback.onSendMessage(message, promptType)
                 },
@@ -306,6 +342,12 @@ class FloatingWindowManager(
                 windowState = state,
                 inputProcessingState = callback.getInputProcessingState()
         )
+        }
+    }
+
+
+    fun minimizeToPet() {
+        switchMode(FloatingMode.BALL)
     }
 
     fun setFloatingWindowVisible(visible: Boolean) {
@@ -336,9 +378,38 @@ class FloatingWindowManager(
         val currentMode = state.currentMode.value
         val view = composeView
 
-        val windowVisible = !windowPersistentHidden && windowDisplayEnabled
+        val entryRequested = isViewAdded && !windowPersistentHidden && windowDisplayEnabled
+        var usePet = entryRequested && currentMode == FloatingMode.BALL &&
+            petPreferences.usePetEntry.value && petPreferences.settings.value.isReady
+        if (usePet && FloatingPetEntry.mode.value != FloatingPetEntryMode.PET) {
+            try {
+                // Set the state before starting the service so its first reconcile keeps it alive.
+                FloatingPetEntry.mode.value = FloatingPetEntryMode.PET
+                ContextCompat.startForegroundService(context, android.content.Intent(context, PetCompanionService::class.java))
+            } catch (error: RuntimeException) {
+                AppLogger.e(TAG, "Unable to show pet entry", error)
+                usePet = false
+            }
+        }
+        FloatingPetEntry.mode.value = when {
+            !isViewAdded -> FloatingPetEntryMode.NONE
+            !entryRequested -> FloatingPetEntryMode.HIDDEN
+            usePet -> FloatingPetEntryMode.PET
+            currentMode == FloatingMode.BALL || currentMode == FloatingMode.VOICE_BALL -> FloatingPetEntryMode.LEGACY_BALL
+            else -> FloatingPetEntryMode.CHAT_WINDOW
+        }
+        val windowVisible = entryRequested && !usePet
+        AIForegroundService.setWakeListeningSuspendedForFloatingFullscreen(
+            context.applicationContext,
+            windowVisible && (currentMode == FloatingMode.FULLSCREEN || currentMode == FloatingMode.SCREEN_OCR),
+        )
 
         view?.let { v ->
+            if (usePet) {
+                // GONE does not dispose Compose. Cancel the outgoing conversation's
+                // focus/scroll jobs before hiding and resizing its unplaced parent.
+                v.disposeComposition()
+            }
             v.visibility = if (windowVisible) View.VISIBLE else View.GONE
             if (windowVisible) {
                 updateViewLayout { params ->
@@ -352,7 +423,7 @@ class FloatingWindowManager(
         val indicatorShouldShow = when {
             !indicatorDisplayEnabled && !indicatorPersistentEnabled -> false
             indicatorPersistentEnabled -> true
-            else -> !windowVisible &&
+            else -> !windowVisible && !usePet &&
                     (currentMode == FloatingMode.FULLSCREEN || currentMode == FloatingMode.WINDOW)
         }
 
@@ -405,6 +476,7 @@ class FloatingWindowManager(
 
             setContent {
                 FloatingWindowTheme(
+                    followAppTheme = true,
                     colorScheme = callback.getColorScheme(),
                     typography = callback.getTypography()
                 ) {
@@ -591,6 +663,22 @@ class FloatingWindowManager(
         params: WindowManager.LayoutParams,
         enabled: Boolean
     ) {
+        val conversation = state.currentMode.value == FloatingMode.WINDOW || state.currentMode.value == FloatingMode.FULLSCREEN
+        if (conversation) {
+            // Fit the actual overlay to system bars and IME once. Compose must not subtract
+            // the same overlay insets again (on-device this collapsed the entire composer).
+            params.flags = params.flags and WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS.inv() and
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN.inv()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                params.setFitInsetsTypes(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.ime())
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // OCR uses screen coordinates; do not carry the chat window's IME fitting into it.
+            params.setFitInsetsTypes(
+                if (state.currentMode.value == FloatingMode.SCREEN_OCR) 0
+                else android.view.WindowInsets.Type.systemBars()
+            )
+        }
         if (!enabled) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             params.layoutInDisplayCutoutMode =
@@ -641,14 +729,72 @@ class FloatingWindowManager(
         return x <= tolerance || x >= screenWidth - width - tolerance
     }
 
-    private fun updateWindowSizeInLayoutParams() {
+    private fun fitWindowHeightAboveIme(view: View) {
+        if (state.currentMode.value != FloatingMode.WINDOW || state.isTransitioning) return
+        val params = view.layoutParams as? WindowManager.LayoutParams ?: return
+        val preferredHeight = (state.windowHeight.value.value *
+            context.resources.displayMetrics.density * state.windowScale.value).toInt()
+        val imeVisible = androidx.core.view.ViewCompat.getRootWindowInsets(view)
+            ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true
+        val visibleFrame = android.graphics.Rect()
+        view.getWindowVisibleDisplayFrame(visibleFrame)
+        // A fixed-size overlay can be clipped by WM's IME fitting without remeasuring its
+        // content. Resize the actual host temporarily, leaving the saved window size intact.
+        val height = if (imeVisible && !visibleFrame.isEmpty) {
+            minOf(preferredHeight, visibleFrame.height())
+        } else preferredHeight
+        if (params.height != height) {
+            params.height = height
+            windowManager.updateViewLayout(view, params)
+        }
+    }
+
+    private fun queueWindowResize(
+        width: androidx.compose.ui.unit.Dp,
+        height: androidx.compose.ui.unit.Dp,
+        anchorRight: Boolean,
+    ) {
+        val view = composeView ?: return
+        if (pendingWindowSize == null) view.postOnAnimation(resizeFrame)
+        pendingWindowSize = WindowResize(width, height, anchorRight)
+    }
+
+    private fun applyPendingWindowSize() {
+        val size = pendingWindowSize ?: return
+        pendingWindowSize = null
+        if (state.windowWidth.value == size.width && state.windowHeight.value == size.height) return
+        state.windowWidth.value = size.width
+        state.windowHeight.value = size.height
+        updateWindowSizeInLayoutParams(anchorRight = size.anchorRight)
+    }
+
+    private fun finishWindowResize() {
+        composeView?.removeCallbacks(resizeFrame)
+        applyPendingWindowSize()
+    }
+
+    private fun updateWindowSizeInLayoutParams(anchorRight: Boolean = false) {
         updateViewLayout { params ->
+            val oldWidth = params.width
             val density = context.resources.displayMetrics.density
             val scale = state.windowScale.value
             val widthDp = state.windowWidth.value
             val heightDp = state.windowHeight.value
             params.width = (widthDp.value * density * scale).toInt()
-            params.height = (heightDp.value * density * scale).toInt()
+            if (anchorRight) {
+                // Move the left edge with the size update in the same WM frame.
+                params.x += oldWidth - params.width
+                state.x = params.x
+            }
+            val preferredHeight = (heightDp.value * density * scale).toInt()
+            val view = composeView
+            val visibleFrame = android.graphics.Rect()
+            view?.getWindowVisibleDisplayFrame(visibleFrame)
+            val imeVisible = view != null && androidx.core.view.ViewCompat.getRootWindowInsets(view)
+                ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true
+            params.height = if (state.currentMode.value == FloatingMode.WINDOW && imeVisible && !visibleFrame.isEmpty) {
+                minOf(preferredHeight, visibleFrame.height())
+            } else preferredHeight
         }
     }
 
@@ -675,8 +821,9 @@ class FloatingWindowManager(
         return Pair(newX, newY)
     }
 
-    private fun switchMode(newMode: FloatingMode) {
+    fun switchMode(newMode: FloatingMode) {
         if (state.isTransitioning || state.currentMode.value == newMode) return
+        finishWindowResize()
         state.isTransitioning = true
 
         if (newMode == FloatingMode.BALL || newMode == FloatingMode.VOICE_BALL) {
@@ -732,7 +879,11 @@ class FloatingWindowManager(
             }
         }
 
+        val petTransition = FloatingPetEntry.mode.value == FloatingPetEntryMode.PET ||
+            (newMode == FloatingMode.BALL && petPreferences.usePetEntry.value && petPreferences.settings.value.isReady)
+        state.petModeTransition.value = petTransition
         state.currentMode.value = newMode
+        if (newMode == FloatingMode.BALL && petTransition) refreshWindowAndIndicatorVisibility()
         if (newMode != FloatingMode.WINDOW) {
             pendingImeFocusRunnable?.let { mainHandler.removeCallbacks(it) }
             pendingImeFocusRunnable = null
@@ -851,8 +1002,8 @@ class FloatingWindowManager(
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                         WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                 TargetParams(
-                    screenWidth,
-                    screenHeight,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
                     0,
                     0,
                     flags,
@@ -896,7 +1047,7 @@ class FloatingWindowManager(
                                 state.previousMode == FloatingMode.VOICE_BALL) ||
                                (newMode == FloatingMode.BALL || newMode == FloatingMode.VOICE_BALL)
         
-        if (isBallTransition) {
+        if (isBallTransition && !petTransition) {
             // 球模式切换：需要与 Compose AnimatedContent 动画同步
             val isToBall = newMode == FloatingMode.BALL || newMode == FloatingMode.VOICE_BALL
             val isFromBall = state.previousMode == FloatingMode.BALL || state.previousMode == FloatingMode.VOICE_BALL
@@ -993,6 +1144,7 @@ class FloatingWindowManager(
             // 立即标记过渡完成
             state.isTransitioning = false
         }
+        refreshWindowAndIndicatorVisibility()
     }
 
     private fun onMove(dx: Float, dy: Float, scale: Float) {

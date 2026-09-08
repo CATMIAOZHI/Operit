@@ -18,73 +18,14 @@ import com.ai.assistance.operit.ui.theme.rainyBaseColorScheme
 fun FloatingWindowTheme(
     colorScheme: ColorScheme? = null,
     typography: Typography? = null,
+    followAppTheme: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val finalColorScheme = colorScheme ?: rainyBaseColorScheme(darkTheme = false)
+    val appStyle = if (followAppTheme) com.ai.assistance.operit.ui.theme.rememberAppThemeStyle() else null
+    val finalColorScheme = appStyle?.colorScheme ?: colorScheme ?: rainyBaseColorScheme(darkTheme = androidx.compose.foundation.isSystemInDarkTheme())
     
-    // 创建调整大小后的默认Typography，如果没有传入typography参数则使用此默认值
-    val defaultSmallTypography = Typography(
-        // 正文大字号
-        bodyLarge = TextStyle(
-            fontFamily = FontFamily.Default,
-            fontWeight = FontWeight.Normal,
-            fontSize = 14.sp,
-            lineHeight = 18.sp,
-            letterSpacing = 0.5.sp
-        ),
-        // 正文中字号 
-        bodyMedium = TextStyle(
-            fontFamily = FontFamily.Default,
-            fontWeight = FontWeight.Normal,
-            fontSize = 12.sp,
-            lineHeight = 16.sp,
-            letterSpacing = 0.25.sp
-        ),
-        // 正文小字号 
-        bodySmall = TextStyle(
-            fontFamily = FontFamily.Default,
-            fontWeight = FontWeight.Normal,
-            fontSize = 10.sp,
-            lineHeight = 14.sp,
-            letterSpacing = 0.4.sp
-        ),
-        // 标签小字号
-        labelSmall = TextStyle(
-            fontFamily = FontFamily.Default,
-            fontWeight = FontWeight.Medium,
-            fontSize = 10.sp,
-            lineHeight = 14.sp,
-            letterSpacing = 0.5.sp
-        ),
-        // 标题小字号
-        titleSmall = TextStyle(
-            fontFamily = FontFamily.Default,
-            fontWeight = FontWeight.Medium,
-            fontSize = 14.sp,
-            lineHeight = 18.sp,
-            letterSpacing = 0.5.sp
-        ),
-        // 按钮文本样式
-        labelMedium = TextStyle(
-            fontFamily = FontFamily.Default,
-            fontWeight = FontWeight.Medium,
-            fontSize = 12.sp,
-            lineHeight = 16.sp,
-            letterSpacing = 0.5.sp
-        ),
-        // 按钮大文本样式
-        labelLarge = TextStyle(
-            fontFamily = FontFamily.Default,
-            fontWeight = FontWeight.Medium,
-            fontSize = 14.sp,
-            lineHeight = 18.sp,
-            letterSpacing = 0.5.sp
-        )
-    )
+    val finalTypography = appStyle?.typography ?: typography ?: com.ai.assistance.operit.ui.theme.Typography
 
-    // 优先使用传入的typography，如果没有则使用默认的小型typography
-    val finalTypography = typography ?: defaultSmallTypography
-    
     MaterialTheme(
         colorScheme = finalColorScheme,
         typography = finalTypography,

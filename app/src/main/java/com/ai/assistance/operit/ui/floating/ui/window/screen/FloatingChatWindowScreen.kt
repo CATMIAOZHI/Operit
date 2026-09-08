@@ -56,6 +56,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import com.ai.assistance.operit.ui.features.chat.components.ChatAppearance
+import com.ai.assistance.operit.ui.features.chat.components.ChatStyle
+import com.ai.assistance.operit.ui.features.chat.components.rememberChatAppearance
+import com.ai.assistance.operit.ui.features.chat.components.MessageFooterBar
+import com.ai.assistance.operit.ui.features.chat.components.style.bubble.BubbleStyleChatMessage
 import com.ai.assistance.operit.ui.features.chat.components.AttachmentChip
 import com.ai.assistance.operit.ui.features.chat.components.ChatMessageHeightMemory
 import com.ai.assistance.operit.ui.features.chat.components.ScrollToBottomButton
@@ -93,24 +98,27 @@ import java.util.UUID
 /** 渲染悬浮窗的窗口模式界面 - 简化版 */
 @Composable
 fun FloatingChatWindowMode(floatContext: FloatContext) {
-    val viewModel = rememberFloatingChatWindowModeViewModel(floatContext)
     ReportFloatingChatViewEffect(floatContext)
-
-    LaunchedEffect(
-        floatContext.windowWidthState,
-        floatContext.windowHeightState,
-        floatContext.windowScale
-    ) {
-        viewModel.syncWindowState()
+    val fullscreen = floatContext.currentMode == FloatingMode.FULLSCREEN
+    val pendingVoice = floatContext.chatService?.hasPendingVoiceChat() == true
+    LaunchedEffect(fullscreen, pendingVoice) {
+        if (fullscreen && pendingVoice) {
+            floatContext.voiceAutoTimeout = true
+            floatContext.voiceMode = true
+            floatContext.chatService?.consumeAutoEnterVoiceChat()
+        }
     }
-
-    FloatingChatWindowContent(floatContext, viewModel)
+    if (fullscreen && floatContext.voiceMode) {
+        com.ai.assistance.operit.ui.floating.ui.fullscreen.FloatingFullscreenMode(floatContext)
+    } else {
+        FloatingConversationSurface(floatContext, fullscreen)
+    }
 }
 
 @Composable
 private fun ReportFloatingChatViewEffect(floatContext: FloatContext) {
     val service = floatContext.chatService ?: return
-    val chatCore = remember(service) { service.getChatCore() }
+    val chatCore = service.getChatCore()
     val chatHistories = chatCore.chatHistories.collectAsState(initial = emptyList()).value
     val currentChatId = chatCore.currentChatId.collectAsState(initial = null).value
     val currentChat = remember(chatHistories, currentChatId) {
@@ -212,16 +220,14 @@ private fun FloatingChatWindowContent(
 }
 
 @Composable
-private fun RecentChatSelectorOverlay(
+internal fun RecentChatSelectorOverlay(
     floatContext: FloatContext,
     visible: Boolean,
     onDismiss: () -> Unit
 ) {
     if (!visible) return
 
-    val chatCore = remember(floatContext.chatService) {
-        floatContext.chatService?.getChatCore()
-    }
+    val chatCore = floatContext.chatService?.getChatCore()
     val chatHistoriesState = chatCore?.chatHistories?.collectAsState(initial = emptyList())
     val currentChatIdState = chatCore?.currentChatId?.collectAsState(initial = null)
     val chatHistories = chatHistoriesState?.value ?: emptyList()
@@ -668,13 +674,11 @@ private fun ColumnScope.ChatContentArea(
 /** 聊天消息视图 */
 @SuppressLint("SuspiciousIndentation")
 @Composable
-private fun ChatMessagesView(
+internal fun ChatMessagesView(
     floatContext: FloatContext,
     _viewModel: FloatingChatWindowModeViewModel
 ) {
-    val chatCore = remember(floatContext.chatService) {
-        floatContext.chatService?.getChatCore()
-    }
+    val chatCore = floatContext.chatService?.getChatCore()
     val currentChatIdState =
         chatCore?.currentChatId?.collectAsState(initial = null)
             ?: remember { mutableStateOf<String?>(null) }
@@ -691,7 +695,7 @@ private fun ChatMessagesView(
     val hasOlderDisplayHistory = hasOlderDisplayHistoryState.value
     val hasNewerDisplayHistory = hasNewerDisplayHistoryState.value
     val isLoadingDisplayWindow = isLoadingDisplayWindowState.value
-    val scrollState = rememberLazyListState()
+    val scrollState = floatContext.messageListState
     val messagesCount = floatContext.messages.size
     val displayMessages =
         floatContext.messages
@@ -700,18 +704,23 @@ private fun ChatMessagesView(
     val messageHeightMemory = rememberChatMessageHeightMemory(displayMessages)
     val coroutineScope = rememberCoroutineScope()
     val lastMessage = floatContext.messages.lastOrNull()
-    val userMessageColor = MaterialTheme.colorScheme.primaryContainer
-    val aiMessageColor = MaterialTheme.colorScheme.surface
-    val userTextColor = MaterialTheme.colorScheme.onPrimaryContainer
-    val aiTextColor = MaterialTheme.colorScheme.onSurface
-    val systemMessageColor = MaterialTheme.colorScheme.surfaceVariant
-    val systemTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val thinkingBackgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-    val thinkingTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val appearance = rememberChatAppearance()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val preferences = remember(context) { UserPreferencesManager.getInstance(context) }
+    val showTokenStats by preferences.showMessageTokenStats.collectAsState(initial = true)
+    val showTimingStats by preferences.showMessageTimingStats.collectAsState(initial = true)
+    val showTimestamp by preferences.showMessageTimestamp.collectAsState(initial = true)
 
     // 滚动状态
-    var autoScrollToBottom by remember { mutableStateOf(true) }
-    val onAutoScrollToBottomChange = remember { { it: Boolean -> autoScrollToBottom = it } }
+    val autoScrollToBottom = floatContext.autoScrollToBottom
+    val onAutoScrollToBottomChange = remember { { it: Boolean -> floatContext.autoScrollToBottom = it } }
+    LaunchedEffect(currentChatId) {
+        if (floatContext.displayedChatId != currentChatId) {
+            floatContext.displayedChatId = currentChatId
+            floatContext.autoScrollToBottom = true
+            scrollState.scrollToItem(0)
+        }
+    }
 
     LaunchedEffect(
         messagesCount,
@@ -732,6 +741,7 @@ private fun ChatMessagesView(
     val inputProcessingState = floatContext.inputProcessingState.value
     val isLoading =
         inputProcessingState !is InputProcessingState.Idle &&
+            inputProcessingState !is InputProcessingState.Error &&
             inputProcessingState !is InputProcessingState.Completed
     val showLoadingIndicator =
         isLoading &&
@@ -761,13 +771,13 @@ private fun ChatMessagesView(
                 .fillMaxSize(),
             state = scrollState,
             reverseLayout = true,
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)
+            contentPadding = PaddingValues(horizontal = appearance.chatAreaHorizontalPadding.dp, vertical = 16.dp)
         ) {
             itemsIndexed(
                 items = renderItems,
                 key = { renderIndex, item ->
                     when (item) {
-                        is com.ai.assistance.operit.data.model.ChatMessage -> "${renderIndex}_${item.timestamp}"
+                        is com.ai.assistance.operit.data.model.ChatMessage -> "${item.sender}:${item.timestamp}"
                         FloatingLoadOlderItem -> "floating_load_older_history"
                         FloatingLoadNewerItem -> "floating_load_newer_history"
                         FloatingLoadingItem -> "floating_loading_indicator"
@@ -825,21 +835,16 @@ private fun ChatMessagesView(
                             (if (hasNewerDisplayHistory) 1 else 0) +
                                 (if (showLoadingIndicator) 1 else 0)
                         val displayIndex = renderIndex - messageListOffset
-                        val actualIndex = messagesCount - 1 - displayIndex
+                        val actualIndex = floatContext.messages.indexOfFirst { it.timestamp == item.timestamp && it.sender == item.sender }
 
                         FloatingMessageItem(
                             index = actualIndex,
                             message = item,
-                            userMessageColor = userMessageColor,
-                            aiMessageColor = aiMessageColor,
-                            userTextColor = userTextColor,
-                            aiTextColor = aiTextColor,
-                            systemMessageColor = systemMessageColor,
-                            systemTextColor = systemTextColor,
-                            thinkingBackgroundColor = thinkingBackgroundColor,
-                            thinkingTextColor = thinkingTextColor,
+                            appearance = appearance,
                             heightMemory = messageHeightMemory,
-                            onSelectMessageToEdit = null,
+                            showTokenStats = showTokenStats,
+                            showTimingStats = showTimingStats,
+                            showTimestamp = showTimestamp,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                     }
@@ -889,34 +894,69 @@ private data object FloatingLoadingItem
 private fun FloatingMessageItem(
     index: Int,
     message: ChatMessage,
-    userMessageColor: Color,
-    aiMessageColor: Color,
-    userTextColor: Color,
-    aiTextColor: Color,
-    systemMessageColor: Color,
-    systemTextColor: Color,
-    thinkingBackgroundColor: Color,
-    thinkingTextColor: Color,
+    appearance: ChatAppearance,
     heightMemory: ChatMessageHeightMemory,
-    onSelectMessageToEdit: ((Int, ChatMessage, String) -> Unit)?,
+    showTokenStats: Boolean,
+    showTimingStats: Boolean,
+    showTimestamp: Boolean,
 ) {
-    CursorStyleChatMessage(
-        message = message,
-        userMessageColor = userMessageColor,
-        aiMessageColor = aiMessageColor,
-        userTextColor = userTextColor,
-        aiTextColor = aiTextColor,
-        systemMessageColor = systemMessageColor,
-        systemTextColor = systemTextColor,
-        thinkingBackgroundColor = thinkingBackgroundColor,
-        thinkingTextColor = thinkingTextColor,
-        heightMemory = heightMemory,
-        index = index,
-        enableDialogs = false,
-        onEditSummary = { summaryMessage ->
-            onSelectMessageToEdit?.invoke(index, summaryMessage, "summary")
-        },
-    )
+    // A reverse LazyColumn reverses separate roots within an item as well.
+    Column(Modifier.fillMaxWidth()) {
+        with(appearance) {
+            when (chatStyle) {
+                ChatStyle.CURSOR -> CursorStyleChatMessage(
+                    message = message,
+                    userMessageColor = userMessageColor,
+                    aiMessageColor = aiMessageColor,
+                    userTextColor = userTextColor,
+                    aiTextColor = aiTextColor,
+                    systemMessageColor = systemMessageColor,
+                    systemTextColor = systemTextColor,
+                    thinkingBackgroundColor = thinkingBackgroundColor,
+                    thinkingTextColor = thinkingTextColor,
+                    userMessageLiquidGlassEnabled = cursorUserBubbleLiquidGlass,
+                    userMessageWaterGlassEnabled = cursorUserBubbleWaterGlass,
+                    heightMemory = heightMemory,
+                    index = index,
+                    enableDialogs = false,
+                )
+                ChatStyle.BUBBLE -> BubbleStyleChatMessage(
+                    message = message,
+                    userMessageColor = userMessageColor,
+                    aiMessageColor = aiMessageColor,
+                    userTextColor = userTextColor,
+                    aiTextColor = aiTextColor,
+                    systemMessageColor = systemMessageColor,
+                    systemTextColor = systemTextColor,
+                    userMessageLiquidGlassEnabled = bubbleUserBubbleLiquidGlass,
+                    userMessageWaterGlassEnabled = bubbleUserBubbleWaterGlass,
+                    aiMessageLiquidGlassEnabled = bubbleAiBubbleLiquidGlass,
+                    aiMessageWaterGlassEnabled = bubbleAiBubbleWaterGlass,
+                    userBubbleImageStyle = bubbleUserImageStyle,
+                    aiBubbleImageStyle = bubbleAiImageStyle,
+                    bubbleUserRoundedCornersEnabled = bubbleUserRoundedCornersEnabled,
+                    bubbleAiRoundedCornersEnabled = bubbleAiRoundedCornersEnabled,
+                    bubbleUserContentPaddingLeft = bubbleUserContentPaddingLeft,
+                    bubbleUserContentPaddingRight = bubbleUserContentPaddingRight,
+                    bubbleAiContentPaddingLeft = bubbleAiContentPaddingLeft,
+                    bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
+                    heightMemory = heightMemory,
+                    index = index,
+                    enableDialogs = false,
+                )
+            }
+        }
+        if (message.sender == "ai") {
+            MessageFooterBar(
+                message = message,
+                showMessageTokenStats = showTokenStats,
+                showMessageTimingStats = showTimingStats,
+                showMessageTimestamp = showTimestamp,
+                allowVariantSelection = false,
+                onSelectVariant = {},
+            )
+        }
+    }
 }
 
 /** 输入对话框视图 */
@@ -1340,7 +1380,7 @@ private fun BoxScope.BottomResizeHandle(
 }
 
 @Composable
-private fun ProcessingStatusIndicator(floatContext: FloatContext) {
+internal fun ProcessingStatusIndicator(floatContext: FloatContext) {
     val state = floatContext.inputProcessingState.value
     
     if (state !is InputProcessingState.Idle && state !is InputProcessingState.Completed) {
@@ -1370,7 +1410,7 @@ private fun ProcessingStatusIndicator(floatContext: FloatContext) {
             modifier = Modifier
                 .fillMaxWidth()
                 .background(backgroundColor)
-                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -1385,9 +1425,10 @@ private fun ProcessingStatusIndicator(floatContext: FloatContext) {
                 }
                 Text(
                     text = text,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelMedium,
                     color = contentColor,
-                    maxLines = 1
+                    maxLines = if (state is InputProcessingState.Error) 3 else 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

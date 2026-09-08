@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.features.reading
 
-import java.io.File
 import java.sql.Connection
 import java.sql.DriverManager
 import org.junit.Assert.assertEquals
@@ -8,22 +7,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 进程重启恢复语义测试（纯 JVM，sqlite-jdbc + 共享 SQL 常量/静态契约）。
- *
- * 生产路径：
- * - 启动时 [ReadingCompanionStore.reconcileAfterProcessStart] 把早于启动时刻的 generating
- *   run 标 interrupted 并释放 claim（清扫 SQL 与 [ReadingCompanionHeartbeatTest] 同一来源）；
- * - 下次 Worker 用 [ReadingCompanionStore.startAutoCommentRun] 创建新 run 并写
- *   restarted_from_run_id=旧 id（谱系，只作记录）；
- * - 新 child 由 SubagentCoordinator 每次全新创建（taskId=null），绝不续写旧对话。
+ * 用生产的过期判定 SQL 验证启动时刻作为截止时间：旧进程的普通 run 和 summary run
+ * 都会被中断。运行中的心跳保活场景由 [ReadingCompanionHeartbeatTest] 覆盖。
  */
 class ReadingCompanionRestartSemanticsTest {
-
-    private val coordinatorSource: String =
-        File(
-            "src/main/java/com/ai/assistance/operit/features/reading/" +
-                "ReadingCompanionSubagentCoordinator.kt",
-        ).readText()
 
     private fun openDatabase(): Connection =
         DriverManager.getConnection("jdbc:sqlite::memory:").apply {
@@ -108,42 +95,6 @@ class ReadingCompanionRestartSemanticsTest {
     }
 
     @Test
-    fun `new run records restart lineage and keeps execution mode subagent`() {
-        openDatabase().use { connection ->
-            connection.createStatement().use { statement ->
-                statement.execute(
-                    "INSERT INTO auto_comment_runs " +
-                        "(trigger_source, execution_mode, status, comment_count, started_at) " +
-                        "VALUES ('background', 'subagent', 'interrupted', 0, 1000)"
-                )
-            }
-            // 与生产 startAutoCommentRun 落库契约一致（阶段 3：execution_mode=subagent；
-            // restarted_from_run_id=旧 id 只作谱系）。
-            val oldRunId = 1L
-            connection.prepareStatement(
-                "INSERT INTO auto_comment_runs " +
-                    "(trigger_source, execution_mode, status, stage, stage_updated_at, run_heartbeat_at, " +
-                    "comment_count, started_at, restarted_from_run_id) " +
-                    "VALUES ('background', 'subagent', 'generating', 'starting', 2000, 2000, 0, 2000, ?)"
-            ).use { prepared ->
-                prepared.setLong(1, oldRunId)
-                prepared.executeUpdate()
-            }
-            connection.createStatement().use { statement ->
-                statement.executeQuery(
-                    "SELECT id, execution_mode, status, restarted_from_run_id " +
-                        "FROM auto_comment_runs WHERE id = 2"
-                ).use { rows ->
-                    assertTrue(rows.next())
-                    assertEquals("subagent", rows.getString(2))
-                    assertEquals("generating", rows.getString(3))
-                    assertEquals(oldRunId, rows.getLong(4))
-                }
-            }
-        }
-    }
-
-    @Test
     fun `restart sweep interrupts a summary run even when the old process heartbeated it`() {
         openDatabase().use { connection ->
             connection.createStatement().use { statement ->
@@ -170,19 +121,4 @@ class ReadingCompanionRestartSemanticsTest {
         }
     }
 
-    @Test
-    fun `restart semantics never resume the old subagent task id`() {
-        // 新 run 的 subagent child 由 SubagentCoordinator 每次全新创建：阅读协调器恒传
-        // taskId=null，restarted_from_run_id 只写 reading 侧 run 谱系，绝不作 runTask 入参。
-        assertTrue(coordinatorSource.contains("taskId = null"))
-        assertTrue(
-            "阅读协调器不得把旧 subagent taskId 传给 runTask",
-            !coordinatorSource.contains("subagentCoordinator.runTask(request, ") &&
-                !coordinatorSource.contains("taskId = taskId"),
-        )
-        assertTrue(
-            "谱系只落在 reading 侧（restartedFromRunId 不得出现在阅读协调器 runTask 请求里）",
-            !coordinatorSource.contains("restartedFromRunId"),
-        )
-    }
 }

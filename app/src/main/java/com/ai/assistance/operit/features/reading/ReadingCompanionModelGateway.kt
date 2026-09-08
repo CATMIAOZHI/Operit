@@ -627,30 +627,28 @@ class ReadingCompanionModelGateway(
     suspend fun previewAutoCommentConfiguration(
         roleCardId: String,
     ): AutoCommentConfigurationPreview {
-        val requestContext = resolveAutoCommentRequestContext(
-            roleCardId = roleCardId,
-            runtime = null,
-        )
+        val role = resolveAutoCommentRole(roleCardId)
         val host = EnhancedAIService.getChatInstance(appContext, INTERNAL_CHAT_ID)
-        val config = host.getModelConfigForFunction(
-            functionType = FunctionType.CHAT,
-            chatModelConfigIdOverride = requestContext.modelConfigId,
-            chatModelIndexOverride = requestContext.modelIndex,
-        )
-        val providerType =
-            ApiProviderType.fromProviderTypeId(config.apiProviderTypeId)
-                ?: config.apiProviderType
-        return AutoCommentConfigurationPreview(
-            roleCardId = requestContext.roleCardId,
-            roleCardName = requestContext.roleCardName,
-            modelSource = requestContext.modelSource,
-            modelConfigId = config.id,
-            modelConfigName = config.name,
-            modelIndex = requestContext.modelIndex ?: 0,
-            provider = providerType.name,
-            model = config.modelName,
-            contextWindowTokens = effectiveContextWindowTokens(config),
-        )
+        val lease = host.acquireAIServiceLeaseForFunction(functionType = FunctionType.CHAT)
+        try {
+            val config = lease.modelConfig
+            val providerType =
+                ApiProviderType.fromProviderTypeId(config.apiProviderTypeId)
+                    ?: config.apiProviderType
+            return AutoCommentConfigurationPreview(
+                roleCardId = role.id,
+                roleCardName = role.name,
+                modelSource = MODEL_SOURCE_GLOBAL_CHAT,
+                modelConfigId = config.id,
+                modelConfigName = config.name,
+                modelIndex = lease.modelIndex,
+                provider = providerType.name,
+                model = config.modelName,
+                contextWindowTokens = effectiveContextWindowTokens(config),
+            )
+        } finally {
+            lease.close()
+        }
     }
 
     private suspend fun resolveAutoCommentRequestContext(

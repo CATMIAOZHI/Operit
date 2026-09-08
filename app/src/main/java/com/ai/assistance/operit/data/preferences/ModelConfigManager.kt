@@ -266,7 +266,8 @@ class ModelConfigManager(
                     modelName = config.modelName,
                     apiEndpoint = config.apiEndpoint,
                     apiProviderType = config.apiProviderType,
-                    apiProviderTypeId = config.apiProviderTypeId
+                    apiProviderTypeId = config.apiProviderTypeId,
+                    modelProtocolSettings = config.modelProtocolSettings,
             )
         }
     }
@@ -581,7 +582,8 @@ class ModelConfigManager(
             modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities>,
             enableGoogleSearch: Boolean,
             enableClaude1hPromptCache: Boolean,
-            enableToolCall: Boolean
+            enableToolCall: Boolean,
+            modelProtocolSettings: Map<String, com.ai.assistance.operit.data.model.ModelProtocolSettings>? = null,
     ): ModelConfigData {
         return updateConfigInternal(configId) {
             it.copy(
@@ -599,6 +601,8 @@ class ModelConfigManager(
                     enableDirectAudioProcessing = enableDirectAudioProcessing,
                     enableDirectVideoProcessing = enableDirectVideoProcessing,
                     modelMultimodalCapabilities = modelMultimodalCapabilities,
+                    modelProtocolSettings = (modelProtocolSettings ?: it.modelProtocolSettings)
+                        .filterKeys { model -> model in com.ai.assistance.operit.data.model.getModelList(modelName) },
                     enableGoogleSearch = enableGoogleSearch,
                     enableClaude1hPromptCache = enableClaude1hPromptCache,
                     enableToolCall = enableToolCall
@@ -1087,7 +1091,8 @@ class ModelConfigManager(
                     modelName = config.modelName,
                     apiEndpoint = config.apiEndpoint,
                     apiProviderType = config.apiProviderType,
-                    apiProviderTypeId = config.apiProviderTypeId
+                    apiProviderTypeId = config.apiProviderTypeId,
+                    modelProtocolSettings = config.modelProtocolSettings,
                 )
             }
 

@@ -277,7 +277,7 @@ internal object AutoCommentSupport {
                 reject(candidateNumber, listOf(REASON_DUPLICATE_ANCHOR))
                 return@forEachIndexed
             }
-            val text = item.optString("text").trim().take(MAX_COMMENT_LENGTH)
+            val text = item.optString("text").trim()
             if (text.isBlank()) {
                 reject(candidateNumber, listOf(REASON_EMPTY_TEXT))
                 return@forEachIndexed
@@ -513,7 +513,6 @@ internal object AutoCommentSupport {
         return null
     }
 
-    private const val MAX_COMMENT_LENGTH = 80
     private const val MAX_QUOTE_LENGTH = 120
     private const val MAX_KIND_LENGTH = 32
     private const val MAX_EVIDENCE_IDS = 8

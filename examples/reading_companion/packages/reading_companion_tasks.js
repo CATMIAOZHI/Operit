@@ -2,12 +2,12 @@
 {
   "name": "reading_companion_tasks",
   "display_name": {
-    "zh": "阅读伴侣生成任务：启动摘要或段评、查询进度、取消。",
-    "en": "Reading generation tasks: start summaries/commentary, inspect progress, cancel."
+    "zh": "阅读伴侣：任务",
+    "en": "Reading Companion: Tasks"
   },
   "description": {
-    "zh": "阅读伴侣生成任务：启动摘要或段评、查询进度、取消。",
-    "en": "Reading generation tasks: start summaries/commentary, inspect progress, cancel."
+    "zh": "阅读伴侣任务：缓存已下载旧章、生成摘要或段评、查询进度、暂停或取消。",
+    "en": "Reading tasks: cache downloaded chapters, generate summaries/commentary, inspect progress, pause or cancel."
   },
   "enabledByDefault": true,
   "category": "AI Reading Companion",
@@ -15,15 +15,15 @@
     {
       "name": "start_task",
       "description": {
-        "zh": "用户明确要求生成时使用。立即返回 task_id；任务固定书籍，在后台逐章执行。进程退出则中断，不自动重放。",
-        "en": "Use only for explicit generation requests. Returns task_id immediately, binds the book and runs chapters asynchronously. Process exit interrupts without automatic replay."
+        "zh": "用户要求生成或缓存旧章时使用。立即返回 task_id；任务固定书籍，在后台逐章执行。进程退出则中断，不自动重放。",
+        "en": "Use for explicit generation or chapter-cache requests. Returns task_id immediately, binds the book and runs chapters asynchronously. Process exit interrupts without automatic replay."
       },
       "parameters": [
         {
           "name": "kind",
           "description": {
-            "zh": "summary（摘要）或 commentary（段评）",
-            "en": "summary or commentary"
+            "zh": "summary（摘要）、commentary（段评）或 cache（缓存 Legado 已下载的已读旧章，不下载、不调用模型）",
+            "en": "summary, commentary, or cache (copy downloaded past chapters only; no download or model calls)"
           },
           "type": "string",
           "required": true
@@ -49,8 +49,8 @@
         {
           "name": "count",
           "description": {
-            "zh": "补缺数量：摘要 1～999，段评 1～10；regenerate 按起止范围生成，此值不缩小范围",
-            "en": "Fill count: summaries 1-999, commentary 1-10. regenerate uses the full explicit range instead of this count"
+            "zh": "cache 传 1，会扫描全部已读旧章；补缺数量：摘要 1～999，段评 1～10；regenerate 按起止范围生成，此值不缩小范围",
+            "en": "For cache pass 1; scans all past chapters. Fill count: summaries 1-999, commentary 1-10. regenerate uses the full explicit range instead of this count"
           },
           "type": "number",
           "required": true

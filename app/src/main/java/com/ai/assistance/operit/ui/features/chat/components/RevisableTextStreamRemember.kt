@@ -6,66 +6,96 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import com.ai.assistance.operit.util.stream.MutableSharedStream
+import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.stream.DisplayTextStream
+import com.ai.assistance.operit.util.stream.MutableSharedStreamImpl
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.TextStreamEventCarrier
+import com.ai.assistance.operit.util.stream.TextStreamEvent
 import com.ai.assistance.operit.util.stream.TextStreamEventType
 import com.ai.assistance.operit.util.stream.TextStreamRevisionTracker
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun rememberRevisableTextStream(sourceStream: Stream<String>?): Stream<String>? {
     val carrier = sourceStream as? TextStreamEventCarrier ?: return sourceStream
 
+    val initialDisplayStream = remember(sourceStream) {
+        DisplayTextStream()
+    }
     var displayStream by remember(sourceStream) {
-        mutableStateOf<Stream<String>?>(MutableSharedStream(replay = Int.MAX_VALUE))
+        mutableStateOf<Stream<String>>(initialDisplayStream)
     }
 
     LaunchedEffect(sourceStream) {
-        val tracker = TextStreamRevisionTracker()
-        var currentDisplayStream = MutableSharedStream<String>(replay = Int.MAX_VALUE)
-        var processedRevisionEventCount = 0
-        var processedReplayCharCount = 0
-        displayStream = currentDisplayStream
-
-        suspend fun drainDueRevisionEvents() {
-            val events = carrier.eventChannel.replayCache
-            while (processedRevisionEventCount < events.size) {
-                val event = events[processedRevisionEventCount]
-                if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
-                    break
-                }
-                processedRevisionEventCount++
-                when (event.eventType) {
-                    TextStreamEventType.SAVEPOINT -> tracker.savepoint(event.id)
-                    TextStreamEventType.ROLLBACK -> {
-                        val snapshot = tracker.rollback(event.id)?.toString() ?: continue
-                        val previousDisplayStream = currentDisplayStream
-                        val replacementStream =
-                            MutableSharedStream<String>(replay = Int.MAX_VALUE)
-                        if (snapshot.isNotEmpty()) {
-                            replacementStream.emit(snapshot)
-                        }
-                        currentDisplayStream = replacementStream
-                        displayStream = replacementStream
-                        previousDisplayStream.resetReplayCache()
-                    }
-                }
+        withContext(Dispatchers.Default) {
+            collectRevisableDisplayStream(sourceStream, carrier, initialDisplayStream) {
+                withContext(Dispatchers.Main.immediate) { displayStream = it }
             }
-        }
-
-        try {
-            sourceStream.collect { chunk ->
-                drainDueRevisionEvents()
-                tracker.append(chunk)
-                processedReplayCharCount += chunk.length
-                currentDisplayStream.emit(chunk)
-            }
-            drainDueRevisionEvents()
-        } finally {
-            currentDisplayStream.resetReplayCache()
-            displayStream = null
         }
     }
 
+    // Only the persisted final message (sourceStream == null) switches to static rendering.
+    // EOF can reach this observer before that message, while message.content is still stale.
     return displayStream
+}
+
+internal suspend fun collectRevisableDisplayStream(
+    sourceStream: Stream<String>,
+    carrier: TextStreamEventCarrier,
+    initialDisplayStream: DisplayTextStream,
+    onReplacement: suspend (Stream<String>) -> Unit,
+) {
+    val tracker = TextStreamRevisionTracker()
+    var currentDisplayStream = initialDisplayStream
+    var processedRevisionEventCount = 0
+    var processedReplayCharCount = 0
+
+    suspend fun drainDueRevisionEvents() {
+        val channel = carrier.eventChannel
+        val events = (channel as? MutableSharedStreamImpl<TextStreamEvent>)
+            ?.replayFrom(processedRevisionEventCount)
+            ?: channel.replayCache.drop(processedRevisionEventCount)
+        for (event in events) {
+            if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
+                break
+            }
+            processedRevisionEventCount++
+            when (event.eventType) {
+                TextStreamEventType.SAVEPOINT -> tracker.savepoint(event.id)
+                TextStreamEventType.ROLLBACK -> {
+                    val snapshot = tracker.rollback(event.id)?.toString() ?: continue
+                    val previousDisplayStream = currentDisplayStream
+                    val replacementStream =
+                        DisplayTextStream()
+                    if (snapshot.isNotEmpty()) {
+                        replacementStream.emit(snapshot)
+                    }
+                    currentDisplayStream = replacementStream
+                    onReplacement(replacementStream)
+                    previousDisplayStream.close()
+                }
+            }
+        }
+    }
+
+    var failure: Throwable? = null
+    try {
+        sourceStream.collect { chunk ->
+            drainDueRevisionEvents()
+            tracker.append(chunk)
+            processedReplayCharCount += chunk.length
+            currentDisplayStream.emit(chunk)
+        }
+        drainDueRevisionEvents()
+    } catch (error: Exception) {
+        failure = error
+        if (error is CancellationException) throw error
+        // The service owns the turn error; this observer must not crash the UI.
+        AppLogger.w("RevisableTextStream", "Display stream ended with an error", error)
+    } finally {
+        currentDisplayStream.close(failure)
+    }
 }

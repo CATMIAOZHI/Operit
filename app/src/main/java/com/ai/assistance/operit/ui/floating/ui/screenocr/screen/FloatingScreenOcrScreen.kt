@@ -68,20 +68,21 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.CircularProgressIndicator
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.AttachmentInfo
 import com.ai.assistance.operit.ui.floating.FloatContext
-import com.ai.assistance.operit.util.OCRUtils
+import com.ai.assistance.operit.util.OperitPaths
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import java.io.File
-import java.io.FileOutputStream
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.min
-import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.hypot
 
@@ -288,6 +289,7 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
 
     var screenshotBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var captureError by remember { mutableStateOf<String?>(null) }
+    var captureAttempt by remember { mutableStateOf(0) }
 
     val points = remember { mutableStateListOf<Offset>() }
     var selectionRect by remember { mutableStateOf<Rect?>(null) }
@@ -327,36 +329,50 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
             label = "glowPulse"
         )
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(captureAttempt) {
         captureError = null
         screenshotBitmap = null
+        points.clear()
+        selectionRect = null
+        showConfirm = false
+        previewBitmap = null
+        try {
+            val toolHandler = AIToolHandler.getInstance(context)
+            val result = withContext(Dispatchers.IO) {
+                toolHandler.executeTool(AITool(name = "capture_screenshot"))
+            }
 
-        val toolHandler = AIToolHandler.getInstance(context)
-        val result = withContext(Dispatchers.IO) {
-            toolHandler.executeTool(AITool(name = "capture_screenshot"))
+            if (!result.success) {
+                captureError = result.error ?: context.getString(R.string.screen_ocr_capture_failed)
+                return@LaunchedEffect
+            }
+
+            val path = result.result.toString().trim()
+            if (path.isBlank()) {
+                captureError = context.getString(R.string.screen_ocr_capture_failed)
+                return@LaunchedEffect
+            }
+
+            val bitmap = try {
+                withContext(Dispatchers.IO) {
+                    BitmapFactory.decodeFile(path)
+                }
+            } finally {
+                // The selection uses the decoded bitmap; only the final crop becomes an attachment.
+                File(path).delete()
+            }
+
+            if (bitmap == null) {
+                captureError = context.getString(R.string.screen_ocr_load_failed)
+                return@LaunchedEffect
+            }
+
+            screenshotBitmap = bitmap
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            captureError = error.message ?: context.getString(R.string.screen_ocr_capture_failed)
         }
-
-        if (!result.success) {
-            captureError = result.error ?: context.getString(R.string.screen_ocr_capture_failed)
-            return@LaunchedEffect
-        }
-
-        val path = result.result.toString().trim()
-        if (path.isBlank()) {
-            captureError = context.getString(R.string.screen_ocr_capture_failed)
-            return@LaunchedEffect
-        }
-
-        val bitmap = withContext(Dispatchers.IO) {
-            BitmapFactory.decodeFile(path)
-        }
-
-        if (bitmap == null) {
-            captureError = context.getString(R.string.screen_ocr_load_failed)
-            return@LaunchedEffect
-        }
-
-        screenshotBitmap = bitmap
     }
 
     LaunchedEffect(screenshotBitmap, overlaySize) {
@@ -420,8 +436,8 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer { alpha = 0.99f }
-                .pointerInput(isBusy, showConfirm, overlaySize) {
-                    if (isBusy) return@pointerInput
+                .pointerInput(isBusy, showConfirm, overlaySize, screenshotBitmap) {
+                    if (isBusy || screenshotBitmap == null) return@pointerInput
 
                     if (!showConfirm) {
                         detectDragGestures(
@@ -582,7 +598,7 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
                     moveTo(points.first().x, points.first().y)
                     for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
                  }
-                 
+
                  // 1. 外发光 (Glow)
                  drawPath(
                      path = path, 
@@ -604,23 +620,23 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
                      style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                  )
             }
-            
+
             // Grid Ripple
             if (showRipple) {
                     val maxRadius = hypot(size.width.toDouble(), size.height.toDouble()).toFloat()
                     val center = Offset(size.width / 2f, size.height / 2f)
                     val p = rippleProgress.value
-                    
+
                     // Grid Configuration
                     val gridSize = 40.dp.toPx()
                     val gridColor = Color.hsv(hueShift, 0.6f, 1f)
-                    
+
                     val currentRadius = (maxRadius * p).coerceAtLeast(1f)
                     val waveWidth = 180f
                     val maxDisplacement = 60f * (1f - p * 0.5f)
                     val visualPeakRadius = currentRadius + maxDisplacement
                     val startFraction = ((visualPeakRadius - waveWidth) / visualPeakRadius).coerceIn(0f, 1f)
-                    
+
                     val rippleBrush = Brush.radialGradient(
                         colorStops = arrayOf(
                             0f to Color.Transparent,
@@ -695,7 +711,7 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
             val btnSizePx = with(density) { btnSize.toPx() }
             val spacing = 16.dp
             val spacingPx = with(density) { spacing.toPx() }
-            
+
             // 默认显示在 Rect 底部下方
             var btnY = rect.bottom + spacingPx
             // 如果超出屏幕底部，则显示在 Rect 内部底部
@@ -704,7 +720,7 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
             }
             // 居中 X
             val centerX = rect.left + rect.width / 2f
-            
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -716,9 +732,9 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
                  // A modifier.offset with calculation relative to screen 0,0 is easiest if usage is Absolute.
                  // But Row is inside Box(fillMaxSize). So offset is relative to screen.
             }
-            
+
             // 使用 Box + offset 而不是 Row + alignment，因为要精确定位到 Rect 附近
-            
+
             Box(
                 modifier = Modifier
                     .offset { IntOffset(centerX.toInt() - (btnSizePx.toInt() * 2 + spacingPx.toInt()) / 2, btnY.toInt()) }
@@ -744,77 +760,52 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
                             val srcBitmap = screenshotBitmap ?: return@FloatingActionButton
                             val bounds = computeCropBounds(srcBitmap, rect, overlaySize) ?: return@FloatingActionButton
 
-                            fun fmt4(v: Float): String {
-                                val scaled = (v * 10000f).roundToInt() / 10000f
-                                return scaled.toString()
-                            }
-                            val cropRight = bounds.left + bounds.width
-                            val cropBottom = bounds.top + bounds.height
-                            val imgW = srcBitmap.width.toFloat().coerceAtLeast(1f)
-                            val imgH = srcBitmap.height.toFloat().coerceAtLeast(1f)
-                            val positionInfo =
-                                buildString {
-                                    append(context.getString(R.string.screen_ocr_position, "screen_selection"))
-                                    append("; image_px=${srcBitmap.width}x${srcBitmap.height}")
-                                    append(
-                                        "; rect_norm=${fmt4(bounds.left / imgW)},${fmt4(bounds.top / imgH)},${fmt4(cropRight / imgW)},${fmt4(cropBottom / imgH)}"
-                                    )
-                                }
-                            
+                            val attachmentDelegate = floatContext.chatService
+                                ?.getChatCore()?.getAttachmentDelegate() ?: return@FloatingActionButton
                             isBusy = true
                             floatContext.coroutineScope.launch {
+                                var imageFile: File? = null
                                 try {
-                                    val croppedBitmap = withContext(Dispatchers.Default) {
-                                        Bitmap.createBitmap(srcBitmap, bounds.left, bounds.top, bounds.width, bounds.height)
-                                    }
-
-                                    val ocrText = withContext(Dispatchers.IO) {
-                                        OCRUtils.recognizeText(
-                                            context = context,
-                                            bitmap = croppedBitmap,
-                                            quality = OCRUtils.Quality.HIGH
-                                        ).trim()
-                                    }
-                                    
-                                    if (ocrText.isBlank()) {
-                                        showToast(context.getString(R.string.screen_ocr_no_text_recognized))
-                                    }
-
-                                    val content =
-                                        buildString {
-                                            append(context.getString(R.string.screen_ocr_selection_ocr_header))
-                                            append(positionInfo)
-                                            append("\n\n")
-                                            if (ocrText.isBlank()) {
-                                                append(context.getString(R.string.screen_ocr_no_text_recognized))
-                                            } else {
-                                                append(ocrText)
+                                    val file = withContext(Dispatchers.IO) {
+                                        val cropped = Bitmap.createBitmap(
+                                            srcBitmap, bounds.left, bounds.top, bounds.width, bounds.height
+                                        )
+                                        try {
+                                            File.createTempFile(
+                                                "screen_selection_", ".png",
+                                                OperitPaths.cleanOnExitInternalDir(context)
+                                            ).also { target ->
+                                                imageFile = target
+                                                target.outputStream().use { output ->
+                                                    check(cropped.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                                                        "Failed to save selected screenshot"
+                                                    }
+                                                }
                                             }
-                                            append("\n\n")
-                                            append(context.getString(R.string.screen_ocr_inline_instruction))
+                                        } finally {
+                                            if (cropped !== srcBitmap) cropped.recycle()
                                         }
-                                    val textAttachment = AttachmentInfo(
-                                        filePath = "screen_ocr_${System.currentTimeMillis()}",
-                                        fileName = "screen_ocr.txt",
-                                        mimeType = "text/plain",
-                                        fileSize = content.length.toLong(),
-                                        content = content
-                                    )
+                                    }
+                                    attachmentDelegate.addAttachments(listOf(AttachmentInfo(
+                                        filePath = file.absolutePath,
+                                        fileName = "screen_selection.png",
+                                        mimeType = "image/png",
+                                        fileSize = file.length()
+                                    )))
+                                    imageFile = null
 
-                                    floatContext.chatService
-                                        ?.getChatCore()
-                                        ?.getAttachmentDelegate()
-                                        ?.addAttachments(listOf(textAttachment))
-                                    
                                     showToast(context.getString(R.string.screen_ocr_selection_content_captured))
-                                    
+
                                     // Set pending flag for Auto-Check in Fullscreen
                                     floatContext.pendingScreenSelection = true
-                                    
+
                                     floatContext.onModeChange(floatContext.previousMode)
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
                                 } catch (e: Exception) {
                                     showToast(context.getString(R.string.screen_ocr_error_prefix, e.message ?: ""))
                                 } finally {
+                                    imageFile?.delete()
                                     isBusy = false
                                 }
                             }
@@ -831,7 +822,35 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
                 }
             }
         }
-        
+
+        if (screenshotBitmap == null) {
+            Surface(
+                modifier = Modifier.align(Alignment.Center).padding(24.dp).fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    if (captureError == null) CircularProgressIndicator(Modifier.size(28.dp))
+                    Text(
+                        captureError ?: stringResource(R.string.screen_ocr_capturing),
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        TextButton(onClick = { floatContext.onModeChange(floatContext.previousMode) },
+                            modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text(stringResource(R.string.back))
+                        }
+                        if (captureError != null) TextButton(onClick = { captureAttempt++ },
+                            modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text(stringResource(R.string.action_retry))
+                        }
+                    }
+                }
+            }
+        }
+
         // 关闭按钮 (Top Left) - 精致化，更小，且带立体感 (Card 风格)
         val cardShape = RoundedCornerShape(8.dp)
         Surface(

@@ -59,10 +59,13 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -106,6 +109,9 @@ import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
+import com.ai.assistance.operit.util.stream.asFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 
 /**
@@ -231,11 +237,19 @@ fun ChatArea(
     var viewportHeightPx by remember { mutableStateOf(0) }
     val messageAnchors = remember(currentChatId) { mutableStateMapOf<Long, ChatScrollMessageAnchor>() }
     var pendingJumpToMessageTimestamp by remember(currentChatId) { mutableStateOf<Long?>(null) }
-    // 标记待跳转是否来自显式定位（消息定位器/导航器跳转）。自动贴底请求只在
-    // autoScrollToBottom 激活期间有效；用户上滑后残留的自动请求必须失效，
-    // 否则之后任意布局变化（如展开折叠的工具调用组导致 scrollState.maxValue
-    // 变化）都会把它复活并强制滚动到底部。显式定位请求不受此限制。
-    var pendingJumpIsExplicit by remember(currentChatId) { mutableStateOf(false) }
+    val currentOnFollowingChange by rememberUpdatedState(onAutoScrollToBottomChange)
+    val currentHasNewerHistory by rememberUpdatedState(hasNewerDisplayHistory)
+    val currentAutoScroll by rememberUpdatedState(autoScrollToBottom)
+    val followScrollConnection = remember(scrollState, currentChatId) {
+        ChatFollowScrollConnection(
+            position = { scrollState.value },
+            isAtLatestBottom = {
+                scrollState.value >= scrollState.maxValue && !currentHasNewerHistory
+            },
+            onUserScroll = { pendingJumpToMessageTimestamp = null },
+            onFollowingChange = { currentOnFollowingChange?.invoke(it) },
+        )
+    }
     val lastMessage = chatHistory.lastOrNull()
     var hasLastAiMessageStartedStreaming by remember(lastMessage?.timestamp) {
         mutableStateOf(lastMessage?.run { sender == "ai" && content.isNotBlank() } == true)
@@ -244,18 +258,14 @@ fun ChatArea(
     val messagesCount = chatHistory.size
     LaunchedEffect(currentChatId, chatHistory.isEmpty()) {
         if (chatHistory.isEmpty()) {
-            pendingJumpIsExplicit = false
             pendingJumpToMessageTimestamp = null
         }
     }
 
-    val lastMessageContentLength = lastMessage?.content?.length
     LaunchedEffect(
         autoScrollToBottom,
-        messagesCount,
         hasNewerDisplayHistory,
         isLoadingDisplayWindow,
-        lastMessageContentLength,
     ) {
         if (
             autoScrollToBottom &&
@@ -264,23 +274,43 @@ fun ChatArea(
                 onShowLatestDisplayWindow != null
         ) {
             onShowLatestDisplayWindow.invoke()
-        } else if (autoScrollToBottom && messagesCount > 0) {
-            pendingJumpIsExplicit = false
-            pendingJumpToMessageTimestamp = lastMessage?.timestamp
+        }
+    }
+
+    // Follow the measured transcript, not a timestamp that stops being the last message
+    // as soon as the AI placeholder is appended. Parsing and completion folding can also
+    // change its height after the final message has already been published.
+    LaunchedEffect(
+        scrollState, currentChatId, autoScrollToBottom, hasNewerDisplayHistory,
+        isLoadingDisplayWindow, pendingJumpToMessageTimestamp, chatHistory.isEmpty(),
+    ) {
+        if (
+            autoScrollToBottom && !hasNewerDisplayHistory && !isLoadingDisplayWindow &&
+                pendingJumpToMessageTimestamp == null && chatHistory.isNotEmpty()
+        ) {
+            followScrollConnection.followingAllowed = true
+            snapshotFlow {
+                scrollState.maxValue to followScrollConnection.userScrollInProgress
+            }.collectLatest { (bottom, userScrolling) ->
+                if (
+                    bottom != Int.MAX_VALUE && currentAutoScroll &&
+                        followScrollConnection.followingAllowed &&
+                        !userScrolling
+                ) {
+                    scrollState.scrollTo(bottom)
+                }
+            }
         }
     }
 
     PendingMessageScrollEffect(
         pendingTimestamp = pendingJumpToMessageTimestamp,
-        explicitJump = pendingJumpIsExplicit,
         messages = chatHistory,
         messageAnchors = messageAnchors,
         scrollState = scrollState,
-        autoScrollToBottom = autoScrollToBottom,
         hasNewerDisplayHistory = hasNewerDisplayHistory,
         onAutoScrollToBottomChange = onAutoScrollToBottomChange,
         onFinished = {
-            pendingJumpIsExplicit = false
             pendingJumpToMessageTimestamp = null
         },
     )
@@ -298,10 +328,8 @@ fun ChatArea(
 
         if (!lastAiMessageHasStaticContent && shouldAwaitFirstChunk && stream != null) {
             try {
-                stream.collect { chunk ->
-                    if (!hasLastAiMessageStartedStreaming && chunk.isNotEmpty()) {
-                        hasLastAiMessageStartedStreaming = true
-                    }
+                if (stream.asFlow().firstOrNull { it.isNotEmpty() } != null) {
+                    hasLastAiMessageStartedStreaming = true
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -354,6 +382,7 @@ fun ChatArea(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = horizontalPadding)
+                    .nestedScroll(followScrollConnection)
                     .verticalScroll(scrollState)
                     .background(Color.Transparent)
                     .padding(top = topPadding, bottom = bottomPadding),
@@ -525,7 +554,6 @@ fun ChatArea(
             onAutoScrollToBottomChange = onAutoScrollToBottomChange,
             onToggleFavoriteMessage = onToggleFavoriteMessage,
             onJumpToMessageTimestamp = { targetTimestamp ->
-                pendingJumpIsExplicit = true
                 pendingJumpToMessageTimestamp = targetTimestamp
                 val targetIndex = chatHistory.indexOfFirst { it.timestamp == targetTimestamp }
                 if (targetIndex >= 0) {
@@ -541,12 +569,10 @@ fun ChatArea(
                             pendingJumpToMessageTimestamp == targetTimestamp &&
                             chatHistory.none { it.timestamp == targetTimestamp }
                         ) {
-                            pendingJumpIsExplicit = false
                             pendingJumpToMessageTimestamp = null
                         }
                     }
                 } else {
-                    pendingJumpIsExplicit = false
                     pendingJumpToMessageTimestamp = null
                 }
             },
@@ -555,7 +581,6 @@ fun ChatArea(
                     val isActualLatestMessage =
                         targetIndex == messagesCount - 1 && !hasNewerDisplayHistory
                     onAutoScrollToBottomChange?.invoke(isActualLatestMessage)
-                    pendingJumpIsExplicit = true
                     pendingJumpToMessageTimestamp = targetMessage.timestamp
                 }
             },
@@ -1281,7 +1306,7 @@ private fun formatCompactTimestamp(completedAt: Long): String {
 }
 
 @Composable
-private fun MessageFooterBar(
+internal fun MessageFooterBar(
     message: ChatMessage,
     showMessageTokenStats: Boolean,
     showMessageTimingStats: Boolean,
@@ -1456,11 +1481,9 @@ private fun LoadingDotsIndicator(textColor: Color) {
 @Composable
 private fun PendingMessageScrollEffect(
     pendingTimestamp: Long?,
-    explicitJump: Boolean,
     messages: List<ChatMessage>,
     messageAnchors: Map<Long, ChatScrollMessageAnchor>,
     scrollState: ScrollState,
-    autoScrollToBottom: Boolean,
     hasNewerDisplayHistory: Boolean,
     onAutoScrollToBottomChange: ((Boolean) -> Unit)?,
     onFinished: () -> Unit,
@@ -1471,10 +1494,6 @@ private fun PendingMessageScrollEffect(
         messages.lastOrNull()?.timestamp, targetAnchor, scrollState.maxValue,
     ) {
         val timestamp = pendingTimestamp ?: return@LaunchedEffect
-        if (!explicitJump && !autoScrollToBottom) {
-            onFinished()
-            return@LaunchedEffect
-        }
         val targetIndex = messages.indexOfFirst { it.timestamp == timestamp }
         if (targetIndex < 0) return@LaunchedEffect
         val anchor = targetAnchor ?: return@LaunchedEffect

@@ -22,13 +22,13 @@ import org.json.JSONObject
  */
 class ReadingCompanionAnnotationProvider : ContentProvider() {
     private lateinit var store: ReadingCompanionStore
-    private lateinit var fileStore: ReadingCompanionFileStore
+    private val fileStore: ReadingCompanionFileStore
+        get() = ReadingCompanionFileStore(requireNotNull(context), publicationSnapshot = store.publicationSnapshot())
     private lateinit var matcher: UriMatcher
 
     override fun onCreate(): Boolean {
         val appContext = requireNotNull(context).applicationContext
         store = ReadingCompanionStore(appContext)
-        fileStore = ReadingCompanionFileStore(appContext)
         matcher = UriMatcher(UriMatcher.NO_MATCH).apply {
             val authority = "${appContext.packageName}.readingCompanionAnnotations"
             addURI(authority, "reviews/summary", MATCH_SUMMARY)

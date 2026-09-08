@@ -29,7 +29,9 @@ open class KimiProvider(
     supportsVision: Boolean = false,
     supportsAudio: Boolean = false,
     supportsVideo: Boolean = false,
-    enableToolCall: Boolean = false
+    enableToolCall: Boolean = false,
+    private val configureThinking: Boolean = true,
+    private val reasoningEfforts: List<String> = emptyList(),
 ) : OpenAIProvider(
     apiEndpoint = apiEndpoint,
     apiKeyProvider = apiKeyProvider,
@@ -52,7 +54,10 @@ open class KimiProvider(
         availableTools: List<ToolPrompt>?,
         preserveThinkInHistory: Boolean
     ): RequestBody {
+        val automaticReasoning = consumeAutomaticReasoningSuppression(modelParameters)
         fun applyThinkingParams(jsonObject: JSONObject) {
+            // Generic reasoning_content endpoints do not share Kimi's thinking switch.
+            if (!configureThinking) return
             jsonObject.put(
                 "thinking",
                 JSONObject().apply {
@@ -61,9 +66,9 @@ open class KimiProvider(
             )
         }
 
-        if (!enableThinking) {
+        if (!enableThinking && configureThinking) {
             val baseRequestBodyJson =
-                super.createRequestBodyInternal(context, chatHistory, modelParameters, stream, availableTools, preserveThinkInHistory)
+                super.createRequestBodyInternal(context, chatHistory, automaticReasoning.modelParameters, stream, availableTools, preserveThinkInHistory)
             val jsonObject = JSONObject(baseRequestBodyJson)
             applyThinkingParams(jsonObject)
             return createJsonRequestBody(jsonObject.toString())
@@ -75,7 +80,7 @@ open class KimiProvider(
         jsonObject.putStreamUsageOption(stream)
         applyThinkingParams(jsonObject)
 
-        for (param in modelParameters) {
+        for (param in automaticReasoning.modelParameters) {
             if (param.isEnabled) {
                 when (param.valueType) {
                     com.ai.assistance.operit.data.model.ParameterValueType.INT ->
@@ -105,6 +110,19 @@ open class KimiProvider(
                         }
                     }
                 }
+            }
+        }
+
+        if (!configureThinking && !automaticReasoning.suppressAutomaticReasoning &&
+            !jsonObject.has("reasoning_effort")
+        ) {
+            val preferred = if (enableThinking) resolveOpenAiChatReasoningEffort(context) else "none"
+            val effort = preferred?.let {
+                ThinkingRequestSemantics.catalogReasoningEffort(it, reasoningEfforts)
+            }
+            if (effort != null) {
+                jsonObject.put("reasoning_effort", effort)
+                AppLogger.d("KimiProvider", "Generic reasoning_content request reasoning_effort=$effort")
             }
         }
 

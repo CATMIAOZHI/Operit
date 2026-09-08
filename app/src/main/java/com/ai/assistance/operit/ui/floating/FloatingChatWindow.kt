@@ -69,7 +69,7 @@ fun FloatingChatWindow(
         width: Dp,
         height: Dp,
         onClose: () -> Unit,
-        onResize: (Dp, Dp) -> Unit,
+        onResize: (Dp, Dp, Boolean) -> Unit,
         ballSize: Dp = 48.dp,
         windowScale: Float = 1.0f,
         onScaleChange: (Float) -> Unit = {},
@@ -125,7 +125,9 @@ fun FloatingChatWindow(
                     windowState = windowState,
                     inputProcessingState = inputProcessingState
             )
-    val chatCore = remember(chatService) { chatService?.getChatCore() }
+    val chatCore = chatService?.getChatCore()
+    val selectedChatId = chatCore?.currentChatId?.collectAsState()?.value
+    SideEffect { floatContext.draftKey = selectedChatId.orEmpty() }
     val toastEventState =
         chatCore?.getUiStateDelegate()?.toastEvent?.collectAsState(initial = null)
             ?: remember { mutableStateOf<String?>(null) }
@@ -141,15 +143,12 @@ fun FloatingChatWindow(
         // 通知服务需要切换焦点模式
         floatContext.onInputFocusRequest?.invoke(floatContext.showInputDialog)
 
-        // 如果隐藏输入框，清空消息
-        if (!floatContext.showInputDialog) {
-            floatContext.userMessage = ""
-        }
     }
 
     // 根据currentMode参数渲染对应界面，使用AnimatedContent添加炫酷过渡动画
     Box {
         AnimatedContent(
+            contentKey = { if (it == FloatingMode.WINDOW || it == FloatingMode.FULLSCREEN) "conversation" else it.name },
             targetState = currentMode, // 只监听 currentMode，避免消息更新时触发动画
             transitionSpec = {
                 val targetMode = targetState
@@ -164,7 +163,10 @@ fun FloatingChatWindow(
                     (initialMode == FloatingMode.WINDOW && (targetMode == FloatingMode.FULLSCREEN || targetMode == FloatingMode.SCREEN_OCR)) ||
                     ((initialMode == FloatingMode.FULLSCREEN || initialMode == FloatingMode.SCREEN_OCR) && targetMode == FloatingMode.WINDOW)
 
-                if (isWindowFullscreenTransition) {
+                if (windowState?.petModeTransition?.value == true &&
+                    (targetMode == FloatingMode.BALL || initialMode == FloatingMode.BALL)) {
+                    EnterTransition.None.togetherWith(ExitTransition.None)
+                } else if (isWindowFullscreenTransition) {
                     // 窗口 ↔ 全屏：使用简洁的缩放 + 淡入淡出动画
                     (fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
                      scaleIn(initialScale = 0.92f, animationSpec = tween(220, easing = FastOutSlowInEasing)))
@@ -206,7 +208,7 @@ fun FloatingChatWindow(
                     }
                 }
                 FloatingMode.VOICE_BALL -> FloatingVoiceBallMode(floatContext = floatContext)
-                FloatingMode.FULLSCREEN -> FloatingFullscreenMode(floatContext = floatContext)
+                FloatingMode.FULLSCREEN -> FloatingChatWindowMode(floatContext = floatContext)
                 FloatingMode.RESULT_DISPLAY -> FloatingResultDisplay(floatContext = floatContext)
                 FloatingMode.SCREEN_OCR -> FloatingScreenOcrMode(floatContext = floatContext)
             }

@@ -12,6 +12,8 @@ import com.ai.assistance.operit.api.chat.enhance.ConversationService
 import com.ai.assistance.operit.api.chat.enhance.FileBindingService
 import com.ai.assistance.operit.api.chat.enhance.MultiServiceManager
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.api.chat.enhance.ToolTurnSignal
+import com.ai.assistance.operit.api.chat.enhance.resolveToolTurnSignal
 import com.ai.assistance.operit.api.chat.llmprovider.AIService
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
@@ -41,6 +43,7 @@ import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.forSelectedModel
+import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.ExternalHttpApiPreferences
@@ -107,7 +110,10 @@ internal fun resolveImageRecognitionAvailability(
  * Enhanced AI service that provides advanced conversational capabilities by integrating various
  * components like tool execution, conversation management, user preferences, and problem library.
  */
-class EnhancedAIService private constructor(private val context: Context) {
+class EnhancedAIService private constructor(
+    private val context: Context,
+    private val providerSessionId: String = java.util.UUID.randomUUID().toString(),
+) {
     data class TurnTokenSnapshot(
         val inputTokens: Int,
         val outputTokens: Int,
@@ -143,7 +149,7 @@ class EnhancedAIService private constructor(private val context: Context) {
             return CHAT_INSTANCES[chatId]
                 ?: synchronized(CHAT_INSTANCES) {
                     CHAT_INSTANCES[chatId]
-                        ?: EnhancedAIService(appContext).also { CHAT_INSTANCES[chatId] = it }
+                        ?: EnhancedAIService(appContext, chatId).also { CHAT_INSTANCES[chatId] = it }
                 }
         }
 
@@ -696,7 +702,12 @@ class EnhancedAIService private constructor(private val context: Context) {
             chatModelConfigIdOverride = chatModelConfigIdOverride,
             chatModelIndexOverride = chatModelIndexOverride
         )
-        return Pair("$provider/${config.name}", modelName)
+        // The service reports its wire adapter (e.g. DEEPSEEK), not necessarily the account
+        // supplying the model. Keep the account identity in the persisted message label.
+        val account = multiServiceManager.getModelConfigForConfig(config.id)
+        val displayProvider =
+            ApiProviderType.fromProviderTypeId(account.apiProviderTypeId)?.name ?: provider
+        return Pair("$displayProvider/${account.name}", modelName)
     }
 
     suspend fun getModelConfigForFunction(
@@ -1234,6 +1245,7 @@ class EnhancedAIService private constructor(private val context: Context) {
                     // 使用新的Stream API
                     AppLogger.d(TAG, "sendMessage请求前准备耗时: ${tAfterGetTools - startTime}ms, 流式输出: $stream")
                     val requestStartTime = messageTimingNow()
+                    com.ai.assistance.operit.core.agent.AgentRunObservers.forChat(chatId)?.onModelRequest()
                     val responseStream =
                             serviceForFunction.sendMessage(
                                     context = this@EnhancedAIService.context,
@@ -1445,7 +1457,15 @@ class EnhancedAIService private constructor(private val context: Context) {
                 }
             }
         }
-        return wrappedStream.withEventChannel(eventChannel)
+        val sessionContext = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
+            chatId?.takeIf { it.isNotBlank() } ?: providerSessionId
+        )
+        val sessionStream = object : Stream<String> by wrappedStream {
+            override suspend fun collect(collector: StreamCollector<String>) {
+                withContext(sessionContext) { wrappedStream.collect(collector) }
+            }
+        }
+        return sessionStream.withEventChannel(eventChannel)
     }
 
     private data class TruncatedToolRoundRecovery(
@@ -1943,7 +1963,13 @@ class EnhancedAIService private constructor(private val context: Context) {
             }
         }
 
-        val processToolJob = toolProcessingScope.async(start = CoroutineStart.LAZY) {
+        // This independent scope must retain the conversation identity for tool continuations.
+        val processToolJob = toolProcessingScope.async(
+            context = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
+                chatId?.takeIf { it.isNotBlank() } ?: providerSessionId
+            ),
+            start = CoroutineStart.LAZY,
+        ) {
             val chatHistoryManager =
                 ChatHistoryManager.getInstance(this@EnhancedAIService.context)
             val childChatTitle =
@@ -2024,13 +2050,18 @@ class EnhancedAIService private constructor(private val context: Context) {
 
             if (allToolResults.isNotEmpty()) {
                 AppLogger.d(TAG, "所有工具结果收集完毕，准备最终处理。")
-                allToolResults.firstOrNull { it.interruptTurn }?.let { interrupted ->
+                val turnSignal = resolveToolTurnSignal(allToolResults)
+                if (turnSignal == ToolTurnSignal.INTERRUPTED) {
+                    val interrupted = allToolResults.first { it.interruptTurn && !it.success }
                     throw IllegalStateException(
                         interrupted.error
                             ?: "Tool execution interrupted this turn: ${interrupted.toolName}"
                     )
                 }
-                if (toolInvocations.singleOrNull()?.tool?.name in context.terminalToolNames) {
+                if (
+                    turnSignal == ToolTurnSignal.COMPLETE ||
+                    toolInvocations.singleOrNull()?.tool?.name in context.terminalToolNames
+                ) {
                     finalizeAssistantResponse(
                         context = context,
                         content = context.roundManager.getDisplayContent(),
@@ -2294,6 +2325,7 @@ class EnhancedAIService private constructor(private val context: Context) {
             try {
                 // 发送消息并获取响应流
                 val aiStartTime = messageTimingNow()
+                com.ai.assistance.operit.core.agent.AgentRunObservers.forChat(chatId)?.onModelRequest()
                 val responseStream =
                         serviceForFunction.sendMessage(
                                 context = this@EnhancedAIService.context,
@@ -2547,7 +2579,9 @@ class EnhancedAIService private constructor(private val context: Context) {
             customRules: String? = null
     ): String {
         // 调用ConversationService中的方法
-        return conversationService.generateSummaryFromPromptTurns(messages, previousSummary, multiServiceManager, customRules)
+        return withContext(com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(providerSessionId)) {
+            conversationService.generateSummaryFromPromptTurns(messages, previousSummary, multiServiceManager, customRules)
+        }
     }
 
 
@@ -2556,11 +2590,13 @@ class EnhancedAIService private constructor(private val context: Context) {
         userText: String,
         attachmentFileNames: List<String> = emptyList()
     ): String {
-        return conversationService.generateConversationTitle(
-            userText = userText,
-            attachmentFileNames = attachmentFileNames,
-            multiServiceManager = multiServiceManager
-        )
+        return withContext(com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(providerSessionId)) {
+            conversationService.generateConversationTitle(
+                userText = userText,
+                attachmentFileNames = attachmentFileNames,
+                multiServiceManager = multiServiceManager
+            )
+        }
     }
 
     /**

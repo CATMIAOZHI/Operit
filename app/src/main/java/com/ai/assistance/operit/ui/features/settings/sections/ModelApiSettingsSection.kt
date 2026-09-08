@@ -54,6 +54,9 @@ import com.ai.assistance.operit.api.chat.llmprovider.parseProviderCustomHeaders
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
+import com.ai.assistance.operit.data.model.ModelProtocolCatalogRepository
+import com.ai.assistance.operit.data.model.ModelProtocolSettings
+import com.ai.assistance.operit.data.model.supportsModelProtocolOverrides
 import com.ai.assistance.operit.data.model.ModelMultimodalCapabilities
 import com.ai.assistance.operit.data.model.ModelOption
 import com.ai.assistance.operit.data.model.OfficialModelCapabilitiesRepository
@@ -143,6 +146,19 @@ fun ModelApiSettingsSection(
             }
         )
     }
+    var modelProtocolSettingsInput by remember(config.id) { mutableStateOf(config.modelProtocolSettings) }
+    var isConfiguringProtocols by remember(config.id) { mutableStateOf(false) }
+    var protocolSyncJob by remember(config.id) { mutableStateOf<Job?>(null) }
+    val protocolCatalogRepository = remember(context.applicationContext) {
+        ModelProtocolCatalogRepository(context.applicationContext)
+    }
+    val protocolCatalogUpdatedAt by protocolCatalogRepository.updatedAt.collectAsState()
+    LaunchedEffect(protocolCatalogRepository) {
+        protocolCatalogRepository.loadCatalog()
+    }
+    DisposableEffect(config.id) {
+        onDispose { protocolSyncJob?.cancel() }
+    }
     var showMultimodalModelPicker by remember { mutableStateOf(false) }
     var selectedMultimodalModel by remember(config.id) {
         mutableStateOf(getModelList(config.modelName).firstOrNull().orEmpty())
@@ -160,7 +176,7 @@ fun ModelApiSettingsSection(
         officialModelCapabilitiesRepository.loadCatalog()
     }
     var isSyncingMultimodalCapabilities by remember(config.id) { mutableStateOf(false) }
-    var isRefreshingMultimodalCatalog by remember(config.id) { mutableStateOf(false) }
+    var isRefreshingModelCatalog by remember(config.id) { mutableStateOf(false) }
     var multimodalSyncJob by remember(config.id) { mutableStateOf<Job?>(null) }
 
     DisposableEffect(config.id) {
@@ -195,6 +211,7 @@ fun ModelApiSettingsSection(
         val enableDirectAudioProcessing: Boolean,
         val enableDirectVideoProcessing: Boolean,
         val modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities>,
+        val modelProtocolSettings: Map<String, ModelProtocolSettings>,
         val enableGoogleSearch: Boolean,
         val enableClaude1hPromptCache: Boolean,
         val enableToolCall: Boolean,
@@ -220,6 +237,7 @@ fun ModelApiSettingsSection(
                     enableDirectAudioProcessing = state.enableDirectAudioProcessing,
                     enableDirectVideoProcessing = state.enableDirectVideoProcessing,
                     modelMultimodalCapabilities = state.modelMultimodalCapabilities,
+                    modelProtocolSettings = state.modelProtocolSettings,
                     enableGoogleSearch = state.enableGoogleSearch,
                     enableClaude1hPromptCache = state.enableClaude1hPromptCache,
                     enableToolCall = state.enableToolCall,
@@ -253,6 +271,7 @@ fun ModelApiSettingsSection(
                     modelMultimodalCapabilitiesInput[modelName]
                         ?: ModelMultimodalCapabilities()
                 },
+            modelProtocolSettings = modelProtocolSettingsInput.filterKeys { it in configuredModelNames },
             enableGoogleSearch = enableGoogleSearchInput,
             enableClaude1hPromptCache = enableClaude1hPromptCacheInput,
             enableToolCall = enableToolCallInput,
@@ -463,8 +482,45 @@ fun ModelApiSettingsSection(
         }
     }
 
+    fun configureModelProtocols() {
+        if (isConfiguringProtocols || isRefreshingModelCatalog) return
+        val names = getModelList(modelNameInput)
+        val endpoint = apiEndpointInput
+        val providerId = selectedProviderTypeId
+        val previous = modelProtocolSettingsInput
+        isConfiguringProtocols = true
+        protocolSyncJob = scope.launch {
+            try {
+                val catalog = protocolCatalogRepository.loadCatalog()
+                if (apiEndpointInput != endpoint || selectedProviderTypeId != providerId ||
+                    getModelList(modelNameInput) != names) {
+                    showNotification(context.getString(R.string.model_protocol_auto_changed))
+                    return@launch
+                }
+                val matched = catalog.matchAll(endpoint, names)
+                    .filter { (model, _) -> modelProtocolSettingsInput[model] == previous[model] }
+                    .mapValues { (model, settings) ->
+                        settings.copy(endpoint = previous[model]?.endpoint?.takeIf { it.isNotBlank() }
+                            ?: settings.endpoint)
+                    }
+                modelProtocolSettingsInput = modelProtocolSettingsInput + matched
+                showNotification(context.getString(
+                    R.string.model_protocol_auto_result,
+                    matched.size, names.size - matched.size,
+                ))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                showNotification(context.getString(R.string.model_protocol_auto_failed))
+            } finally {
+                isConfiguringProtocols = false
+                protocolSyncJob = null
+            }
+        }
+    }
+
     fun syncOfficialModelCapabilities() {
-        if (isSyncingMultimodalCapabilities || isRefreshingMultimodalCatalog) return
+        if (isSyncingMultimodalCapabilities || isRefreshingModelCatalog) return
         val configuredModelNames = getModelList(modelNameInput)
         if (configuredModelNames.isEmpty()) return
         isSyncingMultimodalCapabilities = true
@@ -507,27 +563,30 @@ fun ModelApiSettingsSection(
         }
     }
 
-    fun refreshOfficialModelCapabilitiesCatalog() {
-        if (isSyncingMultimodalCapabilities || isRefreshingMultimodalCatalog) return
-        isRefreshingMultimodalCatalog = true
+    fun refreshLocalModelCatalogs() {
+        if (isConfiguringProtocols || isSyncingMultimodalCapabilities || isRefreshingModelCatalog) return
+        isRefreshingModelCatalog = true
         multimodalSyncJob = scope.launch {
-            try {
-                val catalog = officialModelCapabilitiesRepository.refreshCatalog()
-                showNotification(
-                    context.getString(
-                        R.string.model_multimodal_catalog_refresh_success,
-                        catalog.models.size,
-                    )
-                )
+            suspend fun refresh(block: suspend () -> Unit): Boolean = try {
+                block()
+                true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                AppLogger.e(TAG, "刷新本地模型能力目录失败: ${e.message}", e)
-                showNotification(
-                    context.getString(R.string.model_multimodal_catalog_refresh_failed)
-                )
+                AppLogger.e(TAG, "Local model catalog refresh failed", e)
+                false
+            }
+            try {
+                val capabilitiesUpdated = refresh { officialModelCapabilitiesRepository.refreshCatalog() }
+                val protocolsUpdated = refresh { protocolCatalogRepository.refreshCatalog() }
+                showNotification(context.getString(when {
+                    capabilitiesUpdated && protocolsUpdated -> R.string.model_catalog_refresh_success
+                    capabilitiesUpdated -> R.string.model_catalog_refresh_protocol_failed
+                    protocolsUpdated -> R.string.model_catalog_refresh_multimodal_failed
+                    else -> R.string.model_multimodal_catalog_refresh_failed
+                }))
             } finally {
-                isRefreshingMultimodalCatalog = false
+                isRefreshingModelCatalog = false
                 multimodalSyncJob = null
             }
         }
@@ -758,6 +817,8 @@ fun ModelApiSettingsSection(
                         },
                     enabled = !isMnnProvider && !isLlamaProvider && canEditModelName,
                     trailingContent = {
+                val fillEndpointKeyText = stringResource(R.string.fill_endpoint_and_key)
+                val modelsListSuccessText = stringResource(R.string.models_list_success)
                 IconButton(
                         onClick = {
                             AppLogger.d(
@@ -768,8 +829,6 @@ fun ModelApiSettingsSection(
                             val unknownErrorText = context.getString(R.string.unknown_error)
                             val getModelsFailedText = context.getString(R.string.get_models_list_failed)
                             val defaultConfigNoModelsText = context.getString(R.string.default_config_no_models_list)
-                            val fillEndpointKeyText = context.getString(R.string.fill_endpoint_and_key)
-                            val modelsListSuccessText = context.getString(R.string.models_list_success)
                             
                             showNotification(gettingModelsText)
 
@@ -858,12 +917,36 @@ fun ModelApiSettingsSection(
                 SettingsInfoBanner(
                     text = stringResource(R.string.model_multimodal_capabilities_desc)
                 )
+                if (supportsModelProtocolOverrides(selectedProviderTypeId)) {
+                    OutlinedButton(
+                        onClick = { configureModelProtocols() },
+                        enabled = configuredModels.isNotEmpty() &&
+                            !isConfiguringProtocols && !isRefreshingModelCatalog,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (isConfiguringProtocols) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(stringResource(R.string.model_protocol_auto_configure))
+                    }
+                    Text(
+                        stringResource(
+                            if (selectedApiProvider == ApiProviderType.OPENCODE_GO)
+                                R.string.provider_opencode_go_protocol_hint
+                            else R.string.model_protocol_auto_desc
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                }
                 OutlinedButton(
                     onClick = { syncOfficialModelCapabilities() },
                     enabled =
                         configuredModels.isNotEmpty() &&
                             !isSyncingMultimodalCapabilities &&
-                            !isRefreshingMultimodalCatalog,
+                            !isRefreshingModelCatalog,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     if (isSyncingMultimodalCapabilities) {
@@ -882,13 +965,13 @@ fun ModelApiSettingsSection(
                     Text(stringResource(R.string.model_multimodal_auto_sync))
                 }
                 TextButton(
-                    onClick = { refreshOfficialModelCapabilitiesCatalog() },
+                    onClick = { refreshLocalModelCatalogs() },
                     enabled =
-                        !isSyncingMultimodalCapabilities &&
-                            !isRefreshingMultimodalCatalog,
+                        !isConfiguringProtocols && !isSyncingMultimodalCapabilities &&
+                            !isRefreshingModelCatalog,
                     modifier = Modifier.align(Alignment.End),
                 ) {
-                    if (isRefreshingMultimodalCatalog) {
+                    if (isRefreshingModelCatalog) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
@@ -914,6 +997,19 @@ fun ModelApiSettingsSection(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (supportsModelProtocolOverrides(selectedProviderTypeId)) {
+                    Text(
+                        text = protocolCatalogUpdatedAt?.let {
+                            stringResource(
+                                R.string.model_protocol_catalog_updated_at,
+                                android.text.format.DateFormat.getDateFormat(context).format(java.util.Date(it)) +
+                                    " " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(it)),
+                            )
+                        } ?: stringResource(R.string.model_protocol_catalog_bundled),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (configuredModels.isEmpty()) {
                     Text(
                         text = stringResource(R.string.model_multimodal_capabilities_no_models),
@@ -935,6 +1031,16 @@ fun ModelApiSettingsSection(
                             modelMultimodalCapabilitiesInput[modelName]
                                 ?: ModelMultimodalCapabilities()
                         Column {
+                            if (supportsModelProtocolOverrides(selectedProviderTypeId)) {
+                                ModelProtocolSettingsEditor(
+                                    modelName = modelName,
+                                    settings = modelProtocolSettingsInput[modelName] ?: ModelProtocolSettings(),
+                                    onChange = { settings ->
+                                        modelProtocolSettingsInput = modelProtocolSettingsInput +
+                                            (modelName to settings)
+                                    },
+                                )
+                            }
                             SettingsSwitchRow(
                                 title = stringResource(R.string.enable_direct_image_processing),
                                 subtitle = stringResource(R.string.enable_direct_image_processing_desc),
@@ -1462,6 +1568,7 @@ private fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: an
         ApiProviderType.SILICONFLOW -> context.getString(R.string.provider_siliconflow)
         ApiProviderType.IFLOW -> context.getString(R.string.provider_iflow)
         ApiProviderType.OPENROUTER -> context.getString(R.string.provider_openrouter)
+        ApiProviderType.OPENCODE_GO -> context.getString(R.string.provider_opencode_go)
         ApiProviderType.FOUR_ROUTER -> context.getString(R.string.provider_4router)
         ApiProviderType.NOUS_PORTAL -> context.getString(R.string.provider_nous_portal)
         ApiProviderType.INFINIAI -> context.getString(R.string.provider_infiniai)
@@ -1687,7 +1794,7 @@ internal fun SettingsTextField(
 }
 
 @Composable
-private fun SettingsSelectorRow(
+internal fun SettingsSelectorRow(
         title: String,
         subtitle: String,
         value: String,
@@ -2238,6 +2345,7 @@ private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphi
         ApiProviderType.SILICONFLOW -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.6f)
         ApiProviderType.IFLOW -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)
         ApiProviderType.OPENROUTER -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)
+        ApiProviderType.OPENCODE_GO -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
         ApiProviderType.FOUR_ROUTER -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.56f)
         ApiProviderType.NOUS_PORTAL -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.52f)
         ApiProviderType.INFINIAI -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)

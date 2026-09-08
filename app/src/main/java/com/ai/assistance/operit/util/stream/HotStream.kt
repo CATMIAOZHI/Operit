@@ -104,6 +104,11 @@ class MutableSharedStreamImpl<T>(
     override val replayCache: List<T>
         get() = synchronized(stateLock) { replayBuffer.toList() }
 
+    /** Read only newly appended events without copying the entire replay on each token. */
+    internal fun replayFrom(index: Int): List<T> = synchronized(stateLock) {
+        (index.coerceAtLeast(0) until replayBuffer.size).map { replayBuffer[it] }
+    }
+
     override suspend fun emit(value: T) {
         val subscriberChannels =
             synchronized(stateLock) {

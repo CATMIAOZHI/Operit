@@ -384,6 +384,9 @@ jobs:
           path: |
             build/reports/profile/**
             app/build/reports/**
+            chat-parser/build/reports/**
+            chat-storage/build/reports/**
+            memory-storage/build/reports/**
           if-no-files-found: warn
           retention-days: 14
 
@@ -432,5 +435,8 @@ jobs:
           path: |
             build/reports/profile/**
             app/build/reports/**
+            chat-parser/build/reports/**
+            chat-storage/build/reports/**
+            memory-storage/build/reports/**
           if-no-files-found: warn
           retention-days: 14

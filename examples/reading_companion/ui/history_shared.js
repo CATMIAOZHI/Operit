@@ -1,3 +1,4 @@
+const readingTools = require("./reading_client.js");
 const TOOL_PACKAGE = "reading_companion_manage";
 const RUN_ID_ENV_KEY = "OPERIT_READING_COMPANION_RUN_ID_V1";
 const HISTORY_ROUTE =
@@ -60,57 +61,8 @@ async function callWithTimeout(task, timeoutMessage, timeoutMs) {
   }
 }
 
-function unwrapToolResult(value) {
-  let current = parseJson(value);
-  for (let depth = 0; depth < 6; depth += 1) {
-    if (!current || typeof current !== "object" || Array.isArray(current)) {
-      return current;
-    }
-    if (current.success === false) {
-      throw new Error(
-        String(current.message || current.error || "Operation failed"),
-      );
-    }
-    if (typeof current.task_id === "string") return current;
-    if (Object.prototype.hasOwnProperty.call(current, "data")) {
-      current = parseJson(current.data);
-      continue;
-    }
-    if (Object.prototype.hasOwnProperty.call(current, "result")) {
-      current = parseJson(current.result);
-      continue;
-    }
-    return current;
-  }
-  return current;
-}
-
-async function callHistoryTool(ctx, action, params) {
-  const fallbackName = `${TOOL_PACKAGE}:${action}`;
-  const resolvedName = ctx.resolveToolName
-    ? String(
-        (await ctx.resolveToolName({
-          packageName: TOOL_PACKAGE,
-          toolName: action,
-          preferImported: true,
-        })) || "",
-      ).trim()
-    : "";
-  const candidates = [resolvedName, fallbackName].filter(
-    (name, index, values) => name && values.indexOf(name) === index,
-  );
-  let lastError = "";
-  for (let index = 0; index < candidates.length; index += 1) {
-    try {
-      return unwrapToolResult(
-        await ctx.callTool(candidates[index], params || {}),
-      );
-    } catch (error) {
-      lastError = toErrorText(error);
-    }
-  }
-  throw new Error(lastError || `${action} failed`);
-}
+const unwrapToolResult = readingTools.unwrapToolResult;
+const callHistoryTool = (ctx, action, params) => readingTools.call(ctx, action, params);
 
 function useEnglishLocale() {
   return String(getLang() || "")

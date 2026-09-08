@@ -1,3 +1,4 @@
+const readingTools = require("../reading_client.js");
 const {
   DETAIL_ROUTE,
   RUN_ID_ENV_KEY,
@@ -25,6 +26,7 @@ function historyScreen(ctx) {
   const [tasks, setTasks] = ctx.useState("historyTasks", []);
   const [runs, setRuns] = ctx.useState("historyRuns", []);
 
+  const watchTasks = () => readingTools.watch(ctx, "history", setTasks, error => setError(toErrorText(error)));
   const load = async () => {
     setLoading(true);
     setError("");
@@ -33,13 +35,11 @@ function historyScreen(ctx) {
         limit: 50,
       });
       setRuns(Array.isArray(result && result.runs) ? result.runs : []);
-      const taskName = ctx.resolveToolName ? await ctx.resolveToolName({ packageName: "reading_companion_tasks", toolName: "list_tasks", preferImported: true }) : "reading_companion_tasks:list_tasks";
-      const taskResult = unwrapToolResult(await ctx.callTool(taskName, { limit: 20 }));
-      setTasks(Array.isArray(taskResult.tasks) ? taskResult.tasks : []);
     } catch (loadError) {
       setError(toErrorText(loadError));
     } finally {
       setLoading(false);
+      await watchTasks();
     }
   };
 
@@ -60,22 +60,17 @@ function historyScreen(ctx) {
   const children = [];
   for (const task of tasks) {
     children.push(UI.Card({ fillMaxWidth: true }, UI.Column({ padding: 12, spacing: 6 }, [
-      UI.Text({ text: `${task.kind === "summary" ? (english ? "Summary" : "摘要") : (english ? "Commentary" : "段评")} · ${({
-        queued: english ? "Queued" : "等待中",
-        running: english ? "Running" : "生成中",
-        cancelling: english ? "Cancelling" : "取消中",
-        cancelled: english ? "Cancelled" : "已取消",
-        interrupted: english ? "Interrupted" : "已中断",
-        completed: english ? "Completed" : "已完成",
-        completed_with_failures: english ? "Partially completed" : "部分完成",
-        failed: english ? "Failed" : "失败",
-      })[task.status] || task.status}`, style: "titleSmall" }),
-      UI.Text({ text: String(task.task_id), style: "bodySmall" }),
-      UI.Text({ text: `${english ? "Completed" : "已完成"}: ${Number((task.result || task.progress || {}).completedCount || 0)}` }),
+      UI.Text({ text: readingTools.taskStatusLabel(task, english), style: "titleSmall" }),
+      UI.Text({ text: readingTools.taskLabel(task, english), style: "bodySmall" }),
+      UI.Text({ text: readingTools.taskProgress(task, english) }),
+      ...(readingTools.taskErrors(task, english) ? [UI.Text({ text: readingTools.taskErrors(task, english) })] : []),
+      ...(task.attempts || []).map(attempt => attempt.archived
+        ? UI.Text({ text: `${Number(attempt.chapterIndex) + 1} · ${statusLabel(attempt.status, english)} · ${english ? "Detailed trace expired" : "详细记录已过保留期"}` })
+        : UI.OutlinedButton({ onClick: () => openRun(attempt) },
+        UI.Text({ text: `${Number(attempt.chapterIndex) + 1} · ${attempt.chapterTitle || ""} · ${statusLabel(attempt.status, english)}` }))),
       ["queued", "running", "cancelling"].includes(task.status) ? UI.OutlinedButton({ onClick: async () => {
         try {
-          const name = ctx.resolveToolName ? await ctx.resolveToolName({ packageName: "reading_companion_tasks", toolName: "cancel_task", preferImported: true }) : "reading_companion_tasks:cancel_task";
-          unwrapToolResult(await ctx.callTool(name, { task_id: task.task_id }));
+          await readingTools.tasks.cancel(ctx, task.task_id);
           await load();
         } catch (cancelError) {
           setError(toErrorText(cancelError));
@@ -194,9 +189,12 @@ function historyScreen(ctx) {
 
   return UI.Box(
     {
+      onResume: async () => { readingTools.activate("history"); await watchTasks(); },
+      onPause: () => readingTools.pause("history"),
       fillMaxSize: true,
       topBarTitle: UI.Text({ text: title, maxLines: 1, overflow: "ellipsis" }),
       onLoad: async () => {
+        readingTools.activate("history");
         if (!initialized) {
           setInitialized(true);
           await load();

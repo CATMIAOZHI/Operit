@@ -310,7 +310,7 @@ class ReadingCompanionAutoCommentary private constructor(
             startChapterIndex = startChapterIndex,
             scope = scope,
         )
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         val chapterByIndex = chapters.associateBy(ReaderChapter::index)
         val targets =
             candidateTargets
@@ -527,7 +527,7 @@ class ReadingCompanionAutoCommentary private constructor(
                 runId = runId,
             )
         }
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         fileStore.syncBookCatalog(initialState.book, chapters)
         val prefetchAhead = store.getPrefetchAheadChapters()
         val storedPersona = store.getAutoCommentPersona(initialState.book.id)
@@ -731,7 +731,7 @@ class ReadingCompanionAutoCommentary private constructor(
             ) {
                 provider.getChapters(initialState.book.id)
             }
-            ReadingCompanionFileStore(appContext).syncBookCatalog(initialState.book, latestChapters)
+            ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot()).syncBookCatalog(initialState.book, latestChapters)
             val targetIdentityUnchanged =
                 latestChapters.firstOrNull { it.index == nextChapterIndex }?.sourceId ==
                     expectedTargetChapter.sourceId
@@ -788,7 +788,7 @@ class ReadingCompanionAutoCommentary private constructor(
                     runId,
                 ),
             ) { "claim_lost：保存段评文件前生成所有权已失效" }
-            fileStore.writeGeneratedChapter(
+            val publication = fileStore.writeGeneratedChapter(
                 book = initialState.book,
                 chapter = expectedTargetChapter,
                 sourceContent = content.content,
@@ -799,6 +799,7 @@ class ReadingCompanionAutoCommentary private constructor(
                 summary = generated.summary,
                 comments = records,
                 publishSummary = trigger != TRIGGER_BACKGROUND,
+                prepareOnly = true,
             )
             fileStore.ensureCompanionMemory(
                 initialState.book.id,
@@ -816,6 +817,7 @@ class ReadingCompanionAutoCommentary private constructor(
                             roleCardId = requireNotNull(generated.execution.roleCardId),
                             roleCardName = requireNotNull(generated.execution.roleCardName),
                             generationRunId = runId,
+                            publication = publication,
                         )
                     } else {
                         store.replaceAutoComments(
@@ -826,6 +828,7 @@ class ReadingCompanionAutoCommentary private constructor(
                             roleCardId = requireNotNull(generated.execution.roleCardId),
                             roleCardName = requireNotNull(generated.execution.roleCardName),
                             generationRunId = runId,
+                            publication = publication,
                             comments = records,
                         )
                     }
@@ -1191,7 +1194,7 @@ class ReadingCompanionAutoCommentary private constructor(
         }.getOrNull()
         return JSONObject().apply {
             put("enabled", isEnabled(appContext))
-            put("mode", "whole_chapter_single_request")
+            put("mode", "subagent_multi_turn")
             put(
                 "prefetchChapters",
                 store.getPrefetchAheadChapters(),
@@ -1204,12 +1207,12 @@ class ReadingCompanionAutoCommentary private constructor(
                 put(AutoCommentSupport.MIN_PREFETCH_AHEAD_CHAPTERS)
                 put(AutoCommentSupport.MAX_PREFETCH_AHEAD_CHAPTERS)
             })
-            put("generationRequestsPerChapter", 1)
+            put("generationRequestsPerChapter", JSONObject.NULL)
             put("generationPolicyVersion", AutoCommentSupport.GENERATION_POLICY_VERSION)
-            put("previousContextChapterLimit", AutoCommentSupport.MAX_PREVIOUS_CONTEXT_CHAPTERS)
-            put("previousContextCharacterLimit", AutoCommentSupport.MAX_PREVIOUS_CONTEXT_CHARS)
+            put("previousContextChapterLimit", 4)
+            put("previousContextCharacterLimit", JSONObject.NULL)
             put("roleCardPolicy", "per_book_selected_character_card")
-            put("modelPolicy", "caller_model_or_role_card_binding_or_global_chat")
+            put("modelPolicy", "caller_model_or_global_chat")
             put("tokenStatsCategory", TokenStatCategory.READING_COMPANION.name)
             put(
                 "historyStorage",
@@ -1394,7 +1397,7 @@ class ReadingCompanionAutoCommentary private constructor(
         if (state.chapterIndex >= upper) return false
         val chapters = provider.getChapters(state.book.id)
         val chapterByIndex = chapters.associateBy(ReaderChapter::index)
-        val fileStore = ReadingCompanionFileStore(appContext)
+        val fileStore = ReadingCompanionFileStore(appContext, publicationSnapshot = store.publicationSnapshot())
         fileStore.syncBookCatalog(state.book, chapters)
         val roleCardId = store.getAutoCommentPersona(state.book.id)?.roleCardId
         for (chapterIndex in (state.chapterIndex + 1)..upper) {

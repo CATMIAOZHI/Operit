@@ -523,6 +523,7 @@ class ReadingCompanionStore(context: Context) :
         createCoreTables(db)
         createKnowledgeTables(db)
         createAutoCommentTables(db)
+        createTaskTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -686,6 +687,17 @@ class ReadingCompanionStore(context: Context) :
                 """.trimIndent(),
             )
         }
+        if (oldVersion < 15) createTaskTables(db)
+    }
+
+    private fun createTaskTables(db: SQLiteDatabase) {
+        addColumnIfMissing(db, "auto_comment_runs", "task_id", "TEXT")
+        ReadingTaskRepository.createTables(db)
+        db.execSQL("""CREATE TABLE IF NOT EXISTS reading_publications (
+            chapter_ref TEXT PRIMARY KEY NOT NULL, book_id TEXT NOT NULL, source_id TEXT NOT NULL,
+            revision TEXT NOT NULL, contract_hash TEXT NOT NULL, role_card_id TEXT NOT NULL,
+            run_id INTEGER NOT NULL, committed_at INTEGER NOT NULL
+        )""")
     }
 
     private fun createCoreTables(db: SQLiteDatabase) {
@@ -1696,6 +1708,11 @@ class ReadingCompanionStore(context: Context) :
     }
 
     @Synchronized
+    fun publicationSnapshot(): Map<String, String> = readableDatabase.rawQuery(
+        "SELECT chapter_ref, revision FROM reading_publications", null,
+    ).use { cursor -> buildMap { while (cursor.moveToNext()) put(cursor.getString(0), cursor.getString(1)) } }
+
+    @Synchronized
     fun replaceAutoComments(
         bookId: String,
         chapterIndex: Int,
@@ -1705,6 +1722,7 @@ class ReadingCompanionStore(context: Context) :
         roleCardName: String,
         generationRunId: Long,
         comments: List<AutoCommentRecord>,
+        publication: PreparedReadingPublication? = null,
     ): Boolean {
         AutoCommentSupport.requireReplacementComments(comments)
         return publishAutoComments(
@@ -1716,6 +1734,7 @@ class ReadingCompanionStore(context: Context) :
             roleCardName = roleCardName,
             generationRunId = generationRunId,
             comments = comments,
+            publication = publication,
         )
     }
 
@@ -1733,6 +1752,7 @@ class ReadingCompanionStore(context: Context) :
         roleCardId: String,
         roleCardName: String,
         generationRunId: Long,
+        publication: PreparedReadingPublication? = null,
     ): Boolean =
         publishAutoComments(
             bookId = bookId,
@@ -1743,6 +1763,7 @@ class ReadingCompanionStore(context: Context) :
             roleCardName = roleCardName,
             generationRunId = generationRunId,
             comments = emptyList(),
+            publication = publication,
         )
 
     private fun publishAutoComments(
@@ -1754,6 +1775,7 @@ class ReadingCompanionStore(context: Context) :
         roleCardName: String,
         generationRunId: Long,
         comments: List<AutoCommentRecord>,
+        publication: PreparedReadingPublication? = null,
     ): Boolean {
         val db = writableDatabase
         val createdAt = System.currentTimeMillis()
@@ -1777,6 +1799,15 @@ class ReadingCompanionStore(context: Context) :
             if (!ownsGeneration) {
                 db.setTransactionSuccessful()
                 return false
+            }
+            if (publication != null) {
+                require(publication.bookId == bookId && publication.roleCardId == roleCardId)
+                db.insertWithOnConflict("reading_publications", null, ContentValues().apply {
+                    put("chapter_ref", publication.chapterRef); put("book_id", bookId)
+                    put("source_id", publication.sourceId); put("revision", publication.revision)
+                    put("contract_hash", publication.contractHash); put("role_card_id", roleCardId)
+                    put("run_id", generationRunId); put("committed_at", createdAt)
+                }, SQLiteDatabase.CONFLICT_REPLACE).also { check(it != -1L) }
             }
             db.delete(
                 "auto_comments",
@@ -2017,6 +2048,7 @@ class ReadingCompanionStore(context: Context) :
                 "auto_comment_runs",
                 null,
                 ContentValues().apply {
+                    ReadingTaskContext.taskId?.let { put("task_id", it) }
                     put("trigger_source", trigger)
                     put("execution_mode", executionMode)
                     // 进程重启恢复语义：新 run 只作谱系记录旧 run id，绝不续写旧 child。
@@ -2985,6 +3017,13 @@ class ReadingCompanionStore(context: Context) :
                 }
                 refs
             }
+        db.execSQL("""INSERT OR REPLACE INTO reading_task_attempts
+            (id, task_id, chapter_index, chapter_title, status, stage, subagent_run_id, child_chat_id,
+             actual_input_tokens, actual_output_tokens, started_at, finished_at)
+            SELECT id, task_id, chapter_index, chapter_title, status, stage, subagent_run_id, child_chat_id,
+                   actual_input_tokens, actual_output_tokens, started_at, finished_at
+            FROM auto_comment_runs WHERE task_id IS NOT NULL AND ($selection)
+        """.trimIndent(), selectionArgs)
         db.delete("auto_comment_runs", selection, selectionArgs)
         if (prunedRefs.isNotEmpty()) {
             synchronized(prunedRunChatQueue) {
@@ -3182,6 +3221,42 @@ class ReadingCompanionStore(context: Context) :
         } finally {
             db.endTransaction()
         }
+    }
+
+    /** Index the actual durable summary, never the discarded model candidate. */
+    @Synchronized
+    fun indexPublishedSummary(bookId: String, chapterIndex: Int, summary: PublishedSummary) {
+        val db = writableDatabase
+        val indexed = getIndexedChapter(db, bookId, chapterIndex) ?: return
+        if (summary.sourceHashKind != ReadingCompanionFileStore.CONTENT_HASH_KIND_READABLE ||
+            summary.sourceHash != indexed.contentHash || summary.text.isBlank()) {
+            db.beginTransaction()
+            try {
+                deleteKnowledge(db, bookId, chapterIndex)
+                db.setTransactionSuccessful()
+            } finally { db.endTransaction() }
+            return
+        }
+        val previous = getChapterKnowledge(bookId, chapterIndex)
+        if (previous?.contentHash == indexed.contentHash && previous.summary == summary.text) return
+        db.beginTransaction()
+        try {
+            deleteKnowledge(db, bookId, chapterIndex)
+            db.insertOrThrow("chapter_knowledge", null, ContentValues().apply {
+                put("book_id", bookId); put("chapter_index", chapterIndex)
+                put("chapter_title", indexed.title); put("source_end_pos", indexed.indexedUntil)
+                put("is_complete", if (indexed.isComplete) 1 else 0)
+                put("content_hash", indexed.contentHash); put("summary", summary.text)
+                put("structured_json", "{}"); put("keywords", ""); put("updated_at", System.currentTimeMillis())
+            })
+            db.insertOrThrow("knowledge_fts", null, ContentValues().apply {
+                put("book_id", bookId); put("chapter_index", chapterIndex)
+                put("chapter_title", indexed.title); put("source_end_pos", indexed.indexedUntil)
+                put("kind", "summary"); put("entity_name", ""); put("text", summary.text)
+                put("search_terms", ReadingTextIndexSupport.buildSearchTerms(summary.text))
+            })
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
     }
 
     @Synchronized
@@ -3777,7 +3852,7 @@ class ReadingCompanionStore(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "reading_companion.db"
-        internal const val DATABASE_VERSION = 14
+        internal const val DATABASE_VERSION = 15
         private const val SELECTED_BOOK_KEY = "selected_book_id"
         private const val LAST_RESOLVED_BOOK_KEY = "last_resolved_book_id"
         private const val SUMMARY_BATCH_PREFS_KEY_PREFIX = "summary_batch|"

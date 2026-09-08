@@ -16,6 +16,20 @@ import kotlin.math.min
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class PreparedReadingPublication(
+    val bookId: String, val sourceId: String, val chapterRef: String,
+    val revision: String, val contractHash: String, val roleCardId: String,
+)
+
+data class PublishedSummary(
+    val text: String,
+    val sourceHash: String,
+    val sourceHashKind: String,
+    val revision: String,
+    val editor: String,
+    val wasReplaced: Boolean,
+)
+
 internal data class LegacyMigrationRequirements(
     val summary: Boolean,
     val comments: Boolean,
@@ -34,20 +48,27 @@ private data class FileQueryMatch(
 
 /**
  * Human- and agent-readable book files. SQLite remains the runtime coordinator for claims and
- * Legado queries. Summaries/comments are durable editable artifacts; content.md is the last
+ * Legado queries. Summaries are editable; generated comments use immutable revisions. content.md is the last
  * successfully fetched read-only snapshot. Legado content or cleanup rules may change afterward,
  * and the snapshot refreshes only when the plugin actually processes that chapter again.
  */
 class ReadingCompanionFileStore(
-    @Suppress("UNUSED_PARAMETER") context: Context,
+    context: Context,
     /**
      * Test-only root override. Production callers should leave this null so all books remain
-     * under the shared Operit external-storage directory.
+     * under the installation-specific Operit external-storage directory.
      */
     internal val storageRootOverride: File? = null,
+    private val publicationSnapshot: Map<String, String> = emptyMap(),
 ) {
-    private val root =
-        storageRootOverride ?: File(OperitPaths.operitRootPathSdcard(), "reading_companion/books")
+    private val root: File by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        storageRootOverride ?: synchronized(PROCESS_LOCK) {
+            migrateInstallationRoot(
+                File(OperitPaths.operitRootPathSdcard(), "reading_companion/books"),
+                context.packageName,
+            )
+        }
+    }
 
     fun syncBookCatalog(book: ReaderBook, chapters: List<ReaderChapter>) = withFileStoreLock {
         val bookDir = bookDir(book.id)
@@ -155,19 +176,22 @@ class ReadingCompanionFileStore(
         summary: String,
         comments: List<AutoCommentRecord>,
         publishSummary: Boolean = true,
+        prepareOnly: Boolean = false,
     ) = withFileStoreLock {
         if (publishSummary) {
             require(summary.isNotBlank()) { "章节摘要不能为空" }
         }
         val chapterDir = chapterDir(book.id, chapter)
         chapterDir.mkdirs()
+        recoverSummaryPublication(chapterDir)
         writeChapterContentLocked(
             book = book,
             chapter = chapter,
             sourceContent = sourceContent,
             contentHashKind = CONTENT_HASH_KIND_ANNOTATION,
         )
-        val revision = System.currentTimeMillis().toString()
+        val revision = java.util.UUID.randomUUID().toString()
+        val outputDirectory = if (prepareOnly) File(chapterDir, "revisions/$revision").apply { mkdirs() } else chapterDir
         val metaFile = File(chapterDir, "meta.json")
         val summaryFile = File(chapterDir, "summary.md")
         val previousMeta = metaFile
@@ -199,13 +223,10 @@ class ReadingCompanionFileStore(
             } else {
                 summary.trim()
             }
-        if (shouldPublishSummary) {
-            atomicWrite(summaryFile, "$publishedSummary\n")
-        }
         val paragraphFingerprints =
             paragraphFingerprintMetadata(sourceContent, contractHash).orEmpty()
         atomicWrite(
-            File(chapterDir, "comments.json"),
+            File(outputDirectory, "comments.json"),
             JSONObject()
                 .put("schemaVersion", SCHEMA_VERSION)
                 .put("revision", revision)
@@ -303,7 +324,24 @@ class ReadingCompanionFileStore(
                 },
             )
             .put("updatedAt", System.currentTimeMillis())
-        atomicWrite(metaFile, publishedMeta.toString(2))
+        if (prepareOnly) {
+            atomicWrite(File(outputDirectory, "meta.json"), publishedMeta.toString(2))
+            // Summary is independently editable. Never move the visible commentary commit marker here.
+            if (shouldPublishSummary) {
+                val summaryMeta = JSONObject(previousMeta.toString())
+                listOf("contentHash", "contentHashKind", "summaryHash", "editor", "updatedAt").forEach {
+                    summaryMeta.put(it, publishedMeta.get(it))
+                }
+                publishSummaryAndMetadata(chapterDir, publishedSummary, summaryMeta)
+            }
+        } else if (shouldPublishSummary) {
+            publishSummaryAndMetadata(chapterDir, publishedSummary, publishedMeta)
+        } else {
+            atomicWrite(metaFile, publishedMeta.toString(2))
+        }
+        PreparedReadingPublication(book.id, chapter.sourceId, chapterRef(book.id, chapter.sourceId),
+            revision, contractHash, roleCardId)
+
     }
 
     fun writeSummary(
@@ -314,6 +352,7 @@ class ReadingCompanionFileStore(
     ) = withFileStoreLock {
         require(summary.isNotBlank()) { "章节摘要不能为空" }
         val chapterDir = chapterDir(book.id, chapter).apply { mkdirs() }
+        recoverSummaryPublication(chapterDir)
         writeChapterContentLocked(
             book = book,
             chapter = chapter,
@@ -344,7 +383,6 @@ class ReadingCompanionFileStore(
                         )
                 )
         val publishedSummary = if (preserveHumanSummary) existingSummary else summary.trim()
-        atomicWrite(summaryFile, "$publishedSummary\n")
         previousMeta
             .put("schemaVersion", SCHEMA_VERSION)
             .put("chapterRef", chapterRef(book.id, chapter.sourceId))
@@ -365,7 +403,12 @@ class ReadingCompanionFileStore(
             .put("summaryHash", sha256Full(publishedSummary))
             .put("editor", if (preserveHumanSummary) "main_agent" else "summary_model")
             .put("updatedAt", System.currentTimeMillis())
-        atomicWrite(metaFile, previousMeta.toString(2))
+        publishSummaryAndMetadata(chapterDir, publishedSummary, previousMeta)
+        PublishedSummary(
+            publishedSummary, previousMeta.optString("contentHash"),
+            previousMeta.optString("contentHashKind"), sha256Full(publishedSummary),
+            previousMeta.getString("editor"), !preserveHumanSummary,
+        )
     }
 
     /**
@@ -393,6 +436,7 @@ class ReadingCompanionFileStore(
     ) {
         require(contentHashKind.isNotBlank()) { "正文文件哈希类型不能为空" }
         val chapterDir = chapterDir(book.id, chapter).apply { mkdirs() }
+        recoverSummaryPublication(chapterDir)
         val contentFile = File(chapterDir, CONTENT_FILE_NAME)
         val contentFileHash = contentHash(sourceContent)
         val previousMeta = File(chapterDir, META_FILE_NAME)
@@ -615,6 +659,7 @@ class ReadingCompanionFileStore(
         expectedContentHash: String? = null,
     ): String? = withFileStoreLock {
         val dir = findChapterDir(bookId, sourceId) ?: return null
+        recoverSummaryPublication(dir)
         if (!expectedContentHash.isNullOrBlank()) {
             val meta = File(dir, "meta.json")
                 .takeIf(File::isFile)
@@ -662,18 +707,19 @@ class ReadingCompanionFileStore(
             ?: return null
         val relativePath = entry.optString("relativePath").takeIf(String::isNotBlank)
             ?: return null
-        val chapterDir = File(chapterRoot, relativePath)
-        val meta = File(chapterDir, "meta.json")
+        val chapterDir = recoverCatalogChapter(chapterRoot, relativePath)
+        val commentsDirectory = publishedCommentsDirectory(chapterDir)
+        val meta = File(commentsDirectory, "meta.json")
             .takeIf(File::isFile)
             ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
             ?: return null
         val storedContractHash = meta.optString("contractHash")
-        val commentsFile = File(chapterDir, "comments.json")
+        val commentsFile = File(commentsDirectory, "comments.json")
         var comments = commentsFile
             .takeIf(File::isFile)
             ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
             ?: return null
-        comments =
+        comments = if (commentsDirectory != chapterDir) comments else
             backfillParagraphFingerprintsLocked(
                 chapterDir = chapterDir,
                 sourceContent =
@@ -778,7 +824,7 @@ class ReadingCompanionFileStore(
         sourceId: String,
         roleCardId: String?,
     ): String? {
-        val chapterDir = findChapterDir(bookId, sourceId) ?: return null
+        val chapterDir = publishedCommentsDirectory(findChapterDir(bookId, sourceId) ?: return null)
         val meta = File(chapterDir, "meta.json")
             .takeIf(File::isFile)
             ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
@@ -835,6 +881,7 @@ class ReadingCompanionFileStore(
                         canonicalChapter.path == canonicalRootPath ||
                         !canonicalChapter.path.startsWith(canonicalRootPath + File.separator)
                     ) return@repeat
+                    recoverSummaryPublication(canonicalChapter)
                     val summaryFile = File(canonicalChapter, "summary.md")
                     if (!summaryFile.isFile) return@repeat
                     val meta =
@@ -951,10 +998,10 @@ class ReadingCompanionFileStore(
         catalogChapterMetadata
             .toSortedMap()
             .forEach { (relative, metadata) ->
-                val chapterDir = File(chapterRoot, relative)
+                val chapterDir = recoverCatalogChapter(chapterRoot, relative)
                 val ordinal = metadata.first.takeIf { it > 0 }
                 listOf(CONTENT_FILE_NAME, "summary.md", "comments.json", META_FILE_NAME)
-                    .map { File(chapterDir, it) }
+                    .map { if (it == "comments.json") File(publishedCommentsDirectory(chapterDir), it) else File(chapterDir, it) }
                     .forEach { addFile(it, "chapter", ordinal, metadata.second) }
             }
 
@@ -1082,10 +1129,10 @@ class ReadingCompanionFileStore(
         catalogChapterMetadata
             .toSortedMap()
             .forEach { (relative, metadata) ->
-                val chapterDir = File(chapterRoot, relative)
+                val chapterDir = recoverCatalogChapter(chapterRoot, relative)
                 val ordinal = metadata.first.takeIf { it > 0 }
                 listOf(CONTENT_FILE_NAME, "summary.md", "comments.json", META_FILE_NAME)
-                    .map { File(chapterDir, it) }
+                    .map { if (it == "comments.json") File(publishedCommentsDirectory(chapterDir), it) else File(chapterDir, it) }
                     .forEach { addFile(it, "chapter", ordinal, metadata.second) }
             }
 
@@ -1117,6 +1164,85 @@ class ReadingCompanionFileStore(
      * only that bounded range is materialized; the default null keeps the historical full-file
      * response used by the file browser.
      */
+    fun chapterCacheCoverage(bookId: String, beforeChapterIndex: Int): JSONObject = withFileStoreLock {
+        var total = 0
+        var available = 0
+        val chapterRoot = File(bookDir(bookId), "chapters")
+        chapterRoot.listFiles().orEmpty().filter(File::isDirectory).forEach { group ->
+            val catalog = File(group, "catalog.json").takeIf(File::isFile)?.let { JSONObject(it.readText()) }
+                ?.optJSONArray("chapters") ?: return@forEach
+            repeat(catalog.length()) { index ->
+                val entry = catalog.getJSONObject(index)
+                val ordinal = entry.optInt("ordinal", -1)
+                if (ordinal > 0 && ordinal <= beforeChapterIndex) {
+                    total++
+                    val directory = recoverCatalogChapter(chapterRoot, entry.getString("relativePath"))
+                    if (File(directory, CONTENT_FILE_NAME).isFile) available++
+                }
+            }
+        }
+        JSONObject().put("pastChapterCount", total).put("localSnapshotCount", available)
+            .put("missingSnapshotCount", total - available)
+            .put("note", "Search covers local snapshots only; snapshots may be partial or stale. No match does not prove absence in the book.")
+    }
+
+    /** Literal lookup over the same book-bound active files exposed by the reader. */
+    fun grepPersistedFiles(bookId: String, query: String, offset: Int = 0, limit: Int = 30): JSONObject = withFileStoreLock {
+        require(query.isNotBlank()) { "query must not be blank" }
+        require(offset >= 0 && limit in 1..100) { "Invalid grep page" }
+        val matches = JSONArray()
+        var seen = 0
+        var fileOffset = 0
+        var more = false
+        search@ while (true) {
+            val page = listPersistedFilesFromCatalogs(bookId, fileOffset, 100)
+            val entries = page.getJSONArray("entries")
+            for (i in 0 until entries.length()) {
+                val entry = entries.getJSONObject(i)
+                val file = File(entry.getString("path"))
+                var line = 1
+                var characterOffset = 0
+                file.bufferedReader().use { reader ->
+                    while (true) {
+                        val buffer = StringBuilder()
+                        var consumed = 0
+                        while (true) {
+                            val code = reader.read()
+                            if (code < 0) break
+                            consumed++
+                            if (code == 10) break
+                            if (code == 13) {
+                                reader.mark(1)
+                                if (reader.read() == 10) consumed++ else reader.reset()
+                                break
+                            }
+                            buffer.append(code.toChar())
+                        }
+                        if (consumed == 0) break
+                        val text = buffer.toString()
+                        val matchIndex = text.indexOf(query, ignoreCase = true)
+                        if (matchIndex >= 0) {
+                            if (seen++ >= offset) {
+                                if (matches.length() == limit) { more = true; break }
+                                matches.put(JSONObject().put("path", file.absolutePath)
+                                    .put("kind", entry.optString("kind"))
+                                    .put("lineNumber", line).put("offset", characterOffset + matchIndex)
+                                    .put("text", text.substring(maxOf(0, matchIndex - 200), minOf(text.length, matchIndex + 800))))
+                            }
+                        }
+                        characterOffset += consumed
+                        line++
+                    }
+                }
+                if (more) break@search
+            }
+            if (page.isNull("nextOffset")) break
+            fileOffset = page.getInt("nextOffset")
+        }
+        JSONObject().put("results", matches).put("offset", offset)
+            .put("nextOffset", if (more) offset + matches.length() else JSONObject.NULL)
+    }
+
     fun readPersistedFile(
         bookId: String,
         path: String,
@@ -1143,7 +1269,6 @@ class ReadingCompanionFileStore(
                 targetPath.startsWith(rootPath + File.separator),
         ) { "文件路径必须位于当前书籍目录内" }
         require(target.name in PERSISTED_FILE_ALLOWLIST) { "不允许读取该文件类型" }
-        require(target.isFile) { "文件不存在" }
         val relative = rootDir.toPath().relativize(target.toPath()).toString()
             .replace(File.separatorChar, '/')
         require(!relative.split('/').contains("legacy-unverified")) {
@@ -1152,6 +1277,10 @@ class ReadingCompanionFileStore(
         require(isActivePersistedPathLocked(bookId, target)) {
             "文件不属于当前书籍目录或当前章节 catalog"
         }
+        if (target.name in setOf(CONTENT_FILE_NAME, "summary.md", "comments.json", META_FILE_NAME)) {
+            recoverSummaryPublication(requireNotNull(target.parentFile))
+        }
+        require(target.isFile) { "文件不存在" }
         val range = readTextRange(
             file = target,
             offset = safeOffset,
@@ -1278,6 +1407,7 @@ class ReadingCompanionFileStore(
                         // strictly before the current reading chapter; current partial progress
                         // is represented by the bounded content snapshot below.
                         if (chapter.index < throughChapterIndex) {
+                            recoverSummaryPublication(chapterDirectory)
                             val summaryFile = File(chapterDirectory, "summary.md")
                                 .takeIf(File::isFile)
                             summaryFile?.let { file ->
@@ -1525,8 +1655,8 @@ class ReadingCompanionFileStore(
                     if (relative.isBlank()) return@repeat
                     val chapterDirectory = File(chapterRoot, relative)
                     listOf(CONTENT_FILE_NAME, "summary.md", "comments.json", META_FILE_NAME)
-                        .map { File(chapterDirectory, it) }
-                        .forEach { if (sameFile(it)) return true }
+                        .map { if (it == "comments.json") File(publishedCommentsDirectory(chapterDirectory), it) else File(chapterDirectory, it) }
+                        .forEach { if (it.canonicalPath == targetPath) return true }
                 }
             }
         return false
@@ -1597,7 +1727,7 @@ class ReadingCompanionFileStore(
         val dir = findChapterDir(bookId, sourceId) ?: return@withFileStoreLock null
         val content = File(dir, CONTENT_FILE_NAME).takeIf(File::isFile)
         val summary = File(dir, "summary.md").takeIf(File::isFile)
-        val comments = File(dir, "comments.json").takeIf(File::isFile)
+        val comments = File(publishedCommentsDirectory(dir), "comments.json").takeIf(File::isFile)
         val meta = File(dir, "meta.json").takeIf(File::isFile)
         if (content == null && summary == null && comments == null && meta == null) {
             return@withFileStoreLock null
@@ -1625,11 +1755,9 @@ class ReadingCompanionFileStore(
     }
 
     /**
-     * Bounded default grep roots containing only chapters strictly before [beforeChapterIndex].
-     *
-     * Completed 100-chapter groups are returned as whole directories. Only the current group is
-     * expanded into individual chapter directories, keeping the response bounded by group count
-     * plus at most 100 paths while excluding prefetched future chapters in that same group.
+     * Exact grep files for chapters strictly before [beforeChapterIndex].
+     * Never return recursive directory roots: they also contain old or uncommitted revisions.
+     * Only the publication snapshot's current commentary file is included.
      */
     fun safeChapterSearchPaths(
         bookId: String,
@@ -1765,6 +1893,7 @@ class ReadingCompanionFileStore(
             ?.filter(File::isDirectory)
             ?.map { File(it, name) }
             ?.firstOrNull(File::isDirectory)
+            ?.also(::recoverSummaryPublication)
     }
 
     private fun chapterDirectoryName(bookId: String, sourceId: String): String =
@@ -1772,6 +1901,48 @@ class ReadingCompanionFileStore(
 
     private fun groupName(first: Int, last: Int): String =
         "%04d-%04d".format(first, last)
+
+    private fun publishedCommentsDirectory(chapterDirectory: File): File {
+        val revision = publicationSnapshot["ch_${chapterDirectory.name}"] ?: return chapterDirectory
+        require(revision.matches(Regex("[a-zA-Z0-9-]+"))) { "Invalid publication revision" }
+        return File(chapterDirectory, "revisions/$revision")
+    }
+
+    private fun recoverCatalogChapter(chapterRoot: File, relativePath: String): File {
+        val directory = File(chapterRoot, relativePath).canonicalFile
+        require(directory.path.startsWith(chapterRoot.canonicalPath + File.separator)) {
+            "章节目录必须位于当前书籍目录内"
+        }
+        recoverSummaryPublication(directory)
+        return directory
+    }
+
+    // A single pending record makes a summary/meta publication recoverable after process death.
+    private fun publishSummaryAndMetadata(dir: File, summary: String, metadata: JSONObject) {
+        val current = File(dir, "summary.md").takeIf(File::isFile)?.readText()?.trim().orEmpty()
+        val pending = JSONObject()
+            .put("previousSummaryHash", sha256Full(current))
+            .put("summary", summary.trim())
+            .put("metadata", metadata)
+        atomicWrite(File(dir, SUMMARY_PUBLICATION), pending.toString())
+        recoverSummaryPublication(dir)
+    }
+
+    private fun recoverSummaryPublication(dir: File) {
+        val journal = File(dir, SUMMARY_PUBLICATION)
+        if (!journal.isFile) return
+        val pending = JSONObject(journal.readText())
+        val summary = pending.getString("summary")
+        val summaryFile = File(dir, "summary.md")
+        val current = summaryFile.takeIf(File::isFile)?.readText()?.trim().orEmpty()
+        val currentHash = sha256Full(current)
+        // A real user edit after the interrupted publication must not be overwritten.
+        if (currentHash == pending.getString("previousSummaryHash") || currentHash == sha256Full(summary)) {
+            atomicWrite(summaryFile, "$summary\n")
+            atomicWrite(File(dir, "meta.json"), pending.getJSONObject("metadata").toString(2))
+        }
+        check(journal.delete()) { "无法完成摘要发布记录清理" }
+    }
 
     private fun atomicWrite(target: File, content: String) {
         target.parentFile?.mkdirs()
@@ -1806,6 +1977,23 @@ class ReadingCompanionFileStore(
     }
 
     companion object {
+        private const val SUMMARY_PUBLICATION = ".summary-publication.json"
+
+        internal fun migrateInstallationRoot(legacyRoot: File, packageName: String): File {
+            require(packageName.matches(Regex("[A-Za-z0-9_.]+")))
+            val installation = File(legacyRoot.parentFile, "installations/$packageName")
+            val destination = File(installation, "books")
+            if (destination.isDirectory) return destination
+            val staging = File(installation, "books.migrating")
+            check(staging.mkdirs() || staging.isDirectory)
+            if (legacyRoot.isDirectory) {
+                // Only the private staging copy is replaced on retry; shared originals are retained.
+                legacyRoot.copyRecursively(staging, overwrite = true)
+            }
+            Files.move(staging.toPath(), destination.toPath())
+            return destination
+        }
+
         const val SCHEMA_VERSION = 1
         const val CHAPTERS_PER_GROUP = 100
         const val CONTENT_FILE_NAME = "content.md"
@@ -1898,44 +2086,16 @@ class ReadingCompanionFileStore(
         include: (ReaderChapter) -> Boolean,
     ): JSONArray = withFileStoreLock {
         val paths = JSONArray()
-        val chapterRoot = File(bookDir(bookId), "chapters")
-        chapters
-            .sortedBy(ReaderChapter::index)
-            .groupBy { chapter -> chapter.index / CHAPTERS_PER_GROUP }
-            .toSortedMap()
-            .values
-            .forEach { group ->
-                if (group.isEmpty()) return@forEach
-                val includedChapters = group.filter(include)
-                if (includedChapters.isEmpty()) return@forEach
-                val first = (group.first().index / CHAPTERS_PER_GROUP) * CHAPTERS_PER_GROUP + 1
-                val groupDirectory =
-                    File(chapterRoot, groupName(first, first + CHAPTERS_PER_GROUP - 1))
-                val activeDirectoryNames =
-                    group.map { chapter -> chapterDirectoryName(bookId, chapter.sourceId) }.toSet()
-                val actualDirectories =
-                    groupDirectory
-                        .listFiles()
-                        .orEmpty()
-                        .filter(File::isDirectory)
-                val groupContainsOnlyActiveSources =
-                    actualDirectories.all { directory -> directory.name in activeDirectoryNames }
-                if (includedChapters.size == group.size && groupContainsOnlyActiveSources) {
-                    if (groupDirectory.isDirectory) paths.put(groupDirectory.absolutePath)
-                    return@forEach
-                }
-                includedChapters.forEach { chapter ->
-                    val directory =
-                        File(groupDirectory, chapterDirectoryName(bookId, chapter.sourceId))
-                    if (
-                        directory.isDirectory &&
-                        listOf(CONTENT_FILE_NAME, "summary.md", "comments.json", META_FILE_NAME)
-                            .any { name -> File(directory, name).isFile }
-                    ) {
-                        paths.put(directory.absolutePath)
-                    }
-                }
-            }
+        val directories = File(bookDir(bookId), "chapters").listFiles().orEmpty()
+            .filter(File::isDirectory).flatMap { it.listFiles().orEmpty().filter(File::isDirectory) }
+            .associateBy(File::getName)
+        chapters.sortedBy(ReaderChapter::index).filter(include).forEach { chapter ->
+            val directory = directories[chapterDirectoryName(bookId, chapter.sourceId)] ?: return@forEach
+            recoverSummaryPublication(directory)
+            listOf(File(directory, CONTENT_FILE_NAME), File(directory, "summary.md"),
+                File(publishedCommentsDirectory(directory), "comments.json"))
+                .filter(File::isFile).forEach { paths.put(it.canonicalPath) }
+        }
         paths
     }
 

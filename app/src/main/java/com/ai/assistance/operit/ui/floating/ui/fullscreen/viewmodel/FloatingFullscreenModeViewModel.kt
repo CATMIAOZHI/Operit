@@ -45,12 +45,17 @@ class FloatingFullscreenModeViewModel(
     // ===== 状态定义 =====
     var aiMessage by mutableStateOf(context.getString(R.string.floating_hold_microphone_to_speak))
     
+    var voiceStatus by mutableStateOf("")
+        private set
+
     // UI状态
     var isWaveActive by mutableStateOf(initialWaveActive)
     var showBottomControls by mutableStateOf(true)
     var isEditMode by mutableStateOf(false)
     var editableText by mutableStateOf("")
-    var inputText by mutableStateOf("")
+    var inputText: String
+        get() = floatContext.userMessage
+        set(value) { floatContext.userMessage = value }
     var showDragHints by mutableStateOf(false)
 
     var attachScreenContent by mutableStateOf(false)
@@ -105,7 +110,7 @@ class FloatingFullscreenModeViewModel(
                 }
             }
         },
-        onStateChange = { msg -> aiMessage = msg }
+        onStateChange = { msg -> aiMessage = msg; voiceStatus = msg }
     )
     
     // 代理属性，方便 UI 访问
@@ -318,7 +323,9 @@ class FloatingFullscreenModeViewModel(
             floatContext.onCancelMessage?.invoke()
         }
         
+        voiceStatus = ""
         speechManager.startListening { errorMsg ->
+            voiceStatus = errorMsg
             aiMessage = errorMsg
         }
     }
@@ -424,7 +431,7 @@ class FloatingFullscreenModeViewModel(
 
     // ===== 初始化与清理 =====
 
-     suspend fun initialize(autoEnterVoiceChat: Boolean = false, wakeLaunched: Boolean = false) {
+     suspend fun initialize(autoEnterVoiceChat: Boolean = false, wakeLaunched: Boolean = false, enableAutoTimeout: Boolean = true) {
          speechManager.initialize()
          cancelPendingVoiceCaptureResume()
          prefsJob?.cancel()
@@ -450,7 +457,7 @@ class FloatingFullscreenModeViewModel(
          }
 
          if (autoEnterVoiceChat) {
-             enterWaveMode(wakeLaunched = wakeLaunched, enableAutoTimeout = true)
+             enterWaveMode(wakeLaunched = wakeLaunched, enableAutoTimeout = enableAutoTimeout)
          }
      }
 

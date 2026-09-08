@@ -32,7 +32,10 @@ tools/github/.env
 .dev.vars*
 .npm-cache
 
-app/src/main/assets/pets
+app/src/main/assets/pets/*
+!app/src/main/assets/pets/shuiqingmiao/
+app/src/main/assets/pets/shuiqingmiao/*
+!app/src/main/assets/pets/shuiqingmiao/spritesheet.webp
 
 .vscode
 .gradle

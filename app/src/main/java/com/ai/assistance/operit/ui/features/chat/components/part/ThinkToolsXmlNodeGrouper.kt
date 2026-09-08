@@ -58,6 +58,9 @@ class ThinkToolsXmlNodeGrouper(
                 var toolCount = 0
                 var xmlToolRelatedCount = 0
                 while (j < nodes.size) {
+                    // End only after all calls in this batch have their results. Keep
+                    // concurrent calls and their results together with absolute indices.
+                    if (toolCount >= 8 && xmlToolRelatedCount >= toolCount * 2) break
                     val next = nodes[j]
                     // 允许 think 与 tool/tool_result 之间出现纯空白文本（通常是换行）
                     if (next.type == MarkdownProcessorType.PLAIN_TEXT && next.content.isBlank()) {
@@ -115,6 +118,9 @@ class ThinkToolsXmlNodeGrouper(
                 var xmlToolRelatedCount = 1
 
                 while (j < nodes.size) {
+                    // End only after all calls in this batch have their results. Keep
+                    // concurrent calls and their results together with absolute indices.
+                    if (toolCount >= 8 && xmlToolRelatedCount >= toolCount * 2) break
                     val next = nodes[j]
                     if (next.type == MarkdownProcessorType.PLAIN_TEXT && next.content.isBlank()) {
                         j++

@@ -1,27 +1,18 @@
 package com.ai.assistance.operit.ui.floating.ui.fullscreen.screen
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddComment
@@ -31,6 +22,8 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -42,13 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -79,13 +65,10 @@ import com.ai.assistance.operit.ui.floating.ui.fullscreen.components.EditPanel
 import com.ai.assistance.operit.ui.floating.ui.fullscreen.components.MessageDisplay
 import com.ai.assistance.operit.ui.floating.ui.fullscreen.components.WaveVisualizerSection
 import com.ai.assistance.operit.ui.floating.ui.fullscreen.viewmodel.rememberFloatingFullscreenModeViewModel
-import java.util.Random
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
-import android.graphics.Bitmap
-import android.graphics.Color as AndroidColor
 
 /**
  * 全屏模式主屏幕
@@ -95,7 +78,7 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val service = floatContext.chatService
-    val autoEnterVoiceChat = remember(service) { service?.consumeAutoEnterVoiceChat() == true }
+    val autoEnterVoiceChat = remember { floatContext.voiceMode }
     var autoEnteringVoice by remember(autoEnterVoiceChat) { mutableStateOf(autoEnterVoiceChat) }
     val viewModel = rememberFloatingFullscreenModeViewModel(context, floatContext, coroutineScope, initialWaveActive = autoEnterVoiceChat)
     
@@ -235,7 +218,8 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
     LaunchedEffect(Unit) {
         viewModel.initialize(
             autoEnterVoiceChat = autoEnterVoiceChat,
-            wakeLaunched = service?.isWakeLaunched() == true
+            wakeLaunched = service?.isWakeLaunched() == true,
+            enableAutoTimeout = floatContext.voiceAutoTimeout,
         )
     }
 
@@ -330,79 +314,20 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
         }
     }
 
+    LaunchedEffect(viewModel.isWaveActive, autoEnteringVoice) {
+        if (!viewModel.isWaveActive && !autoEnteringVoice && !viewModel.isEditMode) {
+            floatContext.voiceMode = false
+        }
+    }
+
     // UI 布局
     val effectiveWaveActive = viewModel.isWaveActive || autoEnteringVoice
-    val fullscreenBgAlpha by animateFloatAsState(
-        targetValue = if (autoEnteringVoice) 0f else 0.22f,
-        animationSpec = tween(durationMillis = 260),
-        label = "fullscreen_bg_alpha"
-    )
-    val systemBlurActive = floatContext.windowState?.fullscreenSystemBlurActive?.value ?: false
-    val fallbackBlurEnabled = !systemBlurActive
-    val fallbackOverlayAlpha by animateFloatAsState(
-        targetValue = if (fallbackBlurEnabled && !autoEnteringVoice) 0.30f else 0f,
-        animationSpec = tween(durationMillis = 260),
-        label = "fullscreen_fallback_alpha"
-    )
-    val fallbackBlurRadius by animateFloatAsState(
-        targetValue = if (fallbackBlurEnabled && !autoEnteringVoice) 22f else 0f,
-        animationSpec = tween(durationMillis = 260),
-        label = "fullscreen_fallback_blur"
-    )
-    val fallbackNoiseAlpha by animateFloatAsState(
-        targetValue = if (fallbackBlurEnabled && !autoEnteringVoice) 0.06f else 0f,
-        animationSpec = tween(durationMillis = 260),
-        label = "fullscreen_fallback_noise"
-    )
-    val fullscreenScrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = fullscreenBgAlpha)
-    val noiseBitmap = rememberNoiseBitmap()
-    val topInsetPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val topInsetPadding = 0.dp
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(fullscreenScrimColor)
+            .background(MaterialTheme.colorScheme.surface)
     ) {
-        if (fallbackBlurEnabled) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .graphicsLayer { alpha = fallbackOverlayAlpha }
-                    .background(
-                        brush = Brush.verticalGradient(
-                            colorStops = arrayOf(
-                                0.0f to Color.Transparent,
-                                0.40f to Color.Transparent,
-                                0.68f to MaterialTheme.colorScheme.surface.copy(alpha = 0.22f),
-                                1.0f to MaterialTheme.colorScheme.surface.copy(alpha = 0.40f)
-                            )
-                        )
-                    )
-                    .blur(fallbackBlurRadius.dp)
-            )
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .graphicsLayer { alpha = fallbackOverlayAlpha }
-                    .background(
-                        brush = Brush.verticalGradient(
-                            colorStops = arrayOf(
-                                0.0f to Color.Transparent,
-                                0.35f to Color.Transparent,
-                                0.70f to Color.White.copy(alpha = 0.08f),
-                                1.0f to Color.White.copy(alpha = 0.16f)
-                            )
-                        )
-                    )
-            )
-            Image(
-                bitmap = noiseBitmap,
-                contentDescription = null,
-                modifier = Modifier
-                    .matchParentSize()
-                    .graphicsLayer { alpha = fallbackNoiseAlpha },
-                contentScale = ContentScale.Crop
-            )
-        }
         Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -434,7 +359,7 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
                 Icon(
                     imageVector = Icons.Default.AddComment,
                     contentDescription = stringResource(R.string.new_chat),
-                    tint = Color.White,
+                    tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(24.dp)
                 )
             }
@@ -451,12 +376,13 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
         ) {
             // 返回窗口模式
             IconButton(onClick = {
+                floatContext.voiceMode = false
                 floatContext.onModeChange(FloatingMode.WINDOW)
             }) {
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowDown,
                     contentDescription = stringResource(R.string.floating_back_to_window),
-                    tint = Color.White,
+                    tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(24.dp)
                 )
             }
@@ -466,7 +392,7 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
                 Icon(
                     imageVector = Icons.Default.Chat,
                     contentDescription = stringResource(R.string.floating_shrink_to_ball),
-                    tint = Color.White,
+                    tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -481,24 +407,17 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = stringResource(R.string.floating_close_floating_window),
-                    tint = Color.White,
+                    tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(28.dp)
                 )
             }
         }
         
-        // 主内容区域
         val isBottomBarVisible = viewModel.showBottomControls && !viewModel.isEditMode && !effectiveWaveActive
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = if (isBottomBarVisible) 120.dp else 32.dp)
-        ) {
-            // 波浪可视化和头像：仅在语音模式下显示
-            if (effectiveWaveActive) {
-                val waveOffsetY = (-64).dp
-                val activeWaveSize = if (isVoiceAvatarEnabled) 420.dp else 300.dp
-                val activeAvatarSize = if (isVoiceAvatarEnabled) 320.dp else 120.dp
+        Column(Modifier.fillMaxSize().padding(top = 76.dp, bottom = if (isBottomBarVisible) 120.dp else 72.dp)) {
+            if (effectiveWaveActive) BoxWithConstraints(Modifier.fillMaxWidth().weight(0.8f)) {
+                val activeWaveSize = minOf(maxWidth, maxHeight, 300.dp)
+                val activeAvatarSize = minOf(activeWaveSize * 0.65f, if (isVoiceAvatarEnabled) 240.dp else 120.dp)
                 val centerTapTargetSize = if (isVoiceAvatarEnabled) 220.dp else 140.dp
                 WaveVisualizerSection(
                     isWaveActive = viewModel.isWaveActive,
@@ -533,7 +452,6 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
                     },
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .offset(y = waveOffsetY)
                         .zIndex(1f)
                 )
 
@@ -541,7 +459,6 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .offset(y = waveOffsetY)
                         .size(centerTapTargetSize)
                         .zIndex(4f)
                         .clickable(
@@ -553,47 +470,35 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
                 )
             }
             
-            // 消息显示区域 - 根据模式切换位置
-            AnimatedContent(
-                targetState = effectiveWaveActive,
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(300, 150)) togetherWith
-                    fadeOut(animationSpec = tween(300))
-                },
-                label = "MessageTransition",
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(3f)
-            ) { targetIsWaveActive ->
-                Box(modifier = Modifier.fillMaxSize()) {
-                    val modifier = if (targetIsWaveActive) {
-                        // 波浪模式：文本在底部
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .fillMaxHeight(0.52f)
-                            .padding(horizontal = 16.dp)
-                            .padding(bottom = 16.dp)
-                    } else {
-                        // 正常模式：文本在波浪下方
-                        Modifier
-                            .align(Alignment.Center)
-                            .offset(y = 72.dp)
-                            .fillMaxWidth()
-                            .padding(top = 40.dp, bottom = 60.dp) // Timon: 依照顶部和底部组件距离估算
-                            .padding(horizontal = 16.dp)
-                    }
-
-                    MessageDisplay(
-                        messages = floatContext.messages,
-                        speechPreviewText = if (viewModel.isRecording) viewModel.userMessage else (pendingSpeechPreview ?: ""),
-                        showSpeechOverlay = viewModel.isRecording || pendingSpeechPreview != null,
-                        modifier = modifier
-                    )
+            if (effectiveWaveActive) {
+                val state = floatContext.inputProcessingState.value
+                val voiceStatus = when {
+                    state is com.ai.assistance.operit.data.model.InputProcessingState.Error -> state.message
+                    viewModel.isRecording -> stringResource(R.string.floating_listening)
+                    viewModel.isProcessingSpeech -> stringResource(R.string.floating_recognizing)
+                    viewModel.isVoiceCapturePausedForAi -> stringResource(R.string.floating_voice_answering)
+                    viewModel.voiceStatus.isNotBlank() -> viewModel.voiceStatus
+                    else -> stringResource(R.string.floating_voice_starting)
                 }
+                Text(voiceStatus, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
+            MessageDisplay(
+                floatContext = floatContext,
+                speechPreviewText = if (viewModel.isRecording) viewModel.userMessage else (pendingSpeechPreview ?: ""),
+                showSpeechOverlay = viewModel.isRecording || pendingSpeechPreview != null,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+            )
         }
-        
+        if (effectiveWaveActive && !viewModel.isEditMode) {
+            TextButton(
+                onClick = { viewModel.exitWaveMode(); floatContext.voiceMode = false },
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp).heightIn(min = 48.dp),
+            ) { Text(stringResource(R.string.floating_return_to_text)) }
+        }
+
         // 编辑面板
         EditPanel(
             visible = viewModel.isEditMode,
@@ -639,20 +544,5 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
             volumeLevel = volumeLevel,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
-    }
-}
-
-@Composable
-private fun rememberNoiseBitmap(size: Int = 120): ImageBitmap {
-    return remember(size) {
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val random = Random(0)
-        val pixels = IntArray(size * size)
-        for (i in pixels.indices) {
-            val alpha = 8 + random.nextInt(20)
-            pixels[i] = AndroidColor.argb(alpha, 255, 255, 255)
-        }
-        bitmap.setPixels(pixels, 0, size, 0, 0, size, size)
-        bitmap.asImageBitmap()
     }
 }

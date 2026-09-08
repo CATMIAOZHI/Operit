@@ -1295,6 +1295,8 @@ class ClaudeProvider(
     }
 
     // 创建请求
+    private val openCodeGoHeaders = OpenCodeGoHeaders()
+
     private suspend fun createRequest(requestBody: RequestBody): Request {
         val currentApiKey = apiKeyProvider.getApiKey()
         val completedEndpoint = EndpointCompleter.completeEndpoint(apiEndpoint, providerType)
@@ -1311,6 +1313,7 @@ class ClaudeProvider(
             builder.addHeader(key, value)
         }
 
+        openCodeGoHeaders.applyTo(builder)
         val request = builder.build()
         AppLogger.d("AIService", "Claude请求URL: ${HttpLogSanitizer.urlForLog(request.url)}")
         AppLogger.d("AIService", "Claude请求头: \n${HttpLogSanitizer.headersForLog(request.headers)}")

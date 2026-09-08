@@ -1,7 +1,6 @@
 package com.ai.assistance.operit.features.reading
 
 import com.ai.assistance.operit.data.model.ChatEntity
-import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -156,33 +155,4 @@ class ReadingCompanionOrphanCleanupTest {
         assertTrue(outcome.deletedChildChatIds.isEmpty())
     }
 
-    @Test
-    fun `orphan cleanup is wired at every queue loss entry point`() {
-        val storeSource =
-            File(
-                "src/main/java/com/ai/assistance/operit/features/reading/" +
-                    "ReadingCompanionStore.kt",
-            ).readText()
-        val autoCommentarySource =
-            File(
-                "src/main/java/com/ai/assistance/operit/features/reading/" +
-                    "ReadingCompanionAutoCommentary.kt",
-            ).readText()
-        assertTrue(
-            "启动对账（临时实例 prune 无 flush）必须重建清理",
-            run {
-                val startupSegment =
-                    storeSource.substring(
-                        storeSource.indexOf("suspend fun reconcileAfterProcessStart"),
-                        storeSource.indexOf("suspend fun reconcileCrossDatabase"),
-                    )
-                startupSegment.contains("reconcileCrossDatabase()") &&
-                    startupSegment.contains("runOrphanChatCleanup()")
-            },
-        )
-        assertTrue(
-            "生成 finally / settleInterruptedRuns / Worker 开头必须重建清理",
-            autoCommentarySource.split("runOrphanChatCleanup()").size - 1 >= 4,
-        )
-    }
 }

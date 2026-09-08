@@ -24,7 +24,7 @@ fun rememberFloatContext(
         width: Dp,
         height: Dp,
         onClose: () -> Unit,
-        onResize: (Dp, Dp) -> Unit,
+        onResize: (Dp, Dp, Boolean) -> Unit,
         ballSize: Dp = 48.dp,
         windowScale: Float = 1.0f,
         onScaleChange: (Float) -> Unit,
@@ -151,7 +151,7 @@ class FloatContext(
 ) {
     // 回调函数使用 var 以便通过 SideEffect 更新
     var onClose: () -> Unit = {}
-    var onResize: (Dp, Dp) -> Unit = { _, _ -> }
+    var onResize: (Dp, Dp, Boolean) -> Unit = { _, _, _ -> }
     var onScaleChange: (Float) -> Unit = {}
     var onModeChange: (FloatingMode) -> Unit = {}
     var onMove: (Float, Float, Float) -> Unit = { _, _, _ -> }
@@ -181,16 +181,29 @@ class FloatContext(
     val transitionFeedback = Animatable(0f)
 
     // 大小调整相关状态
-    var isEdgeResizing: Boolean = false
+    var isEdgeResizing by mutableStateOf(false)
     var activeEdge: ResizeEdge = ResizeEdge.NONE
     var initialWindowWidth: Float = 0f
     var initialWindowHeight: Float = 0f
 
     // 对话框与内容显示状态
     var showInputDialog: Boolean by mutableStateOf(false)
-    var userMessage: String by mutableStateOf("")
+    private companion object {
+        // A window can be closed while the app/runtime stays alive. Its unsent drafts survive it.
+        val drafts = mutableStateMapOf<String, String>()
+    }
+    var draftKey by mutableStateOf("")
+    var userMessage: String
+        get() = drafts[draftKey].orEmpty()
+        set(value) { if (value.isEmpty()) drafts.remove(draftKey) else drafts[draftKey] = value }
+    var displayedChatId: String? = null
+    val messageListState = androidx.compose.foundation.lazy.LazyListState()
+    var autoScrollToBottom by mutableStateOf(true)
+    var voiceMode by mutableStateOf(false)
+    var voiceAutoTimeout: Boolean = false
     var contentVisible: Boolean by mutableStateOf(true)
     var showAttachmentPanel: Boolean by mutableStateOf(false)
+    var showPackageSelector: Boolean by mutableStateOf(false)
     
      // 标识是否刚完成了屏幕圈选，用于返回全屏模式时自动勾选"屏幕内容"
     var pendingScreenSelection: Boolean by mutableStateOf(false)

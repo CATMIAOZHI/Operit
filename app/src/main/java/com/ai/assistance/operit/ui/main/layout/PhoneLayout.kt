@@ -44,6 +44,7 @@ import com.ai.assistance.operit.ui.main.navigation.NavigationEntrySpec
 import com.ai.assistance.operit.ui.main.navigation.RouteEntry
 import com.ai.assistance.operit.ui.main.components.AppContent
 import com.ai.assistance.operit.ui.main.components.DrawerContent
+import com.ai.assistance.operit.ui.main.components.NavigationTransform
 import com.ai.assistance.operit.ui.main.components.rememberNavigationDrawerAppearance
 import com.ai.assistance.operit.ui.main.screens.GestureStateHolder
 import com.ai.assistance.operit.ui.main.screens.Screen
@@ -207,18 +208,19 @@ fun PhoneLayout(
         ) {
                 // 主内容区域 - 使用自定义布局修饰符优化性能
                 // 该修饰符只会影响布局，不会触发内容重组
+                NavigationTransform(
+                    modifier = Modifier.fillMaxSize().zIndex(1f),
+                    layerBlock = {
+                        translationX = contentTranslationX.toPx()
+                        translationY = contentTranslationY.toPx()
+                        scaleX = contentScale
+                        scaleY = contentScale
+                        rotationY = contentRotationY
+                        transformOrigin = TransformOrigin(0f, 0.5f)
+                    },
+                ) {
                 Surface(
-                    modifier =
-                            Modifier.fillMaxSize()
-                                    .graphicsLayer {
-                                            translationX = contentTranslationX.toPx()
-                                            translationY = contentTranslationY.toPx()
-                                            scaleX = contentScale
-                                            scaleY = contentScale
-                                            rotationY = contentRotationY
-                                            transformOrigin = TransformOrigin(0f, 0.5f)
-                                    }
-                                    .zIndex(1f),
+                    modifier = Modifier.fillMaxSize(),
                     shape = RoundedCornerShape(contentCornerRadius),
                     color = Color.Transparent,
                     shadowElevation = contentShadowElevation
@@ -247,6 +249,7 @@ fun PhoneLayout(
                         titleContent = topBarTitleContent,
                         aliveScreenKeys = aliveScreenKeys
                     )
+                }
                 }
 
                 // // 添加一个小方块，填充圆角和工具栏之间的空隙
