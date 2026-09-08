@@ -14,6 +14,9 @@ class ModelProtocolCatalogTest {
             "api":"https://opencode.ai/zen/go/v1", "npm":"@ai-sdk/openai-compatible",
             "models":{
               "same":{"interleaved":{"field":"reasoning_content"}},
+              "deepseek-v4-flash":{"interleaved":{"field":"reasoning_content"},
+                "reasoning_options":[{"type":"effort","values":["low","high","max"]}]},
+              "mimo-v2.5":{"interleaved":{"field":"reasoning_content"},"reasoning_options":[]},
               "gpt":{"provider":{"npm":"@ai-sdk/openai"}},
               "minimax":{"provider":{"npm":"@ai-sdk/anthropic"}},
               "qwen3.8-max":{},
@@ -26,6 +29,15 @@ class ModelProtocolCatalogTest {
           }
         }
     """.trimIndent())
+
+    @Test
+    fun reasoningControlsComeFromProviderModelDeclarations() {
+        val matched = catalog.matchAll("https://opencode.ai/zen/go/v1/chat/completions",
+            listOf("deepseek-v4-flash", "mimo-v2.5", "same"))
+        assertEquals(listOf("low", "high", "max"), matched["deepseek-v4-flash"]?.reasoningEfforts)
+        assertEquals(emptyList<String>(), matched["mimo-v2.5"]?.reasoningEfforts)
+        assertNull(matched["same"]?.reasoningEfforts)
+    }
 
     @Test
     fun goUsesItsOwnProviderAndModelMetadata() {

@@ -8,6 +8,9 @@ import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSemantics
 import com.ai.assistance.operit.api.chat.llmprovider.ThinkingRequestSummary
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.ModelConfigSummary
+import com.ai.assistance.operit.data.model.ModelProtocol
+import com.ai.assistance.operit.data.model.ModelProtocolSettings
 import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.preferences.ApiPreferences
@@ -21,6 +24,63 @@ import org.junit.Test
  * 思考程度档位、provider 最终请求语义与显示标签的映射测试。
  */
 class ThinkingQualityTest {
+    private val goConfig = ModelConfigSummary(
+        id = "go", name = "Go",
+        apiProviderType = ApiProviderType.OPENCODE_GO,
+        apiEndpoint = "https://opencode.ai/zen/go/v1/chat/completions",
+        modelProtocolSettings = mapOf(
+            "deepseek" to ModelProtocolSettings(ModelProtocol.DEEPSEEK),
+            "responses" to ModelProtocolSettings(ModelProtocol.RESPONSES),
+            "replay" to ModelProtocolSettings(ModelProtocol.CHAT_REASONING),
+        ),
+    )
+
+    @Test fun accountSummaryUsesSelectedProtocolForThinkingControls() {
+        assertEquals(
+            ThinkingRequestSummary.Effort("high"),
+            ThinkingRequestSemantics.resolve(goConfig, "deepseek", 2, emptyList()),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("medium"),
+            ThinkingRequestSemantics.resolve(goConfig, "responses", 2, emptyList()),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(goConfig, "deepseek", 2, emptyList(), enableThinking = false),
+        )
+        assertEquals(ApiProviderType.OPENCODE_GO, goConfig.apiProviderType)
+    }
+
+    @Test fun genericReplayWithoutCatalogUsesUserEffortAndHonorsExplicitParameters() {
+        for (enabled in listOf(false, true)) {
+            assertEquals(
+                ThinkingRequestSummary.Effort(if (enabled) "max" else "none"),
+                ThinkingRequestSemantics.resolve(goConfig, "replay", 5, emptyList(), enabled),
+            )
+            assertEquals(
+                ThinkingRequestSummary.Effort("high"),
+                ThinkingRequestSemantics.resolve(
+                    goConfig, "replay", 5, listOf(stringParameter("reasoning_effort", "high")), enabled,
+                ),
+            )
+        }
+    }
+
+    @Test fun genericReplayUsesOnlyCatalogDeclaredEfforts() {
+        val configured = goConfig.copy(modelProtocolSettings = mapOf(
+            "deepseek-v4-flash" to ModelProtocolSettings(
+                ModelProtocol.CHAT_REASONING, reasoningEfforts = listOf("low", "high", "max"),
+            ),
+        ))
+        for ((level, expected) in listOf(1 to "low", 2 to "high", 3 to "high", 4 to "max", 5 to "max")) {
+            assertEquals(ThinkingRequestSummary.Effort(expected),
+                ThinkingRequestSemantics.resolve(configured, "deepseek-v4-flash", level, emptyList()))
+        }
+        assertEquals(ThinkingRequestSummary.Effort("low"), ThinkingRequestSemantics.resolve(
+            configured, "deepseek-v4-flash", 5, listOf(stringParameter("reasoning_effort", "low"))))
+        assertEquals(ThinkingRequestSummary.NotSent, ThinkingRequestSemantics.resolve(
+            configured, "deepseek-v4-flash", 5, emptyList(), enableThinking = false))
+    }
 
     @Test fun effortMapping_coversAllLevels() {
         val expected = listOf("low", "medium", "high", "xhigh", "max")

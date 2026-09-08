@@ -2,6 +2,12 @@ package com.ai.assistance.operit.api.chat.llmprovider
 
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.ModelConfigData
+import com.ai.assistance.operit.data.model.ModelConfigSummary
+import com.ai.assistance.operit.data.model.ModelProtocol
+import com.ai.assistance.operit.data.model.protocolSettingsForModel
+import com.ai.assistance.operit.data.model.supportsModelProtocolOverrides
+import com.ai.assistance.operit.data.model.withModelProtocol
 import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.preferences.ApiPreferences
@@ -100,6 +106,49 @@ sealed interface ThinkingRequestSummary {
 object ThinkingRequestSemantics {
     private val openRouterBudgets = listOf<Int?>(null, 1_024, 16_000, 32_000, 64_000)
     private val siliconFlowBudgets = listOf<Int?>(null, 4_096, 8_192, 16_384, 32_768)
+
+    /** Menus resolve the selected model through the same protocol mapping as the service factory. */
+    fun resolve(
+        config: ModelConfigSummary,
+        modelName: String,
+        qualityLevel: Int,
+        modelParameters: List<ModelParameter<*>>,
+        enableThinking: Boolean = true,
+        isToolPkgProvider: Boolean = false,
+    ): ThinkingRequestSummary {
+        val runtime = ModelConfigData(
+            id = config.id,
+            name = config.name,
+            apiProviderType = config.apiProviderType,
+            apiProviderTypeId = config.apiProviderTypeId,
+            apiEndpoint = config.apiEndpoint,
+            modelName = modelName,
+            modelProtocolSettings = config.modelProtocolSettings,
+        ).withModelProtocol()
+        if (!isToolPkgProvider &&
+            supportsModelProtocolOverrides(config.apiProviderTypeId) &&
+            runtime.protocolSettingsForModel(modelName).protocol == ModelProtocol.CHAT_REASONING
+        ) {
+            return enabledRawTextParameter(modelParameters, "reasoning_effort")
+                ?.let(::textSummary)
+                ?: catalogReasoningEffort(
+                    if (enableThinking) ApiPreferences.thinkingQualityEffort(qualityLevel) else "none",
+                    runtime.protocolSettingsForModel(modelName).reasoningEfforts.orEmpty(),
+                )?.let(::textSummary)
+                ?: ThinkingRequestSummary.NotSent
+        }
+        return resolve(
+            providerType = runtime.apiProviderType,
+            providerTypeId = runtime.apiProviderTypeId,
+            isToolPkgProvider = isToolPkgProvider,
+            configId = runtime.id,
+            apiEndpoint = runtime.apiEndpoint,
+            modelName = runtime.modelName,
+            qualityLevel = qualityLevel,
+            modelParameters = modelParameters,
+            enableThinking = enableThinking,
+        )
+    }
 
     fun resolve(
         providerType: ApiProviderType,
@@ -328,6 +377,18 @@ object ThinkingRequestSemantics {
             ApiProviderType.NVIDIA -> effort
             else -> null
         }
+    }
+
+    /** Use declared levels when available; otherwise send the user's chosen effort unchanged. */
+    fun catalogReasoningEffort(preferred: String, supported: List<String>): String? {
+        if (supported.isEmpty()) return preferred
+        if (preferred == "none") return "none".takeIf { it in supported }
+        val ordered = listOf("minimal", "low", "medium", "high", "xhigh", "max")
+        val available = ordered.filter { it in supported }
+        if (available.isEmpty()) return preferred
+        val requested = ordered.indexOf(preferred)
+        if (requested < 0) return null
+        return available.firstOrNull { ordered.indexOf(it) >= requested } ?: available.lastOrNull()
     }
 
     fun normalizeDeepseekEffort(effort: String): String =

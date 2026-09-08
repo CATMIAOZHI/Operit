@@ -266,7 +266,8 @@ class ModelConfigManager(
                     modelName = config.modelName,
                     apiEndpoint = config.apiEndpoint,
                     apiProviderType = config.apiProviderType,
-                    apiProviderTypeId = config.apiProviderTypeId
+                    apiProviderTypeId = config.apiProviderTypeId,
+                    modelProtocolSettings = config.modelProtocolSettings,
             )
         }
     }
@@ -1090,7 +1091,8 @@ class ModelConfigManager(
                     modelName = config.modelName,
                     apiEndpoint = config.apiEndpoint,
                     apiProviderType = config.apiProviderType,
-                    apiProviderTypeId = config.apiProviderTypeId
+                    apiProviderTypeId = config.apiProviderTypeId,
+                    modelProtocolSettings = config.modelProtocolSettings,
                 )
             }
 

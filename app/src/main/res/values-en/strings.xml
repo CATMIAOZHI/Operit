@@ -4124,8 +4124,8 @@
     <string name="model_multimodal_catalog_refresh">Refresh local model catalog</string>
     <string name="model_multimodal_catalog_refresh_success">Updated the local catalog with %1$d official models</string>
     <string name="model_multimodal_catalog_refresh_failed">Update failed; the previous local catalog and update time were kept</string>
-    <string name="model_multimodal_catalog_updated_at">Local catalog updated: %1$s</string>
-    <string name="model_multimodal_catalog_bundled">Local catalog: bundled, not yet updated</string>
+    <string name="model_multimodal_catalog_updated_at">Local multimodal catalog updated: %1$s</string>
+    <string name="model_multimodal_catalog_bundled">Local multimodal catalog: bundled, not yet updated</string>
     <string name="enable_direct_audio_processing">Model supports audio</string>
     <string name="enable_direct_audio_processing_desc">When enabled, audio will be sent directly to the AI for processing instead of returning tool-based transcription/description</string>
     <string name="enable_direct_video_processing">Model supports video</string>
@@ -4173,7 +4173,7 @@
     <string name="provider_iflow">iFlow</string>
     <string name="provider_openrouter">OpenRouter (Multi-model Hub)</string>
     <string name="provider_opencode_go">OpenCode Go</string>
-    <string name="provider_opencode_go_protocol_hint">OpenCode Go models use different APIs. After selecting models, tap Auto-configure protocols, or configure each model manually.</string>
+    <string name="provider_opencode_go_protocol_hint">OpenCode Go models use different APIs. Auto-configure protocols uses the local catalog. Refresh the catalog manually when needed, or configure each model yourself.</string>
     <string name="provider_4router">4Router</string>
     <string name="provider_nous_portal">Nous Portal</string>
     <string name="provider_infiniai">InfiniAI</string>
@@ -8747,9 +8747,13 @@
     <string name="model_protocol_endpoint">Model endpoint (optional)</string>
     <string name="model_protocol_endpoint_desc">Leave blank to use the provider URL with the standard path adjusted for this protocol. Enter custom endpoints here.</string>
     <string name="model_protocol_auto_configure">Auto-configure protocols</string>
-    <string name="model_protocol_auto_desc">Matches the provider and model in models.dev. Updates matched protocols, keeps custom endpoints, and leaves unmatched settings unchanged.</string>
+    <string name="model_protocol_auto_desc">Matches the provider and model in the local catalog without a network refresh. Updates matched protocols, keeps custom endpoints, and leaves unmatched settings unchanged.</string>
     <string name="model_protocol_auto_changed">Configuration changed. Please run auto-configuration again.</string>
-    <string name="model_protocol_auto_result">Configured %1$d models; skipped %2$d (online catalog).</string>
-    <string name="model_protocol_auto_local_result">Online catalog unavailable. Configured %1$d models from the local catalog; skipped %2$d.</string>
+    <string name="model_protocol_auto_result">Configured %1$d models from the local catalog; skipped %2$d.</string>
+    <string name="model_catalog_refresh_success">Local model catalog updated, including multimodal capabilities and protocols. Use the corresponding auto-configure button to apply it.</string>
+    <string name="model_catalog_refresh_protocol_failed">Multimodal catalog updated. Protocol update failed; its previous catalog and update time were kept.</string>
+    <string name="model_catalog_refresh_multimodal_failed">Protocol catalog updated. Multimodal update failed; its previous catalog and update time were kept.</string>
+    <string name="model_protocol_catalog_updated_at">Local protocol catalog updated: %1$s</string>
+    <string name="model_protocol_catalog_bundled">Local protocol catalog: bundled with the app, not yet updated</string>
     <string name="model_protocol_auto_failed">Could not read the protocol catalog. Settings were not changed.</string>
 </resources>

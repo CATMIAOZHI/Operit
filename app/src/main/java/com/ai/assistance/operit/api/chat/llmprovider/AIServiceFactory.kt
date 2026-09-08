@@ -330,6 +330,7 @@ object AIServiceFactory {
                 supportsVideo = supportsVideo,
                 enableToolCall = enableToolCall,
                 configureThinking = false,
+                reasoningEfforts = config.protocolSettingsForModel(config.modelName).reasoningEfforts.orEmpty(),
             )
         }
         

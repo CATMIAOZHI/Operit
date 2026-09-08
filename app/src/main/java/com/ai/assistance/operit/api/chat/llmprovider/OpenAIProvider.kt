@@ -680,7 +680,7 @@ open class OpenAIProvider(
         )
     }
 
-    private fun resolveOpenAiChatReasoningEffort(context: Context): String? {
+    protected open fun resolveOpenAiChatReasoningEffort(context: Context): String? {
         val qualityLevel = runCatching {
             runBlocking {
                 ApiPreferences.getInstance(context).thinkingQualityLevelFlow.first()
