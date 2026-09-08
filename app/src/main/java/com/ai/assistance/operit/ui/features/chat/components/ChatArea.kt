@@ -425,15 +425,6 @@ fun ChatArea(
                                     )
                             },
                     ) {
-                        androidx.compose.runtime.CompositionLocalProvider(
-                            com.ai.assistance.operit.ui.common.markdown.LocalProgressiveTranscript provides (onAutoScrollToBottomChange != null),
-                            com.ai.assistance.operit.ui.common.markdown.LocalTranscriptFollowing provides autoScrollToBottom,
-                            com.ai.assistance.operit.ui.common.markdown.LocalTranscriptUserScrolling provides followScrollConnection.userScrollInProgress,
-                            com.ai.assistance.operit.ui.common.markdown.LocalRevealTranscriptHistory provides {
-                                followScrollConnection.followingAllowed = false
-                                onAutoScrollToBottomChange?.invoke(false)
-                            },
-                        ) {
                         MessageItem(
                             index = actualIndex,
                             message = message,
@@ -487,7 +478,6 @@ fun ChatArea(
                             bubbleAiContentPaddingLeft = bubbleAiContentPaddingLeft,
                             bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
                         )
-                        }
                     }
                 }
 
