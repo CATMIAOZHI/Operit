@@ -107,7 +107,7 @@ class SubagentToolExposureTest {
     }
 
     @Test
-    fun todoIsMainOnlyAndUsesJsonStringSchema() {
+    fun todoIsAvailableToEachAgentAndUsesJsonStringSchema() {
         val englishTodo =
             SystemToolPrompts.getAIAllCategoriesEn()
                 .flatMap { it.tools }
@@ -124,13 +124,13 @@ class SubagentToolExposureTest {
             chineseTodo.parametersStructured.orEmpty().map { it.type },
         )
         assertEquals(
-            0,
+            1,
             SystemToolPrompts.getAIAllCategoriesEn(includeSubagentTools = false)
                 .flatMap { it.tools }
                 .count { it.name == TODO_TOOL_NAME },
         )
         assertEquals(
-            0,
+            1,
             SystemToolPrompts.getAIAllCategoriesCn(includeSubagentTools = false)
                 .flatMap { it.tools }
                 .count { it.name == TODO_TOOL_NAME },

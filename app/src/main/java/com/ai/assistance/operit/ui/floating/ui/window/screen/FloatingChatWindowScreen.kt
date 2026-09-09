@@ -752,6 +752,10 @@ internal fun ChatMessagesView(
     val loadMoreText = stringResource(id = R.string.load_more_history)
     val loadNewerText = stringResource(id = R.string.load_newer_history)
     val loadMoreTextStyle = MaterialTheme.typography.bodyMedium
+    val responseProcessState =
+        com.ai.assistance.operit.ui.features.chat.components.rememberResponseProcessState(
+            floatContext.messages, currentChatId,
+        )
     val renderItems = buildList<Any> {
         if (hasNewerDisplayHistory) {
             add(FloatingLoadNewerItem)
@@ -837,9 +841,16 @@ internal fun ChatMessagesView(
                         val displayIndex = renderIndex - messageListOffset
                         val actualIndex = floatContext.messages.indexOfFirst { it.timestamp == item.timestamp && it.sender == item.sender }
 
+                        com.ai.assistance.operit.ui.features.chat.components.ResponseProcessMessage(
+                            responseProcessState, actualIndex, appearance.aiTextColor,
+                        ) {
                         FloatingMessageItem(
                             index = actualIndex,
                             message = item,
+                            showAssistantHeader =
+                                !com.ai.assistance.operit.ui.features.chat.components.isAssistantContinuation(
+                                    floatContext.messages, actualIndex,
+                                ),
                             appearance = appearance,
                             heightMemory = messageHeightMemory,
                             showTokenStats = showTokenStats,
@@ -847,6 +858,7 @@ internal fun ChatMessagesView(
                             showTimestamp = showTimestamp,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
+                        }
                     }
 
                     FloatingLoadingItem -> {
@@ -899,6 +911,7 @@ private fun FloatingMessageItem(
     showTokenStats: Boolean,
     showTimingStats: Boolean,
     showTimestamp: Boolean,
+    showAssistantHeader: Boolean,
 ) {
     // A reverse LazyColumn reverses separate roots within an item as well.
     Column(Modifier.fillMaxWidth()) {
@@ -906,6 +919,7 @@ private fun FloatingMessageItem(
             when (chatStyle) {
                 ChatStyle.CURSOR -> CursorStyleChatMessage(
                     message = message,
+                    showAssistantHeader = showAssistantHeader,
                     userMessageColor = userMessageColor,
                     aiMessageColor = aiMessageColor,
                     userTextColor = userTextColor,
@@ -922,6 +936,7 @@ private fun FloatingMessageItem(
                 )
                 ChatStyle.BUBBLE -> BubbleStyleChatMessage(
                     message = message,
+                    showAssistantHeader = showAssistantHeader,
                     userMessageColor = userMessageColor,
                     aiMessageColor = aiMessageColor,
                     userTextColor = userTextColor,

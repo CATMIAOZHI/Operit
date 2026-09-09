@@ -130,6 +130,15 @@ class ChatServiceCore(
             },
             onScrollToBottom = {
                 messageProcessingDelegate.scrollToBottom()
+            },
+            onStableHistoryLoaded = { chatId ->
+                if (::messageCoordinationDelegate.isInitialized &&
+                    !messageProcessingDelegate.isChatLoading(chatId) &&
+                    com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                        .getInstance(context).isAgent(chatId)
+                ) {
+                    messageCoordinationDelegate.refreshStableContextWindow(chatId = chatId)
+                }
             }
         )
 

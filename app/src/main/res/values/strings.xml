@@ -1,9 +1,19 @@
 <resources>
+    <string name="subagent_v2_limits">v2 运行限制</string>
+    <string name="subagent_v2_max_active">同时运行的子代理数</string>
+    <string name="subagent_v2_max_depth">最大子代理层数</string>
+    <string name="subagent_v2_min_wait">最短等待（毫秒）</string>
+    <string name="subagent_v2_default_wait">默认等待（毫秒）</string>
+    <string name="subagent_v2_max_wait">最长等待（毫秒）</string>
+    <string name="subagent_v2_limits_help">运行数按整个代理树计算，不含根代理；模型自身的并发限制仍然生效。修改影响后续操作，不会中断正在执行的任务。</string>
+    <string name="subagent_v2_invalid_limits">运行数和层数须为 1–64；等待须满足 0 ≤ 最短 ≤ 默认 ≤ 最长 ≤ 3600000。</string>
     <string name="subagent_message_header">Subagent v2 · %1$s · %2$s</string>
-    <string name="subagent_message_result">结果</string>
-    <string name="subagent_message_status">状态</string>
-    <string name="subagent_message_task">任务</string>
-    <string name="subagent_message_note">消息</string>
+    <string name="subagent_message_result">已完成</string>
+    <string name="subagent_message_status">状态有更新</string>
+    <string name="subagent_message_task">任务消息</string>
+    <string name="subagent_message_note">有了更新</string>
+    <string name="subagent_event_expanded">详情已展开</string>
+    <string name="subagent_event_collapsed">详情已折叠</string>
     <string name="subagent_version_title">Subagent 版本</string>
     <string name="subagent_version_description">选择新对话使用的协作工具。现有代理保留其版本，阅读伴侣继续使用 v1。</string>
     <string name="subagent_version_v2">v2 · 多代理协作（默认）</string>
@@ -8614,7 +8624,6 @@
     <string name="mcp_repository_invalid_plugin_id">插件 ID 无效，已拒绝访问包目录</string>
     <string name="chat_todo_step_progress">第 %1$d / %2$d 步</string>
     <string name="toolreg_todowrite_desc">更新当前聊天的 Todo 列表</string>
-    <string name="chat_todo_tool_subagent_unavailable">子代理会话不能更新聊天 Todo</string>
     <string name="chat_todo_tool_active_chat_required">更新 Todo 需要一个当前聊天</string>
     <string name="chat_todo_tool_missing_todos">缺少必要参数：todos</string>
     <string name="chat_todo_tool_updated">Todo 列表已更新（%1$d 项）</string>

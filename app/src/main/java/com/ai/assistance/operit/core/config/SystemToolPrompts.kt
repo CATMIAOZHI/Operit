@@ -34,6 +34,7 @@ object SystemToolPrompts {
                         details = """
   - Use this tool for work with at least three distinct steps, multiple user requests, or other non-trivial execution. Skip it for simple one-step or informational responses.
   - Every call replaces the entire list, so always include every Todo item in order. Never send only the changed item.
+  - Each agent owns the Todo list of its own chat. Subagent updates do not change the parent or sibling agents' lists; track only your assigned work.
   - While unfinished work remains, exactly one item must be `in_progress`. Mark work `completed` only after it and its required verification are actually finished.
   - Update statuses as progress changes instead of batching updates at the end. Keep completed items in the list so the chat can retain its final progress record.
   - This tool is host-managed and read-only to the user.
@@ -62,6 +63,7 @@ object SystemToolPrompts {
                         details = """
   - 当任务包含至少三个独立步骤、多个用户要求或其他非简单执行时使用；简单的一步操作或仅回答信息时不要使用。
   - 每次调用都会替换整个列表，因此必须按顺序传入全部 Todo，不能只传发生变化的一项。
+  - 每个代理独立维护自己聊天的 Todo；子代理更新不会修改父代理或兄弟代理的列表，只跟踪分配给自己的工作。
   - 仍有未完成工作时必须且只能有一项为 `in_progress`。只有任务及必要验证确实完成后，才能标为 `completed`。
   - 进展发生时立即更新状态，不要全部堆到最后更新。保留已完成项，让聊天持久保存最终进度记录。
   - 这是宿主管理、用户只读的工具。
@@ -667,9 +669,7 @@ object SystemToolPrompts {
         )
 
         return buildList {
-            if (includeSubagentTools) {
-                add(nativeTodoToolsEn)
-            }
+            add(nativeTodoToolsEn)
             add(basicTools)
             if (includeSubagentTools) {
                 add(subagentTools)
@@ -753,9 +753,7 @@ object SystemToolPrompts {
         )
 
         return buildList {
-            if (includeSubagentTools) {
-                add(nativeTodoToolsCn)
-            }
+            add(nativeTodoToolsCn)
             add(basicToolsCn)
             if (includeSubagentTools) {
                 add(subagentToolsCn)

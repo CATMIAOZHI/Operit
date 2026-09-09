@@ -5,6 +5,7 @@ import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.agent.collaboration.AgentFork
 import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
 import com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy
+import com.ai.assistance.operit.core.agent.collaboration.CollaborationModels
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.ToolExecutor
 import com.ai.assistance.operit.data.model.AITool
@@ -35,29 +36,49 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
         fun optional(name: String) = tool.parameters.firstOrNull { it.name == name }?.value?.trim()?.takeIf { it.isNotEmpty() }
         fun required(name: String) = requireNotNull(optional(name)) { "$name is required" }
         return try {
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationArguments.validate(
+                tool.name, tool.parameters.map { it.name },
+            )
             val chatId = requireNotNull(runtime?.callerChatId?.takeIf { it.isNotBlank() }) { "Collaboration requires a caller chat" }
             require(CollaborationToolPolicy.visibility(appContext, chatId, runtime.isSubagent)[tool.name] == true) {
                 "This tool is not available in the caller's subagent version"
             }
             val result = when (tool.name) {
+                "list_agent_models" -> {
+                    val manager = ModelConfigManager(appContext)
+                    manager.initializeIfNeeded()
+                    buildJsonObject {
+                        put("models", buildJsonArray {
+                            CollaborationModels.choices(manager.getAllConfigSummaries()).forEach { choice ->
+                                add(buildJsonObject {
+                                    put("model", choice.selector)
+                                    put("provider", choice.provider)
+                                })
+                            }
+                        })
+                    }
+                }
                 "spawn_agent" -> {
                     val model = optional("model")
                     val effort = optional("reasoning_effort")
                     require(effort == null || effort in setOf("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")) {
                         "Invalid reasoning_effort"
                     }
-                    if (model != null) {
+                    val selectedModel = if (model != null) {
                         val manager = ModelConfigManager(appContext)
                         manager.initializeIfNeeded()
-                        require(manager.getAllConfigSummaries().any { it.id == model }) { "Unknown configured model ID" }
-                    }
+                        CollaborationModels.resolve(model, manager.getAllConfigSummaries())
+                    } else null
                     val agent = coordinator.spawn(
                         chatId, required("task_name"), required("message"), optional("agent_type") ?: "general",
-                        AgentFork.parse(optional("fork_turns")), model ?: runtime.parentModelConfigId,
-                        if (model == null) runtime.parentModelIndex else 0, runtime.callId,
+                        AgentFork.parse(optional("fork_turns")), selectedModel?.configId ?: runtime.parentModelConfigId,
+                        selectedModel?.modelIndex ?: runtime.parentModelIndex, runtime.callId,
                         inheritModel = model != null ||
                             (AgentFork.parse(optional("fork_turns")) == AgentFork.All && optional("agent_type") == null),
                         reasoningEffort = effort,
+                        roleCardId = runtime.callerCardId,
+                        includeProfilePrompt = AgentFork.parse(optional("fork_turns")) != AgentFork.All ||
+                            optional("agent_type") != null,
                     )
                     buildJsonObject { put("task_name", agent.path); put("agent_id", agent.chatId) }
                 }
@@ -69,10 +90,25 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                     put("previous_status", coordinator.interrupt(chatId, required("target")).name.lowercase())
                 }
                 "list_agents" -> buildJsonObject {
+                    val limits = com.ai.assistance.operit.core.agent.AgentProfileRepository.instance.collaborationLimits.value
+                    put("max_active_subagents", limits.maxActive)
+                    put("max_depth", limits.maxDepth)
                     put("agents", buildJsonArray {
                         coordinator.list(chatId, optional("path_prefix")).forEach {
                             add(buildJsonObject {
                                 put("task_name", it.path)
+                                put("agent_name", it.path)
+                                put("agent_status", when (it.status) {
+                                    com.ai.assistance.operit.core.agent.collaboration.CollaborationStatus.COMPLETED ->
+                                        // The mailbox delivers the final text. Polling status must
+                                        // not replay that same output into the parent's context.
+                                        buildJsonObject { put("completed", JsonNull) }
+                                    com.ai.assistance.operit.core.agent.collaboration.CollaborationStatus.FAILED ->
+                                        buildJsonObject { put("errored", it.lastError.orEmpty()) }
+                                    com.ai.assistance.operit.core.agent.collaboration.CollaborationStatus.IDLE ->
+                                        JsonPrimitive("pending_init")
+                                    else -> JsonPrimitive(it.status.name.lowercase())
+                                })
                                 put("agent_id", it.chatId)
                                 put("status", it.status.name.lowercase())
                                 it.lastError?.let { error -> put("error", error) }
@@ -83,11 +119,11 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                 "wait_agent" -> {
                     val timeout = optional("timeout_ms")?.let {
                         requireNotNull(it.toLongOrNull()) { "timeout_ms must be an integer" }
-                    } ?: 30_000L
-                    val timedOut = coordinator.wait(chatId, timeout)
+                    } ?: com.ai.assistance.operit.core.agent.AgentProfileRepository.instance.collaborationLimits.value.defaultWaitMs
+                    val waited = coordinator.wait(chatId, timeout)
                     buildJsonObject {
-                        put("timed_out", timedOut)
-                        put("message", if (timedOut) "Wait timed out." else "Wait completed.")
+                        put("timed_out", waited.timedOut)
+                        put("message", waited.message)
                     }
                 }
                 else -> error("Unknown collaboration tool")

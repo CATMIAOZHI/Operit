@@ -123,6 +123,7 @@ fun AgentProfileSettingsScreen() {
                             Text(stringResource(if (version == 2) R.string.subagent_version_v2 else R.string.subagent_version_v1))
                         }
                     }
+                    if (subagentVersion == 2) CollaborationLimitsSettings(repository)
                 }
             }
         }

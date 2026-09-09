@@ -238,6 +238,20 @@ fun ChatArea(
     var viewportHeightPx by remember { mutableStateOf(0) }
     val messageAnchors = remember(currentChatId) { mutableStateMapOf<Long, ChatScrollMessageAnchor>() }
     var pendingJumpToMessageTimestamp by remember(currentChatId) { mutableStateOf<Long?>(null) }
+    val responseProcessState =
+        rememberResponseProcessState(chatHistory, currentChatId, !isMultiSelectMode)
+    val pendingProcessIndex =
+        chatHistory.indexOfFirst { it.timestamp == pendingJumpToMessageTimestamp }
+    val pendingProcessGroup = responseProcessState.groups[pendingProcessIndex]
+    val pendingProcessCollapsed =
+        pendingProcessGroup != null && pendingProcessIndex != pendingProcessGroup.finalIndex &&
+            pendingProcessGroup.key !in responseProcessState.expandedKeys
+    LaunchedEffect(pendingJumpToMessageTimestamp, pendingProcessGroup?.key, pendingProcessCollapsed) {
+        if (pendingProcessCollapsed && pendingProcessGroup != null) {
+            pendingJumpToMessageTimestamp?.let(messageAnchors::remove)
+            responseProcessState.expand(pendingProcessGroup.key)
+        }
+    }
     val currentOnFollowingChange by rememberUpdatedState(onAutoScrollToBottomChange)
     val currentHasNewerHistory by rememberUpdatedState(hasNewerDisplayHistory)
     val currentAutoScroll by rememberUpdatedState(autoScrollToBottom)
@@ -305,7 +319,7 @@ fun ChatArea(
     }
 
     PendingMessageScrollEffect(
-        pendingTimestamp = pendingJumpToMessageTimestamp,
+        pendingTimestamp = pendingJumpToMessageTimestamp.takeUnless { pendingProcessCollapsed },
         messages = chatHistory,
         messageAnchors = messageAnchors,
         scrollState = scrollState,
@@ -426,9 +440,11 @@ fun ChatArea(
                                     )
                             },
                     ) {
+                    ResponseProcessMessage(responseProcessState, actualIndex, aiTextColor) {
                         MessageItem(
                             index = actualIndex,
                             message = message,
+                            showAssistantHeader = !isAssistantContinuation(chatHistory, actualIndex),
                             enableDialogs = enableDialogs,
                             allowTranscriptMutation = allowTranscriptMutation,
                             enableToolDetailDialogs = enableToolDetailDialogs,
@@ -479,10 +495,10 @@ fun ChatArea(
                             bubbleAiContentPaddingLeft = bubbleAiContentPaddingLeft,
                             bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
                         )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
             }
 
             if (hasNewerDisplayHistory) {
@@ -603,6 +619,7 @@ fun ChatArea(
 private fun MessageItem(
     index: Int,
     message: ChatMessage,
+    showAssistantHeader: Boolean,
     enableDialogs: Boolean,
     allowTranscriptMutation: Boolean,
     enableToolDetailDialogs: Boolean? = null,
@@ -661,8 +678,9 @@ private fun MessageItem(
     val context = LocalContext.current
     val messageInteractionSource = remember { MutableInteractionSource() }
 
-    // 只有用户和AI的消息才能被操作
-    val isActionable = message.sender == "user" || message.sender == "ai"
+    // Collaboration events are transport input to the model, not editable user messages.
+    val isActionable = !message.displayMode.isCollaborationEvent &&
+        (message.sender == "user" || message.sender == "ai")
     val isHiddenUserMessage = isHiddenUserPlaceholder(message)
 
     Box(
@@ -699,6 +717,7 @@ private fun MessageItem(
                 ChatStyle.CURSOR -> {
                     CursorStyleChatMessage(
                         message = message,
+                        showAssistantHeader = showAssistantHeader,
                         userMessageColor = userMessageColor,
                         userMessageLiquidGlassEnabled = cursorUserBubbleLiquidGlass,
                         userMessageWaterGlassEnabled = cursorUserBubbleWaterGlass,
@@ -724,6 +743,7 @@ private fun MessageItem(
                 ChatStyle.BUBBLE -> {
                     BubbleStyleChatMessage(
                         message = message,
+                        showAssistantHeader = showAssistantHeader,
                         userMessageColor = userMessageColor,
                         aiMessageColor = aiMessageColor,
                         userTextColor = userTextColor,
@@ -1280,15 +1300,18 @@ private fun MessageCopyPreviewBottomSheet(
 }
 
 private fun hasDisplayableTokenStats(message: ChatMessage): Boolean {
-    return message.inputTokens > 0 || message.cachedInputTokens > 0 || message.outputTokens > 0
+    return message.displayMode != ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE &&
+        (message.inputTokens > 0 || message.cachedInputTokens > 0 || message.outputTokens > 0)
 }
 
 private fun hasDisplayableTimingStats(message: ChatMessage): Boolean {
-    return message.waitDurationMs > 0L || message.outputDurationMs > 0L
+    return message.displayMode != ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE &&
+        (message.waitDurationMs > 0L || message.outputDurationMs > 0L)
 }
 
 private fun hasDisplayableMessageTimestamp(message: ChatMessage): Boolean {
-    return message.completedAt > 0L
+    return message.displayMode != ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE &&
+        message.completedAt > 0L
 }
 
 private fun formatCompactDuration(durationMs: Long): String {
@@ -1318,6 +1341,7 @@ internal fun MessageFooterBar(
     allowVariantSelection: Boolean,
     onSelectVariant: (Int) -> Unit,
 ) {
+    if (LocalResponseMessageSection.current == ResponseMessageSection.HEADER) return
     val hasPrevious = message.selectedVariantIndex > 0
     val hasNext = message.selectedVariantIndex < message.variantCount - 1
     val context = LocalContext.current

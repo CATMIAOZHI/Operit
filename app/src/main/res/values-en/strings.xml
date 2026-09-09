@@ -1,9 +1,19 @@
 <resources>
+    <string name="subagent_v2_limits">v2 runtime limits</string>
+    <string name="subagent_v2_max_active">Concurrent child agents</string>
+    <string name="subagent_v2_max_depth">Maximum child depth</string>
+    <string name="subagent_v2_min_wait">Minimum wait (ms)</string>
+    <string name="subagent_v2_default_wait">Default wait (ms)</string>
+    <string name="subagent_v2_max_wait">Maximum wait (ms)</string>
+    <string name="subagent_v2_limits_help">Active count covers the entire agent tree, excluding root. Model concurrency limits still apply. Changes affect subsequent operations and do not interrupt active tasks.</string>
+    <string name="subagent_v2_invalid_limits">Active count and depth must be 1–64; waits must satisfy 0 ≤ minimum ≤ default ≤ maximum ≤ 3600000.</string>
     <string name="subagent_message_header">Subagent v2 · %1$s · %2$s</string>
-    <string name="subagent_message_result">Result</string>
-    <string name="subagent_message_status">Status</string>
-    <string name="subagent_message_task">Task</string>
-    <string name="subagent_message_note">Message</string>
+    <string name="subagent_message_result">Completed</string>
+    <string name="subagent_message_status">Status updated</string>
+    <string name="subagent_message_task">Task message</string>
+    <string name="subagent_message_note">Has an update</string>
+    <string name="subagent_event_expanded">Details expanded</string>
+    <string name="subagent_event_collapsed">Details collapsed</string>
     <string name="subagent_version_title">Subagent version</string>
     <string name="subagent_version_description">Choose collaboration tools for new conversations. Existing agents retain their version; Reading Companion continues to use v1.</string>
     <string name="subagent_version_v2">v2 · Multi-agent collaboration (default)</string>
@@ -8631,7 +8641,6 @@
     <string name="mcp_repository_invalid_plugin_id">Invalid plugin ID; package-directory access was rejected</string>
     <string name="chat_todo_step_progress">Step %1$d of %2$d</string>
     <string name="toolreg_todowrite_desc">Update the current chat Todo list</string>
-    <string name="chat_todo_tool_subagent_unavailable">Subagent sessions cannot update chat Todos</string>
     <string name="chat_todo_tool_active_chat_required">Updating Todos requires an active chat</string>
     <string name="chat_todo_tool_missing_todos">Missing required parameter: todos</string>
     <string name="chat_todo_tool_updated">Todo list updated (%1$d items)</string>

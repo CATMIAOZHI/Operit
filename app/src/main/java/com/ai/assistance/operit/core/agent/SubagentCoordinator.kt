@@ -87,6 +87,7 @@ data class SubagentTaskRequest(
     val collaborationHistory: List<com.ai.assistance.operit.core.chat.hooks.PromptTurn> = emptyList(),
     val profileOverride: AgentProfile? = null,
     val collaborationHistoryCutoff: Long? = null,
+    val collaborationRoleCardId: String? = null,
 )
 
 internal fun SubagentTaskRequest.toChatTurnOptions(
@@ -451,7 +452,8 @@ class SubagentCoordinator private constructor(context: Context) {
         var modelSemaphore =
             if (reusesParentModelLease) null
             else resolveModelSemaphore(run.modelConfigIdSnapshot)
-        var parentAcquired = semaphore.tryAcquire()
+        val usesParentQuota = request.collaborationSystemPrompt == null
+        var parentAcquired = !usesParentQuota || semaphore.tryAcquire()
         var modelAcquired =
             if (parentAcquired) {
                 modelSemaphore?.tryAcquire() ?: true
@@ -507,7 +509,7 @@ class SubagentCoordinator private constructor(context: Context) {
                             ChatTurnDispatchRequest(
                                 chatId = childChatId,
                                 message = message,
-                                roleCardId = null,
+                                roleCardId = request.collaborationRoleCardId,
                                 proxySenderName = null,
                                 turnOptions =
                                     request.toChatTurnOptions(
@@ -642,7 +644,7 @@ class SubagentCoordinator private constructor(context: Context) {
             if (modelAcquired) {
                 modelSemaphore?.release()
             }
-            if (parentAcquired) {
+            if (parentAcquired && usesParentQuota) {
                 semaphore.release()
             }
             EnhancedAIService.releaseChatInstance(childChatId)
@@ -671,7 +673,7 @@ class SubagentCoordinator private constructor(context: Context) {
                         configuredMaxConcurrentRequests = config.maxConcurrentRequests,
                     )
                 if (limit <= 0) return@withLock null
-                val effectiveLimit = limit.coerceAtMost(MAX_CONCURRENT_SUBAGENTS_PER_PARENT)
+                val effectiveLimit = limit
                 modelSemaphores
                     .computeIfAbsent(modelConfigId) {
                         AdjustableConcurrencyGate(effectiveLimit)
