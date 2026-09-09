@@ -162,6 +162,7 @@ fun ChatArea(
     scrollState: ScrollState,
     aiReferences: List<AiReference> = emptyList(),
     isLoading: Boolean,
+    activeRunStartedAt: Long? = null,
     enableDialogs: Boolean = true,
     allowTranscriptMutation: Boolean = true,
     enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
@@ -538,6 +539,9 @@ fun ChatArea(
                 }
             }
 
+            if (isLoading && !hasNewerDisplayHistory && activeRunStartedAt != null) {
+                LiveResponseTimer(activeRunStartedAt)
+            }
             Spacer(modifier = Modifier.height(16.dp))
         }
 

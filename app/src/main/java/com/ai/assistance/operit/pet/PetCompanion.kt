@@ -66,6 +66,7 @@ internal fun PetCompanion(
     val model = remember(preview) { if (preview) null else PetTasks.get(context) }
     val tasks = model?.visibleTasks?.collectAsState()?.value.orEmpty()
     val selectedKey = model?.selectedKey?.collectAsState()?.value
+    val floatingEntry by FloatingPetEntry.mode.collectAsState()
     val task = if (preview) {
         PetTask("preview", "", com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN,
             stringResource(R.string.pet_preview_task), PetActivity.THINKING, true)
@@ -210,7 +211,10 @@ internal fun PetCompanion(
                                 ) {
                                     Icon(
                                         Icons.AutoMirrored.Filled.OpenInNew,
-                                        contentDescription = stringResource(R.string.pet_open_floating),
+                                        contentDescription = stringResource(
+                                            if (floatingEntry == FloatingPetEntryMode.CHAT_WINDOW)
+                                                R.string.pet_minimize_floating else R.string.pet_open_floating,
+                                        ),
                                         modifier = Modifier.size(18.dp),
                                     )
                                 }

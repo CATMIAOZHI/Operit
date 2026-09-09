@@ -325,6 +325,7 @@ internal fun EstimatedBadge(text: String, textColor: androidx.compose.ui.graphic
 
 @Composable
 private fun UnknownHint(text: String, color: androidx.compose.ui.graphics.Color) {
+    if (!LocalShowUnknownHints.current) return
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,
@@ -384,7 +385,7 @@ private fun TokenLine(
             color = textColor.copy(alpha = 0.85f),
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (aggregate.unknownEventCount > 0L) {
+            if (LocalShowUnknownHints.current && aggregate.unknownEventCount > 0L) {
                 Text(
                     text = stringResource(
                         R.string.token_stats_unknown_part_suffix,
@@ -1069,9 +1070,9 @@ private fun TokenStatsIdentityRow(
                 fontWeight = FontWeight.Medium,
             )
         }
-        if (totals.uncachedInput.unknownEventCount > 0L ||
+        if (LocalShowUnknownHints.current && (totals.uncachedInput.unknownEventCount > 0L ||
             totals.cachedInput.unknownEventCount > 0L ||
-            totals.output.unknownEventCount > 0L
+            totals.output.unknownEventCount > 0L)
         ) {
             Text(
                 text = stringResource(
@@ -1084,7 +1085,7 @@ private fun TokenStatsIdentityRow(
                 color = colors.unknownHint,
             )
         }
-        if (totals.cost.unknownContributionCount > 0L) {
+        if (LocalShowUnknownHints.current && totals.cost.unknownContributionCount > 0L) {
             Text(
                 text = stringResource(R.string.token_stats_unknown_cost, totals.cost.unknownContributionCount),
                 style = MaterialTheme.typography.bodySmall,

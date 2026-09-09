@@ -282,6 +282,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // 会话隔离：仅当“当前聊天ID == 正在流式的聊天ID”时，才显示处理中/停止按钮
     val activeStreamingChatIds: StateFlow<Set<String>> by lazy { messageProcessingDelegate.activeStreamingChatIds }
+    val activeRunStartedAt: StateFlow<Map<String, Long>> by lazy { messageProcessingDelegate.activeRunStartedAt }
     val currentChatIsLoading: StateFlow<Boolean> by lazy {
         kotlinx.coroutines.flow.combine(
             chatHistoryDelegate.currentChatId,
@@ -2566,6 +2567,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private val _regeneratingTitleIds = MutableStateFlow<Set<String>>(emptySet())
+    suspend fun estimateConversationCost(chatId: String): com.ai.assistance.operit.data.stats.ChatCostEstimate =
+        com.ai.assistance.operit.data.stats.estimateChatCost(context, chatHistoryDelegate.getChatHistory(chatId))
+
     val regeneratingTitleIds: StateFlow<Set<String>> = _regeneratingTitleIds
     private val titleGenerationJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
 

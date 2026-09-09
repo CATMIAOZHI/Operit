@@ -1,4 +1,11 @@
 <resources>
+    <string name="chat_live_elapsed">已用时 %1$s</string>
+    <string name="chat_estimated_cost">本对话估算费用：¥%1$s</string>
+    <string name="chat_estimated_cost_partial">本对话估算费用：¥%1$s（部分未知）</string>
+    <string name="chat_estimated_cost_unavailable">本对话估算费用：暂不可用</string>
+    <string name="chat_estimated_cost_loading">正在估算对话费用…</string>
+    <string name="token_stats_show_unknown_hints">显示请求未知提示</string>
+    <string name="pet_minimize_floating">最小化悬浮聊天</string>
     <string name="chat_title_regenerate">根据最近对话重新生成标题</string>
     <string name="chat_title_generating">正在生成标题…</string>
     <string name="chat_title_no_content">暂无可用于生成标题的对话内容</string>

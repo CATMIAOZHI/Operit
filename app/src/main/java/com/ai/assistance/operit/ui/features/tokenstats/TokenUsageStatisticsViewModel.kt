@@ -64,6 +64,7 @@ data class TokenActivityUiState(
 
 /** 页面 UI 状态（阶段 4）。 */
 data class TokenStatsUiState(
+    val showUnknownHints: Boolean = false,
     val loading: Boolean = true,
     val errorMessage: String? = null,
     /**
@@ -176,8 +177,16 @@ class TokenUsageStatisticsViewModel(
 
     private val manager = TokenStatsSettingsManager(statsDao)
 
-    private val _state = MutableStateFlow(TokenStatsUiState())
+    private val hintPreferences = appContext.getSharedPreferences("token_stats_display", Context.MODE_PRIVATE)
+    private val _state = MutableStateFlow(TokenStatsUiState(
+        showUnknownHints = hintPreferences.getBoolean("show_unknown_hints", false),
+    ))
     val state: StateFlow<TokenStatsUiState> = _state.asStateFlow()
+
+    fun setShowUnknownHints(show: Boolean) {
+        hintPreferences.edit().putBoolean("show_unknown_hints", show).apply()
+        _state.update { it.copy(showUnknownHints = show) }
+    }
 
     private val _actionMessage = MutableStateFlow<TokenStatsActionMessage?>(null)
     val actionMessage: StateFlow<TokenStatsActionMessage?> = _actionMessage.asStateFlow()
