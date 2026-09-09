@@ -68,8 +68,8 @@
     {
       "name": "get_context",
       "description": {
-        "zh": "获取严格已读边界内的对话上下文：当前章安全正文、最近最多 8 章前文、已有摘要/结构化知识、读者记忆，以及该角色已解锁的 AI 段评。用户想交流、吐槽“这段”或刚发生的剧情时使用。",
-        "en": "Get spoiler-safe conversation context: current-chapter text, up to 8 recent read chapters, existing summaries/structured knowledge, reader memories, and this character's unlocked AI comments."
+        "zh": "获取严格已读边界内的对话上下文：当前章安全正文、最近最多 8 章前文、已有摘要/结构化知识、读者记忆，以及该角色已解锁的 AI 段评。用户想交流、吐槽“这段”或刚发生的剧情时使用。失败时应说明无法确认实时位置，不得把旧 content.md 或上次上下文冒充当前情节。",
+        "en": "Get spoiler-safe conversation context: current-chapter text, up to 8 recent read chapters, existing summaries/structured knowledge, reader memories, and this character's unlocked AI comments. On failure, say the live position is unavailable; never present old content.md snapshots or previous context as the current scene."
       },
       "parameters": [
         {
