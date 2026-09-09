@@ -1,8 +1,5 @@
 package com.ai.assistance.operit.services
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.ComponentCallbacks2
 import android.content.Context
@@ -22,7 +19,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.State
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
-import androidx.core.app.NotificationCompat
 import androidx.lifecycle.Lifecycle
 import com.ai.assistance.operit.core.application.ForegroundServiceCompat
 import com.ai.assistance.operit.core.application.OperitApplication
@@ -70,7 +66,6 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     private val binder = LocalBinder()
 
     private val NOTIFICATION_ID = 1001
-    private val CHANNEL_ID = "floating_chat_channel"
 
     private val PREF_KEY_STATUS_INDICATOR_STYLE = "status_indicator_style"
     private val PREF_KEY_COLOR_SCHEME = "floating_color_scheme_json"
@@ -291,9 +286,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                     if (needsWakeLock) acquireWakeLock() else releaseWakeLock()
                 }
             }
-            createNotificationChannel()
-            val notification = createNotification()
-            ForegroundServiceCompat.startForeground(
+            val notification = com.ai.assistance.operit.core.application.CompanionNotification.fallback(this)
+            com.ai.assistance.operit.core.application.CompanionNotification.startForeground(
                 service = this,
                 notificationId = NOTIFICATION_ID,
                 notification = notification,
@@ -335,51 +329,6 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error releasing WakeLock", e)
         }
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = getString(R.string.floating_chat_window_title)
-            val descriptionText = getString(R.string.floating_service_description)
-            val importance = NotificationManager.IMPORTANCE_LOW
-            val channel =
-                    NotificationChannel(CHANNEL_ID, name, importance).apply {
-                        description = descriptionText
-                        setShowBadge(false)
-                    }
-            val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
-        }
-    }
-
-    private fun createNotification() =
-            NotificationCompat.Builder(this, CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle(getString(R.string.floating_chat_window_title))
-                    .setContentText(getString(R.string.floating_chat_running_in_background))
-                    .setPriority(NotificationCompat.PRIORITY_LOW)
-                    .setOngoing(true)
-                    .setCategory(NotificationCompat.CATEGORY_SERVICE)
-                    .setContentIntent(getPendingIntent())
-                    .addAction(
-                        android.R.drawable.ic_menu_close_clear_cancel,
-                        getString(R.string.floating_close_floating_window),
-                        PendingIntent.getService(
-                            this, 2, Intent(this, FloatingChatService::class.java).setAction(ACTION_CLOSE),
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                        ),
-                    )
-                    .build()
-
-    private fun getPendingIntent(): PendingIntent {
-        val intent = packageManager.getLaunchIntentForPackage(packageName)
-        return PendingIntent.getActivity(
-                this,
-                0,
-                intent,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE
-                else 0
-        )
     }
 
     /** Observe the existing runtime; opening a window must not restart or copy an active turn. */
@@ -648,6 +597,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     }
 
     override fun onDestroy() {
+        com.ai.assistance.operit.core.application.CompanionNotification.release(this)
         try {
             AIForegroundService.setWakeListeningSuspendedForFloatingFullscreen(
                 applicationContext,

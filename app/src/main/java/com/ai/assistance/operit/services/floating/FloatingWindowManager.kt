@@ -141,7 +141,7 @@ class FloatingWindowManager(
 
     private val petPreferences = PetPreferences.get(context)
     private val entryObserver = lifecycleOwner.lifecycleScope.launch {
-        combine(petPreferences.usePetEntry, petPreferences.settings) { _, _ -> Unit }.collect {
+        combine(petPreferences.usePetEntry, petPreferences.settings, petPreferences.enabled) { _, _, _ -> Unit }.collect {
             if (isViewAdded) refreshWindowAndIndicatorVisibility()
         }
     }
@@ -378,8 +378,10 @@ class FloatingWindowManager(
         val view = composeView
 
         val entryRequested = isViewAdded && !windowPersistentHidden && windowDisplayEnabled
+        val petEntryDisabled = currentMode == FloatingMode.BALL &&
+            petPreferences.usePetEntry.value && petPreferences.settings.value.isReady && !petPreferences.enabled.value
         var usePet = entryRequested && currentMode == FloatingMode.BALL &&
-            petPreferences.usePetEntry.value && petPreferences.settings.value.isReady
+            petPreferences.enabled.value && petPreferences.usePetEntry.value && petPreferences.settings.value.isReady
         if (usePet && FloatingPetEntry.mode.value != FloatingPetEntryMode.PET) {
             try {
                 // Set the state before starting the service so its first reconcile keeps it alive.
@@ -393,11 +395,12 @@ class FloatingWindowManager(
         FloatingPetEntry.mode.value = when {
             !isViewAdded -> FloatingPetEntryMode.NONE
             !entryRequested -> FloatingPetEntryMode.HIDDEN
+            petEntryDisabled -> FloatingPetEntryMode.PET_DISABLED
             usePet -> FloatingPetEntryMode.PET
             currentMode == FloatingMode.BALL || currentMode == FloatingMode.VOICE_BALL -> FloatingPetEntryMode.LEGACY_BALL
             else -> FloatingPetEntryMode.CHAT_WINDOW
         }
-        val windowVisible = entryRequested && !usePet
+        val windowVisible = entryRequested && !usePet && !petEntryDisabled
         AIForegroundService.setWakeListeningSuspendedForFloatingFullscreen(
             context.applicationContext,
             windowVisible && (currentMode == FloatingMode.FULLSCREEN || currentMode == FloatingMode.SCREEN_OCR),

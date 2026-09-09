@@ -8773,4 +8773,45 @@
     <string name="pet_entry_hint">Use the selected entry when chat is minimized. The voice ball keeps its existing behavior.</string>
     <string name="floating_collapse">Collapse floating chat</string>
     <string name="pet_acknowledge_completion">Acknowledge completion and return to idle</string>
+    <string name="markdown_link_not_openable">This link points to a reference inside the document and cannot be opened</string>
+    <string name="openai_file_omitted">File content omitted, current model does not support file processing</string>
+
+    <string name="provider_openai_codex">OpenAI Codex (ChatGPT OAuth)</string>
+    <string name="onboarding_config_codex_login_required">Sign in to OpenAI Codex first</string>
+    <string name="codex_login_title">Sign in to OpenAI Codex</string>
+    <string name="codex_login_starting">Preparing Codex sign-in...</string>
+    <string name="codex_login_waiting">Complete sign-in in your browser</string>
+    <string name="codex_login_action">Sign in with ChatGPT</string>
+    <string name="codex_login_success">OpenAI Codex sign-in succeeded</string>
+    <string name="codex_login_failed">OpenAI Codex sign-in failed: %1$s</string>
+    <string name="codex_logout_action">Sign out of Codex</string>
+    <string name="codex_logout_success">Signed out of OpenAI Codex</string>
+    <string name="codex_auth_title">OpenAI Codex account</string>
+    <string name="codex_auth_not_logged_in">Sign in with ChatGPT to use Codex subscription access</string>
+    <string name="codex_auth_account">Account: %1$s</string>
+    <string name="codex_endpoint_fixed">The Codex endpoint is fixed by the system</string>
+    <string name="codex_model_directory_hint">Models come from the local directory, or the bundled Codex list when OpenAI is absent. Availability depends on the signed-in account.</string>
+    <string name="codex_plan">Plan: %1$s</string>
+    <string name="codex_direct_media_processing">Direct image/PDF input</string>
+    <string name="codex_direct_media_processing_desc">Send images and PDFs directly to Codex</string>
+    <string name="codex_quota_five_hour">Last 5 hours</string>
+    <string name="codex_quota_seven_day">Last 7 days</string>
+    <string name="codex_quota_remaining">%1$d%% remaining</string>
+    <string name="codex_quota_no_data">No data</string>
+    <string name="codex_usage_refresh">Refresh Codex usage</string>
+    <string name="codex_usage_unavailable">Usage is temporarily unavailable</string>
+    <string name="codex_reset_after_days">Resets in %1$d days</string>
+    <string name="codex_reset_after_clock">Resets in %1$02d:%2$02d</string>
+    <string name="conversation_media_file_link">&lt;link type=&quot;file&quot; id=&quot;%1$s&quot; filename=&quot;%2$s&quot;&gt;PDF&lt;/link&gt;</string>
+    <string name="provider_grok_account">Grok (Account login)</string>
+    <string name="provider_google_antigravity">Google Antigravity</string>
+    <string name="provider_account_not_logged_in">Sign in to select available models. No API key required.</string>
+    <string name="provider_account_logged_in">Account signed in</string>
+    <string name="provider_account_login">Sign in</string>
+    <string name="provider_account_logout">Sign out</string>
+    <string name="provider_account_login_failed">Account sign-in did not complete</string>
+    <string name="provider_account_completing">Verifying account and service access</string>
+    <string name="provider_oauth_client_settings">OAuth client settings</string>
+    <string name="provider_oauth_client_hint">Client settings are encrypted in this app. Leave blank to use saved settings. They are excluded from model configuration exports.</string>
+    <string name="provider_account_login_required">Sign in to the provider first</string>
 </resources>
