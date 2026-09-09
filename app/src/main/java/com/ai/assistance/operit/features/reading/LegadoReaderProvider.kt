@@ -74,6 +74,7 @@ class LegadoReaderProvider(
                             sourceId = item.getString("url"),
                             index = item.getInt("index"),
                             title = item.optString("title"),
+                            isVolume = item.optBoolean("isVolume", false),
                         )
                     )
                 }
