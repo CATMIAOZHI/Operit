@@ -6,6 +6,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.net.URI
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -53,22 +54,7 @@ internal class CodexOAuthLoopbackCallbackServer private constructor(
             .bufferedReader(StandardCharsets.US_ASCII)
             .readLine()
             ?: return null
-        val requestParts = requestLine.split(' ', limit = 3)
-        if (requestParts.size != 3 || requestParts[0] != "GET") {
-            return null
-        }
-
-        val requestUri = Uri.parse(requestParts[1])
-        if (requestUri.scheme != null || requestUri.authority != null) {
-            return null
-        }
-        if (requestUri.path != callbackPath) {
-            return null
-        }
-
-        return Uri.parse(redirectUri).buildUpon()
-            .encodedQuery(requestUri.encodedQuery)
-            .build()
+        return parseOAuthCallbackRequest(requestLine, redirectUri)?.let(Uri::parse)
     }
 
     private fun writeResponse(socket: Socket, response: HttpResponse) {
@@ -115,4 +101,21 @@ internal class CodexOAuthLoopbackCallbackServer private constructor(
             return CodexOAuthLoopbackCallbackServer(socket, path, host)
         }
     }
+}
+
+internal fun parseOAuthCallbackRequest(requestLine: String, redirectUri: String): String? {
+    val parts = requestLine.split(' ', limit = 3)
+    if (parts.size != 3 || parts[0] != "GET") return null
+    val target = parts[1]
+    if (!target.startsWith("/") || target.startsWith("//")) return null
+    // Android Uri treats a colon in an origin-form query (scope=https://...) as a scheme.
+    // Parse the HTTP target with java.net.URI, then give Android a fully qualified URI.
+    return runCatching {
+        val request = URI(target)
+        val expected = URI(redirectUri)
+        if (request.isAbsolute || request.rawAuthority != null ||
+            request.rawFragment != null || request.rawPath != expected.rawPath
+        ) return null
+        redirectUri + (request.rawQuery?.let { "?$it" } ?: "")
+    }.getOrNull()
 }
