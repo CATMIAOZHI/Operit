@@ -18,6 +18,35 @@ import org.junit.Test
 class ReadingCompanionSubagentToolsTest {
 
     @Test
+    fun `long labeled chapters can be fully reconstructed without changing anchors`() {
+        val text = AutoCommentSupport.labeledParagraphs(
+            AutoCommentSupport.paragraphs(("正文".repeat(9000) + "\n").repeat(5)),
+        )
+        val restored = StringBuilder()
+        var offset = 0
+        do {
+            val page = JSONObject()
+            ReadingCompanionSubagentTools.appendChapterPage(page, text, offset, 8000)
+            restored.append(page.getString("content"))
+            assertTrue(page.toString().length < 64000)
+            assertTrue(page.getInt("nextOffset") > offset)
+            offset = page.getInt("nextOffset")
+        } while (page.getBoolean("hasMore"))
+        assertEquals(text, restored.toString())
+    }
+
+    @Test
+    fun `escaped chapter pages remain under transport limit and preserve surrogate pairs`() {
+        val page = JSONObject()
+        ReadingCompanionSubagentTools.appendChapterPage(page, "\"".repeat(70000), 0, Int.MAX_VALUE)
+        val xml = page.toString().replace("&", "&amp;").replace("\"", "&quot;")
+        assertTrue(xml.length < 64000)
+        ReadingCompanionSubagentTools.appendChapterPage(page, "😀尾", 0, 1)
+        assertEquals("😀", page.getString("content"))
+        assertEquals(2, page.getInt("nextOffset"))
+    }
+
+    @Test
     fun `generation prompt requests chapter tools and isolated tools exclude delegation and model search`() {
         val prompt = ReadingCompanionSubagentCoordinator.buildSubagentTaskPrompt(
             "book", 4, "reader", "persona detail",
