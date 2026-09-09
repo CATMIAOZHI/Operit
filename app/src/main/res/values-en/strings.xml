@@ -1,4 +1,11 @@
  <resources>
+    <string name="chat_live_elapsed">Elapsed %1$s</string>
+    <string name="chat_estimated_cost">Estimated conversation cost: ¥%1$s</string>
+    <string name="chat_estimated_cost_partial">Estimated conversation cost: ¥%1$s (partly unknown)</string>
+    <string name="chat_estimated_cost_unavailable">Estimated conversation cost: unavailable</string>
+    <string name="chat_estimated_cost_loading">Estimating conversation cost…</string>
+    <string name="token_stats_show_unknown_hints">Show unknown request hints</string>
+    <string name="pet_minimize_floating">Minimize floating chat</string>
     <string name="chat_title_regenerate">Regenerate title from recent conversation</string>
     <string name="chat_title_generating">Generating title…</string>
     <string name="chat_title_no_content">No conversation content available for a title</string>

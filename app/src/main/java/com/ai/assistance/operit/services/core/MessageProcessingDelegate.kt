@@ -171,6 +171,8 @@ class MessageProcessingDelegate(
 
     private val _activeStreamingChatIds = MutableStateFlow<Set<String>>(emptySet())
     val activeStreamingChatIds: StateFlow<Set<String>> = _activeStreamingChatIds.asStateFlow()
+    private val _activeRunStartedAt = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val activeRunStartedAt: StateFlow<Map<String, Long>> = _activeRunStartedAt.asStateFlow()
 
     private val _inputProcessingStateByChatId =
         MutableStateFlow<Map<String, EnhancedInputProcessingState>>(emptyMap())
@@ -215,6 +217,7 @@ class MessageProcessingDelegate(
         var currentTurnOptions: ChatTurnOptions = ChatTurnOptions(),
         var requestSentAt: Long = 0L,
         var requestStartElapsed: Long = 0L,
+        @Volatile var runStartedElapsed: Long = 0L,
         var firstResponseElapsed: Long? = null,
         val isLoading: MutableStateFlow<Boolean> = MutableStateFlow(false)
     )
@@ -264,6 +267,7 @@ class MessageProcessingDelegate(
         return chatRuntimes[key] ?: ChatRuntime().also { chatRuntimes[key] = it }
     }
 
+    @Synchronized
     private fun updateGlobalLoadingState() {
         val anyLoading = chatRuntimes.values.any { it.isLoading.value }
         val activeChatIds = chatRuntimes
@@ -272,6 +276,9 @@ class MessageProcessingDelegate(
             .filter { it != "__DEFAULT_CHAT__" }
             .toSet()
 
+        _activeRunStartedAt.value = activeChatIds.associateWith {
+            chatRuntimes.getValue(it).runStartedElapsed
+        }
         _activeStreamingChatIds.value = activeChatIds
         _isLoading.value = anyLoading
     }
@@ -775,6 +782,7 @@ class MessageProcessingDelegate(
         chatRuntime.streamingAiMessage = null
         chatRuntime.toolBoundarySnapshot = null
         chatRuntime.steeringBoundarySnapshot = null
+        chatRuntime.runStartedElapsed = android.os.SystemClock.elapsedRealtime()
         chatRuntime.isLoading.value = true
         chatRuntime.currentTurnOptions = turnOptions
         chatRuntime.inputInbox = TurnInputInbox()
@@ -1826,6 +1834,7 @@ class MessageProcessingDelegate(
         var shouldResetInputStateToIdle = false
         chatRuntime.sendJob = currentJob
         resetCurrentTurnToolInvocationCount(chatId)
+        chatRuntime.runStartedElapsed = android.os.SystemClock.elapsedRealtime()
         chatRuntime.isLoading.value = true
         updateGlobalLoadingState()
         setChatInputProcessingState(

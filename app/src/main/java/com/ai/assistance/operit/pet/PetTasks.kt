@@ -174,6 +174,12 @@ class PetTasks private constructor(private val context: Context) {
     }
 
     fun openFloating(task: PetTask?) {
+        if (FloatingPetEntry.mode.value == FloatingPetEntryMode.CHAT_WINDOW) {
+            FloatingChatService.getInstance()?.let {
+                it.minimizeToPet()
+                return
+            }
+        }
         if (!Settings.canDrawOverlays(context)) {
             context.startActivity(Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")

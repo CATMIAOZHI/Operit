@@ -718,6 +718,7 @@ class AIForegroundService : Service() {
     private var hideRuntimeTaskViewEnabled: Boolean = false
     @Volatile
     private var backgroundKeepAliveEnabled: Boolean = false
+    @Volatile private var backgroundKeepAliveLoaded: Boolean = false
     @Volatile
     private var lastAppliedRuntimeTaskViewHidden: Boolean? = null
 
@@ -904,6 +905,8 @@ class AIForegroundService : Service() {
     }
 
     private fun stopSelfIfIdle(ignoreAppForeground: Boolean = false) {
+        // The persisted setting may differ from the field's bootstrap value.
+        if (!backgroundKeepAliveLoaded) return
         val alwaysListeningEnabled = wakeListeningEnabled || isAlwaysListeningEnabledNow()
         val externalHttpEnabled = externalHttpStateFlow.value.isRunning || isExternalHttpEnabledNow()
         if (isAiBusy || alwaysListeningEnabled || backgroundKeepAliveEnabled || externalHttpEnabled) {
@@ -1003,6 +1006,7 @@ class AIForegroundService : Service() {
                     .enableBackgroundKeepAlive
                     .collectLatest { enabled ->
                         backgroundKeepAliveEnabled = enabled
+                        backgroundKeepAliveLoaded = true
                         updateKeepAliveOverlayVisibility()
                         if (enabled) {
                             refreshServiceNotification()
@@ -1012,6 +1016,8 @@ class AIForegroundService : Service() {
                     }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "监听后台保活设置失败: ${e.message}", e)
+                backgroundKeepAliveLoaded = true
+                stopSelfIfIdle()
             }
         }
     }
