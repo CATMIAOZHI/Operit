@@ -8,8 +8,8 @@
     "en": "AI Reading Companion"
   },
   "description": {
-    "zh": "连接 Legado，按需提供阅读上下文、人物回顾和读者记忆，通过生成任务维护章节摘要与段评。",
-    "en": "Connects to Legado with on-demand reading context, character recall, reader memories, and tasks for chapter summaries and comments."
+    "zh": "连接 Legado，提供阅读上下文、人物回顾和由 AI 主动维护的伴读记忆，通过生成任务维护章节摘要与段评。",
+    "en": "Connects to Legado with reading context, character recall, proactively maintained AI companion memory, and tasks for chapter summaries and comments."
   },
   "enabled_by_default": false,
   "subpackages": [

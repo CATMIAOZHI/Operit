@@ -8,7 +8,8 @@ data class MediaLink(
     val type: String,
     val id: String,
     val base64Data: String,
-    val mimeType: String
+    val mimeType: String,
+    val fileName: String? = null,
 )
 
 data class ImageLink(
@@ -20,7 +21,8 @@ data class ImageLink(
 
 data class MediaLinkTag(
     val type: String,
-    val id: String
+    val id: String,
+    val fileName: String? = null,
 )
 
 object MediaLinkParser {
@@ -42,6 +44,16 @@ object MediaLinkParser {
     private val LINK_PATTERN_ESCAPED = Regex(
         """<link\s+type=\\\"?(audio|video)\\\"?\s+id=\\\"?([^\"\s>]+)\\\"?\s*>.*?</link>""",
         RegexOption.DOT_MATCHES_ALL
+    )
+
+    private val FILE_LINK_PATTERN_PLAIN = Regex(
+        """<link\s+type\s*=\s*\"file\"\s+id\s*=\s*\"([^\"]+)\"\s+filename\s*=\s*\"([^\"]+)\"\s*>.*?</link>""",
+        RegexOption.DOT_MATCHES_ALL,
+    )
+
+    private val FILE_LINK_PATTERN_ESCAPED = Regex(
+        """<link\s+type=\\\"file\\\"\s+id=\\\"([^\\\"]+)\\\"\s+filename=\\\"([^\\\"]+)\\\"\s*>.*?</link>""",
+        RegexOption.DOT_MATCHES_ALL,
     )
 
     fun extractImageLinks(message: String): List<ImageLink> {
@@ -155,6 +167,32 @@ object MediaLinkParser {
         collectFromPattern(LINK_PATTERN_PLAIN)
         collectFromPattern(LINK_PATTERN_ESCAPED)
 
+        fun collectFileFromPattern(pattern: Regex) {
+            pattern.findAll(message).forEach { match ->
+                val id = match.groupValues[1]
+                val fileName = unescapeXml(match.groupValues[2])
+                if (id == "error" || fileName.isBlank() || !seenIds.add("file:$id")) {
+                    return@forEach
+                }
+
+                val mediaData = MediaPoolManager.getMedia(id) ?: return@forEach
+                val limited = MediaBase64Limiter.limitBase64ForAi(mediaData.base64, mediaData.mimeType)
+                    ?: return@forEach
+                links.add(
+                    MediaLink(
+                        type = "file",
+                        id = id,
+                        base64Data = limited.base64,
+                        mimeType = limited.mimeType,
+                        fileName = fileName,
+                    )
+                )
+            }
+        }
+
+        collectFileFromPattern(FILE_LINK_PATTERN_PLAIN)
+        collectFileFromPattern(FILE_LINK_PATTERN_ESCAPED)
+
         return links
     }
 
@@ -179,17 +217,41 @@ object MediaLinkParser {
         collectFromPattern(LINK_PATTERN_PLAIN)
         collectFromPattern(LINK_PATTERN_ESCAPED)
 
+        fun collectFileFromPattern(pattern: Regex) {
+            pattern.findAll(message).forEach { match ->
+                val id = match.groupValues[1]
+                val fileName = unescapeXml(match.groupValues[2])
+                if (id == "error" || fileName.isBlank() || !seenIds.add("file:$id")) {
+                    return@forEach
+                }
+                tags.add(MediaLinkTag(type = "file", id = id, fileName = fileName))
+            }
+        }
+
+        collectFileFromPattern(FILE_LINK_PATTERN_PLAIN)
+        collectFileFromPattern(FILE_LINK_PATTERN_ESCAPED)
+
         return tags
     }
 
     fun replaceMediaLinks(message: String, replacer: (type: String, id: String) -> String): String {
         var result = message
-        val patterns = listOf(LINK_PATTERN_PLAIN, LINK_PATTERN_ESCAPED)
-        patterns.forEach { pattern ->
+        val mediaPatterns = listOf(
+            LINK_PATTERN_PLAIN,
+            LINK_PATTERN_ESCAPED,
+        )
+        mediaPatterns.forEach { pattern ->
             result = pattern.replace(result) { match ->
                 val type = match.groupValues.getOrNull(1) ?: return@replace ""
                 val id = match.groupValues.getOrNull(2) ?: return@replace ""
                 if (id == "error") "" else replacer(type, id)
+            }
+        }
+
+        listOf(FILE_LINK_PATTERN_PLAIN, FILE_LINK_PATTERN_ESCAPED).forEach { pattern ->
+            result = pattern.replace(result) { match ->
+                val id = match.groupValues.getOrNull(1) ?: return@replace ""
+                if (id == "error") "" else replacer("file", id)
             }
         }
         return result
@@ -199,9 +261,23 @@ object MediaLinkParser {
         return message
             .replace(LINK_PATTERN_PLAIN, "")
             .replace(LINK_PATTERN_ESCAPED, "")
+            .replace(FILE_LINK_PATTERN_PLAIN, "")
+            .replace(FILE_LINK_PATTERN_ESCAPED, "")
     }
 
     fun hasMediaLinks(message: String): Boolean {
-        return LINK_PATTERN_PLAIN.containsMatchIn(message) || LINK_PATTERN_ESCAPED.containsMatchIn(message)
+        return LINK_PATTERN_PLAIN.containsMatchIn(message) ||
+            LINK_PATTERN_ESCAPED.containsMatchIn(message) ||
+            FILE_LINK_PATTERN_PLAIN.containsMatchIn(message) ||
+            FILE_LINK_PATTERN_ESCAPED.containsMatchIn(message)
+    }
+
+    private fun unescapeXml(value: String): String {
+        return value
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
     }
 }

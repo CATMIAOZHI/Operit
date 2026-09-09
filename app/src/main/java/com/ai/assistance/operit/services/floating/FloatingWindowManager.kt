@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.disableMoveAnimation
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -140,7 +141,7 @@ class FloatingWindowManager(
 
     private val petPreferences = PetPreferences.get(context)
     private val entryObserver = lifecycleOwner.lifecycleScope.launch {
-        combine(petPreferences.usePetEntry, petPreferences.settings) { _, _ -> Unit }.collect {
+        combine(petPreferences.usePetEntry, petPreferences.settings, petPreferences.enabled) { _, _, _ -> Unit }.collect {
             if (isViewAdded) refreshWindowAndIndicatorVisibility()
         }
     }
@@ -171,8 +172,6 @@ class FloatingWindowManager(
     }
 
     companion object {
-        // Private flag to disable window move animations
-        private const val PRIVATE_FLAG_NO_MOVE_ANIMATION = 0x00000040
         private const val FULLSCREEN_BLUR_RADIUS_DP = 48
         private const val IME_FOCUS_DELAY_MS = 200L
         private const val IME_FOCUS_RETRY_DELAY_MS = 50L
@@ -379,8 +378,10 @@ class FloatingWindowManager(
         val view = composeView
 
         val entryRequested = isViewAdded && !windowPersistentHidden && windowDisplayEnabled
+        val petEntryDisabled = currentMode == FloatingMode.BALL &&
+            petPreferences.usePetEntry.value && petPreferences.settings.value.isReady && !petPreferences.enabled.value
         var usePet = entryRequested && currentMode == FloatingMode.BALL &&
-            petPreferences.usePetEntry.value && petPreferences.settings.value.isReady
+            petPreferences.enabled.value && petPreferences.usePetEntry.value && petPreferences.settings.value.isReady
         if (usePet && FloatingPetEntry.mode.value != FloatingPetEntryMode.PET) {
             try {
                 // Set the state before starting the service so its first reconcile keeps it alive.
@@ -394,11 +395,12 @@ class FloatingWindowManager(
         FloatingPetEntry.mode.value = when {
             !isViewAdded -> FloatingPetEntryMode.NONE
             !entryRequested -> FloatingPetEntryMode.HIDDEN
+            petEntryDisabled -> FloatingPetEntryMode.PET_DISABLED
             usePet -> FloatingPetEntryMode.PET
             currentMode == FloatingMode.BALL || currentMode == FloatingMode.VOICE_BALL -> FloatingPetEntryMode.LEGACY_BALL
             else -> FloatingPetEntryMode.CHAT_WINDOW
         }
-        val windowVisible = entryRequested && !usePet
+        val windowVisible = entryRequested && !usePet && !petEntryDisabled
         AIForegroundService.setWakeListeningSuspendedForFloatingFullscreen(
             context.applicationContext,
             windowVisible && (currentMode == FloatingMode.FULLSCREEN || currentMode == FloatingMode.SCREEN_OCR),
@@ -576,7 +578,7 @@ class FloatingWindowManager(
         params.gravity = Gravity.TOP or Gravity.START
 
         // Disable system move animations to allow custom animations to take full control
-        setPrivateFlag(params, PRIVATE_FLAG_NO_MOVE_ANIMATION)
+        params.disableMoveAnimation()
 
         when (state.currentMode.value) {
             FloatingMode.FULLSCREEN, FloatingMode.SCREEN_OCR -> {
@@ -683,15 +685,6 @@ class FloatingWindowManager(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             params.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-    }
-
-    private fun setPrivateFlag(params: WindowManager.LayoutParams, flags: Int) {
-        try {
-            val field = params.javaClass.getField("privateFlags")
-            field.setInt(params, field.getInt(params) or flags)
-        } catch (e: Exception) {
-            AppLogger.e(TAG, "Failed to set privateFlags", e)
         }
     }
 

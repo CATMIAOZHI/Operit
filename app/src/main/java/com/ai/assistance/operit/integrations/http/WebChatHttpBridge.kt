@@ -1835,8 +1835,18 @@ class WebChatHttpBridge(
         val mediaLinkAttachments = MediaLinkParser.extractMediaLinkTags(cleanedContent).map { tag ->
             WebMessageAttachment(
                 id = "media_pool:${tag.id}",
-                fileName = if (tag.type == "audio") "Audio" else "Video",
-                mimeType = if (tag.type == "audio") "audio/*" else "video/*",
+                fileName = when (tag.type) {
+                    "audio" -> "Audio"
+                    "video" -> "Video"
+                    "file" -> tag.fileName.orEmpty()
+                    else -> tag.type
+                },
+                mimeType = when (tag.type) {
+                    "audio" -> "audio/*"
+                    "video" -> "video/*"
+                    "file" -> "application/pdf"
+                    else -> "application/octet-stream"
+                },
                 fileSize = 0L
             )
         }

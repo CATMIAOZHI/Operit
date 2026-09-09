@@ -229,6 +229,7 @@ fun ChatScreenContent(
         }
     }
 
+    val activeRunStartedAt by actualViewModel.activeRunStartedAt.collectAsState()
     Box(modifier = modifier.fillMaxSize().padding(paddingValues)) {
         if (chatHeaderOverlayMode && chatHeaderTransparent) {
             // 覆盖模式：Header浮动在ChatArea之上
@@ -238,6 +239,7 @@ fun ChatScreenContent(
                         currentChatId = currentChatId,
                         scrollState = scrollState,
                         isLoading = isLoading,
+                        activeRunStartedAt = activeRunStartedAt[currentChatId],
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
                         allowTranscriptMutation = !readOnlyTranscript,
                         enableToolDetailDialogs = enableToolDetailDialogs ?: enableMessageDialogs,
@@ -359,6 +361,7 @@ fun ChatScreenContent(
                         currentChatId = currentChatId,
                         scrollState = scrollState,
                         isLoading = isLoading,
+                        activeRunStartedAt = activeRunStartedAt[currentChatId],
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
                         allowTranscriptMutation = !readOnlyTranscript,
                         enableToolDetailDialogs = enableToolDetailDialogs ?: enableMessageDialogs,
@@ -1106,6 +1109,7 @@ fun ChatHistorySelectorPanel(
                             )
     ) {
         val activeStreamingChatIds by actualViewModel.activeStreamingChatIds.collectAsState()
+        val regeneratingTitleIds by actualViewModel.regeneratingTitleIds.collectAsState()
         val chatFolders by actualViewModel.chatFolders.collectAsState()
         // 直接使用ChatHistorySelector
         ChatHistorySelector(
@@ -1149,6 +1153,8 @@ fun ChatHistorySelectorPanel(
                 onUpdateChatTitle = { chatId, newTitle ->
                     actualViewModel.updateChatTitle(chatId, newTitle)
                 },
+                onRegenerateChatTitle = actualViewModel::regenerateChatTitle,
+                regeneratingTitleIds = regeneratingTitleIds,
                 onUpdateChatBinding = { chatId, characterCardName, characterGroupId ->
                     actualViewModel.updateChatCharacterBinding(chatId, characterCardName, characterGroupId)
                 },

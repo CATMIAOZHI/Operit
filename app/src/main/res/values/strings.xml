@@ -1,4 +1,15 @@
 <resources>
+    <string name="chat_live_elapsed">已用时 %1$s</string>
+    <string name="chat_estimated_cost">本对话估算费用：¥%1$s</string>
+    <string name="chat_estimated_cost_partial">本对话估算费用：¥%1$s（部分未知）</string>
+    <string name="chat_estimated_cost_unavailable">本对话估算费用：暂不可用</string>
+    <string name="chat_estimated_cost_loading">正在估算对话费用…</string>
+    <string name="token_stats_show_unknown_hints">显示请求未知提示</string>
+    <string name="pet_minimize_floating">最小化悬浮聊天</string>
+    <string name="chat_title_regenerate">根据最近对话重新生成标题</string>
+    <string name="chat_title_generating">正在生成标题…</string>
+    <string name="chat_title_no_content">暂无可用于生成标题的对话内容</string>
+    <string name="chat_title_generation_failed">标题生成失败，已保留原标题</string>
     <string name="app_name">Operit Ry</string>
     <string name="accessibility_service_description">用于获取UI层次结构，为AI助手提供更快速的界面分析能力，不会收集或存储任何个人信息。</string>
     
@@ -5657,7 +5668,7 @@
     <string name="executing_tool">正在执行工具: %1$s</string>
     <string name="processing_tool_result">正在处理工具结果: %1$s</string>
     <string name="input_question_hint">随心输入</string>
-    <string name="input_question_with_workspace">输入问题，使用@来引用文件</string>
+    <string name="input_question_with_workspace">随心输入，使用@来引用文件</string>
     <string name="add_attachment">添加附件</string>
     <string name="user_uploaded_image">用户上传的图片</string>
     <string name="decode_image_failed">解码图片失败: %1$s</string>
@@ -7870,6 +7881,7 @@
     <string name="openai_error_network_interrupted">网络中断</string>
     <string name="openai_audio_video_omitted">音视频内容已省略，当前模型不支持音视频处理</string>
     <string name="openai_image_omitted">图片内容已省略，当前模型不支持图片处理</string>
+    <string name="openai_file_omitted">文件内容已省略，当前模型不支持文件处理</string>
 
     <!-- WorkflowExecutor (新增) -->
     <string name="workflow_non_execute_node">非执行节点</string>
@@ -7981,6 +7993,7 @@
     <string name="conversation_media_image_link">&lt;link type=&quot;image&quot; id=&quot;%1$s&quot;&gt;图片&lt;/link&gt;</string>
     <string name="conversation_media_audio_link">&lt;link type=&quot;audio&quot; id=&quot;%1$s&quot;&gt;音频&lt;/link&gt;</string>
     <string name="conversation_media_video_link">&lt;link type=&quot;video&quot; id=&quot;%1$s&quot;&gt;视频&lt;/link&gt;</string>
+    <string name="conversation_media_file_link">&lt;link type=&quot;file&quot; id=&quot;%1$s&quot; filename=&quot;%2$s&quot;&gt;PDF&lt;/link&gt;</string>
     <string name="conversation_analyze_image_prompt">Please analyze this image.</string>
     <string name="conversation_analyze_audio_prompt">Please analyze this audio.</string>
     <string name="conversation_analyze_video_prompt">Please analyze this video.</string>
@@ -8743,4 +8756,43 @@
     <string name="pet_entry_hint">最小化聊天窗口时使用所选入口。语音悬浮球保持原有行为。</string>
     <string name="floating_collapse">收起悬浮窗</string>
     <string name="pet_acknowledge_completion">确认完成，回到休息中</string>
+    <string name="markdown_link_not_openable">该链接指向文档内部的引用，无法打开</string>
+
+    <string name="provider_openai_codex">OpenAI Codex (ChatGPT OAuth)</string>
+    <string name="onboarding_config_codex_login_required">请先登录 OpenAI Codex</string>
+    <string name="codex_login_title">登录 OpenAI Codex</string>
+    <string name="codex_login_starting">正在准备 Codex 登录...</string>
+    <string name="codex_login_waiting">请在浏览器中完成登录</string>
+    <string name="codex_login_action">登录 ChatGPT</string>
+    <string name="codex_login_success">OpenAI Codex 登录成功</string>
+    <string name="codex_login_failed">OpenAI Codex 登录失败：%1$s</string>
+    <string name="codex_logout_action">退出 Codex 登录</string>
+    <string name="codex_logout_success">已退出 OpenAI Codex 登录</string>
+    <string name="codex_auth_title">OpenAI Codex 账号</string>
+    <string name="codex_auth_not_logged_in">登录 ChatGPT 后使用 Codex 订阅额度</string>
+    <string name="codex_auth_account">账号：%1$s</string>
+    <string name="codex_endpoint_fixed">Codex endpoint 由系统固定</string>
+    <string name="codex_model_directory_hint">模型列表使用本地目录；目录未包含 OpenAI 时使用内置 Codex 列表。实际可用模型以登录账号为准。</string>
+    <string name="codex_plan">套餐：%1$s</string>
+    <string name="codex_direct_media_processing">图片/PDF 直传</string>
+    <string name="codex_direct_media_processing_desc">将图片和 PDF 直接发送给 Codex 处理</string>
+    <string name="codex_quota_five_hour">近 5 小时</string>
+    <string name="codex_quota_seven_day">近 7 天</string>
+    <string name="codex_quota_remaining">剩余 %1$d%%</string>
+    <string name="codex_quota_no_data">暂无数据</string>
+    <string name="codex_usage_refresh">刷新 Codex 额度</string>
+    <string name="codex_usage_unavailable">额度暂时不可用</string>
+    <string name="codex_reset_after_days">%1$d 天后重置</string>
+    <string name="codex_reset_after_clock">%1$02d:%2$02d 后重置</string>
+    <string name="provider_grok_account">Grok（账户登录）</string>
+    <string name="provider_google_antigravity">Google Antigravity</string>
+    <string name="provider_account_not_logged_in">登录账户后选择可用模型，无需 API Key</string>
+    <string name="provider_account_logged_in">账户已登录</string>
+    <string name="provider_account_login">登录账户</string>
+    <string name="provider_account_logout">退出登录</string>
+    <string name="provider_account_login_failed">账户登录未完成</string>
+    <string name="provider_account_completing">正在验证账户与服务权限</string>
+    <string name="provider_oauth_client_settings">OAuth 客户端配置</string>
+    <string name="provider_oauth_client_hint">客户端配置加密保存在当前应用中。留空使用已保存配置，不随模型配置导出。</string>
+    <string name="provider_account_login_required">请先登录提供商账户</string>
 </resources>

@@ -29,6 +29,24 @@ object ApiProviderConfigs {
             defaultApiEndpoint = "https://api.openai.com/v1/responses"
         ),
         ProviderApiConfig(
+            providerType = ApiProviderType.GROK_ACCOUNT,
+            defaultModelName = "",
+            defaultApiEndpoint = "https://cli-chat-proxy.grok.com/v1/chat/completions",
+            requiresApiKey = false,
+        ),
+        ProviderApiConfig(
+            providerType = ApiProviderType.GOOGLE_ANTIGRAVITY,
+            defaultModelName = "",
+            defaultApiEndpoint = "https://cloudcode-pa.googleapis.com",
+            requiresApiKey = false,
+        ),
+        ProviderApiConfig(
+            providerType = ApiProviderType.OPENAI_CODEX,
+            defaultModelName = "gpt-5.4",
+            defaultApiEndpoint = "https://chatgpt.com/backend-api/codex/responses",
+            requiresApiKey = false,
+        ),
+        ProviderApiConfig(
             providerType = ApiProviderType.OPENAI_RESPONSES_GENERIC,
             defaultModelName = "",
             defaultApiEndpoint = ""

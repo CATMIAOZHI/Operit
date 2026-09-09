@@ -7,6 +7,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ModelProtocolResolverTest {
+    @Test
+    fun codexAuthenticationCannotBeOverriddenByGenericProtocol() {
+        assertFalse(supportsModelProtocolOverrides(ApiProviderType.GROK_ACCOUNT.name))
+        assertFalse(supportsModelProtocolOverrides(ApiProviderType.GOOGLE_ANTIGRAVITY.name))
+        val account = config().copy(
+            apiProviderType = ApiProviderType.OPENAI_CODEX,
+            apiProviderTypeId = ApiProviderType.OPENAI_CODEX.name,
+        )
+        assertFalse(supportsModelProtocolOverrides(account.apiProviderTypeId))
+        assertEquals(ApiProviderType.OPENAI_CODEX, account.forSelectedModel(1).apiProviderType)
+    }
+
     private val endpoint = "https://opencode.ai/zen/go/v1/chat/completions"
     private fun config() = ModelConfigData(
         id = "account", name = "Go", apiEndpoint = endpoint, modelName = "deepseek,gpt,minimax",
