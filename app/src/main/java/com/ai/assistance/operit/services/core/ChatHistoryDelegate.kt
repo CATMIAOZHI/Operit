@@ -36,7 +36,8 @@ class ChatHistoryDelegate(
         private val getEnhancedAiService: () -> EnhancedAIService?,
         private val ensureAiServiceAvailable: () -> Unit = {}, // 确保AI服务可用的回调
         private val getChatStatistics: () -> Triple<Long, Long, Long> = { Triple(0L, 0L, 0L) }, // 获取（输入token, 输出token, 窗口大小）
-        private val onScrollToBottom: () -> Unit = {} // 滚动到底部事件回调
+        private val onScrollToBottom: () -> Unit = {}, // 滚动到底部事件回调
+        private val onStableHistoryLoaded: suspend (String) -> Unit = {},
 ) {
     companion object {
         private const val TAG = "ChatHistoryDelegate"
@@ -640,6 +641,7 @@ class ChatHistoryDelegate(
 
     private suspend fun loadChatMessages(chatId: String) {
         try {
+            chatHistoryManager.repairRepeatedIntermediateMessages(chatId)
             val initialPageCount = latestDisplayPageCountByChatId[chatId] ?: 1
             val messages = loadLatestCurrentChatDisplayWindow(chatId, pageCount = initialPageCount)
             AppLogger.d(TAG, "加载聊天 $chatId 的消息：${messages.size} 条")
@@ -654,6 +656,7 @@ class ChatHistoryDelegate(
 
             // 打开历史对话时也执行开场白同步：仅当当前会话还没有用户消息时
             syncOpeningStatementIfNoUserMessage(chatId)
+            onStableHistoryLoaded(chatId)
 
         } catch (e: Exception) {
             AppLogger.e(TAG, "加载聊天消息失败", e)
@@ -1582,7 +1585,8 @@ class ChatHistoryDelegate(
                     "添加新消息到聊天 $targetChatId, isCurrent=$isCurrentChat, stream is null: ${message.contentStream == null}, ts: ${message.timestamp}"
                 )
                 if (isVisibleNewMessage) {
-                    chatHistoryManager.addMessage(targetChatId, message)
+                    // Absence from the paged display window does not mean absence from storage.
+                    chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
                     refreshCurrentChatDisplayFlags(targetChatId)
                 } else {
                     chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)

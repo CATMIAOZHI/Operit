@@ -28,23 +28,22 @@ internal class SteeredTranscript {
         segmentStream = SteeredSegmentStream()
     }
 
-    fun project(message: ChatMessage): List<ChatMessage> {
+    fun project(input: ChatMessage): List<ChatMessage> {
+        val message = if (input.displayMode ==
+            com.ai.assistance.operit.data.model.ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE
+        ) input.copy(
+            inputTokens = 0, outputTokens = 0, cachedInputTokens = 0,
+            waitDurationMs = 0, outputDurationMs = 0, completedAt = 0,
+        ) else input
         if (boundaries.isEmpty() || message.timestamp != rootTimestamp) return listOf(message)
         val result = mutableListOf<ChatMessage>()
-        var start = 0
-        var timestamp = message.timestamp
-        boundaries.forEach { boundary ->
-            result += message.copy(
-                content = boundary.displayPrefix.substring(start),
-                timestamp = timestamp,
-                contentStream = null,
-                inputTokens = 0, outputTokens = 0, cachedInputTokens = 0,
-            )
-            start = boundary.displayPrefix.length
-            timestamp = boundary.nextTimestamp
-        }
-        // A collector can have captured an older snapshot before the boundary was sealed.
-        // It may refresh the sealed rows, but cannot overwrite the new segment with stale text.
+        // onTurnInput persists each segment before sealing it. Replaying sealed rows here
+        // would push old pages back into the visible window on every streaming snapshot.
+        val lastBoundary = boundaries.last()
+        val start = lastBoundary.displayPrefix.length
+        val timestamp = lastBoundary.nextTimestamp
+        // A collector may have captured a snapshot before sealing; it cannot overwrite the
+        // new segment with that stale text.
         if (message.content.startsWith(boundaries.last().displayPrefix)) {
             val suffix = message.content.substring(start)
             segmentStream?.update(suffix)

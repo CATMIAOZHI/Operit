@@ -66,6 +66,13 @@ internal fun preferToolBoundarySnapshot(
         replayCandidate.substring(boundarySnapshot.replayCharCount)
 }
 
+internal fun boundaryAfterRollback(
+    current: EnhancedAIService.ToolExecutionBoundarySnapshot?,
+    sealed: EnhancedAIService.ToolExecutionBoundarySnapshot?,
+    processedRevisionEventCount: Int,
+): EnhancedAIService.ToolExecutionBoundarySnapshot? =
+    current?.takeIf { it.revisionEventCount >= processedRevisionEventCount } ?: sealed
+
 /** Cancellation bypasses provider EOF finalization, so close only Operit's own reasoning envelope. */
 internal fun finalizeInterruptedStreamingContent(content: String): String {
     var searchFrom = 0
@@ -227,8 +234,8 @@ class MessageProcessingDelegate(
     fun steeringTurnId(chatId: String): String? =
         chatRuntimes[chatId]?.takeIf { it.canSteer }?.inputInbox?.turnId
 
-    fun hasPendingTurnInput(chatId: String): Boolean =
-        chatRuntimes[chatId]?.inputInbox?.hasPending() == true
+    fun pendingTurnInputKind(chatId: String): TurnInputInbox.PendingInputKind? =
+        chatRuntimes[chatId]?.inputInbox?.pendingInputKind()
 
     fun trySteerMessage(chatId: String, expectedTurnId: String, input: TurnInputInbox.Input): Boolean {
         val runtime = chatRuntimes[chatId] ?: return false
@@ -580,7 +587,10 @@ class MessageProcessingDelegate(
 
     fun cancelMessage(chatId: String) {
         coroutineScope.launch(Dispatchers.IO) {
-            cancelMessageInternal(chatId, keepPartialResponse = true)
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                .getInstance(context).stopTreeForUser(chatId) {
+                    cancelMessageInternal(chatId, keepPartialResponse = true)
+                }
         }
     }
 
@@ -889,7 +899,7 @@ class MessageProcessingDelegate(
                     if (effectiveHideUserMessage) {
                         ChatMessageDisplayMode.HIDDEN_PLACEHOLDER
                     } else if (turnOptions.isCollaborationAgent) {
-                        ChatMessageDisplayMode.COLLABORATION_EVENT
+                        ChatMessageDisplayMode.COLLABORATION_TASK
                     } else {
                         ChatMessageDisplayMode.NORMAL
                     }
@@ -1173,30 +1183,36 @@ class MessageProcessingDelegate(
                         recordCurrentTurnToolInvocation(chatId, toolName)
                     },
                     onToolExecutionBoundary = boundary@ { boundarySnapshot ->
-                        toolBoundaryContentSnapshot.set(boundarySnapshot)
-                        chatRuntime.toolBoundarySnapshot = boundarySnapshot
                         val snapshotMessage = toolBoundaryMessageReady.await() ?: return@boundary
                         val targetChatId = chatId ?: return@boundary
-                        persistAssistantMessage(
-                            targetChatId,
-                            snapshotMessage.copy(content = boundarySnapshot.displayContent),
-                        )
+                        chatRuntime.transcriptMutex.withLock {
+                            toolBoundaryContentSnapshot.set(boundarySnapshot)
+                            chatRuntime.toolBoundarySnapshot = boundarySnapshot
+                            chatRuntime.steeredTranscript.project(
+                                snapshotMessage.copy(content = boundarySnapshot.displayContent),
+                            ).forEach { addMessageToChat(targetChatId, it) }
+                        }
                     },
                     turnInputInbox = chatRuntime.inputInbox,
                     onTurnInput = { texts, boundary ->
                         val snapshotMessage = requireNotNull(toolBoundaryMessageReady.await())
-                        toolBoundaryContentSnapshot.set(boundary)
-                        chatRuntime.toolBoundarySnapshot = boundary
-                        chatRuntime.steeringBoundarySnapshot = boundary
                         chatRuntime.transcriptMutex.withLock {
+                            toolBoundaryContentSnapshot.set(boundary)
+                            chatRuntime.toolBoundarySnapshot = boundary
+                            chatRuntime.steeringBoundarySnapshot = boundary
                             chatRuntime.steeredTranscript.project(snapshotMessage.copy(
                                 content = boundary.displayContent, contentStream = null,
+                                displayMode = ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE,
                             )).forEach { addMessageToChat(chatId, it) }
                             texts.forEach { input ->
                                 addMessageToChat(chatId, ChatMessage(
                                     sender = "user", content = input.text,
                                     roleName = input.agentPath ?: context.getString(R.string.message_role_user),
-                                    displayMode = if (input.agentPath != null) ChatMessageDisplayMode.COLLABORATION_EVENT else ChatMessageDisplayMode.NORMAL,
+                                    displayMode = when {
+                                        input.agentPath == null -> ChatMessageDisplayMode.NORMAL
+                                        input.startsAgentTurn -> ChatMessageDisplayMode.COLLABORATION_TASK
+                                        else -> ChatMessageDisplayMode.COLLABORATION_EVENT
+                                    },
                                 ))
                             }
                             val nextAssistantTimestamp = ChatMessageTimestampAllocator.next()
@@ -1220,6 +1236,7 @@ class MessageProcessingDelegate(
                     promptHooksEnabled = turnOptions.promptHooksEnabled,
                     systemPromptOverride = turnOptions.systemPromptOverride,
                     collaborationHistory = turnOptions.collaborationHistory,
+                    collaborationInput = turnOptions.isCollaborationAgent,
                 )
                 } catch (error: Throwable) {
                     toolBoundaryMessageReady.complete(null)
@@ -1434,9 +1451,20 @@ class MessageProcessingDelegate(
                                 return true
                             }
 
-                            suspend fun persistStreamingSnapshot(contentSnapshot: String) {
+                            suspend fun persistStreamingSnapshotLocked(contentSnapshot: String) {
                                 val targetChatId = chatId ?: return
-                                persistAssistantMessage(targetChatId, aiMessage.copy(content = contentSnapshot))
+                                val current = preferToolBoundarySnapshot(
+                                    toolBoundaryContentSnapshot.get(), contentSnapshot,
+                                )
+                                aiMessage.content = current
+                                chatRuntime.steeredTranscript.project(aiMessage.copy(content = current))
+                                    .forEach { addMessageToChat(targetChatId, it) }
+                            }
+
+                            suspend fun persistStreamingSnapshot(contentSnapshot: String) {
+                                chatRuntime.transcriptMutex.withLock {
+                                    persistStreamingSnapshotLocked(contentSnapshot)
+                                }
                             }
 
                             suspend fun drainRevisionEvents() {
@@ -1454,15 +1482,23 @@ class MessageProcessingDelegate(
                                         TextStreamEventType.ROLLBACK -> {
                                             // Provider rollback applies to the new response, not
                                             // the already persisted pre-steer assistant prefix.
-                                            val sealedBoundary = chatRuntime.steeringBoundarySnapshot
-                                            toolBoundaryContentSnapshot.set(sealedBoundary)
-                                            chatRuntime.toolBoundarySnapshot = sealedBoundary
                                             val snapshot =
                                                 revisionTracker.rollback(event.id)?.toString()
                                                     ?: continue
-                                            aiMessage.content = snapshot
-                                            if (claimStreamingSnapshot()) {
-                                                persistStreamingSnapshot(snapshot)
+                                            chatRuntime.transcriptMutex.withLock {
+                                                // The producer may already have published a boundary
+                                                // that includes this delayed rollback event.
+                                                val sealedBoundary = boundaryAfterRollback(
+                                                    toolBoundaryContentSnapshot.get(),
+                                                    chatRuntime.steeringBoundarySnapshot,
+                                                    processedRevisionEventCount,
+                                                )
+                                                toolBoundaryContentSnapshot.set(sealedBoundary)
+                                                chatRuntime.toolBoundarySnapshot = sealedBoundary
+                                                aiMessage.content = snapshot
+                                                if (claimStreamingSnapshot()) {
+                                                    persistStreamingSnapshotLocked(snapshot)
+                                                }
                                             }
                                             if (!isWaifuModeEnabled) {
                                                 tryEmitScrollToBottomThrottled(chatId)
@@ -1529,13 +1565,7 @@ class MessageProcessingDelegate(
                                     val contentSnapshot =
                                         if (claimStreamingSnapshot()) liveContent.toString() else null
                                     if (contentSnapshot != null) {
-                                        val nonRegressingSnapshot =
-                                            preferToolBoundarySnapshot(
-                                                toolBoundaryContentSnapshot.get(),
-                                                contentSnapshot,
-                                            )
-                                        aiMessage.content = nonRegressingSnapshot
-                                        persistStreamingSnapshot(nonRegressingSnapshot)
+                                        persistStreamingSnapshot(contentSnapshot)
                                     }
                                     if (!isWaifuModeEnabled) {
                                         tryEmitScrollToBottomThrottled(chatId)

@@ -7,6 +7,17 @@ import org.junit.Test
 
 class ToolBoundarySnapshotPolicyTest {
     @Test
+    fun delayedRollbackCannotEraseBoundaryThatAlreadyIncludesIt() {
+        val sealed = EnhancedAIService.ToolExecutionBoundarySnapshot("sealed", 6, 1)
+        val old = EnhancedAIService.ToolExecutionBoundarySnapshot("old", 3, 2)
+        val latest = EnhancedAIService.ToolExecutionBoundarySnapshot("rewritten", 9, 4)
+        assertEquals(sealed, boundaryAfterRollback(old, sealed, 3))
+        assertEquals(latest, boundaryAfterRollback(latest, sealed, 3))
+        assertEquals(latest, boundaryAfterRollback(latest, sealed, 4))
+        assertEquals(null, boundaryAfterRollback(old, null, 3))
+    }
+
+    @Test
     fun replayPrefixCannotOverwriteCompleteToolBoundarySnapshot() {
         val boundary = "完整的回复，然后调用工具"
         val snapshot =

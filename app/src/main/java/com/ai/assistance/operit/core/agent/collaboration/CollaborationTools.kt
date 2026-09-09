@@ -9,9 +9,11 @@ import com.ai.assistance.operit.data.model.ToolPrompt
 object CollaborationTools {
     val names = setOf(
         "spawn_agent", "send_message", "followup_task", "interrupt_agent", "list_agents", "wait_agent",
+        "list_agent_models",
     )
 
     fun category(chinese: Boolean, profiles: List<AgentProfile>): SystemToolPromptCategory {
+        val limits = com.ai.assistance.operit.core.agent.AgentProfileRepository.instance.collaborationLimits.value
         fun text(cn: String, en: String) = if (chinese) cn else en
         fun parameter(name: String, cn: String, en: String, required: Boolean = false) =
             ToolParameterSchema(name = name, type = "string", description = text(cn, en), required = required)
@@ -26,23 +28,31 @@ object CollaborationTools {
                 ToolPrompt(
                     name = "spawn_agent",
                     description = text(
-                        "异步创建具名子代理；立即返回路径。子代理可协作、发送消息并继续执行新任务。完成消息自动投递到父代理邮箱。仅为可独立执行的具体子任务创建代理。",
-                        "Spawn a named child asynchronously and return its path immediately. Agents can collaborate, exchange messages and accept follow-up tasks. Completion is delivered to the parent's mailbox. Spawn only for a concrete independent subtask.",
+                        "异步创建具名子代理；立即返回路径。当前每个根会话最多同时运行 ${limits.maxActive} 个子代理（整个子代理树共享，正在创建的也占名额，主代理不占名额）；最大深度 ${limits.maxDepth}（根代理深度 0）。达到并行上限时等待现有代理结束，再创建或唤醒空闲代理；给运行中代理发消息不占新名额。不要靠重复失败调用探测上限。仅为可独立执行的具体子任务创建代理。分工时说明依赖关系，必要时给出协作者的完整路径；收到会影响其他任务的发现时及时转发。完成消息自动投递到父代理邮箱，无需重复发送终稿。",
+                        "Spawn a named child asynchronously and return its path immediately. Current limit per root conversation: ${limits.maxActive} concurrent subagents shared across the entire tree, including pending creation; the root does not occupy a slot. Maximum depth: ${limits.maxDepth}, with root at depth 0. At capacity, wait for an existing agent to finish before spawning or waking an idle agent. Messaging a running agent takes no additional slot. Do not discover limits through repeated failed calls. Spawn only for a concrete independent subtask. Explain dependencies and, when relevant, provide collaborators' canonical paths. Relay findings that affect other tasks promptly. Completion is delivered to the parent's mailbox; do not send a duplicate final report.",
                     ),
                     parametersStructured = listOf(
                         parameter("task_name", "任务名，只含小写字母、数字和下划线，不可为 root。", "Task name: lowercase letters, digits and underscores; root is reserved.", true),
                         message,
                         parameter("fork_turns", "继承父上下文：all（默认）、none 或正整数轮数。", "Parent context: all (default), none, or a positive number of turns."),
                         parameter("agent_type", "代理配置 ID：" + profiles.joinToString { it.id }, "Agent profile ID: " + profiles.joinToString { it.id }),
-                        parameter("model", "可选的已配置模型 ID。", "Optional configured model ID."),
+                        parameter("model", "可选。需要指定模型时先调用 list_agent_models，原样填写返回的 model（配置名称 / 模型名称，重名时带区分标记）。不填则沿用原有继承或子代理预设规则。", "Optional. To select a model, first call list_agent_models and copy its model value (configuration name / model name, disambiguated when needed). Omit to retain the existing inheritance or agent-profile selection."),
                         parameter("reasoning_effort", "可选思考强度：none、minimal、low、medium、high、xhigh、max、ultra；模型需支持。", "Optional reasoning effort: none, minimal, low, medium, high, xhigh, max, ultra; requires model support."),
                     ),
                 ),
                 ToolPrompt(
+                    name = "list_agent_models",
+                    description = text(
+                        "仅在需要为 spawn_agent 指定模型时，按需读取已配置的模型清单。每个 model 可直接用于 spawn_agent.model；同一配置中的模型分别列出。无需指定模型时不必调用，也不要反复查询。",
+                        "Read configured model choices only when selecting a model for spawn_agent. Copy a returned model value into spawn_agent.model; models within one configuration are listed separately. Do not call when no model override is needed or poll repeatedly.",
+                    ),
+                    parametersStructured = emptyList(),
+                ),
+                ToolPrompt(
                     name = "send_message",
                     description = text(
-                        "投递消息。运行中的代理在下一消息边界接收；空闲代理只入队，不会启动新轮。",
-                        "Deliver a message at the next input boundary of an active agent. Queue messages for idle agents without starting a turn.",
+                        "向已有代理交流关键信息、纠正、阻塞或具体问题。需要回复代理的消息时，用此工具投递给其 Sender，不要只在自己的对话里作答。同级代理不会收到你自动回报父代理的终稿。普通文本或手写信封都不会投递，必须实际调用工具并确认 accepted。完整路径可用 list_agents 查询。遵守独立审计等隔离要求，避免无内容的状态消息和向父代理重复发送自动终稿。运行中在下一消息边界接收；空闲时只入队，需要其继续工作请用 followup_task（不能唤醒根代理）。",
+                        "Share actionable findings, corrections, blockers or concrete questions with an existing agent. To reply to an agent message, deliver your answer to its Sender with this tool rather than answering only in your own conversation. Peers do not receive your automatic final report to your parent. Ordinary prose or a handwritten envelope does not deliver anything: call the tool and confirm accepted. Discover canonical paths with list_agents. Respect required independence; avoid empty updates or duplicating your automatic final report to your parent. Active agents receive input at the next boundary; idle agents only queue it. Use followup_task when an idle non-root agent needs to work.",
                     ),
                     parametersStructured = listOf(target, message),
                 ),
@@ -64,7 +74,7 @@ object CollaborationTools {
                 ),
                 ToolPrompt(
                     name = "list_agents",
-                    description = text("列出当前根会话中的代理及状态。", "List agents and their status in the current root conversation."),
+                    description = text("仅列出当前根会话中的代理身份及状态，不重复返回终稿；完整结果由邮箱投递。需要协作者的完整路径时查询，使用返回路径而不要猜测。不必为报进度反复轮询。", "List agent identities and status in the current root conversation without replaying final answers; full results arrive through the mailbox. Use returned canonical paths to contact collaborators instead of guessing; avoid repeated polling just for progress."),
                     parametersStructured = listOf(parameter("path_prefix", "可选完整或当前代理下的相对路径前缀，按路径段筛选。", "Optional canonical or caller-relative path prefix, matched by path segment.")),
                 ),
                 ToolPrompt(
@@ -73,7 +83,9 @@ object CollaborationTools {
                         "等待邮箱消息、完成通知或新的用户输入。消息通过上下文投递；此工具只报告等待结果。",
                         "Wait for mailbox activity, completion notifications or new user input. Messages arrive through context; this tool only reports the wait outcome.",
                     ),
-                    parametersStructured = listOf(parameter("timeout_ms", "等待毫秒数，默认 30000，最少 10000，最多 3600000。", "Timeout in milliseconds: default 30000, minimum 10000, maximum 3600000.")),
+                    parametersStructured = listOf(parameter("timeout_ms",
+                        "等待毫秒数，默认 ${limits.defaultWaitMs}，最少 ${limits.minWaitMs}，最多 ${limits.maxWaitMs}。",
+                        "Timeout in milliseconds: default ${limits.defaultWaitMs}, minimum ${limits.minWaitMs}, maximum ${limits.maxWaitMs}.")),
                 ),
             ),
         )

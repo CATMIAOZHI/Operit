@@ -17,6 +17,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.ui.features.chat.components.LocalResponseMessageSection
+import com.ai.assistance.operit.ui.features.chat.components.ResponseMessageSection
 import com.ai.assistance.operit.ui.common.markdown.StreamMarkdownRenderer
 import com.ai.assistance.operit.ui.features.chat.components.ChatMessageHeightMemory
 import com.ai.assistance.operit.ui.features.chat.components.rememberRevisableTextStream
@@ -54,7 +56,9 @@ fun AiMessageComposable(
     heightMemory: ChatMessageHeightMemory? = null,
     enableDialogs: Boolean = true,  // 新增参数：是否启用弹窗功能，默认启用
     enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
+    showHeader: Boolean = true,
 ) {
+    val section = LocalResponseMessageSection.current
     val context = LocalContext.current
     val preferencesManager = remember { UserPreferencesManager.getInstance(context) }
     val displayPreferencesManager = remember { DisplayPreferencesManager.getInstance(context) }
@@ -133,11 +137,13 @@ fun AiMessageComposable(
                     .fillMaxWidth()
                     .padding(vertical = 2.dp)
                     .onSizeChanged { size ->
-                        heightMemory?.updateMeasured(message.timestamp, size.height)
+                        if (section != ResponseMessageSection.HEADER) {
+                            heightMemory?.updateMeasured(message.timestamp, size.height)
+                        }
                     }
         ) {
         // 构建标题 - 分左右两部分显示
-        Row(
+        if (showHeader && section != ResponseMessageSection.BODY) Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
@@ -186,7 +192,7 @@ fun AiMessageComposable(
         // 使用 message.timestamp 作为 key，确保在重组期间，
         // 只要是同一条消息，StreamMarkdownRenderer就不会被销毁和重建。
         // 这可以防止流被不必要地取消，保证了渲染的连续性。
-        key(message.timestamp) {
+        if (section != ResponseMessageSection.HEADER) key(message.timestamp) {
             val streamToRender = rememberRevisableTextStream(overrideStream ?: message.contentStream)
             if (streamToRender != null) {
                 // 对于正在流式传输的消息，使用流式渲染器

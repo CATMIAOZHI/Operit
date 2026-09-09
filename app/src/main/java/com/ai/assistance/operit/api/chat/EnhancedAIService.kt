@@ -344,6 +344,7 @@ class EnhancedAIService private constructor(
     data class ToolExecutionBoundarySnapshot(
         val displayContent: String,
         val replayCharCount: Int,
+        val revisionEventCount: Int = 0,
     )
 
     data class SendMessageOptions(
@@ -384,7 +385,8 @@ class EnhancedAIService private constructor(
         var memorySpaceIdOverride: String? = null,
         var toolTimingScopeId: String? = null,
         var stream: Boolean = true,
-        var disableWarning: Boolean = false
+        var disableWarning: Boolean = false,
+        var collaborationInput: Boolean = false,
     )
 
     // MultiServiceManager 管理不同功能的 AIService 实例
@@ -462,6 +464,7 @@ class EnhancedAIService private constructor(
         val roundManager: ConversationRoundManager = ConversationRoundManager(),
         val isConversationActive: AtomicBoolean = AtomicBoolean(true),
         val conversationHistory: MutableList<PromptTurn>,
+        val collaborationInputs: MutableList<PromptTurn> = mutableListOf(),
         val eventChannel: MutableSharedStream<TextStreamEvent>,
         val onToolExecutionBoundary: (suspend (ToolExecutionBoundarySnapshot) -> Unit)? = null,
         val turnInputInbox: TurnInputInbox? = null,
@@ -485,7 +488,7 @@ class EnhancedAIService private constructor(
         val active = activeExecutionContexts.values.maxByOrNull { it.executionId } ?: return emptyList()
         val history = active.conversationHistory.toList()
         // The caller is inside the latest tool batch: its assistant call has no results yet.
-        // Retain complete call/result groups and the current user task.
+        // The fork selector subsequently keeps only user inputs and final answers.
         return if (history.lastOrNull()?.kind in setOf(PromptTurnKind.ASSISTANT, PromptTurnKind.TOOL_CALL)) {
             history.dropLast(1)
         } else history
@@ -799,22 +802,28 @@ class EnhancedAIService private constructor(
         maxTokens: Int,
     ): List<PromptTurn> {
         val summary = generateSummaryFromPromptTurns(
-            history.filter { it.kind != PromptTurnKind.SYSTEM },
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCheckpoint.summaryInput(history),
             previousSummary = null,
             customRules = "Preserve the assigned task, constraints, all agent paths and pending work, " +
-                "key findings and unresolved messages. This is a checkpoint for the same continuing agent.",
+                "key findings and unresolved messages from the quoted JSON. This is a checkpoint " +
+                "for the same continuing agent. Your own summarization instructions are not part " +
+                "of its task. Never mark unfinished work complete just because you summarized it.",
         )
         check(summary.isNotBlank()) { "Agent context compaction returned an empty checkpoint" }
-        val compacted = history.filter { it.kind == PromptTurnKind.SYSTEM } +
-            PromptTurn(PromptTurnKind.SUMMARY, summary)
+        val durable = com.ai.assistance.operit.core.agent.collaboration.CollaborationCheckpoint
+            .durableHistory(summary, execution.collaborationInputs.toList())
+        val compacted = com.ai.assistance.operit.core.agent.collaboration.CollaborationCheckpoint
+            .resumeHistory(history.filter { it.kind == PromptTurnKind.SYSTEM }, durable)
         val compactedTokens = estimatePreparedRequestWindow(service, compacted, tools, true)
         check(compactedTokens < maxTokens) {
             "Agent context remains larger than the configured capacity after compaction"
         }
+
         withContext(NonCancellable) {
             val scopeId = requireNotNull(execution.onTurnInput).invoke(
                 emptyList(), ToolExecutionBoundarySnapshot(
                     execution.roundManager.getDisplayContent(), execution.emittedReplayCharCount.get(),
+                    execution.eventChannel.replayCache.size,
                 ),
             )
             execution.toolSequence.startMessage(scopeId)
@@ -822,7 +831,7 @@ class EnhancedAIService private constructor(
             // stream persistence may already insert it, so a later database MAX is unsafe.
             val cutoff = scopeId.toLong() - 1
             com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
-                .getInstance(context).checkpoint(chatId, summary, cutoff)
+                .getInstance(context).checkpoint(chatId, durable, cutoff)
         }
         return compacted
     }
@@ -1010,9 +1019,7 @@ class EnhancedAIService private constructor(
                 originalCurrentMessage = message,
                 finalizedCurrentMessage = finalProcessedInput
             ).mergeAdjacentTurns { previous, current ->
-                previous.kind == PromptTurnKind.USER &&
-                    current.kind == PromptTurnKind.USER &&
-                    previous.toolName == current.toolName
+                com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.canMergeUserTurns(previous, current)
             }
 
         return estimatePreparedRequestWindow(
@@ -1283,10 +1290,23 @@ class EnhancedAIService private constructor(
                             originalCurrentMessage = message,
                             finalizedCurrentMessage = finalProcessedInput
                         ).mergeAdjacentTurns { previous, current ->
-                            previous.kind == PromptTurnKind.USER &&
-                                current.kind == PromptTurnKind.USER &&
-                                previous.toolName == current.toolName
+                            com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.canMergeUserTurns(previous, current)
                         }
+                    if (options.collaborationInput && requestHistory.lastOrNull()?.kind == PromptTurnKind.USER) {
+                        val last = requestHistory.last()
+                        requestHistory = requestHistory.dropLast(1) + last.copy(metadata = last.metadata + mapOf(
+                            com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.EVENT_METADATA to true,
+                            com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.TASK_METADATA to true,
+                        ))
+                    }
+                    if (com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                            .getInstance(context).isAgent(chatId)) {
+                        // A user may also resume an agent directly from its conversation UI.
+                        // Preserve that real user input without relabeling it as an agent event.
+                        execContext.collaborationInputs.add(requireNotNull(requestHistory.lastOrNull {
+                            it.kind == PromptTurnKind.USER
+                        }) { "Agent request has no current input" })
+                    }
                     execContext.conversationHistory.clear()
                     execContext.conversationHistory.addAll(requestHistory)
                     val initialWindow = estimatePreparedRequestWindow(
@@ -1757,7 +1777,11 @@ class EnhancedAIService private constructor(
                 context.conversationHistory.add(
                     PromptTurn(
                         kind = PromptTurnKind.ASSISTANT,
-                        content = context.roundManager.getCurrentRoundContent()
+                        content = context.roundManager.getCurrentRoundContent(),
+                        metadata = mapOf(
+                            com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.INTERMEDIATE_METADATA to
+                                (extractedToolInvocations.isNotEmpty() || truncatedToolRecovery != null),
+                        )
                     )
                 )
             } catch (e: Exception) {
@@ -2012,6 +2036,7 @@ class EnhancedAIService private constructor(
             ToolExecutionBoundarySnapshot(
                 displayContent = liveAssistantContent,
                 replayCharCount = context.emittedReplayCharCount.get(),
+                revisionEventCount = context.eventChannel.replayCache.size,
             )
         )
 
@@ -2289,6 +2314,7 @@ class EnhancedAIService private constructor(
                     turnInputs,
                     ToolExecutionBoundarySnapshot(
                         context.roundManager.getDisplayContent(), context.emittedReplayCharCount.get(),
+                        context.eventChannel.replayCache.size,
                     ),
                 )
                 if (nextAssistantScope != null) {
@@ -2297,7 +2323,17 @@ class EnhancedAIService private constructor(
                     context.toolSequence.startMessage(nextAssistantScope)
                 }
                 turnInputs.forEach { input ->
-                    context.conversationHistory.add(PromptTurn(kind = PromptTurnKind.USER, content = input.text))
+                    val inputTurn = PromptTurn(
+                        kind = PromptTurnKind.USER, content = input.text,
+                        metadata = if (input.agentPath != null) mapOf(
+                            com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.EVENT_METADATA to true,
+                            com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.TASK_METADATA to input.startsAgentTurn,
+                        ) else emptyMap(),
+                    )
+                    context.conversationHistory.add(inputTurn)
+                    if (context.collaborationInputs.isNotEmpty()) {
+                        context.collaborationInputs.add(inputTurn)
+                    }
                 }
                 context.turnInputInbox?.acknowledge()
             }
@@ -2306,8 +2342,7 @@ class EnhancedAIService private constructor(
         val normalizedChatHistory =
             conversationService.normalizeConversationHistoryForModel(context.conversationHistory)
                 .mergeAdjacentTurns { previous, current ->
-                    previous.kind == PromptTurnKind.USER && current.kind == PromptTurnKind.USER &&
-                        previous.toolName == current.toolName
+                    com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.canMergeUserTurns(previous, current)
                 }
         context.conversationHistory.clear()
         context.conversationHistory.addAll(normalizedChatHistory)

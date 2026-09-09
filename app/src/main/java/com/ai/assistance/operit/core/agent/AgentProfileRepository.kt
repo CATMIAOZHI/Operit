@@ -118,6 +118,17 @@ class AgentProfileRepository private constructor() {
     val profiles: StateFlow<List<AgentProfile>> = _profiles.asStateFlow()
     private val _subagentVersion = MutableStateFlow(2)
     val subagentVersion: StateFlow<Int> = _subagentVersion.asStateFlow()
+    private val _collaborationLimits = MutableStateFlow(com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits())
+    val collaborationLimits = _collaborationLimits.asStateFlow()
+
+    @Synchronized
+    fun setCollaborationLimits(value: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits) {
+        value.validate()
+        checkNotNull(preferences).edit().putString("subagent_v2_limits", json.encodeToString(
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits.serializer(), value,
+        )).apply()
+        _collaborationLimits.value = value
+    }
 
     @Synchronized
     fun setSubagentVersion(version: Int) {
@@ -163,6 +174,9 @@ class AgentProfileRepository private constructor() {
         defaults = localizedDefaults
         profilesById = restoreProfiles(localizedDefaults, restored.values.toList())
         preferences = loadedPreferences
+        _collaborationLimits.value = loadedPreferences.getString("subagent_v2_limits", null)?.let {
+            json.decodeFromString(com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits.serializer(), it).validate()
+        } ?: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits()
         _subagentVersion.value = loadedPreferences.getInt("subagent_version", 2).let {
             if (it == 1) 1 else 2
         }

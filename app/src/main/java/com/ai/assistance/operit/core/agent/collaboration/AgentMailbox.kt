@@ -49,6 +49,8 @@ data class CollaborationAgent(
     val inheritedHistory: List<CollaborationTurn> = emptyList(),
     val reasoningEffort: String? = null,
     val historyCutoff: Long? = null,
+    val roleCardId: String? = null,
+    val finalAnswer: String? = null,
 )
 
 /**
