@@ -1108,14 +1108,14 @@ open class OpenAIProvider(
 
             AppLogger.w(
                 "AIService",
-                "发现未完成的tool_calls，按取消处理: count=${openToolCallIds.size}, reason=$reason"
+                "发现缺少执行结果的tool_calls，补齐缺失结果: count=${openToolCallIds.size}, reason=$reason"
             )
             for (toolCallId in openToolCallIds) {
                 messagesArray.put(
                     JSONObject().apply {
                         put("role", "tool")
                         put("tool_call_id", toolCallId)
-                        put("content", "User cancelled")
+                        put("content", "Tool result missing: no matching execution result was available. This does not indicate user cancellation.")
                     }
                 )
             }
@@ -1885,6 +1885,7 @@ open class OpenAIProvider(
         val deferredOutput: java.util.ArrayDeque<DeferredOutputSegment> = java.util.ArrayDeque(),
         val queuedToolIndices: MutableSet<Int> = mutableSetOf(),
         val completedToolIndices: MutableSet<Int> = mutableSetOf(),
+        val emittedResponsesToolIndices: MutableSet<Int> = mutableSetOf(),
     )
 
     private suspend fun closeReasoningBlockIfOpen(
@@ -1912,6 +1913,9 @@ open class OpenAIProvider(
         deltaCall: JSONObject,
         state: StreamingState,
     ): Boolean {
+        // Responses output indices identify items for the entire response. Completion
+        // snapshots and late deltas must not reopen an item that has already been emitted.
+        if (useResponsesApi && index in state.emittedResponsesToolIndices) return false
         queueToolOutput(index, state)
 
         // 获取或创建该index的累积对象
@@ -1999,8 +2003,7 @@ open class OpenAIProvider(
         }
 
         // Build and validate every JSON-to-XML event before publishing the opening tag. A
-        // malformed provider payload therefore cannot require a mid-response rollback, and
-        // downstream consumers never observe a transient, unclosed tool envelope.
+        // malformed provider payload therefore cannot require a mid-response rollback.
         val parser = StreamingJsonXmlConverter()
         val events =
             buildList {
@@ -2099,6 +2102,7 @@ open class OpenAIProvider(
                     if (segment.index !in state.completedToolIndices) return
                     state.deferredOutput.removeFirst()
                     emitCompletedToolCall(segment.index, state, emitter)
+                    if (useResponsesApi) state.emittedResponsesToolIndices.add(segment.index)
                     state.completedToolIndices.remove(segment.index)
                     state.queuedToolIndices.remove(segment.index)
                     state.accumulatedToolCalls.remove(segment.index)
@@ -2645,6 +2649,8 @@ open class OpenAIProvider(
                     }
                     processResponseChunk(jsonResponse, state, emitter, onTokensUpdated, onUsageReported, attemptNumber)
                 } catch (e: IOException) {
+                    throw e
+                } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     AppLogger.w("AIService", "【发送消息】JSON解析错误: ${e.message}")
