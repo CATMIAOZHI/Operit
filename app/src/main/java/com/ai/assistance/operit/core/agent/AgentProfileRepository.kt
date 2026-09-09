@@ -116,6 +116,23 @@ class AgentProfileRepository private constructor() {
     private val profileListSerializer = ListSerializer(AgentProfile.serializer())
     private val _profiles = MutableStateFlow<List<AgentProfile>>(emptyList())
     val profiles: StateFlow<List<AgentProfile>> = _profiles.asStateFlow()
+    private val _subagentVersion = MutableStateFlow(2)
+    val subagentVersion: StateFlow<Int> = _subagentVersion.asStateFlow()
+
+    @Synchronized
+    fun setSubagentVersion(version: Int) {
+        require(version == 1 || version == 2) { "Unknown subagent version" }
+        checkNotNull(preferences).edit().putInt("subagent_version", version).apply()
+        _subagentVersion.value = version
+    }
+
+    @Synchronized
+    fun versionForChat(chatId: String): Int {
+        val prefs = checkNotNull(preferences)
+        val key = "subagent_chat_version:$chatId"
+        if (!prefs.contains(key)) prefs.edit().putInt(key, _subagentVersion.value).apply()
+        return prefs.getInt(key, 2)
+    }
 
     @Volatile private var profilesById: Map<String, AgentProfile> = emptyMap()
     @Volatile private var preferences: android.content.SharedPreferences? = null
@@ -146,6 +163,9 @@ class AgentProfileRepository private constructor() {
         defaults = localizedDefaults
         profilesById = restoreProfiles(localizedDefaults, restored.values.toList())
         preferences = loadedPreferences
+        _subagentVersion.value = loadedPreferences.getInt("subagent_version", 2).let {
+            if (it == 1) 1 else 2
+        }
         publish()
     }
 

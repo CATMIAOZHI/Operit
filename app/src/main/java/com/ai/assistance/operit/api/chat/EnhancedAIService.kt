@@ -377,7 +377,7 @@ class EnhancedAIService private constructor(
         var onToolInvocation: (suspend (String) -> Unit)? = null,
         var onToolExecutionBoundary: (suspend (ToolExecutionBoundarySnapshot) -> Unit)? = null,
         var turnInputInbox: TurnInputInbox? = null,
-        var onTurnInput: (suspend (List<String>, ToolExecutionBoundarySnapshot) -> String)? = null,
+        var onTurnInput: (suspend (List<TurnInputInbox.Input>, ToolExecutionBoundarySnapshot) -> String)? = null,
         var notifyReplyOverride: Boolean? = null,
         var chatModelConfigIdOverride: String? = null,
         var chatModelIndexOverride: Int? = null,
@@ -465,7 +465,7 @@ class EnhancedAIService private constructor(
         val eventChannel: MutableSharedStream<TextStreamEvent>,
         val onToolExecutionBoundary: (suspend (ToolExecutionBoundarySnapshot) -> Unit)? = null,
         val turnInputInbox: TurnInputInbox? = null,
-        val onTurnInput: (suspend (List<String>, ToolExecutionBoundarySnapshot) -> String)? = null,
+        val onTurnInput: (suspend (List<TurnInputInbox.Input>, ToolExecutionBoundarySnapshot) -> String)? = null,
         val toolTimingScopeId: String? = null,
         val workspacePath: String? = null,
         val workspaceEnv: String? = null,
@@ -481,6 +481,15 @@ class EnhancedAIService private constructor(
     )
 
     private val activeExecutionContexts = ConcurrentHashMap<Int, MessageExecutionContext>()
+    internal fun collaborationHistorySnapshot(): List<PromptTurn> {
+        val active = activeExecutionContexts.values.maxByOrNull { it.executionId } ?: return emptyList()
+        val history = active.conversationHistory.toList()
+        // The caller is inside the latest tool batch: its assistant call has no results yet.
+        // Retain complete call/result groups and the current user task.
+        return if (history.lastOrNull()?.kind in setOf(PromptTurnKind.ASSISTANT, PromptTurnKind.TOOL_CALL)) {
+            history.dropLast(1)
+        } else history
+    }
     private val nextExecutionContextId = AtomicInteger(0)
 
     private fun registerExecutionContext(context: MessageExecutionContext) {
@@ -774,6 +783,48 @@ class EnhancedAIService private constructor(
             publishRequestWindowEstimate(windowSize)
         }
         return windowSize
+    }
+
+    /**
+     * Compact inside the same v2 session: no generic auto-continuation may take ownership of
+     * the child. Split the persisted assistant at this boundary before saving the checkpoint,
+     * so later turns can append only transcript rows after its cutoff.
+     */
+    private suspend fun compactCollaborationHistory(
+        execution: MessageExecutionContext,
+        chatId: String,
+        history: List<PromptTurn>,
+        service: AIService,
+        tools: List<ToolPrompt>?,
+        maxTokens: Int,
+    ): List<PromptTurn> {
+        val summary = generateSummaryFromPromptTurns(
+            history.filter { it.kind != PromptTurnKind.SYSTEM },
+            previousSummary = null,
+            customRules = "Preserve the assigned task, constraints, all agent paths and pending work, " +
+                "key findings and unresolved messages. This is a checkpoint for the same continuing agent.",
+        )
+        check(summary.isNotBlank()) { "Agent context compaction returned an empty checkpoint" }
+        val compacted = history.filter { it.kind == PromptTurnKind.SYSTEM } +
+            PromptTurn(PromptTurnKind.SUMMARY, summary)
+        val compactedTokens = estimatePreparedRequestWindow(service, compacted, tools, true)
+        check(compactedTokens < maxTokens) {
+            "Agent context remains larger than the configured capacity after compaction"
+        }
+        withContext(NonCancellable) {
+            val scopeId = requireNotNull(execution.onTurnInput).invoke(
+                emptyList(), ToolExecutionBoundarySnapshot(
+                    execution.roundManager.getDisplayContent(), execution.emittedReplayCharCount.get(),
+                ),
+            )
+            execution.toolSequence.startMessage(scopeId)
+            // The split allocates this next segment ID under transcriptMutex. A concurrent
+            // stream persistence may already insert it, so a later database MAX is unsafe.
+            val cutoff = scopeId.toLong() - 1
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                .getInstance(context).checkpoint(chatId, summary, cutoff)
+        }
+        return compacted
     }
 
     private fun applyPromptFinalizeHooks(
@@ -1137,7 +1188,10 @@ class EnhancedAIService private constructor(
                     }
 
                     // Get all model parameters from preferences (with enabled state)
-                    val modelParameters = modelSnapshot.modelParameters
+                    val modelParameters = com.ai.assistance.operit.core.agent.collaboration.CollaborationModelParameters.apply(
+                        modelSnapshot.modelParameters,
+                        com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).reasoningEffort(chatId),
+                    )
                     val tAfterModelParams = messageTimingNow()
                     AppLogger.d(TAG, "sendMessage本地耗时: getModelParametersForFunction=${tAfterModelParams - tAfterPrepareHistory}ms")
 
@@ -1223,7 +1277,7 @@ class EnhancedAIService private constructor(
                         finalProcessedInput = ChatUtils.stripOpenAiResponsesReasoningMeta(finalProcessedInput)
                         finalPreparedHistory = ChatUtils.stripOpenAiResponsesReasoningMetaTurns(finalPreparedHistory)
                     }
-                    val requestHistory =
+                    var requestHistory =
                         applyFinalizedCurrentUserTurn(
                             preparedHistory = finalPreparedHistory,
                             originalCurrentMessage = message,
@@ -1235,12 +1289,21 @@ class EnhancedAIService private constructor(
                         }
                     execContext.conversationHistory.clear()
                     execContext.conversationHistory.addAll(requestHistory)
-                    estimatePreparedRequestWindow(
+                    val initialWindow = estimatePreparedRequestWindow(
                         serviceForFunction = serviceForFunction,
                         preparedHistory = requestHistory,
                         availableTools = availableTools,
                         publishEstimate = true
                     )
+                    if (maxTokens > 0 && initialWindow.toDouble() / maxTokens >= tokenUsageThreshold &&
+                        com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId)
+                    ) {
+                        requestHistory = compactCollaborationHistory(
+                            execContext, requireNotNull(chatId), requestHistory, serviceForFunction, availableTools, maxTokens,
+                        )
+                        execContext.conversationHistory.clear()
+                        execContext.conversationHistory.addAll(requestHistory)
+                    }
                     
                     // 使用新的Stream API
                     AppLogger.d(TAG, "sendMessage请求前准备耗时: ${tAfterGetTools - startTime}ms, 流式输出: $stream")
@@ -2045,7 +2108,10 @@ class EnhancedAIService private constructor(
                 workspaceEnv = context.workspaceEnv,
                 isSubagent = isSubTask,
                 subagentToolLoopGuard =
-                    context.subagentToolLoopGuard.takeIf { isSubTask },
+                    context.subagentToolLoopGuard.takeIf {
+                        isSubTask && !com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                            .getInstance(this@EnhancedAIService.context).isAgent(chatId)
+                    },
             )
 
             if (allToolResults.isNotEmpty()) {
@@ -2220,7 +2286,7 @@ class EnhancedAIService private constructor(
             // messages to the queue. Complete the history handoff and acknowledgement together.
             withContext(NonCancellable) {
                 val nextAssistantScope = context.onTurnInput?.invoke(
-                    turnInputs.map { it.text },
+                    turnInputs,
                     ToolExecutionBoundarySnapshot(
                         context.roundManager.getDisplayContent(), context.emittedReplayCharCount.get(),
                     ),
@@ -2247,7 +2313,7 @@ class EnhancedAIService private constructor(
         context.conversationHistory.addAll(normalizedChatHistory)
 
         // Get current conversation history is now just the normalized context history
-        val currentChatHistory = context.conversationHistory
+        var currentChatHistory: List<PromptTurn> = context.conversationHistory.toList()
 
         // 不再需要，因为结果在调用时已实时输出
         // context.roundManager.appendContent(toolResultMessage)
@@ -2273,7 +2339,10 @@ class EnhancedAIService private constructor(
             chatModelConfigIdOverride,
             chatModelIndexOverride
         )
-        val modelParameters = modelSnapshot.modelParameters
+        val modelParameters = com.ai.assistance.operit.core.agent.collaboration.CollaborationModelParameters.apply(
+            modelSnapshot.modelParameters,
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this@EnhancedAIService.context).reasoningEffort(chatId),
+        )
 
         // 获取对应功能类型的AIService实例
         val serviceForFunction = modelSnapshot.service
@@ -2302,6 +2371,13 @@ class EnhancedAIService private constructor(
             val usageRatio = currentTokens.toDouble() / maxTokens.toDouble()
 
             if (usageRatio >= tokenUsageThreshold) {
+                if (com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this@EnhancedAIService.context).isAgent(chatId)) {
+                    currentChatHistory = compactCollaborationHistory(
+                        context, requireNotNull(chatId), currentChatHistory, serviceForFunction, availableTools, maxTokens,
+                    )
+                    context.conversationHistory.clear()
+                    context.conversationHistory.addAll(currentChatHistory)
+                } else {
                 AppLogger.w(TAG, "Token usage ($usageRatio) exceeds threshold ($tokenUsageThreshold) after tool call. Triggering summary.")
                 context.turnInputInbox?.seal()
                 onTokenLimitExceeded?.invoke()
@@ -2311,6 +2387,7 @@ class EnhancedAIService private constructor(
                 }
                 // 关键修复：在触发总结后，直接返回，因为后续流程将由回调处理
                 return
+                }
             }
         }
 
@@ -2957,7 +3034,7 @@ class EnhancedAIService private constructor(
                         chatModelHasDirectAudio = chatModelHasDirectAudio,
                         chatModelHasDirectVideo = chatModelHasDirectVideo,
                         safBookmarkNames = safBookmarkNames,
-                        includeSubagentTools = !isSubTask
+                        includeSubagentTools = !isSubTask || com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId)
                     )
                 } else {
                     SystemToolPrompts.getAIAllCategoriesCn(
@@ -2968,13 +3045,15 @@ class EnhancedAIService private constructor(
                         chatModelHasDirectAudio = chatModelHasDirectAudio,
                         chatModelHasDirectVideo = chatModelHasDirectVideo,
                         safBookmarkNames = safBookmarkNames,
-                        includeSubagentTools = !isSubTask
+                        includeSubagentTools = !isSubTask || com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId)
                     )
                 }
 
                 categories.flatMap { it.tools }.toMutableList().apply {
+                    val collaborationVisibility =
+                        com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy.visibility(context, chatId, isSubTask)
                     retainAll { tool ->
-                        roleCardToolAccess.isBuiltinToolAllowed(tool.name)
+                        roleCardToolAccess.isBuiltinToolAllowed(tool.name) && collaborationVisibility[tool.name] != false
                     }
                 }
             }

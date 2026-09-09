@@ -76,6 +76,15 @@ class TaskToolExecutor(context: Context) : ToolExecutor {
         }
 
         return try {
+            require(
+                com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy
+                    .visibility(appContext, parentChatId, runtime?.isSubagent == true)["task"] == true
+            ) { "The task tool is only available in v1 subagent conversations" }
+            if (taskId != null) {
+                require(coordinator.getRun(taskId)?.externalOwnerType !=
+                    com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.OWNER_TYPE
+                ) { "Use followup_task to continue a v2 agent" }
+            }
             profileRepository.requireTaskToolSubagent(subagentType)
             val result =
                 coordinator.runTask(

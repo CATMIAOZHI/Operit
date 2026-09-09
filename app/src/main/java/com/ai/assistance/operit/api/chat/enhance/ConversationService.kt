@@ -630,9 +630,11 @@ class ConversationService(
                     toolExposureMode = toolExposureMode,
                     toolVisibility =
                         if (isSubTask) {
-                            roleCardToolAccess.effectiveBuiltinToolVisibility + ("task" to false)
+                            roleCardToolAccess.effectiveBuiltinToolVisibility +
+                                com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy.visibility(context, chatId, true).filterValues { !it }
                         } else {
-                            roleCardToolAccess.effectiveBuiltinToolVisibility
+                            roleCardToolAccess.effectiveBuiltinToolVisibility +
+                                com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy.visibility(context, chatId, false).filterValues { !it }
                         },
                     allowedPackageNames = roleCardToolAccess.allowedPackageNames,
                     allowedSkillNames = roleCardToolAccess.allowedSkillNames,
