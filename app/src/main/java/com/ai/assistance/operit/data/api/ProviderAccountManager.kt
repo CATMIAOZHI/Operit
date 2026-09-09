@@ -27,11 +27,15 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
 import org.json.JSONObject
 import org.json.JSONException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 internal class AccountHttpException(val status: Int) : IOException("Account request failed: HTTP $status")
 
 enum class AccountProvider(val type: ApiProviderType, val port: Int) {
     GROK(ApiProviderType.GROK_ACCOUNT, 56121),
+    COMMAND_CODE(ApiProviderType.COMMAND_CODE, 5959),
     ANTIGRAVITY(ApiProviderType.GOOGLE_ANTIGRAVITY, 51121);
 
     companion object {
@@ -115,6 +119,7 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         googleClientId: String = "",
         googleClientSecret: String = "",
     ): ProviderLoginSession {
+        check(provider != AccountProvider.COMMAND_CODE) { "Use Command Code login" }
         val discovery = if (provider == AccountProvider.GROK) discoverXai() else null
         val id = if (provider == AccountProvider.GROK) XAI_CLIENT_ID else
             googleClientId.trim().ifBlank { preferences.getString("client_id", "").orEmpty() }
@@ -174,6 +179,7 @@ class ProviderAccountManager private constructor(context: Context, val provider:
 
     suspend fun validAccount(): ProviderAccount = mutex.withLock {
         val current = account.value ?: throw IOException("Account is not logged in")
+        if (provider == AccountProvider.COMMAND_CODE) return@withLock current
         if (current.expiresAt - System.currentTimeMillis() > 120_000) return@withLock current
         val endpoint = if (provider == AccountProvider.GROK) discoverXai().second else GOOGLE_TOKEN
         val form = tokenForm(
@@ -186,6 +192,52 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         }
         currentCoroutineContext().ensureActive()
         updated
+    }
+
+    suspend fun saveCommandCodeApiKey(rawKey: String) = mutex.withLock {
+        check(provider == AccountProvider.COMMAND_CODE)
+        val key = rawKey.trim()
+        require(key.isNotEmpty() && key.none { it.isWhitespace() || it.isISOControl() }) { "Invalid API key" }
+        val user = commandCodeJson("https://api.commandcode.ai/alpha/whoami", key).optJSONObject("user")
+        val id = user?.optString("id").orEmpty()
+        val name = user?.optString("userName").orEmpty()
+        if (id.isBlank() || name.isBlank()) throw IOException("Invalid account identity")
+        currentCoroutineContext().ensureActive()
+        save(ProviderAccount(key, "", Long.MAX_VALUE, email = name))
+    }
+
+    suspend fun availableCommandCodeModels(): List<com.ai.assistance.operit.data.model.ModelOption> {
+        check(provider == AccountProvider.COMMAND_CODE)
+        val json = commandCodeJson("https://api.commandcode.ai/provider/v1/models", validAccount().accessToken)
+        val rows = json.optJSONArray("data") ?: throw IOException("Missing model catalog")
+        return (0 until minOf(rows.length(), 256)).mapNotNull { index ->
+            val row = rows.optJSONObject(index) ?: return@mapNotNull null
+            val id = row.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            com.ai.assistance.operit.data.model.ModelOption(id, row.optString("name").ifBlank { id })
+        }.distinctBy { it.id }
+    }
+
+    private suspend fun commandCodeJson(url: String, key: String): JSONObject = suspendCancellableCoroutine { continuation ->
+        val call = client.newCall(Request.Builder().url(url)
+            .header("Authorization", "Bearer $key").header("Accept", "application/json").build())
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, error: IOException) {
+                continuation.resumeWithException(error)
+            }
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                try {
+                    val json = response.use {
+                        if (!it.isSuccessful) throw AccountHttpException(it.code)
+                        val source = it.body?.source() ?: throw IOException("Empty account response")
+                        if (source.request(262145)) throw IOException("Account response too large")
+                        try { JSONObject(source.readUtf8()) }
+                        catch (_: JSONException) { throw IOException("Invalid account response") }
+                    }
+                    continuation.resume(json)
+                } catch (error: Exception) { continuation.resumeWithException(error) }
+            }
+        })
     }
 
     private fun tokenForm(id: String, secret: String) = FormBody.Builder().add("client_id", id).apply {
@@ -257,7 +309,7 @@ class ProviderAccountManager private constructor(context: Context, val provider:
                 if (token != null) {
                     header("Authorization", "Bearer $token")
                     if (provider == AccountProvider.ANTIGRAVITY) header("User-Agent", ANTIGRAVITY_UA)
-                    else GROK_HEADERS.forEach { (key, value) -> header(key, value) }
+                    else if (provider == AccountProvider.GROK) GROK_HEADERS.forEach { (key, value) -> header(key, value) }
                 }
             }.build()
             client.newCall(request).execute().use { response ->
