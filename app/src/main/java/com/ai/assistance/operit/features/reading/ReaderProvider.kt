@@ -14,6 +14,7 @@ data class ReaderChapter(
     val sourceId: String,
     val index: Int,
     val title: String,
+    val isVolume: Boolean = false,
 )
 
 data class ReadingState(

@@ -228,6 +228,7 @@ function detailScreen(ctx) {
           : "",
       ].filter(Boolean);
       const targetParts = [
+        String(run.chapterTitle || "").trim(),
         run.chapterNumber
           ? (english ? `Chapter ${run.chapterNumber}` : `第 ${run.chapterNumber} 章`)
           : (english ? "Unknown chapter" : "章节未知"),
