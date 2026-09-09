@@ -10,6 +10,10 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
@@ -67,7 +71,7 @@ class CodexAuthManager private constructor(context: Context) {
             if (latest.expiresAtMillis - System.currentTimeMillis() > REFRESH_WINDOW_MILLIS) {
                 latest.accessToken
             } else {
-                refreshAccessToken(latest).accessToken
+                persistCodexRefreshBeforeCancellation { refreshAccessToken(latest) }.accessToken
             }
         }
     }
@@ -149,4 +153,12 @@ class CodexAuthManager private constructor(context: Context) {
             }
         }
     }
+}
+
+/** A rotated refresh token must be saved even if the caller stops the chat during the request. */
+internal suspend fun <T> persistCodexRefreshBeforeCancellation(refreshAndSave: suspend () -> T): T {
+    currentCoroutineContext().ensureActive()
+    val result = withContext(NonCancellable) { refreshAndSave() }
+    currentCoroutineContext().ensureActive()
+    return result
 }

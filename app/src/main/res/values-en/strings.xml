@@ -3,6 +3,17 @@
     <string name="command_code_login_hint">Sign in through your browser or enter a Command Code API key. The verified key is encrypted on this device and can be used to fetch models.</string>
     <string name="command_code_save_key">Verify and save</string>
     <string name="command_code_login_failed">Sign-in or verification failed. Check your API key and network, then try again.</string>
+    <string name="chat_live_elapsed">Elapsed %1$s</string>
+    <string name="chat_estimated_cost">Estimated conversation cost: ¥%1$s</string>
+    <string name="chat_estimated_cost_partial">Estimated conversation cost: ¥%1$s (partly unknown)</string>
+    <string name="chat_estimated_cost_unavailable">Estimated conversation cost: unavailable</string>
+    <string name="chat_estimated_cost_loading">Estimating conversation cost…</string>
+    <string name="token_stats_show_unknown_hints">Show unknown request hints</string>
+    <string name="pet_minimize_floating">Minimize floating chat</string>
+    <string name="chat_title_regenerate">Regenerate title from recent conversation</string>
+    <string name="chat_title_generating">Generating title…</string>
+    <string name="chat_title_no_content">No conversation content available for a title</string>
+    <string name="chat_title_generation_failed">Title generation failed. The original title was kept.</string>
     <string name="app_name">Operit Ry</string>
     <string name="accessibility_service_description">Used to obtain the UI hierarchy, providing faster interface analysis capabilities for AI assistants, and does not collect or store any personal information.</string>
     
@@ -5246,7 +5257,7 @@
     <string name="executing_tool">Executing tool: %1$s</string>
     <string name="processing_tool_result">Processing tool result: %1$s</string>
     <string name="input_question_hint">Type anything</string>
-    <string name="input_question_with_workspace">Enter question, use @ to reference files</string>
+    <string name="input_question_with_workspace">Type anything, use @ to reference files</string>
     <string name="add_attachment">Add Attachment</string>
     <string name="user_uploaded_image">User uploaded image</string>
     <string name="decode_image_failed">Failed to decode image: %1$s</string>

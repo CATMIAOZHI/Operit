@@ -714,6 +714,8 @@ fun ChatHistorySelector(
         onSelectChat: (String) -> Unit,
         onDeleteChat: (String) -> Unit,
         onUpdateChatTitle: (chatId: String, newTitle: String) -> Unit,
+        onRegenerateChatTitle: (String) -> Unit,
+        regeneratingTitleIds: Set<String>,
         onUpdateChatBinding: (chatId: String, characterCardName: String?, characterGroupId: String?) -> Unit,
         chatHistories: List<ChatHistory>,
         orderingChatHistories: List<ChatHistory>,
@@ -2112,6 +2114,33 @@ fun ChatHistorySelector(
 
                     Spacer(modifier = Modifier.height(16.dp))
                     
+                    val titleGenerating = chatItemActionTarget!!.id in regeneratingTitleIds
+                    Surface(
+                        modifier = Modifier.fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clip(MaterialTheme.shapes.medium)
+                            .clickable(enabled = !titleGenerating) {
+                                onRegenerateChatTitle(chatItemActionTarget!!.id)
+                            },
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (titleGenerating) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(24.dp))
+                            }
+                            Spacer(Modifier.width(16.dp))
+                            Text(stringResource(
+                                if (titleGenerating) R.string.chat_title_generating
+                                else R.string.chat_title_regenerate,
+                            ))
+                        }
+                    }
+
                     // 编辑选项
                     Surface(
                         modifier = Modifier
@@ -2122,7 +2151,7 @@ fun ChatHistorySelector(
                                 contentDescription = editTitleText
                             }
                             .clickable {
-                                chatToEdit = chatItemActionTarget
+                                chatToEdit = resolvedTargetChat ?: chatItemActionTarget
                                 chatItemActionTarget = null
                             },
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
