@@ -1,4 +1,13 @@
 <resources>
+    <string name="subagent_message_header">Subagent v2 · %1$s · %2$s</string>
+    <string name="subagent_message_result">结果</string>
+    <string name="subagent_message_status">状态</string>
+    <string name="subagent_message_task">任务</string>
+    <string name="subagent_message_note">消息</string>
+    <string name="subagent_version_title">Subagent 版本</string>
+    <string name="subagent_version_description">选择新对话使用的协作工具。现有代理保留其版本，阅读伴侣继续使用 v1。</string>
+    <string name="subagent_version_v2">v2 · 多代理协作（默认）</string>
+    <string name="subagent_version_v1">v1 · Task 同步任务</string>
     <string name="chat_live_elapsed">已用时 %1$s</string>
     <string name="chat_estimated_cost">本对话估算费用：¥%1$s</string>
     <string name="chat_estimated_cost_partial">本对话估算费用：¥%1$s（部分未知）</string>

@@ -673,6 +673,7 @@ object SystemToolPrompts {
             add(basicTools)
             if (includeSubagentTools) {
                 add(subagentTools)
+                add(com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.category(false, AgentProfileRepository.instance.listAvailableSubagents()))
             }
             add(adjustedFileSystemTools)
             add(httpTools)
@@ -758,6 +759,7 @@ object SystemToolPrompts {
             add(basicToolsCn)
             if (includeSubagentTools) {
                 add(subagentToolsCn)
+                add(com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.category(true, AgentProfileRepository.instance.listAvailableSubagents()))
             }
             add(adjustedFileSystemTools)
             add(httpToolsCn)
@@ -829,9 +831,9 @@ object SystemToolPrompts {
         toolOrder: List<String> = emptyList()
     ): List<ManageableToolPrompt> {
         val baseCategories = if (useEnglish) {
-            listOf(nativeTodoToolsEn, basicTools, subagentTools, fileSystemTools, httpTools, memoryTools)
+            listOf(nativeTodoToolsEn, basicTools, subagentTools, com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.category(false, AgentProfileRepository.instance.listAvailableSubagents()), fileSystemTools, httpTools, memoryTools)
         } else {
-            listOf(nativeTodoToolsCn, basicToolsCn, subagentToolsCn, fileSystemToolsCn, httpToolsCn, memoryToolsCn)
+            listOf(nativeTodoToolsCn, basicToolsCn, subagentToolsCn, com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.category(true, AgentProfileRepository.instance.listAvailableSubagents()), fileSystemToolsCn, httpToolsCn, memoryToolsCn)
         }
 
         val result = baseCategories

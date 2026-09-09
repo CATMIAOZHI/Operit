@@ -350,7 +350,7 @@ object AIMessageManager {
             (suspend (EnhancedAIService.ToolExecutionBoundarySnapshot) -> Unit)? = null,
         turnInputInbox: TurnInputInbox? = null,
         onTurnInput:
-            (suspend (List<String>, EnhancedAIService.ToolExecutionBoundarySnapshot) -> String)? = null,
+            (suspend (List<TurnInputInbox.Input>, EnhancedAIService.ToolExecutionBoundarySnapshot) -> String)? = null,
         notifyReplyOverride: Boolean? = null,
         chatModelConfigIdOverride: String? = null,
         chatModelIndexOverride: Int? = null,
@@ -363,6 +363,7 @@ object AIMessageManager {
         terminalToolNames: Set<String> = emptySet(),
         promptHooksEnabled: Boolean = true,
         systemPromptOverride: String? = null,
+        collaborationHistory: List<com.ai.assistance.operit.core.chat.hooks.PromptTurn> = emptyList(),
     ): SharedStream<String> {
         val totalStartTime = messageTimingNow()
         val chatKey = chatId ?: DEFAULT_CHAT_KEY
@@ -482,7 +483,7 @@ object AIMessageManager {
                 EnhancedAIService.SendMessageOptions(
                     message = messageContent,
                     chatId = chatId,
-                    chatHistory = memoryForRequest,
+                    chatHistory = collaborationHistory + memoryForRequest,
                     workspacePath = workspacePath,
                     workspaceEnv = workspaceEnv,
                     functionType = functionType,

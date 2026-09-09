@@ -227,6 +227,9 @@ class MessageProcessingDelegate(
     fun steeringTurnId(chatId: String): String? =
         chatRuntimes[chatId]?.takeIf { it.canSteer }?.inputInbox?.turnId
 
+    fun hasPendingTurnInput(chatId: String): Boolean =
+        chatRuntimes[chatId]?.inputInbox?.hasPending() == true
+
     fun trySteerMessage(chatId: String, expectedTurnId: String, input: TurnInputInbox.Input): Boolean {
         val runtime = chatRuntimes[chatId] ?: return false
         val inbox = runtime.inputInbox ?: return false
@@ -885,6 +888,8 @@ class MessageProcessingDelegate(
                 displayMode =
                     if (effectiveHideUserMessage) {
                         ChatMessageDisplayMode.HIDDEN_PLACEHOLDER
+                    } else if (turnOptions.isCollaborationAgent) {
+                        ChatMessageDisplayMode.COLLABORATION_EVENT
                     } else {
                         ChatMessageDisplayMode.NORMAL
                     }
@@ -1088,7 +1093,7 @@ class MessageProcessingDelegate(
                 val effectiveMaxTokens = maxTokens
                 val effectiveEnableSummary = enableSummary && effectivePersistTurn
                 val effectiveTokenUsageThreshold =
-                    if (effectiveEnableSummary) tokenUsageThreshold else Double.MAX_VALUE
+                    if (effectiveEnableSummary || turnOptions.isCollaborationAgent) tokenUsageThreshold else Double.MAX_VALUE
                 val effectiveOnTokenLimitExceeded = if (effectiveEnableSummary) {
                     suspend {
                         onTokenLimitExceeded(
@@ -1140,7 +1145,9 @@ class MessageProcessingDelegate(
                     chatHistory = if (isGroupOrchestrationTurn && userMessageAdded && chatHistory.isNotEmpty()) {
                         chatHistory.subList(0, chatHistory.size - 1)
                     } else {
-                        chatHistory
+                        turnOptions.collaborationHistoryCutoff?.let { cutoff ->
+                            chatHistory.filter { it.timestamp > cutoff }
+                        } ?: chatHistory
                     },
                     workspacePath = workspacePath,
                     workspaceEnv = workspaceEnv,
@@ -1185,10 +1192,11 @@ class MessageProcessingDelegate(
                             chatRuntime.steeredTranscript.project(snapshotMessage.copy(
                                 content = boundary.displayContent, contentStream = null,
                             )).forEach { addMessageToChat(chatId, it) }
-                            texts.forEach { text ->
+                            texts.forEach { input ->
                                 addMessageToChat(chatId, ChatMessage(
-                                    sender = "user", content = text,
-                                    roleName = context.getString(R.string.message_role_user),
+                                    sender = "user", content = input.text,
+                                    roleName = input.agentPath ?: context.getString(R.string.message_role_user),
+                                    displayMode = if (input.agentPath != null) ChatMessageDisplayMode.COLLABORATION_EVENT else ChatMessageDisplayMode.NORMAL,
                                 ))
                             }
                             val nextAssistantTimestamp = ChatMessageTimestampAllocator.next()
@@ -1211,6 +1219,7 @@ class MessageProcessingDelegate(
                     terminalToolNames = turnOptions.terminalToolNames,
                     promptHooksEnabled = turnOptions.promptHooksEnabled,
                     systemPromptOverride = turnOptions.systemPromptOverride,
+                    collaborationHistory = turnOptions.collaborationHistory,
                 )
                 } catch (error: Throwable) {
                     toolBoundaryMessageReady.complete(null)
@@ -1264,11 +1273,18 @@ class MessageProcessingDelegate(
                 // 检查是否启用waifu模式来决定是否显示流式过程
                 val waifuPreferences = WaifuPreferences.getInstance(context)
                 isWaifuModeEnabled = waifuPreferences.enableWaifuModeFlow.first()
-                chatRuntime.canSteer = effectivePersistTurn && !isWaifuModeEnabled &&
-                    !turnOptions.isSubTask && !isGroupOrchestrationTurn
+                val collaborationEnabled =
+                    com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy
+                        .visibility(context, chatId, turnOptions.isSubTask)["spawn_agent"] == true
+                chatRuntime.canSteer = effectivePersistTurn && (!isWaifuModeEnabled || collaborationEnabled) &&
+                    (!turnOptions.isSubTask || turnOptions.isCollaborationAgent) && !isGroupOrchestrationTurn
+                if (chatRuntime.canSteer) {
+                    com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                        .getInstance(context).deliverPending()
+                }
                 toolBoundaryMessageReady.complete(
                     aiMessage.takeIf {
-                        effectivePersistTurn && chatId != null && !isWaifuModeEnabled
+                        effectivePersistTurn && chatId != null && (!isWaifuModeEnabled || collaborationEnabled)
                     }
                 )
                 val waifuCharDelay = waifuPreferences.waifuCharDelayFlow.first()

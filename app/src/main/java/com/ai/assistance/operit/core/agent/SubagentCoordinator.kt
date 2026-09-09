@@ -81,6 +81,12 @@ data class SubagentTaskRequest(
     val externalOwnerId: String? = null,
     /** Invoked right after this coordinator creates the executing run/child (suspend-safe). */
     val onRunCreated: (suspend (SubagentRunEntity) -> Unit)? = null,
+    /** v2 owns admission and lifetime; this runner retains transcript/model/terminal handling. */
+    val collaborationSystemPrompt: String? = null,
+    val onTurnStarted: (() -> Unit)? = null,
+    val collaborationHistory: List<com.ai.assistance.operit.core.chat.hooks.PromptTurn> = emptyList(),
+    val profileOverride: AgentProfile? = null,
+    val collaborationHistoryCutoff: Long? = null,
 )
 
 internal fun SubagentTaskRequest.toChatTurnOptions(
@@ -91,6 +97,9 @@ internal fun SubagentTaskRequest.toChatTurnOptions(
         persistTurn = true,
         notifyReply = false,
         isSubTask = true,
+        isCollaborationAgent = collaborationSystemPrompt != null,
+        collaborationHistory = collaborationHistory,
+        collaborationHistoryCutoff = collaborationHistoryCutoff,
         functionType = functionType,
         toolsEnabled = toolsEnabled,
         isolatedToolPrompts = isolatedToolPrompts,
@@ -215,6 +224,12 @@ class SubagentCoordinator private constructor(context: Context) {
         try {
             registered.task.await()
         } catch (error: CancellationException) {
+            withContext(NonCancellable) {
+                runRepository.updateStatus(
+                    registered.resolved.run.id, SubagentRunStatus.CANCELLED,
+                    completedAt = System.currentTimeMillis(),
+                )
+            }
             if (!currentCoroutineContext().isActive) throw error
             throw SubagentExecutionException(
                 registered.resolved.run.id,
@@ -256,6 +271,15 @@ class SubagentCoordinator private constructor(context: Context) {
     ): T = withChatDeletionsPrepared(listOf(chatId), delete)
 
     suspend fun <T> withChatDeletionsPrepared(
+        chatIds: Collection<String>,
+        delete: suspend () -> T,
+    ): T =
+        com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+            .getInstance(appContext).withChatDeletionsPrepared(chatIds) {
+                withLegacyChatDeletionsPrepared(chatIds, delete)
+            }
+
+    private suspend fun <T> withLegacyChatDeletionsPrepared(
         chatIds: Collection<String>,
         delete: suspend () -> T,
     ): T {
@@ -359,7 +383,7 @@ class SubagentCoordinator private constructor(context: Context) {
             return ResolvedRun(run = run, profile = profile)
         }
 
-        val profile = profileRepository.requireSubagent(request.subagentType)
+        val profile = request.profileOverride ?: profileRepository.requireSubagent(request.subagentType)
         val effectiveModelConfigId = profile.modelConfigId ?: request.parentModelConfigId
         val effectiveModelIndex =
             if (profile.modelConfigId != null) {
@@ -385,7 +409,19 @@ class SubagentCoordinator private constructor(context: Context) {
             )
         // Reading-companion audit sessions are registered against the child chat that actually
         // executes the turn; the reading coordinator links its reading.db run via this hook.
-        request.onRunCreated?.invoke(created.run)
+        try {
+            request.onRunCreated?.invoke(created.run)
+        } catch (error: Throwable) {
+            withContext(NonCancellable) {
+                runRepository.updateStatus(
+                    created.run.id,
+                    if (error is CancellationException) SubagentRunStatus.CANCELLED else SubagentRunStatus.FAILED,
+                    completedAt = System.currentTimeMillis(),
+                    error = error.message,
+                )
+            }
+            throw error
+        }
         return ResolvedRun(run = created.run, profile = profile)
     }
 
@@ -413,7 +449,8 @@ class SubagentCoordinator private constructor(context: Context) {
                 terminalToolNames = request.terminalToolNames,
             )
         var modelSemaphore =
-            if (reusesParentModelLease) null else resolveModelSemaphore(run.modelConfigIdSnapshot)
+            if (reusesParentModelLease) null
+            else resolveModelSemaphore(run.modelConfigIdSnapshot)
         var parentAcquired = semaphore.tryAcquire()
         var modelAcquired =
             if (parentAcquired) {
@@ -424,6 +461,9 @@ class SubagentCoordinator private constructor(context: Context) {
         var activeSession: ChatTurnSession? = null
         val taskJob = requireNotNull(currentCoroutineContext()[Job])
         try {
+            check(request.collaborationSystemPrompt == null || (parentAcquired && modelAcquired)) {
+                "Model or parent concurrency limit reached; retry after an active agent finishes"
+            }
             if (!parentAcquired || !modelAcquired) {
                 check(runRepository.updateStatus(taskId, SubagentRunStatus.QUEUED)) {
                     "Subagent task $taskId could not enter the queue"
@@ -472,7 +512,7 @@ class SubagentCoordinator private constructor(context: Context) {
                                 turnOptions =
                                     request.toChatTurnOptions(
                                         systemPrompt =
-                                            SubagentPromptBuilder.buildSystemPrompt(
+                                            request.collaborationSystemPrompt ?: SubagentPromptBuilder.buildSystemPrompt(
                                                 resolved.profile
                                             ),
                                         assistantRoleName = resolved.profile.name,
@@ -492,6 +532,7 @@ class SubagentCoordinator private constructor(context: Context) {
                         is ChatTurnDispatchResult.Failed -> error(dispatch.error)
                     }
                 activeSessions[taskId] = requireNotNull(activeSession)
+                request.onTurnStarted?.invoke()
                 return requireNotNull(activeSession).awaitOutcome()
             }
 
@@ -528,7 +569,13 @@ class SubagentCoordinator private constructor(context: Context) {
                             modelAcquired = false
                         }
                         modelSemaphore = resolveModelSemaphore(parentModelConfigId)
-                        modelSemaphore?.acquire()
+                        if (request.collaborationSystemPrompt != null) {
+                            check(modelSemaphore?.tryAcquire() != false) {
+                                "Fallback model concurrency limit reached; retry after an active agent finishes"
+                            }
+                        } else {
+                            modelSemaphore?.acquire()
+                        }
                         modelAcquired = true
                         if (modelSemaphore != null) {
                             activeModelLeases[taskId] = parentModelConfigId

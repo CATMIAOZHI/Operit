@@ -1,4 +1,13 @@
- <resources>
+<resources>
+    <string name="subagent_message_header">Subagent v2 · %1$s · %2$s</string>
+    <string name="subagent_message_result">Result</string>
+    <string name="subagent_message_status">Status</string>
+    <string name="subagent_message_task">Task</string>
+    <string name="subagent_message_note">Message</string>
+    <string name="subagent_version_title">Subagent version</string>
+    <string name="subagent_version_description">Choose collaboration tools for new conversations. Existing agents retain their version; Reading Companion continues to use v1.</string>
+    <string name="subagent_version_v2">v2 · Multi-agent collaboration (default)</string>
+    <string name="subagent_version_v1">v1 · Synchronous task</string>
     <string name="chat_live_elapsed">Elapsed %1$s</string>
     <string name="chat_estimated_cost">Estimated conversation cost: ¥%1$s</string>
     <string name="chat_estimated_cost_partial">Estimated conversation cost: ¥%1$s (partly unknown)</string>

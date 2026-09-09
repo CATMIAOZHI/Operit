@@ -36,6 +36,10 @@ fun CursorStyleChatMessage(
         enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
         onEditSummary: ((ChatMessage) -> Unit)? = null,
 ) {
+    if (message.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.COLLABORATION_EVENT) {
+        com.ai.assistance.operit.ui.features.chat.components.CollaborationMessageCard(message)
+        return
+    }
     when (message.sender) {
         "user" -> {
             UserMessageComposable(
