@@ -69,13 +69,16 @@ object ReadingCompanionSubagentTools {
                 description =
                     "Read one chapter from the required five-chapter window using chapterRef. " +
                         "The target chapter includes paragraph anchor ids; previous chapters are " +
-                        "context only.",
+                        "context only. Follow nextOffset until hasMore is false to read the whole chapter. " +
+                        "Offsets address the returned labeled text; paragraph anchors may continue across pages.",
                 parametersStructured =
                     listOf(
                         ToolParameterSchema(
                             name = "chapterRef",
                             description = "Opaque chapterRef returned by list_chapters.",
                         ),
+                        ToolParameterSchema(name = "offset", description = "Character offset, default 0; continue with nextOffset."),
+                        ToolParameterSchema(name = "maxCharacters", description = "Page size, 1 to 8000 characters, default 8000."),
                     ),
             ),
             ToolPrompt(
@@ -332,15 +335,31 @@ object ReadingCompanionSubagentTools {
                 .put("chapterNumber", chapter.index + 1)
                 .put("chapterTitle", chapter.title)
                 .put("isTarget", target)
-        if (target) {
+        val text = if (target) {
             val paragraphs = AutoCommentSupport.paragraphs(content)
-            payload
-                .put("paragraphCount", paragraphs.size)
-                .put("content", AutoCommentSupport.labeledParagraphs(paragraphs))
+            payload.put("paragraphCount", paragraphs.size)
+            AutoCommentSupport.labeledParagraphs(paragraphs)
         } else {
-            payload.put("content", content)
+            content
         }
+        val offset = tool.parameters.firstOrNull { it.name == "offset" }?.value?.toInt() ?: 0
+        val limit = tool.parameters.firstOrNull { it.name == "maxCharacters" }?.value?.toInt() ?: 8000
+        appendChapterPage(payload, text, offset, limit)
         return success(tool, payload)
+    }
+
+    // Even JSON-escaped control characters stay below the final 64K tool-message limit.
+    internal fun appendChapterPage(payload: JSONObject, text: String, offset: Int, limit: Int) {
+        require(offset in 0..text.length) { "offset 超出正文范围" }
+        var end = (offset + limit.coerceIn(1, 8000)).coerceAtMost(text.length)
+        if (end < text.length && end > offset && text[end - 1].isHighSurrogate() && text[end].isLowSurrogate()) {
+            if (end - offset == 1) end++ else end--
+        }
+        payload.put("content", text.substring(offset, end))
+            .put("offset", offset)
+            .put("nextOffset", end)
+            .put("totalCharacters", text.length)
+            .put("hasMore", end < text.length)
     }
 
     private fun readFile(tool: AITool, session: ReadingCompanionRunSession): ToolResult {
