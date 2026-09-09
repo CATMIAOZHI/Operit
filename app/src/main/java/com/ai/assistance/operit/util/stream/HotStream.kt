@@ -4,6 +4,8 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -110,6 +112,7 @@ class MutableSharedStreamImpl<T>(
     }
 
     override suspend fun emit(value: T) {
+        currentCoroutineContext().ensureActive()
         val subscriberChannels =
             synchronized(stateLock) {
                 if (isClosed) {
@@ -121,7 +124,9 @@ class MutableSharedStreamImpl<T>(
             }
 
         for (channel in subscriberChannels) {
-            channel.send(SharedEvent.Value(value))
+            // Subscriber channels are unlimited. A failed send means that this subscriber
+            // has left; its cancellation must not cancel the producer or other subscribers.
+            channel.trySend(SharedEvent.Value(value))
         }
     }
 
