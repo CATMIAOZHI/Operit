@@ -35,6 +35,8 @@ data class ReadableChapterContent(
     val isComplete: Boolean,
     val readingChapterIndex: Int,
     val capturedAt: Long,
+    val visibleStart: Int? = null,
+    val visibleEnd: Int? = null,
 )
 
 data class AnnotationChapterContent(
