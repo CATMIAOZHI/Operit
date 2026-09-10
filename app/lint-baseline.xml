@@ -6149,72 +6149,6 @@
     <issue
         id="LocalContextGetResourceValueCall"
         message="Querying resource values using LocalContext.current"
-        errorLine1="                errorMessage = context.getString(R.string.autoglm_error_empty_api_key)"
-        errorLine2="                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/ai/assistance/operit/ui/features/toolbox/screens/autoglm/AutoGlmOneClickToolScreen.kt"
-            line="79"
-            column="32"/>
-    </issue>
-
-    <issue
-        id="LocalContextGetResourceValueCall"
-        message="Querying resource values using LocalContext.current"
-        errorLine1="                val configName = context.getString(R.string.autoglm_config_name)"
-        errorLine2="                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/ai/assistance/operit/ui/features/toolbox/screens/autoglm/AutoGlmOneClickToolScreen.kt"
-            line="88"
-            column="34"/>
-    </issue>
-
-    <issue
-        id="LocalContextGetResourceValueCall"
-        message="Querying resource values using LocalContext.current"
-        errorLine1="                statusMessage = context.getString(R.string.autoglm_status_success)"
-        errorLine2="                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/ai/assistance/operit/ui/features/toolbox/screens/autoglm/AutoGlmOneClickToolScreen.kt"
-            line="197"
-            column="33"/>
-    </issue>
-
-    <issue
-        id="LocalContextGetResourceValueCall"
-        message="Querying resource values using LocalContext.current"
-        errorLine1="                errorMessage = context.getString("
-        errorLine2="                               ^">
-        <location
-            file="src/main/java/com/ai/assistance/operit/ui/features/toolbox/screens/autoglm/AutoGlmOneClickToolScreen.kt"
-            line="199"
-            column="32"/>
-    </issue>
-
-    <issue
-        id="LocalContextGetResourceValueCall"
-        message="Querying resource values using LocalContext.current"
-        errorLine1="                statusMessage = context.getString(R.string.autoglm_restore_success)"
-        errorLine2="                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/ai/assistance/operit/ui/features/toolbox/screens/autoglm/AutoGlmOneClickToolScreen.kt"
-            line="223"
-            column="33"/>
-    </issue>
-
-    <issue
-        id="LocalContextGetResourceValueCall"
-        message="Querying resource values using LocalContext.current"
-        errorLine1="                errorMessage = context.getString("
-        errorLine2="                               ^">
-        <location
-            file="src/main/java/com/ai/assistance/operit/ui/features/toolbox/screens/autoglm/AutoGlmOneClickToolScreen.kt"
-            line="226"
-            column="32"/>
-    </issue>
-
-    <issue
-        id="LocalContextGetResourceValueCall"
-        message="Querying resource values using LocalContext.current"
         errorLine1="                                    context.getString(R.string.avatar_preview_error_log, error)"
         errorLine2="                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
@@ -19311,28 +19245,6 @@
 
     <issue
         id="Typos"
-        message="Did you mean &quot;step! &quot; instead of &quot;step1 &quot;?"
-        errorLine1="    &lt;string name=&quot;autoglm_step1_title&quot;>step1 Configure o modelo básico de diálogo&lt;/string>"
-        errorLine2="                                       ~~~~~~">
-        <location
-            file="src/main/res/values-pt-rBR/strings.xml"
-            line="5123"
-            column="40"/>
-    </issue>
-
-    <issue
-        id="Typos"
-        message="Did you mean &quot;step! &quot; instead of &quot;step1 &quot;?"
-        errorLine1="    &lt;string name=&quot;autoglm_step1_title&quot;>step1 Configure Basic Conversation Model&lt;/string>"
-        errorLine2="                                       ~~~~~~">
-        <location
-            file="src/main/res/values-en/strings.xml"
-            line="6023"
-            column="40"/>
-    </issue>
-
-    <issue
-        id="Typos"
         message="&quot;video&quot; is a common misspelling; did you mean &quot;vídeo&quot;?"
         errorLine1="    &lt;string name=&quot;conversation_media_video_link&quot;>&amp;lt;link type=&quot;video&quot; id=&quot;%1$s&quot;&amp;gt;Vídeo&amp;lt;/link&amp;gt;&lt;/string>"
         errorLine2="                                                             ~~~~~">
@@ -19340,17 +19252,6 @@
             file="src/main/res/values-pt-rBR/strings.xml"
             line="6119"
             column="62"/>
-    </issue>
-
-    <issue
-        id="Typos"
-        message="Did you mean &quot;step! &quot; instead of &quot;step1 &quot;?"
-        errorLine1="    &lt;string name=&quot;autoglm_step1_title&quot;>step1 配置基本对话模型&lt;/string>"
-        errorLine2="                                       ~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="6324"
-            column="40"/>
     </issue>
 
     <issue
@@ -20616,22 +20517,6 @@
             file="src/main/res/values-en/strings.xml"
             line="7952"
             column="5"/>
-    </issue>
-
-    <issue
-        id="StringFormatCount"
-        message="Inconsistent number of arguments in formatting string `autoglm_status_success`; found both 2 here and 0 in values/strings.xml"
-        errorLine1="    &lt;string name=&quot;autoglm_status_success&quot;>AutoGLM one-click configuration completed:\nModel: %1$s\nAPI Key: %2$s\nToolkit: AutoGLM\n\nYou can now use AutoGLM mode in the chat interface.&lt;/string>"
-        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values-en/strings.xml"
-            line="5561"
-            column="5"/>
-        <location
-            file="src/main/res/values/strings.xml"
-            line="2202"
-            column="5"
-            message="Conflicting number of arguments (0) here"/>
     </issue>
 
     <issue
@@ -22524,17 +22409,6 @@
             file="src/main/java/com/ai/assistance/operit/ui/features/assistant/viewmodel/AssistantConfigViewModel.kt"
             line="30"
             column="5"/>
-    </issue>
-
-    <issue
-        id="StaticFieldLeak"
-        message="This field leaks a context object"
-        errorLine1="class AutoGlmViewModel(private val context: Context) : ViewModel() {"
-        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/ai/assistance/operit/ui/features/toolbox/screens/autoglm/AutoGlmViewModel.kt"
-            line="36"
-            column="24"/>
     </issue>
 
     <issue
@@ -41712,39 +41586,6 @@
 
     <issue
         id="UnusedResources"
-        message="The resource `R.string.autoglm_task_complete` appears to be unused"
-        errorLine1="    &lt;string name=&quot;autoglm_task_complete&quot;>✅ 任务完成: %1$s&lt;/string>"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="6515"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UnusedResources"
-        message="The resource `R.string.autoglm_thinking_process` appears to be unused"
-        errorLine1="    &lt;string name=&quot;autoglm_thinking_process&quot;>💭 思考过程:&lt;/string>"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="6516"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UnusedResources"
-        message="The resource `R.string.autoglm_execute_action` appears to be unused"
-        errorLine1="    &lt;string name=&quot;autoglm_execute_action&quot;>🎯 执行动作:&lt;/string>"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="6517"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UnusedResources"
         message="The resource `R.string.version_update` appears to be unused"
         errorLine1="    &lt;string name=&quot;version_update&quot;>版本更新&lt;/string>"
         errorLine2="            ~~~~~~~~~~~~~~~~~~~~~">
@@ -49270,17 +49111,6 @@
     <issue
         id="TypographyEllipsis"
         message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="    &lt;string name=&quot;autoglm_status_running&quot;>Executando configuração com um clique, aguarde...&lt;/string>"
-        errorLine2="                                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values-pt-rBR/strings.xml"
-            line="1931"
-            column="43"/>
-    </issue>
-
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
         errorLine1="    &lt;string name=&quot;ffmpeg_executing_command&quot;>正在执行命令，请稍候...&lt;/string>"
         errorLine2="                                            ~~~~~~~~~~~~~">
         <location
@@ -49320,17 +49150,6 @@
             file="src/main/res/values-id/strings.xml"
             line="1977"
             column="46"/>
-    </issue>
-
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="    &lt;string name=&quot;autoglm_status_running&quot;>원클릭 구성을 실행 중입니다. 잠시 기다려 주십시오...&lt;/string>"
-        errorLine2="                                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values-ko/strings.xml"
-            line="1981"
-            column="43"/>
     </issue>
 
     <issue
@@ -49534,17 +49353,6 @@
     <issue
         id="TypographyEllipsis"
         message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="    &lt;string name=&quot;autoglm_status_running&quot;>Sedang menjalankan konfigurasi satu klik, harap tunggu...&lt;/string>"
-        errorLine2="                                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values-id/strings.xml"
-            line="2144"
-            column="43"/>
-    </issue>
-
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
         errorLine1="    &lt;string name=&quot;plugin_loading_list&quot;>Cargando lista de plugins...&lt;/string>"
         errorLine2="                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
@@ -49650,17 +49458,6 @@
             file="src/main/res/values-pt-rBR/strings.xml"
             line="2201"
             column="45"/>
-    </issue>
-
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="    &lt;string name=&quot;autoglm_status_running&quot;>正在执行一键配置，请稍候...&lt;/string>"
-        errorLine2="                                          ~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="2201"
-            column="43"/>
     </issue>
 
     <issue
@@ -51278,28 +51075,6 @@
             file="src/main/res/values-pt-rBR/strings.xml"
             line="2867"
             column="53"/>
-    </issue>
-
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="    &lt;string name=&quot;autoglm_status_running&quot;>Sedang melaksanakan konfigurasi satu klik, sila tunggu...&lt;/string>"
-        errorLine2="                                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values-ms/strings.xml"
-            line="2918"
-            column="43"/>
-    </issue>
-
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="    &lt;string name=&quot;autoglm_status_running&quot;>Ejecutando configuración con un clic, espere por favor...&lt;/string>"
-        errorLine2="                                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values-es/strings.xml"
-            line="2940"
-            column="43"/>
     </issue>
 
     <issue
@@ -57905,17 +57680,6 @@
     <issue
         id="TypographyEllipsis"
         message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
-        errorLine1="    &lt;string name=&quot;autoglm_status_running&quot;>Running one-click configuration, please wait...&lt;/string>"
-        errorLine2="                                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values-en/strings.xml"
-            line="5560"
-            column="43"/>
-    </issue>
-
-    <issue
-        id="TypographyEllipsis"
-        message="Replace &quot;...&quot; with ellipsis character (…, &amp;#8230;) ?"
         errorLine1="    &lt;string name=&quot;skillmgr_detail_loading&quot;>Sedang membaca detail Skill...&lt;/string>"
         errorLine2="                                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
@@ -63422,17 +63186,6 @@
             file="src/main/java/com/ai/assistance/operit/ui/features/chat/components/attachments/AttachmentViewerDialog.kt"
             line="147"
             column="52"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `String.toUri` instead?"
-        errorLine1="                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(apiKeyUrl))"
-        errorLine2="                                                                    ~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/ai/assistance/operit/ui/features/toolbox/screens/autoglm/AutoGlmOneClickToolScreen.kt"
-            line="305"
-            column="69"/>
     </issue>
 
     <issue

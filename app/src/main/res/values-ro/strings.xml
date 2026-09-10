@@ -2155,19 +2155,8 @@
     <string name="tool_html_packager">HTMLMașină de ambalat</string>
     <string name="tool_html_packager_desc">VaHTMLFișierul și dependențele sale sunt împachetate într-un singur fișierHTMLFișiere, ușor de partajat și de implementat</string>
 
-    <string name="tool_autoglm_one_click">AutoGLM Configurare cu un singur clic</string>
-    <string name="tool_autoglm_one_click_desc">Cu un singur clic pentru UI Configurarea controlerului autoglm-phone Model și comutare AutoGLM Set de instrumente</string>
-    <string name="tool_autoglm_tool">AutoGLM Executare</string>
-    <string name="tool_autoglm_tool_desc">Utilizare autoglm-phone Agentul execută sarcinile de automatizare pe telefonul mobil urmând pașii indicați</string>
 
     <!-- AutoGLM One-Click Configuration -->
-    <string name="autoglm_config_name">AutoGLM Configurație</string>
-    <string name="autoglm_one_click_title">AutoGLM Configurare cu un singur clic</string>
-    <string name="autoglm_one_click_subtitle">Pentru UI Controlerul creează automat un profil inteligent autoglm-phone Configurarea modelului și comutarea AutoGLM Set de instrumente.</string>
-    <string name="autoglm_open_apikey_center">Accesați Zhipu API Key Pagină</string>
-    <string name="autoglm_open_apikey_tip">După autentificare, creați și copiați pe platforma Zhipu API Key</string>
-    <string name="autoglm_api_key_placeholder">Lipiți aici codul dvs. Zhipu API Key</string>
-    <string name="autoglm_one_click_button">Configurare cu un singur clic AutoGLM</string>
 
     <!-- Process Limit Remover Screen -->
     <string name="process_limit_title">Eliminarea restricțiilor procesului „Illusion”</string>
@@ -2202,15 +2191,6 @@
     <string name="process_limit_exit_code">Cod de ieșire:%d</string>
     <string name="process_limit_command">Comandă</string>
     <string name="toolbox_description">O colecție de instrumente practice și ușor de utilizat, care vă sporesc eficiența în muncă</string>
-    <string name="autoglm_status_running">Se efectuează configurarea cu un singur clic, vă rugăm să așteptați...</string>
-    <string name="autoglm_status_success">Finalizat AutoGLM Configurare cu un singur clic:
-- A fost creat sau actualizat AutoGLM UI Configurarea modelului controlerului (autoglm-phone, Zhipu)
-- S-a înlocuit „UI Funcția „Controler” este comutată la această configurație
-- Este închis Automatic_ui_base, deschideți Automatic_ui_subagent
-
-Acum poate fi utilizat în interfața de dialog AutoGLM A devenit un model.</string>
-    <string name="autoglm_status_error">Eșecul configurării cu un singur clic:%1$s</string>
-    <string name="autoglm_error_empty_api_key">Vă rugăm să completați mai întâi formularul Zhipu API Key.</string>
 
     <!-- MCP Config Screen -->
     <string name="import_or_connect_mcp_service">Importare sau conectareMCPServicii</string>
@@ -4005,8 +3985,6 @@ Acum poate fi utilizat în interfața de dialog AutoGLM A devenit un model.</str
     <string name="screen_title_text_to_speech">Conversie text-voce</string>
     <string name="screen_title_speech_to_text">Recunoașterea vocală</string>
     <string name="screen_title_process_limit_remover">Eliminarea restricțiilor procesului „Illusion”</string>
-    <string name="screen_title_autoglm_one_click">AutoGLM Configurare cu un singur clic</string>
-    <string name="screen_title_autoglm_tool">autoglmExecutare</string>
     <string name="screen_title_default_assistant_guide">Setările implicite ale Asistentului</string>
     <string name="screen_title_mcp_market">MCP Piața</string>
     <string name="screen_title_skill_market">Skill Piața</string>
@@ -6315,7 +6293,6 @@ Acum poate fi utilizat în interfața de dialog AutoGLM A devenit un model.</str
     <string name="uidebugger_clear">Ștergere</string>
 
     <!-- Auto GLM Tool Screen -->
-    <string name="autoglm_virtual_screen">De data aceasta se utilizează un ecran virtual</string>
 
     <!-- HTML Packager Screen -->
     <string name="htmlpackager_step1_title">Pasul 1: Selectați folderul proiectului</string>
@@ -6333,20 +6310,6 @@ Acum poate fi utilizat în interfața de dialog AutoGLM A devenit un model.</str
     <string name="document_block_label">Bloc %1$d</string>
 
     <!-- Auto GLM One Click Tool Screen -->
-    <string name="autoglm_go_to_model_config">Accesați configurarea modelului</string>
-    <string name="autoglm_custom_endpoint">Personalizare Endpoint(OpenAI (compatibil)</string>
-    <string name="autoglm_model_name">Denumirea modelului</string>
-    <string name="autoglm_restore_original">Restabilirea logicii inițiale de automatizare</string>
-    <string name="autoglm_step1_title">step1 Configurarea modelului de dialog de bază</string>
-    <string name="autoglm_step1_warning">Nu punețiautoglmModelul ca model principal de dialog</string>
-    <string name="autoglm_step1_note">Atenție: dacă ați configurat deja această opțiune, nu este nevoie să vă mai ocupați de ea; nu modificați în niciun caz această setare autoglm și alte modele mici.</string>
-    <string name="autoglm_step2_title">step2 Accesați site-ul oficial al Zhipu pentru a obține API Key</string>
-    <string name="autoglm_step3_title">step3 Completați API Key, faceți clic pe „Configurare cu un singur clic”</string>
-    <string name="autoglm_hide_advanced">Ascunde setările avansate</string>
-    <string name="autoglm_show_advanced">Afișează setările avansate (personalizare) Endpoint / (Numele modelului)</string>
-    <string name="autoglm_step4_title">step4 Restaurare ne- AutoGLM Automatizare (opțional)</string>
-    <string name="autoglm_step4_description">Dacă simți că, atunci când folosești AutoGLM După configurarea cu un singur clic, operațiunile automate devin dificile; puteți face clic pe butonul de mai jos pentru a reveni la logica automată inițială a software-ului (Activați base Pachet, închidere subagent pachet, restul setărilor rămân neschimbate). Dacă doriți să reactivați AutoGLM, trebuie doar să urmați step3 Introduceți cheia și faceți din nou clic pe „Configurare cu un singur clic”.</string>
-    <string name="autoglm_restore_success">S-a revenit la logica de automatizare inițială a software-ului</string>
 
     <!-- UI Debugger Components -->
     <string name="uidebugger_create_new_package">Crearea unui pachet de configurare nou</string>
@@ -6528,9 +6491,6 @@ Acum poate fi utilizat în interfața de dialog AutoGLM A devenit un model.</str
     <string name="emoticon_shyness">Rușine</string>
     <string name="emoticon_blush">Roșeață</string>
     <string name="emoticon_embarrassed">Îmi pare rău</string>
-    <string name="autoglm_task_complete">✅ Sarcină îndeplinită: %1$s</string>
-    <string name="autoglm_thinking_process">💭 Procesul de gândire:</string>
-    <string name="autoglm_execute_action">🎯 Executarea acțiunii:</string>
     <string name="version_update">Actualizare de versiune</string>
     <string name="mcp_no_zip_selected">Nu s-a selectat nimicZIPDocument</string>
     <string name="mcp_uninstall_failed">Eșecul dezinstalării</string>
