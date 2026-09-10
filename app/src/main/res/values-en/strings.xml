@@ -3769,7 +3769,7 @@
     <string name="token_stats_pricing_catalog_loading">Loading the bundled pricing catalog</string>
     <string name="token_stats_pricing_catalog_remote">Cloud prices have replaced built-in prices</string>
     <string name="token_stats_pricing_catalog_bundled">Using the catalog bundled with the APK</string>
-    <string name="token_stats_pricing_catalog_revision">Active version %1$s · Data date %2$s</string>
+    <string name="token_stats_pricing_catalog_revision">Active version %1$s · Generated %2$s</string>
     <string name="token_stats_pricing_catalog_checked">Last checked: %1$s</string>
     <string name="token_stats_pricing_catalog_not_checked">Cloud updates have not been checked yet</string>
     <string name="token_stats_pricing_catalog_refresh">Update cloud catalog</string>
@@ -3777,11 +3777,11 @@
     <string name="token_stats_pricing_catalog_hint">Matches official prices by model name, regardless of your API provider. Updates fetch models.dev first and use the repository cache on timeout. Tap Replace to apply. Manual prices take priority; historical costs stay unchanged.</string>
     <string name="token_stats_pricing_catalog_details">Catalog details</string>
     <string name="token_stats_pricing_context_tiers">Official prices vary by input context length. Base prices are shown here; manual prices take priority.</string>
-    <string name="token_stats_pricing_catalog_downloaded">Downloaded version %1$s · Data date %2$s</string>
+    <string name="token_stats_pricing_catalog_downloaded">Downloaded version %1$s · Generated %2$s</string>
     <string name="token_stats_pricing_catalog_apply">Replace built-in prices</string>
     <string name="token_stats_pricing_catalog_applying">Replacing…</string>
     <string name="token_stats_pricing_catalog_downloading">Downloading cloud catalog…</string>
-    <string name="token_stats_pricing_catalog_applied">Applied</string>
+    <string name="token_stats_pricing_catalog_up_to_date">Up to date</string>
     <string name="token_stats_pricing_filter_all">All</string>
     <string name="token_stats_pricing_filter_missing">Missing price</string>
     <string name="token_stats_pricing_filter_custom">Customized</string>

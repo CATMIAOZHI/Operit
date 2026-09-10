@@ -954,10 +954,16 @@ private fun PricingCatalogStatusCard(
                     Text(stringResource(R.string.token_stats_pricing_catalog_refresh))
                 }
                 TextButton(onClick = onApply, enabled = state?.canApply == true) {
+                    // 下载到的目录与当前价格一致时没有可覆盖的更新：按钮置灰并直说“已是最新”，
+                    // 否则“已覆盖”配上详情里的下载版本会让人以为还有更新没应用。
+                    val catalogUpToDate = state?.downloadedRevision != null &&
+                        state.downloadedRevision == state.revision
                     Text(stringResource(
-                        if (state?.source == PricingCatalogSource.APPLIED_REMOTE &&
-                            state.downloadedRevision == state.revision) R.string.token_stats_pricing_catalog_applied
-                        else R.string.token_stats_pricing_catalog_apply
+                        when {
+                            state?.canApply == true -> R.string.token_stats_pricing_catalog_apply
+                            catalogUpToDate -> R.string.token_stats_pricing_catalog_up_to_date
+                            else -> R.string.token_stats_pricing_catalog_apply
+                        }
                     ))
                 }
             }
@@ -966,10 +972,11 @@ private fun PricingCatalogStatusCard(
                     Text(stringResource(R.string.token_stats_pricing_catalog_hint), style = MaterialTheme.typography.bodySmall)
                     state?.let { loaded ->
                         Text(stringResource(R.string.token_stats_pricing_catalog_revision, loaded.revision,
-                            loaded.generatedAt.substringBefore('T')), style = MaterialTheme.typography.bodySmall)
-                        loaded.downloadedRevision?.let {
+                            formatCatalogGeneratedAt(loaded.generatedAt)), style = MaterialTheme.typography.bodySmall)
+                        // 内容与当前一致时不再重复列出下载版本，避免读成“有新版本待覆盖”。
+                        loaded.downloadedRevision?.takeIf { it != loaded.revision }?.let {
                             Text(stringResource(R.string.token_stats_pricing_catalog_downloaded, it,
-                                loaded.downloadedGeneratedAt.orEmpty().substringBefore('T')),
+                                formatCatalogGeneratedAt(loaded.downloadedGeneratedAt)),
                                 style = MaterialTheme.typography.bodySmall)
                         }
                         Text(loaded.lastCheckedAt?.let {
@@ -990,6 +997,16 @@ private fun PricingCatalogStatusCard(
 private fun formatCatalogCheckedAt(epochMillis: Long): String =
     DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
         .format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))
+
+/**
+ * 目录的 generatedAt 是 UTC 时刻，直接截取日期会比本地时间早一天，与同一张卡片里的
+ * 「上次检查」口径不一致。这里按本地时区取日期；无法解析时退回原来的截断结果。
+ */
+private fun formatCatalogGeneratedAt(generatedAt: String?): String {
+    val raw = generatedAt.orEmpty()
+    return runCatching { Instant.parse(raw).atZone(ZoneId.systemDefault()).toLocalDate().toString() }
+        .getOrElse { raw.substringBefore('T') }
+}
 
 private fun priceDraftIsComplete(draft: TokenStatsPriceOverrideDraft): Boolean =
     if (draft.billingMode == BillingMode.COUNT) {
