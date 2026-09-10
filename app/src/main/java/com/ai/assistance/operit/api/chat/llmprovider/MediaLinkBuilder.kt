@@ -24,7 +24,8 @@ object MediaLinkBuilder {
         )
     }
 
-    private fun escapeXmlAttribute(value: String): String {
+    /** 转义 XML 属性值；标签里带路径等自由文本时复用同一套规则。 */
+    internal fun escapeXmlAttribute(value: String): String {
         return value
             .replace("&", "&amp;")
             .replace("<", "&lt;")

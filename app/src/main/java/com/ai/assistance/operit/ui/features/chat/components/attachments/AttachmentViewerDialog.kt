@@ -58,6 +58,7 @@ import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ImageBitmapLimiter
 import com.ai.assistance.operit.util.MediaBase64Limiter
 import com.ai.assistance.operit.util.MediaPoolManager
+import com.ai.assistance.operit.util.isSimplePoolCacheId
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
@@ -96,6 +97,8 @@ fun AttachmentViewerDialog(
 
     val mediaPoolFileState = produceState<File?>(initialValue = null, key1 = mediaPoolId, key2 = attachment.mimeType) {
         if (mediaPoolId.isNullOrBlank()) return@produceState
+        // mediaPoolId 会被当成预览文件名使用，来自消息标签时必须仍是简单名字。
+        if (!isSimplePoolCacheId(mediaPoolId)) return@produceState
 
         val mediaData = MediaPoolManager.getMedia(mediaPoolId) ?: return@produceState
         val estimatedBytes = MediaBase64Limiter.estimateDecodedSizeBytes(mediaData.base64)

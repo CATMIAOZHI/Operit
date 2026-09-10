@@ -310,6 +310,9 @@ object MediaPoolManager {
     }
 
     private fun loadOneFromDisk(id: String): MediaData? {
+        if (!isSimplePoolCacheId(id)) {
+            return null
+        }
         val dir = cacheDir ?: return null
         return try {
             val metaFile = File(dir, "$id.meta")
@@ -336,6 +339,10 @@ object MediaPoolManager {
     }
 
     private fun saveToDisk(id: String, data: MediaData) {
+        if (!isSimplePoolCacheId(id)) {
+            AppLogger.w(TAG, "忽略非法媒体 id，不写入磁盘: $id")
+            return
+        }
         val dir = cacheDir ?: return
         try {
             val metaFile = File(dir, "$id.meta")
@@ -348,6 +355,10 @@ object MediaPoolManager {
     }
 
     private fun deleteFromDisk(id: String) {
+        if (!isSimplePoolCacheId(id)) {
+            AppLogger.w(TAG, "忽略非法媒体 id，不删除磁盘文件: $id")
+            return
+        }
         val dir = cacheDir ?: return
         try {
             File(dir, "$id.meta").delete()

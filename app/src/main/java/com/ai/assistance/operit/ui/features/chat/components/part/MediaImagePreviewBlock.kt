@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.api.chat.llmprovider.ImageLinkTag
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ImageBitmapLimiter
 import com.ai.assistance.operit.util.ImagePoolManager
@@ -81,35 +82,41 @@ private const val PREVIEW_MAX_DIMENSION = 2048
 private val PREVIEW_MAX_HEIGHT = 500.dp
 
 /** 当前打开的预览：缩略图立即显示，全尺寸位图解码完成后替换。 */
-private data class ImagePreviewTarget(val id: String, val thumbnail: Bitmap)
+private data class ImagePreviewTarget(val link: ImageLinkTag, val thumbnail: Bitmap)
 
 /**
  * 智能体用 read_file 查看图片时，图片会以 `<link type="image" id="...">` 写进消息内容，作为
  * 下一跳的多模态输入。聊天里不应该显示这条原始标记，而是渲染成可展开的图片预览。
  *
- * 图片可能已经被图片池回收（磁盘缓存被清理），此时按“已过期”展示而不是留下空白。
+ * 图片可能已经被图片池回收（磁盘缓存被清理），此时按“已过期”展示而不是留下空白；
+ * 标签带了源路径、且源文件还在时会先从源文件恢复回池子。
  */
 @Composable
 internal fun MediaImagePreviewBlock(
-    imageIds: List<String>,
+    imageLinks: List<ImageLinkTag>,
     textColor: Color,
     modifier: Modifier = Modifier,
     enableDialogs: Boolean = true,
 ) {
-    if (imageIds.isEmpty()) {
+    if (imageLinks.isEmpty()) {
         return
     }
 
     // 宿主每次组合都会新建 id 列表，用内容做键，避免重复解码。
-    val idsKey = imageIds.joinToString(",")
+    val idsKey = imageLinks.joinToString(",") { it.id }
 
     // null 表示尚未解码完成，避免解码期间误报“已过期”。
     val bitmaps by
         produceState<Map<String, Bitmap?>?>(initialValue = null, key1 = idsKey) {
             value =
                 withContext(Dispatchers.IO) {
-                    imageIds.associateWith { id ->
-                        decodePooledBitmap(id, THUMBNAIL_MAX_PIXELS, THUMBNAIL_MAX_DIMENSION)
+                    imageLinks.associate { link ->
+                        link.id to
+                            decodeImageLinkBitmap(
+                                link,
+                                THUMBNAIL_MAX_PIXELS,
+                                THUMBNAIL_MAX_DIMENSION,
+                            )
                     }
                 }
         }
@@ -127,7 +134,7 @@ internal fun MediaImagePreviewBlock(
         previewBitmap = null
     }
 
-    val title = stringResource(R.string.chat_viewed_images, imageIds.size)
+    val title = stringResource(R.string.chat_viewed_images, imageLinks.size)
     val collapsedStateText = stringResource(R.string.collapsed)
     val expandedStateText = stringResource(R.string.expanded)
     val arrowRotation by
@@ -182,8 +189,8 @@ internal fun MediaImagePreviewBlock(
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp, start = 22.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                imageIds.forEach { id ->
-                    val bitmap = bitmaps?.get(id)
+                imageLinks.forEach { link ->
+                    val bitmap = bitmaps?.get(link.id)
                     when {
                         bitmaps == null -> PendingImagePlaceholder()
                         bitmap != null ->
@@ -192,20 +199,22 @@ internal fun MediaImagePreviewBlock(
                                     Modifier.size(THUMBNAIL_SIZE).clickable(enabled = enableDialogs) {
                                         // 缩略图先顶上，全尺寸版本解码就位后再替换。
                                         previewJobRef.value?.cancel()
-                                        previewTarget = ImagePreviewTarget(id, bitmap)
+                                        previewTarget = ImagePreviewTarget(link, bitmap)
                                         previewBitmap = null
                                         previewJobRef.value =
                                             previewScope.launch {
                                                 val decoded =
                                                     withContext(Dispatchers.IO) {
-                                                        decodePooledBitmap(
-                                                            id,
+                                                        decodeImageLinkBitmap(
+                                                            link,
                                                             PREVIEW_MAX_PIXELS,
                                                             PREVIEW_MAX_DIMENSION,
                                                         )
                                                     }
                                                 // 用户可能已经关闭或切到别的图，丢弃过期结果。
-                                                if (decoded != null && previewTarget?.id == id) {
+                                                if (decoded != null &&
+                                                    previewTarget?.link?.id == link.id
+                                                ) {
                                                     previewBitmap = decoded
                                                 }
                                             }
@@ -231,7 +240,7 @@ internal fun MediaImagePreviewBlock(
     if (enableDialogs && target != null) {
         // 全尺寸位图解码期间先用缩略图，避免对话框闪空白。
         val displayBitmap = previewBitmap ?: target.thumbnail
-        val previewScrollState = remember(target.id) { ScrollState(0) }
+        val previewScrollState = remember(target.link.id) { ScrollState(0) }
         Dialog(onDismissRequest = closePreview) {
             Surface(
                 modifier = Modifier.fillMaxWidth().wrapContentHeight(),
@@ -323,8 +332,16 @@ private fun ExpiredImagePlaceholder(textColor: Color) {
     }
 }
 
-private fun decodePooledBitmap(id: String, maxPixels: Long, maxDimension: Int): Bitmap? {
-    val imageData = ImagePoolManager.getImage(id) ?: return null
+private fun decodeImageLinkBitmap(
+    link: ImageLinkTag,
+    maxPixels: Long,
+    maxDimension: Int,
+): Bitmap? {
+    // 图片池是会话级缓存：进程重启、LRU 淘汰之后，旧消息里只剩下 id。
+    // 链接带了源路径时，只要源文件还在就重新入池，让这条记录自己恢复。
+    link.sourcePath?.let { ImagePoolManager.ensureImageFromSource(link.id, it) }
+
+    val imageData = ImagePoolManager.getImage(link.id) ?: return null
     return try {
         ImageBitmapLimiter.decodeDownsampledBitmap(
             Base64.decode(imageData.base64, Base64.DEFAULT),
@@ -332,7 +349,7 @@ private fun decodePooledBitmap(id: String, maxPixels: Long, maxDimension: Int): 
             maxDimension = maxDimension,
         )
     } catch (e: Exception) {
-        AppLogger.e(TAG, "Failed to decode pooled image: $id", e)
+        AppLogger.e(TAG, "Failed to decode pooled image: ${link.id}", e)
         null
     }
 }
