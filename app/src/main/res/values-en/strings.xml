@@ -6929,6 +6929,7 @@
     <string name="openai_error_max_retries">Failed to get AI response, max retries reached: %1$s</string>
     <string name="openai_error_response_failed">Failed to get AI response: %1$s</string>
     <string name="openai_error_connection_timeout">Connection timeout or interrupted, retried %1$d times: %2$s</string>
+    <string name="openai_error_stream_stalled">Response stalled, retried %1$d times: %2$s</string>
     <string name="openai_error_response_empty">API response is empty</string>
     <string name="openai_error_parse_response_failed">Failed to parse response: %1$s</string>
     <string name="openai_connection_success">Connection successful!</string>

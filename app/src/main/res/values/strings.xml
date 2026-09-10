@@ -7402,6 +7402,7 @@
     <string name="openai_error_max_retries">AI响应获取失败，已达最大重试次数: %1$s</string>
     <string name="openai_error_response_failed">AI响应获取失败: %1$s</string>
     <string name="openai_error_connection_timeout">连接超时或中断，已重试 %1$d 次: %2$s</string>
+    <string name="openai_error_stream_stalled">响应停滞，已重试 %1$d 次: %2$s</string>
     <string name="openai_error_response_empty">API响应为空</string>
     <string name="openai_error_parse_response_failed">解析响应失败: %1$s</string>
     <string name="openai_connection_success">连接成功！</string>
