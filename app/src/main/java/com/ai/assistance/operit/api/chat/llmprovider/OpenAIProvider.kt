@@ -390,16 +390,16 @@ open class OpenAIProvider(
     }
 
     /**
-     * 记录完整请求体，默认关闭（见 [AppLogger.logFullRequestBodies]）。
+     * 记录请求体，默认开启（见 [AppLogger.logRequestBodies]）。
      *
      * [body] 只在开关打开时求值：关闭状态下不再把整个请求体复制成缩进文本，省掉构建字符串的
      * 内存与 CPU（实测单请求峰值内存是请求体本身的 3-4 倍）。
      *
-     * 注意：父类与子类的调用点都受同一开关控制，打开时子类 provider 会先由父类记录一份中间
+     * 注意：父类与子类的调用点都受同一开关控制，开启时子类 provider 会先由父类记录一份中间
      * 请求体、再记录自己的最终请求体。
      */
     protected fun logRequestBodyForDebugging(tag: String, prefix: String, body: () -> String) {
-        if (!AppLogger.logFullRequestBodies) return
+        if (!AppLogger.logRequestBodies) return
         logLargeString(tag, body(), prefix)
     }
 
@@ -897,7 +897,7 @@ open class OpenAIProvider(
 
         customizeFinalRequestObject(finalRequestObject, messagesArray, toolsJson)
 
-        // 使用分块日志函数记录请求体（省略过长的tools字段），默认关闭
+        // 使用分块日志函数记录请求体（省略过长的 tools 字段），可用 AppLogger.logRequestBodies 关闭
         logRequestBodyForDebugging("AIService", "Request body: ") {
             requestBodyForLogging(finalRequestObject)
         }
