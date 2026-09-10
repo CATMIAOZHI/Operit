@@ -6017,8 +6017,6 @@
     <string name="toolreg_ffmpeg_info_desc">Get FFmpeg info</string>
     <string name="toolreg_ffmpeg_convert_desc">Convert video: %1$s → %2$s</string>
 
-    <!-- AutoGLM One-Click Configuration -->
-
     <!-- Skill Market -->
     <string name="available_skills_market">Available Skills</string>
     <string name="beta_plan">Beta Program</string>
