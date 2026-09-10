@@ -228,8 +228,8 @@ class LlamaProvider(
             throw IOException(context.getString(R.string.llama_error_chat_template_failed))
         }
 
-        // 完整 prompt（含全部历史与工具结果）只在开关打开时落盘，默认关闭
-        if (AppLogger.logFullRequestBodies) {
+        // 完整 prompt（含全部历史与工具结果）落盘，可用 AppLogger.logRequestBodies 关闭
+        if (AppLogger.logRequestBodies) {
             logLargeString("Final prompt before llama generation: ", prompt)
         }
 

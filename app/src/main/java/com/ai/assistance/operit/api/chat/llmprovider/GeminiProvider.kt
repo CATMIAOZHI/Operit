@@ -1195,8 +1195,8 @@ open class GeminiProvider(
 
         // 如果消息长度超过限制，分块打印
         if (message.length > maxLogSize) {
-            // 计算需要分多少块打印
-            val chunkCount = message.length / maxLogSize + 1
+            // 计算需要分多少块打印（向上取整，否则长度正好整除时会多输出一个空块）
+            val chunkCount = (message.length + maxLogSize - 1) / maxLogSize
 
             for (i in 0 until chunkCount) {
                 val start = i * maxLogSize
@@ -1727,8 +1727,8 @@ open class GeminiProvider(
         json.put("generationConfig", generationConfig)
 
         val jsonString = json.toString()
-        if (AppLogger.logFullRequestBodies) {
-            // 使用分块日志函数记录请求体（省略过长的tools字段），默认关闭
+        if (AppLogger.logRequestBodies) {
+            // 使用分块日志函数记录请求体（省略过长的 tools 字段），可用 AppLogger.logRequestBodies 关闭
             val logJson = JSONObject(jsonString)
             if (logJson.has("tools")) {
                 val toolsArray = logJson.getJSONArray("tools")
