@@ -3,7 +3,6 @@ package com.ai.assistance.operit.ui.main.screens
 import android.content.Context
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoMode
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DataObject

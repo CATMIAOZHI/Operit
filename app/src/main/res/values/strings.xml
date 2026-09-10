@@ -2207,9 +2207,6 @@
     <string name="tool_html_packager">HTML打包器</string>
     <string name="tool_html_packager_desc">将HTML文件及其依赖打包成单个HTML文件，方便分享和部署</string>
 
-    
-    <!-- AutoGLM One-Click Configuration -->
-
     <!-- Process Limit Remover Screen -->
     <string name="process_limit_title">解除幻象进程限制</string>
     <string name="process_limit_subtitle">管理Android 12+的幻象进程数量限制</string>

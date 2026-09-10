@@ -2156,8 +2156,6 @@
     <string name="tool_html_packager_desc">VaHTMLFișierul și dependențele sale sunt împachetate într-un singur fișierHTMLFișiere, ușor de partajat și de implementat</string>
 
 
-    <!-- AutoGLM One-Click Configuration -->
-
     <!-- Process Limit Remover Screen -->
     <string name="process_limit_title">Eliminarea restricțiilor procesului „Illusion”</string>
     <string name="process_limit_subtitle">AdministrareAndroid 12+Limita numărului de procese iluzorii</string>
