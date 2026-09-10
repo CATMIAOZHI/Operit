@@ -2207,19 +2207,8 @@
     <string name="tool_html_packager">HTML打包器</string>
     <string name="tool_html_packager_desc">将HTML文件及其依赖打包成单个HTML文件，方便分享和部署</string>
 
-    <string name="tool_autoglm_one_click">AutoGLM 一键配置</string>
-    <string name="tool_autoglm_one_click_desc">一键为 UI 控制器配置 autoglm-phone 模型并切换 AutoGLM 工具包</string>
-    <string name="tool_autoglm_tool">AutoGLM 执行</string>
-    <string name="tool_autoglm_tool_desc">使用 autoglm-phone 代理按步骤执行手机自动化任务</string>
     
     <!-- AutoGLM One-Click Configuration -->
-    <string name="autoglm_config_name">AutoGLM 配置</string>
-    <string name="autoglm_one_click_title">AutoGLM 一键配置</string>
-    <string name="autoglm_one_click_subtitle">为 UI 控制器自动创建智谱 autoglm-phone 模型配置，并切换 AutoGLM 工具包。</string>
-    <string name="autoglm_open_apikey_center">前往智谱 API Key 页面</string>
-    <string name="autoglm_open_apikey_tip">登录后，在智谱平台创建并复制 API Key</string>
-    <string name="autoglm_api_key_placeholder">在此粘贴您的智谱 API Key</string>
-    <string name="autoglm_one_click_button">一键配置 AutoGLM</string>
 
     <!-- Process Limit Remover Screen -->
     <string name="process_limit_title">解除幻象进程限制</string>
@@ -2254,15 +2243,6 @@
     <string name="process_limit_exit_code">退出码：%d</string>
     <string name="process_limit_command">命令</string>
     <string name="toolbox_description">便捷实用的工具集合，提升您的工作效率</string>
-    <string name="autoglm_status_running">正在执行一键配置，请稍候...</string>
-    <string name="autoglm_status_success">已完成 AutoGLM 一键配置：
-- 已创建或更新 AutoGLM UI 控制器模型配置（autoglm-phone, 智谱）
-- 已将“UI 控制器”功能切换为该配置
-- 已关闭 Automatic_ui_base，打开 Automatic_ui_subagent
-
-现在可以在对话界面使用 AutoGLM 模式了。</string>
-    <string name="autoglm_status_error">一键配置失败：%1$s</string>
-    <string name="autoglm_error_empty_api_key">请先填写智谱 API Key。</string>
 
     <!-- MCP Config Screen -->
     <string name="import_or_connect_mcp_service">导入或连接MCP服务</string>
@@ -4305,8 +4285,6 @@
     <string name="screen_title_text_to_speech">文本转语音</string>
     <string name="screen_title_speech_to_text">语音识别</string>
     <string name="screen_title_process_limit_remover">解除幻象进程限制</string>
-    <string name="screen_title_autoglm_one_click">AutoGLM 一键配置</string>
-    <string name="screen_title_autoglm_tool">autoglm执行</string>
     <string name="screen_title_default_assistant_guide">默认助手设置</string>
     <string name="screen_title_mcp_market">MCP 市场</string>
     <string name="screen_title_skill_market">Skill 市场</string>
@@ -6799,7 +6777,6 @@
     <string name="uidebugger_clear">清除</string>
 
     <!-- Auto GLM Tool Screen -->
-    <string name="autoglm_virtual_screen">本次使用虚拟屏幕</string>
 
     <!-- HTML Packager Screen -->
     <string name="htmlpackager_step1_title">第一步：选择项目文件夹</string>
@@ -6817,20 +6794,6 @@
     <string name="document_block_label">区块 %1$d</string>
 
     <!-- Auto GLM One Click Tool Screen -->
-    <string name="autoglm_go_to_model_config">前往模型配置</string>
-    <string name="autoglm_custom_endpoint">自定义 Endpoint（OpenAI 兼容）</string>
-    <string name="autoglm_model_name">模型名称</string>
-    <string name="autoglm_restore_original">恢复原本的自动化逻辑</string>
-    <string name="autoglm_step1_title">step1 配置基本对话模型</string>
-    <string name="autoglm_step1_warning">不要把autoglm模型作为对话主模型</string>
-    <string name="autoglm_step1_note">注意：如果已经配置过就不需要管了，这里切勿改成 autoglm 等小模型。</string>
-    <string name="autoglm_step2_title">step2 访问智谱官网，获取 API Key</string>
-    <string name="autoglm_step3_title">step3 填入 API Key，点击一键配置</string>
-    <string name="autoglm_hide_advanced">隐藏高级设置</string>
-    <string name="autoglm_show_advanced">显示高级设置（自定义 Endpoint / 模型名称）</string>
-    <string name="autoglm_step4_title">step4 恢复非 AutoGLM 自动化（可选）</string>
-    <string name="autoglm_step4_description">如果你觉得在使用 AutoGLM 一键配置后自动化操作变得困难，可以点击下方按钮恢复为软件原本的自动化逻辑（启用 base 包，关闭 subagent 包，其余设置保持不变）。如果你想再次启用 AutoGLM，只需要按照 step3 输入密钥并再次点击一键配置。</string>
-    <string name="autoglm_restore_success">已恢复为软件原本的自动化逻辑</string>
 
     <!-- UI Debugger Components -->
     <string name="uidebugger_create_new_package">创建新配置包</string>
@@ -7012,9 +6975,6 @@
     <string name="emoticon_shyness">羞</string>
     <string name="emoticon_blush">脸红</string>
     <string name="emoticon_embarrassed">不好意思</string>
-    <string name="autoglm_task_complete">✅ 任务完成: %1$s</string>
-    <string name="autoglm_thinking_process">💭 思考过程:</string>
-    <string name="autoglm_execute_action">🎯 执行动作:</string>
     <string name="version_update">版本更新</string>
     <string name="mcp_no_zip_selected">未选择ZIP文件</string>
     <string name="mcp_uninstall_failed">卸载失败</string>

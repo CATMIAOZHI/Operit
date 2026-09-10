@@ -3189,9 +3189,6 @@
     <string name="emoticon_shyness">Shyness</string>
     <string name="emoticon_blush">Blush</string>
     <string name="emoticon_embarrassed">Embarrassed</string>
-    <string name="autoglm_task_complete">✅ Task completed: %1$s</string>
-    <string name="autoglm_thinking_process">💭 Thinking Process:</string>
-    <string name="autoglm_execute_action">🎯 Execute Action:</string>
     <string name="version_update">Version Update</string>
     <string name="mcp_no_zip_selected">No ZIP file selected</string>
     <string name="mcp_uninstall_failed">Uninstall failed</string>
@@ -6021,17 +6018,6 @@
     <string name="toolreg_ffmpeg_convert_desc">Convert video: %1$s → %2$s</string>
 
     <!-- AutoGLM One-Click Configuration -->
-    <string name="autoglm_config_name">AutoGLM Configuration</string>
-    <string name="autoglm_one_click_title">AutoGLM One-Click Config</string>
-    <string name="autoglm_one_click_subtitle">Automatically create Zhipu autoglm-phone model configuration for UI controller and switch to AutoGLM toolkit.</string>
-    <string name="autoglm_open_apikey_center">Go to Zhipu API Key Page</string>
-    <string name="autoglm_open_apikey_tip">After logging in, create and copy your API Key on the Zhipu platform</string>
-    <string name="autoglm_api_key_placeholder">Paste your Zhipu API Key here</string>
-    <string name="autoglm_one_click_button">One-Click AutoGLM Config</string>
-    <string name="autoglm_status_running">Running one-click configuration, please wait...</string>
-    <string name="autoglm_status_success">AutoGLM one-click configuration completed:\nModel: %1$s\nAPI Key: %2$s\nToolkit: AutoGLM\n\nYou can now use AutoGLM mode in the chat interface.</string>
-    <string name="autoglm_status_error">One-click configuration failed: %1$s</string>
-    <string name="autoglm_error_empty_api_key">Please fill in the Zhipu API Key first.</string>
 
     <!-- Skill Market -->
     <string name="available_skills_market">Available Skills</string>
@@ -6091,8 +6077,6 @@
     <string name="patch_install_confirm_message">New patch version detected: %1$s\n\nInstall now?</string>
     <string name="prepare_patch_update">Preparing patch update...</string>
     <string name="publish_new_skill">Publish New Skill</string>
-    <string name="screen_title_autoglm_one_click">AutoGLM One-Click Config</string>
-    <string name="screen_title_autoglm_tool">AutoGLM Execution</string>
     <string name="screen_title_skill_detail">Skill Detail</string>
     <string name="screen_title_skill_manage">Manage My Skills</string>
     <string name="screen_title_skill_market">Skill Market</string>
@@ -6106,10 +6090,6 @@
     <string name="skill_repo_address_required">GitHub Repository Address *</string>
     <string name="skill_update_success_message">Your Skill information has been successfully updated.</string>
     <string name="skill_zip_package">Skill ZIP Package</string>
-    <string name="tool_autoglm_one_click">AutoGLM One-Click Config</string>
-    <string name="tool_autoglm_one_click_desc">One-click configure autoglm-phone model for UI controller and switch to AutoGLM toolkit</string>
-    <string name="tool_autoglm_tool">AutoGLM Execution</string>
-    <string name="tool_autoglm_tool_desc">Use autoglm-phone agent to execute mobile automation tasks step by step</string>
     <string name="ui_accessibility_mode">Accessibility Mode</string>
     <string name="ui_accessibility_mode_description">Optimize UI automation behavior for accessibility users like TalkBack, prioritize providing readable operation steps, and carefully execute automatic taps.</string>
     <string name="workflow_execution_failed">Execution Failed</string>
@@ -6481,7 +6461,6 @@
     <string name="uidebugger_clear">Clear</string>
 
     <!-- Auto GLM Tool Screen -->
-    <string name="autoglm_virtual_screen">Virtual screen this time</string>
 
     <!-- HTML Packager Screen -->
     <string name="htmlpackager_step1_title">Step 1: Select project folder</string>
@@ -6499,20 +6478,6 @@
     <string name="document_block_label">Block %1$d</string>
 
     <!-- Auto GLM One Click Tool Screen -->
-    <string name="autoglm_go_to_model_config">Go to Model Config</string>
-    <string name="autoglm_custom_endpoint">Custom Endpoint (OpenAI Compatible)</string>
-    <string name="autoglm_model_name">Model Name</string>
-    <string name="autoglm_restore_original">Restore Original Automation Logic</string>
-    <string name="autoglm_step1_title">step1 Configure Basic Conversation Model</string>
-    <string name="autoglm_step1_warning">Do not use the autoglm model as the main conversation model</string>
-    <string name="autoglm_step1_note">Note: If you have already configured it, you don\'t need to worry about it here. Do not change it to autoglm or other small models.</string>
-    <string name="autoglm_step2_title">step2 Visit Zhipu Official Website to Get API Key</string>
-    <string name="autoglm_step3_title">step3 Enter API Key and Click One-Click Configuration</string>
-    <string name="autoglm_hide_advanced">Hide Advanced Settings</string>
-    <string name="autoglm_show_advanced">Show Advanced Settings (Custom Endpoint / Model Name)</string>
-    <string name="autoglm_step4_title">step4 Restore Non-AutoGLM Automation (Optional)</string>
-    <string name="autoglm_step4_description">If you find automation operations difficult after using AutoGLM one-click configuration, you can click the button below to restore the software\'s original automation logic (enable base package, disable subagent package, other settings remain unchanged). If you want to enable AutoGLM again, just follow step3 to enter the key and click one-click configuration again.</string>
-    <string name="autoglm_restore_success">Restored to the software\'s original automation logic</string>
 
     <!-- UI Debugger Components -->
     <string name="uidebugger_create_new_package">Create New Config Package</string>

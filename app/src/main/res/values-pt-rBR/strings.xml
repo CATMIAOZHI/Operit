@@ -1889,17 +1889,6 @@
     <string name="tool_process_limit_remover_desc">Gerencie o número de processos fantasmas no Android 12+, permitindo mais processos filhos em segundo plano</string>
     <string name="tool_html_packager">Empacotador HTML</string>
     <string name="tool_html_packager_desc">Empacote arquivos HTML e suas dependências em um único arquivo HTML para fácil compartilhamento e implantação</string>
-    <string name="tool_autoglm_one_click">Configuração do AutoGLM com um clique</string>
-    <string name="tool_autoglm_one_click_desc">Configure o modelo autoglm-phone para controlador de UI e alterne o kit de ferramentas AutoGLM com um clique</string>
-    <string name="tool_autoglm_tool">Execução AutoGLM</string>
-    <string name="tool_autoglm_tool_desc">Tarefas passo a passo de automação telefônica usando o agente autoglm-phone</string>
-    <string name="autoglm_config_name">Configuração AutoGLM</string>
-    <string name="autoglm_one_click_title">Configuração do AutoGLM com um clique</string>
-    <string name="autoglm_one_click_subtitle">Crie automaticamente configurações de modelo autoglm-phone para controladores de UI e alterne o kit de ferramentas AutoGLM.</string>
-    <string name="autoglm_open_apikey_center">Vá para a página da chave de API Zhipu</string>
-    <string name="autoglm_open_apikey_tip">Após fazer login, crie e copie a chave API na plataforma Zhipu</string>
-    <string name="autoglm_api_key_placeholder">Cole sua chave de API Wisdom Score aqui</string>
-    <string name="autoglm_one_click_button">Configuração com um clique AutoGLM</string>
     <string name="process_limit_title">Remover restrições de processo fantasma</string>
     <string name="process_limit_subtitle">Gerenciando limite de processo fantasma no Android 12+</string>
     <string name="process_limit_info_title">Sobre limites de processos fantasmas</string>
@@ -1932,15 +1921,6 @@
     <string name="process_limit_exit_code">Código de saída: %d</string>
     <string name="process_limit_command">Ordem</string>
     <string name="toolbox_description">Uma coleção de ferramentas convenientes e práticas para melhorar a eficiência do seu trabalho</string>
-    <string name="autoglm_status_running">Executando configuração com um clique, aguarde...</string>
-    <string name="autoglm_status_success">A configuração do AutoGLM com um clique foi concluída:
-- A configuração do modelo do controlador AutoGLM UI foi criada ou atualizada (autoglm-phone, zhipu)
-- A função "UI Controller" foi alterada para esta configuração
-- Automatic_ui_base desativado, Automatic_ui_subagent ativado
-
-Agora é possível usar o modo AutoGLM na interface de diálogo.</string>
-    <string name="autoglm_status_error">Falha na configuração com um clique: %1$s</string>
-    <string name="autoglm_error_empty_api_key">Preencha primeiro a chave da API Zhipu.</string>
     <string name="import_or_connect_mcp_service">Importe ou conecte-se a serviços MCP</string>
     <string name="select_mcp_plugin_zip">Selecione o pacote compactado do plug-in MCP</string>
     <string name="plugin_zip_package">Pacote compactado de plug-in</string>
@@ -3476,8 +3456,6 @@ Agora é possível usar o modo AutoGLM na interface de diálogo.</string>
     <string name="screen_title_text_to_speech">texto para fala</string>
     <string name="screen_title_speech_to_text">reconhecimento de fala</string>
     <string name="screen_title_process_limit_remover">Remover restrições de processo fantasma</string>
-    <string name="screen_title_autoglm_one_click">Configuração do AutoGLM com um clique</string>
-    <string name="screen_title_autoglm_tool">execução automática</string>
     <string name="screen_title_default_assistant_guide">Configurações padrão do assistente</string>
     <string name="screen_title_mcp_market">Mercado MCP</string>
     <string name="screen_title_skill_market">Mercado de habilidades</string>
@@ -5110,7 +5088,6 @@ Agora é possível usar o modo AutoGLM na interface de diálogo.</string>
     <string name="uidebugger_stop_monitoring">Pare de ouvir</string>
     <string name="uidebugger_start_monitoring">Comece a ouvir</string>
     <string name="uidebugger_clear">Claro</string>
-    <string name="autoglm_virtual_screen">Desta vez usando tela virtual</string>
     <string name="htmlpackager_step1_title">Passo 1: Selecione a pasta do projeto</string>
     <string name="htmlpackager_select_folder">Selecione a pasta</string>
     <string name="htmlpackager_selected">Selecionado: %1$s</string>
@@ -5120,20 +5097,6 @@ Agora é possível usar o modo AutoGLM na interface de diálogo.</string>
     <string name="common_expand">Expandir</string>
     <string name="document_no_content_found">Nenhum conteúdo relevante encontrado.</string>
     <string name="document_block_label">Bloquear %1$d</string>
-    <string name="autoglm_go_to_model_config">Vá para a configuração do modelo</string>
-    <string name="autoglm_custom_endpoint">Endpoint personalizado (compatível com OpenAI)</string>
-    <string name="autoglm_model_name">Nome do modelo</string>
-    <string name="autoglm_restore_original">Restaure a lógica de automação original</string>
-    <string name="autoglm_step1_title">step1 Configure o modelo básico de diálogo</string>
-    <string name="autoglm_step1_warning">Não use o modelo autoglm como modelo de conversa principal</string>
-    <string name="autoglm_step1_note">Nota: Se já estiver configurado, você não precisa se preocupar com isso. Não mude para modelos pequenos como o autoglm aqui.</string>
-    <string name="autoglm_step2_title">step2 Visite o site oficial da Zhipu e obtenha a chave API</string>
-    <string name="autoglm_step3_title">step3 Preencha a chave API e clique em configuração com um clique</string>
-    <string name="autoglm_hide_advanced">Ocultar configurações avançadas</string>
-    <string name="autoglm_show_advanced">Mostrar configurações avançadas (endpoint personalizado/nome do modelo)</string>
-    <string name="autoglm_step4_title">etapa 4 Retomar a automação não AutoGLM (opcional)</string>
-    <string name="autoglm_step4_description">Se você achar difícil automatizar as operações após usar a configuração de um clique do AutoGLM, você pode clicar no botão abaixo para restaurar a lógica de automação original do software (habilitar o pacote base, desligar o pacote subagente e manter as outras configurações inalteradas). Se você deseja ativar o AutoGLM novamente, basta seguir a etapa 3 para inserir a chave e clicar em Configurar com um clique novamente.</string>
-    <string name="autoglm_restore_success">Restaurado para a lógica de automação original do software</string>
     <string name="uidebugger_create_new_package">Criar novo pacote de configuração</string>
     <string name="uidebugger_app_name">Nome do aplicativo</string>
     <string name="uidebugger_description_optional">Descrição (opcional)</string>
@@ -5297,9 +5260,6 @@ Agora é possível usar o modo AutoGLM na interface de diálogo.</string>
     <string name="emoticon_shyness">vergonha</string>
     <string name="emoticon_blush">corar</string>
     <string name="emoticon_embarrassed">Com licença</string>
-    <string name="autoglm_task_complete">✅ Missão concluída: %1$s</string>
-    <string name="autoglm_thinking_process">💭 Processo de pensamento:</string>
-    <string name="autoglm_execute_action">🎯 Execute a ação:</string>
     <string name="version_update">Atualização de versão</string>
     <string name="mcp_no_zip_selected">Nenhum arquivo ZIP selecionado</string>
     <string name="mcp_uninstall_failed">Falha na desinstalação</string>
