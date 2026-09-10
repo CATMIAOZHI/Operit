@@ -3668,7 +3668,7 @@
     <string name="token_stats_pricing_catalog_loading">正在加载内置定价目录</string>
     <string name="token_stats_pricing_catalog_remote">已使用云端价格覆盖内置价格</string>
     <string name="token_stats_pricing_catalog_bundled">正在使用 APK 内置目录</string>
-    <string name="token_stats_pricing_catalog_revision">当前版本 %1$s · 数据日期 %2$s</string>
+    <string name="token_stats_pricing_catalog_revision">当前版本 %1$s · 生成时间 %2$s</string>
     <string name="token_stats_pricing_catalog_checked">上次检查：%1$s</string>
     <string name="token_stats_pricing_catalog_not_checked">尚未检查云端更新</string>
     <string name="token_stats_pricing_catalog_refresh">更新云端目录</string>
@@ -3676,11 +3676,11 @@
     <string name="token_stats_pricing_catalog_hint">按模型名匹配官方价格，与接入提供商无关。更新优先获取 models.dev，超时读取仓库缓存；点击覆盖后生效。手动价格始终优先，历史费用不变。</string>
     <string name="token_stats_pricing_catalog_details">目录详情</string>
     <string name="token_stats_pricing_context_tiers">官方价格按输入上下文长度分档，此处显示基础档；手动价格优先。</string>
-    <string name="token_stats_pricing_catalog_downloaded">已下载版本 %1$s · 数据日期 %2$s</string>
+    <string name="token_stats_pricing_catalog_downloaded">已下载版本 %1$s · 生成时间 %2$s</string>
     <string name="token_stats_pricing_catalog_apply">覆盖内置价格</string>
     <string name="token_stats_pricing_catalog_applying">正在覆盖…</string>
     <string name="token_stats_pricing_catalog_downloading">正在下载云端目录…</string>
-    <string name="token_stats_pricing_catalog_applied">已覆盖</string>
+    <string name="token_stats_pricing_catalog_up_to_date">已是最新</string>
     <string name="token_stats_pricing_filter_all">全部</string>
     <string name="token_stats_pricing_filter_missing">价格缺失</string>
     <string name="token_stats_pricing_filter_custom">已自定义</string>
