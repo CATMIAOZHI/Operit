@@ -359,10 +359,10 @@ class CustomXmlRenderer(
         // 按需读图时图片以 <link type="image" id="..."> 写入消息内容供模型使用，聊天里
         // 展示为图片预览，而不是把它当成未知 XML 显示原始标记。
         if (resolvedTagName == "link") {
-            val imageIds = MediaLinkParser.extractImageLinkIds(trimmedContent)
-            if (imageIds.isNotEmpty()) {
+            val imageLinks = MediaLinkParser.extractImageLinkTags(trimmedContent)
+            if (imageLinks.isNotEmpty()) {
                 MediaImagePreviewBlock(
-                    imageIds = imageIds,
+                    imageLinks = imageLinks,
                     textColor = textColor,
                     modifier = modifier,
                     enableDialogs = enableDialogs,

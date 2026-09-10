@@ -4,6 +4,7 @@ import android.content.Context
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.llmprovider.AIService
+import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.core.tools.DirectoryListingData
@@ -1167,7 +1168,8 @@ open class StandardFileSystemTools(protected val context: Context) {
                         if (imageId == "error") {
                             AppLogger.e(TAG, "Failed to register image for the current model, falling back: $path")
                         } else {
-                            val link = "<link type=\"image\" id=\"$imageId\"></link>"
+                            // 带上源路径：图片池回收后历史消息还能从文件恢复这张图。
+                            val link = MediaLinkParser.buildImageLink(imageId, path)
                             AppLogger.d(TAG, "Generated on-demand image link for current model: $link")
                             return ToolResult(
                                 toolName = tool.name,
