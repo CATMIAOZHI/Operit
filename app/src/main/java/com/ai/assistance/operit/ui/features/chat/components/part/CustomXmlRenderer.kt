@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.viewinterop.AndroidView
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
 import com.ai.assistance.operit.ui.common.animations.SimpleAnimatedVisibility
 import com.ai.assistance.operit.ui.common.markdown.DefaultXmlRenderer
 import com.ai.assistance.operit.ui.common.markdown.StreamMarkdownRenderer
@@ -279,6 +280,13 @@ class CustomXmlRenderer(
             "search" -> stringResource(R.string.search_content_block)
             "status" -> stringResource(R.string.status_info_block)
             "html" -> stringResource(R.string.html_content_block)
+            "link" ->
+                // 渲染成图片预览时，预览块自带“已查看 N 张图像”的描述，这里不再重复标注
+                if (MediaLinkParser.extractImageLinkIds(trimmedContent).isEmpty()) {
+                    stringResource(R.string.image)
+                } else {
+                    null
+                }
             "mood" -> stringResource(R.string.mood_tag_block)
             "font" -> stringResource(R.string.xml_block)
             "details", "detail" -> stringResource(R.string.xml_block)
@@ -286,7 +294,7 @@ class CustomXmlRenderer(
         }
         
         // 用 Box 包裹所有内容，添加无障碍描述
-        if (tagName == "think" || tagName == "thinking") {
+        if (tagName == "think" || tagName == "thinking" || accessibilityDesc == null) {
             Box(modifier = modifier) {
                 RenderXmlContentInternal(trimmedContent, tagName, textColor, xmlStream, renderInstanceKey, Modifier)
             }
@@ -347,6 +355,26 @@ class CustomXmlRenderer(
 
         // 根据新规则处理未闭合的标签
         val isClosed = isXmlFullyClosed(trimmedContent)
+
+        // 按需读图时图片以 <link type="image" id="..."> 写入消息内容供模型使用，聊天里
+        // 展示为图片预览，而不是把它当成未知 XML 显示原始标记。
+        if (resolvedTagName == "link") {
+            val imageIds = MediaLinkParser.extractImageLinkIds(trimmedContent)
+            if (imageIds.isNotEmpty()) {
+                MediaImagePreviewBlock(
+                    imageIds = imageIds,
+                    textColor = textColor,
+                    modifier = modifier,
+                    enableDialogs = enableDialogs,
+                )
+                return
+            }
+            if (!isClosed) {
+                // 流式输出中媒体标记尚未闭合：先不渲染，等闭合后再判定是图片还是回退渲染
+                return
+            }
+        }
+
         if (!isClosed) {
             if (resolvedTagName in builtInTags && resolvedTagName != "tool" && resolvedTagName != "think" && resolvedTagName != "thinking" && resolvedTagName != "search") {
                 // 是内置标签但未闭合，则不显示任何内容，等待其闭合

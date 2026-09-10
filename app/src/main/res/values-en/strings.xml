@@ -5106,6 +5106,7 @@
     <string name="reply">Reply</string>
     <string name="image">Image</string>
     <string name="image_expired">Image (Expired)</string>
+    <string name="chat_viewed_images">Viewed %1$d image(s)</string>
     <string name="copy_content">Copy Content</string>
     <string name="user_reply_instruction">User is replying to your previous message:</string>
     <string name="workspace_status">Workspace Status</string>

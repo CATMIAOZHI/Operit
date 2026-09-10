@@ -5493,6 +5493,7 @@
     <string name="reply">回复</string>
     <string name="image">图片</string>
     <string name="image_expired">图片 (已过期)</string>
+    <string name="chat_viewed_images">已查看 %1$d 张图像</string>
     <string name="copy_content">复制内容</string>
     <string name="user_reply_instruction">用户正在回复你之前的这条消息：</string>
     <string name="workspace_status">工作区状态</string>
