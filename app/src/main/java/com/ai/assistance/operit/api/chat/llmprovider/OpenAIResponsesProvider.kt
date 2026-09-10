@@ -80,17 +80,9 @@ open class OpenAIResponsesProvider(
             )
         }
 
-        val logJson = JSONObject(jsonObject.toString())
-        if (logJson.has("tools")) {
-            val toolsArray = logJson.getJSONArray("tools")
-            logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+        logRequestBodyForDebugging("OpenAIResponsesProvider", "Final Responses request body: ") {
+            requestBodyForLogging(jsonObject)
         }
-        val sanitizedLogJson = sanitizeImageDataForLogging(logJson)
-        logLargeString(
-            "OpenAIResponsesProvider",
-            sanitizedLogJson.toString(4),
-            "Final Responses request body: "
-        )
 
         return createJsonRequestBody(jsonObject.toString())
     }
