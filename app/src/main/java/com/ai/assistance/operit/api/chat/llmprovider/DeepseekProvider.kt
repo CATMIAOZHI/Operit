@@ -157,14 +157,10 @@ class DeepseekProvider(
             )
         jsonObject.put("messages", messagesArray)
 
-        // 记录最终的请求体（省略过长的tools字段）
-        val logJson = JSONObject(jsonObject.toString())
-        if (logJson.has("tools")) {
-            val toolsArray = logJson.getJSONArray("tools")
-            logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+        // 记录最终的请求体（省略过长的tools字段），默认关闭
+        logRequestBodyForDebugging("DeepseekProvider", "Final DeepSeek reasoning mode request body: ") {
+            requestBodyForLogging(jsonObject)
         }
-        val sanitizedLogJson = sanitizeImageDataForLogging(logJson)
-        logLargeString("DeepseekProvider", sanitizedLogJson.toString(4), "Final DeepSeek reasoning mode request body: ")
 
         return createJsonRequestBody(jsonObject.toString())
     }

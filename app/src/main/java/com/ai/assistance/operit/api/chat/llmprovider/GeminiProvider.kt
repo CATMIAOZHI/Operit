@@ -1727,14 +1727,16 @@ open class GeminiProvider(
         json.put("generationConfig", generationConfig)
 
         val jsonString = json.toString()
-        // 使用分块日志函数记录请求体（省略过长的tools字段）
-        val logJson = JSONObject(jsonString)
-        if (logJson.has("tools")) {
-            val toolsArray = logJson.getJSONArray("tools")
-            logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+        if (AppLogger.logFullRequestBodies) {
+            // 使用分块日志函数记录请求体（省略过长的tools字段），默认关闭
+            val logJson = JSONObject(jsonString)
+            if (logJson.has("tools")) {
+                val toolsArray = logJson.getJSONArray("tools")
+                logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+            }
+            sanitizeImageDataForLogging(logJson)
+            logLargeString(TAG, logJson.toString(4), context.getString(R.string.gemini_request_body_json))
         }
-        sanitizeImageDataForLogging(logJson)
-        logLargeString(TAG, logJson.toString(4), context.getString(R.string.gemini_request_body_json))
 
         return jsonString.toByteArray(Charsets.UTF_8).toRequestBody(JSON)
     }

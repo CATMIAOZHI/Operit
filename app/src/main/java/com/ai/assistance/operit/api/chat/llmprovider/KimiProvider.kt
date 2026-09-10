@@ -152,13 +152,9 @@ open class KimiProvider(
             )
         jsonObject.put("messages", messagesArray)
 
-        val logJson = JSONObject(jsonObject.toString())
-        if (logJson.has("tools")) {
-            val toolsArray = logJson.getJSONArray("tools")
-            logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+        logRequestBodyForDebugging("KimiProvider", "Final Kimi K2.5 request body: ") {
+            requestBodyForLogging(jsonObject)
         }
-        val sanitizedLogJson = sanitizeImageDataForLogging(logJson)
-        logLargeString("KimiProvider", sanitizedLogJson.toString(4), "Final Kimi K2.5 request body: ")
 
         return createJsonRequestBody(jsonObject.toString())
     }

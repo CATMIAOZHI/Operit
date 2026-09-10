@@ -1160,14 +1160,16 @@ class ClaudeProvider(
             }
         }
 
-        // 日志输出时省略过长的tools字段
-        val logJson = JSONObject(jsonObject.toString())
-        if (logJson.has("tools")) {
-            val toolsArray = logJson.getJSONArray("tools")
-            logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+        if (AppLogger.logFullRequestBodies) {
+            // 日志输出时省略过长的tools字段，默认关闭
+            val logJson = JSONObject(jsonObject.toString())
+            if (logJson.has("tools")) {
+                val toolsArray = logJson.getJSONArray("tools")
+                logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+            }
+            sanitizeImageDataForLogging(logJson)
+            AppLogger.d("AIService", "Claude请求体: ${logJson.toString(4)}")
         }
-        sanitizeImageDataForLogging(logJson)
-        AppLogger.d("AIService", "Claude请求体: ${logJson.toString(4)}")
         return BuiltRequestBody(
             body = jsonObject.toString().toByteArray(Charsets.UTF_8).toRequestBody(JSON),
             thinkingFormat = appliedThinkingFormat,

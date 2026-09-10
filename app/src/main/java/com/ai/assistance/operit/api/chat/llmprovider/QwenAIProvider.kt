@@ -73,18 +73,10 @@ class QwenAIProvider(
             enableThinking = enableThinking
         )
 
-        // 记录最终的请求体（省略过长的tools字段）
-        val logJson = JSONObject(jsonObject.toString())
-        if (logJson.has("tools")) {
-            val toolsArray = logJson.getJSONArray("tools")
-            logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+        // 记录最终的请求体（省略过长的tools字段），默认关闭
+        logRequestBodyForDebugging("QwenAIProvider", "Final Qwen-compatible request body: ") {
+            requestBodyForLogging(jsonObject)
         }
-        val sanitizedLogJson = sanitizeImageDataForLogging(logJson)
-        logLargeString(
-            "QwenAIProvider",
-            sanitizedLogJson.toString(4),
-            "Final Qwen-compatible request body: "
-        )
 
         // 使用更新后的JSONObject创建新的RequestBody
         return createJsonRequestBody(jsonObject.toString())
