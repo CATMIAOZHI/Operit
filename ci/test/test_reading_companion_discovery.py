@@ -33,7 +33,13 @@ class ReadingCompanionDiscoveryTest(unittest.TestCase):
                 db.execute(triple or plain)
             self.assertEqual((2, "generated"), db.execute("SELECT chapter_index, status FROM auto_comment_runs WHERE id=1").fetchone())
             db.execute("UPDATE auto_comment_runs SET task_id='task-1' WHERE id=1")
-            archive = re.search(r'db.execSQL\("""(INSERT OR REPLACE INTO reading_task_attempts.*?)"""', store, re.S)[1]
+            # 归档 SQL 自改为 ReadingCompanionStore.pruneAutoCommentArchiveSql 生成后，不再内联在
+            # db.execSQL("""…""") 里；按生产函数定位，确保执行的就是交给 execSQL 的那一份。
+            archive = re.search(
+                r'fun pruneAutoCommentArchiveSql\(selection: String\): String\s*=\s*"""(.*?)"""',
+                store,
+                re.S,
+            )[1]
             db.execute(archive.replace("$selection", "id = 1"))
             db.execute("DELETE FROM auto_comment_runs WHERE id=1")
             query = re.search(r'db.rawQuery\("""(.*?FROM reading_task_attempts.*?)"""', repository, re.S)[1]
