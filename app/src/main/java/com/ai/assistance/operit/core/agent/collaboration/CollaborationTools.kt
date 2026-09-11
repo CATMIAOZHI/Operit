@@ -12,6 +12,16 @@ object CollaborationTools {
         "list_agent_models",
     )
 
+    /**
+     * Travelling with the model catalogue rather than in the tool description: the catalogue exists
+     * so a caller can honour a model the user asked for, which is not a licence to switch by itself.
+     */
+    fun listNote(chinese: Boolean): String = if (chinese) {
+        "除非用户偏好或同意，不要调用其他模型。"
+    } else {
+        "Do not use a different model unless the user prefers or agrees to it."
+    }
+
     fun category(chinese: Boolean, profiles: List<AgentProfile>): SystemToolPromptCategory {
         val limits = com.ai.assistance.operit.core.agent.AgentProfileRepository.instance.collaborationLimits.value
         fun text(cn: String, en: String) = if (chinese) cn else en
