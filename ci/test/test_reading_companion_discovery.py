@@ -10,34 +10,159 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = REPO_ROOT / "examples" / "reading_companion"
+READING_SOURCE_ROOT = REPO_ROOT / "app/src/main/java/com/ai/assistance/operit/features/reading"
+
+
+def _skip_kotlin_string(source: str, index: int) -> int:
+    if source.startswith('"""', index):
+        return source.index('"""', index + 3) + 3
+    index += 1
+    while index < len(source):
+        if source[index] == "\\":
+            index += 2
+            continue
+        if source[index] == '"':
+            return index + 1
+        index += 1
+    raise AssertionError("unterminated Kotlin string literal")
+
+
+def _skip_kotlin_comment(source: str, index: int) -> int:
+    if source.startswith("/*", index):
+        return source.index("*/", index + 2) + 2
+    end = source.find("\n", index)
+    return len(source) if end < 0 else end
+
+
+def _skip_kotlin_char_literal(source: str, index: int) -> int:
+    index += 1
+    while index < len(source):
+        if source[index] == "\\":
+            index += 2
+            continue
+        if source[index] == "'":
+            return index + 1
+        index += 1
+    raise AssertionError("unterminated Kotlin char literal")
+
+
+def function_body(source: str, signature: str) -> str:
+    """按签名取 Kotlin 函数体的花括号内容，跳过字符串、字符字面量与注释，不依赖偏移或长度魔数。"""
+    body_start = source.index("{", source.index(signature))
+    depth = 0
+    index = body_start
+    while index < len(source):
+        char = source[index]
+        if char == '"':
+            index = _skip_kotlin_string(source, index)
+            continue
+        if char == "'":
+            index = _skip_kotlin_char_literal(source, index)
+            continue
+        if char == "/" and source[index + 1 : index + 2] in {"/", "*"}:
+            index = _skip_kotlin_comment(source, index)
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[body_start + 1 : index]
+        index += 1
+    raise AssertionError(f"unterminated Kotlin function body: {signature}")
+
+
+def exec_sql_statements(body: str) -> list[str]:
+    """函数体内 db.execSQL(...) 的 SQL 字面量（多行三引号或单行字符串）。"""
+    return [
+        triple or plain
+        for triple, plain in re.findall(
+            r'db\.execSQL\((?:"""(.*?)"""|"([^"\n]*)")\)', body, re.S
+        )
+    ]
+
+
+def raw_query_in_function(source: str, signature: str, marker: str) -> str:
+    """函数体内包含 marker 的三引号 rawQuery SQL。"""
+    body = function_body(source, signature)
+    match = re.search(r'db\.rawQuery\("""(.*?%s.*?)"""' % re.escape(marker), body, re.S)
+    assert match is not None, f"{signature} 中找不到包含 {marker} 的 rawQuery"
+    return match[1]
 
 
 class ReadingCompanionDiscoveryTest(unittest.TestCase):
     def test_task_schema_upgrades_old_runs_and_archive_remains_queryable(self) -> None:
-        directory = REPO_ROOT / "app/src/main/java/com/ai/assistance/operit/features/reading"
-        repository = (directory / "ReadingTaskRepository.kt").read_text(encoding="utf-8")
-        store = (directory / "ReadingCompanionStore.kt").read_text(encoding="utf-8")
-        schema = repository[repository.index("fun createTables"):]
-        schema += store[store.index("private fun createTaskTables"):store.index("private fun createTaskTables") + 900]
+        repository = (READING_SOURCE_ROOT / "ReadingTaskRepository.kt").read_text(encoding="utf-8")
+        store = (READING_SOURCE_ROOT / "ReadingCompanionStore.kt").read_text(encoding="utf-8")
         with sqlite3.connect(":memory:") as db:
-            db.execute("""CREATE TABLE auto_comment_runs (
+            # 旧库结构：auto_comment_runs 还没有 task_id 列（升级由 ALTER 补齐）。
+            db.execute(
+                """CREATE TABLE auto_comment_runs (
                 id INTEGER PRIMARY KEY, chapter_index INTEGER, chapter_title TEXT,
                 status TEXT, stage TEXT, subagent_run_id TEXT, child_chat_id TEXT,
                 actual_input_tokens INTEGER, actual_output_tokens INTEGER,
-                started_at INTEGER, finished_at INTEGER)""")
+                started_at INTEGER, finished_at INTEGER)"""
+            )
             db.execute("INSERT INTO auto_comment_runs(id, chapter_index, status, started_at) VALUES(1, 2, 'generated', 1)")
+            # id=2：有任务关联但章节为 NULL（「无下一章」收尾或未解析到章节即中断的 run）。
+            db.execute("INSERT INTO auto_comment_runs(id, chapter_index, status, started_at) VALUES(2, NULL, 'interrupted', 2)")
             db.execute("ALTER TABLE auto_comment_runs ADD COLUMN task_id TEXT")
-            statements = re.findall(r'db.execSQL\((?:"""(.*?)"""|"([^"\n]*)")\)', schema, re.S)
+
+            schema = function_body(repository, "fun createTables(db: SQLiteDatabase)")
+            schema += function_body(store, "private fun createTaskTables(db: SQLiteDatabase)")
+            statements = exec_sql_statements(schema)
             self.assertGreaterEqual(len(statements), 5)
-            for triple, plain in statements:
-                db.execute(triple or plain)
-            self.assertEqual((2, "generated"), db.execute("SELECT chapter_index, status FROM auto_comment_runs WHERE id=1").fetchone())
+            for statement in statements:
+                db.execute(statement)
+
+            self.assertEqual(
+                (2, "generated"),
+                db.execute("SELECT chapter_index, status FROM auto_comment_runs WHERE id=1").fetchone(),
+            )
             db.execute("UPDATE auto_comment_runs SET task_id='task-1' WHERE id=1")
-            archive = re.search(r'db.execSQL\("""(INSERT OR REPLACE INTO reading_task_attempts.*?)"""', store, re.S)[1]
-            db.execute(archive.replace("$selection", "id = 1"))
-            db.execute("DELETE FROM auto_comment_runs WHERE id=1")
-            query = re.search(r'db.rawQuery\("""(.*?FROM reading_task_attempts.*?)"""', repository, re.S)[1]
-            attempts = db.execute(query, ("task-1", "task-1")).fetchall()
+            db.execute("UPDATE auto_comment_runs SET task_id='task-2', chapter_index=NULL WHERE id=2")
+
+            # 归档 SQL 自改为 ReadingCompanionStore.pruneAutoCommentArchiveSql 生成后，不再内联在
+            # db.execSQL("""…""") 里；按生产函数定位，确保执行的就是交给 execSQL 的那一份。
+            archive = re.search(
+                r'fun pruneAutoCommentArchiveSql\(selection: String\): String\s*=\s*"""(.*?)"""',
+                store,
+                re.S,
+            )[1].replace("$selection", "id IN (1, 2)")
+
+            db.execute(archive)
+            # 空章节 run 若参与归档会在 reading_task_attempts.chapter_index 上触发 NOT NULL 并回滚整个
+            # 剪枝事务，因此必须被跳过，只归档章节有效的 run。
+            self.assertEqual(
+                [(1, "task-1", 2)],
+                db.execute(
+                    "SELECT id, task_id, chapter_index FROM reading_task_attempts ORDER BY id"
+                ).fetchall(),
+            )
+            # 负向对照：去掉空章节过滤后，同一条 SQL 必须在真实 SQLite 上复现该约束失败。
+            legacy_archive = re.sub(
+                r"AND\s+chapter_index\s+IS\s+NOT\s+NULL\s*", "", archive, count=1
+            )
+            self.assertNotEqual(archive, legacy_archive, "空章节过滤没被去掉，负向对照失效")
+            with self.assertRaises(sqlite3.IntegrityError) as raised:
+                db.execute(legacy_archive)
+            self.assertIn("chapter_index", str(raised.exception))
+
+            # 剪枝 DELETE 用同等 selection（不含 chapter_index 条件），空章节脏 run 同样被清除（自愈）。
+            db.execute("DELETE FROM auto_comment_runs WHERE id IN (1, 2)")
+            self.assertEqual(
+                0,
+                db.execute("SELECT COUNT(*) FROM auto_comment_runs WHERE id IN (1, 2)").fetchone()[0],
+            )
+
+            attempts = db.execute(
+                raw_query_in_function(
+                    repository,
+                    "fun view(record: JSONObject): JSONObject",
+                    "FROM reading_task_attempts",
+                ),
+                ("task-1", "task-1"),
+            ).fetchall()
             self.assertEqual(1, len(attempts))
             self.assertEqual(2, attempts[0][1])
             self.assertEqual(1, attempts[0][-1])

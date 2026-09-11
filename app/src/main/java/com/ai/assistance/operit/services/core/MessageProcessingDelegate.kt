@@ -14,7 +14,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
-import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingRepository
 import com.ai.assistance.operit.core.tools.agent.PhoneAgentJobRegistry
 import com.ai.assistance.operit.data.model.*
@@ -33,7 +32,6 @@ import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
-import com.ai.assistance.operit.ui.features.chat.webview.workspace.WorkspaceBackupManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +63,13 @@ internal fun preferToolBoundarySnapshot(
     return boundarySnapshot.displayContent +
         replayCandidate.substring(boundarySnapshot.replayCharCount)
 }
+
+internal fun boundaryAfterRollback(
+    current: EnhancedAIService.ToolExecutionBoundarySnapshot?,
+    sealed: EnhancedAIService.ToolExecutionBoundarySnapshot?,
+    processedRevisionEventCount: Int,
+): EnhancedAIService.ToolExecutionBoundarySnapshot? =
+    current?.takeIf { it.revisionEventCount >= processedRevisionEventCount } ?: sealed
 
 /** Cancellation bypasses provider EOF finalization, so close only Operit's own reasoning envelope. */
 internal fun finalizeInterruptedStreamingContent(content: String): String {
@@ -226,6 +231,9 @@ class MessageProcessingDelegate(
 
     fun steeringTurnId(chatId: String): String? =
         chatRuntimes[chatId]?.takeIf { it.canSteer }?.inputInbox?.turnId
+
+    fun pendingTurnInputKind(chatId: String): TurnInputInbox.PendingInputKind? =
+        chatRuntimes[chatId]?.inputInbox?.pendingInputKind()
 
     fun trySteerMessage(chatId: String, expectedTurnId: String, input: TurnInputInbox.Input): Boolean {
         val runtime = chatRuntimes[chatId] ?: return false
@@ -577,7 +585,10 @@ class MessageProcessingDelegate(
 
     fun cancelMessage(chatId: String) {
         coroutineScope.launch(Dispatchers.IO) {
-            cancelMessageInternal(chatId, keepPartialResponse = true)
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                .getInstance(context).stopTreeForUser(chatId) {
+                    cancelMessageInternal(chatId, keepPartialResponse = true)
+                }
         }
     }
 
@@ -885,42 +896,12 @@ class MessageProcessingDelegate(
                 displayMode =
                     if (effectiveHideUserMessage) {
                         ChatMessageDisplayMode.HIDDEN_PLACEHOLDER
+                    } else if (turnOptions.isCollaborationAgent) {
+                        ChatMessageDisplayMode.COLLABORATION_TASK
                     } else {
                         ChatMessageDisplayMode.NORMAL
                     }
             )
-
-            val toolHandler = AIToolHandler.getInstance(context)
-            var workspaceToolHookSession: WorkspaceBackupManager.WorkspaceToolHookSession? = null
-
-            // 在消息发送期间临时挂载 workspace hook，结束后卸载
-            if (!workspacePath.isNullOrBlank()) {
-                val attachWorkspaceHookStartTime = messageTimingNow()
-                try {
-                    val session =
-                        WorkspaceBackupManager.getInstance(context)
-                            .createWorkspaceToolHookSession(
-                                workspacePath = workspacePath,
-                                workspaceEnv = workspaceEnv,
-                                messageTimestamp = userMessage.timestamp,
-                                chatId = chatId
-                            )
-                    workspaceToolHookSession = session
-                    toolHandler.addToolHook(session)
-                    AppLogger.d(
-                        TAG,
-                        "Workspace hook attached for timestamp=${userMessage.timestamp}, path=$workspacePath"
-                    )
-                    logMessageTiming(
-                        stage = "delegate.attachWorkspaceHook",
-                        startTimeMs = attachWorkspaceHookStartTime,
-                        details = "chatId=$chatId, workspacePath=$workspacePath"
-                    )
-                } catch (e: Exception) {
-                    AppLogger.e(TAG, "Failed to attach workspace hook", e)
-                    _nonFatalErrorEvent.emit(context.getString(R.string.message_workspace_sync_failed, e.message))
-                }
-            }
 
             if (shouldAddUserMessageToChat && chatId != null) {
                 // 等待消息添加到聊天历史完成，确保getChatHistory()包含新消息
@@ -1088,7 +1069,7 @@ class MessageProcessingDelegate(
                 val effectiveMaxTokens = maxTokens
                 val effectiveEnableSummary = enableSummary && effectivePersistTurn
                 val effectiveTokenUsageThreshold =
-                    if (effectiveEnableSummary) tokenUsageThreshold else Double.MAX_VALUE
+                    if (effectiveEnableSummary || turnOptions.isCollaborationAgent) tokenUsageThreshold else Double.MAX_VALUE
                 val effectiveOnTokenLimitExceeded = if (effectiveEnableSummary) {
                     suspend {
                         onTokenLimitExceeded(
@@ -1140,7 +1121,9 @@ class MessageProcessingDelegate(
                     chatHistory = if (isGroupOrchestrationTurn && userMessageAdded && chatHistory.isNotEmpty()) {
                         chatHistory.subList(0, chatHistory.size - 1)
                     } else {
-                        chatHistory
+                        turnOptions.collaborationHistoryCutoff?.let { cutoff ->
+                            chatHistory.filter { it.timestamp > cutoff }
+                        } ?: chatHistory
                     },
                     workspacePath = workspacePath,
                     workspaceEnv = workspaceEnv,
@@ -1166,29 +1149,36 @@ class MessageProcessingDelegate(
                         recordCurrentTurnToolInvocation(chatId, toolName)
                     },
                     onToolExecutionBoundary = boundary@ { boundarySnapshot ->
-                        toolBoundaryContentSnapshot.set(boundarySnapshot)
-                        chatRuntime.toolBoundarySnapshot = boundarySnapshot
                         val snapshotMessage = toolBoundaryMessageReady.await() ?: return@boundary
                         val targetChatId = chatId ?: return@boundary
-                        persistAssistantMessage(
-                            targetChatId,
-                            snapshotMessage.copy(content = boundarySnapshot.displayContent),
-                        )
+                        chatRuntime.transcriptMutex.withLock {
+                            toolBoundaryContentSnapshot.set(boundarySnapshot)
+                            chatRuntime.toolBoundarySnapshot = boundarySnapshot
+                            chatRuntime.steeredTranscript.project(
+                                snapshotMessage.copy(content = boundarySnapshot.displayContent),
+                            ).forEach { addMessageToChat(targetChatId, it) }
+                        }
                     },
                     turnInputInbox = chatRuntime.inputInbox,
                     onTurnInput = { texts, boundary ->
                         val snapshotMessage = requireNotNull(toolBoundaryMessageReady.await())
-                        toolBoundaryContentSnapshot.set(boundary)
-                        chatRuntime.toolBoundarySnapshot = boundary
-                        chatRuntime.steeringBoundarySnapshot = boundary
                         chatRuntime.transcriptMutex.withLock {
+                            toolBoundaryContentSnapshot.set(boundary)
+                            chatRuntime.toolBoundarySnapshot = boundary
+                            chatRuntime.steeringBoundarySnapshot = boundary
                             chatRuntime.steeredTranscript.project(snapshotMessage.copy(
                                 content = boundary.displayContent, contentStream = null,
+                                displayMode = ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE,
                             )).forEach { addMessageToChat(chatId, it) }
-                            texts.forEach { text ->
+                            texts.forEach { input ->
                                 addMessageToChat(chatId, ChatMessage(
-                                    sender = "user", content = text,
-                                    roleName = context.getString(R.string.message_role_user),
+                                    sender = "user", content = input.text,
+                                    roleName = input.agentPath ?: context.getString(R.string.message_role_user),
+                                    displayMode = when {
+                                        input.agentPath == null -> ChatMessageDisplayMode.NORMAL
+                                        input.startsAgentTurn -> ChatMessageDisplayMode.COLLABORATION_TASK
+                                        else -> ChatMessageDisplayMode.COLLABORATION_EVENT
+                                    },
                                 ))
                             }
                             val nextAssistantTimestamp = ChatMessageTimestampAllocator.next()
@@ -1211,6 +1201,8 @@ class MessageProcessingDelegate(
                     terminalToolNames = turnOptions.terminalToolNames,
                     promptHooksEnabled = turnOptions.promptHooksEnabled,
                     systemPromptOverride = turnOptions.systemPromptOverride,
+                    collaborationHistory = turnOptions.collaborationHistory,
+                    collaborationInput = turnOptions.isCollaborationAgent,
                 )
                 } catch (error: Throwable) {
                     toolBoundaryMessageReady.complete(null)
@@ -1264,11 +1256,18 @@ class MessageProcessingDelegate(
                 // 检查是否启用waifu模式来决定是否显示流式过程
                 val waifuPreferences = WaifuPreferences.getInstance(context)
                 isWaifuModeEnabled = waifuPreferences.enableWaifuModeFlow.first()
-                chatRuntime.canSteer = effectivePersistTurn && !isWaifuModeEnabled &&
-                    !turnOptions.isSubTask && !isGroupOrchestrationTurn
+                val collaborationEnabled =
+                    com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy
+                        .visibility(context, chatId, turnOptions.isSubTask)["spawn_agent"] == true
+                chatRuntime.canSteer = effectivePersistTurn && (!isWaifuModeEnabled || collaborationEnabled) &&
+                    (!turnOptions.isSubTask || turnOptions.isCollaborationAgent) && !isGroupOrchestrationTurn
+                if (chatRuntime.canSteer) {
+                    com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                        .getInstance(context).deliverPending()
+                }
                 toolBoundaryMessageReady.complete(
                     aiMessage.takeIf {
-                        effectivePersistTurn && chatId != null && !isWaifuModeEnabled
+                        effectivePersistTurn && chatId != null && (!isWaifuModeEnabled || collaborationEnabled)
                     }
                 )
                 val waifuCharDelay = waifuPreferences.waifuCharDelayFlow.first()
@@ -1418,9 +1417,20 @@ class MessageProcessingDelegate(
                                 return true
                             }
 
-                            suspend fun persistStreamingSnapshot(contentSnapshot: String) {
+                            suspend fun persistStreamingSnapshotLocked(contentSnapshot: String) {
                                 val targetChatId = chatId ?: return
-                                persistAssistantMessage(targetChatId, aiMessage.copy(content = contentSnapshot))
+                                val current = preferToolBoundarySnapshot(
+                                    toolBoundaryContentSnapshot.get(), contentSnapshot,
+                                )
+                                aiMessage.content = current
+                                chatRuntime.steeredTranscript.project(aiMessage.copy(content = current))
+                                    .forEach { addMessageToChat(targetChatId, it) }
+                            }
+
+                            suspend fun persistStreamingSnapshot(contentSnapshot: String) {
+                                chatRuntime.transcriptMutex.withLock {
+                                    persistStreamingSnapshotLocked(contentSnapshot)
+                                }
                             }
 
                             suspend fun drainRevisionEvents() {
@@ -1438,15 +1448,23 @@ class MessageProcessingDelegate(
                                         TextStreamEventType.ROLLBACK -> {
                                             // Provider rollback applies to the new response, not
                                             // the already persisted pre-steer assistant prefix.
-                                            val sealedBoundary = chatRuntime.steeringBoundarySnapshot
-                                            toolBoundaryContentSnapshot.set(sealedBoundary)
-                                            chatRuntime.toolBoundarySnapshot = sealedBoundary
                                             val snapshot =
                                                 revisionTracker.rollback(event.id)?.toString()
                                                     ?: continue
-                                            aiMessage.content = snapshot
-                                            if (claimStreamingSnapshot()) {
-                                                persistStreamingSnapshot(snapshot)
+                                            chatRuntime.transcriptMutex.withLock {
+                                                // The producer may already have published a boundary
+                                                // that includes this delayed rollback event.
+                                                val sealedBoundary = boundaryAfterRollback(
+                                                    toolBoundaryContentSnapshot.get(),
+                                                    chatRuntime.steeringBoundarySnapshot,
+                                                    processedRevisionEventCount,
+                                                )
+                                                toolBoundaryContentSnapshot.set(sealedBoundary)
+                                                chatRuntime.toolBoundarySnapshot = sealedBoundary
+                                                aiMessage.content = snapshot
+                                                if (claimStreamingSnapshot()) {
+                                                    persistStreamingSnapshotLocked(snapshot)
+                                                }
                                             }
                                             if (!isWaifuModeEnabled) {
                                                 tryEmitScrollToBottomThrottled(chatId)
@@ -1513,13 +1531,7 @@ class MessageProcessingDelegate(
                                     val contentSnapshot =
                                         if (claimStreamingSnapshot()) liveContent.toString() else null
                                     if (contentSnapshot != null) {
-                                        val nonRegressingSnapshot =
-                                            preferToolBoundarySnapshot(
-                                                toolBoundaryContentSnapshot.get(),
-                                                contentSnapshot,
-                                            )
-                                        aiMessage.content = nonRegressingSnapshot
-                                        persistStreamingSnapshot(nonRegressingSnapshot)
+                                        persistStreamingSnapshot(contentSnapshot)
                                     }
                                     if (!isWaifuModeEnabled) {
                                         tryEmitScrollToBottomThrottled(chatId)
@@ -1708,19 +1720,6 @@ class MessageProcessingDelegate(
                     startTimeMs = finalizeMessageStartTime,
                     details = "chatId=$activeChatId, notifyTurnComplete=$shouldNotifyTurnComplete"
                 )
-
-                workspaceToolHookSession?.let { session ->
-                    val cleanupWorkspaceHookStartTime = messageTimingNow()
-                    runCatching { toolHandler.removeToolHook(session) }
-                        .onFailure { AppLogger.w(TAG, "Failed to remove workspace hook", it) }
-                    runCatching { session.close() }
-                        .onFailure { AppLogger.w(TAG, "Failed to close workspace hook session", it) }
-                    logMessageTiming(
-                        stage = "delegate.cleanupWorkspaceHook",
-                        startTimeMs = cleanupWorkspaceHookStartTime,
-                        details = "chatId=$activeChatId"
-                    )
-                }
 
                 val cleanupRuntimeStartTime = messageTimingNow()
                 cleanupRuntimeAfterSend(chatId, chatRuntime)

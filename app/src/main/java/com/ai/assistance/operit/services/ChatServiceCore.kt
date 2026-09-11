@@ -19,11 +19,9 @@ import com.ai.assistance.operit.services.core.ChatTurnTerminalSignal
 import com.ai.assistance.operit.services.core.TokenStatisticsDelegate
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.ui.features.chat.viewmodel.UiStateDelegate
-import com.ai.assistance.operit.ui.features.chat.webview.workspace.process.WorkspaceChangeTracker
 import com.ai.assistance.operit.util.stream.SharedStream
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.ConcurrentHashMap
@@ -69,8 +67,6 @@ class ChatServiceCore(
 
     private fun Long.toTokenCountCallbackInt(): Int = coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
     private var uiBridge: ChatServiceUiBridge = EmptyChatServiceUiBridge
-    private val workspaceChangeTracker = WorkspaceChangeTracker.getInstance(context)
-    private val workspaceTrackerOwnerId = "${selectionMode.name}@${System.identityHashCode(this)}"
 
     init {
         AppLogger.d(TAG, "ChatServiceCore 初始化")
@@ -130,6 +126,15 @@ class ChatServiceCore(
             },
             onScrollToBottom = {
                 messageProcessingDelegate.scrollToBottom()
+            },
+            onStableHistoryLoaded = { chatId ->
+                if (::messageCoordinationDelegate.isInitialized &&
+                    !messageProcessingDelegate.isChatLoading(chatId) &&
+                    com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                        .getInstance(context).isAgent(chatId)
+                ) {
+                    messageCoordinationDelegate.refreshStableContextWindow(chatId = chatId)
+                }
             }
         )
 
@@ -145,22 +150,6 @@ class ChatServiceCore(
                         EnhancedAIService.getChatInstance(context, chatId)
                     )
                 }
-            }
-        }
-
-        coroutineScope.launch {
-            combine(
-                chatHistoryDelegate.currentChatId,
-                chatHistoryDelegate.chatHistories
-            ) { chatId, histories ->
-                histories.firstOrNull { it.id == chatId }
-            }.collect { chat ->
-                workspaceChangeTracker.updateOwner(
-                    ownerId = workspaceTrackerOwnerId,
-                    chatId = chat?.id,
-                    workspacePath = chat?.workspace,
-                    workspaceEnv = chat?.workspaceEnv
-                )
             }
         }
 

@@ -51,6 +51,8 @@ class PetCompanionService : Service() {
     private lateinit var windows: WindowManager
     private var view: ComposeView? = null
     private var bubbleView: ComposeView? = null
+    private var bubbleFadeJob: Job? = null
+    private var bubbleGeneration = 0
     private var bubbleHeight = 0
     private var bubbleWidth = 0
     private var bubblePosition = Offset.Zero
@@ -223,6 +225,10 @@ class PetCompanionService : Service() {
             // Keep it invisible until its first measurement supplies the anchored position.
             windows.addView(bubble, bubbleLayoutParams())
             bubbleView = bubble
+            bubbleGeneration++
+            bubble.alpha = 0f
+            bubbleFadeJob?.cancel()
+            bubbleFadeJob = null
             updateBubblePlacement()
         } catch (error: RuntimeException) {
             bubble.disposeComposition()
@@ -281,6 +287,17 @@ class PetCompanionService : Service() {
                 removeBubble()
             }
         }
+        if (bubbleWidth > 0 && bubbleHeight > 0 && bubble.alpha < 1f && bubbleFadeJob == null) {
+            val generation = bubbleGeneration
+            bubbleFadeJob = scope.launch {
+                try {
+                    bubble.animate().alpha(1f).setDuration(PET_BUBBLE_FADE_IN_MS.toLong())
+                        .withEndAction { if (generation == bubbleGeneration) bubbleFadeJob = null }.start()
+                } catch (error: RuntimeException) {
+                    if (generation == bubbleGeneration) bubbleFadeJob = null
+                }
+            }
+        }
     }
 
     private fun removeBubble() {
@@ -288,6 +305,31 @@ class PetCompanionService : Service() {
         bubbleView = null
         bubbleHeight = 0
         bubbleWidth = 0
+        bubbleFadeJob?.cancel()
+        bubbleFadeJob = scope.launch {
+            // Teardown (overlay hidden) removes the pet window immediately, so the
+            // bubble must not linger alone; only user toggles fade out in place.
+            if (view == null || bubble.alpha <= 0f) {
+                detachBubble(bubble)
+                // A re-created bubble owns a fresh fade job; only clear the stale one.
+                if (bubbleView == null) bubbleFadeJob = null
+                return@launch
+            }
+            try {
+                bubble.animate().alpha(0f).setDuration(PET_BUBBLE_FADE_OUT_MS.toLong())
+                    .withEndAction {
+                        detachBubble(bubble)
+                        // A re-created bubble owns a fresh fade job; only clear the stale one.
+                        if (bubbleView == null) bubbleFadeJob = null
+                    }.start()
+            } catch (error: RuntimeException) {
+                detachBubble(bubble)
+                if (bubbleView == null) bubbleFadeJob = null
+            }
+        }
+    }
+
+    private fun detachBubble(bubble: ComposeView) {
         bubble.disposeComposition()
         try {
             windows.removeViewImmediate(bubble)

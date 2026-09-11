@@ -201,7 +201,8 @@ object CliToolModeSupport {
         packageManager: PackageManager,
         roleCardToolAccess: ResolvedCharacterCardToolAccess,
         useEnglish: Boolean,
-        includeSubagentTools: Boolean = true
+        includeSubagentTools: Boolean = true,
+        collaborationVisibility: Map<String, Boolean> = emptyMap(),
     ): List<HiddenToolCatalogEntry> {
         val categories = buildBuiltinAndInternalCategories(useEnglish, includeSubagentTools)
         val builtinToolNames = buildBuiltinToolNameSet(useEnglish, includeSubagentTools)
@@ -209,6 +210,7 @@ object CliToolModeSupport {
 
         categories.forEach { category ->
             category.tools.forEach { tool ->
+                if (collaborationVisibility[tool.name] == false) return@forEach
                 if (tool.name == "use_package") {
                     return@forEach
                 }

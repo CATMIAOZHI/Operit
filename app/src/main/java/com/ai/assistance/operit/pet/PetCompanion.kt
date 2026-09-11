@@ -1,6 +1,11 @@
 package com.ai.assistance.operit.pet
 
 import android.os.SystemClock
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -45,6 +50,27 @@ import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 internal const val PET_BUBBLE_WIDTH_DP = 232
+internal const val PET_BUBBLE_FADE_IN_MS = 220
+internal const val PET_BUBBLE_FADE_OUT_MS = 160
+
+/**
+ * Keeps the bubble's layout space while its exit animation is still running.
+ * The bubble docks beside the pet, so shrinking the group width as soon as the
+ * bubble is hidden would measure the exiting bubble at zero width and clip it.
+ */
+@Composable
+internal fun bubbleOccupiesSpace(showBubble: Boolean): Boolean {
+    var occupies by remember { mutableStateOf(showBubble) }
+    LaunchedEffect(showBubble) {
+        if (showBubble) {
+            occupies = true
+        } else {
+            delay(PET_BUBBLE_FADE_OUT_MS.toLong())
+            occupies = false
+        }
+    }
+    return occupies
+}
 
 @Composable
 internal fun PetCompanion(
@@ -156,7 +182,11 @@ internal fun PetCompanion(
                 dizzy = dizzy,
                 animationOverride = if (preview && !dizzy) previewAnimation else null,
             )
-            if (hasBubble) {
+            AnimatedVisibility(
+                visible = hasBubble,
+                enter = fadeIn(animationSpec = tween(PET_BUBBLE_FADE_IN_MS, easing = FastOutSlowInEasing)),
+                exit = fadeOut(animationSpec = tween(PET_BUBBLE_FADE_OUT_MS)),
+            ) {
                 Box(Modifier.padding(4.dp)) {
                     Surface(
                         shape = RoundedCornerShape(22.dp),

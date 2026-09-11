@@ -10,6 +10,10 @@ data class ChatTurnOptions(
     /** Stable in-process identity for callers that need the terminal result of this exact turn. */
     val turnId: String? = null,
     val isSubTask: Boolean = false,
+    /** Host-owned v2 collaboration turns accept mailbox steering without enabling it for v1. */
+    val isCollaborationAgent: Boolean = false,
+    val collaborationHistory: List<com.ai.assistance.operit.core.chat.hooks.PromptTurn> = emptyList(),
+    val collaborationHistoryCutoff: Long? = null,
     /** Runtime model-function route. Internal turns can use a functional model without becoming CHAT. */
     val functionType: FunctionType = FunctionType.CHAT,
     /** Per-turn hard gate. False hides tool schemas and ignores tool-call markup in the response. */

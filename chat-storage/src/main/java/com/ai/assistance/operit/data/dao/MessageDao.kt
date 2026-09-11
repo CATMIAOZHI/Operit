@@ -11,6 +11,20 @@ import com.ai.assistance.operit.data.model.MessageEntity
 /** 消息DAO接口，定义对消息表的数据访问方法 */
 @Dao
 interface MessageDao {
+    /** Repair repeated persistence of sealed AI segments; differing content or metadata survives. */
+    @Query("""
+        DELETE FROM messages
+        WHERE chatId = :chatId AND sender = 'ai' AND displayMode = 'ASSISTANT_INTERMEDIATE'
+          AND messageId NOT IN (
+            SELECT MIN(messageId) FROM messages
+            WHERE chatId = :chatId AND sender = 'ai' AND displayMode = 'ASSISTANT_INTERMEDIATE'
+            GROUP BY chatId, sender, content, timestamp, roleName, selectedVariantIndex,
+                provider, modelName, inputTokens, outputTokens, cachedInputTokens,
+                sentAt, outputDurationMs, waitDurationMs, completedAt, displayMode, isFavorite
+          )
+    """)
+    suspend fun deleteExactDuplicateIntermediateMessages(chatId: String): Int
+
     /** 获取消息总数 */
     @Query("SELECT COUNT(*) FROM messages")
     suspend fun getTotalMessageCount(): Int

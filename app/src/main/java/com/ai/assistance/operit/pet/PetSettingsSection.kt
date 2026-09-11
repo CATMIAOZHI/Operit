@@ -201,7 +201,7 @@ fun PetSettingsSection() {
                     contentAlignment = Alignment.Center,
                 ) {
                     val previewSettings = settings.copy(sizeDp = size, opacity = opacity)
-                    val width = petWidth(maxWidth.value, size, PET_BUBBLE_WIDTH_DP.toFloat(), settings.edge, settings.showBubble).dp
+                    val width = petWidth(maxWidth.value, size, PET_BUBBLE_WIDTH_DP.toFloat(), settings.edge, bubbleOccupiesSpace(settings.showBubble)).dp
                     val anchor = dockPet(settings.edge, 0.5f, 0.5f)
                     PetCompanion(
                         settings = previewSettings, onDrag = {}, onDragEnd = {},

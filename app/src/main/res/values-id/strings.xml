@@ -1802,11 +1802,6 @@
     <string name="confirm_edit_and_resend_title">Konfirmasi Edit dan Kirim Ulang</string>
     <string name="confirm_edit_and_resend_message">Semua pesan setelah pesan ini akan dihapus, konten yang diedit akan dikirim ulang sebagai pertanyaan baru, dan ruang kerja yang terikat akan dikembalikan ke keadaan sebelum pesan ini. Tindakan ini tidak dapat dibatalkan. Yakin ingin melanjutkan?</string>
     <string name="confirm_edit_and_resend_confirm">Konfirmasi Edit dan Kirim Ulang</string>
-    <string name="workspace_changes_preview_title">Pratinjau Perubahan File Ruang Kerja</string>
-    <string name="workspace_change_added">Ditambahkan</string>
-    <string name="workspace_change_deleted">Dihapus</string>
-    <string name="workspace_change_modified">Diubah</string>
-    <string name="workspace_changes_more">dan %1$d perubahan file lainnya</string>
     <string name="multi_select">Pilih Banyak</string>
     <string name="exit_multi_select">Keluar dari Pilih Banyak</string>
     <string name="select_all_messages">Pilih Semua</string>
@@ -2060,17 +2055,6 @@
     <string name="tool_process_limit_remover_desc">Kelola batas jumlah proses phantom di Android 12+, izinkan lebih banyak proses latar belakang</string>
     <string name="tool_html_packager">Pengemas HTML</string>
     <string name="tool_html_packager_desc">Kemas file HTML dan dependensinya menjadi satu file HTML, mudah dibagikan dan diterapkan</string>
-    <string name="tool_autoglm_one_click">Konfigurasi Satu Klik AutoGLM</string>
-    <string name="tool_autoglm_one_click_desc">Konfigurasi model autoglm-phone untuk pengontrol UI dan alihkan toolkit AutoGLM dengan satu klik</string>
-    <string name="tool_autoglm_tool">Eksekusi AutoGLM</string>
-    <string name="tool_autoglm_tool_desc">Gunakan agen autoglm-phone untuk menjalankan tugas otomatisasi ponsel langkah demi langkah</string>
-    <string name="autoglm_config_name">Konfigurasi AutoGLM</string>
-    <string name="autoglm_one_click_title">Konfigurasi Satu Klik AutoGLM</string>
-    <string name="autoglm_one_click_subtitle">Buat konfigurasi model autoglm-phone Zhipu untuk pengontrol UI secara otomatis, dan alihkan toolkit AutoGLM.</string>
-    <string name="autoglm_open_apikey_center">Buka Halaman API Key Zhipu</string>
-    <string name="autoglm_open_apikey_tip">Setelah login, buat dan salin API Key di platform Zhipu</string>
-    <string name="autoglm_api_key_placeholder">Tempel API Key Zhipu Anda di sini</string>
-    <string name="autoglm_one_click_button">Konfigurasi AutoGLM Satu Klik</string>
     <string name="process_limit_title">Hapus Batas Proses Phantom</string>
     <string name="process_limit_subtitle">Kelola batas jumlah proses phantom di Android 12+</string>
     <string name="process_limit_info_title">Tentang Batas Proses Phantom</string>
@@ -2145,15 +2129,6 @@
     <string name="process_limit_exit_code">Kode keluar: %d</string>
     <string name="process_limit_command">Perintah</string>
     <string name="toolbox_description">Kumpulan alat praktis yang nyaman untuk meningkatkan efisiensi kerja Anda</string>
-    <string name="autoglm_status_running">Sedang menjalankan konfigurasi satu klik, harap tunggu...</string>
-    <string name="autoglm_status_success">Konfigurasi satu klik AutoGLM telah selesai:
-- Konfigurasi model pengontrol UI AutoGLM telah dibuat atau diperbarui (autoglm-phone, Zhipu)
-- Fitur "Pengontrol UI" telah dialihkan ke konfigurasi ini
-- Automatic_ui_base telah dimatikan, Automatic_ui_subagent telah diaktifkan
-
-Sekarang Anda dapat menggunakan mode AutoGLM di antarmuka percakapan.</string>
-    <string name="autoglm_status_error">Konfigurasi satu klik gagal: %1$s</string>
-    <string name="autoglm_error_empty_api_key">Harap isi Kunci API Zhipu terlebih dahulu.</string>
     <string name="import_or_connect_mcp_service">Impor atau hubungkan layanan MCP</string>
     <string name="select_mcp_plugin_zip">Pilih paket terkompresi plugin MCP</string>
     <string name="plugin_zip_package">Paket terkompresi plugin</string>
@@ -3389,8 +3364,6 @@ Sekarang Anda dapat menggunakan mode AutoGLM di antarmuka percakapan.</string>
     <string name="screen_title_text_to_speech">Teks ke Ucapan</string>
     <string name="screen_title_speech_to_text">Pengenalan Ucapan</string>
     <string name="screen_title_process_limit_remover">Hapus Batasan Proses Ilusi</string>
-    <string name="screen_title_autoglm_one_click">Konfigurasi Satu Klik AutoGLM</string>
-    <string name="screen_title_autoglm_tool">Eksekusi autoglm</string>
     <string name="screen_title_default_assistant_guide">Pengaturan Asisten Default</string>
     <string name="screen_title_mcp_market">Pasar MCP</string>
     <string name="screen_title_skill_market">Pasar Skill</string>
@@ -5343,7 +5316,6 @@ Sekarang Anda dapat menggunakan mode AutoGLM di antarmuka percakapan.</string>
     <string name="uidebugger_stop_monitoring">Hentikan pemantauan</string>
     <string name="uidebugger_start_monitoring">Mulai pemantauan</string>
     <string name="uidebugger_clear">Hapus</string>
-    <string name="autoglm_virtual_screen">Menggunakan layar virtual untuk sesi ini</string>
     <string name="htmlpackager_step1_title">Langkah 1: Pilih folder proyek</string>
     <string name="htmlpackager_select_folder">Pilih folder</string>
     <string name="htmlpackager_selected">Dipilih: %1$s</string>
@@ -5353,18 +5325,6 @@ Sekarang Anda dapat menggunakan mode AutoGLM di antarmuka percakapan.</string>
     <string name="common_expand">Bentangkan</string>
     <string name="document_no_content_found">Tidak ada konten yang ditemukan.</string>
     <string name="document_block_label">Blok %1$d</string>
-    <string name="autoglm_go_to_model_config">Pergi ke konfigurasi model</string>
-    <string name="autoglm_custom_endpoint">Endpoint Kustom (kompatibel OpenAI)</string>
-    <string name="autoglm_model_name">Nama model</string>
-    <string name="autoglm_restore_original">Pulihkan logika otomatisasi asli</string>
-    <string name="autoglm_step1_title">step1 Konfigurasi model percakapan dasar</string>
-    <string name="autoglm_step1_warning">Jangan gunakan model autoglm sebagai model percakapan utama</string>
-    <string name="autoglm_step1_note">Catatan: Jika sudah dikonfigurasi, tidak perlu diubah, jangan ubah ke model kecil seperti autoglm di sini.</string>
-    <string name="autoglm_step2_title">step2 Kunjungi situs web resmi Zhipu, dapatkan API Key</string>
-    <string name="autoglm_step3_title">step3 Masukkan API Key, klik konfigurasi satu klik</string>
-    <string name="autoglm_hide_advanced">Sembunyikan pengaturan lanjutan</string>
-    <string name="autoglm_show_advanced">Tampilkan pengaturan lanjutan (Endpoint Kustom / Nama model)</string>
-    <string name="autoglm_step4_title">step4 Pulihkan otomatisasi non-AutoGLM (opsional)</string>
 
     <string name="memory_search_simulation_scope_count">Memori dalam cakupan: %1$d</string>
     <string name="memory_search_simulation_match_count">Jumlah kecocokan Kata kunci:%1$d Tag:%2$d Inklusi terbalik:%3$d Semantik:%4$d</string>
@@ -5448,8 +5408,6 @@ Sekarang Anda dapat menggunakan mode AutoGLM di antarmuka percakapan.</string>
     <string name="headers_preset_us_la">Simulasi Los Angeles, AS (perlu dikombinasikan)</string>
     <string name="context_validation_failed">Validasi gagal</string>
 
-    <string name="autoglm_step4_description">Jika Anda merasa operasi otomatis menjadi sulit setelah menggunakan konfigurasi satu klik AutoGLM, Anda dapat menekan tombol di bawah untuk mengembalikan ke logika otomatisasi asli perangkat lunak (mengaktifkan paket base, menonaktifkan paket subagent, pengaturan lainnya tetap tidak berubah). Jika Anda ingin mengaktifkan AutoGLM lagi, cukup masukkan kunci sesuai step3 dan tekan konfigurasi satu klik lagi.</string>
-    <string name="autoglm_restore_success">Telah dikembalikan ke logika otomatisasi asli perangkat lunak</string>
     <string name="uidebugger_create_new_package">Buat paket konfigurasi baru</string>
     <string name="uidebugger_app_name">Nama aplikasi</string>
     <string name="uidebugger_description_optional">Deskripsi (opsional)</string>
@@ -5617,9 +5575,6 @@ Sekarang Anda dapat menggunakan mode AutoGLM di antarmuka percakapan.</string>
     <string name="emoticon_shyness">Malu</string>
     <string name="emoticon_blush">Muka memerah</string>
     <string name="emoticon_embarrassed">Salah tingkah</string>
-    <string name="autoglm_task_complete">✅ Tugas selesai: %1$s</string>
-    <string name="autoglm_thinking_process">💭 Proses berpikir:</string>
-    <string name="autoglm_execute_action">🎯 Eksekusi aksi:</string>
     <string name="version_update">Pembaruan versi</string>
     <string name="mcp_no_zip_selected">File ZIP belum dipilih</string>
     <string name="mcp_uninstall_failed">Gagal mencopot pemasangan</string>
@@ -6545,7 +6500,6 @@ Sekarang Anda dapat menggunakan mode AutoGLM di antarmuka percakapan.</string>
     <string name="message_workspace_backing_up">Mencadangkan ruang kerja...</string>
     <string name="message_role_user">Pengguna</string>
     <string name="role_card_chat_model_binding_parse_failed">Gagal mengurai pengikatan model percakapan kartu peran</string>
-    <string name="message_workspace_sync_failed">Gagal menyinkronkan status ruang kerja: %1$s</string>
     <string name="message_ai_service_not_initialized">Layanan AI belum diinisialisasi</string>
     <string name="message_summarizing">Meringkas memori...</string>
     <string name="message_send_failed">Gagal mengirim pesan: %1$s</string>
@@ -7204,13 +7158,6 @@ Sekarang Anda dapat menggunakan mode AutoGLM di antarmuka percakapan.</string>
 
     <string name="workspace_attachment_attached">Percakapan saat ini telah dilampirkan ke ruang kerja.</string>
     <string name="workspace_attachment_environment">Lingkungan ruang kerja: %1$s</string>
-    <string name="workspace_attachment_initial_load">Memuat ruang kerja pertama kali:</string>
-    <string name="workspace_attachment_file_changes">Perubahan file ruang kerja:</string>
-    <string name="workspace_attachment_omitted_changes">- Masih ada %1$d perubahan yang tidak tercantum</string>
-    <string name="workspace_attachment_change_created">Baru</string>
-    <string name="workspace_attachment_change_modified">Diubah</string>
-    <string name="workspace_attachment_change_deleted">Dihapus</string>
-    <string name="workspace_attachment_change_moved">Dipindahkan</string>
     <string name="artifact_publish_node_updated">Node «%1$s» telah diperbarui</string>
     <string name="artifact_project_node_view_title">Lihat Node</string>
     <string name="artifact_project_nodes_loading">Memuat node proyek...</string>

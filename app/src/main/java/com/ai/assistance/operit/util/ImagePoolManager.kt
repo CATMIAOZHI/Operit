@@ -219,6 +219,79 @@ object ImagePoolManager {
         return null
     }
 
+    /**
+     * 从原始文件恢复一张已经不在池里的图片，并沿用原来的 [id]。
+     *
+     * 池子在进程启动时会被清空、也会按 LRU 淘汰并删除磁盘缓存，所以历史消息里的图片
+     * 只剩一个 id。链接上带了源路径时用这个方法重新入池，避免整条记录一直显示“图片已过期”。
+     * 源文件已经不存在时返回 false，调用方按找不到处理。
+     *
+     * 解码放在锁外：恢复可能发生在主线程正调用 [getImage] 的时刻，锁内解码大图会阻塞主线程。
+     */
+    fun ensureImageFromSource(id: String, sourcePath: String): Boolean {
+        if (sourcePath.isBlank()) {
+            return false
+        }
+        // id 直接作为磁盘缓存文件名使用，来自消息标签时必须是简单名字。
+        if (!isSimplePoolCacheId(id)) {
+            AppLogger.w(TAG, "忽略非法图片 id: $id")
+            return false
+        }
+
+        synchronized(this) {
+            if (imagePool.containsKey(id)) {
+                return true
+            }
+            val cached = loadFromDisk(id)
+            if (cached != null) {
+                imagePool[id] = cached
+                return true
+            }
+        }
+
+        val file = File(sourcePath)
+        if (!file.exists() || !file.isFile) {
+            return false
+        }
+
+        val bitmap = decodeBitmapFromFile(file.absolutePath) ?: return false
+        val sourceMimeType = getMimeTypeFromFile(file) ?: "image/png"
+
+        synchronized(this) {
+            // 解码期间可能已被别的调用恢复，这里只要保证不重复解码。
+            if (imagePool.containsKey(id)) {
+                bitmap.recycle()
+                return true
+            }
+
+            val restored =
+                try {
+                    registerBitmap(
+                        sourceBitmap = bitmap,
+                        sourceMimeType = sourceMimeType,
+                        options = null,
+                        sourcePath = file.absolutePath,
+                        recycleSource = true,
+                        idOverride = id
+                    )
+                } catch (e: Throwable) {
+                    // 恢复只是让历史消息里的图能再显示一次，失败就退回“已过期”，
+                    // 不把解码/压缩的异常抛给调用方（渲染侧在 Compose 协程里调用）。
+                    AppLogger.e(TAG, "从源文件恢复图片失败: $id, path=$sourcePath", e)
+                    bitmap.recycle()
+                    return false
+                }
+
+            if (restored == "error") {
+                AppLogger.w(TAG, "从源文件恢复图片失败: $id, path=$sourcePath")
+                return false
+            }
+
+            AppLogger.d(TAG, "已从源文件恢复图片到池子: $id, path=$sourcePath")
+            return true
+        }
+    }
+
     @Synchronized
     fun getImageMimeType(id: String): String? = getImage(id)?.mimeType
 
@@ -250,7 +323,8 @@ object ImagePoolManager {
         sourceMimeType: String,
         options: ImageRegistrationOptions?,
         sourcePath: String? = null,
-        recycleSource: Boolean
+        recycleSource: Boolean,
+        idOverride: String? = null
     ): String {
         val resolvedOptions = resolveOptions(options)
         var workingBitmap = sourceBitmap
@@ -335,7 +409,7 @@ object ImagePoolManager {
                     height = outputBitmap.height
                 )
 
-            val id = UUID.randomUUID().toString()
+            val id = idOverride ?: UUID.randomUUID().toString()
             imagePool[id] = imageData
             saveToDisk(id, imageData)
 
@@ -599,6 +673,10 @@ object ImagePoolManager {
     }
 
     private fun saveToDisk(id: String, imageData: ImageData) {
+        if (!isSimplePoolCacheId(id)) {
+            AppLogger.w(TAG, "忽略非法图片 id，不写入磁盘: $id")
+            return
+        }
         val dir = cacheDir
         if (dir == null) {
             AppLogger.w(TAG, "缓存目录未初始化，跳过磁盘保存")
@@ -622,6 +700,9 @@ object ImagePoolManager {
     }
 
     private fun loadFromDisk(id: String): ImageData? {
+        if (!isSimplePoolCacheId(id)) {
+            return null
+        }
         val dir = cacheDir ?: return null
 
         return try {
@@ -667,6 +748,10 @@ object ImagePoolManager {
     }
 
     private fun deleteFromDisk(id: String) {
+        if (!isSimplePoolCacheId(id)) {
+            AppLogger.w(TAG, "忽略非法图片 id，不删除磁盘文件: $id")
+            return
+        }
         val dir = cacheDir ?: return
 
         try {

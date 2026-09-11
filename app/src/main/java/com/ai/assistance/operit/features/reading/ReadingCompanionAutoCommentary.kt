@@ -322,7 +322,7 @@ class ReadingCompanionAutoCommentary private constructor(
         val candidateTargets = selectManualCommentaryTargets(
             currentChapterIndex = state.chapterIndex,
             upperChapterIndex = minOf(upper, rangeEnd),
-            availableChapterIndices = chapters.map(ReaderChapter::index),
+            availableChapterIndices = chapters.filterNot(ReaderChapter::isVolume).map(ReaderChapter::index),
             // Scan the whole requested range before taking [count], otherwise already valid
             // chapters at the front would consume the batch and leave later missing chapters
             // unfilled.
@@ -552,6 +552,7 @@ class ReadingCompanionAutoCommentary private constructor(
         val prefetchAhead = store.getPrefetchAheadChapters()
         val storedPersona = store.getAutoCommentPersona(initialState.book.id)
         val nextChapterIndex = firstChapterNeedingGeneration(
+            runId = runId,
             bookId = initialState.book.id,
             currentChapterIndex = initialState.chapterIndex,
             prefetchAhead = prefetchAhead,
@@ -563,6 +564,11 @@ class ReadingCompanionAutoCommentary private constructor(
             fileStore = fileStore,
         )
         if (nextChapterIndex == null) {
+            store.updateAutoCommentRunTarget(
+                runId = runId,
+                bookId = initialState.book.id,
+                chapterIndex = null,
+            )
             store.finishAutoCommentRun(
                 runId = runId,
                 status = STATUS_NO_NEXT_CHAPTER,
@@ -575,16 +581,16 @@ class ReadingCompanionAutoCommentary private constructor(
                 runId = runId,
             )
         }
+        val expectedTargetChapter = chapters.first { it.index == nextChapterIndex }
         store.updateAutoCommentRunTarget(
             runId = runId,
             bookId = initialState.book.id,
             chapterIndex = nextChapterIndex,
+            chapterTitle = expectedTargetChapter.title,
         )
 
         val selectedPersona = store.getAutoCommentPersona(initialState.book.id)
             ?: throw AutoCommentRoleNotSelectedException()
-        val expectedTargetChapter = chapters.firstOrNull { it.index == nextChapterIndex }
-            ?: error("目标章节已不在目录中")
         val resolvedRole = modelGateway.resolveAutoCommentRole(selectedPersona.roleCardId)
         val persona = selectedPersona.copy(
             roleCardId = resolvedRole.id,
@@ -602,6 +608,8 @@ class ReadingCompanionAutoCommentary private constructor(
                 .put("route", "book/annotationContent/query")
                 .put("bookId", initialState.book.id)
                 .put("chapterIndex", nextChapterIndex)
+                .put("chapterTitle", expectedTargetChapter.title)
+                .put("chapterSourceId", expectedTargetChapter.sourceId)
                 .put("contentPolicy", "full_annotation_contract_for_prefetch"),
         ) {
             provider.getAnnotationChapterContent(
@@ -1065,6 +1073,7 @@ class ReadingCompanionAutoCommentary private constructor(
                     maxOf(0, targetChapterIndex - REQUIRED_PREVIOUS_RAW_CHAPTERS)
             ) {
                 val expectedChapter = chapterByIndex[chapterIndex] ?: continue
+                if (expectedChapter.isVolume) continue
                 val chapter = try {
                     provider.getAnnotationChapterContent(bookId, chapterIndex)
                 } catch (_: ReaderProviderException) {
@@ -1086,6 +1095,7 @@ class ReadingCompanionAutoCommentary private constructor(
     }
 
     private suspend fun firstChapterNeedingGeneration(
+        runId: Long,
         bookId: String,
         currentChapterIndex: Int,
         prefetchAhead: Int,
@@ -1112,10 +1122,19 @@ class ReadingCompanionAutoCommentary private constructor(
                 }
             if (!inAllowedRange) continue
             val chapter = chapterByIndex[chapterIndex] ?: continue
+            if (chapter.isVolume) continue
             if (force) return chapterIndex
             val storedContractHash =
                 fileStore.publishedContractHash(bookId, chapter.sourceId, roleCardId)
             if (storedContractHash != null) {
+                // Freshness checks also read the annotation endpoint and can fail before
+                // generation starts. Preserve the catalog identity before that request.
+                store.updateAutoCommentRunTarget(
+                    runId = runId,
+                    bookId = bookId,
+                    chapterIndex = chapter.index,
+                    chapterTitle = chapter.title,
+                )
                 val current = provider.getAnnotationChapterContent(bookId, chapterIndex)
                 if (
                     current.sourceId == chapter.sourceId &&
@@ -1429,6 +1448,7 @@ class ReadingCompanionAutoCommentary private constructor(
         val roleCardId = store.getAutoCommentPersona(state.book.id)?.roleCardId
         for (chapterIndex in (state.chapterIndex + 1)..upper) {
             val chapter = chapterByIndex[chapterIndex] ?: continue
+            if (chapter.isVolume) continue
             val storedContractHash =
                 fileStore.publishedContractHash(state.book.id, chapter.sourceId, roleCardId)
             if (storedContractHash != null) {
@@ -1525,6 +1545,7 @@ class ReadingCompanionAutoCommentary private constructor(
         put("bookName", bookName)
         put("chapterIndex", chapterIndex)
         put("chapterNumber", chapterIndex?.plus(1))
+        put("chapterTitle", chapterTitle)
         put("trigger", trigger)
         put("status", status)
         put("stage", stage)

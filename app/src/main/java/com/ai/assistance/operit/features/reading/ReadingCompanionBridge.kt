@@ -446,7 +446,11 @@ object ReadingCompanionBridge {
                 }
                 is IllegalArgumentException,
                 is IllegalStateException -> error.message.orEmpty()
-                else -> "伴读操作失败，请确认 Legado 已安装并打开过目标书籍"
+                else -> {
+                    val reason =
+                        error.message?.takeIf(String::isNotBlank) ?: error::class.java.simpleName
+                    "伴读操作失败，请确认 Legado 已安装并打开过目标书籍（实际原因：$reason）"
+                }
             }.ifBlank { "伴读操作失败" }
             JSONObject()
                 .put("success", false)

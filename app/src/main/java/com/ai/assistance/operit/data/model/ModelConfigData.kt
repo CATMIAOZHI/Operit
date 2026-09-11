@@ -26,6 +26,7 @@ enum class ApiProviderType {
         OPENAI_RESPONSES, // OpenAI Responses API
         OPENAI_CODEX, // OpenAI Codex（ChatGPT OAuth）
         GROK_ACCOUNT, // Grok 账户 OAuth
+        COMMAND_CODE, // Command Code 账户登录或手填 API Key
         GOOGLE_ANTIGRAVITY, // Google Antigravity 账户 OAuth
         OPENAI_RESPONSES_GENERIC, // OpenAI Responses通用（自定义端点）
         OPENAI_GENERIC, // OpenAI通用（自定义端点）

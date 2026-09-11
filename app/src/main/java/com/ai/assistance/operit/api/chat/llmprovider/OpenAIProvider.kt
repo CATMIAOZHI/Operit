@@ -36,6 +36,12 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -48,6 +54,52 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
+
+/**
+ * 流式响应的应用层停滞检测参数。
+ *
+ * OkHttp 的 readTimeout 计的是“距上次收到任意字节”，SSE 空行或 `: ping` 心跳都能一直续命，
+ * 因此“连接活着但不再产生数据”只能由应用层自己判定。
+ */
+private const val STREAM_STALL_CHECK_INTERVAL_MS = 1_000L
+private const val STREAM_STALL_TIMEOUT_MS = 120_000L
+
+/** 连续停滞允许的重试次数：停滞每次都要等满超时，不能像普通网络错误那样重试 5 次。 */
+private const val MAX_STREAM_STALL_RETRIES = 2
+
+/** 首包单独放宽：网关排队或超长上下文的首字延迟可能明显超过常规块间隔。 */
+private const val STREAM_FIRST_CHUNK_TIMEOUT_MS = 300_000L
+
+/** 单调时钟（毫秒）。用 nanoTime 而不是 SystemClock，后者在 JVM 单测里是未实现的桩。 */
+private fun streamNowMs(): Long = System.nanoTime() / 1_000_000L
+
+/**
+ * 流式读取进度：只有 `data:` 行算有效进度，空行和 `: ping` 注释心跳都不算。
+ *
+ * 看门狗与读取循环在不同线程上读写，因此用原子量传递。
+ */
+private class StreamProgress {
+    val lastProgressAt = AtomicLong(streamNowMs())
+    val stallTimeoutMs = AtomicLong(STREAM_FIRST_CHUNK_TIMEOUT_MS)
+    val nonDataLineCount = AtomicLong(0)
+    val nonDataLineCountAtLastData = AtomicLong(0)
+
+    /** 只在看门狗线程读写，用于避免反复打印同一次停滞。 */
+    var stallReported: Boolean = false
+}
+
+/**
+ * 看门狗调度器：用独立守护线程而不是协程。
+ *
+ * 挂起的子协程会让读取协程的续体改由线程池线程恢复，而 JVM 单测只在测试线程上静态 mock 了
+ * AppLogger，落到别的线程就会执行真实的 android.util.Log。独立线程既不受协程调度影响，也不需要
+ * 额外的结构化并发收尾。
+ */
+private val streamStallWatchdogExecutor: ScheduledExecutorService by lazy {
+    Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "OperitStreamStallWatchdog").apply { isDaemon = true }
+    }
+}
 
 internal fun JSONObject.applyChatCompletionsStreamUsageOption(
     stream: Boolean,
@@ -124,13 +176,18 @@ open class OpenAIProvider(
     protected val JSON = "application/json".toMediaType()
 
     // 当前活跃的Call对象，用于取消流式传输
+    @Volatile
     private var activeCall: Call? = null
 
     // 当前活跃的Response对象，用于强制关闭流
+    @Volatile
     private var activeResponse: Response? = null
 
     @Volatile
     private var isManuallyCancelled = false
+
+    /** 停滞看门狗是否关闭过连接，用于对停滞单独限次（看门狗在其它线程上写）。 */
+    private val stallCloseRequested = AtomicBoolean(false)
 
     /**
      * 由客户端错误（如4xx状态码）触发的API异常，是否重试由统一策略决定
@@ -304,8 +361,8 @@ open class OpenAIProvider(
 
         // 如果消息长度超过限制，分块打印
         if (message.length > maxLogSize) {
-            // 计算需要分多少块打印
-            val chunkCount = message.length / maxLogSize + 1
+            // 计算需要分多少块打印（向上取整，否则长度正好整除时会多出一个空块）
+            val chunkCount = (message.length + maxLogSize - 1) / maxLogSize
 
             for (i in 0 until chunkCount) {
                 val start = i * maxLogSize
@@ -320,6 +377,30 @@ open class OpenAIProvider(
             // 消息长度在限制之内，直接打印
             AppLogger.d(tag, "$prefix$message")
         }
+    }
+
+    /** 生成用于日志的请求体文本：省略超长的 tools 字段，抹掉图片 base64。 */
+    protected fun requestBodyForLogging(json: JSONObject): String {
+        val logJson = JSONObject(json.toString())
+        if (logJson.has("tools")) {
+            val toolsArray = logJson.getJSONArray("tools")
+            logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+        }
+        return sanitizeImageDataForLogging(logJson).toString(4)
+    }
+
+    /**
+     * 记录请求体，默认开启（见 [AppLogger.logRequestBodies]）。
+     *
+     * [body] 只在开关打开时求值：关闭状态下不再把整个请求体复制成缩进文本，省掉构建字符串的
+     * 内存与 CPU（实测单请求峰值内存是请求体本身的 3-4 倍）。
+     *
+     * 注意：父类与子类的调用点都受同一开关控制，开启时子类 provider 会先由父类记录一份中间
+     * 请求体、再记录自己的最终请求体。
+     */
+    protected fun logRequestBodyForDebugging(tag: String, prefix: String, body: () -> String) {
+        if (!AppLogger.logRequestBodies) return
+        logLargeString(tag, body(), prefix)
     }
 
     protected fun logFinalOutput(tag: String, content: CharSequence, prefix: String = "Final output: ") {
@@ -816,14 +897,10 @@ open class OpenAIProvider(
 
         customizeFinalRequestObject(finalRequestObject, messagesArray, toolsJson)
 
-        // 使用分块日志函数记录请求体（省略过长的tools字段）
-        val logJson = JSONObject(finalRequestObject.toString())
-        if (logJson.has("tools")) {
-            val toolsArray = logJson.getJSONArray("tools")
-            logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+        // 使用分块日志函数记录请求体（省略过长的 tools 字段），可用 AppLogger.logRequestBodies 关闭
+        logRequestBodyForDebugging("AIService", "Request body: ") {
+            requestBodyForLogging(finalRequestObject)
         }
-        val sanitizedLogJson = sanitizeImageDataForLogging(logJson)
-        logLargeString("AIService", sanitizedLogJson.toString(4), "Request body: ")
         return finalRequestObject.toString()
     }
 
@@ -1108,14 +1185,14 @@ open class OpenAIProvider(
 
             AppLogger.w(
                 "AIService",
-                "发现未完成的tool_calls，按取消处理: count=${openToolCallIds.size}, reason=$reason"
+                "发现缺少执行结果的tool_calls，补齐缺失结果: count=${openToolCallIds.size}, reason=$reason"
             )
             for (toolCallId in openToolCallIds) {
                 messagesArray.put(
                     JSONObject().apply {
                         put("role", "tool")
                         put("tool_call_id", toolCallId)
-                        put("content", "User cancelled")
+                        put("content", "Tool result missing: no matching execution result was available. This does not indicate user cancellation.")
                     }
                 )
             }
@@ -1870,7 +1947,6 @@ open class OpenAIProvider(
 
     private data class StreamingState(
         var chunkCount: Int = 0,
-        var lastLogTime: Long = System.currentTimeMillis(),
         var isInReasoningMode: Boolean = false,
         var hasEmittedThinkStart: Boolean = false,
         var hasEmittedRegularContent: Boolean = false,
@@ -1885,6 +1961,7 @@ open class OpenAIProvider(
         val deferredOutput: java.util.ArrayDeque<DeferredOutputSegment> = java.util.ArrayDeque(),
         val queuedToolIndices: MutableSet<Int> = mutableSetOf(),
         val completedToolIndices: MutableSet<Int> = mutableSetOf(),
+        val emittedResponsesToolIndices: MutableSet<Int> = mutableSetOf(),
     )
 
     private suspend fun closeReasoningBlockIfOpen(
@@ -1912,6 +1989,9 @@ open class OpenAIProvider(
         deltaCall: JSONObject,
         state: StreamingState,
     ): Boolean {
+        // Responses output indices identify items for the entire response. Completion
+        // snapshots and late deltas must not reopen an item that has already been emitted.
+        if (useResponsesApi && index in state.emittedResponsesToolIndices) return false
         queueToolOutput(index, state)
 
         // 获取或创建该index的累积对象
@@ -1999,8 +2079,7 @@ open class OpenAIProvider(
         }
 
         // Build and validate every JSON-to-XML event before publishing the opening tag. A
-        // malformed provider payload therefore cannot require a mid-response rollback, and
-        // downstream consumers never observe a transient, unclosed tool envelope.
+        // malformed provider payload therefore cannot require a mid-response rollback.
         val parser = StreamingJsonXmlConverter()
         val events =
             buildList {
@@ -2099,6 +2178,7 @@ open class OpenAIProvider(
                     if (segment.index !in state.completedToolIndices) return
                     state.deferredOutput.removeFirst()
                     emitCompletedToolCall(segment.index, state, emitter)
+                    if (useResponsesApi) state.emittedResponsesToolIndices.add(segment.index)
                     state.completedToolIndices.remove(segment.index)
                     state.queuedToolIndices.remove(segment.index)
                     state.accumulatedToolCalls.remove(segment.index)
@@ -2591,6 +2671,52 @@ open class OpenAIProvider(
     }
 
     /**
+     * 启动流式响应停滞看门狗：只有收到 `data:` 有效载荷才算有进度。
+     *
+     * 停滞超时后关闭当前响应（并兜底 cancel 当前 Call），让阻塞中的 `readLine()` 抛
+     * IOException，从而进入既有的重试与原子回滚链路；用户手动取消走各自的路径，互不影响。
+     * 调用方负责在结束时取消返回的任务。
+     */
+    private fun startStreamStallWatchdog(progress: StreamProgress): ScheduledFuture<*> =
+        streamStallWatchdogExecutor.scheduleWithFixedDelay(
+            {
+                // 看门狗自身不能抛异常，否则会被调度器静默吞掉后续检查。
+                runCatching {
+                    val idleMs = streamNowMs() - progress.lastProgressAt.get()
+                    if (idleMs < progress.stallTimeoutMs.get()) {
+                        return@runCatching
+                    }
+                    // 先处置再打日志：日志本身可能失败（例如单测线程上没有 Android Log 实现），
+                    // 不能因此跳过关闭连接。
+                    // 置位必须在关连接之前：close 会立刻唤醒阻塞的读协程，异常先到就会把这次停滞
+                    // 误判成普通网络错误。
+                    stallCloseRequested.set(true)
+                    runCatching { activeResponse?.close() }
+                    runCatching { activeCall?.cancel() }
+                    if (!progress.stallReported) {
+                        progress.stallReported = true
+                        runCatching {
+                            // 先读基准再读累计值：中途若恰好落下一个数据块，得到的是偏大而非负值
+                            val baseline = progress.nonDataLineCountAtLastData.get()
+                            val heartbeats =
+                                (progress.nonDataLineCount.get() - baseline).coerceAtLeast(0)
+                            AppLogger.w(
+                                "AIService",
+                                "【发送消息】流式响应已停滞 ${idleMs}ms 未收到数据块" +
+                                    "（期间收到 $heartbeats 行非数据行），关闭连接以触发重试"
+                            )
+                        }
+                    }
+                    // 每轮重新取当前连接：重试会替换 activeResponse/activeCall，只关本次的。
+                    // 关一次没唤醒阻塞读时下一秒继续兜底，直到读取协程结束并取消本任务。
+                }
+            },
+            STREAM_STALL_CHECK_INTERVAL_MS,
+            STREAM_STALL_CHECK_INTERVAL_MS,
+            TimeUnit.MILLISECONDS
+        )
+
+    /**
      * 处理 OpenAI 流式响应
      */
     private suspend fun processStreamingResponse(
@@ -2602,6 +2728,31 @@ open class OpenAIProvider(
         attemptNumber: Int = 1
     ) {
         val state = StreamingState()
+        // 只认 data: 有效载荷的进度时间戳：OkHttp 的 readTimeout 会被任意字节（空行、注释心跳）
+        // 重置，覆盖不了“连接活着但不再产生数据”的死连接。
+        val progress = StreamProgress()
+        // 每次 attempt 复位：provider 实例会被同一会话反复复用，上一次尝试留下的置位会把
+        // 下一个请求的普通失败误记成停滞。
+        stallCloseRequested.set(false)
+        val stallWatchdog = startStreamStallWatchdog(progress)
+
+        // 记一次进度，并在真正产生内容后把首包宽限收紧到常规块间隔：role-only / usage-only
+        // 这类空壳数据块不算内容，否则宽限会在最需要它的时候提前失效。
+        fun markProgress() {
+            progress.lastProgressAt.set(streamNowMs())
+            val hasPayload =
+                state.hasEmittedRegularContent ||
+                    state.reasoningObserved ||
+                    // Chat Completions 的思考增量走 processContentDelta，不置位 reasoningObserved，
+                    // 靠这两个标记识别，否则纯思考流会一直停在首包宽限上
+                    state.isInReasoningMode ||
+                    state.streamedReasoningContentLength > 0 ||
+                    state.accumulatedToolCalls.isNotEmpty() ||
+                    state.imageBuffers.isNotEmpty()
+            if (hasPayload && progress.stallTimeoutMs.get() != STREAM_STALL_TIMEOUT_MS) {
+                progress.stallTimeoutMs.set(STREAM_STALL_TIMEOUT_MS)
+            }
+        }
 
         try {
             // 使用 while 循环读取流式响应
@@ -2609,8 +2760,14 @@ open class OpenAIProvider(
                 val line = reader.readLine() ?: break
 
                 if (!line.startsWith("data:")) {
+                    progress.nonDataLineCount.incrementAndGet()
                     continue
                 }
+                val nowMs = streamNowMs()
+                val idleMs = nowMs - progress.lastProgressAt.get()
+                progress.lastProgressAt.set(nowMs)
+                // 记录此刻的非数据行累计值，停滞告警只报这一段窗口内的心跳行数
+                progress.nonDataLineCountAtLastData.set(progress.nonDataLineCount.get())
                 
                 val data = line.substring(5).trim()
                 if (data == "[DONE]") {
@@ -2622,10 +2779,12 @@ open class OpenAIProvider(
                 }
 
                 state.chunkCount++
-                // 每10个块或500ms记录一次日志
-                val currentTime = System.currentTimeMillis()
-                if (state.chunkCount % 10 == 0 || currentTime - state.lastLogTime > 500) {
-                    state.lastLogTime = currentTime
+                // 每 10 个数据块记一次心跳；卡住时最后一条心跳里的块间隔就是现场
+                if (state.chunkCount % 10 == 0) {
+                    AppLogger.d(
+                        "AIService",
+                        "【发送消息】已接收 ${state.chunkCount} 个数据块，距上一块 ${idleMs}ms"
+                    )
                 }
 
                 try {
@@ -2634,23 +2793,32 @@ open class OpenAIProvider(
 
                     if (useResponsesApi) {
                         processResponsesStreamingEvent(context, jsonResponse, state, emitter, onTokensUpdated, onUsageReported, attemptNumber)
+                        markProgress()
                         continue
                     }
 
                     if (!jsonResponse.has("choices")) {
                         val handled = tryHandleOpenAiImageResponse(jsonResponse, emitter, state)
                         if (handled) {
+                            markProgress()
                             continue
                         }
                     }
                     processResponseChunk(jsonResponse, state, emitter, onTokensUpdated, onUsageReported, attemptNumber)
+                    // 处理完成后再刷新一次：下游（UI/落盘）很慢时不要把处理耗时算成网络停滞。
+                    markProgress()
                 } catch (e: IOException) {
+                    throw e
+                } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     AppLogger.w("AIService", "【发送消息】JSON解析错误: ${e.message}")
                     logLargeString("AIService", data, "[Send message] Original data when JSON parsing failed: ")
                 }
             }
+
+            // 流已正常读完：立刻停掉看门狗，避免在收尾（下游 flush）期间误报停滞并关连接。
+            stallWatchdog.cancel(false)
 
             // Some OpenAI-compatible endpoints terminate the SSE body without a [DONE] sentinel.
             // Close any stateful reasoning envelope before returning so it cannot leak into the
@@ -2677,6 +2845,7 @@ open class OpenAIProvider(
                 throw e
             }
         } finally {
+            stallWatchdog.cancel(false)
             runCatching { flushImageBuffers(state, emitter) }
             // 确保 reader 被关闭
             try {
@@ -2727,6 +2896,9 @@ open class OpenAIProvider(
             val emitter = StreamEmitter(receivedContent, ::emit, eventChannel, onTokensUpdated)
             val requestSavepointId = "attempt_${UUID.randomUUID().toString().replace("-", "")}"
             emitter.emitSavepoint(requestSavepointId)
+
+            // 停滞重试单独计数：不占用普通网络错误的重试额度
+            var stallRetryCount = 0
 
             while (retryCount <= maxRetries) {
                 // 在循环开始时检查是否已被取消
@@ -2940,6 +3112,28 @@ open class OpenAIProvider(
             } catch (e: Exception) {
                 lastException = e
                 emitter.emitRollback(requestSavepointId)
+                // 停滞单独限次：每次停滞都要等满超时，全量重试会把用户晾十几分钟
+                // 取消类异常与手动取消优先：看门狗恰好与用户取消重合时，不能把取消改写成停滞错误
+                val cancelled =
+                    e is UserCancellationException || e is CancellationException || isManuallyCancelled
+                if (!cancelled && stallCloseRequested.compareAndSet(true, false)) {
+                    stallRetryCount++
+                    if (stallRetryCount > MAX_STREAM_STALL_RETRIES) {
+                        AppLogger.e(
+                            "AIService",
+                            "【发送消息】连续 $stallRetryCount 次流式停滞，停止重试"
+                        )
+                        // 用停滞专属文案，避免复用「已重试 5 次」这种与实际次数不符的提示
+                        throw IOException(
+                            context.getString(
+                                R.string.openai_error_stream_stalled,
+                                stallRetryCount - 1,
+                                resolveRetryErrorText(context, e)
+                            ),
+                            e
+                        )
+                    }
+                }
                 retryCount = handleRetryableError(
                     context,
                     e,
