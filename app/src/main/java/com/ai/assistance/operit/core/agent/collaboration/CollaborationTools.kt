@@ -38,8 +38,8 @@ object CollaborationTools {
                 ToolPrompt(
                     name = "spawn_agent",
                     description = text(
-                        "异步创建具名子代理；立即返回路径。当前每个根会话最多同时运行 ${limits.maxActive} 个子代理（整个子代理树共享，正在创建的也占名额，主代理不占名额）；最大深度 ${limits.maxDepth}（根代理深度 0）。达到并行上限时等待现有代理结束，再创建或唤醒空闲代理；给运行中代理发消息不占新名额。不要靠重复失败调用探测上限。仅为可独立执行的具体子任务创建代理。分工时说明依赖关系，必要时给出协作者的完整路径；收到会影响其他任务的发现时及时转发。完成消息自动投递到父代理邮箱，无需重复发送终稿。",
-                        "Spawn a named child asynchronously and return its path immediately. Current limit per root conversation: ${limits.maxActive} concurrent subagents shared across the entire tree, including pending creation; the root does not occupy a slot. Maximum depth: ${limits.maxDepth}, with root at depth 0. At capacity, wait for an existing agent to finish before spawning or waking an idle agent. Messaging a running agent takes no additional slot. Do not discover limits through repeated failed calls. Spawn only for a concrete independent subtask. Explain dependencies and, when relevant, provide collaborators' canonical paths. Relay findings that affect other tasks promptly. Completion is delivered to the parent's mailbox; do not send a duplicate final report.",
+                        "异步创建具名子代理；立即返回路径。当前每个根会话最多同时运行 ${limits.maxActive} 个子代理（整个子代理树共享，正在创建的也占名额，主代理不占名额）；最大深度 ${limits.maxDepth}（根代理深度 0）。达到并行上限时等待现有代理结束，再创建或唤醒空闲代理；给运行中代理发消息不占新名额。不要靠重复失败调用探测上限。仅为可独立执行的具体子任务创建代理。分工时说明依赖关系，必要时给出协作者的完整路径；收到会影响其他任务的发现时及时转发。完成消息会投递到父代理邮箱，但不会唤醒你；若本轮答复依赖子代理结果，必须在结束本轮前调用 wait_agent。无需重复发送终稿。",
+                        "Spawn a named child asynchronously and return its path immediately. Current limit per root conversation: ${limits.maxActive} concurrent subagents shared across the entire tree, including pending creation; the root does not occupy a slot. Maximum depth: ${limits.maxDepth}, with root at depth 0. At capacity, wait for an existing agent to finish before spawning or waking an idle agent. Messaging a running agent takes no additional slot. Do not discover limits through repeated failed calls. Spawn only for a concrete independent subtask. Explain dependencies and, when relevant, provide collaborators' canonical paths. Relay findings that affect other tasks promptly. Completion is delivered to the parent's mailbox but does not wake you; if this turn's answer depends on a subagent's result, call wait_agent before ending the turn. Do not send a duplicate final report.",
                     ),
                     parametersStructured = listOf(
                         parameter("task_name", "任务名，只含小写字母、数字和下划线，不可为 root。", "Task name: lowercase letters, digits and underscores; root is reserved.", true),
@@ -90,8 +90,8 @@ object CollaborationTools {
                 ToolPrompt(
                     name = "wait_agent",
                     description = text(
-                        "等待邮箱消息、完成通知或新的用户输入。消息通过上下文投递；此工具只报告等待结果。",
-                        "Wait for mailbox activity, completion notifications or new user input. Messages arrive through context; this tool only reports the wait outcome.",
+                        "等待邮箱消息、完成通知或新的用户输入。消息通过上下文投递；此工具只报告等待结果。子代理的完成消息不会唤醒你：不调用此工具的时候，结果只留在邮箱里，要等到下一轮（通常是用户下一条消息）才会进入上下文。",
+                        "Wait for mailbox activity, completion notifications or new user input. Messages arrive through context; this tool only reports the wait outcome. A child's completion message does not wake you: without this tool the result stays in the mailbox and only enters context on a later turn (usually the user's next message).",
                     ),
                     parametersStructured = listOf(parameter("timeout_ms",
                         "等待毫秒数，默认 ${limits.defaultWaitMs}，最少 ${limits.minWaitMs}，最多 ${limits.maxWaitMs}。",
