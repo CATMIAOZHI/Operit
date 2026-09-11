@@ -59,16 +59,23 @@ class PetTasks private constructor(private val context: Context) {
     val tasks = mutableTasks.asStateFlow()
     val appVisible = MutableStateFlow(false)
     val selectedKey = MutableStateFlow<String?>(null)
+    /**
+     * Completed runs the pet no longer has to show: the user confirmed the card on the panel, or
+     * the main screen already displayed that conversation. The chat returns with its next run.
+     */
     private val acknowledgedRuns = MutableStateFlow<Map<String, Long>>(emptyMap())
     val visibleTasks = combine(tasks, acknowledgedRuns) { current, acknowledged ->
-        current.map { task -> acknowledgedPetTask(task, acknowledged[task.key]) }
+        visiblePetTasks(current, acknowledged)
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     fun acknowledgeCompletion(task: PetTask) {
-        val current = tasks.value.firstOrNull { it.key == task.key } ?: return
-        if (current.startedOrder != task.startedOrder || current.active || current.activity != PetActivity.COMPLETE) return
-        acknowledgedRuns.value = acknowledgedRuns.value + (current.key to current.startedOrder)
-        selectedKey.value = current.key
+        val current = tasks.value.firstOrNull { it.key == task.key && it.startedOrder == task.startedOrder }
+            ?: return
+        val acknowledged = acknowledgedRuns.value + (current.key to current.startedOrder)
+        if (!current.isAcknowledged(acknowledged)) return
+        acknowledgedRuns.value = acknowledged
+        // The confirmed card is gone, so the pet moves on to a task that is still listed.
+        selectedKey.value = visiblePetTasks(tasks.value, acknowledged).lastOrNull()?.key
     }
 
     fun acknowledgeViewedChat(chatId: String) {
@@ -77,6 +84,13 @@ class PetTasks private constructor(private val context: Context) {
         if (viewed.isNotEmpty()) {
             acknowledgedRuns.value = acknowledgedRuns.value +
                 viewed.associate { it.key to it.startedOrder }
+        }
+    }
+
+    /** A confirmation only means something while the run it refers to is still known. */
+    private fun pruneStaleConfirmations() {
+        acknowledgedRuns.value = acknowledgedRuns.value.filter { (key, order) ->
+            mutableTasks.value.any { it.key == key && it.startedOrder == order }
         }
     }
 
@@ -101,9 +115,7 @@ class PetTasks private constructor(private val context: Context) {
                                 fun publish() {
                                     bySlot[slot] = runs.values.toList()
                                     mutableTasks.value = bySlot.values.flatten().sortedBy { it.startedOrder }
-                                    acknowledgedRuns.value = acknowledgedRuns.value.filter { (key, order) ->
-                                        mutableTasks.value.any { it.key == key && it.startedOrder == order }
-                                    }
+                                    pruneStaleConfirmations()
                                 }
                                 val metadataFlow = core.chatHistories.map { histories ->
                                     histories.associate { it.id to petChatMetadataOf(it) }
@@ -204,7 +216,9 @@ class PetTasks private constructor(private val context: Context) {
         }
         scope.launch {
             val core = ChatRuntimeHolder.getInstance(context).getCore(slot)
-            val currentChatId = core.currentChatId.value
+            // Nothing is selected in that runtime: stay on the last conversation the pet knew, so
+            // dismissing the only completed card still opens that conversation.
+            val currentChatId = core.currentChatId.value ?: tasks.value.lastOrNull { it.slot == slot }?.chatId
             val current = currentChatId?.let { core.getChatMetadata(it) }
             // The pet never opens a subagent transcript; fall back to the parent conversation.
             startFloatingChat(
@@ -233,10 +247,13 @@ class PetTasks private constructor(private val context: Context) {
     }
 }
 
-internal fun acknowledgedPetTask(task: PetTask, acknowledgedOrder: Long?): PetTask =
-    if (!task.active && task.activity == PetActivity.COMPLETE && task.startedOrder == acknowledgedOrder) {
-        task.copy(activity = PetActivity.IDLE)
-    } else task
+/** A confirmed run leaves the pet task list; the conversation returns with its next run. */
+internal fun PetTask.isAcknowledged(acknowledgedRuns: Map<String, Long>): Boolean =
+    !active && activity == PetActivity.COMPLETE && startedOrder == acknowledgedRuns[key]
+
+/** Only what still needs attention stays in the list the pet shows. */
+internal fun visiblePetTasks(tasks: List<PetTask>, acknowledgedRuns: Map<String, Long>): List<PetTask> =
+    tasks.filterNot { it.isAcknowledged(acknowledgedRuns) }
 
 internal fun shouldAcknowledgeViewedPetTask(task: PetTask, chatId: String): Boolean =
     task.slot == ChatRuntimeSlot.MAIN && task.chatId == chatId &&

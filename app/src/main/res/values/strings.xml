@@ -8725,7 +8725,7 @@
     <string name="pet_entry_legacy">旧版悬浮球</string>
     <string name="pet_entry_hint">最小化聊天窗口时使用所选入口。语音悬浮球保持原有行为。</string>
     <string name="floating_collapse">收起悬浮窗</string>
-    <string name="pet_acknowledge_completion">确认完成，回到休息中</string>
+    <string name="pet_acknowledge_completion">确认完成，移出任务列表</string>
     <string name="markdown_link_not_openable">该链接指向文档内部的引用，无法打开</string>
 
     <string name="provider_openai_codex">OpenAI Codex (ChatGPT OAuth)</string>
