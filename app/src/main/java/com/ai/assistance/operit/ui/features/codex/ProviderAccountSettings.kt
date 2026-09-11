@@ -14,6 +14,8 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.api.AccountProvider
 import com.ai.assistance.operit.data.api.ProviderAccountManager
 import com.ai.assistance.operit.data.api.ProviderLoginSession
+import com.ai.assistance.operit.data.api.ProviderQuota
+import com.ai.assistance.operit.ui.features.settings.components.ProviderQuotaPanel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -36,6 +38,43 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
     var clientId by remember(provider) { mutableStateOf("") }
     var clientSecret by remember(provider) { mutableStateOf("") }
     var error by remember(provider) { mutableStateOf<String?>(null) }
+    // Grok's own account row is the credential, so a probe cannot cross accounts the way a free-text
+    // key field can; it still runs through the same request-id guard as the other account panels.
+    val isGrok = provider == AccountProvider.GROK
+    var quota by remember(provider) { mutableStateOf<ProviderQuota?>(null) }
+    var quotaLoading by remember(provider) { mutableStateOf(false) }
+    var quotaFailed by remember(provider) { mutableStateOf(false) }
+    var quotaRequestId by remember(provider) { mutableLongStateOf(0L) }
+    fun refreshQuota() {
+        if (account == null) return
+        val requestId = ++quotaRequestId
+        quotaFailed = false
+        quotaLoading = true
+        scope.launch {
+            val result = try {
+                withContext(Dispatchers.IO) { manager.fetchGrokQuota() }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            // A slow probe for a superseded account must not land on the new one's panel.
+            if (requestId != quotaRequestId) return@launch
+            quotaLoading = false
+            // A transient failure keeps the last good numbers; only the note changes.
+            if (result != null) quota = result
+            quotaFailed = result == null
+        }
+    }
+    // A different account is a different meter, so never show the previous one's numbers.
+    LaunchedEffect(account?.accessToken) {
+        quota = null
+        quotaFailed = false
+        quotaLoading = false
+        quotaRequestId++
+        // Antigravity shares this composable but has no billing endpoint, so never probe for it.
+        if (isGrok && account != null) refreshQuota()
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(if (account == null) R.string.provider_account_not_logged_in
             else R.string.provider_account_logged_in), style = MaterialTheme.typography.bodyMedium)
@@ -61,6 +100,14 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
             if (account != null) TextButton(onClick = {
                 scope.launch { manager.logout(); onAccountChanged() }
             }) { Text(stringResource(R.string.provider_account_logout)) }
+        }
+        if (isGrok && account != null) {
+            ProviderQuotaPanel(
+                quota = quota,
+                loading = quotaLoading,
+                failed = quotaFailed,
+                onRefresh = { refreshQuota() },
+            )
         }
     }
     if (login) {
