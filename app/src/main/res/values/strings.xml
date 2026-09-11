@@ -6914,6 +6914,7 @@
     <string name="token_price_description">设置每次API请求的人民币价格</string>
     <string name="floating_chat_cancel">取消</string>
     <string name="floating_chat_send">发送</string>
+    <string name="floating_chat_subagent_read_only">Subagent 对话为只读记录</string>
     <string name="file_list_folder">文件夹</string>
     <string name="folder_navigator_folder">文件夹</string>
     <string name="folder_navigator_all">全部</string>

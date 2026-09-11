@@ -3137,6 +3137,7 @@
     <string name="token_price_description">Set the RMB price per API request</string>
     <string name="floating_chat_cancel">Cancel</string>
     <string name="floating_chat_send">Send</string>
+    <string name="floating_chat_subagent_read_only">Subagent conversations are read-only records</string>
     <string name="file_list_folder">Folder</string>
     <string name="folder_navigator_folder">Folder</string>
     <string name="folder_navigator_all">All</string>
