@@ -1605,6 +1605,17 @@ class ChatHistoryDelegate(
     }
 
     /**
+     * 读取指定时间戳起（含）之后的持久化消息。用于撤回前的提示判断，不受当前显示窗口限制。
+     */
+    suspend fun loadMessagesFromTimestamp(
+        chatId: String?,
+        startTimestampInclusive: Long,
+    ): List<ChatMessage> {
+        val targetChatId = chatId ?: return emptyList()
+        return chatHistoryManager.loadChatMessagesFromTimestamp(targetChatId, startTimestampInclusive)
+    }
+
+    /**
      * 截断聊天记录，会同步删除数据库中指定时间戳之后的消息，并从 SQL 重新加载当前显示窗口。
      *
      * @param timestampOfFirstDeletedMessage 用于删除数据库记录的起始时间戳。如果为null，则清空所有消息。

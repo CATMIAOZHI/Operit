@@ -19366,17 +19366,6 @@
 
     <issue
         id="PluralsCandidate"
-        message="Formatting %d followed by words (&quot;more&quot;): This should probably be a plural rather than a string"
-        errorLine1="    &lt;string name=&quot;workspace_changes_more&quot;>and %1$d more files&lt;/string>"
-        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values-en/strings.xml"
-            line="769"
-            column="5"/>
-    </issue>
-
-    <issue
-        id="PluralsCandidate"
         message="Formatting %d followed by words (&quot;selected&quot;): This should probably be a plural rather than a string"
         errorLine1="    &lt;string name=&quot;selected_count&quot;>%d selected&lt;/string>"
         errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
@@ -20494,17 +20483,6 @@
         <location
             file="src/main/res/values-en/strings.xml"
             line="7881"
-            column="5"/>
-    </issue>
-
-    <issue
-        id="PluralsCandidate"
-        message="Formatting %d followed by words (&quot;more&quot;): This should probably be a plural rather than a string"
-        errorLine1="    &lt;string name=&quot;workspace_attachment_omitted_changes&quot;>- %1$d more changes not listed&lt;/string>"
-        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values-en/strings.xml"
-            line="7917"
             column="5"/>
     </issue>
 
@@ -23013,28 +22991,6 @@
         <location
             file="src/main/java/com/ai/assistance/operit/core/tools/defaultTool/websession/browser/WebSessionHistoryStore.kt"
             line="30"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="StaticFieldLeak"
-        message="Do not place Android context classes in static fields (static reference to `WorkspaceBackupManager` which has field `context` pointing to `Context`); this is a memory leak"
-        errorLine1="        @Volatile"
-        errorLine2="        ^">
-        <location
-            file="src/main/java/com/ai/assistance/operit/ui/features/chat/webview/workspace/WorkspaceBackupManager.kt"
-            line="68"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="StaticFieldLeak"
-        message="Do not place Android context classes in static fields (static reference to `WorkspaceChangeTracker` which has field `context` pointing to `Context`); this is a memory leak"
-        errorLine1="        @Volatile"
-        errorLine2="        ^">
-        <location
-            file="src/main/java/com/ai/assistance/operit/ui/features/chat/webview/workspace/process/WorkspaceChangeTracker.kt"
-            line="19"
             column="9"/>
     </issue>
 
@@ -29613,50 +29569,6 @@
         <location
             file="src/main/res/values/strings.xml"
             line="1637"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UnusedResources"
-        message="The resource `R.string.workspace_change_added` appears to be unused"
-        errorLine1="    &lt;string name=&quot;workspace_change_added&quot;>新增&lt;/string>"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="1645"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UnusedResources"
-        message="The resource `R.string.workspace_change_deleted` appears to be unused"
-        errorLine1="    &lt;string name=&quot;workspace_change_deleted&quot;>删除&lt;/string>"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="1646"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UnusedResources"
-        message="The resource `R.string.workspace_change_modified` appears to be unused"
-        errorLine1="    &lt;string name=&quot;workspace_change_modified&quot;>修改&lt;/string>"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="1647"
-            column="13"/>
-    </issue>
-
-    <issue
-        id="UnusedResources"
-        message="The resource `R.string.workspace_changes_more` appears to be unused"
-        errorLine1="    &lt;string name=&quot;workspace_changes_more&quot;>以及另外 %1$d 个文件变更&lt;/string>"
-        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/res/values/strings.xml"
-            line="1648"
             column="13"/>
     </issue>
 

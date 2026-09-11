@@ -14,7 +14,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
-import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingRepository
 import com.ai.assistance.operit.core.tools.agent.PhoneAgentJobRegistry
 import com.ai.assistance.operit.data.model.*
@@ -33,7 +32,6 @@ import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
-import com.ai.assistance.operit.ui.features.chat.webview.workspace.WorkspaceBackupManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -905,38 +903,6 @@ class MessageProcessingDelegate(
                     }
             )
 
-            val toolHandler = AIToolHandler.getInstance(context)
-            var workspaceToolHookSession: WorkspaceBackupManager.WorkspaceToolHookSession? = null
-
-            // 在消息发送期间临时挂载 workspace hook，结束后卸载
-            if (!workspacePath.isNullOrBlank()) {
-                val attachWorkspaceHookStartTime = messageTimingNow()
-                try {
-                    val session =
-                        WorkspaceBackupManager.getInstance(context)
-                            .createWorkspaceToolHookSession(
-                                workspacePath = workspacePath,
-                                workspaceEnv = workspaceEnv,
-                                messageTimestamp = userMessage.timestamp,
-                                chatId = chatId
-                            )
-                    workspaceToolHookSession = session
-                    toolHandler.addToolHook(session)
-                    AppLogger.d(
-                        TAG,
-                        "Workspace hook attached for timestamp=${userMessage.timestamp}, path=$workspacePath"
-                    )
-                    logMessageTiming(
-                        stage = "delegate.attachWorkspaceHook",
-                        startTimeMs = attachWorkspaceHookStartTime,
-                        details = "chatId=$chatId, workspacePath=$workspacePath"
-                    )
-                } catch (e: Exception) {
-                    AppLogger.e(TAG, "Failed to attach workspace hook", e)
-                    _nonFatalErrorEvent.emit(context.getString(R.string.message_workspace_sync_failed, e.message))
-                }
-            }
-
             if (shouldAddUserMessageToChat && chatId != null) {
                 // 等待消息添加到聊天历史完成，确保getChatHistory()包含新消息
                 val addUserMessageStartTime = messageTimingNow()
@@ -1754,19 +1720,6 @@ class MessageProcessingDelegate(
                     startTimeMs = finalizeMessageStartTime,
                     details = "chatId=$activeChatId, notifyTurnComplete=$shouldNotifyTurnComplete"
                 )
-
-                workspaceToolHookSession?.let { session ->
-                    val cleanupWorkspaceHookStartTime = messageTimingNow()
-                    runCatching { toolHandler.removeToolHook(session) }
-                        .onFailure { AppLogger.w(TAG, "Failed to remove workspace hook", it) }
-                    runCatching { session.close() }
-                        .onFailure { AppLogger.w(TAG, "Failed to close workspace hook session", it) }
-                    logMessageTiming(
-                        stage = "delegate.cleanupWorkspaceHook",
-                        startTimeMs = cleanupWorkspaceHookStartTime,
-                        details = "chatId=$activeChatId"
-                    )
-                }
 
                 val cleanupRuntimeStartTime = messageTimingNow()
                 cleanupRuntimeAfterSend(chatId, chatRuntime)

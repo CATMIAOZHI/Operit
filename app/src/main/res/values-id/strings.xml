@@ -1802,11 +1802,6 @@
     <string name="confirm_edit_and_resend_title">Konfirmasi Edit dan Kirim Ulang</string>
     <string name="confirm_edit_and_resend_message">Semua pesan setelah pesan ini akan dihapus, konten yang diedit akan dikirim ulang sebagai pertanyaan baru, dan ruang kerja yang terikat akan dikembalikan ke keadaan sebelum pesan ini. Tindakan ini tidak dapat dibatalkan. Yakin ingin melanjutkan?</string>
     <string name="confirm_edit_and_resend_confirm">Konfirmasi Edit dan Kirim Ulang</string>
-    <string name="workspace_changes_preview_title">Pratinjau Perubahan File Ruang Kerja</string>
-    <string name="workspace_change_added">Ditambahkan</string>
-    <string name="workspace_change_deleted">Dihapus</string>
-    <string name="workspace_change_modified">Diubah</string>
-    <string name="workspace_changes_more">dan %1$d perubahan file lainnya</string>
     <string name="multi_select">Pilih Banyak</string>
     <string name="exit_multi_select">Keluar dari Pilih Banyak</string>
     <string name="select_all_messages">Pilih Semua</string>
@@ -6505,7 +6500,6 @@
     <string name="message_workspace_backing_up">Mencadangkan ruang kerja...</string>
     <string name="message_role_user">Pengguna</string>
     <string name="role_card_chat_model_binding_parse_failed">Gagal mengurai pengikatan model percakapan kartu peran</string>
-    <string name="message_workspace_sync_failed">Gagal menyinkronkan status ruang kerja: %1$s</string>
     <string name="message_ai_service_not_initialized">Layanan AI belum diinisialisasi</string>
     <string name="message_summarizing">Meringkas memori...</string>
     <string name="message_send_failed">Gagal mengirim pesan: %1$s</string>
@@ -7164,13 +7158,6 @@
 
     <string name="workspace_attachment_attached">Percakapan saat ini telah dilampirkan ke ruang kerja.</string>
     <string name="workspace_attachment_environment">Lingkungan ruang kerja: %1$s</string>
-    <string name="workspace_attachment_initial_load">Memuat ruang kerja pertama kali:</string>
-    <string name="workspace_attachment_file_changes">Perubahan file ruang kerja:</string>
-    <string name="workspace_attachment_omitted_changes">- Masih ada %1$d perubahan yang tidak tercantum</string>
-    <string name="workspace_attachment_change_created">Baru</string>
-    <string name="workspace_attachment_change_modified">Diubah</string>
-    <string name="workspace_attachment_change_deleted">Dihapus</string>
-    <string name="workspace_attachment_change_moved">Dipindahkan</string>
     <string name="artifact_publish_node_updated">Node «%1$s» telah diperbarui</string>
     <string name="artifact_project_node_view_title">Lihat Node</string>
     <string name="artifact_project_nodes_loading">Memuat node proyek...</string>

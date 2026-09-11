@@ -1475,11 +1475,6 @@
     <string name="confirm_edit_and_resend_title">수정 확인 및 다시 보내기</string>
     <string name="confirm_edit_and_resend_message">이 메시지 이후의 모든 메시지를 삭제하고, 수정한 내용을 새 요청으로 다시 보내며, 연결된 작업 공간을 이 메시지 이전 상태로 되돌립니다. 이 작업은 취소할 수 없습니다. 계속하시겠습니까?</string>
     <string name="confirm_edit_and_resend_confirm">수정 및 재전송</string>
-    <string name="workspace_changes_preview_title">작업 공간 변경 미리보기</string>
-    <string name="workspace_change_added">추가됨</string>
-    <string name="workspace_change_deleted">삭제됨</string>
-    <string name="workspace_change_modified">수정됨</string>
-    <string name="workspace_changes_more">및 %1$d 추가 파일</string>
     <string name="multi_select">다중 선택</string>
     <string name="exit_multi_select">다중 선택 종료</string>
     <string name="select_all_messages">모두 선택</string>
@@ -6707,7 +6702,6 @@
     <string name="message_workspace_backing_up">작업 공간 백업 중...</string>
     <string name="message_role_user">사용자</string>
     <string name="role_card_chat_model_binding_parse_failed">캐릭터 카드 채팅 모델 바인딩을 파싱하지 못했습니다.</string>
-    <string name="message_workspace_sync_failed">작업 공간 상태 동기화 실패: %1$s</string>
     <string name="message_ai_service_not_initialized">AI 서비스가 초기화되지 않았습니다.</string>
     <string name="message_summarizing">메모리를 요약하는 중...</string>
     <string name="message_send_failed">메시지 전송 실패: %1$s</string>
@@ -7016,13 +7010,6 @@
 
     <string name="workspace_attachment_attached">현재 대화에 작업 공간이 첨부되었습니다.</string>
     <string name="workspace_attachment_environment">작업 공간 환경: %1$s</string>
-    <string name="workspace_attachment_initial_load">작업 공간 초기 로드:</string>
-    <string name="workspace_attachment_file_changes">작업 공간 파일 변경:</string>
-    <string name="workspace_attachment_omitted_changes">- %1$d개의 변경 사항이 더 있습니다.</string>
-    <string name="workspace_attachment_change_created">생성됨</string>
-    <string name="workspace_attachment_change_modified">수정됨</string>
-    <string name="workspace_attachment_change_deleted">삭제됨</string>
-    <string name="workspace_attachment_change_moved">이동됨</string>
     <string name="artifact_publish_node_updated">노드「%1$s」가 업데이트되었습니다.</string>
     <string name="artifact_project_node_view_title">노드 보기</string>
     <string name="artifact_project_nodes_loading">프로젝트 노드를 불러오는 중...</string>

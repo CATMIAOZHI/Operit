@@ -800,16 +800,12 @@
     <string name="modify_memory">Modify Memory</string>
     <string name="delete_from_here">Delete From Here</string>
     <string name="confirm_rollback_title">Confirm rollback</string>
-    <string name="confirm_rollback_message">This will delete all messages after this one and roll back the bound workspace to the state before this message. This action cannot be undone. Continue?</string>
+    <string name="confirm_rollback_message">This will delete this message and all messages after it. File changes the AI already wrote to disk will not be reverted, so you need to handle them yourself. This action cannot be undone. Continue?</string>
     <string name="confirm_rollback_confirm">Rollback</string>
     <string name="confirm_edit_and_resend_title">Confirm edit &amp; resend</string>
-    <string name="confirm_edit_and_resend_message">This will delete all messages after this one, resend the edited content as a new request, and roll back the bound workspace to the state before this message. This action cannot be undone. Continue?</string>
+    <string name="confirm_edit_and_resend_message">This will delete all messages after this one and resend the edited content as a new request. File changes the AI already wrote to disk will not be reverted, so you need to handle them yourself. This action cannot be undone. Continue?</string>
     <string name="confirm_edit_and_resend_confirm">Edit &amp; Resend</string>
-    <string name="workspace_changes_preview_title">Workspace changes preview</string>
-    <string name="workspace_change_added">Added</string>
-    <string name="workspace_change_deleted">Deleted</string>
-    <string name="workspace_change_modified">Modified</string>
-    <string name="workspace_changes_more">and %1$d more files</string>
+    <string name="confirm_revert_tool_calls_warning">Rounds in this range called tools. Their conversations are deleted as well, so the AI no longer remembers them and may repeat operations or misjudge existing files when answering again.</string>
     <string name="multi_select">Multi-select</string>
 
     <string name="exit_multi_select">Exit Multi-select</string>
@@ -7697,7 +7693,6 @@
     <string name="message_workspace_backing_up">Backing up workspace...</string>
     <string name="message_role_user">User</string>
     <string name="role_card_chat_model_binding_parse_failed">Failed to parse role-card chat-model binding</string>
-    <string name="message_workspace_sync_failed">Workspace state sync failed: %1$s</string>
     <string name="message_ai_service_not_initialized">AI service not initialized</string>
     <string name="message_summarizing">Summarizing memories...</string>
     <string name="message_send_failed">Failed to send message: %1$s</string>
@@ -8398,13 +8393,6 @@
 
     <string name="workspace_attachment_attached">Current conversation has attached workspace.</string>
     <string name="workspace_attachment_environment">Workspace environment: %1$s</string>
-    <string name="workspace_attachment_initial_load">Initial workspace load:</string>
-    <string name="workspace_attachment_file_changes">Workspace file changes:</string>
-    <string name="workspace_attachment_omitted_changes">- %1$d more changes not listed</string>
-    <string name="workspace_attachment_change_created">Created</string>
-    <string name="workspace_attachment_change_modified">Modified</string>
-    <string name="workspace_attachment_change_deleted">Deleted</string>
-    <string name="workspace_attachment_change_moved">Moved</string>
     <string name="artifact_publish_node_updated">Node「%1$s」updated</string>
     <string name="artifact_project_node_view_title">Node View</string>
     <string name="artifact_project_nodes_loading">Loading project nodes...</string>

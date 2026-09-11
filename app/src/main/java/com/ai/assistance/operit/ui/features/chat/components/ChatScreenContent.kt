@@ -45,7 +45,6 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatHistoryDisplayMode
 import com.ai.assistance.operit.ui.features.chat.components.style.bubble.BubbleImageStyleConfig
-import com.ai.assistance.operit.ui.features.chat.webview.workspace.WorkspaceBackupManager
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -74,6 +73,15 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.ui.features.chat.components.MessageEditor
 import com.ai.assistance.operit.ui.main.screens.GestureStateHolder
 import kotlin.math.roundToInt
+
+/**
+ * 待确认的撤回请求。索引与"是否丢弃工具轮次"一起写入，避免连续点击时两次异步判断互相覆盖。
+ */
+private data class MessageRevertRequest(
+    val index: Int,
+    val removesToolCalls: Boolean,
+    val editedContent: String? = null,
+)
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -175,11 +183,8 @@ fun ChatScreenContent(
     var exportErrorMessage by remember { mutableStateOf<String?>(null) }
     var webContentDir by remember { mutableStateOf<File?>(null) }
     var editingMessageType by remember { mutableStateOf<String?>(null) }
-    var pendingRollbackIndex by remember { mutableStateOf<Int?>(null) }
-    var pendingRewindIndex by remember { mutableStateOf<Int?>(null) }
-    var pendingRewindContent by remember { mutableStateOf<String?>(null) }
-    var rollbackPreview by remember { mutableStateOf<List<WorkspaceBackupManager.WorkspaceFileChange>>(emptyList()) }
-    var rewindPreview by remember { mutableStateOf<List<WorkspaceBackupManager.WorkspaceFileChange>>(emptyList()) }
+    var pendingRollback by remember { mutableStateOf<MessageRevertRequest?>(null) }
+    var pendingRewind by remember { mutableStateOf<MessageRevertRequest?>(null) }
     val hasOlderDisplayHistory by actualViewModel.hasOlderDisplayHistory.collectAsState()
     val hasNewerDisplayHistory by actualViewModel.hasNewerDisplayHistory.collectAsState()
     val isLoadingDisplayWindow by actualViewModel.isLoadingDisplayWindow.collectAsState()
@@ -193,8 +198,8 @@ fun ChatScreenContent(
             isMultiSelectMode = false
             selectedMessageIndices = emptySet()
             editingMessageIndex.value = null
-            pendingRollbackIndex = null
-            pendingRewindIndex = null
+            pendingRollback = null
+            pendingRewind = null
         }
     }
     LaunchedEffect(isSpeechSessionActive, isSpeechPaused, isAutoReadEnabled) {
@@ -203,24 +208,6 @@ fun ChatScreenContent(
             "speechControls session=$isSpeechSessionActive paused=$isSpeechPaused autoRead=$isAutoReadEnabled visible=${isSpeechSessionActive || isSpeechPaused || isAutoReadEnabled}"
         )
     }
-    LaunchedEffect(pendingRollbackIndex) {
-        val index = pendingRollbackIndex
-        if (index != null) {
-            rollbackPreview = actualViewModel.previewWorkspaceChangesForMessage(index)
-        } else {
-            rollbackPreview = emptyList()
-        }
-    }
-
-    LaunchedEffect(pendingRewindIndex) {
-        val index = pendingRewindIndex
-        if (index != null) {
-            rewindPreview = actualViewModel.previewWorkspaceChangesForMessage(index)
-        } else {
-            rewindPreview = emptyList()
-        }
-    }
-
     val onSelectMessageToEditCallback = remember(editingMessageIndex, editingMessageContent, editingMessageType) {
         { index: Int, message: ChatMessage, senderType: String ->
             editingMessageIndex.value = index
@@ -259,7 +246,16 @@ fun ChatScreenContent(
                             actualViewModel.deleteCurrentMessageVariant(index)
                         },
                         onDeleteMessagesFrom = { index -> actualViewModel.deleteMessagesFrom(index) },
-                        onRollbackToMessage = { index -> pendingRollbackIndex = index },
+                        onRollbackToMessage = { index ->
+                            coroutineScope.launch {
+                                pendingRollback =
+                                    MessageRevertRequest(
+                                        index = index,
+                                        removesToolCalls =
+                                            actualViewModel.willRevertDropToolCalls(index),
+                                    )
+                            }
+                        },
                         onRegenerateMessage = { index -> actualViewModel.regenerateSingleAiMessage(index) },
                         onSwitchMessageVariant = { index, targetVariantIndex ->
                             actualViewModel.switchMessageVariant(index, targetVariantIndex)
@@ -381,7 +377,16 @@ fun ChatScreenContent(
                             actualViewModel.deleteCurrentMessageVariant(index)
                         },
                         onDeleteMessagesFrom = { index -> actualViewModel.deleteMessagesFrom(index) },
-                        onRollbackToMessage = { index -> pendingRollbackIndex = index },
+                        onRollbackToMessage = { index ->
+                            coroutineScope.launch {
+                                pendingRollback =
+                                    MessageRevertRequest(
+                                        index = index,
+                                        removesToolCalls =
+                                            actualViewModel.willRevertDropToolCalls(index),
+                                    )
+                            }
+                        },
                         onRegenerateMessage = { index -> actualViewModel.regenerateSingleAiMessage(index) },
                         onSwitchMessageVariant = { index, targetVariantIndex ->
                             actualViewModel.switchMessageVariant(index, targetVariantIndex)
@@ -1011,15 +1016,17 @@ fun ChatScreenContent(
                 onResend = {
                     val index = editingMessageIndex.value
                     if (index != null) {
-                        val currentChat = chatHistories.find { it.id == currentChatId }
-                        val hasWorkspace = !currentChat?.workspace.isNullOrBlank()
+                        val editedContent = editingMessageContent.value
 
-                        if (hasWorkspace) {
-                            pendingRewindIndex = index
-                            pendingRewindContent = editingMessageContent.value
-                        } else {
-                            // 没有绑定工作区时，直接执行编辑并重发，无需确认弹窗
-                            actualViewModel.rewindAndResendMessage(index, editingMessageContent.value)
+                        // 编辑并重发同样会删除此后的轮次，无论是否绑定工作区都要先确认改动不会被撤回。
+                        coroutineScope.launch {
+                            pendingRewind =
+                                MessageRevertRequest(
+                                    index = index,
+                                    removesToolCalls =
+                                        actualViewModel.willRevertDropToolCalls(index),
+                                    editedContent = editedContent,
+                                )
                         }
                     }
                     editingMessageIndex.value = null
@@ -1029,39 +1036,33 @@ fun ChatScreenContent(
             )
         }
 
-        if (pendingRollbackIndex != null) {
-            WorkspaceChangeConfirmDialog(
-                mode = WorkspaceChangeConfirmMode.ROLLBACK,
-                changes = rollbackPreview,
+        val rollbackRequest = pendingRollback
+        if (rollbackRequest != null) {
+            MessageRevertConfirmDialog(
+                mode = MessageRevertMode.ROLLBACK,
+                removedRangeHasToolCalls = rollbackRequest.removesToolCalls,
                 onConfirm = {
-                    val index = pendingRollbackIndex
-                    if (index != null) {
-                        actualViewModel.rollbackToMessage(index)
-                    }
-                    pendingRollbackIndex = null
+                    actualViewModel.rollbackToMessage(rollbackRequest.index)
+                    pendingRollback = null
                 },
                 onDismiss = {
-                    pendingRollbackIndex = null
+                    pendingRollback = null
                 }
             )
         }
 
-        if (pendingRewindIndex != null && pendingRewindContent != null) {
-            WorkspaceChangeConfirmDialog(
-                mode = WorkspaceChangeConfirmMode.EDIT_AND_RESEND,
-                changes = rewindPreview,
+        val rewindRequest = pendingRewind
+        val rewindEditedContent = rewindRequest?.editedContent
+        if (rewindRequest != null && rewindEditedContent != null) {
+            MessageRevertConfirmDialog(
+                mode = MessageRevertMode.EDIT_AND_RESEND,
+                removedRangeHasToolCalls = rewindRequest.removesToolCalls,
                 onConfirm = {
-                    val index = pendingRewindIndex
-                    val content = pendingRewindContent
-                    if (index != null && content != null) {
-                        actualViewModel.rewindAndResendMessage(index, content)
-                    }
-                    pendingRewindIndex = null
-                    pendingRewindContent = null
+                    actualViewModel.rewindAndResendMessage(rewindRequest.index, rewindEditedContent)
+                    pendingRewind = null
                 },
                 onDismiss = {
-                    pendingRewindIndex = null
-                    pendingRewindContent = null
+                    pendingRewind = null
                 }
             )
         }

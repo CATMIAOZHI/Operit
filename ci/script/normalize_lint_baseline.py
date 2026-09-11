@@ -14,7 +14,7 @@ HOME_VERSION_CATALOG_PATH = re.compile(
     r'file="\$HOME/[^\"]*/gradle/libs\.versions\.toml"'
 )
 NORMALIZED_VERSION_CATALOG_PATH = 'file="../gradle/libs.versions.toml"'
-EXPECTED_SHA256 = "396e0383a86d7a46b2421d020c5c80efc82faf51ce926fb2864d0593c008d535"
+EXPECTED_SHA256 = "47cc95ba2f072e74920a4d897c383f31e27b48c88dc5f3f9e7bb04439841fabb"
 
 
 def normalize(text: str) -> str:
