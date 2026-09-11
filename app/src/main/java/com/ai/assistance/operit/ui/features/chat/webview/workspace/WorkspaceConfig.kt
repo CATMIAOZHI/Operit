@@ -21,7 +21,6 @@ data class WorkspaceConfig(
     val preview: PreviewConfig = PreviewConfig(),
     val commands: List<CommandConfig> = emptyList(),
     val export: ExportConfig = ExportConfig(),
-    val watch: WatchConfig = WatchConfig()
 )
 
 @Serializable
@@ -63,14 +62,6 @@ data class CommandConfig(
 @Serializable
 data class ExportConfig(
     val enabled: Boolean = true // 是否显示导出按钮
-)
-
-@Serializable
-data class WatchConfig(
-    val enabled: Boolean = true,
-    val maxDepth: Int = 3,
-    val maxChangedFiles: Int = 80,
-    val exclude: List<String> = listOf(".git", ".operit", ".backup", "backup")
 )
 
 object WorkspaceConfigReader {

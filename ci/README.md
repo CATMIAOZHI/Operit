@@ -66,4 +66,6 @@ Android lint 使用 `app/lint-baseline.xml` 记录启用 PR 检查前已有的�
 
 初始 baseline 使用 AGP 8.13.2 并启用依赖检查，从上游提交 `1fe3b5eddb1f5c6ed795465f80716dda8c36cc65` 生成，对应 [GitHub Actions 运行](https://github.com/luojiaping/Operit/actions/runs/29661867372)。归一化路径后的 SHA-256 为 `396e0383a86d7a46b2421d020c5c80efc82faf51ce926fb2864d0593c008d535`。
 
+删除工作区快照/回滚子系统后，按同一检查基准手工清理了指向已删字符串的过期条目（2 条 `PluralsCandidate`、4 条 `UnusedResources`），未重新生成整个 baseline。当前归一化路径后的 SHA-256 为 `47cc95ba2f072e74920a4d897c383f31e27b48c88dc5f3f9e7bb04439841fabb`，脚本中的 `EXPECTED_SHA256` 已同步。
+
 baseline 只能通过 `:app:updateLintBaseline` 显式更新。生成后运行 `python3 ci/script/normalize_lint_baseline.py` 清理环境相关路径，再记录生成基准、依赖环境与新校验和，并同步脚本中的 `EXPECTED_SHA256`。

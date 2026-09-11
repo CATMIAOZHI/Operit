@@ -1438,11 +1438,6 @@
     <string name="confirm_edit_and_resend_title">Confirme as edições e reenvie</string>
     <string name="confirm_edit_and_resend_message">Todas as mensagens após esta mensagem serão excluídas, o conteúdo editado será reenviado como uma nova pergunta e o espaço de trabalho vinculado será revertido para o estado anterior a esta mensagem. Esta operação é irreversível. Tem certeza de que deseja continuar?</string>
     <string name="confirm_edit_and_resend_confirm">Confirme as edições e reenvie</string>
-    <string name="workspace_changes_preview_title">Pré-visualização da alteração do arquivo do espaço de trabalho</string>
-    <string name="workspace_change_added">Novo</string>
-    <string name="workspace_change_deleted">excluir</string>
-    <string name="workspace_change_modified">Rever</string>
-    <string name="workspace_changes_more">e mais %1$d alterações no arquivo</string>
     <string name="multi_select">Múltipla escolha</string>
     <string name="exit_multi_select">Sair da seleção múltipla</string>
     <string name="select_all_messages">Selecionar tudo</string>
@@ -6222,7 +6217,6 @@
     <string name="message_workspace_backing_up">Fazendo backup do espaço de trabalho...</string>
     <string name="message_role_user">usuário</string>
     <string name="role_card_chat_model_binding_parse_failed">Falha na análise de vinculação do modelo de diálogo do cartão de personagem</string>
-    <string name="message_workspace_sync_failed">Falha na sincronização do status do espaço de trabalho: %1$s</string>
     <string name="message_ai_service_not_initialized">Serviço de IA não inicializado</string>
     <string name="message_summarizing">Resumindo memórias...</string>
     <string name="message_send_failed">Falha ao enviar mensagem: %1$s</string>
@@ -7001,13 +6995,6 @@
 
     <string name="workspace_attachment_attached">O espaço de trabalho atual está anexado.</string>
     <string name="workspace_attachment_environment">Ambiente do espaço de trabalho: %1$s</string>
-    <string name="workspace_attachment_initial_load">Carregamento inicial do espaço de trabalho:</string>
-    <string name="workspace_attachment_file_changes">Alterações de arquivo do espaço de trabalho:</string>
-    <string name="workspace_attachment_omitted_changes">- Mais %1$d alterações não listadas</string>
-    <string name="workspace_attachment_change_created">Criado</string>
-    <string name="workspace_attachment_change_modified">Modificado</string>
-    <string name="workspace_attachment_change_deleted">Excluído</string>
-    <string name="workspace_attachment_change_moved">Movido</string>
     <string name="artifact_publish_node_updated">Nó «%1$s» atualizado</string>
     <string name="artifact_project_node_view_title">Visualização de nó</string>
     <string name="artifact_project_nodes_loading">Carregando nós do projeto...</string>

@@ -19,6 +19,7 @@ import androidx.lifecycle.viewModelScope
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.api.chat.EnhancedAIService
+import com.ai.assistance.operit.api.chat.protocol.ExecutableToolProtocolParser
 import com.ai.assistance.operit.core.chat.AIMessageManager
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.FileOperationData
@@ -67,7 +68,6 @@ import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.model.ActivePrompt
 import com.ai.assistance.operit.util.WaifuMessageProcessor
-import com.ai.assistance.operit.ui.features.chat.webview.workspace.WorkspaceBackupManager
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.CommandConfig
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.WorkspaceCommandExecutionState
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.WorkspaceConfigReader
@@ -1303,38 +1303,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     return@launch
                 }
 
-                // **核心修复**: 确定回滚的时间戳。
-                // 我们需要恢复到目标消息 *之前* 的状态,
-                // 所以我们使用前一条消息的时间戳。
-                // 如果目标是第一条消息，则回滚到初始状态 (时间戳 0)。
-                val rewindTimestamp = if (index > 0) {
-                    currentHistory[index - 1].timestamp
-                } else {
-                    0L
-                }
-
-                // 获取当前工作区路径
-                val chatId = currentChatId.value
-                val currentChat = chatHistories.value.find { it.id == chatId }
-                val workspacePath = currentChat?.workspace
-                val workspaceEnv = currentChat?.workspaceEnv
-
                 AppLogger.d(TAG, "[Rewind] Target message timestamp: ${targetMessage.timestamp}")
                 if (index > 0) {
                     AppLogger.d(TAG, "[Rewind] Previous message timestamp: ${currentHistory[index - 1].timestamp}")
                 } else {
                     AppLogger.d(TAG, "[Rewind] No previous message, target is the first message.")
-                }
-                AppLogger.d(TAG, "[Rewind] Timestamp passed to syncState: $rewindTimestamp")
-
-                // 如果绑定了工作区，则执行回滚
-                if (!workspacePath.isNullOrBlank()) {
-                    AppLogger.d(TAG, "Rewinding workspace to timestamp: $rewindTimestamp")
-                    withContext(Dispatchers.IO) {
-                        WorkspaceBackupManager.getInstance(context)
-                            .syncState(workspacePath, rewindTimestamp, workspaceEnv, chatId)
-                    }
-                    AppLogger.d(TAG, "Workspace rewind complete.")
                 }
 
                 // 截取到指定消息的历史记录（不包含该消息本身）
@@ -1354,35 +1327,31 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    suspend fun previewWorkspaceChangesForMessage(index: Int): List<WorkspaceBackupManager.WorkspaceFileChange> {
+    /**
+     * 判断撤回是否会丢弃调用过工具的轮次。
+     *
+     * 撤回只删除对话记录，不会撤销 AI 写入磁盘的文件改动。此时 AI 失去了这些操作的上下文，重新回答
+     * 时可能出现重复操作或判断偏差，需要在确认框中额外提示。
+     */
+    suspend fun willRevertDropToolCalls(index: Int): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                val currentHistory = chatHistoryDelegate.chatHistory.value.toMutableList()
-
+                val currentHistory = chatHistoryDelegate.chatHistory.value
                 if (index < 0 || index >= currentHistory.size) {
-                    emptyList()
+                    false
                 } else {
-                    val rewindTimestamp = if (index > 0) {
-                        currentHistory[index - 1].timestamp
-                    } else {
-                        0L
-                    }
-
-                    val chatId = currentChatId.value
-                    val currentChat = chatHistories.value.find { it.id == chatId }
-                    val workspacePath = currentChat?.workspace
-                    val workspaceEnv = currentChat?.workspaceEnv
-
-                    if (workspacePath.isNullOrBlank()) {
-                        emptyList()
-                    } else {
-                        WorkspaceBackupManager.getInstance(context)
-                            .previewChangesForRewind(workspacePath, workspaceEnv, rewindTimestamp, chatId)
-                    }
+                    chatHistoryDelegate
+                        .loadMessagesFromTimestamp(
+                            chatId = currentChatId.value,
+                            startTimestampInclusive = currentHistory[index].timestamp,
+                        )
+                        .any { message ->
+                            messageHasExecutableToolCall(message.sender, message.content)
+                        }
                 }
             } catch (e: Exception) {
-                AppLogger.e(TAG, "预览工作区变更失败", e)
-                emptyList()
+                AppLogger.e(TAG, "检查撤回轮次的工具调用失败", e)
+                false
             }
         }
     }
@@ -1404,26 +1373,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 if (targetMessage.sender != "user") {
                     uiStateDelegate.showErrorMessage(context.getString(R.string.chat_only_user_message_allowed))
                     return@launch
-                }
-
-                val rewindTimestamp = if (index > 0) {
-                    currentHistory[index - 1].timestamp
-                } else {
-                    0L
-                }
-
-                val chatId = currentChatId.value
-                val currentChat = chatHistories.value.find { it.id == chatId }
-                val workspacePath = currentChat?.workspace
-                val workspaceEnv = currentChat?.workspaceEnv
-
-                if (!workspacePath.isNullOrBlank()) {
-                    AppLogger.d(TAG, "[Rollback] Rewinding workspace to timestamp: $rewindTimestamp")
-                    withContext(Dispatchers.IO) {
-                        WorkspaceBackupManager.getInstance(context)
-                            .syncState(workspacePath, rewindTimestamp, workspaceEnv, chatId)
-                    }
-                    AppLogger.d(TAG, "[Rollback] Workspace rewind complete.")
                 }
 
                 // 删除目标消息及其之后的所有消息
@@ -3323,4 +3272,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         messageCoordinationDelegate.manuallySummarizeConversation()
     }
 
+}
+
+/**
+ * 判断一条消息是否属于"调用过工具"的轮次，用于撤回前的提示判断。
+ *
+ * 只认 AI 消息里会被真正执行的工具调用：用户消息中的示例文本（例如"记忆文件夹"附件内联的
+ * `<tool …>` 示例）以及代码块中的写法都不算。这里复用执行路径的解析器，避免"正文里出现工具
+ * 标签"被当成"执行过工具"。
+ *
+ * 这是尽力而为的判断：只检查当前对话的行，子代理/协作模式产生的是各自独立的对话行，直接由
+ * 工具包或 JS 在别处执行的调用也看不到。漏报只会少一条提示，不会误报。
+ */
+internal fun messageHasExecutableToolCall(sender: String, content: String): Boolean {
+    if (sender != "ai" || content.isEmpty()) {
+        return false
+    }
+    return ExecutableToolProtocolParser.parse(content).isNotEmpty()
 }

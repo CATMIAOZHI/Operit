@@ -27,7 +27,6 @@ import com.ai.assistance.operit.data.model.PromptFunctionType
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.process.WorkspaceAttachmentProcessor
-import com.ai.assistance.operit.ui.features.chat.webview.workspace.process.WorkspaceChangeTracker
 import com.ai.assistance.operit.util.MediaPoolManager
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.ChatMarkupRegex
@@ -180,14 +179,10 @@ object AIMessageManager {
             if (normalizedWorkspacePath.isNotEmpty() &&
                 !processedMessageText.contains("<workspace_attachment", ignoreCase = true)
             ) {
-                val workspaceChanges =
-                    WorkspaceChangeTracker.getInstance(context)
-                        .consumeChanges(chatId, normalizedWorkspacePath, workspaceEnv)
                 "<workspace_attachment>" +
                     WorkspaceAttachmentProcessor.generateWorkspaceAttachment(
                         context,
                         workspaceEnv,
-                        workspaceChanges
                     ) +
                     "</workspace_attachment>"
             } else {

@@ -1645,20 +1645,8 @@
     <string name="confirm_edit_and_resend_title">Confirmă modificările și retrimite</string>
     <string name="confirm_edit_and_resend_message">Se vor șterge toate mesajele ulterioare acestui mesaj, iar conținutul editat va fi retrimis ca o nouă întrebare; totodată, spațiul de lucru asociat va fi readus la starea dinaintea acestui mesaj. Această acțiune este ireversibilă. Doriți să continuați?</string>
     <string name="confirm_edit_and_resend_confirm">Confirmă modificările și retrimite</string>
-    <string name="workspace_changes_preview_title">Previzualizarea modificărilor aduse fișierelor din zona de lucru</string>
-    <string name="workspace_change_added">Adăugat</string>
-    <string name="workspace_change_deleted">Ștergere</string>
-    <string name="workspace_change_modified">Modificare</string>
-    <string name="workspace_changes_more">precum și, în plus, %1$d Modificări la fișiere</string>
     <string name="workspace_attachment_attached">Dialogul curent a fost atașat la spațiul de lucru.</string>
     <string name="workspace_attachment_environment">Mediul de lucru:%1$s</string>
-    <string name="workspace_attachment_initial_load">Încărcarea inițială a spațiului de lucru:</string>
-    <string name="workspace_attachment_file_changes">Modificări ale fișierelor din zona de lucru:</string>
-    <string name="workspace_attachment_omitted_changes">- Și încă ceva %1$d Această modificare nu este menționată</string>
-    <string name="workspace_attachment_change_created">Adăugat</string>
-    <string name="workspace_attachment_change_modified">Modificare</string>
-    <string name="workspace_attachment_change_deleted">Ștergere</string>
-    <string name="workspace_attachment_change_moved">Mobil</string>
     <string name="multi_select">Răspunsuri multiple</string>
 
     <string name="exit_multi_select">Anulare selecție multiplă</string>
@@ -7701,7 +7689,6 @@
     <string name="message_workspace_backing_up">Se efectuează copierea de rezervă a spațiului de lucru...</string>
     <string name="message_role_user">Utilizator</string>
     <string name="role_card_chat_model_binding_parse_failed">Eșec la analizarea legării modelului de dialog al cărții de personaj</string>
-    <string name="message_workspace_sync_failed">Eșecul sincronizării stării zonei de lucru: %1$s</string>
     <string name="message_ai_service_not_initialized">AIServiciul nu a fost inițializat</string>
     <string name="message_summarizing">Se face un rezumat al amintirilor...</string>
     <string name="message_send_failed">Eșec la trimiterea mesajului: %1$s</string>
