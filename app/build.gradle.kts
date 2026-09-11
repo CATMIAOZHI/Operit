@@ -150,7 +150,7 @@ android {
         targetSdk = 34
         // Dev/beta releases keep this code; increment only for a new base version.
         versionCode = 100203
-        versionName = "1.12.1-ry.4"
+        versionName = "1.12.1-ry.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

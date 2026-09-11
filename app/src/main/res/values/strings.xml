@@ -18,10 +18,6 @@
     <string name="subagent_version_description">选择新对话使用的协作工具。现有代理保留其版本，阅读伴侣继续使用 v1。</string>
     <string name="subagent_version_v2">v2 · 多代理协作（默认）</string>
     <string name="subagent_version_v1">v1 · Task 同步任务</string>
-    <string name="provider_command_code">Command Code（账户登录）</string>
-    <string name="command_code_login_hint">在浏览器中登录，或填入 Command Code API Key。验证后加密保存在本机，可获取模型列表。</string>
-    <string name="command_code_save_key">验证并保存</string>
-    <string name="command_code_login_failed">登录或验证失败，请检查 API Key、网络后重试。</string>
     <string name="chat_live_elapsed">已用时 %1$s</string>
     <string name="chat_estimated_cost">本对话估算费用：¥%1$s</string>
     <string name="chat_estimated_cost_partial">本对话估算费用：¥%1$s（部分未知）</string>
@@ -33,6 +29,10 @@
     <string name="chat_title_generating">正在生成标题…</string>
     <string name="chat_title_no_content">暂无可用于生成标题的对话内容</string>
     <string name="chat_title_generation_failed">标题生成失败，已保留原标题</string>
+    <string name="provider_command_code">Command Code（账户登录）</string>
+    <string name="command_code_login_hint">在浏览器中登录，或填入 Command Code API Key。验证后加密保存在本机，可获取模型列表。</string>
+    <string name="command_code_save_key">验证并保存</string>
+    <string name="command_code_login_failed">登录或验证失败，请检查 API Key、网络后重试。</string>
     <string name="app_name">Operit Ry</string>
     <string name="accessibility_service_description">用于获取UI层次结构，为AI助手提供更快速的界面分析能力，不会收集或存储任何个人信息。</string>
     
