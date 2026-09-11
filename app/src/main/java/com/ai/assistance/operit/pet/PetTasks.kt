@@ -9,6 +9,8 @@ import androidx.core.content.ContextCompat
 import com.ai.assistance.operit.services.FloatingChatService
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
+import com.ai.assistance.operit.data.model.ChatHistory
+import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.ui.main.MainActivity
 import kotlinx.coroutines.*
@@ -16,7 +18,16 @@ import kotlinx.coroutines.flow.*
 
 enum class PetActivity { IDLE, THINKING, TOOL, SUMMARIZING, COMPLETE, ERROR, ENDED }
 
-private data class PetChatMetadata(val title: String, val hidden: Boolean)
+internal data class PetChatMetadata(val title: String, val hidden: Boolean, val subagent: Boolean) {
+    /**
+     * Hidden chats stay out of ordinary UI, and a subagent chat is another agent's read-only
+     * transcript rather than a conversation the user drives. Neither is a pet task.
+     */
+    val petVisible: Boolean get() = !hidden && !subagent
+}
+
+internal fun petChatMetadataOf(chat: ChatHistory): PetChatMetadata =
+    PetChatMetadata(chat.title, chat.isHidden, chat.chatKind == ChatKind.SUBAGENT.name)
 
 data class PetTask(
     val key: String,
@@ -95,7 +106,7 @@ class PetTasks private constructor(private val context: Context) {
                                     }
                                 }
                                 val metadataFlow = core.chatHistories.map { histories ->
-                                    histories.associate { it.id to PetChatMetadata(it.title, it.isHidden) }
+                                    histories.associate { it.id to petChatMetadataOf(it) }
                                 }.distinctUntilChanged()
                                 combine(core.activeStreamingChatIds, core.inputProcessingStateByChatId, metadataFlow) {
                                     active, states, metadata -> Triple(active, states, metadata)
@@ -108,11 +119,11 @@ class PetTasks private constructor(private val context: Context) {
                                         val previous = runs[chatId]
                                         val metadata = metadataCache[chatId] ?: (
                                             metadataSnapshot[chatId] ?: core.getChatMetadata(chatId)?.let {
-                                                PetChatMetadata(it.title, it.isHidden)
+                                                petChatMetadataOf(it)
                                             }
                                         )?.also { metadataCache[chatId] = it }
-                                        // Internal audit chats are intentionally absent from ordinary UI.
-                                        if (metadata == null || metadata.hidden) {
+                                        // Internal audit chats and subagent transcripts are absent from ordinary UI.
+                                        if (metadata == null || !metadata.petVisible) {
                                             runs.remove(chatId)
                                             continue
                                         }
@@ -135,10 +146,10 @@ class PetTasks private constructor(private val context: Context) {
                                     runs.toMap().forEach { (chatId, previous) ->
                                         val metadata = metadataCache[chatId] ?: (
                                             metadataSnapshot[chatId] ?: core.getChatMetadata(chatId)?.let {
-                                                PetChatMetadata(it.title, it.isHidden)
+                                                petChatMetadataOf(it)
                                             }
                                         )?.also { metadataCache[chatId] = it }
-                                        if (metadata == null || metadata.hidden) {
+                                        if (metadata == null || !metadata.petVisible) {
                                             runs.remove(chatId)
                                             return@forEach
                                         }
@@ -187,8 +198,23 @@ class PetTasks private constructor(private val context: Context) {
             return
         }
         val slot = task?.slot ?: FloatingChatService.getInstance()?.currentChatSlot ?: ChatRuntimeSlot.MAIN
-        val chatId = task?.chatId
-            ?: ChatRuntimeHolder.getInstance(context).getCore(slot).currentChatId.value
+        if (task != null) {
+            startFloatingChat(slot, task.chatId)
+            return
+        }
+        scope.launch {
+            val core = ChatRuntimeHolder.getInstance(context).getCore(slot)
+            val currentChatId = core.currentChatId.value
+            val current = currentChatId?.let { core.getChatMetadata(it) }
+            // The pet never opens a subagent transcript; fall back to the parent conversation.
+            startFloatingChat(
+                slot,
+                if (current?.chatKind == ChatKind.SUBAGENT.name) current.parentChatId else currentChatId,
+            )
+        }
+    }
+
+    private fun startFloatingChat(slot: ChatRuntimeSlot, chatId: String?) {
         ContextCompat.startForegroundService(context, Intent(context, FloatingChatService::class.java).apply {
             putExtra(FloatingChatService.EXTRA_CHAT_SLOT, slot.name)
             putExtra(FloatingChatService.EXTRA_CHAT_ID, chatId)

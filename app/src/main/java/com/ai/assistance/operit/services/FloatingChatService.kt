@@ -45,6 +45,7 @@ import com.ai.assistance.operit.services.floating.FloatingWindowCallback
 import com.ai.assistance.operit.services.floating.FloatingWindowManager
 import com.ai.assistance.operit.services.floating.FloatingWindowState
 import com.ai.assistance.operit.services.floating.StatusIndicatorStyle
+import com.ai.assistance.operit.ui.floating.isReadOnlyTranscript
 import com.ai.assistance.operit.ui.floating.FloatingMode
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.FileUtils
@@ -699,6 +700,13 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         val targetCore = boundCore
         serviceScope.launch {
             try {
+                // A subagent chat is a read-only transcript; nothing in the floating surface may
+                // append a user message to it.
+                val chatId = targetCore.currentChatId.value
+                if (chatId != null && targetCore.getChatMetadata(chatId).isReadOnlyTranscript()) {
+                    AppLogger.w(TAG, "忽略发送：Subagent 对话为只读记录")
+                    return@launch
+                }
                 // Capture the selected runtime before suspending.
                 targetCore.sendUserMessage(
                     promptFunctionType = promptType,
