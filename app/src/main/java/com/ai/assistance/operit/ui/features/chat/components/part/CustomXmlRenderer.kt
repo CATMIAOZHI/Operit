@@ -237,6 +237,9 @@ class CustomXmlRenderer(
     // 只读转写（如 subagent 对话）仍允许查看工具详情，其余弹窗保持禁用；未显式指定时跟随 enableDialogs
     private val toolDetailDialogsEnabled: Boolean
         get() = enableToolDetailDialogs ?: enableDialogs
+    // 图片预览也是只读查看器，和工具详情同类：只读转写里同样应该能点开。
+    private val imagePreviewEnabled: Boolean
+        get() = toolDetailDialogsEnabled
     // 定义渲染器能够处理的内置标签集合
     private val builtInTags =
             setOf("think", "thinking", "search", "tool", "status", "tool_result", "html", "mood", "font", "details", "detail", "meta")
@@ -365,7 +368,7 @@ class CustomXmlRenderer(
                     imageLinks = imageLinks,
                     textColor = textColor,
                     modifier = modifier,
-                    enableDialogs = enableDialogs,
+                    enableDialogs = imagePreviewEnabled,
                 )
                 return
             }

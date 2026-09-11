@@ -84,6 +84,10 @@ import ru.noties.jlatexmath.JLatexMathDrawable
 private const val TAG = "MarkdownRenderer"
 private const val RENDER_INTERVAL_MS = 200L // 渲染间隔 0.2 秒
 private const val FADE_IN_DURATION_MS = 800 // 淡入动画持续时间
+// 一批新增节点超过这个数量，要么是渲染器在追赶一段已经存在的内容（打开正在运行的会话、
+// 切回正在流式的消息），要么是实时输出恰好在一个批次里冒出好几块；两种情况逐块播放 800ms
+// 入场动画都会变成"方块陆续冒出来"。只有零星新增才播放入场动画。
+private const val MAX_ANIMATED_NODES_PER_FLUSH = 2
 private const val MAX_CONSECUTIVE_RENDERED_NEWLINES = 2
 
 internal enum class MarkdownRenderMode {
@@ -1226,10 +1230,13 @@ private fun synchronizeRenderNodes(
         } else {
             // 添加新节点
             renderNodes.add(stableNode)
-            val nodeKey = "node-$rendererId-$i"
-            nodeAnimationStates[nodeKey] = false // 准备播放动画
-            keysToAnimate.add(nodeKey)
+            keysToAnimate.add("node-$rendererId-$i")
         }
+    }
+
+    // 只有零星新增才准备入场动画；一次性补齐的内容直接显示，避免追赶已有转写时逐块冒出。
+    if (keysToAnimate.size <= MAX_ANIMATED_NODES_PER_FLUSH) {
+        keysToAnimate.forEach { nodeKey -> nodeAnimationStates[nodeKey] = false }
     }
 
     // 2. 如果源列表变小，则移除多余的节点
