@@ -7,9 +7,17 @@ import java.util.UUID
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
-/** A conversation identity, inherited by retries and tool continuations, not shared mutable state. */
-internal class OpenCodeSessionContext(val sessionId: String) :
-    AbstractCoroutineContextElement(Key) {
+/**
+ * A conversation identity, inherited by retries and tool continuations, not shared mutable state.
+ *
+ * [workspacePath] is the workspace the conversation is bound to, when it has one. Providers that
+ * report workspace metadata upstream read it here; a conversation without a bound workspace reports
+ * an empty working directory.
+ */
+internal class OpenCodeSessionContext(
+    val sessionId: String,
+    val workspacePath: String? = null,
+) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<OpenCodeSessionContext>
 }
 

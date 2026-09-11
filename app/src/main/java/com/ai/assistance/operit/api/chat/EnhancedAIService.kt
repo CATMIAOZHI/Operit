@@ -1541,7 +1541,8 @@ class EnhancedAIService private constructor(
             }
         }
         val sessionContext = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
-            chatId?.takeIf { it.isNotBlank() } ?: providerSessionId
+            chatId?.takeIf { it.isNotBlank() } ?: providerSessionId,
+            workspacePath,
         )
         val sessionStream = object : Stream<String> by wrappedStream {
             override suspend fun collect(collector: StreamCollector<String>) {
@@ -2054,7 +2055,8 @@ class EnhancedAIService private constructor(
         // This independent scope must retain the conversation identity for tool continuations.
         val processToolJob = toolProcessingScope.async(
             context = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
-                chatId?.takeIf { it.isNotBlank() } ?: providerSessionId
+                chatId?.takeIf { it.isNotBlank() } ?: providerSessionId,
+                context.workspacePath,
             ),
             start = CoroutineStart.LAZY,
         ) {

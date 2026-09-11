@@ -8,6 +8,8 @@ import okio.buffer
 import java.io.IOException
 
 class CommandCodeTransportTest {
+    private val workspace = "/data/user/0/com.ai.assistance.operit/files/workspace/test-chat"
+
     @Test fun accountProtocolAndReasoningSummaryMatchTheTransport() {
         val provider = com.ai.assistance.operit.data.model.ApiProviderType.COMMAND_CODE
         assertFalse(com.ai.assistance.operit.data.model.supportsModelProtocolOverrides(provider.name))
@@ -28,7 +30,7 @@ class CommandCodeTransportTest {
             {"role":"tool","tool_call_id":"b","content":"done"},
             {"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}],
             "tools":[{"type":"function","function":{"name":"read_file","parameters":{"type":"object"}}}]}""")
-        val body = CommandCodeTransport.compile(input)
+        val body = CommandCodeTransport.compile(input, workspace)
         val params = body.getJSONObject("params")
         assertTrue(params.getBoolean("stream"))
         assertEquals("max", params.getString("reasoning_effort"))
@@ -48,10 +50,30 @@ class CommandCodeTransportTest {
 
     @Test fun orphanResultDoesNotBecomeANativeUnpairedToolMessage() {
         val body = CommandCodeTransport.compile(JSONObject("""{"model":"future","messages":[
-            {"role":"tool","tool_call_id":"orphan","content":"evidence"}]}"""))
+            {"role":"tool","tool_call_id":"orphan","content":"evidence"}]}"""), workspace)
         val row = body.getJSONObject("params").getJSONArray("messages").getJSONObject(0)
         assertEquals("user", row.getString("role"))
         assertTrue(row.toString().contains("evidence"))
+    }
+
+    @Test fun configCarriesTheWorkspaceAndGitBlockTheEndpointRequires() {
+        val body = CommandCodeTransport.compile(JSONObject("""{"model":"future","messages":[
+            {"role":"user","content":"hi"}]}"""), workspace)
+        val config = body.getJSONObject("config")
+        assertEquals(workspace, config.getString("workingDir"))
+        assertFalse(config.getBoolean("isGitRepo"))
+        assertEquals("", config.getString("currentBranch"))
+        assertEquals("", config.getString("mainBranch"))
+        assertEquals("", config.getString("gitStatus"))
+        assertEquals(0, config.getJSONArray("recentCommits").length())
+        assertEquals(0, config.getJSONArray("structure").length())
+    }
+
+    @Test fun chatWithoutABoundWorkspaceReportsAnEmptyWorkingDir() {
+        // A plain chat has no project directory; the app sandbox root must not be presented as one.
+        val body = CommandCodeTransport.compile(JSONObject("""{"model":"future","messages":[
+            {"role":"user","content":"hi"}]}"""), "")
+        assertEquals("", body.getJSONObject("config").getString("workingDir"))
     }
 
     @Test fun eventsKeepToolIdsReasoningUsageAndOnlyOneFinish() {
