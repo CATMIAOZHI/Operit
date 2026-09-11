@@ -63,4 +63,16 @@ class CollaborationModelsTest {
             assertFalse(description.contains("Work / alpha"))
         }
     }
+
+    @Test fun modelCatalogResultCarriesTheNoSwitchConstraintInTheCallerLanguage() {
+        for (chinese in listOf(false, true)) {
+            val note = CollaborationTools.listNote(chinese)
+            assertTrue(note.isNotBlank())
+            assertNotEquals(CollaborationTools.listNote(!chinese), note)
+        }
+        assertTrue(CollaborationTools.listNote(chinese = true)
+            .contains("除非用户偏好或同意，不要调用其他模型"))
+        assertTrue(CollaborationTools.listNote(chinese = false)
+            .contains("unless the user prefers or agrees"))
+    }
 }
