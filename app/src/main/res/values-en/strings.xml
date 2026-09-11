@@ -8776,6 +8776,18 @@
     <string name="codex_quota_no_data">No data</string>
     <string name="codex_usage_refresh">Refresh Codex usage</string>
     <string name="codex_usage_unavailable">Usage is temporarily unavailable</string>
+    <string name="quota_title">Usage &amp; balance</string>
+    <string name="quota_refresh">Refresh</string>
+    <string name="quota_unavailable">Balance is temporarily unavailable</string>
+    <string name="quota_not_fetched">Tap refresh to load the balance</string>
+    <string name="quota_no_windows">This account reported no quota windows</string>
+    <string name="quota_window_five_hour">5 hours</string>
+    <string name="quota_window_weekly">This week</string>
+    <string name="quota_window_monthly">This month</string>
+    <string name="quota_percent">%1$d%% used</string>
+    <string name="quota_resets_in">Resets in %1$s</string>
+    <string name="quota_credits">Remaining %1$.2f of %2$.2f (%3$.2f used)</string>
+    <string name="quota_credits_remaining">Remaining %1$.2f</string>
     <string name="codex_reset_after_days">Resets in %1$d days</string>
     <string name="codex_reset_after_clock">Resets in %1$02d:%2$02d</string>
     <string name="conversation_media_file_link">&lt;link type=&quot;file&quot; id=&quot;%1$s&quot; filename=&quot;%2$s&quot;&gt;PDF&lt;/link&gt;</string>

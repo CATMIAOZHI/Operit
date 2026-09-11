@@ -57,8 +57,11 @@ import com.ai.assistance.operit.api.chat.llmprovider.parseProviderCustomHeaders
 import com.ai.assistance.operit.data.api.CodexAuthManager
 import com.ai.assistance.operit.data.api.AccountProvider
 import com.ai.assistance.operit.data.api.ProviderAccountManager
+import com.ai.assistance.operit.data.api.OpenCodeGoQuotaClient
+import com.ai.assistance.operit.data.api.ProviderQuota
 import com.ai.assistance.operit.api.chat.llmprovider.AntigravityTransport
 import com.ai.assistance.operit.ui.features.codex.ProviderAccountSettings
+import com.ai.assistance.operit.ui.features.settings.components.ProviderQuotaPanel
 import com.ai.assistance.operit.data.api.CodexUsageSnapshot
 import com.ai.assistance.operit.data.api.CodexUsageWindow
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
@@ -183,6 +186,56 @@ fun ModelApiSettingsSection(
             codexUsageError = result.isFailure
             codexUsageLoading = false
         }
+    }
+
+    // OpenCode Go is a plain key-based provider rather than a browser account, so its quota probe
+    // lives here next to the fields that supply the key and endpoint it reads from.
+    val openCodeGoQuotaClient = remember { OpenCodeGoQuotaClient() }
+    var openCodeGoQuota by remember(config.id) { mutableStateOf<ProviderQuota?>(null) }
+    var openCodeGoQuotaLoading by remember(config.id) { mutableStateOf(false) }
+    var openCodeGoQuotaFailed by remember(config.id) { mutableStateOf(false) }
+    var openCodeGoRequestId by remember(config.id) { mutableLongStateOf(0L) }
+
+    // No automatic probe: the key field keeps the previous provider's value while the user switches
+    // providers, and autosave then persists that key into this row. Probing on arrival would send a
+    // credential the user never associated with OpenCode Go, so the probe only runs when asked for.
+    val isOpenCodeGoProvider = selectedApiProvider == ApiProviderType.OPENCODE_GO
+    val openCodeGoProbeKey = apiKeyInput.trim()
+    val openCodeGoProbeEndpoint = apiEndpointInput
+
+    fun refreshOpenCodeGoQuota() {
+        val key = openCodeGoProbeKey
+        if (key.isEmpty()) return
+        val requestId = ++openCodeGoRequestId
+        openCodeGoQuotaFailed = false
+        openCodeGoQuotaLoading = true
+        scope.launch {
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    openCodeGoQuotaClient.fetch(key, openCodeGoProbeEndpoint)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                AppLogger.e(TAG, "获取 OpenCode Go 余额失败", error)
+                null
+            }
+            // A slow probe for a superseded key must not land on the current one's panel.
+            if (requestId != openCodeGoRequestId) return@launch
+            openCodeGoQuotaLoading = false
+            // A transient failure keeps the last good numbers; only the note changes.
+            if (result != null) openCodeGoQuota = result
+            openCodeGoQuotaFailed = result == null
+        }
+    }
+
+    LaunchedEffect(isOpenCodeGoProvider, openCodeGoProbeKey, openCodeGoProbeEndpoint) {
+        // Supersede any in-flight probe so neither its result nor its spinner outlives the target,
+        // and drop the previous target's numbers rather than attribute them to the new one.
+        openCodeGoRequestId++
+        openCodeGoQuotaLoading = false
+        openCodeGoQuotaFailed = false
+        openCodeGoQuota = null
     }
 
     // MNN特定配置状态
@@ -1014,6 +1067,15 @@ fun ModelApiSettingsSection(
                         }
                     }
             )
+
+            if (isOpenCodeGoProvider && openCodeGoProbeKey.isNotEmpty()) {
+                ProviderQuotaPanel(
+                    quota = openCodeGoQuota,
+                    loading = openCodeGoQuotaLoading,
+                    failed = openCodeGoQuotaFailed,
+                    onRefresh = { refreshOpenCodeGoQuota() },
+                )
+            }
 
             val configuredModels = getModelList(modelNameInput)
             val activeModel =

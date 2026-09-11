@@ -13,6 +13,8 @@ import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.api.CommandCodeCallbackServer
 import com.ai.assistance.operit.data.api.ProviderAccountManager
+import com.ai.assistance.operit.data.api.ProviderQuota
+import com.ai.assistance.operit.ui.features.settings.components.ProviderQuotaPanel
 import kotlinx.coroutines.*
 
 @Composable
@@ -25,6 +27,40 @@ internal fun CommandCodeAccountSettings(manager: ProviderAccountManager, onAccou
     var browserLogin by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
     val busy = manualJob != null || browserLogin
+    var quota by remember { mutableStateOf<ProviderQuota?>(null) }
+    var quotaLoading by remember { mutableStateOf(false) }
+    var quotaFailed by remember { mutableStateOf(false) }
+    var quotaRequestId by remember { mutableLongStateOf(0L) }
+    fun refreshQuota() {
+        if (account == null) return
+        quotaFailed = false
+        val requestId = ++quotaRequestId
+        quotaLoading = true
+        scope.launch {
+            val result = try {
+                withContext(Dispatchers.IO) { manager.fetchCommandCodeQuota() }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            // A slow probe for a superseded account must not land on the new one's panel.
+            if (requestId != quotaRequestId) return@launch
+            quotaLoading = false
+            // A transient failure keeps the last good numbers; only the note changes.
+            if (result != null) quota = result
+            quotaFailed = result == null
+        }
+    }
+    // A different account is a different meter, so never show the previous one's numbers; bumping
+    // the request id also discards a probe still in flight for the account we just left.
+    LaunchedEffect(account?.accessToken) {
+        quota = null
+        quotaFailed = false
+        quotaLoading = false
+        quotaRequestId++
+        if (account != null) refreshQuota()
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(if (account == null) R.string.provider_account_not_logged_in else R.string.provider_account_logged_in))
         account?.email?.takeIf { it.isNotBlank() }?.let { Text(it) }
@@ -59,6 +95,14 @@ internal fun CommandCodeAccountSettings(manager: ProviderAccountManager, onAccou
         if (account != null) TextButton(enabled = !busy, onClick = {
             scope.launch { manager.logout(); key = ""; onAccountChanged() }
         }) { Text(stringResource(R.string.provider_account_logout)) }
+        if (account != null) {
+            ProviderQuotaPanel(
+                quota = quota,
+                loading = quotaLoading,
+                failed = quotaFailed,
+                onRefresh = { refreshQuota() },
+            )
+        }
     }
     if (browserLogin) {
         var active by remember { mutableStateOf<CommandCodeCallbackServer?>(null) }
