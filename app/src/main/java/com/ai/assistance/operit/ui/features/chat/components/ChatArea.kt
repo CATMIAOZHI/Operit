@@ -51,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -316,6 +317,16 @@ fun ChatArea(
                 }
             }
         }
+    }
+
+    // A card belongs to the conversation that opened it: leaving that conversation closes it before
+    // the next one composes, so coming back never flashes a card the user already left behind.
+    DisposableEffect(currentChatId) { onDispose { SubagentDetailHost.clear() } }
+
+    // The subagent card the user opened lives above the transcript: the message that owns a card can
+    // be dropped when older history loads, and the floating card must not go with it.
+    SubagentDetailHost.requestFor(currentChatId)?.let { request ->
+        SubagentDetailCard(request = request, onDismiss = { SubagentDetailHost.dismiss(currentChatId) })
     }
 
     PendingMessageScrollEffect(

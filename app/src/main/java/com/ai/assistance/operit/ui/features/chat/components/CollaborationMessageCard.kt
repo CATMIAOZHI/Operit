@@ -50,6 +50,13 @@ internal fun collaborationDisplayMessages(content: String, sender: String): List
 }
 
 /**
+ * Only a message the agent sent back is its return. A task the parent handed over and a status line
+ * are not, so those rows fall through to the child conversation the way a spawn row does.
+ */
+internal fun collaborationReturnedBody(kind: String, body: String): String? =
+    body.takeIf { kind == "MESSAGE" || kind == "FINAL_ANSWER" }
+
+/**
  * Resolves the live run a collaboration row belongs to. Archived runs, v1 tasks and runs owned by
  * another feature (the reading companion shares this table) never shadow the agent's own run.
  */
@@ -73,8 +80,7 @@ internal fun findCollaborationRun(
 private fun SubagentRunEventCard(
     run: SubagentRunEntity,
     event: CollaborationDisplayMessage,
-    expanded: Boolean,
-    onToggle: () -> Unit,
+    chatId: String?,
     onOpenConversation: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -120,9 +126,10 @@ private fun SubagentRunEventCard(
         statsText = subagentCardStatsText(durationText, toolCount, run.modelRoundCount),
         identity = remember(agentPath) { subagentAgentIdentity(agentPath) },
         statusColor = subagentCardStatusColor(cardState.status),
-        body = event.body,
-        expanded = expanded,
-        onToggle = onToggle,
+        body = collaborationReturnedBody(event.kind, event.body),
+        chatId = chatId,
+        childChatId = childChatId,
+        failureText = subagentFailureText(cardState.status, run.error),
         onOpenConversation = onOpenConversation,
     )
 }
@@ -162,8 +169,7 @@ fun CollaborationMessageCard(message: ChatMessage) {
                     SubagentRunEventCard(
                         run = run,
                         event = event,
-                        expanded = expanded,
-                        onToggle = { TranscriptExpansionState.toggle(currentChatId, expansionId) },
+                        chatId = currentChatId,
                         onOpenConversation = {
                             chatCore.switchChat(run.childChatId, scrollToBottom = false)
                         },

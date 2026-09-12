@@ -7,30 +7,37 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Hub
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.TravelExplore
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,11 +48,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.agent.SubagentResultExtractor
+import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.data.model.ChatMessageDisplayMode
+import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -232,8 +243,149 @@ internal fun subagentCardStatsText(
 }
 
 /**
- * The shared subagent card: badge, agent path, live status, run statistics and an optional body
- * (a reply, task or note) revealed on tap.
+ * What a subagent returned: the message the parent was handed when the row carries one, otherwise
+ * the child conversation's last finished answer. A half-finished turn is process, not the answer,
+ * and a persisted answer still carries the provider reasoning envelope and the tool calls around it.
+ */
+internal fun subagentReturnedContent(messages: List<ChatMessage>?, body: String?): String? {
+    body?.takeIf { it.isNotBlank() }?.let {
+        return it
+    }
+    return messages
+        // A half-finished turn is process, not the answer the agent returned.
+        ?.lastOrNull {
+            it.sender == "ai" &&
+                it.displayMode != ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE
+        }
+        ?.content
+        ?.let { SubagentResultExtractor.extract(it, "") }
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+}
+
+/**
+ * Why a run failed, when it did. A failure that left no answer behind still has a reason, and the
+ * card is the place the user looks for one.
+ */
+internal fun subagentFailureText(status: SubagentCardStatus, error: String?): String? =
+    error?.takeIf { it.isNotBlank() && status == SubagentCardStatus.FAILED }
+
+/**
+ * The card the user tapped, held outside the transcript: loading older history drops the message
+ * that owns a card, and the floating card must not go with it.
+ */
+internal data class SubagentDetailRequest(
+    val chatId: String?,
+    /** Every open is its own read, so a card reopened after the run finished shows the answer. */
+    val token: Long,
+    val agentPath: String,
+    val statusText: String,
+    val statsText: String?,
+    val failureText: String?,
+    val identity: SubagentAgentIdentity,
+    val statusColor: Color,
+    val body: String?,
+    val childChatId: String?,
+    val onOpenConversation: (() -> Unit)?,
+)
+
+/** Holds the one open card so the transcript can render it above every message. */
+internal object SubagentDetailHost {
+    private var request by mutableStateOf<SubagentDetailRequest?>(null)
+    private var issued = 0L
+
+    fun requestDetail(
+        chatId: String?,
+        agentPath: String,
+        statusText: String,
+        statsText: String?,
+        failureText: String?,
+        identity: SubagentAgentIdentity,
+        statusColor: Color,
+        body: String?,
+        childChatId: String?,
+        onOpenConversation: (() -> Unit)?,
+    ) {
+        request =
+            SubagentDetailRequest(
+                chatId = chatId,
+                token = ++issued,
+                agentPath = agentPath,
+                statusText = statusText,
+                statsText = statsText,
+                failureText = failureText,
+                identity = identity,
+                statusColor = statusColor,
+                body = body,
+                childChatId = childChatId,
+                onOpenConversation = onOpenConversation,
+            )
+    }
+
+    /** Only the conversation that owns the open card closes it. */
+    fun dismiss(chatId: String?) {
+        val open = request ?: return
+        if (open.chatId == null || open.chatId == chatId) request = null
+    }
+
+    /** Drops whatever card was open, e.g. because the user left the conversation it belonged to. */
+    fun clear() {
+        request = null
+    }
+
+    /** The card open in this conversation, if any. */
+    fun requestFor(chatId: String?): SubagentDetailRequest? =
+        request?.takeIf { it.chatId == null || it.chatId == chatId }
+}
+
+/**
+ * The returned content, read once per open. A reply row already carries it and needs no read; a
+ * spawn row has to ask the child conversation, which a row that is still working cannot answer yet.
+ */
+@Composable
+private fun rememberSubagentReturnedContent(
+    childChatId: String?,
+    body: String?,
+    token: Long,
+): String? {
+    val handed = body?.takeIf { it.isNotBlank() }
+    val chatId = childChatId?.takeIf { it.isNotBlank() }
+    if (handed != null || chatId == null) return handed
+    val context = LocalContext.current
+    val historyManager = remember(context) { ChatHistoryManager.getInstance(context) }
+    return produceState<String?>(initialValue = null, chatId, token) {
+            value =
+                runCatching { historyManager.loadChatMessages(chatId) }
+                    .getOrNull()
+                    .let { subagentReturnedContent(it, null) }
+        }
+        .value
+}
+
+/** The agent's own mark, so a family of agents stays scannable by sight. */
+@Composable
+private fun SubagentAgentBadge(identity: SubagentAgentIdentity, boxSize: Dp, iconSize: Dp) {
+    Box(
+        modifier =
+            Modifier
+                .size(boxSize)
+                .clip(RoundedCornerShape(boxSize / 3))
+                .background(identity.accent.copy(alpha = 0.16f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = identity.icon,
+            contentDescription = null,
+            tint = identity.accent,
+            modifier = Modifier.size(iconSize),
+        )
+    }
+}
+
+/**
+ * The shared subagent card: badge, agent path, live status and run statistics. Tapping it opens the
+ * floating detail card rather than jumping straight into the child conversation. The card itself is
+ * rendered by [ChatArea], so loading older history cannot take it away.
  */
 @Composable
 internal fun SubagentAgentCard(
@@ -244,29 +396,32 @@ internal fun SubagentAgentCard(
     statusColor: Color,
     modifier: Modifier = Modifier,
     body: String? = null,
-    expanded: Boolean = false,
-    onToggle: (() -> Unit)? = null,
+    chatId: String? = null,
+    childChatId: String? = null,
+    failureText: String? = null,
     onOpenConversation: (() -> Unit)? = null,
 ) {
-    val expandable = !body.isNullOrBlank() && onToggle != null
-    val expansionState =
-        stringResource(
-            if (expanded) R.string.subagent_event_expanded else R.string.subagent_event_collapsed,
+    val openable =
+        onOpenConversation != null || !body.isNullOrBlank() || !childChatId.isNullOrBlank()
+    val openDetailLabel = stringResource(R.string.subagent_card_open_detail)
+    val openDetail = {
+        SubagentDetailHost.requestDetail(
+            chatId = chatId,
+            agentPath = agentPath,
+            statusText = statusText,
+            statsText = statsText,
+            failureText = failureText,
+            identity = identity,
+            statusColor = statusColor,
+            body = body,
+            childChatId = childChatId,
+            onOpenConversation = onOpenConversation,
         )
-    val openConversationLabel = stringResource(R.string.subagent_open_conversation)
+    }
     val rowModifier =
-        when {
-            expandable -> Modifier.clickable(role = Role.Button, onClick = onToggle!!)
-            onOpenConversation != null -> Modifier.clickable(role = Role.Button, onClick = onOpenConversation)
-            else -> Modifier
-        }
+        if (openable) Modifier.clickable(role = Role.Button) { openDetail() } else Modifier
     val rowSemantics =
-        when {
-            expandable -> Modifier.semantics { stateDescription = expansionState }
-            // The whole card opens the child conversation here, so it needs an accessible name.
-            onOpenConversation != null -> Modifier.semantics { contentDescription = openConversationLabel }
-            else -> Modifier
-        }
+        if (openable) Modifier.semantics { contentDescription = openDetailLabel } else Modifier
 
     Column(
         modifier
@@ -279,21 +434,7 @@ internal fun SubagentAgentCard(
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier =
-                    Modifier
-                        .size(26.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(identity.accent.copy(alpha = 0.16f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = identity.icon,
-                    contentDescription = null,
-                    tint = identity.accent,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
+            SubagentAgentBadge(identity = identity, boxSize = 26.dp, iconSize = 16.dp)
             Spacer(modifier = Modifier.width(10.dp))
             Text(
                 text = agentPath,
@@ -312,15 +453,7 @@ internal fun SubagentAgentCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (expandable) {
-                Icon(
-                    imageVector =
-                        if (expanded) Icons.Default.KeyboardArrowDown else Icons.Default.ChevronRight,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else if (onOpenConversation != null) {
+            if (openable) {
                 Icon(
                     imageVector = Icons.Default.ChevronRight,
                     contentDescription = null,
@@ -339,26 +472,110 @@ internal fun SubagentAgentCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (expanded) {
-            body?.takeIf { it.isNotBlank() }?.let { text ->
-                Spacer(modifier = Modifier.height(4.dp))
-                SelectionContainer {
+    }
+}
+
+/**
+ * The floating card a tap opens: what this subagent returned, and the way into its conversation.
+ * [ChatArea] renders it, so it outlives the message that was tapped.
+ */
+@Composable
+internal fun SubagentDetailCard(request: SubagentDetailRequest, onDismiss: () -> Unit) {
+    val returned =
+        rememberSubagentReturnedContent(
+            childChatId = request.childChatId,
+            body = request.body,
+            token = request.token,
+        )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SubagentAgentBadge(
+                        identity = request.identity,
+                        boxSize = 28.dp,
+                        iconSize = 17.dp,
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = request.agentPath,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = request.statusText,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = request.statusColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                request.statsText?.takeIf { it.isNotBlank() }?.let { text ->
                     Text(
                         text = text,
-                        modifier = Modifier.padding(start = 36.dp),
-                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(start = 38.dp, top = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            onOpenConversation?.let { open ->
-                TextButton(onClick = open, modifier = Modifier.padding(start = 28.dp)) {
-                    Text(
-                        text = stringResource(R.string.subagent_open_conversation),
-                        style = MaterialTheme.typography.labelMedium,
-                    )
+        },
+        text = {
+            Box(
+                modifier =
+                    Modifier.padding(vertical = 4.dp)
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState())
+            ) {
+                Column {
+                    // A run that ended badly says why before it says what it managed to return.
+                    request.failureText?.takeIf { it.isNotBlank() }?.let { text ->
+                        Text(
+                            text = text,
+                            modifier = Modifier.padding(bottom = 8.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    SelectionContainer {
+                        Text(
+                            text = returned ?: stringResource(R.string.subagent_detail_empty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color =
+                                if (returned == null) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                        )
+                    }
                 }
             }
-        }
-    }
+        },
+        confirmButton = {
+            request.onOpenConversation?.let { open ->
+                Button(
+                    onClick = {
+                        onDismiss()
+                        open()
+                    }
+                ) {
+                    Text(stringResource(R.string.subagent_open_conversation))
+                }
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text(stringResource(R.string.subagent_detail_close))
+            }
+        },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(16.dp),
+    )
 }

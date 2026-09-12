@@ -29,4 +29,12 @@ class CollaborationMessagePresentationTest {
         ).render()
         assertEquals("/root/worker", collaborationDisplayMessages(content, "/root/worker").single().sender)
     }
+
+    @Test fun onlyAReportedMessageCountsAsTheReturnedContent() {
+        assertEquals("the answer", collaborationReturnedBody("FINAL_ANSWER", "the answer"))
+        assertEquals("hello", collaborationReturnedBody("MESSAGE", "hello"))
+        // A task handed over and a status line are not something the agent returned.
+        assertNull(collaborationReturnedBody("NEW_TASK", "do the thing"))
+        assertNull(collaborationReturnedBody("STATUS", "still working"))
+    }
 }

@@ -3,10 +3,13 @@ package com.ai.assistance.operit.ui.features.chat.components
 import com.ai.assistance.operit.R
 import androidx.compose.ui.graphics.Color
 import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.data.model.ChatMessageDisplayMode
 import com.ai.assistance.operit.data.model.SubagentRunEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -123,6 +126,44 @@ class SubagentAgentCardTest {
         assertEquals("v1 · subagent", subagentRunTitle(false, "7", ""))
     }
 
+    @Test fun theCardShowsTheChildsLastFinishedAnswer() {
+        val reasoning = "<think data-operit-provider-reasoning=\"html-v1\">weighing options</think>"
+        val childMessages =
+            listOf(
+                ChatMessage(sender = "user", content = "do the thing"),
+                ChatMessage(
+                    sender = "ai",
+                    content = "half a thought",
+                    displayMode = ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE,
+                ),
+                ChatMessage(sender = "ai", content = "   "),
+                // A persisted answer still carries the reasoning envelope and the tool calls.
+                ChatMessage(
+                    sender = "ai",
+                    content = "$reasoning<tool name=\"read_file\"></tool>the answer",
+                ),
+            )
+
+        assertEquals("the answer", subagentReturnedContent(childMessages, null))
+        assertEquals("the answer", subagentReturnedContent(childMessages, "   "))
+        // A reply row already carries what the agent returned, so the child is not read for it.
+        assertEquals("handed over", subagentReturnedContent(childMessages, "handed over"))
+        // A child that only produced process so far has nothing to show.
+        val onlyProcess =
+            listOf(
+                ChatMessage(
+                    sender = "ai",
+                    content = "still thinking",
+                    displayMode = ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE,
+                )
+            )
+        assertNull(subagentReturnedContent(onlyProcess, null))
+        assertNull(subagentReturnedContent(null, null))
+        assertNull(subagentReturnedContent(null, "   "))
+        // The task the agent was handed is not something it returned.
+        assertNull(subagentReturnedContent(listOf(ChatMessage(sender = "user", content = "task")), null))
+    }
+
     @Test fun theRunLookupPrefersTheLiveRunTheAgentOwns() {
         val archived = collaborationRun(id = "archived", owner = "/root/worker", archivedAt = 1L)
         val live = collaborationRun(id = "live", owner = "/root/worker")
@@ -142,6 +183,57 @@ class SubagentAgentCardTest {
         assertNull(findCollaborationRun(listOf(archived, otherAgent), "/root/worker"))
         assertNull(findCollaborationRun(listOf(live, otherAgent), null))
         assertNull(findCollaborationRun(listOf(live, otherAgent), "  "))
+    }
+
+    @Test fun theOpenCardBelongsToTheConversationThatOpenedIt() {
+        SubagentDetailHost.clear()
+        openCard(chatId = "a")
+        assertNotNull(SubagentDetailHost.requestFor("a"))
+        // Another conversation neither shows a card it did not open nor closes one it does not own.
+        assertNull(SubagentDetailHost.requestFor("b"))
+        SubagentDetailHost.dismiss("b")
+        assertNotNull(SubagentDetailHost.requestFor("a"))
+
+        SubagentDetailHost.dismiss("a")
+        assertNull(SubagentDetailHost.requestFor("a"))
+
+        // Walking away from the conversation drops the card it left behind.
+        openCard(chatId = "a")
+        SubagentDetailHost.clear()
+        assertNull(SubagentDetailHost.requestFor("a"))
+    }
+
+    @Test fun aCardOpenedWithoutAConversationClosesFromAnyConversation() {
+        SubagentDetailHost.clear()
+        openCard(chatId = null)
+        assertNotNull(SubagentDetailHost.requestFor("a"))
+        assertNotNull(SubagentDetailHost.requestFor(null))
+
+        SubagentDetailHost.dismiss("a")
+        assertNull(SubagentDetailHost.requestFor(null))
+    }
+
+    @Test fun onlyAFailedRunExplainsItself() {
+        assertEquals("boom", subagentFailureText(SubagentCardStatus.FAILED, "boom"))
+        assertNull(subagentFailureText(SubagentCardStatus.FAILED, "   "))
+        assertNull(subagentFailureText(SubagentCardStatus.COMPLETED, "boom"))
+        // A run the user stopped is not a failure to explain.
+        assertNull(subagentFailureText(SubagentCardStatus.CANCELLED, "stopped"))
+    }
+
+    private fun openCard(chatId: String?) {
+        SubagentDetailHost.requestDetail(
+            chatId = chatId,
+            agentPath = "/root/worker",
+            statusText = "completed",
+            statsText = null,
+            failureText = null,
+            identity = subagentAgentIdentity("/root/worker"),
+            statusColor = Color(0xFF112233),
+            body = "the answer",
+            childChatId = "child",
+            onOpenConversation = null,
+        )
     }
 
     private fun collaborationRun(
