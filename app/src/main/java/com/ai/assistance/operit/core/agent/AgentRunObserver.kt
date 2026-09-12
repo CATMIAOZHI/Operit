@@ -13,6 +13,8 @@ object AgentRunObservers {
     private val observers = ConcurrentHashMap<String, AgentRunObserver>()
     fun register(chatId: String, observer: AgentRunObserver) { observers[chatId] = observer }
     fun forChat(chatId: String?): AgentRunObserver? = chatId?.let(observers::get)
+    /** True when an observer already accounts for this chat's rounds, so callers must not double count. */
+    fun hasObserver(chatId: String?): Boolean = chatId != null && observers.containsKey(chatId)
     fun unregister(chatId: String) { observers.remove(chatId) }
     fun isCapabilityTool(name: String): Boolean = observers.values.any { name in it.capabilityTools }
 }

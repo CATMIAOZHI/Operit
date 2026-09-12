@@ -21,10 +21,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -36,6 +32,8 @@ import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatTodo
 import com.ai.assistance.operit.data.model.ChatTodoStatus
+
+private const val TODO_DOCK_EXPANDED_ID = "chat-todo-dock"
 
 internal fun currentTodoStep(todos: List<ChatTodo>): Int {
     val inProgressIndex = todos.indexOfFirst { it.status == ChatTodoStatus.IN_PROGRESS }
@@ -60,9 +58,9 @@ fun ChatTodoDock(
         todos.all {
             it.status == ChatTodoStatus.COMPLETED || it.status == ChatTodoStatus.CANCELLED
         }
-    var expanded by rememberSaveable(chatId) { mutableStateOf(false) }
+    val expanded = TranscriptExpansionState.isExpanded(chatId, TODO_DOCK_EXPANDED_ID)
     LaunchedEffect(chatId, allTerminal) {
-        if (allTerminal) expanded = false
+        if (allTerminal) TranscriptExpansionState.setExpanded(chatId, TODO_DOCK_EXPANDED_ID, false)
     }
 
     val currentStep = currentTodoStep(todos)
@@ -97,7 +95,7 @@ fun ChatTodoDock(
         }
 
         Surface(
-            modifier = Modifier.clickable { expanded = !expanded },
+            modifier = Modifier.clickable { TranscriptExpansionState.toggle(chatId, TODO_DOCK_EXPANDED_ID) },
             shape = RoundedCornerShape(50),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 3.dp,

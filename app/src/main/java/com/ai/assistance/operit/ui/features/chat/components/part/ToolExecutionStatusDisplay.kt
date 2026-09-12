@@ -57,6 +57,14 @@ import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
+import com.ai.assistance.operit.ui.features.chat.components.SubagentAgentCard
+import com.ai.assistance.operit.ui.features.chat.components.perChatValue
+import com.ai.assistance.operit.ui.features.chat.components.isActiveSubagentRun
+import com.ai.assistance.operit.ui.features.chat.components.subagentAgentIdentity
+import com.ai.assistance.operit.ui.features.chat.components.subagentCardState
+import com.ai.assistance.operit.ui.features.chat.components.subagentCardStatsText
+import com.ai.assistance.operit.ui.features.chat.components.subagentCardStatusColor
+import com.ai.assistance.operit.ui.features.chat.components.subagentCardStatusText
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEvent
 import com.ai.assistance.operit.ui.permissions.PermissionReviewAuthorization
@@ -295,6 +303,19 @@ internal fun ToolExecutionStatusDisplay(
             modifier = Modifier,
         )
         }
+        return
+    }
+
+    if (toolName == "spawn_agent") {
+        SubagentSpawnStatusDisplay(
+            callId = liveExecution?.callId ?: persistedExecution?.callId,
+            fallbackState = state,
+            fallbackStartedAtElapsedMs = liveExecution?.startedAtElapsedMs,
+            fallbackDurationMs = liveExecution?.durationMs ?: persistedExecution?.durationMs,
+            requestedAgentName = requestedSubagentName,
+            reviewEvent = reviewEvent,
+            modifier = modifier,
+        )
         return
     }
 
@@ -799,6 +820,126 @@ private fun SubagentTaskResultRow(
         }
     }
 }
+
+/**
+ * The call side of a v2 collaboration: the row keeps the child's badge and live status instead of
+ * the raw spawn result, and tapping it opens the child conversation.
+ */
+@Composable
+private fun SubagentSpawnStatusDisplay(
+    callId: String?,
+    fallbackState: ToolExecutionState,
+    fallbackStartedAtElapsedMs: Long?,
+    fallbackDurationMs: Long?,
+    requestedAgentName: String?,
+    reviewEvent: PermissionReviewEvent?,
+    modifier: Modifier,
+) {
+    val context = LocalContext.current
+    val repository = remember(context) { SubagentRunRepository.getInstance(context) }
+    val chatCore =
+        remember(context) {
+            ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
+        }
+    val parentChatId by chatCore.currentChatId.collectAsState()
+    val runFlow =
+        remember(parentChatId, callId) {
+            val chatId = parentChatId
+            val call = callId?.takeIf { it.isNotBlank() }
+            if (chatId.isNullOrBlank() || call == null) {
+                null
+            } else {
+                repository.observeByParentToolCallId(
+                    chatId,
+                    call,
+                    AgentProfileRepository.PERMISSION_REVIEWER_ID,
+                )
+            }
+        }
+    val run by (runFlow ?: flowOf(null)).collectAsState(initial = null)
+    val childChatId = run?.childChatId
+    val childProcessingState = perChatValue(chatCore.inputProcessingStateByChatId, childChatId)
+    val childLastToolName = perChatValue(chatCore.lastToolNameByChatId, childChatId)
+    val childToolInvocations =
+        perChatValue(chatCore.lastTurnToolInvocationCountByChatId, childChatId) ?: 0
+
+    var nowMs by remember(callId) { mutableLongStateOf(System.currentTimeMillis()) }
+    var fallbackElapsedMs by
+        remember(fallbackStartedAtElapsedMs, fallbackDurationMs) {
+            mutableLongStateOf(
+                fallbackDurationMs
+                    ?: fallbackStartedAtElapsedMs?.let {
+                        (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
+                    }
+                    ?: 0L
+            )
+        }
+    val runActive = run?.isActiveSubagentRun() == true
+    LaunchedEffect(run?.id, run?.status, fallbackState, fallbackStartedAtElapsedMs) {
+        while (runActive || (run == null && fallbackState == ToolExecutionState.RUNNING)) {
+            nowMs = System.currentTimeMillis()
+            fallbackStartedAtElapsedMs?.let {
+                fallbackElapsedMs = (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
+            }
+            delay(1_000L)
+        }
+    }
+
+    val currentTool =
+        resolveSubagentDisplayedTool(
+            childProcessingState = childProcessingState,
+            lastToolName = childLastToolName,
+        )
+    val toolCount = maxOf(run?.toolInvocationCount ?: 0, childToolInvocations)
+    val roundCount = run?.modelRoundCount ?: 0
+    val durationMs =
+        run?.let { ((it.completedAt ?: nowMs) - (it.startedAt ?: it.createdAt)).coerceAtLeast(0L) }
+            ?: fallbackElapsedMs
+    val cardState =
+        subagentCardState(
+            runStatus = run?.status ?: fallbackState.toSubagentCardStatusName(),
+            toolCount = toolCount,
+            roundCount = roundCount,
+            currentTool = currentTool,
+        )
+    val agentPath =
+        run?.externalOwnerId?.takeIf { it.isNotBlank() }
+            ?: requestedAgentName?.takeIf { it.isNotBlank() }
+            ?: "subagent"
+    val openConversation: (() -> Unit)? =
+        if (childChatId.isNullOrBlank()) {
+            null
+        } else {
+            { chatCore.switchChat(childChatId, scrollToBottom = false) }
+        }
+
+    Column(modifier = modifier) {
+        reviewEvent?.let { event -> PermissionReviewLifecycleDisplay(event) }
+        SubagentAgentCard(
+            agentPath = agentPath,
+            statusText = subagentCardStatusText(cardState),
+            statsText =
+                subagentCardStatsText(
+                    formatToolExecutionDuration(context, durationMs),
+                    toolCount,
+                    roundCount,
+                ),
+            identity = remember(agentPath) { subagentAgentIdentity(agentPath) },
+            statusColor = subagentCardStatusColor(cardState.status),
+            modifier = Modifier.padding(start = 24.dp, end = 8.dp, bottom = 8.dp),
+            onOpenConversation = openConversation,
+        )
+    }
+}
+
+private fun ToolExecutionState.toSubagentCardStatusName(): String =
+    when (this) {
+        ToolExecutionState.RUNNING,
+        ToolExecutionState.WAITING_AUTHORIZATION,
+        ToolExecutionState.WAITING_EXECUTION -> "RUNNING"
+        ToolExecutionState.COMPLETED -> "COMPLETED"
+        ToolExecutionState.NOT_EXECUTED -> "FAILED"
+    }
 
 @Composable
 private fun SubagentTaskStatusDisplay(

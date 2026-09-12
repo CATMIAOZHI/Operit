@@ -858,6 +858,9 @@ class CustomXmlRenderer(
                     displayParams["subagent_type"]
                         ?.trim()
                         ?.takeIf { displayToolName == "task" && it.isNotEmpty() }
+                        ?: displayParams["task_name"]
+                            ?.trim()
+                            ?.takeIf { displayToolName == "spawn_agent" && it.isNotEmpty() }
                 val subagentTaskId =
                     displayParams["task_id"]
                         ?.trim()

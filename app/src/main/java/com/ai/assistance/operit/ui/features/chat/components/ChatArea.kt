@@ -245,7 +245,7 @@ fun ChatArea(
     val pendingProcessGroup = responseProcessState.groups[pendingProcessIndex]
     val pendingProcessCollapsed =
         pendingProcessGroup != null && pendingProcessIndex != pendingProcessGroup.finalIndex &&
-            pendingProcessGroup.key !in responseProcessState.expandedKeys
+            !responseProcessState.isExpanded(pendingProcessGroup.key)
     LaunchedEffect(pendingJumpToMessageTimestamp, pendingProcessGroup?.key, pendingProcessCollapsed) {
         if (pendingProcessCollapsed && pendingProcessGroup != null) {
             pendingJumpToMessageTimestamp?.let(messageAnchors::remove)
