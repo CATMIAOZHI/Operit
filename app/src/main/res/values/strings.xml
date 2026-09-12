@@ -5516,6 +5516,9 @@
     <string name="subagent_result_title">Subagent 结果：%1$s</string>
     <string name="subagent_result_empty">Subagent 未返回文本结果</string>
     <string name="subagent_open_conversation">进入 Subagent 对话</string>
+    <string name="subagent_card_open_detail">查看 Subagent 详情</string>
+    <string name="subagent_detail_empty">这个 Subagent 还没有返回内容</string>
+    <string name="subagent_detail_close">关闭</string>
     <string name="subagent_delegated_by_parent">由父聊天委派</string>
     <string name="subagent_return_to_parent">返回父聊天</string>
     <string name="subagent_parent_chat">父聊天：%1$s</string>

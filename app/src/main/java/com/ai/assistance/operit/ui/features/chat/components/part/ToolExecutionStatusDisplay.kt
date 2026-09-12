@@ -65,6 +65,7 @@ import com.ai.assistance.operit.ui.features.chat.components.subagentCardState
 import com.ai.assistance.operit.ui.features.chat.components.subagentCardStatsText
 import com.ai.assistance.operit.ui.features.chat.components.subagentCardStatusColor
 import com.ai.assistance.operit.ui.features.chat.components.subagentCardStatusText
+import com.ai.assistance.operit.ui.features.chat.components.subagentFailureText
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEvent
 import com.ai.assistance.operit.ui.permissions.PermissionReviewAuthorization
@@ -823,7 +824,7 @@ private fun SubagentTaskResultRow(
 
 /**
  * The call side of a v2 collaboration: the row keeps the child's badge and live status instead of
- * the raw spawn result, and tapping it opens the child conversation.
+ * the raw spawn result, and tapping it opens the floating card that shows what the agent returned.
  */
 @Composable
 private fun SubagentSpawnStatusDisplay(
@@ -927,6 +928,9 @@ private fun SubagentSpawnStatusDisplay(
             identity = remember(agentPath) { subagentAgentIdentity(agentPath) },
             statusColor = subagentCardStatusColor(cardState.status),
             modifier = Modifier.padding(start = 24.dp, end = 8.dp, bottom = 8.dp),
+            chatId = parentChatId,
+            childChatId = childChatId,
+            failureText = subagentFailureText(cardState.status, run?.error),
             onOpenConversation = openConversation,
         )
     }
