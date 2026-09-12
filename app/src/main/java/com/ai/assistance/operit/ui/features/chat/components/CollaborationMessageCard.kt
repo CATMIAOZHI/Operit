@@ -11,15 +11,24 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
+import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
+import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
 import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.data.model.SubagentRunEntity
+import com.ai.assistance.operit.data.repository.SubagentRunRepository
+import com.ai.assistance.operit.ui.features.chat.components.part.formatToolExecutionDuration
+import com.ai.assistance.operit.ui.features.chat.components.part.resolveSubagentDisplayedTool
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flowOf
 
 internal data class CollaborationDisplayMessage(val sender: String, val kind: String, val body: String)
 
@@ -40,21 +49,127 @@ internal fun collaborationDisplayMessages(content: String, sender: String): List
     )
 }
 
+/**
+ * Resolves the live run a collaboration row belongs to. Archived runs, v1 tasks and runs owned by
+ * another feature (the reading companion shares this table) never shadow the agent's own run.
+ */
+internal fun findCollaborationRun(
+    runs: List<SubagentRunEntity>,
+    sender: String?,
+): SubagentRunEntity? {
+    val owner = sender?.takeIf { it.isNotBlank() } ?: return null
+    return runs.firstOrNull {
+        it.externalOwnerId == owner &&
+            it.externalOwnerType == CollaborationCoordinator.OWNER_TYPE &&
+            it.archivedAt == null
+    }
+}
+
+/**
+ * A collaboration row that belongs to a real Subagent run: the row keeps the agent's badge, its
+ * live status and the run statistics instead of the anonymous "note" line.
+ */
+@Composable
+private fun SubagentRunEventCard(
+    run: SubagentRunEntity,
+    event: CollaborationDisplayMessage,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onOpenConversation: () -> Unit,
+) {
+    val context = LocalContext.current
+    val chatCore = remember(context) {
+        ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
+    }
+    val childChatId = run.childChatId
+    val childProcessingState = perChatValue(chatCore.inputProcessingStateByChatId, childChatId)
+    val childLastToolName = perChatValue(chatCore.lastToolNameByChatId, childChatId)
+    val childToolInvocations =
+        perChatValue(chatCore.lastTurnToolInvocationCountByChatId, childChatId) ?: 0
+
+    var nowMs by remember(run.id) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(run.id, run.status, run.startedAt, run.completedAt) {
+        while (run.isActiveSubagentRun()) {
+            nowMs = System.currentTimeMillis()
+            delay(1_000L)
+        }
+    }
+    val currentTool =
+        resolveSubagentDisplayedTool(
+            childProcessingState = childProcessingState,
+            lastToolName = childLastToolName,
+        )
+    val toolCount = maxOf(run.toolInvocationCount, childToolInvocations)
+    val durationText =
+        formatToolExecutionDuration(
+            context,
+            ((run.completedAt ?: nowMs) - (run.startedAt ?: run.createdAt)).coerceAtLeast(0L),
+        )
+    val cardState =
+        subagentCardState(
+            runStatus = run.status,
+            toolCount = toolCount,
+            roundCount = run.modelRoundCount,
+            currentTool = currentTool,
+        )
+    val agentPath = run.externalOwnerId?.takeIf { it.isNotBlank() } ?: event.sender
+
+    SubagentAgentCard(
+        agentPath = agentPath,
+        statusText = subagentCardStatusText(cardState),
+        statsText = subagentCardStatsText(durationText, toolCount, run.modelRoundCount),
+        identity = remember(agentPath) { subagentAgentIdentity(agentPath) },
+        statusColor = subagentCardStatusColor(cardState.status),
+        body = event.body,
+        expanded = expanded,
+        onToggle = onToggle,
+        onOpenConversation = onOpenConversation,
+    )
+}
+
 /** Only host-marked collaboration rows use this display; normal user prose is never reclassified. */
 @Composable
 fun CollaborationMessageCard(message: ChatMessage) {
     val events = remember(message.content, message.roleName) {
         collaborationDisplayMessages(message.content, message.roleName)
     }
-    var expanded by rememberSaveable(message.timestamp) { mutableStateOf(false) }
+    val context = LocalContext.current
+    val chatCore = remember(context) {
+        ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
+    }
+    val repository = remember(context) { SubagentRunRepository.getInstance(context) }
+    val currentChatId by chatCore.currentChatId.collectAsState(initial = null)
+    val runsFlow = remember(currentChatId) {
+        currentChatId?.let { repository.observeByParentChatId(it) }
+    }
+    val runs by (runsFlow ?: flowOf(emptyList())).collectAsState(initial = emptyList())
+    // Keyed by conversation: this row must come back expanded after the user leaves the chat and
+    // returns, which a value living in the transcript composition cannot do. The timestamp stands
+    // in for the message the way the rest of the app treats it, on the strength of
+    // ChatMessageTimestampAllocator handing out one message per timestamp inside a process.
+    val expansionId = "agent-event-${message.timestamp}"
+    val expanded = TranscriptExpansionState.isExpanded(currentChatId, expansionId)
     val expansionState = stringResource(
         if (expanded) R.string.subagent_event_expanded else R.string.subagent_event_collapsed,
     )
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
             events.forEach { event ->
+                val run = findCollaborationRun(runs, event.sender)
+                if (run != null) {
+                    SubagentRunEventCard(
+                        run = run,
+                        event = event,
+                        expanded = expanded,
+                        onToggle = { TranscriptExpansionState.toggle(currentChatId, expansionId) },
+                        onOpenConversation = {
+                            chatCore.switchChat(run.childChatId, scrollToBottom = false)
+                        },
+                    )
+                    return@forEach
+                }
                 val kind = stringResource(when (event.kind) {
                     "FINAL_ANSWER" -> R.string.subagent_message_result
                     "STATUS" -> R.string.subagent_message_status
@@ -64,7 +179,7 @@ fun CollaborationMessageCard(message: ChatMessage) {
                 Row(
                     Modifier.fillMaxWidth()
                         .semantics { stateDescription = expansionState }
-                        .clickable { expanded = !expanded }
+                        .clickable { TranscriptExpansionState.toggle(currentChatId, expansionId) }
                         .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),

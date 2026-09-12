@@ -14,6 +14,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.TextFieldValue.Companion
 import androidx.core.content.FileProvider
 import com.ai.assistance.operit.ui.features.chat.components.ChatStyle
+import com.ai.assistance.operit.ui.features.chat.components.TranscriptExpansionState
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
@@ -799,6 +800,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         chatHistoryDelegate.deleteChatHistory(chatId) { deleted ->
             if (deleted) {
                 pendingMessageQueueStore.removeChat(chatId)
+                TranscriptExpansionState.clear(chatId)
             } else {
                 uiStateDelegate.showToast(context.getString(R.string.chat_locked_cannot_delete))
             }
@@ -808,7 +810,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun clearCurrentChat() {
         chatHistoryDelegate.clearCurrentChat { deleted, deletedChatId ->
             if (deleted) {
-                deletedChatId?.let(pendingMessageQueueStore::removeChat)
+                deletedChatId?.let {
+                    pendingMessageQueueStore.removeChat(it)
+                    TranscriptExpansionState.clear(it)
+                }
                 uiStateDelegate.showToast(context.getString(R.string.chat_cleared))
             } else {
                 uiStateDelegate.showToast(context.getString(R.string.chat_locked_cannot_delete))

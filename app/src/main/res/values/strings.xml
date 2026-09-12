@@ -5498,7 +5498,9 @@
     <string name="tool_waiting_execution">等待执行</string>
     <string name="tool_executing_duration">执行中 · %1$s</string>
     <string name="subagent_status_creating">正在创建</string>
+    <string name="subagent_status_started">开始工作</string>
     <string name="subagent_status_queued">排队中 · 第 %1$d 位</string>
+    <string name="subagent_status_queued_pending">排队中</string>
     <string name="subagent_status_thinking">正在思考</string>
     <string name="subagent_status_calling_tool">正在调用 %1$s</string>
     <string name="subagent_status_with_agent">%1$s · %2$s</string>
@@ -5507,6 +5509,9 @@
     <string name="subagent_status_completed_with_tool_count">已完成 · 调用了 %1$d 次工具</string>
     <string name="subagent_status_error">错误</string>
     <string name="subagent_status_cancelled">已取消</string>
+    <string name="subagent_card_elapsed">用时 %1$s</string>
+    <string name="subagent_card_tool_count">工具 %1$d 次</string>
+    <string name="subagent_card_round_count">模型 %1$d 轮</string>
     <string name="subagent_stop_task">停止子任务</string>
     <string name="subagent_result_title">Subagent 结果：%1$s</string>
     <string name="subagent_result_empty">Subagent 未返回文本结果</string>

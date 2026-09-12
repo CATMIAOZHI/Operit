@@ -7,7 +7,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -64,7 +63,7 @@ internal fun responseProcessGroups(messages: List<ChatMessage>): Map<Int, Respon
 
 internal class ResponseProcessState(
     val groups: Map<Int, ResponseProcessGroup>,
-    val expandedKeys: List<Long>,
+    val isExpanded: (Long) -> Boolean,
     val toggle: (Long) -> Unit,
     val expand: (Long) -> Unit,
 )
@@ -78,19 +77,21 @@ internal fun rememberResponseProcessState(
     val context = LocalContext.current
     val preferences = remember(context) { DisplayPreferencesManager.getInstance(context) }
     val collapse by preferences.collapseCompletedProcess.collectAsState(initial = true)
-    var expandedKeys by rememberSaveable(chatId) { mutableStateOf(emptyList<Long>()) }
     val snapshot = messages.toList()
     val groups = remember(snapshot, collapse, enabled) {
         if (collapse && enabled) responseProcessGroups(snapshot) else emptyMap()
     }
     return ResponseProcessState(
-        groups, expandedKeys,
-        toggle = { key ->
-            expandedKeys = if (key in expandedKeys) expandedKeys - key else expandedKeys + key
-        },
-        expand = { key -> if (key !in expandedKeys) expandedKeys = expandedKeys + key },
+        groups,
+        // An expanded section belongs to its conversation, not to the composition that shows it:
+        // leaving the conversation must not fold the sections opened in it.
+        isExpanded = { key -> TranscriptExpansionState.isExpanded(chatId, processSectionId(key)) },
+        toggle = { key -> TranscriptExpansionState.toggle(chatId, processSectionId(key)) },
+        expand = { key -> TranscriptExpansionState.expand(chatId, processSectionId(key)) },
     )
 }
+
+private fun processSectionId(key: Long): String = "process-section-$key"
 
 @Composable
 internal fun ResponseProcessMessage(
@@ -104,7 +105,7 @@ internal fun ResponseProcessMessage(
         Column { content() }
         return
     }
-    val expanded = group.key in state.expandedKeys
+    val expanded = state.isExpanded(group.key)
     Column {
         if (index == group.firstIndex) {
             CompositionLocalProvider(LocalResponseMessageSection provides ResponseMessageSection.HEADER) {

@@ -1110,6 +1110,34 @@ private fun subagentFilterLabel(filter: SubagentListFilter): String =
         SubagentListFilter.ARCHIVED -> stringResource(R.string.subagent_filter_archived)
     }
 
+/**
+ * A named v2 agent shows its own badge here too, the way the chat cards do; the auto review run and
+ * anything that is not a named v2 agent keep the plain status mark.
+ */
+internal fun subagentRunShowsAgentIdentity(isAutoReview: Boolean, isV2Agent: Boolean): Boolean =
+    !isAutoReview && isV2Agent
+
+/** The agent's own accent for a named agent, the run status colour otherwise. */
+internal fun subagentRunBadgeColor(
+    showsAgentIdentity: Boolean,
+    statusColor: Color,
+    accent: Color,
+): Color = if (showsAgentIdentity) accent else statusColor
+
+/**
+ * Only a v2 run names itself by its canonical agent path; another feature's owner id (the reading
+ * companion's run id) is not a name, so it falls back to the version and the profile id.
+ */
+internal fun subagentRunTitle(
+    isV2Agent: Boolean,
+    externalOwnerId: String?,
+    agentProfileId: String,
+): String {
+    val version = if (isV2Agent) "v2" else "v1"
+    val ownerName = if (isV2Agent) externalOwnerId?.takeIf { it.isNotBlank() } else null
+    return ownerName ?: "$version · ${agentProfileId.ifBlank { "subagent" }}"
+}
+
 @Composable
 private fun SubagentRunRow(
     run: SubagentRunEntity,
@@ -1127,14 +1155,19 @@ private fun SubagentRunRow(
             ChatRuntimeHolder.getInstance(context.applicationContext)
                 .getCore(ChatRuntimeSlot.MAIN)
         }
-    val processingStates by chatCore.inputProcessingStateByChatId.collectAsState()
-    val lastToolNames by chatCore.lastToolNameByChatId.collectAsState()
     val chatHistories by chatCore.chatHistories.collectAsState()
-    val lastTurnToolInvocationCounts by
-        chatCore.lastTurnToolInvocationCountByChatId.collectAsState()
+    val childProcessingState = perChatValue(chatCore.inputProcessingStateByChatId, run.childChatId)
+    val childLastToolName = perChatValue(chatCore.lastToolNameByChatId, run.childChatId)
+    val childToolInvocations =
+        perChatValue(chatCore.lastTurnToolInvocationCountByChatId, run.childChatId) ?: 0
     val status = run.status.toSubagentRunStatus()
     val isAutoReview =
         run.agentProfileId == AgentProfileRepository.PERMISSION_REVIEWER_ID
+    val isV2Agent =
+        run.externalOwnerType ==
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.OWNER_TYPE
+    val agentIdentitySeed = run.externalOwnerId?.takeIf { it.isNotBlank() } ?: run.childChatId
+    val agentIdentity = remember(agentIdentitySeed) { subagentAgentIdentity(agentIdentitySeed) }
     val finalAssistantText =
         if (isAutoReview) {
             chatHistories
@@ -1173,14 +1206,10 @@ private fun SubagentRunRow(
     }
     val currentTool =
         resolveSubagentDisplayedTool(
-            childProcessingState = processingStates[run.childChatId],
-            lastToolName = lastToolNames[run.childChatId],
+            childProcessingState = childProcessingState,
+            lastToolName = childLastToolName,
         )
-    val toolCount =
-        maxOf(
-            run.toolInvocationCount,
-            lastTurnToolInvocationCounts[run.childChatId] ?: 0,
-        )
+    val toolCount = maxOf(run.toolInvocationCount, childToolInvocations)
     val duration =
         formatToolExecutionDuration(
             context,
@@ -1209,6 +1238,9 @@ private fun SubagentRunRow(
             else -> MaterialTheme.colorScheme.onSurfaceVariant
             }
         }
+    // A v2 agent keeps its own badge colour here too, so the list reads like the chat cards do.
+    val showsAgentIdentity = subagentRunShowsAgentIdentity(isAutoReview, isV2Agent)
+    val badgeColor = subagentRunBadgeColor(showsAgentIdentity, statusColor, agentIdentity.accent)
     var showMenu by remember(run.id) { mutableStateOf(false) }
 
     Card(
@@ -1236,13 +1268,14 @@ private fun SubagentRunRow(
                     Modifier
                         .size(34.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(statusColor.copy(alpha = 0.12f)),
+                        .background(badgeColor.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Default.SmartToy,
+                    imageVector =
+                        if (showsAgentIdentity) agentIdentity.icon else Icons.Default.SmartToy,
                     contentDescription = null,
-                    tint = statusColor,
+                    tint = badgeColor,
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -1253,10 +1286,11 @@ private fun SubagentRunRow(
                         if (isAutoReview) {
                             stringResource(R.string.agent_profile_builtin_permission_reviewer_name)
                         } else {
-                            val version = if (run.externalOwnerType ==
-                                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.OWNER_TYPE
-                            ) "v2" else "v1"
-                            "$version · ${run.agentProfileId.ifBlank { "subagent" }}"
+                            subagentRunTitle(
+                                isV2Agent = isV2Agent,
+                                externalOwnerId = run.externalOwnerId,
+                                agentProfileId = run.agentProfileId,
+                            )
                         },
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,

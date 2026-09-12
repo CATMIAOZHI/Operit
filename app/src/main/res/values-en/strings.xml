@@ -5119,7 +5119,9 @@
     <string name="tool_waiting_execution">Waiting to execute</string>
     <string name="tool_executing_duration">Running · %1$s</string>
     <string name="subagent_status_creating">Creating</string>
+    <string name="subagent_status_started">Started working</string>
     <string name="subagent_status_queued">Queued · position %1$d</string>
+    <string name="subagent_status_queued_pending">Queued</string>
     <string name="subagent_status_thinking">Thinking</string>
     <string name="subagent_status_calling_tool">Calling %1$s</string>
     <string name="subagent_status_with_agent">%1$s · %2$s</string>
@@ -5128,6 +5130,9 @@
     <string name="subagent_status_completed_with_tool_count">Completed · %1$d tool calls</string>
     <string name="subagent_status_error">Error</string>
     <string name="subagent_status_cancelled">Cancelled</string>
+    <string name="subagent_card_elapsed">Took %1$s</string>
+    <string name="subagent_card_tool_count">%1$d tool calls</string>
+    <string name="subagent_card_round_count">%1$d model rounds</string>
     <string name="subagent_stop_task">Stop Subagent task</string>
     <string name="subagent_result_title">Subagent result: %1$s</string>
     <string name="subagent_result_empty">The Subagent returned no textual result</string>
