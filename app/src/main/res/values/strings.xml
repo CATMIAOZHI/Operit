@@ -7,13 +7,12 @@
     <string name="subagent_v2_max_wait">最长等待（毫秒）</string>
     <string name="subagent_v2_limits_help">运行数按整个代理树计算，不含根代理；模型自身的并发限制仍然生效。修改影响后续操作，不会中断正在执行的任务。</string>
     <string name="subagent_v2_invalid_limits">运行数和层数须为 1–64；等待须满足 0 ≤ 最短 ≤ 默认 ≤ 最长 ≤ 3600000。</string>
-    <string name="subagent_message_header">Subagent v2 · %1$s · %2$s</string>
     <string name="subagent_message_result">已完成</string>
     <string name="subagent_message_status">状态有更新</string>
     <string name="subagent_message_task">任务消息</string>
     <string name="subagent_message_note">有了更新</string>
-    <string name="subagent_event_expanded">详情已展开</string>
-    <string name="subagent_event_collapsed">详情已折叠</string>
+    <string name="subagent_message_midway">中途消息</string>
+    <string name="subagent_message_open_detail">查看消息详情</string>
     <string name="subagent_version_title">Subagent 版本</string>
     <string name="subagent_version_description">选择新对话使用的协作工具。现有代理保留其版本，阅读伴侣继续使用 v1。</string>
     <string name="subagent_version_v2">v2 · 多代理协作（默认）</string>

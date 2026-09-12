@@ -1,33 +1,26 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+import com.ai.assistance.operit.data.model.ActivePrompt
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.SubagentRunEntity
+import com.ai.assistance.operit.data.preferences.ActivePromptManager
+import com.ai.assistance.operit.data.preferences.CharacterCardManager
+import com.ai.assistance.operit.data.preferences.CharacterGroupCardManager
+import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
-import com.ai.assistance.operit.ui.features.chat.components.part.formatToolExecutionDuration
 import com.ai.assistance.operit.ui.features.chat.components.part.resolveSubagentDisplayedTool
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 
 internal data class CollaborationDisplayMessage(val sender: String, val kind: String, val body: String)
@@ -55,6 +48,25 @@ internal fun collaborationDisplayMessages(content: String, sender: String): List
  */
 internal fun collaborationReturnedBody(kind: String, body: String): String? =
     body.takeIf { kind == "MESSAGE" || kind == "FINAL_ANSWER" }
+
+/**
+ * The label a collaboration row carries for the kind of message it is. It is the row's own subtitle,
+ * so a row whose text arrives on its own reads as what it is rather than as the run's last status.
+ */
+internal fun collaborationKindLabelRes(kind: String): Int =
+    when (kind) {
+        "FINAL_ANSWER" -> R.string.subagent_message_result
+        "STATUS" -> R.string.subagent_message_status
+        "NEW_TASK" -> R.string.subagent_message_task
+        else -> R.string.subagent_message_note
+    }
+
+/**
+ * A mid-way message is not the result the agent finished with. The run status of a live run would say
+ * "completed" over it, so a message says what it is instead.
+ */
+internal fun collaborationMidwayLabelRes(kind: String): Int? =
+    R.string.subagent_message_midway.takeIf { kind == "MESSAGE" }
 
 /**
  * Resolves the live run a collaboration row belongs to. Archived runs, v1 tasks and runs owned by
@@ -90,40 +102,25 @@ private fun SubagentRunEventCard(
     val childChatId = run.childChatId
     val childProcessingState = perChatValue(chatCore.inputProcessingStateByChatId, childChatId)
     val childLastToolName = perChatValue(chatCore.lastToolNameByChatId, childChatId)
-    val childToolInvocations =
-        perChatValue(chatCore.lastTurnToolInvocationCountByChatId, childChatId) ?: 0
 
-    var nowMs by remember(run.id) { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(run.id, run.status, run.startedAt, run.completedAt) {
-        while (run.isActiveSubagentRun()) {
-            nowMs = System.currentTimeMillis()
-            delay(1_000L)
-        }
-    }
     val currentTool =
         resolveSubagentDisplayedTool(
             childProcessingState = childProcessingState,
             lastToolName = childLastToolName,
         )
-    val toolCount = maxOf(run.toolInvocationCount, childToolInvocations)
-    val durationText =
-        formatToolExecutionDuration(
-            context,
-            ((run.completedAt ?: nowMs) - (run.startedAt ?: run.createdAt)).coerceAtLeast(0L),
-        )
     val cardState =
         subagentCardState(
             runStatus = run.status,
-            toolCount = toolCount,
-            roundCount = run.modelRoundCount,
             currentTool = currentTool,
         )
     val agentPath = run.externalOwnerId?.takeIf { it.isNotBlank() } ?: event.sender
+    val roleName = rememberMainAgentRole(agentPath)?.name
 
     SubagentAgentCard(
-        agentPath = agentPath,
-        statusText = subagentCardStatusText(cardState),
-        statsText = subagentCardStatsText(durationText, toolCount, run.modelRoundCount),
+        agentPath = collaborationRowTitle(agentPath, roleName),
+        statusText =
+            collaborationMidwayLabelRes(event.kind)?.let { stringResource(it) }
+                ?: subagentCardStatusText(cardState),
         identity = remember(agentPath) { subagentAgentIdentity(agentPath) },
         statusColor = subagentCardStatusColor(cardState.status),
         body = collaborationReturnedBody(event.kind, event.body),
@@ -150,18 +147,9 @@ fun CollaborationMessageCard(message: ChatMessage) {
         currentChatId?.let { repository.observeByParentChatId(it) }
     }
     val runs by (runsFlow ?: flowOf(emptyList())).collectAsState(initial = emptyList())
-    // Keyed by conversation: this row must come back expanded after the user leaves the chat and
-    // returns, which a value living in the transcript composition cannot do. The timestamp stands
-    // in for the message the way the rest of the app treats it, on the strength of
-    // ChatMessageTimestampAllocator handing out one message per timestamp inside a process.
-    val expansionId = "agent-event-${message.timestamp}"
-    val expanded = TranscriptExpansionState.isExpanded(currentChatId, expansionId)
-    val expansionState = stringResource(
-        if (expanded) R.string.subagent_event_expanded else R.string.subagent_event_collapsed,
-    )
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 1.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
     ) {
             events.forEach { event ->
                 val run = findCollaborationRun(runs, event.sender)
@@ -176,44 +164,141 @@ fun CollaborationMessageCard(message: ChatMessage) {
                     )
                     return@forEach
                 }
-                val kind = stringResource(when (event.kind) {
-                    "FINAL_ANSWER" -> R.string.subagent_message_result
-                    "STATUS" -> R.string.subagent_message_status
-                    "NEW_TASK" -> R.string.subagent_message_task
-                    else -> R.string.subagent_message_note
-                })
-                Row(
-                    Modifier.fillMaxWidth()
-                        .semantics { stateDescription = expansionState }
-                        .clickable { TranscriptExpansionState.toggle(currentChatId, expansionId) }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(Icons.Default.SmartToy, contentDescription = null,
-                        modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                    Text(
-                        stringResource(R.string.subagent_message_header, event.sender, kind),
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Icon(
-                        if (expanded) Icons.Default.KeyboardArrowDown else Icons.Default.ChevronRight,
-                        contentDescription = null, modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (expanded) {
-                    SelectionContainer {
-                        Text(
-                            event.body,
-                            modifier = Modifier.padding(start = 24.dp, bottom = 8.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+                CollaborationAgentMessage(
+                    sender = event.sender,
+                    kindLabel = stringResource(collaborationKindLabelRes(event.kind)),
+                    body = event.body,
+                    chatId = currentChatId,
+                )
             }
     }
 }
+
+/**
+ * A collaboration row with no live run to hang off, which is every row inside the subagent's own
+ * conversation. It is the card the conversation's own agents wear: a picture, the name of the agent
+ * that spoke, what kind of message it is, and the message itself in the floating card a tap opens.
+ */
+@Composable
+private fun CollaborationAgentMessage(
+    sender: String,
+    kindLabel: String,
+    body: String,
+    chatId: String?,
+) {
+    val role = rememberMainAgentRole(sender)
+    SubagentAgentCard(
+        agentPath = collaborationRowTitle(sender, role?.name),
+        statusText = kindLabel,
+        identity = remember(sender) { subagentAgentIdentity(sender) },
+        statusColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        body = body,
+        avatarUri = role?.avatarUri,
+        openDetailLabelRes = R.string.subagent_message_open_detail,
+        chatId = chatId,
+    )
+}
+
+/**
+ * The main agent is the one-segment task path; every named subagent hangs off it.
+ */
+internal fun collaborationSenderIsMainAgent(sender: String): Boolean =
+    sender.trim().trim('/').let { it.isNotEmpty() && !it.contains('/') }
+
+/**
+ * Who the main agent speaks as. A row that speaks for the main agent wears the main role card's name
+ * and picture the way the conversation's other role cards do; a row from a named subagent keeps that
+ * agent's own path and mark, which is what tells a family of agents apart.
+ *
+ * The chain is the chat's own: the active card's picture with the system cards' built-in picture
+ * filled in, or for a character group the group's picture and then its first member's, and only
+ * failing all of them the global AI picture.
+ */
+@Composable
+private fun rememberMainAgentRole(sender: String): MainAgentRole? {
+    if (!collaborationSenderIsMainAgent(sender)) return null
+    val context = LocalContext.current
+    val preferences = remember(context) { UserPreferencesManager.getInstance(context) }
+    val characterCardManager = remember(context) { CharacterCardManager.getInstance(context) }
+    val groupCardManager = remember(context) { CharacterGroupCardManager.getInstance(context) }
+    val activePromptManager = remember(context) { ActivePromptManager.getInstance(context) }
+    val activePrompt by
+        remember(activePromptManager) { activePromptManager.activePromptFlow }
+            .collectAsState(
+                initial =
+                    ActivePrompt.CharacterCard(CharacterCardManager.DEFAULT_CHARACTER_CARD_ID)
+            )
+    val cardId = (activePrompt as? ActivePrompt.CharacterCard)?.id
+    val groupId = (activePrompt as? ActivePrompt.CharacterGroup)?.id
+    val card by
+        remember(characterCardManager, cardId) {
+                cardId?.let { characterCardManager.getCharacterCardFlow(it) } ?: flowOf(null)
+            }
+            .collectAsState(initial = null)
+    val cardAvatarUri by
+        remember(preferences, cardId) { avatarUriFlow(preferences, cardId) }
+            .collectAsState(initial = null)
+    val groupAvatarUri by
+        remember(preferences, groupId) {
+                groupId?.let { preferences.getAiAvatarForCharacterGroupFlow(it) } ?: flowOf(null)
+            }
+            .collectAsState(initial = null)
+    val group by
+        remember(groupCardManager, groupId) {
+                groupId?.let { groupCardManager.getCharacterGroupCardFlow(it) } ?: flowOf(null)
+            }
+            .collectAsState(initial = null)
+    val firstMemberCardId =
+        remember(group) {
+            group?.members?.sortedBy { it.orderIndex }?.firstOrNull()?.characterCardId
+        }
+    val firstMemberAvatarUri by
+        remember(preferences, firstMemberCardId) {
+                avatarUriFlow(preferences, firstMemberCardId)
+            }
+            .collectAsState(initial = null)
+    val globalAvatarUri by preferences.customAiAvatarUri.collectAsState(initial = null)
+    return MainAgentRole(
+        name = card?.name?.takeIf { it.isNotBlank() } ?: group?.name?.takeIf { it.isNotBlank() },
+        avatarUri =
+            preferredAvatarUri(
+                cardAvatarUri = cardAvatarUri,
+                groupAvatarUri = groupAvatarUri,
+                firstMemberAvatarUri = firstMemberAvatarUri,
+                globalAvatarUri = globalAvatarUri,
+            ),
+    )
+}
+
+/** The role card the main agent speaks as: the name the conversation calls it, and its picture. */
+internal data class MainAgentRole(val name: String?, val avatarUri: String?)
+
+/**
+ * The label a row carries: the role card that speaks it, then the agent path it speaks from. Only the
+ * main agent's row is named this way - a subagent's path is already what tells it from its siblings.
+ */
+internal fun collaborationRowTitle(sender: String, roleName: String?): String =
+    roleName
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() && collaborationSenderIsMainAgent(sender) }
+        ?.let { "$it · $sender" }
+        ?: sender
+
+/**
+ * Which picture wins when the role card, its group, the group's first member and the global one all
+ * have one. A blank value is no picture at all, so it never stands in front of one that is.
+ */
+internal fun preferredAvatarUri(
+    cardAvatarUri: String?,
+    groupAvatarUri: String?,
+    firstMemberAvatarUri: String?,
+    globalAvatarUri: String?,
+): String? =
+    listOf(cardAvatarUri, groupAvatarUri, firstMemberAvatarUri, globalAvatarUri)
+        .firstOrNull { !it.isNullOrBlank() }
+
+private fun avatarUriFlow(
+    preferences: UserPreferencesManager,
+    characterCardId: String?,
+): Flow<String?> =
+    characterCardId?.let { preferences.getResolvedAiAvatarForCharacterCardFlow(it) } ?: flowOf(null)

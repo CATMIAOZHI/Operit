@@ -59,10 +59,8 @@ import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.ui.features.chat.components.SubagentAgentCard
 import com.ai.assistance.operit.ui.features.chat.components.perChatValue
-import com.ai.assistance.operit.ui.features.chat.components.isActiveSubagentRun
 import com.ai.assistance.operit.ui.features.chat.components.subagentAgentIdentity
 import com.ai.assistance.operit.ui.features.chat.components.subagentCardState
-import com.ai.assistance.operit.ui.features.chat.components.subagentCardStatsText
 import com.ai.assistance.operit.ui.features.chat.components.subagentCardStatusColor
 import com.ai.assistance.operit.ui.features.chat.components.subagentCardStatusText
 import com.ai.assistance.operit.ui.features.chat.components.subagentFailureText
@@ -248,6 +246,7 @@ internal fun ToolExecutionStatusDisplay(
     requestedToolName: String? = null,
     requestedSubagentName: String? = null,
     requestedSubagentTaskId: String? = null,
+    requestedSubagentTask: String? = null,
 ) {
     val context = LocalContext.current
     remember(context) { PermissionReviewEventRepository.initialize(context); true }
@@ -311,9 +310,8 @@ internal fun ToolExecutionStatusDisplay(
         SubagentSpawnStatusDisplay(
             callId = liveExecution?.callId ?: persistedExecution?.callId,
             fallbackState = state,
-            fallbackStartedAtElapsedMs = liveExecution?.startedAtElapsedMs,
-            fallbackDurationMs = liveExecution?.durationMs ?: persistedExecution?.durationMs,
             requestedAgentName = requestedSubagentName,
+            taskText = requestedSubagentTask?.takeIf { it.isNotBlank() },
             reviewEvent = reviewEvent,
             modifier = modifier,
         )
@@ -830,9 +828,8 @@ private fun SubagentTaskResultRow(
 private fun SubagentSpawnStatusDisplay(
     callId: String?,
     fallbackState: ToolExecutionState,
-    fallbackStartedAtElapsedMs: Long?,
-    fallbackDurationMs: Long?,
     requestedAgentName: String?,
+    taskText: String?,
     reviewEvent: PermissionReviewEvent?,
     modifier: Modifier,
 ) {
@@ -861,46 +858,15 @@ private fun SubagentSpawnStatusDisplay(
     val childChatId = run?.childChatId
     val childProcessingState = perChatValue(chatCore.inputProcessingStateByChatId, childChatId)
     val childLastToolName = perChatValue(chatCore.lastToolNameByChatId, childChatId)
-    val childToolInvocations =
-        perChatValue(chatCore.lastTurnToolInvocationCountByChatId, childChatId) ?: 0
-
-    var nowMs by remember(callId) { mutableLongStateOf(System.currentTimeMillis()) }
-    var fallbackElapsedMs by
-        remember(fallbackStartedAtElapsedMs, fallbackDurationMs) {
-            mutableLongStateOf(
-                fallbackDurationMs
-                    ?: fallbackStartedAtElapsedMs?.let {
-                        (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
-                    }
-                    ?: 0L
-            )
-        }
-    val runActive = run?.isActiveSubagentRun() == true
-    LaunchedEffect(run?.id, run?.status, fallbackState, fallbackStartedAtElapsedMs) {
-        while (runActive || (run == null && fallbackState == ToolExecutionState.RUNNING)) {
-            nowMs = System.currentTimeMillis()
-            fallbackStartedAtElapsedMs?.let {
-                fallbackElapsedMs = (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
-            }
-            delay(1_000L)
-        }
-    }
 
     val currentTool =
         resolveSubagentDisplayedTool(
             childProcessingState = childProcessingState,
             lastToolName = childLastToolName,
         )
-    val toolCount = maxOf(run?.toolInvocationCount ?: 0, childToolInvocations)
-    val roundCount = run?.modelRoundCount ?: 0
-    val durationMs =
-        run?.let { ((it.completedAt ?: nowMs) - (it.startedAt ?: it.createdAt)).coerceAtLeast(0L) }
-            ?: fallbackElapsedMs
     val cardState =
         subagentCardState(
             runStatus = run?.status ?: fallbackState.toSubagentCardStatusName(),
-            toolCount = toolCount,
-            roundCount = roundCount,
             currentTool = currentTool,
         )
     val agentPath =
@@ -919,17 +885,12 @@ private fun SubagentSpawnStatusDisplay(
         SubagentAgentCard(
             agentPath = agentPath,
             statusText = subagentCardStatusText(cardState),
-            statsText =
-                subagentCardStatsText(
-                    formatToolExecutionDuration(context, durationMs),
-                    toolCount,
-                    roundCount,
-                ),
             identity = remember(agentPath) { subagentAgentIdentity(agentPath) },
             statusColor = subagentCardStatusColor(cardState.status),
             modifier = Modifier.padding(start = 24.dp, end = 8.dp, bottom = 8.dp),
             chatId = parentChatId,
             childChatId = childChatId,
+            body = taskText,
             failureText = subagentFailureText(cardState.status, run?.error),
             onOpenConversation = openConversation,
         )

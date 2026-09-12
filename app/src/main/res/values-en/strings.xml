@@ -7,13 +7,12 @@
     <string name="subagent_v2_max_wait">Maximum wait (ms)</string>
     <string name="subagent_v2_limits_help">Active count covers the entire agent tree, excluding root. Model concurrency limits still apply. Changes affect subsequent operations and do not interrupt active tasks.</string>
     <string name="subagent_v2_invalid_limits">Active count and depth must be 1–64; waits must satisfy 0 ≤ minimum ≤ default ≤ maximum ≤ 3600000.</string>
-    <string name="subagent_message_header">Subagent v2 · %1$s · %2$s</string>
     <string name="subagent_message_result">Completed</string>
     <string name="subagent_message_status">Status updated</string>
     <string name="subagent_message_task">Task message</string>
     <string name="subagent_message_note">Has an update</string>
-    <string name="subagent_event_expanded">Details expanded</string>
-    <string name="subagent_event_collapsed">Details collapsed</string>
+    <string name="subagent_message_midway">Interim message</string>
+    <string name="subagent_message_open_detail">View message details</string>
     <string name="subagent_version_title">Subagent version</string>
     <string name="subagent_version_description">Choose collaboration tools for new conversations. Existing agents retain their version; Reading Companion continues to use v1.</string>
     <string name="subagent_version_v2">v2 · Multi-agent collaboration (default)</string>

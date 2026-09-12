@@ -76,6 +76,7 @@ import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.core.agent.AgentProfileRepository
 import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.data.model.SubagentRunStatus
+import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.ui.features.chat.components.part.formatToolExecutionDuration
 import com.ai.assistance.operit.ui.features.chat.components.part.resolveSubagentDisplayedTool
 import com.ai.assistance.operit.ui.permissions.PermissionReviewOutcome
@@ -1155,7 +1156,6 @@ private fun SubagentRunRow(
             ChatRuntimeHolder.getInstance(context.applicationContext)
                 .getCore(ChatRuntimeSlot.MAIN)
         }
-    val chatHistories by chatCore.chatHistories.collectAsState()
     val childProcessingState = perChatValue(chatCore.inputProcessingStateByChatId, run.childChatId)
     val childLastToolName = perChatValue(chatCore.lastToolNameByChatId, run.childChatId)
     val childToolInvocations =
@@ -1168,26 +1168,28 @@ private fun SubagentRunRow(
             com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.OWNER_TYPE
     val agentIdentitySeed = run.externalOwnerId?.takeIf { it.isNotBlank() } ?: run.childChatId
     val agentIdentity = remember(agentIdentitySeed) { subagentAgentIdentity(agentIdentitySeed) }
-    val finalAssistantText =
-        if (isAutoReview) {
-            chatHistories
-                .firstOrNull { it.id == run.childChatId }
-                ?.messages
-                ?.lastOrNull { it.sender == "ai" }
-                ?.content
-        } else {
-            null
-        }
+    // The chat list carries no messages of its own (its histories are built without them), so the
+    // child's last turn has to be read from the child conversation, the way the chat card reads it.
+    // The text is read and turned into the display state in one pass: a state of its own would let
+    // the state be recomputed from a text that has not arrived yet, which paints an error colour on
+    // a run that simply has not been read.
     val reviewDisplayState by
         produceState<PermissionReviewRunDisplayState?>(
             initialValue = null,
             isAutoReview,
             status,
-            finalAssistantText,
             reviewEvent,
+            run.childChatId,
         ) {
             value =
                 if (isAutoReview) {
+                    val finalAssistantText =
+                        runCatching {
+                                ChatHistoryManager.getInstance(context).loadChatMessages(run.childChatId)
+                            }
+                            .getOrNull()
+                            ?.lastOrNull { it.sender == "ai" }
+                            ?.content
                     resolvePermissionReviewRunDisplayState(
                         status,
                         finalAssistantText,
@@ -1218,11 +1220,7 @@ private fun SubagentRunRow(
         )
     val statusText =
         reviewDisplayState?.let { permissionReviewRunStatusText(it) }
-            ?: subagentRunStatusText(
-                status = status,
-                currentTool = currentTool,
-                toolCount = toolCount,
-            )
+            ?: subagentRunStatusText(status = status, currentTool = currentTool)
     val statusColor =
         when (reviewDisplayState) {
             PermissionReviewRunDisplayState.ALLOWED -> MaterialTheme.colorScheme.primary
@@ -1305,7 +1303,12 @@ private fun SubagentRunRow(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "$statusText · $duration",
+                    text =
+                        listOfNotNull(
+                                statusText,
+                                subagentCardStatsText(duration, toolCount, run.modelRoundCount),
+                            )
+                            .joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall,
                     color = statusColor,
                     maxLines = 1,
@@ -1384,7 +1387,6 @@ private fun permissionReviewRunStatusText(state: PermissionReviewRunDisplayState
 private fun subagentRunStatusText(
     status: SubagentRunStatus,
     currentTool: String?,
-    toolCount: Int,
 ): String =
     when (status) {
         SubagentRunStatus.CREATED -> stringResource(R.string.subagent_status_creating)
@@ -1395,15 +1397,8 @@ private fun subagentRunStatusText(
             } else {
                 stringResource(R.string.subagent_status_calling_tool, currentTool)
             }
-        SubagentRunStatus.COMPLETED ->
-            if (toolCount > 0) {
-                stringResource(
-                    R.string.subagent_status_completed_with_tool_count,
-                    toolCount,
-                )
-            } else {
-                stringResource(R.string.subagent_status_completed)
-            }
+        // The tool count and the rest of the run statistics follow as their own line fragment.
+        SubagentRunStatus.COMPLETED -> stringResource(R.string.subagent_status_completed)
         SubagentRunStatus.CANCELLED -> stringResource(R.string.subagent_status_cancelled)
         SubagentRunStatus.FAILED,
         SubagentRunStatus.INTERRUPTED -> stringResource(R.string.subagent_status_error)
