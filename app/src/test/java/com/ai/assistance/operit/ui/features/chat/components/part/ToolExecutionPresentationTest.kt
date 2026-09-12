@@ -598,4 +598,28 @@ class ToolExecutionPresentationTest {
             success = true,
             resultText = "result",
         )
+
+    @Test
+    fun theTaskAReaderSeesIsWhatTheCallerHandedOver() {
+        assertEquals(
+            "Investigate the parser",
+            readSubagentTaskText("spawn_agent", "Investigate the parser"),
+        )
+        // A raw parameter arrives either wrapped in CDATA or escaped, and both read as the message.
+        assertEquals(
+            "Check \"quoted\" names",
+            readSubagentTaskText("spawn_agent", "Check &quot;quoted&quot; names"),
+        )
+        assertEquals(
+            "Check <the> file",
+            readSubagentTaskText("spawn_agent", "<![CDATA[Check <the> file]]>"),
+        )
+        assertEquals("spaced", readSubagentTaskText("spawn_agent", "  spaced  "))
+
+        // Anything that is not a spawn call has no task of its own, and neither has an empty one.
+        assertNull(readSubagentTaskText("task", "Investigate the parser"))
+        assertNull(readSubagentTaskText("spawn_agent", "   "))
+        assertNull(readSubagentTaskText("spawn_agent", null))
+        assertNull(readSubagentTaskText("spawn_agent", "<![CDATA[]]>"))
+    }
 }

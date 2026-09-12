@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -43,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -56,7 +60,9 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.agent.SubagentResultExtractor
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.ChatMessageDisplayMode
+import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
+import coil.compose.rememberAsyncImagePainter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -126,59 +132,29 @@ internal data class SubagentCardState(
     val toolName: String? = null,
     /** Only known when the queue is visible to the caller; null means "queued, position unknown". */
     val queuePosition: Int? = null,
-    val toolCount: Int = 0,
-    val roundCount: Int = 0,
 )
 
 internal fun subagentCardState(
     runStatus: String?,
-    toolCount: Int = 0,
-    roundCount: Int = 0,
     currentTool: String? = null,
     queuePosition: Int? = null,
 ): SubagentCardState {
-    val safeToolCount = toolCount.coerceAtLeast(0)
-    val safeRoundCount = roundCount.coerceAtLeast(0)
     return when (runStatus?.trim()?.uppercase()) {
         "QUEUED" ->
             SubagentCardState(
                 SubagentCardStatus.QUEUED,
                 queuePosition = queuePosition?.coerceAtLeast(1),
-                toolCount = safeToolCount,
-                roundCount = safeRoundCount,
             )
         "RUNNING" ->
             SubagentCardState(
                 if (currentTool.isNullOrBlank()) SubagentCardStatus.STARTED else SubagentCardStatus.CALLING_TOOL,
                 toolName = currentTool?.takeIf { it.isNotBlank() },
-                toolCount = safeToolCount,
-                roundCount = safeRoundCount,
             )
-        "COMPLETED" ->
-            SubagentCardState(
-                SubagentCardStatus.COMPLETED,
-                toolCount = safeToolCount,
-                roundCount = safeRoundCount,
-            )
-        "FAILED", "INTERRUPTED" ->
-            SubagentCardState(
-                SubagentCardStatus.FAILED,
-                toolCount = safeToolCount,
-                roundCount = safeRoundCount,
-            )
-        "CANCELLED" ->
-            SubagentCardState(
-                SubagentCardStatus.CANCELLED,
-                toolCount = safeToolCount,
-                roundCount = safeRoundCount,
-            )
+        "COMPLETED" -> SubagentCardState(SubagentCardStatus.COMPLETED)
+        "FAILED", "INTERRUPTED" -> SubagentCardState(SubagentCardStatus.FAILED)
+        "CANCELLED" -> SubagentCardState(SubagentCardStatus.CANCELLED)
         // CREATED and anything unknown read as "the subagent has begun working".
-        else ->
-            SubagentCardState(
-                SubagentCardStatus.STARTED,
-                toolCount = safeToolCount,
-                roundCount = safeRoundCount,
-            )
+        else -> SubagentCardState(SubagentCardStatus.STARTED)
     }
 }
 
@@ -234,12 +210,11 @@ internal fun subagentCardStatsText(
     toolCount: Int,
     roundCount: Int,
 ): String? {
-    val lines = subagentStatLines(durationText, toolCount, roundCount)
-    if (lines.isEmpty()) return null
-    val context = LocalContext.current
-    return lines.joinToString(" · ") { line ->
-        context.getString(line.labelResId, *line.args.toTypedArray())
-    }
+    val parts =
+        subagentStatLines(durationText, toolCount, roundCount).map { line ->
+            stringResource(line.labelResId, *line.args.toTypedArray())
+        }
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
 /**
@@ -279,8 +254,9 @@ internal data class SubagentDetailRequest(
     /** Every open is its own read, so a card reopened after the run finished shows the answer. */
     val token: Long,
     val agentPath: String,
+    /** The role card's picture when the row speaks for one, otherwise null and the badge is used. */
+    val avatarUri: String?,
     val statusText: String,
-    val statsText: String?,
     val failureText: String?,
     val identity: SubagentAgentIdentity,
     val statusColor: Color,
@@ -297,8 +273,8 @@ internal object SubagentDetailHost {
     fun requestDetail(
         chatId: String?,
         agentPath: String,
+        avatarUri: String?,
         statusText: String,
-        statsText: String?,
         failureText: String?,
         identity: SubagentAgentIdentity,
         statusColor: Color,
@@ -311,8 +287,8 @@ internal object SubagentDetailHost {
                 chatId = chatId,
                 token = ++issued,
                 agentPath = agentPath,
+                avatarUri = avatarUri,
                 statusText = statusText,
-                statsText = statsText,
                 failureText = failureText,
                 identity = identity,
                 statusColor = statusColor,
@@ -383,7 +359,44 @@ private fun SubagentAgentBadge(identity: SubagentAgentIdentity, boxSize: Dp, ico
 }
 
 /**
- * The shared subagent card: badge, agent path, live status and run statistics. Tapping it opens the
+ * The picture an agent is known by. A row that speaks for a role card wears that card's own picture,
+ * shaped the way the conversation draws it; everything else keeps the agent's own mark.
+ */
+@Composable
+internal fun SubagentAgentAvatar(
+    avatarUri: String?,
+    identity: SubagentAgentIdentity,
+    boxSize: Dp,
+    iconSize: Dp,
+) {
+    if (avatarUri.isNullOrBlank()) {
+        SubagentAgentBadge(identity = identity, boxSize = boxSize, iconSize = iconSize)
+        return
+    }
+    val context = LocalContext.current
+    val preferences = remember(context) { UserPreferencesManager.getInstance(context) }
+    val avatarShapePref by
+        preferences.avatarShape.collectAsState(
+            initial = UserPreferencesManager.AVATAR_SHAPE_CIRCLE,
+        )
+    val avatarCornerRadius by preferences.avatarCornerRadius.collectAsState(initial = 8f)
+    val shape = remember(avatarShapePref, avatarCornerRadius) {
+        if (avatarShapePref == UserPreferencesManager.AVATAR_SHAPE_SQUARE) {
+            RoundedCornerShape(avatarCornerRadius.dp)
+        } else {
+            CircleShape
+        }
+    }
+    Image(
+        painter = rememberAsyncImagePainter(model = Uri.parse(avatarUri)),
+        contentDescription = null,
+        modifier = Modifier.size(boxSize).clip(shape),
+        contentScale = ContentScale.Crop,
+    )
+}
+
+/**
+ * The shared subagent card: the agent's mark, its path and its live status. Tapping it opens the
  * floating detail card rather than jumping straight into the child conversation. The card itself is
  * rendered by [ChatArea], so loading older history cannot take it away.
  */
@@ -391,11 +404,12 @@ private fun SubagentAgentBadge(identity: SubagentAgentIdentity, boxSize: Dp, ico
 internal fun SubagentAgentCard(
     agentPath: String,
     statusText: String,
-    statsText: String?,
     identity: SubagentAgentIdentity,
     statusColor: Color,
     modifier: Modifier = Modifier,
     body: String? = null,
+    avatarUri: String? = null,
+    openDetailLabelRes: Int = R.string.subagent_card_open_detail,
     chatId: String? = null,
     childChatId: String? = null,
     failureText: String? = null,
@@ -403,13 +417,13 @@ internal fun SubagentAgentCard(
 ) {
     val openable =
         onOpenConversation != null || !body.isNullOrBlank() || !childChatId.isNullOrBlank()
-    val openDetailLabel = stringResource(R.string.subagent_card_open_detail)
+    val openDetailLabel = stringResource(openDetailLabelRes)
     val openDetail = {
         SubagentDetailHost.requestDetail(
             chatId = chatId,
             agentPath = agentPath,
+            avatarUri = avatarUri,
             statusText = statusText,
-            statsText = statsText,
             failureText = failureText,
             identity = identity,
             statusColor = statusColor,
@@ -426,51 +440,55 @@ internal fun SubagentAgentCard(
     Column(
         modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .padding(vertical = 1.dp)
+            .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
             .then(rowSemantics)
             .then(rowModifier)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SubagentAgentBadge(identity = identity, boxSize = 26.dp, iconSize = 16.dp)
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                text = agentPath,
-                modifier = Modifier.weight(1f, fill = false),
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            SubagentAgentAvatar(
+                avatarUri = avatarUri,
+                identity = identity,
+                boxSize = 22.dp,
+                iconSize = 14.dp,
             )
             Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = statusText,
+            // The path and its status share one weighted band that reaches the card's trailing
+            // edge, so what is left over after them stays inside the band and the chevron comes
+            // to rest against that edge however long the path runs.
+            Row(
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.labelMedium,
-                color = statusColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = agentPath,
+                    modifier = Modifier.weight(1f, fill = false),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = statusText,
+                    modifier = Modifier.weight(1f, fill = false),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = statusColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             if (openable) {
+                Spacer(modifier = Modifier.width(4.dp))
                 Icon(
                     imageVector = Icons.Default.ChevronRight,
                     contentDescription = null,
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(14.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        }
-        statsText?.takeIf { it.isNotBlank() }?.let { text ->
-            Text(
-                text = text,
-                modifier = Modifier.padding(start = 36.dp, top = 4.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 }
@@ -492,7 +510,8 @@ internal fun SubagentDetailCard(request: SubagentDetailRequest, onDismiss: () ->
         title = {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    SubagentAgentBadge(
+                    SubagentAgentAvatar(
+                        avatarUri = request.avatarUri,
                         identity = request.identity,
                         boxSize = 28.dp,
                         iconSize = 17.dp,
@@ -514,14 +533,6 @@ internal fun SubagentDetailCard(request: SubagentDetailRequest, onDismiss: () ->
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                }
-                request.statsText?.takeIf { it.isNotBlank() }?.let { text ->
-                    Text(
-                        text = text,
-                        modifier = Modifier.padding(start = 38.dp, top = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
             }
         },

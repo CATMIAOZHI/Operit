@@ -105,6 +105,18 @@ private fun String.decodeToolXmlText(): String =
         .replace("&gt;", ">")
         .replace("&amp;", "&")
 
+/**
+ * The task a `spawn_agent` call handed the agent. It is what the card in the chat shows, so the raw
+ * parameter is unwrapped from its CDATA and its entities before it is displayed.
+ */
+internal fun readSubagentTaskText(displayToolName: String, message: String?): String? =
+    message
+        ?.trim()
+        ?.removeSurrounding("<![CDATA[", "]]>")
+        ?.decodeToolXmlText()
+        ?.trim()
+        ?.takeIf { displayToolName == "spawn_agent" && it.isNotEmpty() }
+
 internal fun resolveXmlTagNameForRendering(content: String): String? {
     val rawTagName = ChatMarkupRegex.extractOpeningTagName(content) ?: return null
     return if (displayEndTagNames(rawTagName) != null) {
@@ -251,6 +263,7 @@ class CustomXmlRenderer(
         val summaryOverride: String? = null,
         val subagentName: String? = null,
         val subagentTaskId: String? = null,
+        val subagentTaskText: String? = null,
         val isClosed: Boolean,
     )
 
@@ -865,6 +878,10 @@ class CustomXmlRenderer(
                     displayParams["task_id"]
                         ?.trim()
                         ?.takeIf { displayToolName == "task" && it.isNotEmpty() }
+                // What the caller handed the agent. It is the row's own content in the chat, so it is
+                // read here where the call is parsed rather than dug out of the child conversation.
+                val subagentTaskText =
+                    readSubagentTaskText(displayToolName, displayParams["message"])
 
                 ToolRequestRenderState(
                     rawToolName = rawToolName,
@@ -873,6 +890,7 @@ class CustomXmlRenderer(
                     summaryOverride = summaryOverride,
                     subagentName = subagentName,
                     subagentTaskId = subagentTaskId,
+                    subagentTaskText = subagentTaskText,
                     isClosed = isXmlFullyClosed(content),
                 )
             }
@@ -940,6 +958,7 @@ class CustomXmlRenderer(
                     requestedToolName = renderState.displayToolName,
                     requestedSubagentName = renderState.subagentName,
                     requestedSubagentTaskId = renderState.subagentTaskId,
+                    requestedSubagentTask = renderState.subagentTaskText,
                     modifier = modifier,
                 )
             }

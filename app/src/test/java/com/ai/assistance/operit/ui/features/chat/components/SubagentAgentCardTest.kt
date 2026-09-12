@@ -63,7 +63,7 @@ class SubagentAgentCardTest {
 
         assertEquals(
             SubagentCardStatus.COMPLETED,
-            subagentCardState(runStatus = "COMPLETED", toolCount = 2, roundCount = 1).status,
+            subagentCardState(runStatus = "COMPLETED").status,
         )
         assertEquals(SubagentCardStatus.FAILED, subagentCardState(runStatus = "FAILED").status)
         assertEquals(SubagentCardStatus.FAILED, subagentCardState(runStatus = "INTERRUPTED").status)
@@ -71,10 +71,6 @@ class SubagentAgentCardTest {
             SubagentCardStatus.CANCELLED,
             subagentCardState(runStatus = "CANCELLED").status,
         )
-
-        val clamped = subagentCardState(runStatus = "COMPLETED", toolCount = -4, roundCount = -1)
-        assertEquals(0, clamped.toolCount)
-        assertEquals(0, clamped.roundCount)
     }
 
     @Test fun statsOnlyListWhatIsKnown() {
@@ -225,8 +221,8 @@ class SubagentAgentCardTest {
         SubagentDetailHost.requestDetail(
             chatId = chatId,
             agentPath = "/root/worker",
+            avatarUri = null,
             statusText = "completed",
-            statsText = null,
             failureText = null,
             identity = subagentAgentIdentity("/root/worker"),
             statusColor = Color(0xFF112233),
