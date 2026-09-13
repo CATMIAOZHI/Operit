@@ -3,6 +3,7 @@ package com.ai.assistance.operit.ui.features.chat.components.style.bubble
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.ui.features.chat.components.ChatMessageHeightMemory
 import com.ai.assistance.operit.ui.features.chat.components.style.cursor.SummaryMessageComposable
@@ -47,11 +48,7 @@ fun BubbleStyleChatMessage(
     showAssistantHeader: Boolean = true,
     onEditSummary: ((ChatMessage) -> Unit)? = null,
 ) {
-    if (message.displayMode.isCollaborationEvent) {
-        com.ai.assistance.operit.ui.features.chat.components.CollaborationMessageCard(message)
-        return
-    }
-    when (message.sender) {
+    when (if (message.displayMode.isCollaborationEvent) "ai" else message.sender) {
         "user" -> {
             BubbleUserMessageComposable(
                 message = message,
@@ -69,7 +66,10 @@ fun BubbleStyleChatMessage(
         "ai" -> {
             BubbleAiMessageComposable(
                 message = message,
-                showHeader = showAssistantHeader,
+                showHeader = showAssistantHeader && !message.displayMode.isCollaborationEvent,
+                inlineContent = if (message.displayMode.isCollaborationEvent) {
+                    { com.ai.assistance.operit.ui.features.chat.components.CollaborationMessageCard(message, horizontalPadding = 0.dp) }
+                } else null,
                 backgroundColor = aiMessageColor,
                 textColor = aiTextColor,
                 enableLiquidGlass = aiMessageLiquidGlassEnabled,

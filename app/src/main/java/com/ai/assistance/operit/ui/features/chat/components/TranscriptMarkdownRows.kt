@@ -27,7 +27,7 @@ internal fun transcriptMarkdownRows(
     isExpanded: (String) -> Boolean,
     toggle: (String) -> Unit,
     processExpanded: (Long) -> Boolean = { true },
-): List<TranscriptRow> = baseRows.flatMap { row ->
+): List<TranscriptRow> = withCardEnds(baseRows.flatMap { row ->
     val message = messages.getOrNull(row.messageIndex)
     if (!enabled || message == null || row.section == ResponseMessageSection.HEADER ||
         !canSplitTranscriptMessage(message)) return@flatMap listOf(row)
@@ -100,4 +100,4 @@ internal fun transcriptMarkdownRows(
             markdownSlice = slice.copy(first = index == 0, last = index == batches.lastIndex),
         )
     }
-}
+})

@@ -61,6 +61,7 @@ import com.ai.assistance.operit.ui.theme.liquidGlass
 import com.ai.assistance.operit.ui.theme.resolveConfiguredFontFamily
 import com.ai.assistance.operit.ui.theme.waterGlass
 import kotlinx.coroutines.flow.emitAll
+import com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptCardEnds
 import com.ai.assistance.operit.ui.features.chat.components.LocalResponseMessageSection
 import com.ai.assistance.operit.ui.features.chat.components.ResponseMessageSection
 
@@ -97,12 +98,16 @@ fun BubbleAiMessageComposable(
     enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
     onAvatarLongPressMention: ((String) -> Unit)? = null,
     showHeader: Boolean = true,
+    inlineContent: (@Composable () -> Unit)? = null,
 ) {
     val section = LocalResponseMessageSection.current
     val timelineSlice = com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current
-    val firstBlock = timelineSlice?.first != false
-    val lastBlock = timelineSlice?.last != false
-    val showIdentity = showHeader && section != ResponseMessageSection.BODY
+    // One turn is one card: only its first and last rows round the card off, the rest flow inside it.
+    val cardEnds = LocalTranscriptCardEnds.current
+    val inlineFooter = com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptInlineFooter.current
+    val firstBlock = cardEnds.first && timelineSlice?.first != false
+    val lastBlock = cardEnds.last && timelineSlice?.last != false
+    val showIdentity = showHeader && cardEnds.first && section != ResponseMessageSection.BODY
     val context = LocalContext.current
     val preferencesManager = remember { UserPreferencesManager.getInstance(context) }
     val characterCardManager = remember { CharacterCardManager.getInstance(context) }
@@ -223,7 +228,8 @@ fun BubbleAiMessageComposable(
             null
         }
     }
-    val shouldUseExpandedBubbleLayout =
+    val sharedCard = !cardEnds.first || !cardEnds.last
+    val shouldUseExpandedBubbleLayout = sharedCard || inlineContent != null ||
         rendererState.renderNodes.any { node -> node.type in ExpandedBubbleLayoutNodeTypes }
     val sizeTrackingModifier =
         if (heightMemory == null || isHidden || section == ResponseMessageSection.HEADER) {
@@ -328,7 +334,7 @@ fun BubbleAiMessageComposable(
             }
 
             if (section != ResponseMessageSection.HEADER) Box(modifier = Modifier.fillMaxWidth()) {
-                if (imageUrl != null) {
+                if (imageUrl != null && inlineContent == null && !sharedCard) {
                     AsyncImage(
                         model = Uri.parse(imageUrl),
                         contentDescription = "Image from AI",
@@ -348,10 +354,18 @@ fun BubbleAiMessageComposable(
                         }
                     val bubbleModifier =
                         Modifier
-                            .then(if (timelineSlice != null) Modifier.fillMaxWidth() else Modifier)
+                            .then(if (timelineSlice != null || sharedCard || inlineContent != null) Modifier.fillMaxWidth() else Modifier)
                             .defaultMinSize(minHeight = if (timelineSlice == null) 44.dp else 0.dp)
                     val renderContent: @Composable () -> Unit = {
-                        key(message.timestamp) {
+                      Column {
+                        if (inlineContent != null) {
+                            Box(Modifier.padding(
+                                start = bubbleContentPaddingLeft.dp,
+                                end = bubbleContentPaddingRight.dp,
+                                top = if (firstBlock) 12.dp else 0.dp,
+                                bottom = if (lastBlock) 12.dp else 0.dp,
+                            )) { inlineContent() }
+                        } else key(message.timestamp) {
                             val stream = rememberRevisableTextStream(message.contentStream)
                             if (stream != null) {
                                 val charStream = remember(stream) { stream.toCharStream() }
@@ -396,8 +410,9 @@ fun BubbleAiMessageComposable(
                                 )
                             }
                         }
+                        inlineFooter?.invoke()
+                      }
                     }
-
                     if (effectiveBubbleImageStyle != null) {
                         BubbleImageBackgroundSurface(
                             imageStyle = effectiveBubbleImageStyle,
@@ -538,7 +553,7 @@ fun BubbleAiMessageComposable(
             
             if (section != ResponseMessageSection.HEADER) BoxWithConstraints {
                 val maxBubbleWidth = maxWidth * 0.85f
-                if (imageUrl != null) {
+                if (imageUrl != null && inlineContent == null && !sharedCard) {
                     AsyncImage(
                         model = Uri.parse(imageUrl),
                         contentDescription = "Image from AI",
@@ -561,12 +576,20 @@ fun BubbleAiMessageComposable(
                     val bubbleModifier =
                         Modifier
                             .widthIn(max = maxBubbleWidth)
-                            .then(if (timelineSlice != null) Modifier.width(maxBubbleWidth) else Modifier)
+                            .then(if (timelineSlice != null || sharedCard || inlineContent != null) Modifier.width(maxBubbleWidth) else Modifier)
                             .defaultMinSize(minHeight = if (timelineSlice == null) 44.dp else 0.dp)
                     val renderContent: @Composable () -> Unit = {
+                      Column {
                         // 使用 message.timestamp 作为 key，确保在重组期间，
                         // 只要是同一条消息，StreamMarkdownRenderer就不会被销毁和重建。
-                        key(message.timestamp) {
+                        if (inlineContent != null) {
+                            Box(Modifier.padding(
+                                start = bubbleContentPaddingLeft.dp,
+                                end = bubbleContentPaddingRight.dp,
+                                top = if (firstBlock) 12.dp else 0.dp,
+                                bottom = if (lastBlock) 12.dp else 0.dp,
+                            )) { inlineContent() }
+                        } else key(message.timestamp) {
                             val stream = rememberRevisableTextStream(message.contentStream)
                             if (stream != null) {
                                 val charStream = remember(stream) { stream.toCharStream() }
@@ -613,6 +636,8 @@ fun BubbleAiMessageComposable(
                                 )
                             }
                         }
+                        inlineFooter?.invoke()
+                      }
                     }
 
                     if (effectiveBubbleImageStyle != null) {

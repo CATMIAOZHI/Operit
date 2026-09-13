@@ -451,14 +451,6 @@ private fun MessageItem(
     bubbleAiContentPaddingLeft: Float = 12f,
     bubbleAiContentPaddingRight: Float = 12f,
 ) {
-    if (message.sender == "user" && message.displayMode.isCollaborationEvent &&
-        !isHidden && !isSelected
-    ) {
-        // Host events have their own card actions and are never editable/selectable messages.
-        // Avoid wrapping every event in the ordinary message menu and its no-op gesture nodes.
-        CollaborationMessageCard(message)
-        return
-    }
     var showContextMenu by remember { mutableStateOf(false) }
     var showMessageInfoDialog by remember { mutableStateOf(false) }
     var showHiddenUserMessageDialog by remember { mutableStateOf(false) }
@@ -471,6 +463,29 @@ private fun MessageItem(
     val isActionable = !message.displayMode.isCollaborationEvent &&
         (message.sender == "user" || message.sender == "ai")
     val isHiddenUserMessage = isHiddenUserPlaceholder(message)
+    val sharedBubble = chatStyle == ChatStyle.BUBBLE &&
+        (!LocalTranscriptCardEnds.current.first || !LocalTranscriptCardEnds.current.last)
+    val footer: @Composable () -> Unit = {
+        if (message.sender == "ai" &&
+            com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.last != false &&
+            LocalResponseMessageSection.current != ResponseMessageSection.HEADER &&
+            (message.variantCount > 1 ||
+                (showMessageTokenStats && hasDisplayableTokenStats(message)) ||
+                (showMessageTimingStats && hasDisplayableTimingStats(message)) ||
+                (showMessageTimestamp && hasDisplayableMessageTimestamp(message)))
+        ) {
+            MessageFooterBar(
+                message = message,
+                showMessageTokenStats = showMessageTokenStats,
+                showMessageTimingStats = showMessageTimingStats,
+                showMessageTimestamp = showMessageTimestamp,
+                allowVariantSelection = allowTranscriptMutation,
+                onSelectVariant = { targetVariantIndex ->
+                    onSwitchMessageVariant?.invoke(index, targetVariantIndex)
+                },
+            )
+        }
+    }
 
     Box(
         modifier =
@@ -502,6 +517,9 @@ private fun MessageItem(
             ),
     ) {
         Column {
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalTranscriptInlineFooter provides if (sharedBubble) footer else null,
+            ) {
             when (chatStyle) {
                 ChatStyle.CURSOR -> {
                     CursorStyleChatMessage(
@@ -564,27 +582,8 @@ private fun MessageItem(
                 }
             }
 
-            if (message.sender == "ai" &&
-                com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.last != false &&
-                LocalResponseMessageSection.current != ResponseMessageSection.HEADER &&
-                (
-                    message.variantCount > 1 ||
-                        (showMessageTokenStats && hasDisplayableTokenStats(message)) ||
-                        (showMessageTimingStats && hasDisplayableTimingStats(message)) ||
-                        (showMessageTimestamp && hasDisplayableMessageTimestamp(message))
-                )
-            ) {
-                MessageFooterBar(
-                    message = message,
-                    showMessageTokenStats = showMessageTokenStats,
-                    showMessageTimingStats = showMessageTimingStats,
-                    showMessageTimestamp = showMessageTimestamp,
-                    allowVariantSelection = allowTranscriptMutation,
-                    onSelectVariant = { targetVariantIndex ->
-                        onSwitchMessageVariant?.invoke(index, targetVariantIndex)
-                    },
-                )
             }
+            if (!sharedBubble) footer()
         }
 
         DropdownMenu(

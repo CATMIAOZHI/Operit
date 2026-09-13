@@ -43,7 +43,8 @@ class CollaborationMessagePresentationTest {
         assertEquals(R.string.subagent_message_task, collaborationKindLabelRes("NEW_TASK"))
         assertEquals(R.string.subagent_message_result, collaborationKindLabelRes("FINAL_ANSWER"))
         assertEquals(R.string.subagent_message_status, collaborationKindLabelRes("STATUS"))
-        assertEquals(R.string.subagent_message_note, collaborationKindLabelRes("MESSAGE"))
+        assertEquals(R.string.subagent_message_midway, collaborationKindLabelRes("MESSAGE"))
+        assertEquals(collaborationMidwayLabelRes("MESSAGE"), collaborationKindLabelRes("MESSAGE"))
         assertEquals(R.string.subagent_message_note, collaborationKindLabelRes("SOMETHING_NEW"))
     }
 
@@ -119,5 +120,67 @@ class CollaborationMessagePresentationTest {
         assertEquals("global", preferredAvatarUri("", " ", "  ", "global"))
         assertNull(preferredAvatarUri(null, null, null, null))
         assertNull(preferredAvatarUri("", " ", null, "  "))
+    }
+
+    @Test fun aFragmentWearsTheSameWordsAsItsRowInTheTranscript() {
+        assertEquals(R.string.subagent_message_midway, collaborationFragmentLabelRes("MESSAGE"))
+        assertEquals(R.string.subagent_message_result, collaborationFragmentLabelRes("FINAL_ANSWER"))
+        assertEquals(R.string.subagent_message_status, collaborationFragmentLabelRes("STATUS"))
+        assertEquals(R.string.subagent_message_task, collaborationFragmentLabelRes("NEW_TASK"))
+    }
+
+    @Test fun aMemoryEditRewritesWhatWasSaidAndKeepsWhoSaidIt() {
+        val content =
+            AgentMessage(
+                "11111111-1111-1111-1111-111111111111",
+                "/root/worker",
+                "/root",
+                AgentMessageKind.MESSAGE,
+                "halfway\n",
+            ).render()
+
+        val rewritten = collaborationBodyReplaced(content, "改成这句话")
+
+        // 信封原样留下：卡片上的名字、类型标签和历史压缩都读它。
+        assertTrue(rewritten.startsWith("Message ID: 11111111-1111-1111-1111-111111111111\n"))
+        assertTrue(rewritten.contains("Message Type: MESSAGE\n"))
+        assertTrue(rewritten.contains("Sender: /root/worker\n"))
+        assertEquals("改成这句话\n", rewritten.substringAfter("Payload:\n"))
+        val event = collaborationDisplayMessages(rewritten, "/root/worker").single()
+        assertEquals("MESSAGE", event.kind)
+        assertEquals("改成这句话", event.body)
+    }
+
+    @Test fun aRowThatNeverCarriedAnEnvelopeIsOnlyItsText() {
+        // 没有信封的行，正文就是它的全部内容。
+        assertEquals("new words", collaborationBodyReplaced("plain words", "new words"))
+        assertEquals("", collaborationBodyReplaced("", ""))
+    }
+
+    @Test fun anEnvelopeQuotedInsideTheBodyIsNotAnEnvelope() {
+        // 信封正则锚在开头、且不带 MULTILINE，所以正文里引用的另一条消息永远不会被当成这条的。
+        val quoted =
+            AgentMessage(
+                "22222222-2222-2222-2222-222222222222",
+                "/root",
+                "/root/worker",
+                AgentMessageKind.NEW_TASK,
+                "quoted instructions",
+            ).render()
+        val content =
+            AgentMessage(
+                "11111111-1111-1111-1111-111111111111",
+                "/root/worker",
+                "/root",
+                AgentMessageKind.FINAL_ANSWER,
+                "举例：\n$quoted",
+            ).render()
+
+        val rewritten = collaborationBodyReplaced(content, "换成这句")
+
+        assertEquals("换成这句", collaborationDisplayMessages(rewritten, "/root/worker").first().body)
+        assertTrue(rewritten.contains("Message Type: FINAL_ANSWER\n"))
+        assertTrue(rewritten.contains("Sender: /root/worker\n"))
+        assertFalse(rewritten.substringAfter("Payload:\n").contains("quoted instructions"))
     }
 }

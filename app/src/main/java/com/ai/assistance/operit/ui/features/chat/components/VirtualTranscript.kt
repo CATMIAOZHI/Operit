@@ -9,7 +9,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -326,6 +325,7 @@ internal fun VirtualTranscript(
         }
     }
     var showLocator by remember(chatId) { mutableStateOf(false) }
+    var locatorAnchor by remember(chatId) { mutableStateOf(0L) }
     var locatorEntries by remember(chatId) { mutableStateOf<List<ChatMessageLocatorPreview>>(emptyList()) }
     var locatorLoading by remember(chatId) { mutableStateOf(false) }
     var locatorFailed by remember(chatId) { mutableStateOf(false) }
@@ -352,14 +352,14 @@ internal fun VirtualTranscript(
                 // Keep each chronological block together for accessibility traversal,
                 // instead of geometrically sorting all of its descendants with other rows.
                 Column(Modifier.semantics { isTraversalGroup = true }) {
-                    if (row.loadMore && row.group != null) {
-                        CircularProgressIndicator(Modifier.size(20.dp))
-                    }
+                    // Keep the paging sentinel key without cutting a transparent hole in the reply.
                     CompositionLocalProvider(
                         LocalResponseMessageSection provides row.section,
                         LocalResponseProcessExpanded provides row.group?.let { process.isExpanded(it.key) },
                         LocalTranscriptMarkdownSlice provides row.markdownSlice,
                         LocalTranscriptRuns provides runSnapshot,
+                        LocalTranscriptCardEnds provides
+                            TranscriptCardEnds(row.cardFirst, row.cardLast),
                         LocalBubbleAiRenderSettings provides bubbleSettings,
                         LocalTranscriptTextMeasurer provides toolLabelTextMeasurer,
                     ) {
@@ -375,15 +375,46 @@ internal fun VirtualTranscript(
                             process.toggle(row.group.key)
                         }
                     }
-                    if (row.markdownSlice?.last != false) Spacer(Modifier.height(8.dp))
+                    // Only the end of a reply leaves space outside its background.
+                    if (row.cardLast && row.markdownSlice?.last != false) {
+                        Spacer(Modifier.height(8.dp))
+                    }
                 }
             }
             item("footer") { footer() }
         }
         Column(Modifier.align(Alignment.CenterEnd)) {
-            IconButton(onClick = { showLocator = true }) {
-                Icon(Icons.Default.Search, stringResource(R.string.search))
-            }
+            TranscriptPositionIndicator(
+                progress = {
+                    val layout = listState.layoutInfo
+                    if (!listState.canScrollForward) 1f
+                    else if (!listState.canScrollBackward) 0f
+                    else {
+                        val center = (layout.viewportStartOffset + layout.viewportEndOffset) / 2
+                        val item = layout.visibleItemsInfo.asSequence().filter {
+                            rows.getOrNull(it.index)?.messageIndex?.let { index ->
+                                index in messages.indices
+                            } == true
+                        }.minByOrNull {
+                            kotlin.math.abs(it.offset + it.size / 2 - center)
+                        }
+                        val messageIndex = item?.let { rows.getOrNull(it.index)?.messageIndex } ?: 0
+                        messageIndex.coerceAtLeast(0).toFloat() / messages.lastIndex.coerceAtLeast(1)
+                    }
+                },
+                onClick = {
+                    val layout = listState.layoutInfo
+                    val center = (layout.viewportStartOffset + layout.viewportEndOffset) / 2
+                    locatorAnchor = layout.visibleItemsInfo
+                        .filter { item ->
+                            rows.getOrNull(item.index)?.messageIndex?.let { it in messages.indices } == true
+                        }
+                        .minByOrNull { kotlin.math.abs(it.offset + it.size / 2 - center) }
+                        ?.let { item -> messages.getOrNull(rows[item.index].messageIndex)?.timestamp }
+                        ?: messages.firstOrNull()?.timestamp ?: 0L
+                    showLocator = true
+                },
+            )
             if (!following || hasNewer) {
                 IconButton(onClick = { onFollowingChange?.invoke(true); onLatest?.invoke() }) {
                     Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.history_scroll_to_bottom))
@@ -394,13 +425,8 @@ internal fun VirtualTranscript(
     }
     }
     if (showLocator) {
-        val visibleMessageTimestamp = listState.layoutInfo.visibleItemsInfo.firstNotNullOfOrNull { item ->
-            rows.firstOrNull { it.key == item.key }?.let { row ->
-                messages.getOrNull(row.messageIndex)?.timestamp
-            }
-        } ?: messages.firstOrNull()?.timestamp ?: 0L
         ChatMessageLocatorDialog(
-            locatorEntries, visibleMessageTimestamp, locatorLoading, locatorFailed,
+            locatorEntries, locatorAnchor, locatorLoading, locatorFailed,
             chatId, loadLocator, { showLocator = false }, onFavorite,
         ) { timestamp ->
             showLocator = false
