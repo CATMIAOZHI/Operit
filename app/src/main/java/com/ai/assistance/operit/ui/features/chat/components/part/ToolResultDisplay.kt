@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.SubdirectoryArrowRight
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,6 +29,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.ui.features.chat.components.compactDialogHeightWhenShort
 import com.ai.assistance.operit.ui.features.chat.components.rememberCompactDialogMetrics
+import com.ai.assistance.operit.ui.theme.stoppedAttention
 
 /** 工具执行结果显示组件 简洁风格，显示工具执行结果，无边框，与CompactToolDisplay风格一致 通过缩进和特殊图标区分工具调用和执行结果 支持点击查看详细内容 */
 @Composable
@@ -147,11 +149,17 @@ internal fun ToolResultDetailDialog(
         onCopy: () -> Unit,
         titleOverride: String? = null,
         metadata: String? = null,
+        /**
+         * Why this result is not a failure but not a success either, e.g. a Subagent run the app
+         * stopped. It wears the attention tone instead of the error one.
+         */
+        stoppedNote: String? = null,
         primaryActionLabel: String? = null,
         onPrimaryAction: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val dialogMetrics = rememberCompactDialogMetrics()
+    val stopped = !stoppedNote.isNullOrBlank()
     val resultMaxHeight = if (dialogMetrics.isCompactHeight) 160.dp else 300.dp
     val cardModifier =
             Modifier.fillMaxWidth().padding(16.dp).compactDialogHeightWhenShort(dialogMetrics)
@@ -174,11 +182,26 @@ internal fun ToolResultDetailDialog(
                     // 状态图标
                     Icon(
                             imageVector =
-                                    if (isSuccess) Icons.Default.Check else Icons.Default.Close,
-                            contentDescription = if (isSuccess) context.getString(R.string.success) else context.getString(R.string.failed),
+                                    when {
+                                        stopped -> Icons.Default.Warning
+                                        isSuccess -> Icons.Default.Check
+                                        else -> Icons.Default.Close
+                                    },
+                            contentDescription =
+                                    when {
+                                        stopped ->
+                                            context.getString(
+                                                R.string.subagent_status_interrupted
+                                            )
+                                        isSuccess -> context.getString(R.string.success)
+                                        else -> context.getString(R.string.failed)
+                                    },
                             tint =
-                                    if (isSuccess) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.error,
+                                    when {
+                                        stopped -> MaterialTheme.colorScheme.stoppedAttention
+                                        isSuccess -> MaterialTheme.colorScheme.primary
+                                        else -> MaterialTheme.colorScheme.error
+                                    },
                             modifier = Modifier.size(20.dp)
                     )
 
@@ -218,6 +241,15 @@ internal fun ToolResultDetailDialog(
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
+                stoppedNote?.takeIf { it.isNotBlank() }?.let { noteText ->
+                    Text(
+                            text = noteText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.stoppedAttention,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
                 // 分隔线
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
@@ -231,7 +263,7 @@ internal fun ToolResultDetailDialog(
                                         .verticalScroll(rememberScrollState())
                                         .background(
                                                 color =
-                                                        if (isSuccess)
+                                                        if (isSuccess || stopped)
                                                                 MaterialTheme.colorScheme
                                                                         .surfaceVariant.copy(
                                                                         alpha = 0.5f

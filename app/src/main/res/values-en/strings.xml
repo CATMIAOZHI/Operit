@@ -7,7 +7,7 @@
     <string name="subagent_v2_max_wait">Maximum wait (ms)</string>
     <string name="subagent_v2_limits_help">Active count covers the entire agent tree, excluding root. Model concurrency limits still apply. Changes affect subsequent operations and do not interrupt active tasks.</string>
     <string name="subagent_v2_invalid_limits">Active count and depth must be 1–64; waits must satisfy 0 ≤ minimum ≤ default ≤ maximum ≤ 3600000.</string>
-    <string name="subagent_message_result">Completed</string>
+    <string name="subagent_message_result">Task complete</string>
     <string name="subagent_message_status">Status updated</string>
     <string name="subagent_message_task">Task message</string>
     <string name="subagent_message_note">Has an update</string>
@@ -5121,6 +5121,7 @@
     <string name="tool_executing_duration">Running · %1$s</string>
     <string name="subagent_status_creating">Creating</string>
     <string name="subagent_status_started">Started working</string>
+    <string name="subagent_status_dispatched">Task started</string>
     <string name="subagent_status_queued">Queued · position %1$d</string>
     <string name="subagent_status_queued_pending">Queued</string>
     <string name="subagent_status_thinking">Thinking</string>
@@ -5130,6 +5131,12 @@
     <string name="subagent_status_syncing_result">Syncing result</string>
     <string name="subagent_status_completed_with_tool_count">Completed · %1$d tool calls</string>
     <string name="subagent_status_error">Error</string>
+    <string name="subagent_status_interrupted">Interrupted</string>
+    <string name="subagent_interrupted_app_restart">The app restarted, so this task did not continue</string>
+    <string name="subagent_interrupted_archive_import">The task had not finished when the backup was imported, so it did not continue</string>
+    <string name="subagent_interrupted_chat_branch">The task had not finished when the branch was created, so it did not continue</string>
+    <string name="subagent_interrupted_reading_companion">The app restarted and this task was lost, so it did not continue</string>
+    <string name="subagent_interrupted_unknown">The task was interrupted before it finished, so it did not continue</string>
     <string name="subagent_status_cancelled">Cancelled</string>
     <string name="subagent_card_elapsed">Took %1$s</string>
     <string name="subagent_card_tool_count">%1$d tool calls</string>
@@ -5162,6 +5169,7 @@
     <string name="subagent_filter_completed">Completed</string>
     <string name="subagent_filter_auto_review">Auto review</string>
     <string name="subagent_filter_error">Errors</string>
+    <string name="subagent_filter_interrupted">Interrupted</string>
     <string name="subagent_filter_archived">Archived</string>
     <string name="subagent_archive">Archive</string>
     <string name="subagent_restore">Restore</string>

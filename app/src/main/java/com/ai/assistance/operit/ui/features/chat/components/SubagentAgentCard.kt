@@ -62,6 +62,8 @@ import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.ChatMessageDisplayMode
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
+import com.ai.assistance.operit.data.repository.SubagentInterruption
+import com.ai.assistance.operit.ui.theme.stoppedAttention
 import coil.compose.rememberAsyncImagePainter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -125,7 +127,16 @@ internal fun <T> perChatValue(flow: Flow<Map<String, T>>, chatId: String?): T? =
         .value
 
 /** Lifecycle states a named subagent can show in the conversation. */
-internal enum class SubagentCardStatus { QUEUED, STARTED, CALLING_TOOL, COMPLETED, FAILED, CANCELLED }
+internal enum class SubagentCardStatus {
+    QUEUED,
+    STARTED,
+    CALLING_TOOL,
+    COMPLETED,
+    FAILED,
+    /** Never reached a terminal state; the app or the parent chat stopped it. Not a failure. */
+    INTERRUPTED,
+    CANCELLED,
+}
 
 internal data class SubagentCardState(
     val status: SubagentCardStatus,
@@ -151,7 +162,8 @@ internal fun subagentCardState(
                 toolName = currentTool?.takeIf { it.isNotBlank() },
             )
         "COMPLETED" -> SubagentCardState(SubagentCardStatus.COMPLETED)
-        "FAILED", "INTERRUPTED" -> SubagentCardState(SubagentCardStatus.FAILED)
+        "FAILED" -> SubagentCardState(SubagentCardStatus.FAILED)
+        "INTERRUPTED" -> SubagentCardState(SubagentCardStatus.INTERRUPTED)
         "CANCELLED" -> SubagentCardState(SubagentCardStatus.CANCELLED)
         // CREATED and anything unknown read as "the subagent has begun working".
         else -> SubagentCardState(SubagentCardStatus.STARTED)
@@ -190,6 +202,7 @@ internal fun subagentCardStatusText(state: SubagentCardState): String =
             stringResource(R.string.subagent_status_calling_tool, state.toolName.orEmpty())
         SubagentCardStatus.COMPLETED -> stringResource(R.string.subagent_status_completed)
         SubagentCardStatus.FAILED -> stringResource(R.string.subagent_status_error)
+        SubagentCardStatus.INTERRUPTED -> stringResource(R.string.subagent_status_interrupted)
         SubagentCardStatus.CANCELLED -> stringResource(R.string.subagent_status_cancelled)
     }
 
@@ -198,6 +211,7 @@ internal fun subagentCardStatusColor(status: SubagentCardStatus): Color =
     when (status) {
         SubagentCardStatus.FAILED -> MaterialTheme.colorScheme.error
         SubagentCardStatus.QUEUED -> MaterialTheme.colorScheme.tertiary
+        SubagentCardStatus.INTERRUPTED -> MaterialTheme.colorScheme.stoppedAttention
         SubagentCardStatus.STARTED, SubagentCardStatus.CALLING_TOOL ->
             MaterialTheme.colorScheme.primary
         SubagentCardStatus.COMPLETED,
@@ -246,6 +260,24 @@ internal fun subagentFailureText(status: SubagentCardStatus, error: String?): St
     error?.takeIf { it.isNotBlank() && status == SubagentCardStatus.FAILED }
 
 /**
+ * Why an interrupted run stopped, as a resource handle: the stored reason is an English sentence
+ * written by whoever stopped the run, and the card owes the user that reason in their language.
+ */
+internal fun subagentInterruptionHintRes(status: SubagentCardStatus, error: String?): Int? =
+    if (status != SubagentCardStatus.INTERRUPTED) {
+        null
+    } else {
+        when (error) {
+            SubagentInterruption.APP_RESTART -> R.string.subagent_interrupted_app_restart
+            SubagentInterruption.ARCHIVE_IMPORT -> R.string.subagent_interrupted_archive_import
+            SubagentInterruption.CHAT_BRANCH -> R.string.subagent_interrupted_chat_branch
+            SubagentInterruption.READING_COMPANION ->
+                R.string.subagent_interrupted_reading_companion
+            else -> R.string.subagent_interrupted_unknown
+        }
+    }
+
+/**
  * The card the user tapped, held outside the transcript: loading older history drops the message
  * that owns a card, and the floating card must not go with it.
  */
@@ -258,6 +290,8 @@ internal data class SubagentDetailRequest(
     val avatarUri: String?,
     val statusText: String,
     val failureText: String?,
+    /** Why the run stopped rather than failed; shown the way a failure is, in its own tone. */
+    val interruptionText: String?,
     val identity: SubagentAgentIdentity,
     val statusColor: Color,
     val body: String?,
@@ -276,6 +310,7 @@ internal object SubagentDetailHost {
         avatarUri: String?,
         statusText: String,
         failureText: String?,
+        interruptionText: String?,
         identity: SubagentAgentIdentity,
         statusColor: Color,
         body: String?,
@@ -290,6 +325,7 @@ internal object SubagentDetailHost {
                 avatarUri = avatarUri,
                 statusText = statusText,
                 failureText = failureText,
+                interruptionText = interruptionText,
                 identity = identity,
                 statusColor = statusColor,
                 body = body,
@@ -413,6 +449,7 @@ internal fun SubagentAgentCard(
     chatId: String? = null,
     childChatId: String? = null,
     failureText: String? = null,
+    interruptionText: String? = null,
     onOpenConversation: (() -> Unit)? = null,
 ) {
     val openable =
@@ -425,6 +462,7 @@ internal fun SubagentAgentCard(
             avatarUri = avatarUri,
             statusText = statusText,
             failureText = failureText,
+            interruptionText = interruptionText,
             identity = identity,
             statusColor = statusColor,
             body = body,
@@ -551,6 +589,15 @@ internal fun SubagentDetailCard(request: SubagentDetailRequest, onDismiss: () ->
                             modifier = Modifier.padding(bottom = 8.dp),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    // A run that stopped is not a run that failed, and it says which.
+                    request.interruptionText?.takeIf { it.isNotBlank() }?.let { text ->
+                        Text(
+                            text = text,
+                            modifier = Modifier.padding(bottom = 8.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.stoppedAttention,
                         )
                     }
                     SelectionContainer {

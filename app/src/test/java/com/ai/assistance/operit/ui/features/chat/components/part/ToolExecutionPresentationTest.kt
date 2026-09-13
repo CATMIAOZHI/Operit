@@ -26,6 +26,23 @@ import org.junit.Test
 
 class ToolExecutionPresentationTest {
     @Test
+    fun aSpawnRowReportsTheDispatchRatherThanWhatTheRunBecame() {
+        // A spawn call that ran is the hand-over itself: a run that later failed, finished or was
+        // stopped by an app restart is not this row's business, so the row never reads its state.
+        for (state in ToolExecutionState.values()) {
+            assertFalse(subagentSpawnCallNeverRan(runExists = true, fallbackState = state))
+            assertEquals(
+                state == ToolExecutionState.NOT_EXECUTED,
+                subagentSpawnCallNeverRan(runExists = false, fallbackState = state),
+            )
+        }
+        // Only a call that never started is a failure the spawn row owns.
+        assertTrue(subagentSpawnCallNeverRan(false, ToolExecutionState.NOT_EXECUTED))
+        assertFalse(subagentSpawnCallNeverRan(false, ToolExecutionState.COMPLETED))
+        assertFalse(subagentSpawnCallNeverRan(false, ToolExecutionState.RUNNING))
+    }
+
+    @Test
     fun steeredAssistantUsesNewScopeAndMessageLocalResultIndices() {
         val sequence = com.ai.assistance.operit.core.chat.AssistantToolSequence("before")
         repeat(4) { sequence.nextIndex.getAndIncrement() }

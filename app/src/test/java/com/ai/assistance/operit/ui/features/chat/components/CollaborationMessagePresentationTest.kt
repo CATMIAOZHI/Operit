@@ -49,10 +49,41 @@ class CollaborationMessagePresentationTest {
 
     @Test fun onlyAMessageSentMidwayReadsAsAMessage() {
         assertEquals(R.string.subagent_message_midway, collaborationMidwayLabelRes("MESSAGE"))
+        // A row that carries the answer says so; the run's later status does not rename it.
+        assertEquals(R.string.subagent_message_result, collaborationResultLabelRes("FINAL_ANSWER"))
+        assertNull(collaborationResultLabelRes("MESSAGE"))
+        assertNull(collaborationResultLabelRes("STATUS"))
+        assertNull(collaborationResultLabelRes("NEW_TASK"))
         // Everything else keeps the run's own status, which is what a completion or a failure is.
         assertNull(collaborationMidwayLabelRes("FINAL_ANSWER"))
         assertNull(collaborationMidwayLabelRes("STATUS"))
         assertNull(collaborationMidwayLabelRes("NEW_TASK"))
+    }
+
+    @Test fun aReturnedReplyNeverWearsTheRunsOwnStatusWording() {
+        // What arrived is the result, whatever the run becomes afterwards. The row therefore draws
+        // its own words: a later failure or a run stopped by an app restart cannot rename a reply
+        // that is already in the transcript, because the row never reads the status resources.
+        assertNotEquals(
+            R.string.subagent_status_completed,
+            collaborationResultLabelRes("FINAL_ANSWER"),
+        )
+        assertNotEquals(
+            R.string.subagent_status_interrupted,
+            collaborationResultLabelRes("FINAL_ANSWER"),
+        )
+        assertNotEquals(
+            R.string.subagent_status_dispatched,
+            collaborationResultLabelRes("FINAL_ANSWER"),
+        )
+
+        // Only the row that carries a reply is exempt from the run; every other row keeps reading it,
+        // so this one predicate is what the row's words, colour and notes all follow.
+        assertTrue(collaborationRowCarriesReturnedReply("FINAL_ANSWER"))
+        assertFalse(collaborationRowCarriesReturnedReply("MESSAGE"))
+        assertFalse(collaborationRowCarriesReturnedReply("STATUS"))
+        assertFalse(collaborationRowCarriesReturnedReply("NEW_TASK"))
+        assertFalse(collaborationRowCarriesReturnedReply(""))
     }
 
     @Test fun onlyTheMainAgentSpeaksWithTheMainRoleCardsPicture() {

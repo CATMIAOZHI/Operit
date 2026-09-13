@@ -58,15 +58,13 @@ import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.ui.features.chat.components.SubagentAgentCard
-import com.ai.assistance.operit.ui.features.chat.components.perChatValue
+import com.ai.assistance.operit.ui.features.chat.components.SubagentCardStatus
 import com.ai.assistance.operit.ui.features.chat.components.subagentAgentIdentity
-import com.ai.assistance.operit.ui.features.chat.components.subagentCardState
-import com.ai.assistance.operit.ui.features.chat.components.subagentCardStatusColor
-import com.ai.assistance.operit.ui.features.chat.components.subagentCardStatusText
-import com.ai.assistance.operit.ui.features.chat.components.subagentFailureText
+import com.ai.assistance.operit.ui.features.chat.components.subagentInterruptionHintRes
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEvent
 import com.ai.assistance.operit.ui.permissions.PermissionReviewAuthorization
+import com.ai.assistance.operit.ui.theme.stoppedAttention
 import com.ai.assistance.operit.ui.permissions.PermissionReviewExactOverrideState
 import com.ai.assistance.operit.ui.permissions.PermissionReviewFailureKind
 import com.ai.assistance.operit.ui.permissions.PermissionReviewRiskLevel
@@ -619,6 +617,8 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
                                         R.string.subagent_status_completed
                                     SubagentRunStatus.CANCELLED.name ->
                                         R.string.subagent_status_cancelled
+                                    SubagentRunStatus.INTERRUPTED.name ->
+                                        R.string.subagent_status_interrupted
                                     else -> R.string.subagent_status_error
                                 }
                             )
@@ -757,13 +757,15 @@ private fun SubagentTaskResultRow(
     summary: String,
     modifier: Modifier,
     isSuccess: Boolean,
+    /** A run that stopped without failing is not a failed one, and it says so in its own tone. */
+    isInterrupted: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
     val accentColor =
-        if (isSuccess) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.error
+        when {
+            isInterrupted -> MaterialTheme.colorScheme.stoppedAttention
+            isSuccess -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.error
         }
     val rowClickModifier =
         if (onClick != null) {
@@ -811,7 +813,7 @@ private fun SubagentTaskResultRow(
                 text = summary,
                 style = MaterialTheme.typography.bodySmall,
                 color =
-                    if (isSuccess) {
+                    if (isSuccess || isInterrupted) {
                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     } else {
                         MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
@@ -824,8 +826,19 @@ private fun SubagentTaskResultRow(
 }
 
 /**
- * The call side of a v2 collaboration: the row keeps the child's badge and live status instead of
- * the raw spawn result, and tapping it opens the floating card that shows what the agent returned.
+ * Whether a spawn row has a failure of its own to report. It records the dispatch and nothing else:
+ * what the agent did afterwards belongs to the rows that carry its messages and its result, so the
+ * run's later state never reaches this row. Only a call that never started is a failure it owns.
+ */
+internal fun subagentSpawnCallNeverRan(
+    runExists: Boolean,
+    fallbackState: ToolExecutionState,
+): Boolean = !runExists && fallbackState == ToolExecutionState.NOT_EXECUTED
+
+/**
+ * The call side of a v2 collaboration: the row keeps the child's badge and says that the task was
+ * handed over instead of repeating the run's live status, and tapping it opens the floating card
+ * that shows what the agent returned.
  */
 @Composable
 private fun SubagentSpawnStatusDisplay(
@@ -859,23 +872,11 @@ private fun SubagentSpawnStatusDisplay(
         }
     val run by (runFlow ?: flowOf(null)).collectAsState(initial = null)
     val childChatId = run?.childChatId
-    val childProcessingState = perChatValue(chatCore.inputProcessingStateByChatId, childChatId)
-    val childLastToolName = perChatValue(chatCore.lastToolNameByChatId, childChatId)
-
-    val currentTool =
-        resolveSubagentDisplayedTool(
-            childProcessingState = childProcessingState,
-            lastToolName = childLastToolName,
-        )
-    val cardState =
-        subagentCardState(
-            runStatus = run?.status ?: fallbackState.toSubagentCardStatusName(),
-            currentTool = currentTool,
-        )
     val agentPath =
         run?.externalOwnerId?.takeIf { it.isNotBlank() }
             ?: requestedAgentName?.takeIf { it.isNotBlank() }
             ?: "subagent"
+    val dispatchFailed = subagentSpawnCallNeverRan(runExists = run != null, fallbackState)
     val openConversation: (() -> Unit)? =
         if (childChatId.isNullOrBlank()) {
             null
@@ -887,27 +888,27 @@ private fun SubagentSpawnStatusDisplay(
         reviewEvent?.let { event -> PermissionReviewLifecycleDisplay(event) }
         SubagentAgentCard(
             agentPath = agentPath,
-            statusText = subagentCardStatusText(cardState),
+            statusText =
+                if (dispatchFailed) {
+                    stringResource(R.string.tool_not_executed)
+                } else {
+                    stringResource(R.string.subagent_status_dispatched)
+                },
             identity = remember(agentPath) { subagentAgentIdentity(agentPath) },
-            statusColor = subagentCardStatusColor(cardState.status),
+            statusColor =
+                if (dispatchFailed) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             modifier = Modifier.padding(start = 24.dp, end = 8.dp, bottom = 8.dp),
             chatId = parentChatId,
             childChatId = childChatId,
             body = taskText,
-            failureText = subagentFailureText(cardState.status, run?.error),
             onOpenConversation = openConversation,
         )
     }
 }
-
-private fun ToolExecutionState.toSubagentCardStatusName(): String =
-    when (this) {
-        ToolExecutionState.RUNNING,
-        ToolExecutionState.WAITING_AUTHORIZATION,
-        ToolExecutionState.WAITING_EXECUTION -> "RUNNING"
-        ToolExecutionState.COMPLETED -> "COMPLETED"
-        ToolExecutionState.NOT_EXECUTED -> "FAILED"
-    }
 
 @Composable
 private fun SubagentTaskStatusDisplay(
@@ -1138,8 +1139,9 @@ private fun SubagentTaskStatusDisplay(
                 } else {
                     stringResource(R.string.subagent_status_completed)
                 }
-            SubagentRunStatus.FAILED,
-            SubagentRunStatus.INTERRUPTED -> stringResource(R.string.subagent_status_error)
+            SubagentRunStatus.FAILED -> stringResource(R.string.subagent_status_error)
+            SubagentRunStatus.INTERRUPTED ->
+                stringResource(R.string.subagent_status_interrupted)
             SubagentRunStatus.CANCELLED -> stringResource(R.string.subagent_status_cancelled)
         }
     val agentName =
@@ -1162,6 +1164,15 @@ private fun SubagentTaskStatusDisplay(
         status != SubagentRunStatus.FAILED &&
             status != SubagentRunStatus.INTERRUPTED &&
             status != SubagentRunStatus.CANCELLED
+    val isInterrupted = status == SubagentRunStatus.INTERRUPTED
+    // A run the app stopped still owes the user the reason it stopped, the way the chat card does.
+    val interruptionNote =
+        if (isInterrupted) {
+            subagentInterruptionHintRes(SubagentCardStatus.INTERRUPTED, resolvedRun.error)
+                ?.let { stringResource(it) }
+        } else {
+            null
+        }
     val isTerminal =
         runIsTerminal && !resultIsSynchronizing
     val terminalResult =
@@ -1174,6 +1185,7 @@ private fun SubagentTaskStatusDisplay(
             toolName = "task",
             result = terminalResult,
             isSuccess = isSuccess,
+            stoppedNote = interruptionNote,
             titleOverride =
                 stringResource(
                     R.string.subagent_result_title,
@@ -1200,6 +1212,7 @@ private fun SubagentTaskStatusDisplay(
         summary = rowContent.summary,
         modifier = modifier,
         isSuccess = isSuccess,
+        isInterrupted = isInterrupted,
         onClick = {
             if (isTerminal) {
                 showResultDialog = true

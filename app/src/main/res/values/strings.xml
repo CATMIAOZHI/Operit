@@ -7,7 +7,7 @@
     <string name="subagent_v2_max_wait">最长等待（毫秒）</string>
     <string name="subagent_v2_limits_help">运行数按整个代理树计算，不含根代理；模型自身的并发限制仍然生效。修改影响后续操作，不会中断正在执行的任务。</string>
     <string name="subagent_v2_invalid_limits">运行数和层数须为 1–64；等待须满足 0 ≤ 最短 ≤ 默认 ≤ 最长 ≤ 3600000。</string>
-    <string name="subagent_message_result">已完成</string>
+    <string name="subagent_message_result">任务完成</string>
     <string name="subagent_message_status">状态有更新</string>
     <string name="subagent_message_task">任务消息</string>
     <string name="subagent_message_note">有了更新</string>
@@ -5500,6 +5500,7 @@
     <string name="tool_executing_duration">执行中 · %1$s</string>
     <string name="subagent_status_creating">正在创建</string>
     <string name="subagent_status_started">开始工作</string>
+    <string name="subagent_status_dispatched">开始任务</string>
     <string name="subagent_status_queued">排队中 · 第 %1$d 位</string>
     <string name="subagent_status_queued_pending">排队中</string>
     <string name="subagent_status_thinking">正在思考</string>
@@ -5509,6 +5510,12 @@
     <string name="subagent_status_syncing_result">正在同步结果</string>
     <string name="subagent_status_completed_with_tool_count">已完成 · 调用了 %1$d 次工具</string>
     <string name="subagent_status_error">错误</string>
+    <string name="subagent_status_interrupted">已中断</string>
+    <string name="subagent_interrupted_app_restart">应用重启，任务未继续运行</string>
+    <string name="subagent_interrupted_archive_import">导入备份时任务尚未结束，未继续运行</string>
+    <string name="subagent_interrupted_chat_branch">创建分支时任务尚未结束，未继续运行</string>
+    <string name="subagent_interrupted_reading_companion">应用重启后任务已丢失，未继续运行</string>
+    <string name="subagent_interrupted_unknown">任务在结束前被中断，未继续运行</string>
     <string name="subagent_status_cancelled">已取消</string>
     <string name="subagent_card_elapsed">用时 %1$s</string>
     <string name="subagent_card_tool_count">工具 %1$d 次</string>
@@ -5541,6 +5548,7 @@
     <string name="subagent_filter_completed">已完成</string>
     <string name="subagent_filter_auto_review">自动审核</string>
     <string name="subagent_filter_error">发生错误</string>
+    <string name="subagent_filter_interrupted">已中断</string>
     <string name="subagent_filter_archived">已归档</string>
     <string name="subagent_archive">归档</string>
     <string name="subagent_restore">取消归档</string>

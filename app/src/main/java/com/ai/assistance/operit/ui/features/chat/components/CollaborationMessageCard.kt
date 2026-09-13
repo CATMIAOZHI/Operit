@@ -69,6 +69,22 @@ internal fun collaborationMidwayLabelRes(kind: String): Int? =
     R.string.subagent_message_midway.takeIf { kind == "MESSAGE" }
 
 /**
+ * A row carrying the answer an agent finished with says so on its own, in words of its own: the run's
+ * later status is about the run, not about the reply that is already in the transcript, so a reply
+ * that arrived never reads as a status the run reached afterwards.
+ */
+internal fun collaborationResultLabelRes(kind: String): Int? =
+    R.string.subagent_message_result.takeIf { kind == "FINAL_ANSWER" }
+
+/**
+ * Whether a row carries a reply that already arrived. Such a row says what it is and borrows nothing
+ * from the run: not the run's words, not its colour, not its failure or interruption note. What the
+ * run became afterwards belongs to the run, and the reply is already in the transcript.
+ */
+internal fun collaborationRowCarriesReturnedReply(kind: String): Boolean =
+    collaborationResultLabelRes(kind) != null
+
+/**
  * Resolves the live run a collaboration row belongs to. Archived runs, v1 tasks and runs owned by
  * another feature (the reading companion shares this table) never shadow the agent's own run.
  */
@@ -115,18 +131,33 @@ private fun SubagentRunEventCard(
         )
     val agentPath = run.externalOwnerId?.takeIf { it.isNotBlank() } ?: event.sender
     val roleName = rememberMainAgentRole(agentPath)?.name
+    val carriesReply = collaborationRowCarriesReturnedReply(event.kind)
 
     SubagentAgentCard(
         agentPath = collaborationRowTitle(agentPath, roleName),
         statusText =
-            collaborationMidwayLabelRes(event.kind)?.let { stringResource(it) }
+            collaborationResultLabelRes(event.kind)?.let { stringResource(it) }
+                ?: collaborationMidwayLabelRes(event.kind)?.let { stringResource(it) }
                 ?: subagentCardStatusText(cardState),
         identity = remember(agentPath) { subagentAgentIdentity(agentPath) },
-        statusColor = subagentCardStatusColor(cardState.status),
+        // The reply already arrived, so no run status colours or annotates this row.
+        statusColor =
+            if (carriesReply) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                subagentCardStatusColor(cardState.status)
+            },
         body = collaborationReturnedBody(event.kind, event.body),
         chatId = chatId,
         childChatId = childChatId,
-        failureText = subagentFailureText(cardState.status, run.error),
+        failureText =
+            if (carriesReply) null else subagentFailureText(cardState.status, run.error),
+        interruptionText =
+            if (carriesReply) {
+                null
+            } else {
+                subagentInterruptionHintRes(cardState.status, run.error)?.let { stringResource(it) }
+            },
         onOpenConversation = onOpenConversation,
     )
 }
