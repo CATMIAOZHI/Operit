@@ -5501,6 +5501,8 @@
     <string name="subagent_status_creating">正在创建</string>
     <string name="subagent_status_started">开始工作</string>
     <string name="subagent_status_dispatched">开始任务</string>
+    <string name="subagent_message_sent">已发送消息</string>
+    <string name="subagent_task_followup">已派发任务</string>
     <string name="subagent_status_queued">排队中 · 第 %1$d 位</string>
     <string name="subagent_status_queued_pending">排队中</string>
     <string name="subagent_status_thinking">正在思考</string>
