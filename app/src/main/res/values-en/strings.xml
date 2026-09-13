@@ -5122,6 +5122,8 @@
     <string name="subagent_status_creating">Creating</string>
     <string name="subagent_status_started">Started working</string>
     <string name="subagent_status_dispatched">Task started</string>
+    <string name="subagent_message_sent">Message sent</string>
+    <string name="subagent_task_followup">Task dispatched</string>
     <string name="subagent_status_queued">Queued · position %1$d</string>
     <string name="subagent_status_queued_pending">Queued</string>
     <string name="subagent_status_thinking">Thinking</string>

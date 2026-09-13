@@ -106,16 +106,38 @@ private fun String.decodeToolXmlText(): String =
         .replace("&amp;", "&")
 
 /**
- * The task a `spawn_agent` call handed the agent. It is what the card in the chat shows, so the raw
- * parameter is unwrapped from its CDATA and its entities before it is displayed.
+ * The text a collaboration call handed the agent it addressed: the task a `spawn_agent` gave it, or
+ * the message `send_message` and `followup_task` delivered. It is what the card in the chat shows, so
+ * the raw parameter is unwrapped from its CDATA and its entities before it is displayed.
  */
-internal fun readSubagentTaskText(displayToolName: String, message: String?): String? =
+internal fun readSubagentCallMessage(displayToolName: String, message: String?): String? =
     message
         ?.trim()
         ?.removeSurrounding("<![CDATA[", "]]>")
         ?.decodeToolXmlText()
         ?.trim()
-        ?.takeIf { displayToolName == "spawn_agent" && it.isNotEmpty() }
+        ?.takeIf { subagentCallAddressesAnAgent(displayToolName) && it.isNotEmpty() }
+
+/** The calls whose row stands for one named agent, rather than for a tool and its own arguments. */
+internal fun subagentCallAddressesAnAgent(displayToolName: String): Boolean =
+    displayToolName == "spawn_agent" ||
+        displayToolName == "send_message" ||
+        displayToolName == "followup_task"
+
+/**
+ * The agent a collaboration call addressed: the name a spawn creates, or the target an existing one
+ * was written to. Both are what the row's card wears as its title.
+ */
+internal fun readSubagentCallTarget(
+    displayToolName: String,
+    params: Map<String, String>,
+): String? =
+    when (displayToolName) {
+        "task" -> params["subagent_type"]
+        "spawn_agent" -> params["task_name"]
+        "send_message", "followup_task" -> params["target"]
+        else -> null
+    }?.trim()?.takeIf { it.isNotEmpty() }
 
 internal fun resolveXmlTagNameForRendering(content: String): String? {
     val rawTagName = ChatMarkupRegex.extractOpeningTagName(content) ?: return null
@@ -866,13 +888,7 @@ class CustomXmlRenderer(
                     } else {
                         null
                     }
-                val subagentName =
-                    displayParams["subagent_type"]
-                        ?.trim()
-                        ?.takeIf { displayToolName == "task" && it.isNotEmpty() }
-                        ?: displayParams["task_name"]
-                            ?.trim()
-                            ?.takeIf { displayToolName == "spawn_agent" && it.isNotEmpty() }
+                val subagentName = readSubagentCallTarget(displayToolName, displayParams)
                 val subagentTaskId =
                     displayParams["task_id"]
                         ?.trim()
@@ -880,7 +896,7 @@ class CustomXmlRenderer(
                 // What the caller handed the agent. It is the row's own content in the chat, so it is
                 // read here where the call is parsed rather than dug out of the child conversation.
                 val subagentTaskText =
-                    readSubagentTaskText(displayToolName, displayParams["message"])
+                    readSubagentCallMessage(displayToolName, displayParams["message"])
 
                 ToolRequestRenderState(
                     rawToolName = rawToolName,
