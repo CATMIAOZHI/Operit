@@ -58,6 +58,7 @@ fun AiMessageComposable(
     enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
     showHeader: Boolean = true,
 ) {
+    val timelineSlice = com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current
     val section = LocalResponseMessageSection.current
     val context = LocalContext.current
     val preferencesManager = remember { UserPreferencesManager.getInstance(context) }
@@ -135,7 +136,8 @@ fun AiMessageComposable(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 2.dp)
+                    .padding(top = if (timelineSlice?.first != false) 2.dp else 0.dp,
+                        bottom = if (timelineSlice?.last != false) 2.dp else 0.dp)
                     .onSizeChanged { size ->
                         if (section != ResponseMessageSection.HEADER) {
                             heightMemory?.updateMeasured(message.timestamp, size.height)

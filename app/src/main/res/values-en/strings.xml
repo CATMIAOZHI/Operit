@@ -1749,6 +1749,8 @@
     <string name="avatar_mode">Avatar Mode</string>
     <string name="loading_failed">Loading failed: %1$s</string>
     <string name="loading">Loading...</string>
+    <string name="chat_scroll_older">Scroll up for earlier messages</string>
+    <string name="chat_scroll_newer">Scroll down for newer messages</string>
     <string name="floating_service_description">Display AI assistant floating window service</string>
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>

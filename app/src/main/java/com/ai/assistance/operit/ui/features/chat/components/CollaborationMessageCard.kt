@@ -143,10 +143,11 @@ fun CollaborationMessageCard(message: ChatMessage) {
     }
     val repository = remember(context) { SubagentRunRepository.getInstance(context) }
     val currentChatId by chatCore.currentChatId.collectAsState(initial = null)
+    val sharedRuns = LocalTranscriptRuns.current?.takeIf { it.chatId == currentChatId }
     val runsFlow = remember(currentChatId) {
         currentChatId?.let { repository.observeByParentChatId(it) }
     }
-    val runs by (runsFlow ?: flowOf(emptyList())).collectAsState(initial = emptyList())
+    val runs = sharedRuns?.runs ?: (runsFlow ?: flowOf(emptyList())).collectAsState(initial = emptyList()).value
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 1.dp),
         verticalArrangement = Arrangement.spacedBy(1.dp),

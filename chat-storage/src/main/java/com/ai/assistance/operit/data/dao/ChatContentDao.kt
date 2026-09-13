@@ -195,6 +195,16 @@ abstract class ChatContentDao {
         timestamp: Long,
     ): MessageContentRow?
 
+    @Query(MESSAGE_CONTENT_ROW_QUERY + " WHERE chatId = :chatId AND timestamp IN (:timestamps) ORDER BY timestamp ASC")
+    protected abstract suspend fun queryMessagesByTimestamps(
+        chatId: String,
+        timestamps: List<Long>,
+    ): List<MessageContentRow>
+
+    @Transaction
+    open suspend fun getMessagesByTimestamps(chatId: String, timestamps: List<Long>): List<MessageEntity> =
+        materializeMessages(queryMessagesByTimestamps(chatId, timestamps))
+
     @Query(
         "SELECT SUBSTR(CAST(content AS BLOB), :startByte, :byteCount)" +
             " FROM messages WHERE messageId = :messageId"

@@ -76,13 +76,7 @@ fun ToolResultDisplay(
         if (!hasContent) {
             ""
         } else {
-            result
-                .replace("\n", " ")
-                .replace(Regex("\\s+"), " ")
-                .trim()
-                .let { normalized ->
-                    if (normalized.length <= 20) normalized else normalized.take(20) + "..."
-                }
+            toolResultSemanticPreview(result)
         }
     }
     val semanticDescription = remember(toolName, summaryText, semanticResultText, isSuccess, hasContent) {
@@ -121,6 +115,26 @@ fun ToolResultDisplay(
                 null
             },
     )
+}
+
+/** Stop once the short spoken preview is known; don't normalize an entire file result on scroll. */
+internal fun toolResultSemanticPreview(result: String): String {
+    val preview = StringBuilder(21)
+    var previousAsciiWhitespace = false
+    var lastContentLength = 0
+    for (character in result) {
+        val asciiWhitespace = character == ' ' || character in '\t'..'\r'
+        if (asciiWhitespace && previousAsciiWhitespace) continue
+        previousAsciiWhitespace = asciiWhitespace
+        val normalized = if (asciiWhitespace) ' ' else character
+        if (preview.isEmpty() && normalized.isWhitespace()) continue
+        if (preview.length < 21) preview.append(normalized)
+        if (!normalized.isWhitespace()) {
+            if (preview.length > 20) return preview.substring(0, 20) + "..."
+            lastContentLength = preview.length
+        }
+    }
+    return preview.substring(0, lastContentLength)
 }
 
 /** 工具结果详情弹窗 美观的弹窗显示完整的工具执行结果 */

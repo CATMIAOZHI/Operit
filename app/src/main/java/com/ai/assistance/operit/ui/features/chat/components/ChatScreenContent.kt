@@ -115,7 +115,6 @@ fun ChatScreenContent(
         verticalDrag: Float,
         onVerticalDragChange: (Float) -> Unit,
         dragThreshold: Float,
-        scrollState: ScrollState,
         autoScrollToBottom: Boolean,
         onAutoScrollToBottomChange: (Boolean) -> Unit,
         coroutineScope: CoroutineScope,
@@ -154,7 +153,8 @@ fun ChatScreenContent(
 
     // Multi-select mode state
     var isMultiSelectMode by remember { mutableStateOf(false) }
-    var selectedMessageIndices by remember { mutableStateOf(setOf<Int>()) }
+    val transcriptSelection = remember(currentChatId) { TranscriptSelection() }
+    var selectedMessageIndices by transcriptSelection.forMessages(chatHistory)
     val selectableMessageIndices = remember(chatHistory) {
         chatHistory.mapIndexedNotNull { index, message ->
             if (message.sender == "user" || message.sender == "ai") index else null
@@ -186,6 +186,8 @@ fun ChatScreenContent(
     var pendingRollback by remember { mutableStateOf<MessageRevertRequest?>(null) }
     var pendingRewind by remember { mutableStateOf<MessageRevertRequest?>(null) }
     val hasOlderDisplayHistory by actualViewModel.hasOlderDisplayHistory.collectAsState()
+    val processMetadata by actualViewModel.processMetadata.collectAsState()
+    val displayedChatId by actualViewModel.displayedChatId.collectAsState()
     val hasNewerDisplayHistory by actualViewModel.hasNewerDisplayHistory.collectAsState()
     val isLoadingDisplayWindow by actualViewModel.isLoadingDisplayWindow.collectAsState()
     
@@ -224,7 +226,6 @@ fun ChatScreenContent(
                 ChatArea(
                         chatHistory = chatHistory,
                         currentChatId = currentChatId,
-                        scrollState = scrollState,
                         isLoading = isLoading,
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
@@ -272,11 +273,15 @@ fun ChatScreenContent(
                         autoScrollToBottom = autoScrollToBottom,
                         onAutoScrollToBottomChange = onAutoScrollToBottomChange,
                         hasOlderDisplayHistory = hasOlderDisplayHistory,
+                        processMetadata = processMetadata,
+                        onLoadProcess = actualViewModel::loadTranscriptProcess,
+                        transcriptReady = displayedChatId == currentChatId,
                         hasNewerDisplayHistory = hasNewerDisplayHistory,
                         isLoadingDisplayWindow = isLoadingDisplayWindow,
                         onLoadOlderDisplayWindow = {
                             actualViewModel.loadOlderMessagesForCurrentChat()
                         },
+                        onTranscriptViewport = actualViewModel::updateTranscriptViewport,
                         onLoadNewerDisplayWindow = {
                             actualViewModel.loadNewerMessagesForCurrentChat()
                         },
@@ -355,7 +360,6 @@ fun ChatScreenContent(
                 ChatArea(
                         chatHistory = chatHistory,
                         currentChatId = currentChatId,
-                        scrollState = scrollState,
                         isLoading = isLoading,
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
@@ -403,11 +407,15 @@ fun ChatScreenContent(
                         autoScrollToBottom = autoScrollToBottom,
                         onAutoScrollToBottomChange = onAutoScrollToBottomChange,
                         hasOlderDisplayHistory = hasOlderDisplayHistory,
+                        processMetadata = processMetadata,
+                        onLoadProcess = actualViewModel::loadTranscriptProcess,
+                        transcriptReady = displayedChatId == currentChatId,
                         hasNewerDisplayHistory = hasNewerDisplayHistory,
                         isLoadingDisplayWindow = isLoadingDisplayWindow,
                         onLoadOlderDisplayWindow = {
                             actualViewModel.loadOlderMessagesForCurrentChat()
                         },
+                        onTranscriptViewport = actualViewModel::updateTranscriptViewport,
                         onLoadNewerDisplayWindow = {
                             actualViewModel.loadNewerMessagesForCurrentChat()
                         },
@@ -757,7 +765,7 @@ fun ChatScreenContent(
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            actualViewModel.deleteMessages(selectedMessageIndices)
+                            actualViewModel.deleteMessagesByTimestamp(transcriptSelection.timestamps)
                             selectedMessageIndices = emptySet()
                             isMultiSelectMode = false
                             showDeleteSelectedConfirmDialog = false

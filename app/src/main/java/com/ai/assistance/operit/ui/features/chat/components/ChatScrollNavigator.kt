@@ -576,7 +576,7 @@ internal fun ChatScrollNavigator(
 }
 
 @Composable
-private fun ChatMessageLocatorDialog(
+internal fun ChatMessageLocatorDialog(
     locatorEntries: List<ChatMessageLocatorPreview>,
     currentMessageTimestamp: Long,
     isLoading: Boolean,

@@ -60,7 +60,7 @@ import com.ai.assistance.operit.ui.theme.isWaterGlassSupported
 import com.ai.assistance.operit.ui.theme.liquidGlass
 import com.ai.assistance.operit.ui.theme.resolveConfiguredFontFamily
 import com.ai.assistance.operit.ui.theme.waterGlass
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.emitAll
 import com.ai.assistance.operit.ui.features.chat.components.LocalResponseMessageSection
 import com.ai.assistance.operit.ui.features.chat.components.ResponseMessageSection
 
@@ -99,54 +99,35 @@ fun BubbleAiMessageComposable(
     showHeader: Boolean = true,
 ) {
     val section = LocalResponseMessageSection.current
+    val timelineSlice = com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current
+    val firstBlock = timelineSlice?.first != false
+    val lastBlock = timelineSlice?.last != false
     val showIdentity = showHeader && section != ResponseMessageSection.BODY
     val context = LocalContext.current
     val preferencesManager = remember { UserPreferencesManager.getInstance(context) }
-    val displayPreferencesManager = remember { DisplayPreferencesManager.getInstance(context) }
     val characterCardManager = remember { CharacterCardManager.getInstance(context) }
-    val bubbleShowAvatar by preferencesManager.bubbleShowAvatar.collectAsState(initial = true)
-    val bubbleWideLayoutEnabled by preferencesManager.bubbleWideLayoutEnabled.collectAsState(initial = true)
-    val showThinkingProcess by preferencesManager.showThinkingProcess.collectAsState(initial = true)
-    val showStatusTags by preferencesManager.showStatusTags.collectAsState(initial = true)
+    val settings = LocalBubbleAiRenderSettings.current ?: rememberBubbleAiRenderSettings() ?: return
+    val bubbleShowAvatar = settings.layout.avatar
+    val bubbleWideLayoutEnabled = settings.layout.wide
+    val showThinkingProcess = settings.layout.thinking
+    val showStatusTags = settings.layout.status
     val effectiveShowThinkingProcess = if (forceShowThinkingProcess) true else showThinkingProcess
-    val avatarShapePref by preferencesManager.avatarShape.collectAsState(initial = UserPreferencesManager.AVATAR_SHAPE_CIRCLE)
-    val avatarCornerRadius by preferencesManager.avatarCornerRadius.collectAsState(initial = 8f)
-    val bubbleAiUseCustomFont by
-        preferencesManager.bubbleAiUseCustomFont.collectAsState(initial = false)
-    val bubbleAiFontType by
-        preferencesManager.bubbleAiFontType.collectAsState(
-            initial = UserPreferencesManager.FONT_TYPE_SYSTEM,
-        )
-    val bubbleAiSystemFontName by
-        preferencesManager.bubbleAiSystemFontName.collectAsState(
-            initial = UserPreferencesManager.SYSTEM_FONT_DEFAULT,
-        )
-    val bubbleAiCustomFontPath by
-        preferencesManager.bubbleAiCustomFontPath.collectAsState(initial = null)
-    
-    val showModelProvider by preferencesManager.showModelProvider.collectAsState(initial = true)
-    val showModelName by preferencesManager.showModelName.collectAsState(initial = true)
-    val showRoleName by preferencesManager.showRoleName.collectAsState(initial = true)
-    val collapseCompletedProcess by displayPreferencesManager.collapseCompletedProcess.collectAsState(initial = true)
-    val toolCollapseMode by displayPreferencesManager.toolCollapseMode.collectAsState(initial = ToolCollapseMode.FULL)
+    val avatarShapePref = settings.identity.shape
+    val avatarCornerRadius = settings.identity.radius
+    val showModelProvider = settings.identity.provider
+    val showModelName = settings.identity.model
+    val showRoleName = settings.identity.role
+    val collapseCompletedProcess = settings.collapse
+    val toolCollapseMode = settings.toolMode
     
     // 根据角色名获取头像
-    val aiAvatarUri by remember(message.roleName) {
-        if (message.roleName != null) {
-            try {
-                runBlocking {
-                    val characterCard = characterCardManager.findCharacterCardByName(message.roleName)
-                    if (characterCard != null) {
-                        preferencesManager.getAiAvatarForCharacterCardFlow(characterCard.id)
-                    } else {
-                        preferencesManager.customAiAvatarUri
-                    }
-                }
-            } catch (e: Exception) {
-                preferencesManager.customAiAvatarUri
-            }
-        } else {
-            preferencesManager.customAiAvatarUri
+    val aiAvatarUri by remember(message.roleName, showIdentity, bubbleShowAvatar) {
+        kotlinx.coroutines.flow.flow {
+            if (!showIdentity || !bubbleShowAvatar) { emit(null); return@flow }
+            val characterCard = characterCardManager.findCharacterCardByName(message.roleName)
+            emitAll(if (characterCard != null)
+                preferencesManager.getAiAvatarForCharacterCardFlow(characterCard.id)
+            else preferencesManager.customAiAvatarUri)
         }
     }.collectAsState(initial = null)
 
@@ -245,35 +226,14 @@ fun BubbleAiMessageComposable(
     val shouldUseExpandedBubbleLayout =
         rendererState.renderNodes.any { node -> node.type in ExpandedBubbleLayoutNodeTypes }
     val sizeTrackingModifier =
-        if (isHidden || section == ResponseMessageSection.HEADER) {
+        if (heightMemory == null || isHidden || section == ResponseMessageSection.HEADER) {
             Modifier
         } else {
             Modifier.onSizeChanged { size ->
                 heightMemory?.updateMeasured(message.timestamp, size.height)
             }
         }
-    val baseTypography = MaterialTheme.typography
-    val bubbleTypography =
-        remember(
-            context,
-            bubbleAiUseCustomFont,
-            bubbleAiFontType,
-            bubbleAiSystemFontName,
-            bubbleAiCustomFontPath,
-            baseTypography,
-        ) {
-            applyFontFamilyToTypography(
-                baseTypography = baseTypography,
-                fontFamily =
-                    resolveConfiguredFontFamily(
-                        context = context,
-                        useCustomFont = bubbleAiUseCustomFont,
-                        fontType = bubbleAiFontType,
-                        systemFontName = bubbleAiSystemFontName,
-                        customFontPath = bubbleAiCustomFontPath,
-                    ),
-            )
-        }
+    val bubbleTypography = settings.typography
     val waterGlassEnabled = enableWaterGlass && isWaterGlassSupported()
     val liquidGlassEnabled =
         !waterGlassEnabled && enableLiquidGlass && isLiquidGlassSupported()
@@ -307,9 +267,9 @@ fun BubbleAiMessageComposable(
                 .fillMaxWidth()
                 .padding(
                     start = if (bubbleShowAvatar) 0.dp else 8.dp,
-                    top = 4.dp,
+                    top = if (firstBlock) 4.dp else 0.dp,
                     end = 0.dp,
-                    bottom = 4.dp,
+                    bottom = if (lastBlock) 4.dp else 0.dp,
                 )
                 .then(sizeTrackingModifier)
                 .alpha(alpha)
@@ -367,14 +327,12 @@ fun BubbleAiMessageComposable(
                 Spacer(modifier = Modifier.height(6.dp))
             }
 
-            if (section != ResponseMessageSection.HEADER) BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                val maxBubbleWidth = maxWidth
+            if (section != ResponseMessageSection.HEADER) Box(modifier = Modifier.fillMaxWidth()) {
                 if (imageUrl != null) {
                     AsyncImage(
                         model = Uri.parse(imageUrl),
                         contentDescription = "Image from AI",
                         modifier = Modifier
-                            .widthIn(max = maxBubbleWidth)
                             .heightIn(max = 80.dp)
                             .clip(RoundedCornerShape(16.dp)),
                         contentScale = ContentScale.Fit,
@@ -382,14 +340,16 @@ fun BubbleAiMessageComposable(
                 } else {
                     val bubbleShape =
                         if (bubbleRoundedCornersEnabled) {
-                            RoundedCornerShape(4.dp, 20.dp, 20.dp, 20.dp)
+                            RoundedCornerShape(
+                                if (firstBlock) 4.dp else 0.dp, if (firstBlock) 20.dp else 0.dp,
+                                if (lastBlock) 20.dp else 0.dp, if (lastBlock) 20.dp else 0.dp)
                         } else {
                             RoundedCornerShape(0.dp)
                         }
                     val bubbleModifier =
                         Modifier
-                            .widthIn(max = maxBubbleWidth)
-                            .defaultMinSize(minHeight = 44.dp)
+                            .then(if (timelineSlice != null) Modifier.fillMaxWidth() else Modifier)
+                            .defaultMinSize(minHeight = if (timelineSlice == null) 44.dp else 0.dp)
                     val renderContent: @Composable () -> Unit = {
                         key(message.timestamp) {
                             val stream = rememberRevisableTextStream(message.contentStream)
@@ -406,9 +366,9 @@ fun BubbleAiMessageComposable(
                                     modifier =
                                         Modifier.padding(
                                             start = bubbleContentPaddingLeft.dp,
-                                            top = 12.dp,
+                                            top = if (firstBlock) 12.dp else 0.dp,
                                             end = bubbleContentPaddingRight.dp,
-                                            bottom = 12.dp,
+                                            bottom = if (lastBlock) 12.dp else 0.dp,
                                     ),
                                     state = rendererState,
                                     fillMaxWidth = shouldUseExpandedBubbleLayout,
@@ -427,9 +387,9 @@ fun BubbleAiMessageComposable(
                                     modifier =
                                         Modifier.padding(
                                             start = bubbleContentPaddingLeft.dp,
-                                            top = 12.dp,
+                                            top = if (firstBlock) 12.dp else 0.dp,
                                             end = bubbleContentPaddingRight.dp,
-                                            bottom = 12.dp,
+                                            bottom = if (lastBlock) 12.dp else 0.dp,
                                     ),
                                     state = rendererState,
                                     fillMaxWidth = shouldUseExpandedBubbleLayout,
@@ -492,7 +452,7 @@ fun BubbleAiMessageComposable(
     } else {
     Row(
         modifier = Modifier
-            .padding(horizontal = 0.dp, vertical = 4.dp)
+            .padding(top = if (firstBlock) 4.dp else 0.dp, bottom = if (lastBlock) 4.dp else 0.dp)
             .then(sizeTrackingModifier)
             .alpha(alpha)
             .offset(y = offsetY.dp),
@@ -592,14 +552,17 @@ fun BubbleAiMessageComposable(
                     // Message bubble
                     val bubbleShape =
                         if (bubbleRoundedCornersEnabled) {
-                            RoundedCornerShape(4.dp, 20.dp, 20.dp, 20.dp)
+                            RoundedCornerShape(
+                                if (firstBlock) 4.dp else 0.dp, if (firstBlock) 20.dp else 0.dp,
+                                if (lastBlock) 20.dp else 0.dp, if (lastBlock) 20.dp else 0.dp)
                         } else {
                             RoundedCornerShape(0.dp)
                         }
                     val bubbleModifier =
                         Modifier
                             .widthIn(max = maxBubbleWidth)
-                            .defaultMinSize(minHeight = 44.dp)
+                            .then(if (timelineSlice != null) Modifier.width(maxBubbleWidth) else Modifier)
+                            .defaultMinSize(minHeight = if (timelineSlice == null) 44.dp else 0.dp)
                     val renderContent: @Composable () -> Unit = {
                         // 使用 message.timestamp 作为 key，确保在重组期间，
                         // 只要是同一条消息，StreamMarkdownRenderer就不会被销毁和重建。
@@ -618,9 +581,9 @@ fun BubbleAiMessageComposable(
                                     modifier =
                                         Modifier.padding(
                                             start = bubbleContentPaddingLeft.dp,
-                                            top = 12.dp,
+                                            top = if (firstBlock) 12.dp else 0.dp,
                                             end = bubbleContentPaddingRight.dp,
-                                            bottom = 12.dp,
+                                            bottom = if (lastBlock) 12.dp else 0.dp,
                                     ),
                                     state = rendererState,
                                     fillMaxWidth = shouldUseExpandedBubbleLayout,
@@ -641,9 +604,9 @@ fun BubbleAiMessageComposable(
                                     modifier =
                                         Modifier.padding(
                                             start = bubbleContentPaddingLeft.dp,
-                                            top = 12.dp,
+                                            top = if (firstBlock) 12.dp else 0.dp,
                                             end = bubbleContentPaddingRight.dp,
-                                            bottom = 12.dp,
+                                            bottom = if (lastBlock) 12.dp else 0.dp,
                                     ),
                                     state = rendererState,
                                     fillMaxWidth = shouldUseExpandedBubbleLayout,

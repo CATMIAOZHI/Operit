@@ -250,6 +250,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     // 聊天历史相关
     val chatHistory: StateFlow<List<ChatMessage>> by lazy { chatHistoryDelegate.chatHistory }
     val displayedChatId: StateFlow<String?> by lazy { chatHistoryDelegate.displayedChatId }
+    val processMetadata by lazy { chatHistoryDelegate.processMetadata }
+    suspend fun loadTranscriptProcess(key: Long) = chatHistoryDelegate.loadTranscriptProcess(key)
     val showChatHistorySelector: StateFlow<Boolean> by lazy {
         chatHistoryDelegate.showChatHistorySelector
     }
@@ -807,6 +809,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    fun updateTranscriptViewport(chatId: String, timestamps: Set<Long>) {
+        chatHistoryDelegate.updateTranscriptViewport(chatId, timestamps)
+    }
+
     fun clearCurrentChat() {
         chatHistoryDelegate.clearCurrentChat { deleted, deletedChatId ->
             if (deleted) {
@@ -1046,6 +1052,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     /** 批量删除消息 */
+    fun deleteMessagesByTimestamp(timestamps: Set<Long>) {
+        if (isCurrentTranscriptReadOnly()) return
+        val chatId = chatHistoryDelegate.currentChatId.value ?: return
+        viewModelScope.launch {
+            chatHistoryDelegate.deleteMessagesByTimestamps(chatId, timestamps.toList())
+        }
+    }
+
     fun deleteMessages(indices: Set<Int>) {
         if (isCurrentTranscriptReadOnly()) return
         viewModelScope.launch {

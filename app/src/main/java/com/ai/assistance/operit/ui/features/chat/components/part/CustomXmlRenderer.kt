@@ -847,7 +847,6 @@ class CustomXmlRenderer(
         xmlStream: Stream<String>?,
         invocationIndex: Int?,
     ) {
-        val paramTokenEstimate = rememberToolParamTokenEstimate(content, xmlStream)
         val renderState =
             remember(content) {
                 val nameRegex = "name=\"([^\"]+)\"".toRegex()
@@ -929,7 +928,11 @@ class CustomXmlRenderer(
                 }
             } else {
                 // 对于其他工具，保持原有逻辑
-                if (!renderState.isClosed && paramTokenEstimate > TOOL_PARAM_TOKEN_THRESHOLD) {
+                // Completed history always uses the compact presentation; do not rescan its
+                // potentially large parameters for a streaming-only threshold.
+                if (!renderState.isClosed &&
+                    rememberToolParamTokenEstimate(content, xmlStream) > TOOL_PARAM_TOKEN_THRESHOLD
+                ) {
                     DetailedToolDisplay(
                         toolName = renderState.displayToolName,
                         params = renderState.paramText,
