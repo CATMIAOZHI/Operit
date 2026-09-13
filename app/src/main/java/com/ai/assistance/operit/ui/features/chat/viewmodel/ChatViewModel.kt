@@ -1216,6 +1216,75 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    /**
+     * 修改记忆：一次保存回复正文和它这一轮的协作消息。
+     *
+     * 协作消息各自写回自己那条，绝不并进 AI 正文——模型下一轮仍然把子代理的话读成子代理说的，
+     * 而不是当成自己说过的；删除同理，删掉的就是那条消息本身。
+     */
+    fun saveMemoryEdit(
+        index: Int,
+        editedMessage: ChatMessage,
+        fragmentContents: Map<Long, String>,
+        deletedFragments: Set<Long>,
+    ) {
+        if (isCurrentTranscriptReadOnly()) return
+        viewModelScope.launch {
+            try {
+                val currentHistory = chatHistoryDelegate.chatHistory.value
+                if (currentHistory.getOrNull(index) == null) {
+                    uiStateDelegate.showErrorMessage(
+                        context.getString(R.string.chat_invalid_message_index),
+                    )
+                    return@launch
+                }
+
+                // 写入一律绑在保存这一刻的会话上：这段编辑跨多次挂起，中途切会话不该落到别处。
+                val chatId = chatHistoryDelegate.currentChatId.value
+                if (chatId == null) {
+                    uiStateDelegate.showToast(
+                        context.getString(R.string.chat_no_active_conversation),
+                    )
+                    return@launch
+                }
+
+                val fragmentUpdates = fragmentContents.map { (timestamp, content) ->
+                    val fragment = currentHistory.firstOrNull { it.timestamp == timestamp }
+                        ?: error("Memory fragment is no longer available: $timestamp")
+                    fragment.copy(content = content, contentStream = null)
+                }
+                if (deletedFragments.isNotEmpty()) {
+                    chatHistoryDelegate.deleteMessagesByTimestamps(
+                        chatId,
+                        deletedFragments.toList(),
+                    )
+                }
+
+                fragmentUpdates.forEach { fragment ->
+                    chatHistoryDelegate.addMessageToChat(
+                        fragment,
+                        chatIdOverride = chatId,
+                    )
+                }
+
+                chatHistoryDelegate.addMessageToChat(
+                    editedMessage,
+                    chatIdOverride = chatId,
+                    clearTodosAfterUpdate = true,
+                )
+
+                messageCoordinationDelegate.refreshStableContextWindow(chatId = chatId)
+
+                uiStateDelegate.showToast(context.getString(R.string.chat_message_updated))
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "保存修改记忆失败", e)
+                uiStateDelegate.showErrorMessage(
+                    context.getString(R.string.chat_update_message_failed, e.message ?: ""),
+                )
+            }
+        }
+    }
+
     fun regenerateSingleAiMessage(index: Int) {
         if (isCurrentTranscriptReadOnly()) return
         viewModelScope.launch {

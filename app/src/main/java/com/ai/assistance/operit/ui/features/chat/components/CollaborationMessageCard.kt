@@ -25,12 +25,14 @@ import kotlinx.coroutines.flow.flowOf
 
 internal data class CollaborationDisplayMessage(val sender: String, val kind: String, val body: String)
 
+/** The envelope a collaboration row carries, anchored so quoted text cannot pose as one. */
+private val collaborationEnvelopeHeader = Regex(
+    "^Message ID: [0-9a-f-]{36}\\nMessage Type: (MESSAGE|NEW_TASK|FINAL_ANSWER|STATUS)\\n" +
+        "Task name: [^\\n]+\\nSender: ([^\\n]+)\\nPayload:\\n",
+)
+
 internal fun collaborationDisplayMessages(content: String, sender: String): List<CollaborationDisplayMessage> {
-    val header = Regex(
-        "^Message ID: [0-9a-f-]{36}\\nMessage Type: (MESSAGE|NEW_TASK|FINAL_ANSWER|STATUS)\\n" +
-            "Task name: [^\\n]+\\nSender: ([^\\n]+)\\nPayload:\\n",
-    )
-    val match = header.find(content)
+    val match = collaborationEnvelopeHeader.find(content)
     if (match == null) {
         return listOf(CollaborationDisplayMessage(sender, "NEW_TASK", content))
     }
@@ -40,6 +42,19 @@ internal fun collaborationDisplayMessages(content: String, sender: String): List
             content.substring(match.range.last + 1).trimEnd(),
         )
     )
+}
+
+/**
+ * The row with its payload swapped for [body], its envelope left exactly as it was.
+ *
+ * The envelope is what the row's own label, its card and the prompt history read to know who spoke
+ * and what kind of message it was, so a memory edit changes what the agent said and nothing about
+ * who said it. A row that never carried an envelope is only text, so the text is all there is.
+ */
+internal fun collaborationBodyReplaced(content: String, body: String): String {
+    val match = collaborationEnvelopeHeader.find(content) ?: return body
+    val trailing = content.substring(match.range.last + 1).takeLastWhile { it.isWhitespace() }
+    return content.substring(0, match.range.last + 1) + body + trailing
 }
 
 /**
@@ -55,6 +70,7 @@ internal fun collaborationReturnedBody(kind: String, body: String): String? =
  */
 internal fun collaborationKindLabelRes(kind: String): Int =
     when (kind) {
+        "MESSAGE" -> R.string.subagent_message_midway
         "FINAL_ANSWER" -> R.string.subagent_message_result
         "STATUS" -> R.string.subagent_message_status
         "NEW_TASK" -> R.string.subagent_message_task
@@ -164,7 +180,7 @@ private fun SubagentRunEventCard(
 
 /** Only host-marked collaboration rows use this display; normal user prose is never reclassified. */
 @Composable
-fun CollaborationMessageCard(message: ChatMessage) {
+fun CollaborationMessageCard(message: ChatMessage, horizontalPadding: androidx.compose.ui.unit.Dp = 12.dp) {
     val events = remember(message.content, message.roleName) {
         collaborationDisplayMessages(message.content, message.roleName)
     }
@@ -180,7 +196,7 @@ fun CollaborationMessageCard(message: ChatMessage) {
     }
     val runs = sharedRuns?.runs ?: (runsFlow ?: flowOf(emptyList())).collectAsState(initial = emptyList()).value
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 1.dp),
+        Modifier.fillMaxWidth().padding(horizontal = horizontalPadding, vertical = 1.dp),
         verticalArrangement = Arrangement.spacedBy(1.dp),
     ) {
             events.forEach { event ->
@@ -247,7 +263,7 @@ internal fun collaborationSenderIsMainAgent(sender: String): Boolean =
  * failing all of them the global AI picture.
  */
 @Composable
-private fun rememberMainAgentRole(sender: String): MainAgentRole? {
+internal fun rememberMainAgentRole(sender: String): MainAgentRole? {
     if (!collaborationSenderIsMainAgent(sender)) return null
     val context = LocalContext.current
     val preferences = remember(context) { UserPreferencesManager.getInstance(context) }
