@@ -11,6 +11,19 @@ import com.ai.assistance.operit.data.model.MessageEntity
 /** 消息DAO接口，定义对消息表的数据访问方法 */
 @Dao
 interface MessageDao {
+    @Query("""
+        SELECT m.timestamp, m.sender, m.displayMode,
+            COALESCE(v.sentAt, m.sentAt) AS sentAt,
+            COALESCE(v.completedAt, m.completedAt) AS completedAt,
+            COALESCE(v.waitDurationMs, m.waitDurationMs) AS waitDurationMs,
+            COALESCE(v.outputDurationMs, m.outputDurationMs) AS outputDurationMs
+        FROM messages m LEFT JOIN message_variants v
+          ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
+          AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
+        WHERE m.chatId = :chatId ORDER BY m.timestamp ASC
+    """)
+    suspend fun getProcessMetadata(chatId: String): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
+
     /** Repair repeated persistence of sealed AI segments; differing content or metadata survives. */
     @Query("""
         DELETE FROM messages

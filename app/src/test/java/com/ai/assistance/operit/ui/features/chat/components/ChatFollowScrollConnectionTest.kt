@@ -18,11 +18,13 @@ class ChatFollowScrollConnectionTest {
     private var offset = 1_000
     private val changes = mutableListOf<Boolean>()
     private var userScrolls = 0
+    private val pagingDirections = mutableListOf<Float>()
     private val connection = ChatFollowScrollConnection(
         position = { offset },
         isAtLatestBottom = { offset == 1_000 },
         onUserScroll = { userScrolls++ },
         onFollowingChange = { changes += it },
+        onScrollDirection = { pagingDirections += it },
     )
 
     @Test
@@ -31,6 +33,7 @@ class ChatFollowScrollConnectionTest {
         assertEquals(1_000, offset)
         assertFalse(connection.followingAllowed)
         assertEquals(listOf(false), changes)
+        assertTrue(pagingDirections.isEmpty())
         offset = 988
         assertEquals(
             Offset.Zero,
@@ -81,6 +84,21 @@ class ChatFollowScrollConnectionTest {
         connection.onPostScroll(Offset(0f, -100f), Offset.Zero, NestedScrollSource.SideEffect)
         assertEquals(0, userScrolls)
         assertTrue(changes.isEmpty())
+        assertTrue(pagingDirections.isEmpty())
+    }
+
+    @Test
+    fun pagingOnlyRespondsToOuterMovementOrUnconsumedEdgeGesture() {
+        connection.onPreScroll(Offset(0f, 50f), NestedScrollSource.UserInput)
+        connection.onPostScroll(Offset(0f, 50f), Offset.Zero, NestedScrollSource.UserInput)
+        assertTrue(pagingDirections.isEmpty())
+        connection.onPreScroll(Offset(0f, 50f), NestedScrollSource.UserInput)
+        offset -= 50
+        connection.onPostScroll(Offset(0f, 50f), Offset.Zero, NestedScrollSource.UserInput)
+        assertEquals(listOf(50f), pagingDirections)
+        connection.onPreScroll(Offset(0f, 20f), NestedScrollSource.UserInput)
+        connection.onPostScroll(Offset.Zero, Offset(0f, 20f), NestedScrollSource.UserInput)
+        assertEquals(listOf(50f, 20f), pagingDirections)
     }
 
     @Test

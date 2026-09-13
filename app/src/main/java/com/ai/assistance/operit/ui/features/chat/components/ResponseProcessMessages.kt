@@ -8,10 +8,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.map
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.ChatMessageDisplayMode
+import com.ai.assistance.operit.data.model.ChatMessageProcessMetadata
 import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
 import com.ai.assistance.operit.ui.common.markdown.LocalResponseProcessExpanded
 import com.ai.assistance.operit.ui.common.markdown.ResponseActivityHeader
@@ -21,33 +27,44 @@ internal data class ResponseProcessGroup(
     val firstIndex: Int,
     val finalIndex: Int,
     val durationMs: Long,
+    val headerIndex: Int = firstIndex,
 )
 
 /** Agent input cards are part of the AI process; human steering stays outside the fold. */
 internal fun responseProcessGroups(messages: List<ChatMessage>): Map<Int, ResponseProcessGroup> {
     val result = mutableMapOf<Int, ResponseProcessGroup>()
     val pending = mutableListOf<Int>()
+    val leadingCards = mutableListOf<Int>()
     messages.forEachIndexed { index, message ->
-        if (message.sender != "ai") return@forEachIndexed
+        if (message.sender != "ai") {
+            if (pending.isEmpty()) {
+                if (message.displayMode.isCollaborationEvent) leadingCards += index
+                else leadingCards.clear()
+            }
+            return@forEachIndexed
+        }
         if (pending.isNotEmpty() && messages[pending.first()].sentAt != message.sentAt) {
             pending.clear()
+            leadingCards.clear()
         }
         if (message.sentAt > 0L &&
             message.displayMode == ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE
         ) {
             pending += index
         } else {
-            if (pending.isNotEmpty() &&
+            if ((pending.isNotEmpty() || leadingCards.isNotEmpty()) &&
+                message.sentAt > 0L &&
                 message.displayMode == ChatMessageDisplayMode.NORMAL &&
                 message.completedAt > 0L && message.contentStream == null
             ) {
                 val group = ResponseProcessGroup(
                     key = message.sentAt,
-                    firstIndex = pending.first(),
+                    firstIndex = leadingCards.firstOrNull() ?: pending.first(),
                     finalIndex = index,
                     durationMs = message.waitDurationMs + message.outputDurationMs,
+                    headerIndex = pending.firstOrNull() ?: index,
                 )
-                (pending.first()..index).forEach { member ->
+                (group.firstIndex..index).forEach { member ->
                     if (messages[member].sender == "ai" ||
                         messages[member].displayMode.isCollaborationEvent
                     ) {
@@ -56,6 +73,7 @@ internal fun responseProcessGroups(messages: List<ChatMessage>): Map<Int, Respon
                 }
             }
             pending.clear()
+            leadingCards.clear()
         }
     }
     return result
@@ -66,28 +84,98 @@ internal class ResponseProcessState(
     val isExpanded: (Long) -> Boolean,
     val toggle: (Long) -> Unit,
     val expand: (Long) -> Unit,
+    val hasMore: (Long) -> Boolean = { false },
+    val loadMore: suspend (Long) -> Unit = {},
+    val showSummary: Boolean = true,
+    val ready: Boolean = true,
 )
+
+/** Map complete transcript structure to a bounded body window, including card-only pages. */
+internal fun windowResponseProcessGroups(
+    messages: List<ChatMessage>,
+    metadata: List<ChatMessageProcessMetadata>,
+): Map<Int, ResponseProcessGroup> {
+    if (metadata.isEmpty()) return responseProcessGroups(messages)
+    val structuralMessages = metadata.associateBy { it.timestamp }.toMutableMap()
+    // A live/finalized row in memory is newer than the persisted metadata snapshot.
+    messages.forEach { message ->
+        structuralMessages[message.timestamp] = ChatMessageProcessMetadata(
+            message.timestamp, message.sender, message.displayMode.name, message.sentAt,
+            if (message.contentStream == null) message.completedAt else 0L,
+            message.waitDurationMs, message.outputDurationMs,
+        )
+    }
+    val structure = com.ai.assistance.operit.services.core.TranscriptStructure(
+        structuralMessages.values.sortedBy { it.timestamp })
+    val groupsByTimestamp = structure.turnByTimestamp
+    val windowMembers = messages.indices.filter { messages[it].timestamp in groupsByTimestamp }
+        .groupBy { groupsByTimestamp.getValue(messages[it].timestamp) }
+    return buildMap {
+        windowMembers.forEach { (group, members) ->
+            val visible = ResponseProcessGroup(
+                key = group.key,
+                durationMs = group.durationMs,
+                firstIndex = members.first(),
+                finalIndex = messages.indexOfFirst { it.timestamp == group.finalTimestamp },
+                headerIndex = members.firstOrNull { messages[it].sender == "ai" } ?: -1,
+            )
+            members.forEach { put(it, visible) }
+        }
+    }
+}
 
 @Composable
 internal fun rememberResponseProcessState(
     messages: List<ChatMessage>,
     chatId: String?,
     enabled: Boolean = true,
+    metadata: List<ChatMessageProcessMetadata> = emptyList(),
+    loadProcess: (suspend (Long) -> Unit)? = null,
 ): ResponseProcessState {
     val context = LocalContext.current
     val preferences = remember(context) { DisplayPreferencesManager.getInstance(context) }
-    val collapse by preferences.collapseCompletedProcess.collectAsState(initial = true)
+    val collapsePreference by remember(preferences) {
+        preferences.collapseCompletedProcess.map { it as Boolean? }
+    }.collectAsState(initial = null)
+    val collapse = collapsePreference ?: true
     val snapshot = messages.toList()
-    val groups = remember(snapshot, collapse, enabled) {
-        if (collapse && enabled) responseProcessGroups(snapshot) else emptyMap()
+    val allGroups = remember(snapshot, metadata) {
+        windowResponseProcessGroups(snapshot, metadata)
+    }
+    val groups = allGroups
+    val missingKeys = remember(metadata, snapshot) {
+        val present = snapshot.mapTo(hashSetOf()) { it.timestamp }
+        com.ai.assistance.operit.services.core.TranscriptStructure(metadata).turns
+            .filter { turn -> turn.memberTimestamps.any { it !in present } }
+            .mapTo(hashSetOf()) { it.key }
+    }
+    val scope = rememberCoroutineScope()
+    val currentLoad by rememberUpdatedState(loadProcess)
+    val expandedKeys = allGroups.values.map { it.key }.distinct().filter {
+        !collapse || !enabled || TranscriptExpansionState.isExpanded(chatId, processSectionId(it))
+    }
+    LaunchedEffect(chatId, expandedKeys, metadata, messages.map { it.timestamp }) {
+        expandedKeys.filter { key ->
+            allGroups.entries.none { (index, group) ->
+                group.key == key && index != group.finalIndex
+            }
+        }.forEach { currentLoad?.invoke(it) }
+    }
+    val expand: (Long) -> Unit = { key ->
+        TranscriptExpansionState.expand(chatId, processSectionId(key))
+        scope.launch { currentLoad?.invoke(key) }
     }
     return ResponseProcessState(
         groups,
         // An expanded section belongs to its conversation, not to the composition that shows it:
         // leaving the conversation must not fold the sections opened in it.
-        isExpanded = { key -> TranscriptExpansionState.isExpanded(chatId, processSectionId(key)) },
+        isExpanded = { key -> !collapse || !enabled || TranscriptExpansionState.isExpanded(chatId, processSectionId(key)) },
         toggle = { key -> TranscriptExpansionState.toggle(chatId, processSectionId(key)) },
-        expand = { key -> TranscriptExpansionState.expand(chatId, processSectionId(key)) },
+        expand = expand,
+        hasMore = { key -> key in missingKeys },
+        loadMore = { key -> currentLoad?.invoke(key) },
+        showSummary = collapse && enabled,
+        ready = collapsePreference != null,
     )
 }
 
@@ -98,18 +186,20 @@ internal fun ResponseProcessMessage(
     state: ResponseProcessState,
     index: Int,
     textColor: Color,
-    content: @Composable () -> Unit,
+    content: @Composable (Int) -> Unit,
 ) {
     val group = state.groups[index]
     if (group == null) {
-        Column { content() }
+        Column { content(index) }
         return
     }
     val expanded = state.isExpanded(group.key)
     Column {
-        if (index == group.firstIndex) {
-            CompositionLocalProvider(LocalResponseMessageSection provides ResponseMessageSection.HEADER) {
-                content()
+        if (index == group.firstIndex && state.showSummary) {
+            if (group.headerIndex >= 0) {
+                CompositionLocalProvider(LocalResponseMessageSection provides ResponseMessageSection.HEADER) {
+                    content(group.headerIndex)
+                }
             }
             ResponseActivityHeader(
                 durationMs = group.durationMs,
@@ -119,11 +209,14 @@ internal fun ResponseProcessMessage(
             )
         }
         if (expanded || index == group.finalIndex) {
+            if (expanded && index == group.finalIndex && state.hasMore(group.key)) {
+                LaunchedEffect(group.key, index) { state.loadMore(group.key) }
+            }
             CompositionLocalProvider(
                 LocalResponseProcessExpanded provides expanded,
-                LocalResponseMessageSection provides ResponseMessageSection.BODY,
+                LocalResponseMessageSection provides if (state.showSummary) ResponseMessageSection.BODY else ResponseMessageSection.ALL,
             ) {
-                content()
+                content(index)
             }
         }
     }

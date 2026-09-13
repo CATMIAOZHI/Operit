@@ -4276,6 +4276,18 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
     }
 
+    suspend fun loadChatMessageProcessMetadata(
+        chatId: String,
+    ): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata> =
+        withContext(Dispatchers.IO) { messageDao.getProcessMetadata(chatId) }
+
+    suspend fun loadChatMessagesByTimestamps(chatId: String, timestamps: List<Long>): List<ChatMessage> =
+        withContext(Dispatchers.IO) {
+            timestamps.distinct().chunked(400).flatMap { chunk ->
+                hydrateMessages(chatId, chatContentDao.getMessagesByTimestamps(chatId, chunk))
+            }.sortedBy { it.timestamp }
+        }
+
     suspend fun loadChatMessageLocatorPreviews(
         chatId: String,
         query: String = "",

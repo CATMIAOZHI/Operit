@@ -692,6 +692,7 @@ internal fun ChatMessagesView(
         chatCore?.currentChatIsLoadingDisplayWindow?.collectAsState(initial = false)
             ?: remember { mutableStateOf(false) }
     val currentChatId = currentChatIdState.value
+    val processMetadata = chatCore?.currentChatProcessMetadata?.collectAsState()?.value.orEmpty()
     val hasOlderDisplayHistory = hasOlderDisplayHistoryState.value
     val hasNewerDisplayHistory = hasNewerDisplayHistoryState.value
     val isLoadingDisplayWindow = isLoadingDisplayWindowState.value
@@ -755,6 +756,8 @@ internal fun ChatMessagesView(
     val responseProcessState =
         com.ai.assistance.operit.ui.features.chat.components.rememberResponseProcessState(
             floatContext.messages, currentChatId,
+            metadata = processMetadata,
+            loadProcess = { key -> chatCore?.loadTranscriptProcess(key) },
         )
     val renderItems = buildList<Any> {
         if (hasNewerDisplayHistory) {
@@ -843,13 +846,13 @@ internal fun ChatMessagesView(
 
                         com.ai.assistance.operit.ui.features.chat.components.ResponseProcessMessage(
                             responseProcessState, actualIndex, appearance.aiTextColor,
-                        ) {
+                        ) { messageIndex ->
                         FloatingMessageItem(
-                            index = actualIndex,
-                            message = item,
+                            index = messageIndex,
+                            message = floatContext.messages[messageIndex],
                             showAssistantHeader =
                                 !com.ai.assistance.operit.ui.features.chat.components.isAssistantContinuation(
-                                    floatContext.messages, actualIndex,
+                                    floatContext.messages, messageIndex,
                                 ),
                             appearance = appearance,
                             heightMemory = messageHeightMemory,

@@ -1864,6 +1864,8 @@
     <string name="avatar_mode">虚拟形象模式</string>
     <string name="loading_failed">加载失败: %1$s</string>
     <string name="loading">正在加载...</string>
+    <string name="chat_scroll_older">向上滑动查看更早的消息</string>
+    <string name="chat_scroll_newer">向下滑动查看较新的消息</string>
     <string name="floating_service_description">显示AI助手的悬浮窗服务</string>
     <string name="undo">撤销</string>
     <string name="redo">重做</string>

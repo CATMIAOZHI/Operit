@@ -133,6 +133,9 @@ internal fun rememberPersistedToolExecutions(
     messageKey: Long,
     content: String,
 ): Map<Int, PersistedToolExecution> {
+    com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.let {
+        return it.document.toolExecutions
+    }
     val state = remember(messageKey) {
         androidx.compose.runtime.mutableStateOf<Map<Int, PersistedToolExecution>>(emptyMap())
     }
@@ -951,7 +954,18 @@ private fun SubagentTaskStatusDisplay(
                 null -> flowOf(null)
             }
         }
-    val run by runFlow.collectAsState(initial = null)
+    val sharedRuns = com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptRuns.current
+        ?.takeIf { it.chatId == parentChatId }
+    val run = if (sharedRuns != null) {
+        when (val lookup = resolveSubagentRunLookup(requestedSubagentTaskId, parentChatId, callId)) {
+            is SubagentRunLookup.TaskId -> sharedRuns.runs.firstOrNull { it.id == lookup.taskId }
+            is SubagentRunLookup.ParentCall -> sharedRuns.runs.lastOrNull {
+                it.parentToolCallId == lookup.callId &&
+                    it.agentProfileId != com.ai.assistance.operit.core.agent.AgentProfileRepository.PERMISSION_REVIEWER_ID
+            }
+            null -> null
+        }
+    } else runFlow.collectAsState(initial = null).value
 
     if (run == null) {
         var fallbackElapsedMs by
@@ -1050,7 +1064,7 @@ private fun SubagentTaskStatusDisplay(
         remember(resolvedRun.parentChatId) {
             repository.observeByParentChatId(resolvedRun.parentChatId)
         }
-    val parentRuns by parentRunsFlow.collectAsState(initial = emptyList())
+    val parentRuns = sharedRuns?.runs ?: parentRunsFlow.collectAsState(initial = emptyList()).value
     val processingStates by chatCore.inputProcessingStateByChatId.collectAsState()
     val lastToolNames by chatCore.lastToolNameByChatId.collectAsState()
     val lastTurnToolInvocationCounts by
