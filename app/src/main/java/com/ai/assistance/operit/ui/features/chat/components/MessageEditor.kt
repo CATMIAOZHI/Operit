@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -932,8 +933,8 @@ private fun TagEditorDialog(
                 OutlinedTextField(
                     value = attributes,
                     onValueChange = { attributes = it },
-                    label = { Text(context.getString(R.string.attributes_optional), style=MaterialTheme.typography.bodySmall) },
-                    placeholder = { Text(context.getString(R.string.attributes_example)) },
+                    label = { Text(stringResource(R.string.attributes_optional), style=MaterialTheme.typography.bodySmall) },
+                    placeholder = { Text(stringResource(R.string.attributes_example)) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     textStyle = MaterialTheme.typography.bodyMedium,
@@ -949,7 +950,7 @@ private fun TagEditorDialog(
                 OutlinedTextField(
                     value = content,
                     onValueChange = { content = it },
-                    label = { Text(context.getString(R.string.content_label), style=MaterialTheme.typography.bodySmall) },
+                    label = { Text(stringResource(R.string.content_label), style=MaterialTheme.typography.bodySmall) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(120.dp),
@@ -982,7 +983,7 @@ private fun TagEditorDialog(
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(
-                            context.getString(R.string.cancel),
+                            stringResource(R.string.cancel),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
                         )
@@ -997,7 +998,7 @@ private fun TagEditorDialog(
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(
-                            context.getString(R.string.save),
+                            stringResource(R.string.save),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
                         )
