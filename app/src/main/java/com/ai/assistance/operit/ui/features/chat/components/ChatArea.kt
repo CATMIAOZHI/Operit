@@ -203,7 +203,6 @@ fun ChatArea(
     isLoadingDisplayWindow: Boolean = false,
     onLoadOlderDisplayWindow: (() -> Unit)? = null,
     onLoadNewerDisplayWindow: (() -> Unit)? = null,
-    onTranscriptViewport: ((String, Set<Long>) -> Unit)? = null,
     onShowLatestDisplayWindow: (() -> Unit)? = null,
     loadMessageLocatorEntries: (suspend (String, String) -> List<ChatMessageLocatorPreview>)? = null,
     onRevealMessageForLocator: (suspend (Long) -> Boolean)? = null,
@@ -316,7 +315,6 @@ fun ChatArea(
         loadingPage = isLoadingDisplayWindow,
         onOlder = onLoadOlderDisplayWindow,
         onNewer = onLoadNewerDisplayWindow,
-        onViewport = onTranscriptViewport,
         splitMarkdown = chatStyle == ChatStyle.CURSOR ||
             (bubbleAiImageStyle == null && !bubbleAiBubbleLiquidGlass && !bubbleAiBubbleWaterGlass),
         onLatest = onShowLatestDisplayWindow,

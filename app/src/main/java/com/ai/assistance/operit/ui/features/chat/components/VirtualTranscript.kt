@@ -68,7 +68,6 @@ internal fun VirtualTranscript(
     loadingPage: Boolean,
     onOlder: (() -> Unit)?,
     onNewer: (() -> Unit)?,
-    onViewport: ((String, Set<Long>) -> Unit)? = null,
     onLatest: (() -> Unit)?,
     loadLocator: (suspend (String, String) -> List<ChatMessageLocatorPreview>)?,
     reveal: (suspend (Long) -> Boolean)?,
@@ -160,7 +159,6 @@ internal fun VirtualTranscript(
     val currentRows by rememberUpdatedState(rows)
     val currentBaseRows by rememberUpdatedState(baseRows)
     val currentMessages by rememberUpdatedState(messages)
-    val currentViewport by rememberUpdatedState(onViewport)
     val prepareCandidates by remember(listState) { derivedStateOf {
         val indices = listState.layoutInfo.visibleItemsInfo.mapNotNull {
             currentRows.getOrNull(it.index)?.messageIndex?.takeIf { index -> index >= 0 }
@@ -212,13 +210,6 @@ internal fun VirtualTranscript(
         } else if (restoreTimestamp == null) {
             restoring = false
         }
-    }
-    LaunchedEffect(chatId, listState) {
-        snapshotFlow {
-            listState.layoutInfo.visibleItemsInfo.mapNotNull { item ->
-                currentRows.getOrNull(item.index)?.let { currentMessages.getOrNull(it.messageIndex)?.timestamp }
-            }.toSet()
-        }.distinctUntilChanged().collect { currentViewport?.invoke(chatId, it) }
     }
     val connection = remember(chatId, listState) {
         object : NestedScrollConnection {

@@ -809,10 +809,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    fun updateTranscriptViewport(chatId: String, timestamps: Set<Long>) {
-        chatHistoryDelegate.updateTranscriptViewport(chatId, timestamps)
-    }
-
     fun clearCurrentChat() {
         chatHistoryDelegate.clearCurrentChat { deleted, deletedChatId ->
             if (deleted) {
