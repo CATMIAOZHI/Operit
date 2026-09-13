@@ -1,27 +1,26 @@
 package com.ai.assistance.operit.services.core
 
-/** A soft window protects the current viewport and its read-ahead buffer before evicting data. */
-internal fun transcriptWindowRange(
-    timestamps: List<Long>,
-    visible: Set<Long>,
-    preferNewer: Boolean,
-    targetSize: Int = 160,
-    buffer: Int = 24,
-): IntRange {
-    if (timestamps.isEmpty()) return IntRange.EMPTY
-    if (timestamps.size <= targetSize) return timestamps.indices
-    val protected = timestamps.indices.filter { timestamps[it] in visible }
-    if (protected.isEmpty()) {
-        // Without a measured viewport, dropping rows can destroy an in-flight restore.
-        return timestamps.indices
-    }
-    val first = (protected.first() - buffer).coerceAtLeast(0)
-    val last = (protected.last() + buffer).coerceAtMost(timestamps.lastIndex)
-    val size = maxOf(targetSize, last - first + 1)
-    val start = if (preferNewer) {
-        maxOf(0, minOf(first, timestamps.size - size))
-    } else {
-        minOf(first, (last - size + 1).coerceAtLeast(0))
-    }
-    return start..maxOf(last, (start + size - 1).coerceAtMost(timestamps.lastIndex))
+import com.ai.assistance.operit.data.model.ChatMessage
+
+/** Paging expands the loaded range; concurrent in-memory updates win over the fetched page. */
+internal fun mergeLoadedTranscriptMessages(
+    current: List<ChatMessage>,
+    incoming: List<ChatMessage>,
+): List<ChatMessage> =
+    (incoming + current).associateBy { it.timestamp }.values.sortedBy { it.timestamp }
+
+/** Keep loaded history across refreshes, without restoring deleted bodies from stale memory. */
+internal fun retainedTranscriptReloadTimestamps(
+    structure: TranscriptStructure,
+    loaded: List<Long>,
+    hasNewer: Boolean,
+): List<Long> {
+    if (loaded.isEmpty()) return emptyList()
+    val loadedSet = loaded.toHashSet()
+    val start = loaded.min()
+    val end = if (hasNewer) loaded.max() else Long.MAX_VALUE
+    val topLevel = structure.topLevelRows.asSequence()
+        .filter { it.timestamp in start..end }.map { it.timestamp }.toSet()
+    return structure.rows.filter { it.timestamp in loadedSet || it.timestamp in topLevel }
+        .map { it.timestamp }
 }

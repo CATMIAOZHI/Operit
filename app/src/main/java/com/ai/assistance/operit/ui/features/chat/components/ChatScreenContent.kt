@@ -281,7 +281,6 @@ fun ChatScreenContent(
                         onLoadOlderDisplayWindow = {
                             actualViewModel.loadOlderMessagesForCurrentChat()
                         },
-                        onTranscriptViewport = actualViewModel::updateTranscriptViewport,
                         onLoadNewerDisplayWindow = {
                             actualViewModel.loadNewerMessagesForCurrentChat()
                         },
@@ -415,7 +414,6 @@ fun ChatScreenContent(
                         onLoadOlderDisplayWindow = {
                             actualViewModel.loadOlderMessagesForCurrentChat()
                         },
-                        onTranscriptViewport = actualViewModel::updateTranscriptViewport,
                         onLoadNewerDisplayWindow = {
                             actualViewModel.loadNewerMessagesForCurrentChat()
                         },

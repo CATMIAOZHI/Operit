@@ -58,6 +58,18 @@ internal class CurrentChatWindowController {
         _isLoadingDisplayWindow.value = false
     }
 
+    fun tryApplyLoadResult(
+        result: CurrentChatWindowLoadResult,
+        chatHistoryFlow: MutableStateFlow<List<ChatMessage>>,
+        token: Long,
+        expectedMessages: List<ChatMessage>? = null,
+    ): Boolean {
+        if (!isCurrent(token) ||
+            (expectedMessages != null && chatHistoryFlow.value !== expectedMessages)) return false
+        applyLoadResult(result, chatHistoryFlow)
+        return true
+    }
+
     fun applyMessages(
         messages: List<ChatMessage>,
         chatHistoryFlow: MutableStateFlow<List<ChatMessage>>,
