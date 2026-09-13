@@ -79,6 +79,7 @@ import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.ui.features.chat.components.part.formatToolExecutionDuration
 import com.ai.assistance.operit.ui.features.chat.components.part.resolveSubagentDisplayedTool
+import com.ai.assistance.operit.ui.theme.stoppedAttention
 import com.ai.assistance.operit.ui.permissions.PermissionReviewOutcome
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEvent
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
@@ -95,6 +96,7 @@ internal enum class SubagentListFilter {
     QUEUED,
     COMPLETED,
     AUTO_REVIEW,
+    INTERRUPTED,
     ERROR,
     ARCHIVED,
 }
@@ -109,6 +111,7 @@ internal enum class PermissionReviewRunDisplayState {
     DENIED,
     INVALID_OUTPUT,
     CANCELLED_OR_TIMED_OUT,
+    INTERRUPTED,
     ERROR,
 }
 
@@ -144,8 +147,8 @@ internal suspend fun resolvePermissionReviewRunDisplayState(
             }
         }
         SubagentRunStatus.CANCELLED -> PermissionReviewRunDisplayState.CANCELLED_OR_TIMED_OUT
-        SubagentRunStatus.FAILED,
-        SubagentRunStatus.INTERRUPTED -> PermissionReviewRunDisplayState.ERROR
+        SubagentRunStatus.FAILED -> PermissionReviewRunDisplayState.ERROR
+        SubagentRunStatus.INTERRUPTED -> PermissionReviewRunDisplayState.INTERRUPTED
         SubagentRunStatus.CREATED,
         SubagentRunStatus.QUEUED,
         SubagentRunStatus.RUNNING -> null
@@ -181,11 +184,14 @@ internal fun filterAndSortSubagentRuns(
                             !isAutoReview &&
                             status == SubagentRunStatus.COMPLETED
                     SubagentListFilter.AUTO_REVIEW -> run.archivedAt == null && isAutoReview
+                    SubagentListFilter.INTERRUPTED ->
+                        run.archivedAt == null &&
+                            !isAutoReview &&
+                            status == SubagentRunStatus.INTERRUPTED
                     SubagentListFilter.ERROR ->
                         run.archivedAt == null &&
                             !isAutoReview &&
-                            (status == SubagentRunStatus.FAILED ||
-                                status == SubagentRunStatus.INTERRUPTED)
+                            status == SubagentRunStatus.FAILED
                     SubagentListFilter.ARCHIVED -> run.archivedAt != null
                 }
             matchesFilter &&
@@ -1055,6 +1061,7 @@ private fun SubagentFilterRow(
             ),
             listOf(
                 SubagentListFilter.AUTO_REVIEW,
+                SubagentListFilter.INTERRUPTED,
                 SubagentListFilter.ERROR,
                 SubagentListFilter.ARCHIVED,
             ),
@@ -1107,6 +1114,7 @@ private fun subagentFilterLabel(filter: SubagentListFilter): String =
         SubagentListFilter.QUEUED -> stringResource(R.string.subagent_filter_queued)
         SubagentListFilter.COMPLETED -> stringResource(R.string.subagent_filter_completed)
         SubagentListFilter.AUTO_REVIEW -> stringResource(R.string.subagent_filter_auto_review)
+        SubagentListFilter.INTERRUPTED -> stringResource(R.string.subagent_filter_interrupted)
         SubagentListFilter.ERROR -> stringResource(R.string.subagent_filter_error)
         SubagentListFilter.ARCHIVED -> stringResource(R.string.subagent_filter_archived)
     }
@@ -1228,9 +1236,11 @@ private fun SubagentRunRow(
             PermissionReviewRunDisplayState.INVALID_OUTPUT,
             PermissionReviewRunDisplayState.CANCELLED_OR_TIMED_OUT,
             PermissionReviewRunDisplayState.ERROR -> MaterialTheme.colorScheme.error
+            PermissionReviewRunDisplayState.INTERRUPTED ->
+                MaterialTheme.colorScheme.stoppedAttention
             null -> when (status) {
-            SubagentRunStatus.FAILED,
-            SubagentRunStatus.INTERRUPTED -> MaterialTheme.colorScheme.error
+            SubagentRunStatus.FAILED -> MaterialTheme.colorScheme.error
+            SubagentRunStatus.INTERRUPTED -> MaterialTheme.colorScheme.stoppedAttention
             SubagentRunStatus.RUNNING -> MaterialTheme.colorScheme.primary
             SubagentRunStatus.QUEUED -> MaterialTheme.colorScheme.tertiary
             else -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -1379,6 +1389,8 @@ private fun permissionReviewRunStatusText(state: PermissionReviewRunDisplayState
             stringResource(R.string.permission_review_status_invalid)
         PermissionReviewRunDisplayState.CANCELLED_OR_TIMED_OUT ->
             stringResource(R.string.permission_review_status_timeout_or_cancelled)
+        PermissionReviewRunDisplayState.INTERRUPTED ->
+            stringResource(R.string.subagent_status_interrupted)
         PermissionReviewRunDisplayState.ERROR ->
             stringResource(R.string.permission_review_status_error)
     }
@@ -1400,8 +1412,9 @@ private fun subagentRunStatusText(
         // The tool count and the rest of the run statistics follow as their own line fragment.
         SubagentRunStatus.COMPLETED -> stringResource(R.string.subagent_status_completed)
         SubagentRunStatus.CANCELLED -> stringResource(R.string.subagent_status_cancelled)
-        SubagentRunStatus.FAILED,
-        SubagentRunStatus.INTERRUPTED -> stringResource(R.string.subagent_status_error)
+        SubagentRunStatus.FAILED -> stringResource(R.string.subagent_status_error)
+        SubagentRunStatus.INTERRUPTED ->
+            stringResource(R.string.subagent_status_interrupted)
     }
 
 @Composable

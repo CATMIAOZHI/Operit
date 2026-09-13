@@ -1502,7 +1502,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     completedAt = if (wasActive) now else run.completedAt,
                     error =
                         if (wasActive) {
-                            "Imported while the Subagent task was incomplete."
+                            SubagentInterruption.ARCHIVE_IMPORT
                         } else {
                             run.error
                         },

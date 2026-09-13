@@ -6,6 +6,7 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import com.ai.assistance.operit.data.preferences.ThemePreferenceSnapshot
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_AUTO
@@ -92,6 +93,15 @@ private val RainyLightColorScheme =
 
 internal fun rainyBaseColorScheme(darkTheme: Boolean): ColorScheme =
     if (darkTheme) RainyDarkColorScheme else RainyLightColorScheme
+
+/**
+ * The tone for something that stopped without failing, such as a Subagent run an app restart cut
+ * short. It is deliberately neither `error` nor `tertiary`: this palette paints the light theme's
+ * tertiary with the very rose it paints `error`, so a stopped run would still read as one that went
+ * wrong. The warning hue says "look at this" without saying "this broke".
+ */
+val ColorScheme.stoppedAttention: Color
+    get() = if (background.luminance() > 0.5f) RainyWarningTextLight else RainyWarning
 
 fun resolveThemeColorScheme(
     context: Context,

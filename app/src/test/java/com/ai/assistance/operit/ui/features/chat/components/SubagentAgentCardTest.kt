@@ -6,6 +6,7 @@ import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinato
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.ChatMessageDisplayMode
 import com.ai.assistance.operit.data.model.SubagentRunEntity
+import com.ai.assistance.operit.data.repository.SubagentInterruption
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -66,7 +67,10 @@ class SubagentAgentCardTest {
             subagentCardState(runStatus = "COMPLETED").status,
         )
         assertEquals(SubagentCardStatus.FAILED, subagentCardState(runStatus = "FAILED").status)
-        assertEquals(SubagentCardStatus.FAILED, subagentCardState(runStatus = "INTERRUPTED").status)
+        assertEquals(
+            SubagentCardStatus.INTERRUPTED,
+            subagentCardState(runStatus = "INTERRUPTED").status,
+        )
         assertEquals(
             SubagentCardStatus.CANCELLED,
             subagentCardState(runStatus = "CANCELLED").status,
@@ -215,6 +219,53 @@ class SubagentAgentCardTest {
         assertNull(subagentFailureText(SubagentCardStatus.COMPLETED, "boom"))
         // A run the user stopped is not a failure to explain.
         assertNull(subagentFailureText(SubagentCardStatus.CANCELLED, "stopped"))
+        // Neither is a run the app stopped for the user.
+        assertNull(subagentFailureText(SubagentCardStatus.INTERRUPTED, "stopped by restart"))
+    }
+
+    @Test fun onlyAnInterruptedRunExplainsWhyItStopped() {
+        assertNull(subagentInterruptionHintRes(SubagentCardStatus.FAILED, "boom"))
+        assertNull(subagentInterruptionHintRes(SubagentCardStatus.COMPLETED, "boom"))
+        assertNull(subagentInterruptionHintRes(SubagentCardStatus.CANCELLED, "stopped"))
+
+        // Each stored reason keeps its own wording instead of every stop reading as a restart.
+        assertEquals(
+            R.string.subagent_interrupted_app_restart,
+            subagentInterruptionHintRes(
+                SubagentCardStatus.INTERRUPTED,
+                SubagentInterruption.APP_RESTART,
+            ),
+        )
+        assertEquals(
+            R.string.subagent_interrupted_archive_import,
+            subagentInterruptionHintRes(
+                SubagentCardStatus.INTERRUPTED,
+                SubagentInterruption.ARCHIVE_IMPORT,
+            ),
+        )
+        assertEquals(
+            R.string.subagent_interrupted_chat_branch,
+            subagentInterruptionHintRes(
+                SubagentCardStatus.INTERRUPTED,
+                SubagentInterruption.CHAT_BRANCH,
+            ),
+        )
+        assertEquals(
+            R.string.subagent_interrupted_reading_companion,
+            subagentInterruptionHintRes(
+                SubagentCardStatus.INTERRUPTED,
+                SubagentInterruption.READING_COMPANION,
+            ),
+        )
+        // A reason this build does not know still explains itself rather than showing nothing.
+        assertEquals(
+            R.string.subagent_interrupted_unknown,
+            subagentInterruptionHintRes(SubagentCardStatus.INTERRUPTED, null),
+        )
+        assertEquals(
+            R.string.subagent_interrupted_unknown,
+            subagentInterruptionHintRes(SubagentCardStatus.INTERRUPTED, "some other reason"),
+        )
     }
 
     private fun openCard(chatId: String?) {
@@ -224,6 +275,7 @@ class SubagentAgentCardTest {
             avatarUri = null,
             statusText = "completed",
             failureText = null,
+            interruptionText = null,
             identity = subagentAgentIdentity("/root/worker"),
             statusColor = Color(0xFF112233),
             body = "the answer",

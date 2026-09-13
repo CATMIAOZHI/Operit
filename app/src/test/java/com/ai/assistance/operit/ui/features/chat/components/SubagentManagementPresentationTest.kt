@@ -163,7 +163,7 @@ class SubagentManagementPresentationTest {
     }
 
     @Test
-    fun errorFilterShowsOnlyFailedOrInterruptedOrdinaryRuns() {
+    fun errorAndInterruptedFiltersStaySeparate() {
         val failed = run(id = "failed", status = SubagentRunStatus.FAILED, createdAt = 30)
         val interrupted =
             run(id = "interrupted", status = SubagentRunStatus.INTERRUPTED, createdAt = 20)
@@ -177,10 +177,19 @@ class SubagentManagementPresentationTest {
             )
 
         assertEquals(
-            listOf("failed", "interrupted"),
+            listOf("failed"),
             filterAndSortSubagentRuns(
                     listOf(failed, interrupted, cancelled, failedReview),
                     SubagentListFilter.ERROR,
+                )
+                .map { it.id },
+        )
+        // A run the app stopped is not an error, so it is looked up where it is named.
+        assertEquals(
+            listOf("interrupted"),
+            filterAndSortSubagentRuns(
+                    listOf(failed, interrupted, cancelled, failedReview),
+                    SubagentListFilter.INTERRUPTED,
                 )
                 .map { it.id },
         )
@@ -274,6 +283,15 @@ class SubagentManagementPresentationTest {
             assertEquals(
                 PermissionReviewRunDisplayState.CANCELLED_OR_TIMED_OUT,
                 resolvePermissionReviewRunDisplayState(SubagentRunStatus.CANCELLED, null),
+            )
+            // A review the app stopped is not a review that failed.
+            assertEquals(
+                PermissionReviewRunDisplayState.INTERRUPTED,
+                resolvePermissionReviewRunDisplayState(SubagentRunStatus.INTERRUPTED, null),
+            )
+            assertEquals(
+                PermissionReviewRunDisplayState.ERROR,
+                resolvePermissionReviewRunDisplayState(SubagentRunStatus.FAILED, null),
             )
         }
     }

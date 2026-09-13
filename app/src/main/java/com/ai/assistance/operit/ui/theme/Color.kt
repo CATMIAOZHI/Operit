@@ -26,3 +26,10 @@ val RainyDarkBorder = Color(0xFF4D3A42)
 val RainySuccess = Color(0xFF66BB6A)
 val RainyWarning = Color(0xFFFFA726)
 val RainyInfo = Color(0xFF64B5F6)
+
+/**
+ * The warning hue kept legible as small text on the light background. RainyWarning is a decorative
+ * orange with too little contrast there to be read as a label, and a stopped run's label also lands
+ * on the selected row's tinted container, which is the darkest surface it is drawn on.
+ */
+val RainyWarningTextLight = Color(0xFF963F12)

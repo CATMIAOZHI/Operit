@@ -2516,7 +2516,8 @@ class ReadingCompanionStore(context: Context) :
                             taskId = subagentRunId,
                             status = com.ai.assistance.operit.data.model.SubagentRunStatus.INTERRUPTED,
                             error =
-                                "Reading companion run was reconciled as missing after restart.",
+                                com.ai.assistance.operit.data.repository.SubagentInterruption
+                                    .READING_COMPANION,
                         )
                     } catch (_: Throwable) {
                         false
