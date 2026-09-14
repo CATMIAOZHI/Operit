@@ -14,6 +14,7 @@ internal class ChatFollowScrollConnection(
     private val isAtLatestBottom: () -> Boolean,
     private val onUserScroll: () -> Unit,
     private val onFollowingChange: (Boolean) -> Unit,
+    private val onScrollDirection: (Float) -> Unit = {},
 ) : NestedScrollConnection {
     var followingAllowed = true
     var userScrollInProgress by mutableStateOf(false)
@@ -38,6 +39,12 @@ internal class ChatFollowScrollConnection(
         available: Offset,
         source: NestedScrollSource,
     ): Offset {
+        if (source == NestedScrollSource.UserInput) {
+            val movement = positionBeforeScroll - position()
+            if (movement != 0 || available.y != 0f) {
+                onScrollDirection(if (movement != 0) movement.toFloat() else available.y)
+            }
+        }
         // Scrolling inside a thinking/tool panel must not re-enable following merely
         // because the surrounding transcript happens to be at its bottom.
         if (userScrollInProgress && position() > positionBeforeScroll && isAtLatestBottom()) {

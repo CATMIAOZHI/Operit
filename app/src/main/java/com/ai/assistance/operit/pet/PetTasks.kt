@@ -9,6 +9,8 @@ import androidx.core.content.ContextCompat
 import com.ai.assistance.operit.services.FloatingChatService
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
+import com.ai.assistance.operit.data.model.ChatHistory
+import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.ui.main.MainActivity
 import kotlinx.coroutines.*
@@ -16,7 +18,16 @@ import kotlinx.coroutines.flow.*
 
 enum class PetActivity { IDLE, THINKING, TOOL, SUMMARIZING, COMPLETE, ERROR, ENDED }
 
-private data class PetChatMetadata(val title: String, val hidden: Boolean)
+internal data class PetChatMetadata(val title: String, val hidden: Boolean, val subagent: Boolean) {
+    /**
+     * Hidden chats stay out of ordinary UI, and a subagent chat is another agent's read-only
+     * transcript rather than a conversation the user drives. Neither is a pet task.
+     */
+    val petVisible: Boolean get() = !hidden && !subagent
+}
+
+internal fun petChatMetadataOf(chat: ChatHistory): PetChatMetadata =
+    PetChatMetadata(chat.title, chat.isHidden, chat.chatKind == ChatKind.SUBAGENT.name)
 
 data class PetTask(
     val key: String,
@@ -48,16 +59,23 @@ class PetTasks private constructor(private val context: Context) {
     val tasks = mutableTasks.asStateFlow()
     val appVisible = MutableStateFlow(false)
     val selectedKey = MutableStateFlow<String?>(null)
+    /**
+     * Completed runs the pet no longer has to show: the user confirmed the card on the panel, or
+     * the main screen already displayed that conversation. The chat returns with its next run.
+     */
     private val acknowledgedRuns = MutableStateFlow<Map<String, Long>>(emptyMap())
     val visibleTasks = combine(tasks, acknowledgedRuns) { current, acknowledged ->
-        current.map { task -> acknowledgedPetTask(task, acknowledged[task.key]) }
+        visiblePetTasks(current, acknowledged)
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     fun acknowledgeCompletion(task: PetTask) {
-        val current = tasks.value.firstOrNull { it.key == task.key } ?: return
-        if (current.startedOrder != task.startedOrder || current.active || current.activity != PetActivity.COMPLETE) return
-        acknowledgedRuns.value = acknowledgedRuns.value + (current.key to current.startedOrder)
-        selectedKey.value = current.key
+        val current = tasks.value.firstOrNull { it.key == task.key && it.startedOrder == task.startedOrder }
+            ?: return
+        val acknowledged = acknowledgedRuns.value + (current.key to current.startedOrder)
+        if (!current.isAcknowledged(acknowledged)) return
+        acknowledgedRuns.value = acknowledged
+        // The confirmed card is gone, so the pet moves on to a task that is still listed.
+        selectedKey.value = visiblePetTasks(tasks.value, acknowledged).lastOrNull()?.key
     }
 
     fun acknowledgeViewedChat(chatId: String) {
@@ -66,6 +84,13 @@ class PetTasks private constructor(private val context: Context) {
         if (viewed.isNotEmpty()) {
             acknowledgedRuns.value = acknowledgedRuns.value +
                 viewed.associate { it.key to it.startedOrder }
+        }
+    }
+
+    /** A confirmation only means something while the run it refers to is still known. */
+    private fun pruneStaleConfirmations() {
+        acknowledgedRuns.value = acknowledgedRuns.value.filter { (key, order) ->
+            mutableTasks.value.any { it.key == key && it.startedOrder == order }
         }
     }
 
@@ -90,12 +115,10 @@ class PetTasks private constructor(private val context: Context) {
                                 fun publish() {
                                     bySlot[slot] = runs.values.toList()
                                     mutableTasks.value = bySlot.values.flatten().sortedBy { it.startedOrder }
-                                    acknowledgedRuns.value = acknowledgedRuns.value.filter { (key, order) ->
-                                        mutableTasks.value.any { it.key == key && it.startedOrder == order }
-                                    }
+                                    pruneStaleConfirmations()
                                 }
                                 val metadataFlow = core.chatHistories.map { histories ->
-                                    histories.associate { it.id to PetChatMetadata(it.title, it.isHidden) }
+                                    histories.associate { it.id to petChatMetadataOf(it) }
                                 }.distinctUntilChanged()
                                 combine(core.activeStreamingChatIds, core.inputProcessingStateByChatId, metadataFlow) {
                                     active, states, metadata -> Triple(active, states, metadata)
@@ -108,11 +131,11 @@ class PetTasks private constructor(private val context: Context) {
                                         val previous = runs[chatId]
                                         val metadata = metadataCache[chatId] ?: (
                                             metadataSnapshot[chatId] ?: core.getChatMetadata(chatId)?.let {
-                                                PetChatMetadata(it.title, it.isHidden)
+                                                petChatMetadataOf(it)
                                             }
                                         )?.also { metadataCache[chatId] = it }
-                                        // Internal audit chats are intentionally absent from ordinary UI.
-                                        if (metadata == null || metadata.hidden) {
+                                        // Internal audit chats and subagent transcripts are absent from ordinary UI.
+                                        if (metadata == null || !metadata.petVisible) {
                                             runs.remove(chatId)
                                             continue
                                         }
@@ -135,10 +158,10 @@ class PetTasks private constructor(private val context: Context) {
                                     runs.toMap().forEach { (chatId, previous) ->
                                         val metadata = metadataCache[chatId] ?: (
                                             metadataSnapshot[chatId] ?: core.getChatMetadata(chatId)?.let {
-                                                PetChatMetadata(it.title, it.isHidden)
+                                                petChatMetadataOf(it)
                                             }
                                         )?.also { metadataCache[chatId] = it }
-                                        if (metadata == null || metadata.hidden) {
+                                        if (metadata == null || !metadata.petVisible) {
                                             runs.remove(chatId)
                                             return@forEach
                                         }
@@ -187,8 +210,25 @@ class PetTasks private constructor(private val context: Context) {
             return
         }
         val slot = task?.slot ?: FloatingChatService.getInstance()?.currentChatSlot ?: ChatRuntimeSlot.MAIN
-        val chatId = task?.chatId
-            ?: ChatRuntimeHolder.getInstance(context).getCore(slot).currentChatId.value
+        if (task != null) {
+            startFloatingChat(slot, task.chatId)
+            return
+        }
+        scope.launch {
+            val core = ChatRuntimeHolder.getInstance(context).getCore(slot)
+            // Nothing is selected in that runtime: stay on the last conversation the pet knew, so
+            // dismissing the only completed card still opens that conversation.
+            val currentChatId = core.currentChatId.value ?: tasks.value.lastOrNull { it.slot == slot }?.chatId
+            val current = currentChatId?.let { core.getChatMetadata(it) }
+            // The pet never opens a subagent transcript; fall back to the parent conversation.
+            startFloatingChat(
+                slot,
+                if (current?.chatKind == ChatKind.SUBAGENT.name) current.parentChatId else currentChatId,
+            )
+        }
+    }
+
+    private fun startFloatingChat(slot: ChatRuntimeSlot, chatId: String?) {
         ContextCompat.startForegroundService(context, Intent(context, FloatingChatService::class.java).apply {
             putExtra(FloatingChatService.EXTRA_CHAT_SLOT, slot.name)
             putExtra(FloatingChatService.EXTRA_CHAT_ID, chatId)
@@ -207,10 +247,13 @@ class PetTasks private constructor(private val context: Context) {
     }
 }
 
-internal fun acknowledgedPetTask(task: PetTask, acknowledgedOrder: Long?): PetTask =
-    if (!task.active && task.activity == PetActivity.COMPLETE && task.startedOrder == acknowledgedOrder) {
-        task.copy(activity = PetActivity.IDLE)
-    } else task
+/** A confirmed run leaves the pet task list; the conversation returns with its next run. */
+internal fun PetTask.isAcknowledged(acknowledgedRuns: Map<String, Long>): Boolean =
+    !active && activity == PetActivity.COMPLETE && startedOrder == acknowledgedRuns[key]
+
+/** Only what still needs attention stays in the list the pet shows. */
+internal fun visiblePetTasks(tasks: List<PetTask>, acknowledgedRuns: Map<String, Long>): List<PetTask> =
+    tasks.filterNot { it.isAcknowledged(acknowledgedRuns) }
 
 internal fun shouldAcknowledgeViewedPetTask(task: PetTask, chatId: String): Boolean =
     task.slot == ChatRuntimeSlot.MAIN && task.chatId == chatId &&

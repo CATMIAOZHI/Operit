@@ -50,16 +50,25 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.core.agent.AgentProfileRepository
+import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingKey
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingRepository
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingSnapshot
 import com.ai.assistance.operit.data.model.InputProcessingState
+import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
+import com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptRuns
+import com.ai.assistance.operit.ui.features.chat.components.SubagentAgentCard
+import com.ai.assistance.operit.ui.features.chat.components.SubagentCardStatus
+import com.ai.assistance.operit.ui.features.chat.components.agentBadgeSeed
+import com.ai.assistance.operit.ui.features.chat.components.subagentAgentIdentity
+import com.ai.assistance.operit.ui.features.chat.components.subagentInterruptionHintRes
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEvent
 import com.ai.assistance.operit.ui.permissions.PermissionReviewAuthorization
+import com.ai.assistance.operit.ui.theme.stoppedAttention
 import com.ai.assistance.operit.ui.permissions.PermissionReviewExactOverrideState
 import com.ai.assistance.operit.ui.permissions.PermissionReviewFailureKind
 import com.ai.assistance.operit.ui.permissions.PermissionReviewRiskLevel
@@ -126,6 +135,9 @@ internal fun rememberPersistedToolExecutions(
     messageKey: Long,
     content: String,
 ): Map<Int, PersistedToolExecution> {
+    com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.let {
+        return it.document.toolExecutions
+    }
     val state = remember(messageKey) {
         androidx.compose.runtime.mutableStateOf<Map<Int, PersistedToolExecution>>(emptyMap())
     }
@@ -239,6 +251,7 @@ internal fun ToolExecutionStatusDisplay(
     requestedToolName: String? = null,
     requestedSubagentName: String? = null,
     requestedSubagentTaskId: String? = null,
+    requestedSubagentTask: String? = null,
 ) {
     val context = LocalContext.current
     remember(context) { PermissionReviewEventRepository.initialize(context); true }
@@ -295,6 +308,23 @@ internal fun ToolExecutionStatusDisplay(
             modifier = Modifier,
         )
         }
+        return
+    }
+
+    val callKind = subagentCallKind(toolName)
+    if (callKind != null) {
+        val success = liveExecution?.success ?: persistedExecution?.success ?: false
+        SubagentCallStatusDisplay(
+            callKind = callKind,
+            callId = liveExecution?.callId ?: persistedExecution?.callId,
+            fallbackState = state,
+            executionSuccess = success,
+            executionResultText = resolveResultText(liveExecution, persistedExecution, success),
+            requestedAgentName = requestedSubagentName,
+            bodyText = requestedSubagentTask?.takeIf { it.isNotBlank() },
+            reviewEvent = reviewEvent,
+            modifier = modifier,
+        )
         return
     }
 
@@ -596,6 +626,8 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
                                         R.string.subagent_status_completed
                                     SubagentRunStatus.CANCELLED.name ->
                                         R.string.subagent_status_cancelled
+                                    SubagentRunStatus.INTERRUPTED.name ->
+                                        R.string.subagent_status_interrupted
                                     else -> R.string.subagent_status_error
                                 }
                             )
@@ -734,13 +766,15 @@ private fun SubagentTaskResultRow(
     summary: String,
     modifier: Modifier,
     isSuccess: Boolean,
+    /** A run that stopped without failing is not a failed one, and it says so in its own tone. */
+    isInterrupted: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
     val accentColor =
-        if (isSuccess) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.error
+        when {
+            isInterrupted -> MaterialTheme.colorScheme.stoppedAttention
+            isSuccess -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.error
         }
     val rowClickModifier =
         if (onClick != null) {
@@ -788,7 +822,7 @@ private fun SubagentTaskResultRow(
                 text = summary,
                 style = MaterialTheme.typography.bodySmall,
                 color =
-                    if (isSuccess) {
+                    if (isSuccess || isInterrupted) {
                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     } else {
                         MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
@@ -799,6 +833,172 @@ private fun SubagentTaskResultRow(
         }
     }
 }
+
+/**
+ * What a collaboration call did, in the words its own row carries. A v1 `task` is not one of them:
+ * that row is about the run it created and keeps the renderer that shows the run itself.
+ */
+internal enum class SubagentCallKind {
+    DISPATCHED,
+    MESSAGE_SENT,
+    TASK_FOLLOWUP,
+}
+
+internal fun subagentCallKind(toolName: String): SubagentCallKind? =
+    when (toolName) {
+        "spawn_agent" -> SubagentCallKind.DISPATCHED
+        "send_message" -> SubagentCallKind.MESSAGE_SENT
+        "followup_task" -> SubagentCallKind.TASK_FOLLOWUP
+        else -> null
+    }
+
+/** Why a collaboration row reports a failure of its own, or null when its call went through. */
+internal enum class SubagentCallFailure {
+    /** The call never started, so nothing was dispatched or delivered. */
+    NEVER_RAN,
+
+    /** The call ran and came back with an execution error. */
+    EXECUTION_ERROR,
+}
+
+/**
+ * Whether a collaboration call has a failure of its own to report. The row records what the call
+ * did and nothing else: what the agent did afterwards belongs to the rows that carry its messages
+ * and its result, so the run's later state never reaches this row. Only the call's own end does —
+ * it never started, or it came back with an execution error while no run stands behind it.
+ */
+internal fun subagentCallFailure(
+    fallbackState: ToolExecutionState,
+    executionSuccess: Boolean,
+    runOwnedByCall: Boolean,
+): SubagentCallFailure? =
+    when {
+        // A run of its own says the call handed the work over, whatever the call did afterwards.
+        runOwnedByCall -> null
+        fallbackState == ToolExecutionState.NOT_EXECUTED -> SubagentCallFailure.NEVER_RAN
+        fallbackState == ToolExecutionState.COMPLETED && !executionSuccess ->
+            SubagentCallFailure.EXECUTION_ERROR
+        else -> null
+    }
+
+/**
+ * The run a collaboration row stands for: the one this call created, or failing that the agent it
+ * addressed. A spawn row is the call's own, so its run answers to the call id; a follow-up row
+ * writes to an agent that is already running and only knows the name it wrote to, which is the same
+ * name the run wears as its path.
+ */
+internal fun findCallRun(
+    runs: List<SubagentRunEntity>,
+    callId: String?,
+    target: String?,
+): SubagentRunEntity? {
+    val candidates =
+        runs.filter {
+            it.externalOwnerType == CollaborationCoordinator.OWNER_TYPE &&
+                it.archivedAt == null &&
+                it.agentProfileId != AgentProfileRepository.PERMISSION_REVIEWER_ID
+        }
+    val call = callId?.takeIf { it.isNotBlank() }
+    if (call != null) {
+        candidates.lastOrNull { it.parentToolCallId == call }?.let { return it }
+    }
+    val name = target?.takeIf { it.isNotBlank() } ?: return null
+    val seed = agentBadgeSeed(name)
+    return candidates.lastOrNull {
+        val owner = it.externalOwnerId
+        !owner.isNullOrBlank() && agentBadgeSeed(owner) == seed
+    }
+}
+
+/**
+ * The call side of a v2 collaboration: the row keeps the addressed agent's badge and says what the
+ * call did — a task handed over, a message delivered — instead of repeating the run's live status,
+ * and tapping it opens the floating card that shows what the call handed over.
+ */
+@Composable
+private fun SubagentCallStatusDisplay(
+    callKind: SubagentCallKind,
+    callId: String?,
+    fallbackState: ToolExecutionState,
+    executionSuccess: Boolean,
+    executionResultText: String,
+    requestedAgentName: String?,
+    bodyText: String?,
+    reviewEvent: PermissionReviewEvent?,
+    modifier: Modifier,
+) {
+    val context = LocalContext.current
+    val repository = remember(context) { SubagentRunRepository.getInstance(context) }
+    val chatCore =
+        remember(context) {
+            ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
+        }
+    val parentChatId by chatCore.currentChatId.collectAsState()
+    val sharedRuns = LocalTranscriptRuns.current?.takeIf { it.chatId == parentChatId }
+    val runsFlow =
+        remember(parentChatId, repository) {
+            parentChatId?.takeIf { it.isNotBlank() }?.let { repository.observeByParentChatId(it) }
+        }
+    val runs =
+        sharedRuns?.runs
+            ?: (runsFlow ?: flowOf(emptyList())).collectAsState(initial = emptyList()).value
+    val run =
+        remember(runs, callId, requestedAgentName) {
+            findCallRun(runs, callId, requestedAgentName)
+        }
+    val childChatId = run?.childChatId
+    val agentPath =
+        run?.externalOwnerId?.takeIf { it.isNotBlank() }
+            ?: requestedAgentName?.takeIf { it.isNotBlank() }
+            ?: "subagent"
+    val failure =
+        subagentCallFailure(
+            fallbackState = fallbackState,
+            executionSuccess = executionSuccess,
+            runOwnedByCall =
+                callId?.isNotBlank() == true && run?.parentToolCallId == callId,
+        )
+    val openConversation: (() -> Unit)? =
+        if (childChatId.isNullOrBlank()) {
+            null
+        } else {
+            { chatCore.switchChat(childChatId, scrollToBottom = false) }
+        }
+
+    Column(modifier = modifier) {
+        reviewEvent?.let { event -> PermissionReviewLifecycleDisplay(event) }
+        SubagentAgentCard(
+            agentPath = agentPath,
+            statusText =
+                when (failure) {
+                    null -> stringResource(subagentCallKindLabelRes(callKind))
+                    SubagentCallFailure.NEVER_RAN -> stringResource(R.string.tool_not_executed)
+                    SubagentCallFailure.EXECUTION_ERROR -> stringResource(R.string.execution_failed)
+                },
+            identity = remember(agentPath) { subagentAgentIdentity(agentPath) },
+            statusColor =
+                if (failure == null) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+            modifier = Modifier.padding(start = 24.dp, end = 8.dp, bottom = 8.dp),
+            chatId = parentChatId,
+            childChatId = childChatId,
+            body = bodyText,
+            failureText =
+                if (failure == null) null else executionResultText.takeIf { it.isNotBlank() },
+            onOpenConversation = openConversation,
+        )
+    }
+}
+
+private fun subagentCallKindLabelRes(callKind: SubagentCallKind): Int =
+    when (callKind) {
+        SubagentCallKind.DISPATCHED -> R.string.subagent_status_dispatched
+        SubagentCallKind.MESSAGE_SENT -> R.string.subagent_message_sent
+        SubagentCallKind.TASK_FOLLOWUP -> R.string.subagent_task_followup
+    }
 
 @Composable
 private fun SubagentTaskStatusDisplay(
@@ -845,7 +1045,18 @@ private fun SubagentTaskStatusDisplay(
                 null -> flowOf(null)
             }
         }
-    val run by runFlow.collectAsState(initial = null)
+    val sharedRuns = com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptRuns.current
+        ?.takeIf { it.chatId == parentChatId }
+    val run = if (sharedRuns != null) {
+        when (val lookup = resolveSubagentRunLookup(requestedSubagentTaskId, parentChatId, callId)) {
+            is SubagentRunLookup.TaskId -> sharedRuns.runs.firstOrNull { it.id == lookup.taskId }
+            is SubagentRunLookup.ParentCall -> sharedRuns.runs.lastOrNull {
+                it.parentToolCallId == lookup.callId &&
+                    it.agentProfileId != com.ai.assistance.operit.core.agent.AgentProfileRepository.PERMISSION_REVIEWER_ID
+            }
+            null -> null
+        }
+    } else runFlow.collectAsState(initial = null).value
 
     if (run == null) {
         var fallbackElapsedMs by
@@ -944,7 +1155,7 @@ private fun SubagentTaskStatusDisplay(
         remember(resolvedRun.parentChatId) {
             repository.observeByParentChatId(resolvedRun.parentChatId)
         }
-    val parentRuns by parentRunsFlow.collectAsState(initial = emptyList())
+    val parentRuns = sharedRuns?.runs ?: parentRunsFlow.collectAsState(initial = emptyList()).value
     val processingStates by chatCore.inputProcessingStateByChatId.collectAsState()
     val lastToolNames by chatCore.lastToolNameByChatId.collectAsState()
     val lastTurnToolInvocationCounts by
@@ -1018,8 +1229,9 @@ private fun SubagentTaskStatusDisplay(
                 } else {
                     stringResource(R.string.subagent_status_completed)
                 }
-            SubagentRunStatus.FAILED,
-            SubagentRunStatus.INTERRUPTED -> stringResource(R.string.subagent_status_error)
+            SubagentRunStatus.FAILED -> stringResource(R.string.subagent_status_error)
+            SubagentRunStatus.INTERRUPTED ->
+                stringResource(R.string.subagent_status_interrupted)
             SubagentRunStatus.CANCELLED -> stringResource(R.string.subagent_status_cancelled)
         }
     val agentName =
@@ -1042,6 +1254,15 @@ private fun SubagentTaskStatusDisplay(
         status != SubagentRunStatus.FAILED &&
             status != SubagentRunStatus.INTERRUPTED &&
             status != SubagentRunStatus.CANCELLED
+    val isInterrupted = status == SubagentRunStatus.INTERRUPTED
+    // A run the app stopped still owes the user the reason it stopped, the way the chat card does.
+    val interruptionNote =
+        if (isInterrupted) {
+            subagentInterruptionHintRes(SubagentCardStatus.INTERRUPTED, resolvedRun.error)
+                ?.let { stringResource(it) }
+        } else {
+            null
+        }
     val isTerminal =
         runIsTerminal && !resultIsSynchronizing
     val terminalResult =
@@ -1054,6 +1275,7 @@ private fun SubagentTaskStatusDisplay(
             toolName = "task",
             result = terminalResult,
             isSuccess = isSuccess,
+            stoppedNote = interruptionNote,
             titleOverride =
                 stringResource(
                     R.string.subagent_result_title,
@@ -1080,6 +1302,7 @@ private fun SubagentTaskStatusDisplay(
         summary = rowContent.summary,
         modifier = modifier,
         isSuccess = isSuccess,
+        isInterrupted = isInterrupted,
         onClick = {
             if (isTerminal) {
                 showResultDialog = true

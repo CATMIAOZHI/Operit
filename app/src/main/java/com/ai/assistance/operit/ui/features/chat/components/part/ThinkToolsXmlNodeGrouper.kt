@@ -183,6 +183,24 @@ class ThinkToolsXmlNodeGrouper(
         fillMaxWidth: Boolean,
         fontSize: TextUnit
     ) {
+        val timelineSlice = com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current
+        if (timelineSlice != null) {
+            val count = (group.startIndex..group.endIndexInclusive).count {
+                nodes[it].type == MarkdownProcessorType.XML_BLOCK &&
+                    extractXmlTagName(nodes[it].content) == "tool"
+            }
+            CanvasExpandableHeaderRow(
+                title = stringResource(
+                    if (group.stableKey.startsWith("tools-only-")) R.string.tools_group_title_with_count
+                    else R.string.thinking_tools_group_title_with_count, count),
+                semanticDescription = if (timelineSlice.expanded) "Collapse" else "Expand",
+                expanded = timelineSlice.expanded,
+                titleColor = textColor.copy(alpha = 0.7f),
+                modifier = modifier,
+                onClick = timelineSlice.toggle,
+            )
+            return
+        }
         val alpha = if (forceExpandGroups) {
             null
         } else {

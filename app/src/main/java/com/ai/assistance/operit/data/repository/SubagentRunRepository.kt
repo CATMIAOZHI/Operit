@@ -151,7 +151,7 @@ class SubagentRunRepository internal constructor(
             createdBeforeOrAt = createdBeforeOrAt,
             interruptedStatus = SubagentRunStatus.INTERRUPTED.name,
             completedAt = System.currentTimeMillis(),
-            error = "The app stopped before this Subagent task reached a terminal state.",
+            error = SubagentInterruption.APP_RESTART,
         )
 
     suspend fun countChildren(parentChatId: String): Int =

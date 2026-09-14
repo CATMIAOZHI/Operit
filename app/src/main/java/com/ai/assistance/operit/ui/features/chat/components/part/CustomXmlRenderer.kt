@@ -105,6 +105,40 @@ private fun String.decodeToolXmlText(): String =
         .replace("&gt;", ">")
         .replace("&amp;", "&")
 
+/**
+ * The text a collaboration call handed the agent it addressed: the task a `spawn_agent` gave it, or
+ * the message `send_message` and `followup_task` delivered. It is what the card in the chat shows, so
+ * the raw parameter is unwrapped from its CDATA and its entities before it is displayed.
+ */
+internal fun readSubagentCallMessage(displayToolName: String, message: String?): String? =
+    message
+        ?.trim()
+        ?.removeSurrounding("<![CDATA[", "]]>")
+        ?.decodeToolXmlText()
+        ?.trim()
+        ?.takeIf { subagentCallAddressesAnAgent(displayToolName) && it.isNotEmpty() }
+
+/** The calls whose row stands for one named agent, rather than for a tool and its own arguments. */
+internal fun subagentCallAddressesAnAgent(displayToolName: String): Boolean =
+    displayToolName == "spawn_agent" ||
+        displayToolName == "send_message" ||
+        displayToolName == "followup_task"
+
+/**
+ * The agent a collaboration call addressed: the name a spawn creates, or the target an existing one
+ * was written to. Both are what the row's card wears as its title.
+ */
+internal fun readSubagentCallTarget(
+    displayToolName: String,
+    params: Map<String, String>,
+): String? =
+    when (displayToolName) {
+        "task" -> params["subagent_type"]
+        "spawn_agent" -> params["task_name"]
+        "send_message", "followup_task" -> params["target"]
+        else -> null
+    }?.trim()?.takeIf { it.isNotEmpty() }
+
 internal fun resolveXmlTagNameForRendering(content: String): String? {
     val rawTagName = ChatMarkupRegex.extractOpeningTagName(content) ?: return null
     return if (displayEndTagNames(rawTagName) != null) {
@@ -237,6 +271,9 @@ class CustomXmlRenderer(
     // 只读转写（如 subagent 对话）仍允许查看工具详情，其余弹窗保持禁用；未显式指定时跟随 enableDialogs
     private val toolDetailDialogsEnabled: Boolean
         get() = enableToolDetailDialogs ?: enableDialogs
+    // 图片预览也是只读查看器，和工具详情同类：只读转写里同样应该能点开。
+    private val imagePreviewEnabled: Boolean
+        get() = toolDetailDialogsEnabled
     // 定义渲染器能够处理的内置标签集合
     private val builtInTags =
             setOf("think", "thinking", "search", "tool", "status", "tool_result", "html", "mood", "font", "details", "detail", "meta")
@@ -248,6 +285,7 @@ class CustomXmlRenderer(
         val summaryOverride: String? = null,
         val subagentName: String? = null,
         val subagentTaskId: String? = null,
+        val subagentTaskText: String? = null,
         val isClosed: Boolean,
     )
 
@@ -365,7 +403,7 @@ class CustomXmlRenderer(
                     imageLinks = imageLinks,
                     textColor = textColor,
                     modifier = modifier,
-                    enableDialogs = enableDialogs,
+                    enableDialogs = imagePreviewEnabled,
                 )
                 return
             }
@@ -831,7 +869,6 @@ class CustomXmlRenderer(
         xmlStream: Stream<String>?,
         invocationIndex: Int?,
     ) {
-        val paramTokenEstimate = rememberToolParamTokenEstimate(content, xmlStream)
         val renderState =
             remember(content) {
                 val nameRegex = "name=\"([^\"]+)\"".toRegex()
@@ -851,14 +888,15 @@ class CustomXmlRenderer(
                     } else {
                         null
                     }
-                val subagentName =
-                    displayParams["subagent_type"]
-                        ?.trim()
-                        ?.takeIf { displayToolName == "task" && it.isNotEmpty() }
+                val subagentName = readSubagentCallTarget(displayToolName, displayParams)
                 val subagentTaskId =
                     displayParams["task_id"]
                         ?.trim()
                         ?.takeIf { displayToolName == "task" && it.isNotEmpty() }
+                // What the caller handed the agent. It is the row's own content in the chat, so it is
+                // read here where the call is parsed rather than dug out of the child conversation.
+                val subagentTaskText =
+                    readSubagentCallMessage(displayToolName, displayParams["message"])
 
                 ToolRequestRenderState(
                     rawToolName = rawToolName,
@@ -867,6 +905,7 @@ class CustomXmlRenderer(
                     summaryOverride = summaryOverride,
                     subagentName = subagentName,
                     subagentTaskId = subagentTaskId,
+                    subagentTaskText = subagentTaskText,
                     isClosed = isXmlFullyClosed(content),
                 )
             }
@@ -905,7 +944,11 @@ class CustomXmlRenderer(
                 }
             } else {
                 // 对于其他工具，保持原有逻辑
-                if (!renderState.isClosed && paramTokenEstimate > TOOL_PARAM_TOKEN_THRESHOLD) {
+                // Completed history always uses the compact presentation; do not rescan its
+                // potentially large parameters for a streaming-only threshold.
+                if (!renderState.isClosed &&
+                    rememberToolParamTokenEstimate(content, xmlStream) > TOOL_PARAM_TOKEN_THRESHOLD
+                ) {
                     DetailedToolDisplay(
                         toolName = renderState.displayToolName,
                         params = renderState.paramText,
@@ -934,6 +977,7 @@ class CustomXmlRenderer(
                     requestedToolName = renderState.displayToolName,
                     requestedSubagentName = renderState.subagentName,
                     requestedSubagentTaskId = renderState.subagentTaskId,
+                    requestedSubagentTask = renderState.subagentTaskText,
                     modifier = modifier,
                 )
             }

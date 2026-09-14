@@ -6,11 +6,13 @@ import com.ai.assistance.operit.core.agent.collaboration.AgentFork
 import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
 import com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy
 import com.ai.assistance.operit.core.agent.collaboration.CollaborationModels
+import com.ai.assistance.operit.core.agent.collaboration.CollaborationTools
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.ToolExecutor
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
+import com.ai.assistance.operit.util.LocaleUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -48,6 +50,9 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                     val manager = ModelConfigManager(appContext)
                     manager.initializeIfNeeded()
                     buildJsonObject {
+                        // The list exists so a caller can honour an explicit model request, so say
+                        // so where it is read; seeing the choices is not itself a mandate to switch.
+                        put("note", CollaborationTools.listNote(isChineseLanguage()))
                         put("models", buildJsonArray {
                             CollaborationModels.choices(manager.getAllConfigSummaries()).forEach { choice ->
                                 add(buildJsonObject {
@@ -135,4 +140,7 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
             ToolResult(toolName = tool.name, success = false, result = StringResultData(""), error = error.message ?: "Collaboration failed")
         }
     }
+
+    /** Keeps result text in the same language the caller's tool prompts were rendered in. */
+    private fun isChineseLanguage(): Boolean = LocaleUtils.getCurrentLanguage(appContext) != "en"
 }

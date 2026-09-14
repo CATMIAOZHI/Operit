@@ -217,6 +217,71 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         }.distinctBy { it.id }
     }
 
+    /**
+     * Command Code reports the same billing surface its official CLI's usage view reads: the rolling
+     * 5-hour and weekly windows off `/alpha/billing/credits`, plus subscription-scoped spend for the
+     * USD figure. Every sub-request soft-fails, so a partial outage still shows what did answer;
+     * only the credits call is load-bearing because it carries the windows themselves.
+     */
+    suspend fun fetchCommandCodeQuota(): ProviderQuota {
+        check(provider == AccountProvider.COMMAND_CODE)
+        val bearer = validAccount().accessToken
+        val orgId = commandCodeJsonOrNull(COMMAND_CODE_WHOAMI, bearer)
+            ?.let { it.optJSONObject("data") ?: it }
+            ?.optJSONObject("org")?.optString("id")?.trim()?.takeIf { it.isNotEmpty() }
+        val orgQuery = CommandCodeQuota.orgIdQuery(orgId?.let { Uri.encode(it) })
+        val credits = commandCodeJsonOrNull("$COMMAND_CODE_CREDITS$orgQuery", bearer)
+            ?: throw IOException("Command Code credits are unavailable")
+        val body = credits.optJSONObject("data") ?: credits
+        val limits = body.optJSONObject("windowLimits")
+        val windows = CommandCodeQuota.windows(limits)
+        val spend = commandCodeSpend(bearer, body.optJSONObject("credits"), orgQuery)
+        val quota = ProviderQuota(
+            windows = windows,
+            creditsUsedUsd = spend?.used,
+            creditsLimitUsd = spend?.limit,
+            creditsRemainingUsd = spend?.remaining,
+        )
+        if (quota.isEmpty) throw IOException("Command Code reported no quota")
+        return quota
+    }
+
+    /**
+     * Spend against the remaining credit pools. The unscoped usage summary is lifetime spend, so a
+     * percentage is only truthful once a billing period start scopes the query; without one the USD
+     * figure is omitted rather than computed against the wrong denominator.
+     */
+    private suspend fun commandCodeSpend(
+        bearer: String,
+        pools: JSONObject?,
+        orgQuery: String,
+    ): CommandCodeQuota.Spend? {
+        if (pools == null) return null
+        val subscription = commandCodeJsonOrNull("$COMMAND_CODE_SUBSCRIPTIONS$orgQuery", bearer)
+            ?.let { it.optJSONObject("data") ?: it }
+        // Trimmed, not just tested for blankness: padding must never reach the `since` query value.
+        val periodStart = subscription?.optString("currentPeriodStart")?.trim()
+        val summary = periodStart?.takeIf { it.isNotBlank() }?.let {
+            commandCodeJsonOrNull(
+                CommandCodeQuota.appendQuery(
+                    "$COMMAND_CODE_USAGE_SUMMARY$orgQuery",
+                    "since=${Uri.encode(it)}",
+                ),
+                bearer,
+            )?.let { body -> body.optJSONObject("data") ?: body }
+        }
+        return CommandCodeQuota.spend(pools, periodStart, summary)
+    }
+
+    /** Soft-fail GET: a quota probe must never turn a provider hiccup into a thrown error path. */
+    private suspend fun commandCodeJsonOrNull(url: String, key: String): JSONObject? = try {
+        commandCodeJson(url, key)
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
+
     private suspend fun commandCodeJson(url: String, key: String): JSONObject = suspendCancellableCoroutine { continuation ->
         val call = client.newCall(Request.Builder().url(url)
             .header("Authorization", "Bearer $key").header("Accept", "application/json").build())
@@ -302,8 +367,46 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         }
     }
 
-    private suspend fun requestJson(url: String, body: RequestBody? = null, token: String? = null): JSONObject =
-        withContext(Dispatchers.IO) {
+    /**
+     * Grok reports the weekly credits window that actually gates prompting, and the legacy monthly
+     * dollar pool when that window is not reported. Both live behind the same account token the
+     * chat transport already uses, so this never touches an API-key configuration.
+     */
+    suspend fun fetchGrokQuota(): ProviderQuota {
+        check(provider == AccountProvider.GROK)
+        val bearer = validAccount().accessToken
+        GrokQuota.userIdFromAccessToken(bearer)?.let { userId ->
+            val body = grokJsonOrNull(XAI_CREDITS_URL, bearer, mapOf("x-userid" to userId))
+            GrokQuota.weeklyCredits(body)?.let { (percent, resetAt) ->
+                return ProviderQuota(listOf(ProviderQuotaWindow(QuotaWindow.WEEKLY, percent, resetAt)))
+            }
+        }
+        GrokQuota.monthlyDollars(grokJsonOrNull(XAI_BILLING_URL, bearer, emptyMap()))?.let {
+            (percent, resetAt) ->
+            return ProviderQuota(listOf(ProviderQuotaWindow(QuotaWindow.MONTHLY, percent, resetAt)))
+        }
+        throw IOException("Grok reported no quota")
+    }
+
+    /** Soft-fail GET: a quota probe must never turn a provider hiccup into a thrown error path. */
+    private suspend fun grokJsonOrNull(
+        url: String,
+        bearer: String,
+        extraHeaders: Map<String, String>,
+    ): JSONObject? = try {
+        requestJson(url, token = bearer, extraHeaders = extraHeaders)
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
+
+    private suspend fun requestJson(
+        url: String,
+        body: RequestBody? = null,
+        token: String? = null,
+        extraHeaders: Map<String, String> = emptyMap(),
+    ): JSONObject = withContext(Dispatchers.IO) {
             val request = Request.Builder().url(url).header("Accept", "application/json").apply {
                 if (body != null) post(body)
                 if (token != null) {
@@ -311,6 +414,7 @@ class ProviderAccountManager private constructor(context: Context, val provider:
                     if (provider == AccountProvider.ANTIGRAVITY) header("User-Agent", ANTIGRAVITY_UA)
                     else if (provider == AccountProvider.GROK) GROK_HEADERS.forEach { (key, value) -> header(key, value) }
                 }
+                extraHeaders.forEach { (key, value) -> header(key, value) }
             }.build()
             client.newCall(request).execute().use { response ->
                 currentCoroutineContext().ensureActive()
@@ -329,8 +433,14 @@ class ProviderAccountManager private constructor(context: Context, val provider:
             "User-Agent" to "Operit/${com.ai.assistance.operit.BuildConfig.VERSION_NAME}",
         )
         private const val GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
+        private const val COMMAND_CODE_WHOAMI = "https://api.commandcode.ai/alpha/whoami"
+        private const val COMMAND_CODE_CREDITS = "https://api.commandcode.ai/alpha/billing/credits"
+        private const val COMMAND_CODE_SUBSCRIPTIONS = "https://api.commandcode.ai/alpha/billing/subscriptions"
+        private const val COMMAND_CODE_USAGE_SUMMARY = "https://api.commandcode.ai/alpha/usage/summary"
         private const val XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
         private const val XAI_SCOPE = "openid profile email offline_access grok-cli:access api:access"
+        private const val XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing"
+        private const val XAI_CREDITS_URL = "$XAI_BILLING_URL?format=credits"
         private val GOOGLE_SCOPE = listOf("cloud-platform", "userinfo.email", "userinfo.profile",
             "cclog", "experimentsandconfigs").joinToString(" ") { "https://www.googleapis.com/auth/$it" }
         private val instances = mutableMapOf<AccountProvider, ProviderAccountManager>()

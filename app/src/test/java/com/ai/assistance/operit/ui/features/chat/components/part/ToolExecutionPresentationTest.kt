@@ -1,6 +1,8 @@
 package com.ai.assistance.operit.ui.features.chat.components.part
 
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.core.agent.AgentProfileRepository
+import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.ToolExecutionLimits
 import com.ai.assistance.operit.core.tools.ToolExecutionTimingRepository
@@ -10,6 +12,7 @@ import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.data.model.ToolInvocation
 import com.ai.assistance.operit.data.model.ToolResult
+import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.ui.common.markdown.toolInvocationIndices
 import com.ai.assistance.operit.util.markdown.MarkdownNodeStable
 import com.ai.assistance.operit.util.markdown.MarkdownProcessorType
@@ -25,6 +28,38 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolExecutionPresentationTest {
+    @Test
+    fun aCollaborationRowReportsItsOwnCallRatherThanWhatTheRunBecame() {
+        // A call that ran is the hand-over itself: a run that later failed, finished or was stopped
+        // by an app restart is not this row's business, so no run state ever makes a row fail.
+        for (state in ToolExecutionState.values()) {
+            assertNull(subagentCallFailure(state, executionSuccess = false, runOwnedByCall = true))
+        }
+        // With no run behind it, only the call's own end is a failure this row owns.
+        assertEquals(
+            SubagentCallFailure.NEVER_RAN,
+            subagentCallFailure(ToolExecutionState.NOT_EXECUTED, true, runOwnedByCall = false),
+        )
+        assertEquals(
+            SubagentCallFailure.EXECUTION_ERROR,
+            subagentCallFailure(ToolExecutionState.COMPLETED, false, runOwnedByCall = false),
+        )
+        assertNull(subagentCallFailure(ToolExecutionState.COMPLETED, true, runOwnedByCall = false))
+        assertNull(subagentCallFailure(ToolExecutionState.RUNNING, false, runOwnedByCall = false))
+    }
+
+    @Test
+    fun onlyACollaborationCallWearsAnAgentRow() {
+        assertEquals(SubagentCallKind.DISPATCHED, subagentCallKind("spawn_agent"))
+        assertEquals(SubagentCallKind.MESSAGE_SENT, subagentCallKind("send_message"))
+        assertEquals(SubagentCallKind.TASK_FOLLOWUP, subagentCallKind("followup_task"))
+        // A v1 task row and every other tool keep the renderer they already had.
+        assertNull(subagentCallKind("task"))
+        assertNull(subagentCallKind("wait_agent"))
+        assertNull(subagentCallKind("list_agents"))
+        assertNull(subagentCallKind("read_file"))
+    }
+
     @Test
     fun steeredAssistantUsesNewScopeAndMessageLocalResultIndices() {
         val sequence = com.ai.assistance.operit.core.chat.AssistantToolSequence("before")
@@ -597,5 +632,117 @@ class ToolExecutionPresentationTest {
             durationMs = 100L,
             success = true,
             resultText = "result",
+        )
+
+    @Test
+    fun theMessageAReaderSeesIsWhatTheCallerHandedOver() {
+        assertEquals(
+            "Investigate the parser",
+            readSubagentCallMessage("spawn_agent", "Investigate the parser"),
+        )
+        // A raw parameter arrives either wrapped in CDATA or escaped, and both read as the message.
+        assertEquals(
+            "Check \"quoted\" names",
+            readSubagentCallMessage("spawn_agent", "Check &quot;quoted&quot; names"),
+        )
+        assertEquals(
+            "Check <the> file",
+            readSubagentCallMessage("spawn_agent", "<![CDATA[Check <the> file]]>"),
+        )
+        assertEquals("spaced", readSubagentCallMessage("spawn_agent", "  spaced  "))
+
+        // What a follow-up delivered is the row's own content, the way a spawn shows its task.
+        assertEquals(
+            "Use the new parser",
+            readSubagentCallMessage("send_message", "Use the new parser"),
+        )
+        assertEquals(
+            "Continue with the tests",
+            readSubagentCallMessage("followup_task", "Continue with the tests"),
+        )
+
+        // A call that addresses no agent has no message of its own, and neither has an empty one.
+        assertNull(readSubagentCallMessage("task", "Investigate the parser"))
+        assertNull(readSubagentCallMessage("wait_agent", "/root/worker"))
+        assertNull(readSubagentCallMessage("spawn_agent", "   "))
+        assertNull(readSubagentCallMessage("spawn_agent", null))
+        assertNull(readSubagentCallMessage("spawn_agent", "<![CDATA[]]>"))
+    }
+
+    @Test
+    fun theAgentARowWearsIsTheOneItsCallAddressed() {
+        assertEquals(
+            "worker",
+            readSubagentCallTarget("spawn_agent", mapOf("task_name" to " worker ")),
+        )
+        assertEquals(
+            "/root/worker",
+            readSubagentCallTarget("send_message", mapOf("target" to "/root/worker")),
+        )
+        assertEquals(
+            "/root/worker",
+            readSubagentCallTarget("followup_task", mapOf("target" to "/root/worker")),
+        )
+        // The v1 task names its agent in a parameter of its own and keeps it.
+        assertEquals("explore", readSubagentCallTarget("task", mapOf("subagent_type" to "explore")))
+        // A call that names nobody, or names a blank, has no agent to wear.
+        assertNull(readSubagentCallTarget("send_message", mapOf("message" to "hello")))
+        assertNull(readSubagentCallTarget("send_message", mapOf("target" to "   ")))
+        assertNull(readSubagentCallTarget("wait_agent", mapOf("target" to "/root/worker")))
+    }
+
+    @Test
+    fun aFollowUpRowFindsTheAgentItAddressed() {
+        val spawned = subagentRun("run-1", "call-spawn", "/root/tests_docs")
+        val other = subagentRun("run-2", "call-other", "/root/guardian_core")
+        val runs = listOf(spawned, other)
+
+        // The call that created the run finds it by call id: that row is the call's own.
+        assertEquals(spawned, findCallRun(runs, "call-spawn", null))
+        // A follow-up only knows the agent it wrote to, spelled with or without its path.
+        assertEquals(spawned, findCallRun(runs, "call-followup", "/root/tests_docs"))
+        assertEquals(spawned, findCallRun(runs, "call-followup", "tests_docs"))
+        assertEquals(other, findCallRun(runs, "call-followup", "/root/guardian_core"))
+        assertNull(findCallRun(runs, "call-followup", "/root/gone"))
+        assertNull(findCallRun(runs, null, null))
+    }
+
+    @Test
+    fun aRunAnotherFeatureOwnsNeverAnswersForAnAgentRow() {
+        val companion =
+            subagentRun(
+                id = "run-companion",
+                callId = null,
+                owner = "reading-room-7",
+                ownerType = "reading_companion_run",
+            )
+        val archived =
+            subagentRun("run-archived", "call-archived", "/root/worker").copy(archivedAt = 1L)
+        val reviewer =
+            subagentRun("run-reviewer", "call-reviewer", "/root/worker").copy(
+                agentProfileId = AgentProfileRepository.PERMISSION_REVIEWER_ID,
+            )
+
+        // A name that reads like an agent still only answers when the run behind it is that agent.
+        assertNull(findCallRun(listOf(companion), "call-unknown", "reading-room-7"))
+        assertNull(findCallRun(listOf(archived), "call-archived", "/root/worker"))
+        assertNull(findCallRun(listOf(reviewer), "call-reviewer", "/root/worker"))
+    }
+
+    private fun subagentRun(
+        id: String,
+        callId: String?,
+        owner: String?,
+        ownerType: String? = CollaborationCoordinator.OWNER_TYPE,
+    ) =
+        SubagentRunEntity(
+            id = id,
+            parentChatId = "parent",
+            childChatId = "child-$id",
+            parentToolCallId = callId,
+            agentProfileId = "default",
+            title = id,
+            externalOwnerType = ownerType,
+            externalOwnerId = owner,
         )
 }

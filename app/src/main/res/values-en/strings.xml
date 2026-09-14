@@ -7,13 +7,12 @@
     <string name="subagent_v2_max_wait">Maximum wait (ms)</string>
     <string name="subagent_v2_limits_help">Active count covers the entire agent tree, excluding root. Model concurrency limits still apply. Changes affect subsequent operations and do not interrupt active tasks.</string>
     <string name="subagent_v2_invalid_limits">Active count and depth must be 1–64; waits must satisfy 0 ≤ minimum ≤ default ≤ maximum ≤ 3600000.</string>
-    <string name="subagent_message_header">Subagent v2 · %1$s · %2$s</string>
-    <string name="subagent_message_result">Completed</string>
+    <string name="subagent_message_result">Task complete</string>
     <string name="subagent_message_status">Status updated</string>
     <string name="subagent_message_task">Task message</string>
     <string name="subagent_message_note">Has an update</string>
-    <string name="subagent_event_expanded">Details expanded</string>
-    <string name="subagent_event_collapsed">Details collapsed</string>
+    <string name="subagent_message_midway">Interim message</string>
+    <string name="subagent_message_open_detail">View message details</string>
     <string name="subagent_version_title">Subagent version</string>
     <string name="subagent_version_description">Choose collaboration tools for new conversations. Existing agents retain their version; Reading Companion continues to use v1.</string>
     <string name="subagent_version_v2">v2 · Multi-agent collaboration (default)</string>
@@ -1750,6 +1749,8 @@
     <string name="avatar_mode">Avatar Mode</string>
     <string name="loading_failed">Loading failed: %1$s</string>
     <string name="loading">Loading...</string>
+    <string name="chat_scroll_older">Scroll up for earlier messages</string>
+    <string name="chat_scroll_newer">Scroll down for newer messages</string>
     <string name="floating_service_description">Display AI assistant floating window service</string>
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
@@ -3137,6 +3138,7 @@
     <string name="token_price_description">Set the RMB price per API request</string>
     <string name="floating_chat_cancel">Cancel</string>
     <string name="floating_chat_send">Send</string>
+    <string name="floating_chat_subagent_read_only">Subagent conversations are read-only records</string>
     <string name="file_list_folder">Folder</string>
     <string name="folder_navigator_folder">Folder</string>
     <string name="folder_navigator_all">All</string>
@@ -5118,7 +5120,12 @@
     <string name="tool_waiting_execution">Waiting to execute</string>
     <string name="tool_executing_duration">Running · %1$s</string>
     <string name="subagent_status_creating">Creating</string>
+    <string name="subagent_status_started">Started working</string>
+    <string name="subagent_status_dispatched">Task started</string>
+    <string name="subagent_message_sent">Message sent</string>
+    <string name="subagent_task_followup">Task dispatched</string>
     <string name="subagent_status_queued">Queued · position %1$d</string>
+    <string name="subagent_status_queued_pending">Queued</string>
     <string name="subagent_status_thinking">Thinking</string>
     <string name="subagent_status_calling_tool">Calling %1$s</string>
     <string name="subagent_status_with_agent">%1$s · %2$s</string>
@@ -5126,11 +5133,23 @@
     <string name="subagent_status_syncing_result">Syncing result</string>
     <string name="subagent_status_completed_with_tool_count">Completed · %1$d tool calls</string>
     <string name="subagent_status_error">Error</string>
+    <string name="subagent_status_interrupted">Interrupted</string>
+    <string name="subagent_interrupted_app_restart">The app restarted, so this task did not continue</string>
+    <string name="subagent_interrupted_archive_import">The task had not finished when the backup was imported, so it did not continue</string>
+    <string name="subagent_interrupted_chat_branch">The task had not finished when the branch was created, so it did not continue</string>
+    <string name="subagent_interrupted_reading_companion">The app restarted and this task was lost, so it did not continue</string>
+    <string name="subagent_interrupted_unknown">The task was interrupted before it finished, so it did not continue</string>
     <string name="subagent_status_cancelled">Cancelled</string>
+    <string name="subagent_card_elapsed">Took %1$s</string>
+    <string name="subagent_card_tool_count">%1$d tool calls</string>
+    <string name="subagent_card_round_count">%1$d model rounds</string>
     <string name="subagent_stop_task">Stop Subagent task</string>
     <string name="subagent_result_title">Subagent result: %1$s</string>
     <string name="subagent_result_empty">The Subagent returned no textual result</string>
     <string name="subagent_open_conversation">Open Subagent conversation</string>
+    <string name="subagent_card_open_detail">View Subagent details</string>
+    <string name="subagent_detail_empty">This Subagent has not returned anything yet</string>
+    <string name="subagent_detail_close">Close</string>
     <string name="subagent_delegated_by_parent">Delegated by parent chat</string>
     <string name="subagent_return_to_parent">Return to parent chat</string>
     <string name="subagent_parent_chat">Parent chat: %1$s</string>
@@ -5152,6 +5171,7 @@
     <string name="subagent_filter_completed">Completed</string>
     <string name="subagent_filter_auto_review">Auto review</string>
     <string name="subagent_filter_error">Errors</string>
+    <string name="subagent_filter_interrupted">Interrupted</string>
     <string name="subagent_filter_archived">Archived</string>
     <string name="subagent_archive">Archive</string>
     <string name="subagent_restore">Restore</string>
@@ -8747,7 +8767,7 @@
     <string name="pet_entry_legacy">Classic ball</string>
     <string name="pet_entry_hint">Use the selected entry when chat is minimized. The voice ball keeps its existing behavior.</string>
     <string name="floating_collapse">Collapse floating chat</string>
-    <string name="pet_acknowledge_completion">Acknowledge completion and return to idle</string>
+    <string name="pet_acknowledge_completion">Acknowledge completion and remove from the task list</string>
     <string name="markdown_link_not_openable">This link points to a reference inside the document and cannot be opened</string>
     <string name="openai_file_omitted">File content omitted, current model does not support file processing</string>
 
@@ -8775,6 +8795,18 @@
     <string name="codex_quota_no_data">No data</string>
     <string name="codex_usage_refresh">Refresh Codex usage</string>
     <string name="codex_usage_unavailable">Usage is temporarily unavailable</string>
+    <string name="quota_title">Usage &amp; balance</string>
+    <string name="quota_refresh">Refresh</string>
+    <string name="quota_unavailable">Balance is temporarily unavailable</string>
+    <string name="quota_not_fetched">Tap refresh to load the balance</string>
+    <string name="quota_no_windows">This account reported no quota windows</string>
+    <string name="quota_window_five_hour">5 hours</string>
+    <string name="quota_window_weekly">This week</string>
+    <string name="quota_window_monthly">This month</string>
+    <string name="quota_percent">%1$d%% used</string>
+    <string name="quota_resets_in">Resets in %1$s</string>
+    <string name="quota_credits">Remaining %1$.2f of %2$.2f (%3$.2f used)</string>
+    <string name="quota_credits_remaining">Remaining %1$.2f</string>
     <string name="codex_reset_after_days">Resets in %1$d days</string>
     <string name="codex_reset_after_clock">Resets in %1$02d:%2$02d</string>
     <string name="conversation_media_file_link">&lt;link type=&quot;file&quot; id=&quot;%1$s&quot; filename=&quot;%2$s&quot;&gt;PDF&lt;/link&gt;</string>

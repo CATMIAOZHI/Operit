@@ -1502,7 +1502,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     completedAt = if (wasActive) now else run.completedAt,
                     error =
                         if (wasActive) {
-                            "Imported while the Subagent task was incomplete."
+                            SubagentInterruption.ARCHIVE_IMPORT
                         } else {
                             run.error
                         },
@@ -4275,6 +4275,18 @@ class ChatHistoryManager private constructor(private val context: Context) {
             hydrateMessages(chatId, messageEntities)
         }
     }
+
+    suspend fun loadChatMessageProcessMetadata(
+        chatId: String,
+    ): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata> =
+        withContext(Dispatchers.IO) { messageDao.getProcessMetadata(chatId) }
+
+    suspend fun loadChatMessagesByTimestamps(chatId: String, timestamps: List<Long>): List<ChatMessage> =
+        withContext(Dispatchers.IO) {
+            timestamps.distinct().chunked(400).flatMap { chunk ->
+                hydrateMessages(chatId, chatContentDao.getMessagesByTimestamps(chatId, chunk))
+            }.sortedBy { it.timestamp }
+        }
 
     suspend fun loadChatMessageLocatorPreviews(
         chatId: String,

@@ -201,9 +201,6 @@ private val ACTIVE_SUBAGENT_RUN_STATUS_NAMES =
         SubagentRunStatus.RUNNING.name,
     )
 
-private const val BRANCH_SNAPSHOT_INTERRUPTED_ERROR =
-    "This Subagent run was interrupted because its parent chat was branched."
-
 internal fun SubagentRunEntity.copyForBranch(
     branchTaskId: String,
     branchParentChatId: String,
@@ -217,7 +214,7 @@ internal fun SubagentRunEntity.copyForBranch(
         childChatId = branchChildChatId,
         status = if (activeSnapshot) SubagentRunStatus.INTERRUPTED.name else status,
         completedAt = if (activeSnapshot) snapshotAt else completedAt,
-        error = if (activeSnapshot) BRANCH_SNAPSHOT_INTERRUPTED_ERROR else error,
+        error = if (activeSnapshot) SubagentInterruption.CHAT_BRANCH else error,
     )
 }
 

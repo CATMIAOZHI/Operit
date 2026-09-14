@@ -63,4 +63,32 @@ class CollaborationModelsTest {
             assertFalse(description.contains("Work / alpha"))
         }
     }
+
+    @Test fun modelCatalogResultCarriesTheNoSwitchConstraintInTheCallerLanguage() {
+        for (chinese in listOf(false, true)) {
+            val note = CollaborationTools.listNote(chinese)
+            assertTrue(note.isNotBlank())
+            assertNotEquals(CollaborationTools.listNote(!chinese), note)
+        }
+        assertTrue(CollaborationTools.listNote(chinese = true)
+            .contains("除非用户偏好或同意，不要调用其他模型"))
+        assertTrue(CollaborationTools.listNote(chinese = false)
+            .contains("unless the user prefers or agrees"))
+    }
+
+    @Test fun subagentPromptsSayACompletionDoesNotWakeTheCaller() {
+        for (chinese in listOf(false, true)) {
+            val category = CollaborationTools.category(chinese, emptyList())
+            val spawn = category.tools.single { it.name == "spawn_agent" }.description
+            val wait = category.tools.single { it.name == "wait_agent" }.description
+            assertTrue(spawn.contains(if (chinese) "不会唤醒你" else "does not wake you"))
+            assertTrue(wait.contains(if (chinese) "不会唤醒你" else "does not wake you"))
+            assertTrue(spawn.contains("wait_agent"))
+            assertTrue(spawn.contains(
+                if (chinese) "结束本轮前调用 wait_agent" else "call wait_agent before ending the turn"
+            ))
+            assertTrue(wait.contains(if (chinese) "留在邮箱" else "stays in the mailbox"))
+            assertTrue(wait.contains(if (chinese) "下一轮" else "a later turn"))
+        }
+    }
 }

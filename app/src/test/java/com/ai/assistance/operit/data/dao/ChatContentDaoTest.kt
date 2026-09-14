@@ -38,6 +38,25 @@ class ChatContentDaoTest {
     }
 
     @Test
+    fun `process metadata follows the selected variant without loading its body`() = runBlocking {
+        val chatId = "process-variant"
+        database.chatDao().insertChat(ChatEntity(id = chatId, title = "Process"))
+        database.messageDao().insertMessage(MessageEntity(
+            chatId = chatId, sender = "ai", content = "base", timestamp = 10L,
+            orderIndex = 0, selectedVariantIndex = 1, sentAt = 1L, completedAt = 2L,
+        ))
+        database.messageVariantDao().insertVariant(MessageVariantEntity(
+            chatId = chatId, messageTimestamp = 10L, variantIndex = 1, content = "selected",
+            sentAt = 3L, completedAt = 9L, waitDurationMs = 4L, outputDurationMs = 5L,
+        ))
+        val selected = database.messageDao().getProcessMetadata(chatId).single()
+        assertEquals(3L, selected.sentAt)
+        assertEquals(9L, selected.completedAt)
+        assertEquals(4L, selected.waitDurationMs)
+        assertEquals(5L, selected.outputDurationMs)
+    }
+
+    @Test
     fun `large message and variant content are materialized without truncation`() = runBlocking {
         val chatId = "large-content-chat"
         val timestamp = 1234L
@@ -65,7 +84,15 @@ class ChatContentDaoTest {
 
         val contentDao = database.chatContentDao()
         assertEquals(messageContent, contentDao.getMessagesForChat(chatId).single().content)
+        val structure = database.messageDao().getProcessMetadata(chatId).single()
+        assertEquals(timestamp, structure.timestamp)
+        assertEquals("ai", structure.sender)
+        assertEquals("NORMAL", structure.displayMode)
+        assertEquals(emptyList<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>(),
+            database.messageDao().getProcessMetadata("another-chat"))
         assertEquals(messageContent, contentDao.getMessageByTimestamp(chatId, timestamp)?.content)
+        assertEquals(messageContent, contentDao.getMessagesByTimestamps(chatId, listOf(timestamp)).single().content)
+        assertEquals(emptyList<MessageEntity>(), contentDao.getMessagesByTimestamps("other", listOf(timestamp)))
         assertEquals(
             variantContent,
             contentDao.getVariantsForMessages(chatId, listOf(timestamp)).single().content,

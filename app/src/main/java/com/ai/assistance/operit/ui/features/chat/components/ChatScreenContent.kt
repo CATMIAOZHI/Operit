@@ -115,7 +115,6 @@ fun ChatScreenContent(
         verticalDrag: Float,
         onVerticalDragChange: (Float) -> Unit,
         dragThreshold: Float,
-        scrollState: ScrollState,
         autoScrollToBottom: Boolean,
         onAutoScrollToBottomChange: (Boolean) -> Unit,
         coroutineScope: CoroutineScope,
@@ -154,7 +153,8 @@ fun ChatScreenContent(
 
     // Multi-select mode state
     var isMultiSelectMode by remember { mutableStateOf(false) }
-    var selectedMessageIndices by remember { mutableStateOf(setOf<Int>()) }
+    val transcriptSelection = remember(currentChatId) { TranscriptSelection() }
+    var selectedMessageIndices by transcriptSelection.forMessages(chatHistory)
     val selectableMessageIndices = remember(chatHistory) {
         chatHistory.mapIndexedNotNull { index, message ->
             if (message.sender == "user" || message.sender == "ai") index else null
@@ -183,9 +183,13 @@ fun ChatScreenContent(
     var exportErrorMessage by remember { mutableStateOf<String?>(null) }
     var webContentDir by remember { mutableStateOf<File?>(null) }
     var editingMessageType by remember { mutableStateOf<String?>(null) }
+    // 这一轮回复里的协作消息：它们各自是独立消息，编辑器里按发生顺序作为内容片段呈现。
+    val editingMemoryFragments = remember { mutableStateOf<List<MemoryEditFragment>>(emptyList()) }
     var pendingRollback by remember { mutableStateOf<MessageRevertRequest?>(null) }
     var pendingRewind by remember { mutableStateOf<MessageRevertRequest?>(null) }
     val hasOlderDisplayHistory by actualViewModel.hasOlderDisplayHistory.collectAsState()
+    val processMetadata by actualViewModel.processMetadata.collectAsState()
+    val displayedChatId by actualViewModel.displayedChatId.collectAsState()
     val hasNewerDisplayHistory by actualViewModel.hasNewerDisplayHistory.collectAsState()
     val isLoadingDisplayWindow by actualViewModel.isLoadingDisplayWindow.collectAsState()
     
@@ -198,6 +202,7 @@ fun ChatScreenContent(
             isMultiSelectMode = false
             selectedMessageIndices = emptySet()
             editingMessageIndex.value = null
+            editingMemoryFragments.value = emptyList()
             pendingRollback = null
             pendingRewind = null
         }
@@ -208,11 +213,23 @@ fun ChatScreenContent(
             "speechControls session=$isSpeechSessionActive paused=$isSpeechPaused autoRead=$isAutoReadEnabled visible=${isSpeechSessionActive || isSpeechPaused || isAutoReadEnabled}"
         )
     }
-    val onSelectMessageToEditCallback = remember(editingMessageIndex, editingMessageContent, editingMessageType) {
+    // 打开编辑器的那一刻才去读这一轮的协作消息，所以回调本身可以一直复用，不受转录刷新影响。
+    val latestChatHistory by rememberUpdatedState(chatHistory)
+    val onSelectMessageToEditCallback = remember(
+        editingMessageIndex,
+        editingMessageContent,
+        editingMemoryFragments,
+    ) {
         { index: Int, message: ChatMessage, senderType: String ->
             editingMessageIndex.value = index
             editingMessageContent.value = message.content
             editingMessageType = senderType
+            editingMemoryFragments.value =
+                if (senderType == "ai") {
+                    collaborationMemoryFragments(latestChatHistory, index, includeAssistant = true)
+                } else {
+                    emptyList()
+                }
         }
     }
 
@@ -224,7 +241,6 @@ fun ChatScreenContent(
                 ChatArea(
                         chatHistory = chatHistory,
                         currentChatId = currentChatId,
-                        scrollState = scrollState,
                         isLoading = isLoading,
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
@@ -272,6 +288,9 @@ fun ChatScreenContent(
                         autoScrollToBottom = autoScrollToBottom,
                         onAutoScrollToBottomChange = onAutoScrollToBottomChange,
                         hasOlderDisplayHistory = hasOlderDisplayHistory,
+                        processMetadata = processMetadata,
+                        onLoadProcess = actualViewModel::loadTranscriptProcess,
+                        transcriptReady = displayedChatId == currentChatId,
                         hasNewerDisplayHistory = hasNewerDisplayHistory,
                         isLoadingDisplayWindow = isLoadingDisplayWindow,
                         onLoadOlderDisplayWindow = {
@@ -355,7 +374,6 @@ fun ChatScreenContent(
                 ChatArea(
                         chatHistory = chatHistory,
                         currentChatId = currentChatId,
-                        scrollState = scrollState,
                         isLoading = isLoading,
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
@@ -403,6 +421,9 @@ fun ChatScreenContent(
                         autoScrollToBottom = autoScrollToBottom,
                         onAutoScrollToBottomChange = onAutoScrollToBottomChange,
                         hasOlderDisplayHistory = hasOlderDisplayHistory,
+                        processMetadata = processMetadata,
+                        onLoadProcess = actualViewModel::loadTranscriptProcess,
+                        transcriptReady = displayedChatId == currentChatId,
                         hasNewerDisplayHistory = hasNewerDisplayHistory,
                         isLoadingDisplayWindow = isLoadingDisplayWindow,
                         onLoadOlderDisplayWindow = {
@@ -757,7 +778,7 @@ fun ChatScreenContent(
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            actualViewModel.deleteMessages(selectedMessageIndices)
+                            actualViewModel.deleteMessagesByTimestamp(transcriptSelection.timestamps)
                             selectedMessageIndices = emptySet()
                             isMultiSelectMode = false
                             showDeleteSelectedConfirmDialog = false
@@ -996,9 +1017,17 @@ fun ChatScreenContent(
         if (editingMessageIndex.value != null) {
             MessageEditor(
                 editingMessageContent = editingMessageContent,
+                memoryFragments = editingMemoryFragments.value,
+                memoryAnchorTimestamp = editingMemoryFragments.value.firstOrNull {
+                    it.messageIndex == editingMessageIndex.value
+                }?.timestamp,
+                onMemoryFragmentsChange = { updatedFragments ->
+                    editingMemoryFragments.value = updatedFragments
+                },
                 onCancel = {
                     editingMessageIndex.value = null
                     editingMessageContent.value = ""
+                    editingMemoryFragments.value = emptyList()
                 },
                 onSave = {
                     val index = editingMessageIndex.value
@@ -1008,10 +1037,27 @@ fun ChatScreenContent(
                                 content = editingMessageContent.value,
                                 contentStream = null
                             )
-                        actualViewModel.updateMessage(index, editedMessage)
+                        val fragments = editingMemoryFragments.value
+                        actualViewModel.saveMemoryEdit(
+                            index = index,
+                            editedMessage = editedMessage,
+                            fragmentContents =
+                                fragments
+                                    .filter { it.changed && it.timestamp != editedMessage.timestamp }
+                                    .associate { fragment ->
+                                        fragment.timestamp to
+                                            if (fragment.isAssistant) fragment.body else collaborationBodyReplaced(
+                                                fragment.content,
+                                                fragment.body,
+                                            )
+                                    },
+                            deletedFragments =
+                                fragments.filter { it.deleted }.map { it.timestamp }.toSet(),
+                        )
                     }
                     editingMessageIndex.value = null
                     editingMessageContent.value = ""
+                    editingMemoryFragments.value = emptyList()
                 },
                 onResend = {
                     val index = editingMessageIndex.value
@@ -1031,6 +1077,7 @@ fun ChatScreenContent(
                     }
                     editingMessageIndex.value = null
                     editingMessageContent.value = ""
+                    editingMemoryFragments.value = emptyList()
                 },
                 showResendButton = editingMessageType == "user"
             )

@@ -32,7 +32,17 @@ class CommandCodeProvider(
     private val fallbackSession = UUID.randomUUID().toString()
     override suspend fun applyAuthenticationHeaders(builder: Request.Builder, currentApiKey: String) {
         super.applyAuthenticationHeaders(builder, currentApiKey)
-        builder.header("x-session-id", currentCoroutineContext()[OpenCodeSessionContext]?.sessionId ?: fallbackSession)
+        val session = currentCoroutineContext()[OpenCodeSessionContext]
+        builder.header("x-session-id", session?.sessionId ?: fallbackSession)
+        // The transport runs on a synchronous interceptor, so the workspace this request belongs to
+        // travels on the request itself. A chat with no bound workspace reports an empty working
+        // directory, mirroring the system prompt, which omits its workspace section in that case:
+        // Operit's managed workspace is an app-sandbox path that must not be presented to the model
+        // as if the conversation had a project directory.
+        builder.tag(
+            CommandCodeWorkspace::class.java,
+            CommandCodeWorkspace(session?.workspacePath?.takeIf { it.isNotBlank() } ?: ""),
+        )
     }
     override suspend fun getModelsList(context: android.content.Context): Result<List<ModelOption>> = try {
         Result.success(manager.availableCommandCodeModels())
@@ -41,6 +51,9 @@ class CommandCodeProvider(
 
     companion object { const val ENDPOINT = "https://api.commandcode.ai/alpha/generate" }
 }
+
+/** Workspace of one request, handed from the suspend request path to the synchronous transport. */
+internal data class CommandCodeWorkspace(val path: String)
 
 internal object CommandCodePolicy {
     fun effort(model: String, requested: String): String? {
@@ -63,7 +76,8 @@ internal class CommandCodeTransport : Interceptor {
         check(original.url.toString() == CommandCodeProvider.ENDPOINT) { "Unexpected Command Code endpoint" }
         val buffer = Buffer()
         requireNotNull(original.body).writeTo(buffer)
-        val body = compile(JSONObject(buffer.readUtf8()))
+        val workspace = original.tag(CommandCodeWorkspace::class.java)?.path ?: ""
+        val body = compile(JSONObject(buffer.readUtf8()), workspace)
         val request = original.newBuilder()
             .header("User-Agent", "cli").header("x-command-code-version", "0.52.1")
             .header("x-cli-environment", "production").header("x-taste-learning", "false").header("x-co-flag", "false")
@@ -82,7 +96,7 @@ internal class CommandCodeTransport : Interceptor {
     }
 
     companion object {
-        fun compile(input: JSONObject): JSONObject {
+        fun compile(input: JSONObject, workspacePath: String): JSONObject {
             val messages = JSONArray()
             val pending = linkedMapOf<String, String>()
             val system = mutableListOf<String>()
@@ -171,8 +185,16 @@ internal class CommandCodeTransport : Interceptor {
                 CommandCodePolicy.effort(model, it)?.let { effort -> params.put("reasoning_effort", effort) }
             }
             return JSONObject().put("params", params)
-                .put("config", JSONObject().put("environment", "android").put("date", java.time.LocalDate.now().toString())
-                    .put("structure", JSONArray()))
+                .put("config", JSONObject()
+                    .put("workingDir", workspacePath)
+                    .put("environment", "android")
+                    .put("date", java.time.LocalDate.now().toString())
+                    .put("structure", JSONArray())
+                    // /alpha/generate requires the git block; Operit's app process has no git binary
+                    // and cannot read the workspace repository state, so report the schema's
+                    // "no repository" shape rather than guessing branch, status, or commits.
+                    .put("isGitRepo", false).put("currentBranch", "").put("mainBranch", "")
+                    .put("gitStatus", "").put("recentCommits", JSONArray()))
                 .put("memory", "").put("taste", JSONObject.NULL).put("skills", JSONObject.NULL)
                 .put("permissionMode", "standard").put("mode", "agent")
         }

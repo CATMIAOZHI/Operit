@@ -1328,7 +1328,7 @@ class EnhancedAIService private constructor(
                     // 使用新的Stream API
                     AppLogger.d(TAG, "sendMessage请求前准备耗时: ${tAfterGetTools - startTime}ms, 流式输出: $stream")
                     val requestStartTime = messageTimingNow()
-                    com.ai.assistance.operit.core.agent.AgentRunObservers.forChat(chatId)?.onModelRequest()
+                    notifyModelRequestStarted(chatId, isSubTask)
                     val responseStream =
                             serviceForFunction.sendMessage(
                                     context = this@EnhancedAIService.context,
@@ -1541,7 +1541,8 @@ class EnhancedAIService private constructor(
             }
         }
         val sessionContext = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
-            chatId?.takeIf { it.isNotBlank() } ?: providerSessionId
+            chatId?.takeIf { it.isNotBlank() } ?: providerSessionId,
+            workspacePath,
         )
         val sessionStream = object : Stream<String> by wrappedStream {
             override suspend fun collect(collector: StreamCollector<String>) {
@@ -1898,6 +1899,28 @@ class EnhancedAIService private constructor(
         }
     }
 
+    /**
+     * Announces a model request and keeps the Subagent run's round counter in step, so the card can
+     * report model rounds. A chat with its own run observer (the reading companion) already
+     * persists its rounds, so it is skipped here.
+     */
+    private suspend fun notifyModelRequestStarted(chatId: String?, isSubTask: Boolean) {
+        com.ai.assistance.operit.core.agent.AgentRunObservers.forChat(chatId)?.onModelRequest()
+        val childChatId = chatId?.takeIf { it.isNotBlank() }
+        if (!isSubTask || childChatId == null) return
+        if (com.ai.assistance.operit.core.agent.AgentRunObservers.hasObserver(childChatId)) return
+        runCatching {
+            SubagentRunRepository.getInstance(context)
+                .incrementModelRoundCountByChildChatId(childChatId)
+        }.onFailure { error ->
+            AppLogger.e(
+                TAG,
+                "Failed to persist Subagent model round count: chatId=$childChatId",
+                error,
+            )
+        }
+    }
+
     /** Finalize an assistant response without relying on status-tag control flow. */
     private suspend fun finalizeAssistantResponse(
         context: MessageExecutionContext,
@@ -2054,7 +2077,8 @@ class EnhancedAIService private constructor(
         // This independent scope must retain the conversation identity for tool continuations.
         val processToolJob = toolProcessingScope.async(
             context = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
-                chatId?.takeIf { it.isNotBlank() } ?: providerSessionId
+                chatId?.takeIf { it.isNotBlank() } ?: providerSessionId,
+                context.workspacePath,
             ),
             start = CoroutineStart.LAZY,
         ) {
@@ -2437,7 +2461,7 @@ class EnhancedAIService private constructor(
             try {
                 // 发送消息并获取响应流
                 val aiStartTime = messageTimingNow()
-                com.ai.assistance.operit.core.agent.AgentRunObservers.forChat(chatId)?.onModelRequest()
+                notifyModelRequestStarted(chatId, isSubTask)
                 val responseStream =
                         serviceForFunction.sendMessage(
                                 context = this@EnhancedAIService.context,

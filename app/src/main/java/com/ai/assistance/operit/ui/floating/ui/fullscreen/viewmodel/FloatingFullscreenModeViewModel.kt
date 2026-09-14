@@ -9,6 +9,7 @@ import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.PromptFunctionType
 import com.ai.assistance.operit.data.preferences.WakeWordPreferences
 import com.ai.assistance.operit.ui.floating.FloatContext
+import com.ai.assistance.operit.ui.floating.isReadOnlyTranscript
 import com.ai.assistance.operit.ui.floating.ui.fullscreen.XmlTextProcessor
 import com.ai.assistance.operit.ui.floating.ui.pet.AvatarEmotionManager
 import com.ai.assistance.operit.ui.floating.voice.SpeechInteractionManager
@@ -97,20 +98,30 @@ class FloatingFullscreenModeViewModel(
             // 收到最终语音结果后直接发送，不再写入底部输入框
             val finalText = text.trim()
             if (finalText.isNotEmpty()) {
-                aiMessage = context.getString(R.string.floating_thinking)
-                coroutineScope.launch {
-                    startVoiceAvatarThinking()
-                    prepareVoiceCaptureForAiTurn()
-                    try {
-                        maybeAutoAttachByKeyword(finalText)
-                    } catch (_: Exception) {
+                if (isCurrentChatReadOnly()) {
+                    aiMessage = context.getString(R.string.floating_chat_subagent_read_only)
+                } else {
+                    aiMessage = context.getString(R.string.floating_thinking)
+                    coroutineScope.launch {
+                        startVoiceAvatarThinking()
+                        prepareVoiceCaptureForAiTurn()
+                        try {
+                            maybeAutoAttachByKeyword(finalText)
+                        } catch (_: Exception) {
+                        }
+                        floatContext.onSendMessage?.invoke(finalText, PromptFunctionType.VOICE)
+                        awaitAiTurnAndResumeVoiceCapture()
                     }
-                    floatContext.onSendMessage?.invoke(finalText, PromptFunctionType.VOICE)
-                    awaitAiTurnAndResumeVoiceCapture()
                 }
             }
         },
-        onStateChange = { msg -> aiMessage = msg; voiceStatus = msg }
+        onStateChange = { msg ->
+            // Keep the read-only notice visible; speech status must not overwrite it.
+            if (!isCurrentChatReadOnly()) {
+                aiMessage = msg
+                voiceStatus = msg
+            }
+        }
     )
     
     // 代理属性，方便 UI 访问
@@ -140,6 +151,16 @@ class FloatingFullscreenModeViewModel(
 
     private fun isAiBusyOrSpeaking(): Boolean {
         return isAiBusy() || speechManager.voiceService.isSpeaking
+    }
+
+    /**
+     * A subagent chat is another agent's read-only transcript. FloatingChatService refuses such
+     * sends as well; stopping here keeps this surface from waiting for a turn that cannot start.
+     */
+    private fun isCurrentChatReadOnly(): Boolean {
+        val core = floatContext.chatService?.getChatCore() ?: return false
+        val chatId = core.currentChatId.value ?: return false
+        return core.chatHistories.value.firstOrNull { it.id == chatId }.isReadOnlyTranscript()
     }
 
     private fun shouldInterceptCenterAvatarClick(): Boolean {
@@ -558,6 +579,12 @@ class FloatingFullscreenModeViewModel(
     }
     
     fun sendEditedMessage() {
+        if (isCurrentChatReadOnly()) {
+            aiMessage = context.getString(R.string.floating_chat_subagent_read_only)
+            isEditMode = false
+            editableText = ""
+            return
+        }
         if (editableText.isNotBlank()) {
             startVoiceAvatarThinking()
             prepareVoiceCaptureForAiTurn()
@@ -572,6 +599,11 @@ class FloatingFullscreenModeViewModel(
     fun sendInputMessage() {
         val text = inputText.trim()
         if (text.isEmpty() && !attachScreenContent && !attachNotifications && !attachLocation && !hasOcrSelection) return
+        if (isCurrentChatReadOnly()) {
+            aiMessage = context.getString(R.string.floating_chat_subagent_read_only)
+            inputText = ""
+            return
+        }
 
         // 立即清理UI状态，不等待协程
         val shouldCaptureScreen = attachScreenContent

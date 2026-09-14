@@ -76,8 +76,10 @@ import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.core.agent.AgentProfileRepository
 import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.data.model.SubagentRunStatus
+import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.ui.features.chat.components.part.formatToolExecutionDuration
 import com.ai.assistance.operit.ui.features.chat.components.part.resolveSubagentDisplayedTool
+import com.ai.assistance.operit.ui.theme.stoppedAttention
 import com.ai.assistance.operit.ui.permissions.PermissionReviewOutcome
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEvent
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
@@ -94,6 +96,7 @@ internal enum class SubagentListFilter {
     QUEUED,
     COMPLETED,
     AUTO_REVIEW,
+    INTERRUPTED,
     ERROR,
     ARCHIVED,
 }
@@ -108,6 +111,7 @@ internal enum class PermissionReviewRunDisplayState {
     DENIED,
     INVALID_OUTPUT,
     CANCELLED_OR_TIMED_OUT,
+    INTERRUPTED,
     ERROR,
 }
 
@@ -143,8 +147,8 @@ internal suspend fun resolvePermissionReviewRunDisplayState(
             }
         }
         SubagentRunStatus.CANCELLED -> PermissionReviewRunDisplayState.CANCELLED_OR_TIMED_OUT
-        SubagentRunStatus.FAILED,
-        SubagentRunStatus.INTERRUPTED -> PermissionReviewRunDisplayState.ERROR
+        SubagentRunStatus.FAILED -> PermissionReviewRunDisplayState.ERROR
+        SubagentRunStatus.INTERRUPTED -> PermissionReviewRunDisplayState.INTERRUPTED
         SubagentRunStatus.CREATED,
         SubagentRunStatus.QUEUED,
         SubagentRunStatus.RUNNING -> null
@@ -180,11 +184,14 @@ internal fun filterAndSortSubagentRuns(
                             !isAutoReview &&
                             status == SubagentRunStatus.COMPLETED
                     SubagentListFilter.AUTO_REVIEW -> run.archivedAt == null && isAutoReview
+                    SubagentListFilter.INTERRUPTED ->
+                        run.archivedAt == null &&
+                            !isAutoReview &&
+                            status == SubagentRunStatus.INTERRUPTED
                     SubagentListFilter.ERROR ->
                         run.archivedAt == null &&
                             !isAutoReview &&
-                            (status == SubagentRunStatus.FAILED ||
-                                status == SubagentRunStatus.INTERRUPTED)
+                            status == SubagentRunStatus.FAILED
                     SubagentListFilter.ARCHIVED -> run.archivedAt != null
                 }
             matchesFilter &&
@@ -1054,6 +1061,7 @@ private fun SubagentFilterRow(
             ),
             listOf(
                 SubagentListFilter.AUTO_REVIEW,
+                SubagentListFilter.INTERRUPTED,
                 SubagentListFilter.ERROR,
                 SubagentListFilter.ARCHIVED,
             ),
@@ -1106,9 +1114,38 @@ private fun subagentFilterLabel(filter: SubagentListFilter): String =
         SubagentListFilter.QUEUED -> stringResource(R.string.subagent_filter_queued)
         SubagentListFilter.COMPLETED -> stringResource(R.string.subagent_filter_completed)
         SubagentListFilter.AUTO_REVIEW -> stringResource(R.string.subagent_filter_auto_review)
+        SubagentListFilter.INTERRUPTED -> stringResource(R.string.subagent_filter_interrupted)
         SubagentListFilter.ERROR -> stringResource(R.string.subagent_filter_error)
         SubagentListFilter.ARCHIVED -> stringResource(R.string.subagent_filter_archived)
     }
+
+/**
+ * A named v2 agent shows its own badge here too, the way the chat cards do; the auto review run and
+ * anything that is not a named v2 agent keep the plain status mark.
+ */
+internal fun subagentRunShowsAgentIdentity(isAutoReview: Boolean, isV2Agent: Boolean): Boolean =
+    !isAutoReview && isV2Agent
+
+/** The agent's own accent for a named agent, the run status colour otherwise. */
+internal fun subagentRunBadgeColor(
+    showsAgentIdentity: Boolean,
+    statusColor: Color,
+    accent: Color,
+): Color = if (showsAgentIdentity) accent else statusColor
+
+/**
+ * Only a v2 run names itself by its canonical agent path; another feature's owner id (the reading
+ * companion's run id) is not a name, so it falls back to the version and the profile id.
+ */
+internal fun subagentRunTitle(
+    isV2Agent: Boolean,
+    externalOwnerId: String?,
+    agentProfileId: String,
+): String {
+    val version = if (isV2Agent) "v2" else "v1"
+    val ownerName = if (isV2Agent) externalOwnerId?.takeIf { it.isNotBlank() } else null
+    return ownerName ?: "$version · ${agentProfileId.ifBlank { "subagent" }}"
+}
 
 @Composable
 private fun SubagentRunRow(
@@ -1127,34 +1164,40 @@ private fun SubagentRunRow(
             ChatRuntimeHolder.getInstance(context.applicationContext)
                 .getCore(ChatRuntimeSlot.MAIN)
         }
-    val processingStates by chatCore.inputProcessingStateByChatId.collectAsState()
-    val lastToolNames by chatCore.lastToolNameByChatId.collectAsState()
-    val chatHistories by chatCore.chatHistories.collectAsState()
-    val lastTurnToolInvocationCounts by
-        chatCore.lastTurnToolInvocationCountByChatId.collectAsState()
+    val childProcessingState = perChatValue(chatCore.inputProcessingStateByChatId, run.childChatId)
+    val childLastToolName = perChatValue(chatCore.lastToolNameByChatId, run.childChatId)
+    val childToolInvocations =
+        perChatValue(chatCore.lastTurnToolInvocationCountByChatId, run.childChatId) ?: 0
     val status = run.status.toSubagentRunStatus()
     val isAutoReview =
         run.agentProfileId == AgentProfileRepository.PERMISSION_REVIEWER_ID
-    val finalAssistantText =
-        if (isAutoReview) {
-            chatHistories
-                .firstOrNull { it.id == run.childChatId }
-                ?.messages
-                ?.lastOrNull { it.sender == "ai" }
-                ?.content
-        } else {
-            null
-        }
+    val isV2Agent =
+        run.externalOwnerType ==
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.OWNER_TYPE
+    val agentIdentitySeed = run.externalOwnerId?.takeIf { it.isNotBlank() } ?: run.childChatId
+    val agentIdentity = remember(agentIdentitySeed) { subagentAgentIdentity(agentIdentitySeed) }
+    // The chat list carries no messages of its own (its histories are built without them), so the
+    // child's last turn has to be read from the child conversation, the way the chat card reads it.
+    // The text is read and turned into the display state in one pass: a state of its own would let
+    // the state be recomputed from a text that has not arrived yet, which paints an error colour on
+    // a run that simply has not been read.
     val reviewDisplayState by
         produceState<PermissionReviewRunDisplayState?>(
             initialValue = null,
             isAutoReview,
             status,
-            finalAssistantText,
             reviewEvent,
+            run.childChatId,
         ) {
             value =
                 if (isAutoReview) {
+                    val finalAssistantText =
+                        runCatching {
+                                ChatHistoryManager.getInstance(context).loadChatMessages(run.childChatId)
+                            }
+                            .getOrNull()
+                            ?.lastOrNull { it.sender == "ai" }
+                            ?.content
                     resolvePermissionReviewRunDisplayState(
                         status,
                         finalAssistantText,
@@ -1173,14 +1216,10 @@ private fun SubagentRunRow(
     }
     val currentTool =
         resolveSubagentDisplayedTool(
-            childProcessingState = processingStates[run.childChatId],
-            lastToolName = lastToolNames[run.childChatId],
+            childProcessingState = childProcessingState,
+            lastToolName = childLastToolName,
         )
-    val toolCount =
-        maxOf(
-            run.toolInvocationCount,
-            lastTurnToolInvocationCounts[run.childChatId] ?: 0,
-        )
+    val toolCount = maxOf(run.toolInvocationCount, childToolInvocations)
     val duration =
         formatToolExecutionDuration(
             context,
@@ -1189,11 +1228,7 @@ private fun SubagentRunRow(
         )
     val statusText =
         reviewDisplayState?.let { permissionReviewRunStatusText(it) }
-            ?: subagentRunStatusText(
-                status = status,
-                currentTool = currentTool,
-                toolCount = toolCount,
-            )
+            ?: subagentRunStatusText(status = status, currentTool = currentTool)
     val statusColor =
         when (reviewDisplayState) {
             PermissionReviewRunDisplayState.ALLOWED -> MaterialTheme.colorScheme.primary
@@ -1201,14 +1236,19 @@ private fun SubagentRunRow(
             PermissionReviewRunDisplayState.INVALID_OUTPUT,
             PermissionReviewRunDisplayState.CANCELLED_OR_TIMED_OUT,
             PermissionReviewRunDisplayState.ERROR -> MaterialTheme.colorScheme.error
+            PermissionReviewRunDisplayState.INTERRUPTED ->
+                MaterialTheme.colorScheme.stoppedAttention
             null -> when (status) {
-            SubagentRunStatus.FAILED,
-            SubagentRunStatus.INTERRUPTED -> MaterialTheme.colorScheme.error
+            SubagentRunStatus.FAILED -> MaterialTheme.colorScheme.error
+            SubagentRunStatus.INTERRUPTED -> MaterialTheme.colorScheme.stoppedAttention
             SubagentRunStatus.RUNNING -> MaterialTheme.colorScheme.primary
             SubagentRunStatus.QUEUED -> MaterialTheme.colorScheme.tertiary
             else -> MaterialTheme.colorScheme.onSurfaceVariant
             }
         }
+    // A v2 agent keeps its own badge colour here too, so the list reads like the chat cards do.
+    val showsAgentIdentity = subagentRunShowsAgentIdentity(isAutoReview, isV2Agent)
+    val badgeColor = subagentRunBadgeColor(showsAgentIdentity, statusColor, agentIdentity.accent)
     var showMenu by remember(run.id) { mutableStateOf(false) }
 
     Card(
@@ -1236,13 +1276,14 @@ private fun SubagentRunRow(
                     Modifier
                         .size(34.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(statusColor.copy(alpha = 0.12f)),
+                        .background(badgeColor.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Default.SmartToy,
+                    imageVector =
+                        if (showsAgentIdentity) agentIdentity.icon else Icons.Default.SmartToy,
                     contentDescription = null,
-                    tint = statusColor,
+                    tint = badgeColor,
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -1253,10 +1294,11 @@ private fun SubagentRunRow(
                         if (isAutoReview) {
                             stringResource(R.string.agent_profile_builtin_permission_reviewer_name)
                         } else {
-                            val version = if (run.externalOwnerType ==
-                                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.OWNER_TYPE
-                            ) "v2" else "v1"
-                            "$version · ${run.agentProfileId.ifBlank { "subagent" }}"
+                            subagentRunTitle(
+                                isV2Agent = isV2Agent,
+                                externalOwnerId = run.externalOwnerId,
+                                agentProfileId = run.agentProfileId,
+                            )
                         },
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
@@ -1271,7 +1313,12 @@ private fun SubagentRunRow(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "$statusText · $duration",
+                    text =
+                        listOfNotNull(
+                                statusText,
+                                subagentCardStatsText(duration, toolCount, run.modelRoundCount),
+                            )
+                            .joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall,
                     color = statusColor,
                     maxLines = 1,
@@ -1342,6 +1389,8 @@ private fun permissionReviewRunStatusText(state: PermissionReviewRunDisplayState
             stringResource(R.string.permission_review_status_invalid)
         PermissionReviewRunDisplayState.CANCELLED_OR_TIMED_OUT ->
             stringResource(R.string.permission_review_status_timeout_or_cancelled)
+        PermissionReviewRunDisplayState.INTERRUPTED ->
+            stringResource(R.string.subagent_status_interrupted)
         PermissionReviewRunDisplayState.ERROR ->
             stringResource(R.string.permission_review_status_error)
     }
@@ -1350,7 +1399,6 @@ private fun permissionReviewRunStatusText(state: PermissionReviewRunDisplayState
 private fun subagentRunStatusText(
     status: SubagentRunStatus,
     currentTool: String?,
-    toolCount: Int,
 ): String =
     when (status) {
         SubagentRunStatus.CREATED -> stringResource(R.string.subagent_status_creating)
@@ -1361,18 +1409,12 @@ private fun subagentRunStatusText(
             } else {
                 stringResource(R.string.subagent_status_calling_tool, currentTool)
             }
-        SubagentRunStatus.COMPLETED ->
-            if (toolCount > 0) {
-                stringResource(
-                    R.string.subagent_status_completed_with_tool_count,
-                    toolCount,
-                )
-            } else {
-                stringResource(R.string.subagent_status_completed)
-            }
+        // The tool count and the rest of the run statistics follow as their own line fragment.
+        SubagentRunStatus.COMPLETED -> stringResource(R.string.subagent_status_completed)
         SubagentRunStatus.CANCELLED -> stringResource(R.string.subagent_status_cancelled)
-        SubagentRunStatus.FAILED,
-        SubagentRunStatus.INTERRUPTED -> stringResource(R.string.subagent_status_error)
+        SubagentRunStatus.FAILED -> stringResource(R.string.subagent_status_error)
+        SubagentRunStatus.INTERRUPTED ->
+            stringResource(R.string.subagent_status_interrupted)
     }
 
 @Composable

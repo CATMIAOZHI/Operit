@@ -576,7 +576,7 @@ internal fun ChatScrollNavigator(
 }
 
 @Composable
-private fun ChatMessageLocatorDialog(
+internal fun ChatMessageLocatorDialog(
     locatorEntries: List<ChatMessageLocatorPreview>,
     currentMessageTimestamp: Long,
     isLoading: Boolean,
@@ -589,7 +589,7 @@ private fun ChatMessageLocatorDialog(
 ) {
     val visibleLocatorEntries = locatorVisibleEntries(locatorEntries)
     val currentVisiblePosition =
-        visibleLocatorEntries.indexOfFirst { it.timestamp == currentMessageTimestamp }
+        locatorCurrentVisiblePosition(locatorEntries, currentMessageTimestamp)
     val currentMessageIndex =
         visibleLocatorEntries.getOrNull(currentVisiblePosition)?.messageIndex ?: -1
     val initialIndex =
@@ -720,7 +720,7 @@ private fun ChatMessageLocatorDialog(
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
-                        Text(
+                        if (currentMessageIndex >= 0) Text(
                             text =
                                 stringResource(
                                     R.string.chat_message_locator_current,

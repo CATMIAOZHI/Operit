@@ -443,64 +443,6 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val canDrawOverlays = remember { mutableStateOf(Settings.canDrawOverlays(context)) }
 
     // UI state
-    var chatScrollOffsets by rememberSaveable {
-        mutableStateOf<Map<String, Int>>(emptyMap())
-    }
-    val deferredRestoreOffset = remember(currentChatId) {
-        chatScrollOffsets[currentChatId.orEmpty()]
-    }
-    val scrollState = rememberSaveable(currentChatId, saver = ScrollState.Saver) {
-        ScrollState(initial = chatScrollOffsets[currentChatId.orEmpty()] ?: 0)
-    }
-    var deferredRestoreComplete by remember(currentChatId) {
-        mutableStateOf(deferredRestoreOffset == null)
-    }
-    LaunchedEffect(currentChatId, displayedChatId, scrollState) {
-        val targetOffset = deferredRestoreOffset ?: return@LaunchedEffect
-        if (displayedChatId != currentChatId) {
-            return@LaunchedEffect
-        }
-        // The selected id is published before its transcript finishes loading. Restore only
-        // after the target transcript has replaced the previous chat's layout.
-        withFrameNanos { }
-        withFrameNanos { }
-        scrollState.scrollTo(targetOffset.coerceAtMost(scrollState.maxValue))
-        deferredRestoreComplete = true
-    }
-    val latestDisplayedChatIdForScrollSave by rememberUpdatedState(displayedChatId)
-    val latestDeferredRestoreComplete by rememberUpdatedState(deferredRestoreComplete)
-    DisposableEffect(currentChatId, scrollState) {
-        val chatId = currentChatId
-        onDispose {
-            if (
-                !chatId.isNullOrBlank() &&
-                    latestDisplayedChatIdForScrollSave == chatId &&
-                    latestDeferredRestoreComplete
-            ) {
-                chatScrollOffsets = chatScrollOffsets + (chatId to scrollState.value)
-            }
-        }
-    }
-    LaunchedEffect(currentChatId, displayedChatId, scrollState, deferredRestoreComplete) {
-        val chatId = currentChatId
-        if (
-            chatId.isNullOrBlank() ||
-                displayedChatId != chatId ||
-                !deferredRestoreComplete
-        ) {
-            return@LaunchedEffect
-        }
-        snapshotFlow { scrollState.value }.collect { offset ->
-            chatScrollOffsets = chatScrollOffsets + (chatId to offset)
-        }
-    }
-    LaunchedEffect(chatHistories, chatHistoriesLoaded) {
-        if (!chatHistoriesLoaded) {
-            return@LaunchedEffect
-        }
-        val validChatIds = chatHistories.mapTo(mutableSetOf()) { it.id }
-        chatScrollOffsets = chatScrollOffsets.filterKeys(validChatIds::contains)
-    }
     val historyListState = rememberLazyListState()
     var selectedHistoryCategoryName by
         rememberLocal(
@@ -707,13 +649,6 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                 Unit
             }
         }
-    LaunchedEffect(chatHistories, chatHistoriesLoaded) {
-        if (!chatHistoriesLoaded) {
-            return@LaunchedEffect
-        }
-        val validChatIds = chatHistories.mapTo(mutableSetOf()) { it.id }
-        chatAutoScrollStates = chatAutoScrollStates.filterKeys(validChatIds::contains)
-    }
     val imeBottomPx = WindowInsets.ime.getBottom(density)
 
     // 移除原有的 snackbar 错误处理
@@ -991,7 +926,6 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 verticalDrag = verticalDrag,
                                 onVerticalDragChange = onVerticalDragChange,
                                 dragThreshold = dragThreshold,
-                                scrollState = scrollState,
                                 autoScrollToBottom = autoScrollToBottom,
                                 onAutoScrollToBottomChange = onAutoScrollToBottomChange,
                                 coroutineScope = coroutineScope,
