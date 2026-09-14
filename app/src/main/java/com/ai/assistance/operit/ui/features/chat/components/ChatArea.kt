@@ -463,22 +463,26 @@ private fun MessageItem(
     val isActionable = !message.displayMode.isCollaborationEvent &&
         (message.sender == "user" || message.sender == "ai")
     val isHiddenUserMessage = isHiddenUserPlaceholder(message)
-    val sharedBubble = chatStyle == ChatStyle.BUBBLE &&
-        (!LocalTranscriptCardEnds.current.first || !LocalTranscriptCardEnds.current.last)
+    // The statistics are drawn outside the card, and only by the row that closes it: drawn inside,
+    // they landed on the reply's own background whenever the row shared its turn's card, and a reply
+    // written as several messages (waifu mode) carries the same totals on every one of them. The
+    // version switcher belongs to its message, so it still shows where the statistics do not.
+    val closesCard = LocalTranscriptCardEnds.current.last
     val footer: @Composable () -> Unit = {
         if (message.sender == "ai" &&
             com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.last != false &&
             LocalResponseMessageSection.current != ResponseMessageSection.HEADER &&
             (message.variantCount > 1 ||
-                (showMessageTokenStats && hasDisplayableTokenStats(message)) ||
-                (showMessageTimingStats && hasDisplayableTimingStats(message)) ||
-                (showMessageTimestamp && hasDisplayableMessageTimestamp(message)))
+                (closesCard &&
+                    ((showMessageTokenStats && hasDisplayableTokenStats(message)) ||
+                        (showMessageTimingStats && hasDisplayableTimingStats(message)) ||
+                        (showMessageTimestamp && hasDisplayableMessageTimestamp(message)))))
         ) {
             MessageFooterBar(
                 message = message,
-                showMessageTokenStats = showMessageTokenStats,
-                showMessageTimingStats = showMessageTimingStats,
-                showMessageTimestamp = showMessageTimestamp,
+                showMessageTokenStats = showMessageTokenStats && closesCard,
+                showMessageTimingStats = showMessageTimingStats && closesCard,
+                showMessageTimestamp = showMessageTimestamp && closesCard,
                 allowVariantSelection = allowTranscriptMutation,
                 onSelectVariant = { targetVariantIndex ->
                     onSwitchMessageVariant?.invoke(index, targetVariantIndex)
@@ -517,9 +521,6 @@ private fun MessageItem(
             ),
     ) {
         Column {
-            androidx.compose.runtime.CompositionLocalProvider(
-                LocalTranscriptInlineFooter provides if (sharedBubble) footer else null,
-            ) {
             when (chatStyle) {
                 ChatStyle.CURSOR -> {
                     CursorStyleChatMessage(
@@ -582,8 +583,7 @@ private fun MessageItem(
                 }
             }
 
-            }
-            if (!sharedBubble) footer()
+            footer()
         }
 
         DropdownMenu(

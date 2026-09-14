@@ -8,7 +8,6 @@ import com.ai.assistance.operit.ui.common.markdown.TranscriptMarkdownSlice
 internal data class TranscriptCardEnds(val first: Boolean, val last: Boolean)
 
 internal val LocalTranscriptCardEnds = compositionLocalOf { TranscriptCardEnds(true, true) }
-internal val LocalTranscriptInlineFooter = compositionLocalOf<(@androidx.compose.runtime.Composable () -> Unit)?> { null }
 
 internal data class TranscriptRow(
     val key: String,
