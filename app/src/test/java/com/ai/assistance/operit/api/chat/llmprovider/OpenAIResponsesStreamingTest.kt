@@ -26,6 +26,75 @@ import org.mockito.Mockito
 
 class OpenAIResponsesStreamingTest {
     @Test
+    fun downstreamCancellation_isNotSwallowedAsJsonError() = runBlocking {
+        val sseBody =
+            listOf(
+                """data: {"type":"response.output_text.delta","delta":"first"}""",
+                """data: {"type":"response.output_text.delta","delta":"must not arrive"}""",
+                """data: {"type":"response.completed","response":{"output":[],"usage":{}}}""",
+            ).joinToString(separator = "\n\n", postfix = "\n\n")
+        val provider = OpenAIResponsesProvider(
+            responsesApiEndpoint = "https://example.test/v1/responses",
+            apiKeyProvider = SingleApiKeyProvider("test-key"),
+            modelName = "test-model",
+            client = clientForSse(sseBody),
+            enableToolCall = true,
+        )
+        withoutAndroidLogging {
+            val cancellation = kotlinx.coroutines.CancellationException("collector cancelled")
+            var propagated = false
+            val chunks = mutableListOf<String>()
+            try {
+                provider.sendMessage(
+                    context = Mockito.mock(Context::class.java),
+                    chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                    modelParameters = emptyList(),
+                    enableThinking = false,
+                    stream = true,
+                    availableTools = null,
+                    preserveThinkInHistory = false,
+                    onTokensUpdated = { _, _, _ -> },
+                    onNonFatalError = {},
+                    enableRetry = false,
+                ).collect {
+                    chunks.add(it)
+                    throw cancellation
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Coroutine stack-trace recovery may copy the exception across dispatchers.
+                propagated = e.message == cancellation.message
+            }
+            assertTrue(propagated)
+            assertEquals(listOf("first"), chunks)
+        }
+    }
+
+    @Test
+    fun completedFunctionItem_doesNotReopenTool() = runBlocking {
+        val sseBody =
+            listOf(
+                """data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","name":"use_package","call_id":"call_1"}}""",
+                """data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"package_name\":\"reading_companion\"}"}""",
+                """data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"package_name\":\"reading_companion\"}"}""",
+                """data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","name":"use_package","call_id":"call_1","arguments":"{\"package_name\":\"reading_companion\"}"}}""",
+                """data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}""",
+                """data: {"type":"response.function_call_arguments.done","output_index":0}""",
+                """data: {"type":"response.completed","response":{"output":[],"usage":{}}}""",
+            ).joinToString(separator = "\n\n", postfix = "\n\n")
+        val provider = OpenAIResponsesProvider(
+            responsesApiEndpoint = "https://example.test/v1/responses",
+            apiKeyProvider = SingleApiKeyProvider("test-key"),
+            modelName = "test-model",
+            client = clientForSse(sseBody),
+            enableToolCall = true,
+        )
+        withoutAndroidLogging {
+            val output = collectResponse(provider, Mockito.mock(Context::class.java))
+            assertSingleStructuredTool(output, "use_package", "reading_companion")
+        }
+    }
+
+    @Test
     fun responseCompleted_closesToolBeforeEmittingLateReasoning() = runBlocking {
         val sseBody =
             listOf(

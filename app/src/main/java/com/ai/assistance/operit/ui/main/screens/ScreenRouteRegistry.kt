@@ -3,7 +3,6 @@ package com.ai.assistance.operit.ui.main.screens
 import android.content.Context
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoMode
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DataObject
@@ -344,24 +343,6 @@ object ScreenRouteRegistry {
                 descriptionResId = R.string.tool_html_packager_desc,
                 icon = Icons.Default.Html,
                 order = 160
-            ),
-            hostEntryDefinition(
-                entryId = "toolbox.auto_glm_one_click",
-                screen = Screen.AutoGlmOneClick,
-                surface = NavigationSurface.TOOLBOX,
-                titleResId = R.string.tool_autoglm_one_click,
-                descriptionResId = R.string.tool_autoglm_one_click_desc,
-                icon = Icons.Default.AutoMode,
-                order = 170
-            ),
-            hostEntryDefinition(
-                entryId = "toolbox.auto_glm_tool",
-                screen = Screen.AutoGlmTool,
-                surface = NavigationSurface.TOOLBOX,
-                titleResId = R.string.tool_autoglm_tool,
-                descriptionResId = R.string.tool_autoglm_tool_desc,
-                icon = Icons.Default.AutoMode,
-                order = 180
             ),
             hostEntryDefinition(
                 entryId = "hidden.toolbox",

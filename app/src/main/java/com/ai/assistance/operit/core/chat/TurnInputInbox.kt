@@ -9,9 +9,21 @@ class TurnInputInbox {
         val text: String,
         val consumed: () -> Unit = {},
         val returned: () -> Unit = {},
+        val agentPath: String? = null,
+        val startsAgentTurn: Boolean = false,
     )
     private val pending = ArrayDeque<Input>()
     private var delivering: List<Input> = emptyList()
+    enum class PendingInputKind { USER, AGENT }
+    fun pendingInputKind(): PendingInputKind? = synchronized(lock) {
+        when {
+            pending.any { it.agentPath == null } -> PendingInputKind.USER
+            pending.isNotEmpty() -> PendingInputKind.AGENT
+            else -> null
+        }
+    }
+    fun hasPending(): Boolean = synchronized(lock) { pending.isNotEmpty() }
+    fun hasPendingUserInput(): Boolean = synchronized(lock) { pending.any { it.agentPath == null } }
 
     fun offer(input: Input): Boolean = synchronized(lock) {
         if (!open || input.text.isBlank()) return@synchronized false

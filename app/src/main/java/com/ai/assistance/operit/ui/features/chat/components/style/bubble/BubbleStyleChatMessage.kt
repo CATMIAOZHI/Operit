@@ -44,8 +44,13 @@ fun BubbleStyleChatMessage(
     enableDialogs: Boolean = true,  // 新增参数：是否启用弹窗功能，默认启用
     enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
     onRoleAvatarLongPress: ((String) -> Unit)? = null,
+    showAssistantHeader: Boolean = true,
     onEditSummary: ((ChatMessage) -> Unit)? = null,
 ) {
+    if (message.displayMode.isCollaborationEvent) {
+        com.ai.assistance.operit.ui.features.chat.components.CollaborationMessageCard(message)
+        return
+    }
     when (message.sender) {
         "user" -> {
             BubbleUserMessageComposable(
@@ -64,6 +69,7 @@ fun BubbleStyleChatMessage(
         "ai" -> {
             BubbleAiMessageComposable(
                 message = message,
+                showHeader = showAssistantHeader,
                 backgroundColor = aiMessageColor,
                 textColor = aiTextColor,
                 enableLiquidGlass = aiMessageLiquidGlassEnabled,

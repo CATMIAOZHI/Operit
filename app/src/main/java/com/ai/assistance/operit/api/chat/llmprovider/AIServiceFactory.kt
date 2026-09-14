@@ -375,6 +375,13 @@ object AIServiceFactory {
                     config.modelName, httpClient, customHeaders, supportsVision, enableToolCall,
                 )
 
+            ApiProviderType.COMMAND_CODE ->
+                CommandCodeProvider(
+                    com.ai.assistance.operit.data.api.ProviderAccountManager.get(context,
+                        com.ai.assistance.operit.data.api.AccountProvider.COMMAND_CODE),
+                    config.modelName, httpClient, customHeaders, supportsVision, enableToolCall,
+                )
+
             ApiProviderType.GOOGLE_ANTIGRAVITY -> {
                 val manager = com.ai.assistance.operit.data.api.ProviderAccountManager.get(context,
                     com.ai.assistance.operit.data.api.AccountProvider.ANTIGRAVITY)

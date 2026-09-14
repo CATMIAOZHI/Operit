@@ -468,6 +468,25 @@ internal const val READING_STALE_RUN_WHERE_SQL =
     "status = ? AND run_heartbeat_at < ? AND " +
         "id NOT IN $READING_CLAIMS_NOT_STALE_SUBQUERY_SQL"
 
+/**
+ * 剪枝归档 SQL：把被剪枝的任务关联 run 拷贝进 reading_task_attempts。
+ *
+ * `auto_comment_runs.chapter_index` 可空（「无下一章」收尾或未解析到章节即中断的 run），而
+ * `reading_task_attempts.chapter_index` 为 NOT NULL；直接拷贝会触发约束异常并回滚整个剪枝
+ * 事务，留下的脏 run 永不删除。因此跳过空章节 run——它们仍会被 [pruneAutoCommentRuns] 的
+ * DELETE（同等 selection，不含 task_id/chapter_index 条件）一并清除。
+ */
+internal fun pruneAutoCommentArchiveSql(selection: String): String =
+    """
+    INSERT OR REPLACE INTO reading_task_attempts
+        (id, task_id, chapter_index, chapter_title, status, stage, subagent_run_id, child_chat_id,
+         actual_input_tokens, actual_output_tokens, started_at, finished_at)
+        SELECT id, task_id, chapter_index, chapter_title, status, stage, subagent_run_id, child_chat_id,
+               actual_input_tokens, actual_output_tokens, started_at, finished_at
+        FROM auto_comment_runs
+        WHERE task_id IS NOT NULL AND chapter_index IS NOT NULL AND ($selection)
+    """.trimIndent()
+
 /** 段评生成执行模式：单发（v13 前兼容值）。 */
 const val AUTO_COMMENT_RUN_EXECUTION_MODE_DIRECT = "direct"
 
@@ -3017,13 +3036,7 @@ class ReadingCompanionStore(context: Context) :
                 }
                 refs
             }
-        db.execSQL("""INSERT OR REPLACE INTO reading_task_attempts
-            (id, task_id, chapter_index, chapter_title, status, stage, subagent_run_id, child_chat_id,
-             actual_input_tokens, actual_output_tokens, started_at, finished_at)
-            SELECT id, task_id, chapter_index, chapter_title, status, stage, subagent_run_id, child_chat_id,
-                   actual_input_tokens, actual_output_tokens, started_at, finished_at
-            FROM auto_comment_runs WHERE task_id IS NOT NULL AND ($selection)
-        """.trimIndent(), selectionArgs)
+        db.execSQL(pruneAutoCommentArchiveSql(selection), selectionArgs)
         db.delete("auto_comment_runs", selection, selectionArgs)
         if (prunedRefs.isNotEmpty()) {
             synchronized(prunedRunChatQueue) {

@@ -1,4 +1,23 @@
 <resources>
+    <string name="subagent_v2_limits">v2 运行限制</string>
+    <string name="subagent_v2_max_active">同时运行的子代理数</string>
+    <string name="subagent_v2_max_depth">最大子代理层数</string>
+    <string name="subagent_v2_min_wait">最短等待（毫秒）</string>
+    <string name="subagent_v2_default_wait">默认等待（毫秒）</string>
+    <string name="subagent_v2_max_wait">最长等待（毫秒）</string>
+    <string name="subagent_v2_limits_help">运行数按整个代理树计算，不含根代理；模型自身的并发限制仍然生效。修改影响后续操作，不会中断正在执行的任务。</string>
+    <string name="subagent_v2_invalid_limits">运行数和层数须为 1–64；等待须满足 0 ≤ 最短 ≤ 默认 ≤ 最长 ≤ 3600000。</string>
+    <string name="subagent_message_header">Subagent v2 · %1$s · %2$s</string>
+    <string name="subagent_message_result">已完成</string>
+    <string name="subagent_message_status">状态有更新</string>
+    <string name="subagent_message_task">任务消息</string>
+    <string name="subagent_message_note">有了更新</string>
+    <string name="subagent_event_expanded">详情已展开</string>
+    <string name="subagent_event_collapsed">详情已折叠</string>
+    <string name="subagent_version_title">Subagent 版本</string>
+    <string name="subagent_version_description">选择新对话使用的协作工具。现有代理保留其版本，阅读伴侣继续使用 v1。</string>
+    <string name="subagent_version_v2">v2 · 多代理协作（默认）</string>
+    <string name="subagent_version_v1">v1 · Task 同步任务</string>
     <string name="chat_live_elapsed">已用时 %1$s</string>
     <string name="chat_estimated_cost">本对话估算费用：¥%1$s</string>
     <string name="chat_estimated_cost_partial">本对话估算费用：¥%1$s（部分未知）</string>
@@ -10,6 +29,10 @@
     <string name="chat_title_generating">正在生成标题…</string>
     <string name="chat_title_no_content">暂无可用于生成标题的对话内容</string>
     <string name="chat_title_generation_failed">标题生成失败，已保留原标题</string>
+    <string name="provider_command_code">Command Code（账户登录）</string>
+    <string name="command_code_login_hint">在浏览器中登录，或填入 Command Code API Key。验证后加密保存在本机，可获取模型列表。</string>
+    <string name="command_code_save_key">验证并保存</string>
+    <string name="command_code_login_failed">登录或验证失败，请检查 API Key、网络后重试。</string>
     <string name="app_name">Operit Ry</string>
     <string name="accessibility_service_description">用于获取UI层次结构，为AI助手提供更快速的界面分析能力，不会收集或存储任何个人信息。</string>
     
@@ -594,9 +617,9 @@
     <string name="termux_setup_guide">Termux 设置向导</string>
     
     <!-- About Screen -->
-    <string name="about_title">关于 Operit AI</string>
+    <string name="about_title">关于 Operit Ry</string>
     <string name="about_version">版本: %1$s</string>
-    <string name="about_description">Operit AI是一个智能助手应用，能够帮助用户更高效地使用设备，提供界面分析、聊天对话等功能。</string>
+    <string name="about_description">Operit Ry是一个智能助手应用，能够帮助用户更高效地使用设备，提供界面分析、聊天对话等功能。</string>
     <string name="about_developer">维护者: &lt;a href="https://github.com/CATMIAOZHI"&gt;Rainy&lt;/a&gt;</string>
     <string name="about_contact">上游项目: AAswordman / Operit</string>
     <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/Operit"&gt;GitHub: https://github.com/CATMIAOZHI/Operit&lt;/a&gt;</string>
@@ -619,7 +642,7 @@
     <string name="network_status_label">网络状态</string>
 
     <!-- Configuration Screen -->
-    <string name="config_title">Operit AI 助手</string>
+    <string name="config_title">Operit Ry 助手</string>
     <string name="config_description">使用 DeepSeek API Key，或配置其他模型服务</string>
     <string name="config_api_key_label">API密钥</string>
     <string name="config_api_key_placeholder">DeepSeek API密钥</string>
@@ -1663,25 +1686,14 @@
     <string name="modify_memory">修改记忆</string>
     <string name="delete_from_here">删除到此</string>
     <string name="confirm_rollback_title">确认回滚</string>
-    <string name="confirm_rollback_message">将删除此消息之后的所有消息，并将已绑定的工作区回滚到此消息之前的状态。此操作不可撤销，确定继续吗？</string>
+    <string name="confirm_rollback_message">将删除此消息及其之后的所有消息。AI 写入磁盘的文件改动不会被撤销，需要你自行处理。此操作不可撤销，确定继续吗？</string>
     <string name="confirm_rollback_confirm">确认回滚</string>
     <string name="confirm_edit_and_resend_title">确认编辑并重发</string>
-    <string name="confirm_edit_and_resend_message">将删除此消息之后的所有消息，并把已编辑的内容作为新的提问重新发送，同时回滚已绑定的工作区到此消息之前的状态。此操作不可撤销，确定继续吗？</string>
+    <string name="confirm_edit_and_resend_message">将删除此消息之后的所有消息，并把已编辑的内容作为新的提问重新发送。AI 写入磁盘的文件改动不会被撤销，需要你自行处理。此操作不可撤销，确定继续吗？</string>
     <string name="confirm_edit_and_resend_confirm">确认编辑并重发</string>
-    <string name="workspace_changes_preview_title">工作区文件变更预览</string>
-    <string name="workspace_change_added">新增</string>
-    <string name="workspace_change_deleted">删除</string>
-    <string name="workspace_change_modified">修改</string>
-    <string name="workspace_changes_more">以及另外 %1$d 个文件变更</string>
+    <string name="confirm_revert_tool_calls_warning">被删除的轮次调用过工具，这些对话被删除后 AI 不再记得它们，重新回答时可能重复操作或误判已有文件，表现可能下降。</string>
     <string name="workspace_attachment_attached">当前对话已附着工作区。</string>
     <string name="workspace_attachment_environment">工作区环境：%1$s</string>
-    <string name="workspace_attachment_initial_load">首次加载工作区：</string>
-    <string name="workspace_attachment_file_changes">工作区文件变化：</string>
-    <string name="workspace_attachment_omitted_changes">- 还有 %1$d 个变化未列出</string>
-    <string name="workspace_attachment_change_created">新增</string>
-    <string name="workspace_attachment_change_modified">修改</string>
-    <string name="workspace_attachment_change_deleted">删除</string>
-    <string name="workspace_attachment_change_moved">移动</string>
     <string name="multi_select">多选</string>
 
     <string name="exit_multi_select">退出多选</string>
@@ -2184,20 +2196,6 @@
     <string name="tool_html_packager">HTML打包器</string>
     <string name="tool_html_packager_desc">将HTML文件及其依赖打包成单个HTML文件，方便分享和部署</string>
 
-    <string name="tool_autoglm_one_click">AutoGLM 一键配置</string>
-    <string name="tool_autoglm_one_click_desc">一键为 UI 控制器配置 autoglm-phone 模型并切换 AutoGLM 工具包</string>
-    <string name="tool_autoglm_tool">AutoGLM 执行</string>
-    <string name="tool_autoglm_tool_desc">使用 autoglm-phone 代理按步骤执行手机自动化任务</string>
-    
-    <!-- AutoGLM One-Click Configuration -->
-    <string name="autoglm_config_name">AutoGLM 配置</string>
-    <string name="autoglm_one_click_title">AutoGLM 一键配置</string>
-    <string name="autoglm_one_click_subtitle">为 UI 控制器自动创建智谱 autoglm-phone 模型配置，并切换 AutoGLM 工具包。</string>
-    <string name="autoglm_open_apikey_center">前往智谱 API Key 页面</string>
-    <string name="autoglm_open_apikey_tip">登录后，在智谱平台创建并复制 API Key</string>
-    <string name="autoglm_api_key_placeholder">在此粘贴您的智谱 API Key</string>
-    <string name="autoglm_one_click_button">一键配置 AutoGLM</string>
-
     <!-- Process Limit Remover Screen -->
     <string name="process_limit_title">解除幻象进程限制</string>
     <string name="process_limit_subtitle">管理Android 12+的幻象进程数量限制</string>
@@ -2231,15 +2229,6 @@
     <string name="process_limit_exit_code">退出码：%d</string>
     <string name="process_limit_command">命令</string>
     <string name="toolbox_description">便捷实用的工具集合，提升您的工作效率</string>
-    <string name="autoglm_status_running">正在执行一键配置，请稍候...</string>
-    <string name="autoglm_status_success">已完成 AutoGLM 一键配置：
-- 已创建或更新 AutoGLM UI 控制器模型配置（autoglm-phone, 智谱）
-- 已将“UI 控制器”功能切换为该配置
-- 已关闭 Automatic_ui_base，打开 Automatic_ui_subagent
-
-现在可以在对话界面使用 AutoGLM 模式了。</string>
-    <string name="autoglm_status_error">一键配置失败：%1$s</string>
-    <string name="autoglm_error_empty_api_key">请先填写智谱 API Key。</string>
 
     <!-- MCP Config Screen -->
     <string name="import_or_connect_mcp_service">导入或连接MCP服务</string>
@@ -3668,7 +3657,7 @@
     <string name="token_stats_pricing_catalog_loading">正在加载内置定价目录</string>
     <string name="token_stats_pricing_catalog_remote">已使用云端价格覆盖内置价格</string>
     <string name="token_stats_pricing_catalog_bundled">正在使用 APK 内置目录</string>
-    <string name="token_stats_pricing_catalog_revision">当前版本 %1$s · 数据日期 %2$s</string>
+    <string name="token_stats_pricing_catalog_revision">当前版本 %1$s · 生成时间 %2$s</string>
     <string name="token_stats_pricing_catalog_checked">上次检查：%1$s</string>
     <string name="token_stats_pricing_catalog_not_checked">尚未检查云端更新</string>
     <string name="token_stats_pricing_catalog_refresh">更新云端目录</string>
@@ -3676,11 +3665,11 @@
     <string name="token_stats_pricing_catalog_hint">按模型名匹配官方价格，与接入提供商无关。更新优先获取 models.dev，超时读取仓库缓存；点击覆盖后生效。手动价格始终优先，历史费用不变。</string>
     <string name="token_stats_pricing_catalog_details">目录详情</string>
     <string name="token_stats_pricing_context_tiers">官方价格按输入上下文长度分档，此处显示基础档；手动价格优先。</string>
-    <string name="token_stats_pricing_catalog_downloaded">已下载版本 %1$s · 数据日期 %2$s</string>
+    <string name="token_stats_pricing_catalog_downloaded">已下载版本 %1$s · 生成时间 %2$s</string>
     <string name="token_stats_pricing_catalog_apply">覆盖内置价格</string>
     <string name="token_stats_pricing_catalog_applying">正在覆盖…</string>
     <string name="token_stats_pricing_catalog_downloading">正在下载云端目录…</string>
-    <string name="token_stats_pricing_catalog_applied">已覆盖</string>
+    <string name="token_stats_pricing_catalog_up_to_date">已是最新</string>
     <string name="token_stats_pricing_filter_all">全部</string>
     <string name="token_stats_pricing_filter_missing">价格缺失</string>
     <string name="token_stats_pricing_filter_custom">已自定义</string>
@@ -4282,8 +4271,6 @@
     <string name="screen_title_text_to_speech">文本转语音</string>
     <string name="screen_title_speech_to_text">语音识别</string>
     <string name="screen_title_process_limit_remover">解除幻象进程限制</string>
-    <string name="screen_title_autoglm_one_click">AutoGLM 一键配置</string>
-    <string name="screen_title_autoglm_tool">autoglm执行</string>
     <string name="screen_title_default_assistant_guide">默认助手设置</string>
     <string name="screen_title_mcp_market">MCP 市场</string>
     <string name="screen_title_skill_market">Skill 市场</string>
@@ -5422,7 +5409,7 @@
     <string name="default_assistant_guide_step1_title">设置为默认助理</string>
     <string name="default_assistant_guide_step1_desc">将 Operit 设置为系统的默认数字助理应用</string>
     <string name="default_assistant_guide_step1_detail1">• 打开系统设置 → 应用 → 默认应用 → 数字助理应用</string>
-    <string name="default_assistant_guide_step1_detail2">• 在助手应用列表中找到并选择"Operit AI"</string>
+    <string name="default_assistant_guide_step1_detail2">• 在助手应用列表中找到并选择"Operit Ry"</string>
     <string name="default_assistant_guide_step1_detail_android12">Android 12+: 设置 → 应用 → 默认应用 → 数字助理应用 → 默认数字助理应用</string>
     <string name="default_assistant_guide_open_settings">打开助理设置</string>
     
@@ -5454,7 +5441,7 @@
     <string name="default_assistant_guide_troubleshooting_content">如果在列表中找不到Operit，请确保：\n\n• 应用已正确安装且未被禁用\n• 已授予必要的权限（麦克风、悬浮窗等）\n• 尝试重启设备后再次设置\n\n部分定制系统可能限制第三方应用作为默认助手，如遇此情况，您仍可通过应用内的悬浮窗功能使用Operit。</string>
     
     <!-- Voice Interaction Service -->
-    <string name="voice_interaction_service_name">Operit AI 助手</string>
+    <string name="voice_interaction_service_name">Operit Ry 助手</string>
     <string name="voice_interaction_service_summary">智能语音助手服务</string>
 
     <!-- Tool Permission Settings -->
@@ -5495,6 +5482,7 @@
     <string name="reply">回复</string>
     <string name="image">图片</string>
     <string name="image_expired">图片 (已过期)</string>
+    <string name="chat_viewed_images">已查看 %1$d 张图像</string>
     <string name="copy_content">复制内容</string>
     <string name="user_reply_instruction">用户正在回复你之前的这条消息：</string>
     <string name="workspace_status">工作区状态</string>
@@ -5857,7 +5845,7 @@
     <string name="start_with_new_chat_description">开启后，每次启动应用都会进入一个新的空白聊天界面，不再自动打开上一次聊天。</string>
     <string name="software_identity_title">软件标识</string>
     <string name="software_identity_description">更改侧边栏顶部显示的软件标识。</string>
-    <string name="software_identity_option_operit">Operit AI</string>
+    <string name="software_identity_option_operit">Operit Ry</string>
     <string name="software_identity_option_lingshu">灵枢 AI</string>
     <string name="reset_all_display_settings">重置所有显示设置</string>
     <string name="ui_accessibility_mode">无障碍适配模式</string>
@@ -6776,7 +6764,6 @@
     <string name="uidebugger_clear">清除</string>
 
     <!-- Auto GLM Tool Screen -->
-    <string name="autoglm_virtual_screen">本次使用虚拟屏幕</string>
 
     <!-- HTML Packager Screen -->
     <string name="htmlpackager_step1_title">第一步：选择项目文件夹</string>
@@ -6794,20 +6781,6 @@
     <string name="document_block_label">区块 %1$d</string>
 
     <!-- Auto GLM One Click Tool Screen -->
-    <string name="autoglm_go_to_model_config">前往模型配置</string>
-    <string name="autoglm_custom_endpoint">自定义 Endpoint（OpenAI 兼容）</string>
-    <string name="autoglm_model_name">模型名称</string>
-    <string name="autoglm_restore_original">恢复原本的自动化逻辑</string>
-    <string name="autoglm_step1_title">step1 配置基本对话模型</string>
-    <string name="autoglm_step1_warning">不要把autoglm模型作为对话主模型</string>
-    <string name="autoglm_step1_note">注意：如果已经配置过就不需要管了，这里切勿改成 autoglm 等小模型。</string>
-    <string name="autoglm_step2_title">step2 访问智谱官网，获取 API Key</string>
-    <string name="autoglm_step3_title">step3 填入 API Key，点击一键配置</string>
-    <string name="autoglm_hide_advanced">隐藏高级设置</string>
-    <string name="autoglm_show_advanced">显示高级设置（自定义 Endpoint / 模型名称）</string>
-    <string name="autoglm_step4_title">step4 恢复非 AutoGLM 自动化（可选）</string>
-    <string name="autoglm_step4_description">如果你觉得在使用 AutoGLM 一键配置后自动化操作变得困难，可以点击下方按钮恢复为软件原本的自动化逻辑（启用 base 包，关闭 subagent 包，其余设置保持不变）。如果你想再次启用 AutoGLM，只需要按照 step3 输入密钥并再次点击一键配置。</string>
-    <string name="autoglm_restore_success">已恢复为软件原本的自动化逻辑</string>
 
     <!-- UI Debugger Components -->
     <string name="uidebugger_create_new_package">创建新配置包</string>
@@ -6989,9 +6962,6 @@
     <string name="emoticon_shyness">羞</string>
     <string name="emoticon_blush">脸红</string>
     <string name="emoticon_embarrassed">不好意思</string>
-    <string name="autoglm_task_complete">✅ 任务完成: %1$s</string>
-    <string name="autoglm_thinking_process">💭 思考过程:</string>
-    <string name="autoglm_execute_action">🎯 执行动作:</string>
     <string name="version_update">版本更新</string>
     <string name="mcp_no_zip_selected">未选择ZIP文件</string>
     <string name="mcp_uninstall_failed">卸载失败</string>
@@ -7421,6 +7391,7 @@
     <string name="openai_error_max_retries">AI响应获取失败，已达最大重试次数: %1$s</string>
     <string name="openai_error_response_failed">AI响应获取失败: %1$s</string>
     <string name="openai_error_connection_timeout">连接超时或中断，已重试 %1$d 次: %2$s</string>
+    <string name="openai_error_stream_stalled">响应停滞，已重试 %1$d 次: %2$s</string>
     <string name="openai_error_response_empty">API响应为空</string>
     <string name="openai_error_parse_response_failed">解析响应失败: %1$s</string>
     <string name="openai_connection_success">连接成功！</string>
@@ -7835,7 +7806,7 @@
     <string name="html_export_updated">更新</string>
     <string name="html_export_group">分组</string>
     <string name="html_export_message_count">消息数</string>
-    <string name="html_export_footer">导出自 Operit AI Assistant</string>
+    <string name="html_export_footer">导出自 Operit Ry Assistant</string>
 
     <!-- MnnModelDownloadManager (新增) -->
     <string name="mnn_no_cache_data">无缓存数据</string>
@@ -8242,7 +8213,6 @@
     <string name="message_workspace_backing_up">正在备份工作区...</string>
     <string name="message_role_user">用户</string>
     <string name="role_card_chat_model_binding_parse_failed">角色卡对话模型绑定解析失败</string>
-    <string name="message_workspace_sync_failed">工作区状态同步失败: %1$s</string>
     <string name="message_ai_service_not_initialized">AI服务未初始化</string>
     <string name="message_summarizing">正在总结记忆...</string>
     <string name="message_send_failed">发送消息失败: %1$s</string>
@@ -8601,7 +8571,6 @@
     <string name="mcp_repository_invalid_plugin_id">插件 ID 无效，已拒绝访问包目录</string>
     <string name="chat_todo_step_progress">第 %1$d / %2$d 步</string>
     <string name="toolreg_todowrite_desc">更新当前聊天的 Todo 列表</string>
-    <string name="chat_todo_tool_subagent_unavailable">子代理会话不能更新聊天 Todo</string>
     <string name="chat_todo_tool_active_chat_required">更新 Todo 需要一个当前聊天</string>
     <string name="chat_todo_tool_missing_todos">缺少必要参数：todos</string>
     <string name="chat_todo_tool_updated">Todo 列表已更新（%1$d 项）</string>

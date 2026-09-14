@@ -895,11 +895,6 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     var showCharacterSelector by remember { mutableStateOf(false) }
 
     var bottomBarHeightPx by remember { mutableStateOf(0) }
-    LaunchedEffect(isReadOnlyTranscript) {
-        if (isReadOnlyTranscript) {
-            bottomBarHeightPx = 0
-        }
-    }
     val bottomBarHeightDp = with(density) { bottomBarHeightPx.toDp() }
     val classicSettingsBarBottomPadding =
         if (bottomBarHeightDp > 36.dp) {
@@ -1173,6 +1168,20 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 },
                                 onRequestAutoScrollToBottom = requestAutoScrollToBottom,
                             )
+                        }
+                    } else {
+                        val todos by actualViewModel.currentTodos.collectAsState()
+                        Box(
+                            modifier =
+                                Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .onGloballyPositioned {
+                                        bottomBarHeightPx = it.size.height
+                                    }
+                        ) {
+                            if (isSubagentChat) {
+                                ChatTodoDock(chatId = currentChatId, todos = todos)
+                            }
                         }
                     }
 

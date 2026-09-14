@@ -630,9 +630,11 @@ class ConversationService(
                     toolExposureMode = toolExposureMode,
                     toolVisibility =
                         if (isSubTask) {
-                            roleCardToolAccess.effectiveBuiltinToolVisibility + ("task" to false)
+                            roleCardToolAccess.effectiveBuiltinToolVisibility +
+                                com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy.visibility(context, chatId, true).filterValues { !it }
                         } else {
-                            roleCardToolAccess.effectiveBuiltinToolVisibility
+                            roleCardToolAccess.effectiveBuiltinToolVisibility +
+                                com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy.visibility(context, chatId, false).filterValues { !it }
                         },
                     allowedPackageNames = roleCardToolAccess.allowedPackageNames,
                     allowedSkillNames = roleCardToolAccess.allowedSkillNames,
@@ -713,7 +715,7 @@ class ConversationService(
                     val xmlTags = splitXmlTag(content)
                     if (xmlTags.isNotEmpty()) {
                         // Process the message with tool results
-                        processChatMessageWithTools(content, xmlTags, preparedHistory, index, effectiveChatHistory.size)
+                        processChatMessageWithTools(content, xmlTags, preparedHistory, index, effectiveChatHistory.size, message.metadata)
                     } else {
                         // Add the message as is
                         preparedHistory.add(message)
@@ -794,14 +796,16 @@ class ConversationService(
             xmlTags: List<List<String>>,
             conversationHistory: MutableList<PromptTurn>,
             messageIndex: Int,
-            totalMessages: Int
+            totalMessages: Int,
+            sourceMetadata: Map<String, Any?> = emptyMap(),
     ) {
         if (xmlTags.isEmpty()) {
             // 如果没有XML标签，直接添加为AI消息
             conversationHistory.add(
                 PromptTurn(
                     kind = PromptTurnKind.ASSISTANT,
-                    content = content
+                    content = content,
+                    metadata = sourceMetadata,
                 )
             )
             return
@@ -859,7 +863,9 @@ class ConversationService(
         // A read_file image result is stored as a structured tool result followed by a standalone
         // image link. Keep both in one TOOL_RESULT turn so providers resend the image as the
         // external user payload of that tool result instead of an invalid assistant image block.
-        val historySafeSegments = mergeToolResultImageLinksForHistory(segments)
+        val historySafeSegments =
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory
+                .restoreSplitAssistantMetadata(mergeToolResultImageLinksForHistory(segments), sourceMetadata)
 
         // 合并连续的相同角色消息
         val mergedSegments = mutableListOf<PromptTurn>()
@@ -871,6 +877,7 @@ class ConversationService(
         for (segment in historySafeSegments) {
             val shouldMergeCurrent =
                 segment.kind == currentKind &&
+                    segment.metadata == currentMetadata &&
                     segment.kind !in setOf(PromptTurnKind.TOOL_CALL, PromptTurnKind.TOOL_RESULT)
             if (shouldMergeCurrent) {
                 // 如果角色与当前角色相同，则合并内容

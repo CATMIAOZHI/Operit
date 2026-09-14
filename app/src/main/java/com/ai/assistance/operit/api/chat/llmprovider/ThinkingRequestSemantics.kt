@@ -170,6 +170,10 @@ object ThinkingRequestSemantics {
         if (!enableThinking) {
             val preservedOverride =
                 when (ApiProviderType.fromProviderTypeId(providerTypeId)) {
+                    ApiProviderType.COMMAND_CODE ->
+                        enabledRawTextParameter(modelParameters, "reasoning_effort")
+                            ?.let { CommandCodePolicy.effort(modelName, it) }
+                            ?.let(::textSummary) ?: ThinkingRequestSummary.NotSent
                     ApiProviderType.GROK_ACCOUNT ->
                         enabledRawTextParameter(modelParameters, "reasoning_effort")
                             ?.let { GrokAccountPolicy.effort(modelName, it) }
@@ -239,6 +243,11 @@ object ThinkingRequestSemantics {
             ApiProviderType.fromProviderTypeId(providerTypeId)
                 ?: return ThinkingRequestSummary.NotSent
         return when (effectiveProviderType) {
+            ApiProviderType.COMMAND_CODE ->
+                CommandCodePolicy.effort(modelName,
+                    enabledRawTextParameter(modelParameters, "reasoning_effort")
+                        ?: ApiPreferences.thinkingQualityEffort(qualityLevel))
+                    ?.let(::textSummary) ?: ThinkingRequestSummary.NotSent
             ApiProviderType.GROK_ACCOUNT ->
                 GrokAccountPolicy.effort(modelName,
                     enabledRawTextParameter(modelParameters, "reasoning_effort")
@@ -385,7 +394,7 @@ object ThinkingRequestSemantics {
         val effort = ApiPreferences.thinkingQualityEffort(qualityLevel)
         return when (providerType) {
             ApiProviderType.DEEPSEEK -> normalizeDeepseekEffort(effort)
-            ApiProviderType.GROK_ACCOUNT -> effort
+            ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE -> effort
             ApiProviderType.OPENAI,
             ApiProviderType.OPENAI_GENERIC,
             ApiProviderType.OPENAI_CODEX,

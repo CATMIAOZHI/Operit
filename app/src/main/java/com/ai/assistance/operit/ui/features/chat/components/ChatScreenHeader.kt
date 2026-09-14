@@ -151,7 +151,14 @@ fun ChatScreenHeader(
             },
             onStop = { run ->
                 coroutineScope.launch {
-                    SubagentCoordinator.getInstance(context).cancelTask(run.id)
+                    if (run.externalOwnerType ==
+                        com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.OWNER_TYPE
+                    ) {
+                        com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                            .getInstance(context).interrupt(run.parentChatId, run.childChatId)
+                    } else {
+                        SubagentCoordinator.getInstance(context).cancelTask(run.id)
+                    }
                 }
             },
             onArchive = { run ->

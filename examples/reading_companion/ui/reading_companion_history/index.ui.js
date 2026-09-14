@@ -25,6 +25,7 @@ function historyScreen(ctx) {
   const [error, setError] = ctx.useState("historyError", "");
   const [tasks, setTasks] = ctx.useState("historyTasks", []);
   const [runs, setRuns] = ctx.useState("historyRuns", []);
+  const [section, setSection] = ctx.useState("historySection", "runs");
 
   const watchTasks = () => readingTools.watch(ctx, "history", setTasks, error => setError(toErrorText(error)));
   const load = async () => {
@@ -57,28 +58,68 @@ function historyScreen(ctx) {
   const errorTitle = english ? "Could not load history" : "加载历史失败";
   const refresh = english ? "Refresh" : "刷新";
 
+  const tasksLabel = english ? "Tasks" : "任务";
+  const runsLabel = english ? "Records" : "记录";
+  const emptyTasks = english
+    ? "No generation task records yet."
+    : "还没有生成任务记录。";
+
+  const tabs = UI.Row({ fillMaxWidth: true }, [
+    ["tasks", `${tasksLabel} (${tasks.length})`],
+    ["runs", `${runsLabel} (${runs.length})`],
+  ].map(([id, label]) =>
+    UI.Tab({
+      weight: 1,
+      selected: section === id,
+      onClick: () => setSection(id),
+      selectedContentColor: colors.primary,
+      unselectedContentColor: colors.onSurfaceVariant,
+    }, [
+      UI.Text({ text: label, padding: 12, fontWeight: section === id ? "bold" : "normal" }),
+      UI.HorizontalDivider({ thickness: 2, color: section === id ? colors.primary : colors.surface }),
+    ])));
+
   const children = [];
-  for (const task of tasks) {
-    children.push(UI.Card({ fillMaxWidth: true }, UI.Column({ padding: 12, spacing: 6 }, [
-      UI.Text({ text: readingTools.taskStatusLabel(task, english), style: "titleSmall" }),
-      UI.Text({ text: readingTools.taskLabel(task, english), style: "bodySmall" }),
-      UI.Text({ text: readingTools.taskProgress(task, english) }),
-      ...(readingTools.taskErrors(task, english) ? [UI.Text({ text: readingTools.taskErrors(task, english) })] : []),
-      ...(task.attempts || []).map(attempt => attempt.archived
-        ? UI.Text({ text: `${Number(attempt.chapterIndex) + 1} · ${statusLabel(attempt.status, english)} · ${english ? "Detailed trace expired" : "详细记录已过保留期"}` })
-        : UI.OutlinedButton({ onClick: () => openRun(attempt) },
-        UI.Text({ text: `${Number(attempt.chapterIndex) + 1} · ${attempt.chapterTitle || ""} · ${statusLabel(attempt.status, english)}` }))),
-      ["queued", "running", "cancelling"].includes(task.status) ? UI.OutlinedButton({ onClick: async () => {
-        try {
-          await readingTools.tasks.cancel(ctx, task.task_id);
-          await load();
-        } catch (cancelError) {
-          setError(toErrorText(cancelError));
-        }
-      } }, UI.Text({ text: english ? "Cancel task" : "取消任务" })) : null,
-    ].filter(Boolean))));
-  }
-  if (loading) {
+  const errorCard = () => UI.Card(
+    { fillMaxWidth: true, containerColor: colors.errorContainer },
+    UI.Column({ fillMaxWidth: true, padding: 16, spacing: 10 }, [
+      UI.Text({ text: errorTitle, style: "titleMedium", color: colors.onErrorContainer }),
+      UI.Text({ text: error, style: "bodySmall", color: colors.onErrorContainer }),
+      UI.OutlinedButton({ onClick: load }, UI.Text({ text: refresh })),
+    ]),
+  );
+  if (section === "tasks") {
+    if (error) {
+      children.push(errorCard());
+    } else if (tasks.length === 0) {
+      children.push(
+        UI.Card(
+          { fillMaxWidth: true, containerColor: colors.surfaceVariant },
+          UI.Text({ text: emptyTasks, color: colors.onSurfaceVariant, padding: 16 }),
+        ),
+      );
+    }
+    for (const task of tasks) {
+      children.push(UI.Card({ fillMaxWidth: true }, UI.Column({ padding: 16, spacing: 10 }, [
+        UI.Text({ text: readingTools.taskStatusLabel(task, english), style: "titleSmall" }),
+        UI.Text({ text: readingTools.taskLabel(task, english), style: "bodySmall" }),
+        UI.Text({ text: readingTools.taskProgress(task, english) }),
+        ...(readingTools.taskErrors(task, english) ? [UI.Text({ text: readingTools.taskErrors(task, english) })] : []),
+        ...(task.attempts || []).map(attempt => attempt.archived
+          ? UI.Text({ text: `${Number(attempt.chapterIndex) + 1} · ${statusLabel(attempt.status, english)} · ${english ? "Detailed trace expired" : "详细记录已过保留期"}` })
+          : UI.OutlinedButton({ onClick: () => openRun(attempt) },
+          UI.Text({ text: `${Number(attempt.chapterIndex) + 1} · ${attempt.chapterTitle || ""} · ${statusLabel(attempt.status, english)}` }))),
+        ["queued", "running", "cancelling"].includes(task.status) ? UI.OutlinedButton({ onClick: async () => {
+          try {
+            await readingTools.tasks.cancel(ctx, task.task_id);
+            await load();
+          } catch (cancelError) {
+            setError(toErrorText(cancelError));
+          }
+        } }, UI.Text({ text: english ? "Cancel task" : "取消任务" })) : null,
+      ].filter(Boolean))));
+    }
+  } else if (loading) {
     children.push(
       UI.Row(
         {
@@ -97,16 +138,7 @@ function historyScreen(ctx) {
       ),
     );
   } else if (error) {
-    children.push(
-      UI.Card(
-        { fillMaxWidth: true, containerColor: colors.errorContainer },
-        UI.Column({ fillMaxWidth: true, padding: 16, spacing: 10 }, [
-          UI.Text({ text: errorTitle, style: "titleMedium", color: colors.onErrorContainer }),
-          UI.Text({ text: error, style: "bodySmall", color: colors.onErrorContainer }),
-          UI.OutlinedButton({ onClick: load }, UI.Text({ text: refresh })),
-        ]),
-      ),
-    );
+    children.push(errorCard());
   } else if (runs.length === 0) {
     children.push(
       UI.Card(
@@ -139,7 +171,7 @@ function historyScreen(ctx) {
             containerColor: colors.surface,
             modifier: ctx.Modifier.fillMaxWidth().clickable(() => openRun(run)),
           },
-          UI.Column({ fillMaxWidth: true, padding: 16, spacing: 6 }, [
+          UI.Column({ fillMaxWidth: true, padding: 16, spacing: 10 }, [
             UI.Row(
               { fillMaxWidth: true, horizontalArrangement: "spaceBetween", verticalAlignment: "center" },
               [
@@ -187,7 +219,7 @@ function historyScreen(ctx) {
     });
   }
 
-  return UI.Box(
+  return UI.Column(
     {
       onResume: async () => { readingTools.activate("history"); await watchTasks(); },
       onPause: () => readingTools.pause("history"),
@@ -201,11 +233,15 @@ function historyScreen(ctx) {
         }
       },
     },
-    UI.LazyColumn({
-      fillMaxSize: true,
-      padding: 16,
-      spacing: 12,
-    }, children),
+    [
+      tabs,
+      UI.Box({ fillMaxWidth: true, weight: 1 },
+        UI.LazyColumn({
+          fillMaxSize: true,
+          padding: 16,
+          spacing: 16,
+        }, children)),
+    ],
   );
 }
 

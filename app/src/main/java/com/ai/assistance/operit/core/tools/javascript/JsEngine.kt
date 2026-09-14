@@ -11,6 +11,7 @@ import androidx.core.content.ContextCompat
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
 import com.ai.assistance.operit.core.tools.AIToolHandler
@@ -2588,7 +2589,8 @@ class JsEngine(private val context: Context) {
             return try {
                 val id = ImagePoolManager.addImage(path)
                 if (id != "error") {
-                    "<link type=\"image\" id=\"$id\"></link>"
+                    // 带上源路径：图片池回收后历史消息还能从文件恢复这张图。
+                    MediaLinkParser.buildImageLink(id, path)
                 } else {
                     "[image registration failed]"
                 }

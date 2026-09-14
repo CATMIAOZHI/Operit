@@ -155,7 +155,8 @@ class ClaudeProvider(
     private fun logLargeString(tag: String, message: String, prefix: String = "") {
         val maxLogSize = 3000
         if (message.length > maxLogSize) {
-            val chunkCount = message.length / maxLogSize + 1
+            // 向上取整，否则长度正好整除时会多输出一个空块
+            val chunkCount = (message.length + maxLogSize - 1) / maxLogSize
             for (i in 0 until chunkCount) {
                 val start = i * maxLogSize
                 val end = minOf((i + 1) * maxLogSize, message.length)
@@ -1160,14 +1161,17 @@ class ClaudeProvider(
             }
         }
 
-        // 日志输出时省略过长的tools字段
-        val logJson = JSONObject(jsonObject.toString())
-        if (logJson.has("tools")) {
-            val toolsArray = logJson.getJSONArray("tools")
-            logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+        if (AppLogger.logRequestBodies) {
+            // 日志输出时省略过长的 tools 字段，可用 AppLogger.logRequestBodies 关闭
+            val logJson = JSONObject(jsonObject.toString())
+            if (logJson.has("tools")) {
+                val toolsArray = logJson.getJSONArray("tools")
+                logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
+            }
+            sanitizeImageDataForLogging(logJson)
+            // 走分块日志：单条日志有 12000 字符上限，Claude 请求体很容易超，直接写会丢尾部
+            logLargeString("AIService", logJson.toString(4), "Claude请求体: ")
         }
-        sanitizeImageDataForLogging(logJson)
-        AppLogger.d("AIService", "Claude请求体: ${logJson.toString(4)}")
         return BuiltRequestBody(
             body = jsonObject.toString().toByteArray(Charsets.UTF_8).toRequestBody(JSON),
             thinkingFormat = appliedThinkingFormat,

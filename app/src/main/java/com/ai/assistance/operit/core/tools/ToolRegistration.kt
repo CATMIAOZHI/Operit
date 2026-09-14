@@ -1036,7 +1036,10 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                         packageManager = handler.getOrCreatePackageManager(),
                         roleCardToolAccess = roleCardToolAccess,
                         useEnglish = useEnglish,
-                        includeSubagentTools = runtimeContext?.isSubagent != true
+                        includeSubagentTools = runtimeContext?.isSubagent != true ||
+                            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(runtimeContext?.callerChatId),
+                        collaborationVisibility =
+                            com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy.visibility(context, runtimeContext?.callerChatId, runtimeContext?.isSubagent == true),
                     )
                 }
                 val results = CliToolModeSupport.searchHiddenToolCatalog(
@@ -1619,6 +1622,15 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     // 对话管理工具
     val chatManagerTool = ToolGetter.getChatManagerTool(context)
     val taskToolExecutor = TaskToolExecutor(context)
+    val collaborationExecutor =
+        com.ai.assistance.operit.core.tools.defaultTool.standard.CollaborationToolExecutor(context)
+    com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.names.forEach { name ->
+        handler.registerTool(
+            name = name,
+            descriptionGenerator = { name },
+            executor = collaborationExecutor,
+        )
+    }
 
     handler.registerTool(
         name = "task",

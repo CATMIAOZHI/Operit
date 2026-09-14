@@ -16,7 +16,7 @@ Maintain Operit Ry as an independently installable distribution while keeping ge
 
 ## Scope
 
-- Use `com.rainy.operitry` and the launcher name `Operit Ry` while retaining the in-app Operit AI product wording.
+- Use `com.rainy.operitry` and the launcher name `Operit Ry`; update the in-app Operit AI product wording to Operit Ry (values/, values-en/, web-chat metadata, and hardcoded brand literals).
 - Recolor the existing Operit icon with the Rainytoken pink palette.
 - Use `CATMIAOZHI/Operit` for project links, stable releases, help, and fork-owned runtime scripts.
 - Use `CATMIAOZHI/OperitNightlyRelease` for nightly and patch releases.

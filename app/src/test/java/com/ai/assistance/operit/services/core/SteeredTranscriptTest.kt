@@ -21,8 +21,8 @@ class SteeredTranscriptTest {
         val transcript = SteeredTranscript()
         transcript.add(canonicalPrefix, 3, 1)
         val rows = transcript.project(ChatMessage(sender = "ai", timestamp = 1, content = merged))
-        assertEquals(listOf(canonicalPrefix, "complete replacement"), rows.map { it.content })
-        assertEquals(listOf(1L, 3L), rows.map { it.timestamp })
+        assertEquals(listOf("complete replacement"), rows.map { it.content })
+        assertEquals(listOf(3L), rows.map { it.timestamp })
     }
     @Test fun multipleSteersKeepAssistantSegmentsAfterTheirUserMessages() {
         val transcript = SteeredTranscript()
@@ -32,10 +32,10 @@ class SteeredTranscriptTest {
             sender = "ai", timestamp = 1,
             content = "tool call\n<tool_result>done</tool_result>\nsecond reply\nlast reply",
         ))
-        assertEquals(listOf(1L, 3L, 5L), rows.map { it.timestamp })
+        assertEquals(listOf(5L), rows.map { it.timestamp })
         assertEquals(5L, transcript.finalTimestamp(1))
         assertEquals(10L, transcript.finalTimestamp(10))
-        assertEquals(listOf("tool call\n<tool_result>done</tool_result>", "\nsecond reply", "\nlast reply"),
+        assertEquals(listOf("\nlast reply"),
             rows.map { it.content })
     }
 
@@ -43,20 +43,48 @@ class SteeredTranscriptTest {
         val transcript = SteeredTranscript()
         transcript.add("first\nsecond", 3, 1)
         val rows = transcript.project(ChatMessage(sender = "ai", timestamp = 1, content = "firstsecond"))
-        assertEquals(1, rows.size)
-        assertEquals("first\nsecond", rows.single().content)
-        assertEquals(1L, rows.single().timestamp)
+        assertTrue(rows.isEmpty())
     }
 
     @Test fun aggregateUsageIsAssignedOnlyToTheLastAssistantSegment() {
         val transcript = SteeredTranscript()
         transcript.add("first", 3, 1)
+        transcript.add("firstsecond", 5, 1)
         val rows = transcript.project(ChatMessage(
-            sender = "ai", timestamp = 1, content = "firstsecond", inputTokens = 100, outputTokens = 20,
+            sender = "ai", timestamp = 1, content = "firstsecondlast", inputTokens = 100, outputTokens = 20,
+            cachedInputTokens = 40, waitDurationMs = 5000, outputDurationMs = 20000,
+            completedAt = 30000,
         ))
         assertEquals(100, rows.sumOf { it.inputTokens })
         assertEquals(20, rows.sumOf { it.outputTokens })
-        assertEquals(0, rows.first().outputTokens)
+        assertEquals(40, rows.last().cachedInputTokens)
+        assertEquals(5000L, rows.last().waitDurationMs)
+        assertEquals(20000L, rows.last().outputDurationMs)
+        assertEquals(30000L, rows.last().completedAt)
+    }
+
+    @Test fun sealingPersistsOnlyCurrentSegmentWithoutAggregateStats() {
+        val transcript = SteeredTranscript()
+        val first = ChatMessage(
+            sender = "ai", timestamp = 1, content = "first",
+            displayMode = com.ai.assistance.operit.data.model.ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE,
+            inputTokens = 100, outputTokens = 20, cachedInputTokens = 40,
+            waitDurationMs = 5000, outputDurationMs = 20000, completedAt = 30000,
+        )
+        val sealedFirst = transcript.project(first).single()
+        transcript.add("first", 3, 1)
+        val sealedSecond = transcript.project(first.copy(content = "firstsecond")).single()
+        assertEquals("first", sealedFirst.content)
+        assertEquals("second", sealedSecond.content)
+        assertEquals(3L, sealedSecond.timestamp)
+        listOf(sealedFirst, sealedSecond).forEach {
+            assertEquals(0, it.inputTokens)
+            assertEquals(0, it.outputTokens)
+            assertEquals(0, it.cachedInputTokens)
+            assertEquals(0L, it.waitDurationMs)
+            assertEquals(0L, it.outputDurationMs)
+            assertEquals(0L, it.completedAt)
+        }
     }
 
     @Test fun anotherResponseIsNotSplitUsingAPreviousTurnsBoundaries() {

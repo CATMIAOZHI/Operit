@@ -96,8 +96,10 @@ class ConversationMarkupManager {
             }
 
             val imageLinkPayload =
-                MediaLinkParser.extractImageLinkIds(rawPayload)
-                    .joinToString("\n") { id -> """<link type="image" id="$id"></link>""" }
+                MediaLinkParser.extractImageLinkTags(rawPayload)
+                    .joinToString("\n") { tag ->
+                        MediaLinkParser.buildImageLink(tag.id, tag.sourcePath)
+                    }
             val textPayload = MediaLinkParser.removeImageLinks(rawPayload).trim()
             val toolPayload =
                 listOf("Image attached as multimodal input.", textPayload)

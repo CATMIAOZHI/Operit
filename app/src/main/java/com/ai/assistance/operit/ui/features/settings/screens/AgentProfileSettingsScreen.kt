@@ -74,6 +74,7 @@ fun AgentProfileSettingsScreen() {
     val modelConfigManager = remember(context) { ModelConfigManager(context.applicationContext) }
     val scope = rememberCoroutineScope()
     val profiles by repository.profiles.collectAsState()
+    val subagentVersion by repository.subagentVersion.collectAsState()
     var modelConfigs by remember { mutableStateOf<List<ModelConfigSummary>>(emptyList()) }
     var isLoadingModels by remember { mutableStateOf(true) }
     var modelLoadFailed by remember { mutableStateOf(false) }
@@ -105,6 +106,27 @@ fun AgentProfileSettingsScreen() {
             ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        item {
+            Card {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text(stringResource(R.string.subagent_version_title), style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.subagent_version_description))
+                    listOf(2, 1).forEach { version ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { repository.setSubagentVersion(version) },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            androidx.compose.material3.RadioButton(
+                                selected = subagentVersion == version,
+                                onClick = { repository.setSubagentVersion(version) },
+                            )
+                            Text(stringResource(if (version == 2) R.string.subagent_version_v2 else R.string.subagent_version_v1))
+                        }
+                    }
+                    if (subagentVersion == 2) CollaborationLimitsSettings(repository)
+                }
+            }
+        }
         item {
             Card(
                 colors =

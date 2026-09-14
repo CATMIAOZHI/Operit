@@ -1306,11 +1306,6 @@
     <string name="confirm_edit_and_resend_title">Confirmar editar y reenviar</string>
     <string name="confirm_edit_and_resend_message">Esto eliminará todos los mensajes posteriores, reenviará el contenido editado como una nueva petición y revertirá el espacio de trabajo vinculado al estado anterior a este mensaje. Esta acción no se puede deshacer. ¿Deseas continuar?</string>
     <string name="confirm_edit_and_resend_confirm">Editar y reenviar</string>
-    <string name="workspace_changes_preview_title">Vista previa de cambios en el espacio de trabajo</string>
-    <string name="workspace_change_added">Añadido</string>
-    <string name="workspace_change_deleted">Eliminado</string>
-    <string name="workspace_change_modified">Modificado</string>
-    <string name="workspace_changes_more">y otros %1$d archivos</string>
     <string name="multi_select">Selección múltiple</string>
     <string name="exit_multi_select">Salir de selección múltiple</string>
     <string name="delete_selected">Eliminar seleccionados</string>
@@ -2899,17 +2894,6 @@
     <string name="tool_process_limit_remover_desc">Gestionar el límite de procesos fantasma en Android 12+, permitiendo más procesos secundarios en segundo plano</string>
     <string name="tool_html_packager">Empaquetador HTML</string>
     <string name="tool_html_packager_desc">Empaqueta archivos HTML y sus dependencias en un solo archivo HTML, fácil de compartir e implementar</string>
-    <string name="tool_autoglm_one_click">Configuración con un clic de AutoGLM</string>
-    <string name="tool_autoglm_one_click_desc">Configura el modelo autoglm-phone para el controlador de UI con un clic y cambia al paquete de herramientas AutoGLM</string>
-    <string name="tool_autoglm_tool">Ejecución de AutoGLM</string>
-    <string name="tool_autoglm_tool_desc">Usa el agente autoglm-phone para ejecutar tareas de automatización del teléfono paso a paso</string>
-    <string name="autoglm_config_name">Configuración de AutoGLM</string>
-    <string name="autoglm_one_click_title">Configuración con un clic de AutoGLM</string>
-    <string name="autoglm_one_click_subtitle">Crea automáticamente la configuración del modelo autoglm-phone de Zhipu para el controlador de UI y cambia al paquete de herramientas AutoGLM.</string>
-    <string name="autoglm_open_apikey_center">Ir a la página de API Key de Zhipu</string>
-    <string name="autoglm_open_apikey_tip">Después de iniciar sesión, crea y copia la API Key en la plataforma Zhipu</string>
-    <string name="autoglm_api_key_placeholder">Pega aquí tu API Key de Zhipu</string>
-    <string name="autoglm_one_click_button">Configurar AutoGLM con un clic</string>
     <string name="process_limit_title">Eliminar límite de procesos fantasma</string>
     <string name="process_limit_subtitle">Gestionar el límite de procesos fantasma en Android 12+</string>
     <string name="process_limit_info_title">Acerca del límite de procesos fantasma</string>
@@ -2941,15 +2925,6 @@
     <string name="process_limit_error_output">Salida de error</string>
     <string name="process_limit_exit_code">Código de salida: %d</string>
     <string name="process_limit_command">Comando</string>
-    <string name="autoglm_status_running">Ejecutando configuración con un clic, espere por favor...</string>
-    <string name="autoglm_status_success">Configuración con un clic de AutoGLM completada:
-- Se ha creado o actualizado la configuración del modelo del controlador de UI AutoGLM (autoglm-phone, Zhipu)
-- Se ha cambiado la función "Controlador de UI" a esta configuración
-- Se ha cerrado Automatic_ui_base y abierto Automatic_ui_subagent
-
-Ahora puede usar el modo AutoGLM en la interfaz de conversación.</string>
-    <string name="autoglm_status_error">Error en la configuración con un clic: %1$s</string>
-    <string name="autoglm_error_empty_api_key">Por favor, complete la API Key de Zhipu primero.</string>
     <string name="connection_type">Tipo de conexión</string>
     <string name="mcp_remote_bearer_token">Bearer Token (opcional)</string>
     <string name="mcp_remote_bearer_token_hint">Ingrese el Bearer Token para generar el encabezado de solicitud Authorization</string>
@@ -3509,8 +3484,6 @@ Ahora puede usar el modo AutoGLM en la interfaz de conversación.</string>
     <string name="screen_title_text_to_speech">Texto a voz</string>
     <string name="screen_title_speech_to_text">Reconocimiento de voz</string>
     <string name="screen_title_process_limit_remover">Eliminar límite de procesos de ilusión</string>
-    <string name="screen_title_autoglm_one_click">Configuración con un clic de AutoGLM</string>
-    <string name="screen_title_autoglm_tool">Ejecución de autoglm</string>
     <string name="screen_title_default_assistant_guide">Configuración del asistente predeterminado</string>
     <string name="screen_title_mcp_market">Mercado MCP</string>
     <string name="screen_title_skill_market">Mercado de habilidades</string>
@@ -5597,9 +5570,6 @@ Ahora puede usar el modo AutoGLM en la interfaz de conversación.</string>
     <string name="emoticon_shyness">Vergüenza</string>
     <string name="emoticon_blush">Sonrojo</string>
     <string name="emoticon_embarrassed">Avergonzado</string>
-    <string name="autoglm_task_complete">✅ Tarea completada: %1$s</string>
-    <string name="autoglm_thinking_process">💭 Proceso de pensamiento:</string>
-    <string name="autoglm_execute_action">🎯 Ejecutar acción:</string>
     <string name="version_update">Actualización de versión</string>
     <string name="mcp_no_zip_selected">No se seleccionó ningún archivo ZIP</string>
     <string name="mcp_uninstall_failed">Error al desinstalar</string>
@@ -5652,7 +5622,6 @@ Ahora puede usar el modo AutoGLM en la interfaz de conversación.</string>
     <string name="uidebugger_stop_monitoring">Detener monitoreo</string>
     <string name="uidebugger_start_monitoring">Iniciar monitoreo</string>
     <string name="uidebugger_clear">Limpiar</string>
-    <string name="autoglm_virtual_screen">Usar pantalla virtual esta vez</string>
     <string name="htmlpackager_step1_title">Paso 1: Seleccionar carpeta del proyecto</string>
     <string name="htmlpackager_select_folder">Seleccionar carpeta</string>
     <string name="htmlpackager_selected">Seleccionado: %1$s</string>
@@ -5662,20 +5631,6 @@ Ahora puede usar el modo AutoGLM en la interfaz de conversación.</string>
     <string name="common_expand">Expandir</string>
     <string name="document_no_content_found">No se encontró contenido relevante.</string>
     <string name="document_block_label">Bloque %1$d</string>
-    <string name="autoglm_go_to_model_config">Ir a configuración del modelo</string>
-    <string name="autoglm_custom_endpoint">Endpoint personalizado (compatible con OpenAI)</string>
-    <string name="autoglm_model_name">Nombre del modelo</string>
-    <string name="autoglm_restore_original">Restaurar lógica de automatización original</string>
-    <string name="autoglm_step1_title">Paso 1: Configurar modelo de diálogo básico</string>
-    <string name="autoglm_step1_warning">No usar el modelo autoglm como modelo principal de diálogo</string>
-    <string name="autoglm_step1_note">Nota: Si ya está configurado, no es necesario modificarlo. Aquí no se debe cambiar a modelos pequeños como autoglm.</string>
-    <string name="autoglm_step2_title">Paso 2: Visitar el sitio web de ZhiPu para obtener la clave API</string>
-    <string name="autoglm_step3_title">Paso 3: Ingresar la clave API y hacer clic en configuración con un solo clic</string>
-    <string name="autoglm_hide_advanced">Ocultar configuración avanzada</string>
-    <string name="autoglm_show_advanced">Mostrar configuración avanzada (Endpoint personalizado / Nombre del modelo)</string>
-    <string name="autoglm_step4_title">Paso 4: Restaurar automatización no AutoGLM (opcional)</string>
-    <string name="autoglm_step4_description">Si sientes que la automatización se ha vuelto difícil después de usar la configuración con un solo clic de AutoGLM, puedes hacer clic en el botón de abajo para restaurar la lógica de automatización original del software (habilitar el paquete base, deshabilitar el paquete subagent, el resto de configuraciones permanecen igual). Si deseas volver a habilitar AutoGLM, solo sigue el paso 3 e ingresa la clave y haz clic en configuración con un solo clic nuevamente.</string>
-    <string name="autoglm_restore_success">Se ha restaurado la lógica de automatización original del software</string>
     <string name="uidebugger_create_new_package">Crear nuevo paquete de configuración</string>
     <string name="uidebugger_app_name">Nombre de la aplicación</string>
     <string name="uidebugger_description_optional">Descripción (opcional)</string>
@@ -6686,7 +6641,6 @@ Ahora puede usar el modo AutoGLM en la interfaz de conversación.</string>
     <string name="message_processing">Procesando mensaje...</string>
     <string name="message_role_user">Usuario</string>
     <string name="role_card_chat_model_binding_parse_failed">Error al analizar el enlace del modelo de chat de la tarjeta de personaje</string>
-    <string name="message_workspace_sync_failed">Error al sincronizar el estado del espacio de trabajo: %1$s</string>
     <string name="message_ai_service_not_initialized">El servicio AI no está inicializado</string>
     <string name="message_summarizing">Resumiendo memoria...</string>
     <string name="message_send_failed">Error al enviar mensaje: %1$s</string>
@@ -7271,13 +7225,6 @@ Ahora puede usar el modo AutoGLM en la interfaz de conversación.</string>
 
     <string name="workspace_attachment_attached">El espacio de trabajo actual está adjunto.</string>
     <string name="workspace_attachment_environment">Entorno del espacio de trabajo: %1$s</string>
-    <string name="workspace_attachment_initial_load">Carga inicial del espacio de trabajo:</string>
-    <string name="workspace_attachment_file_changes">Cambios en archivos del espacio de trabajo:</string>
-    <string name="workspace_attachment_omitted_changes">- Hay %1$d cambios no listados</string>
-    <string name="workspace_attachment_change_created">Creado</string>
-    <string name="workspace_attachment_change_modified">Modificado</string>
-    <string name="workspace_attachment_change_deleted">Eliminado</string>
-    <string name="workspace_attachment_change_moved">Movido</string>
     <string name="artifact_publish_node_updated">Nodo «%1$s» actualizado</string>
     <string name="artifact_project_node_view_title">Vista de nodo</string>
     <string name="artifact_project_nodes_loading">Cargando nodos del proyecto...</string>

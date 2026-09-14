@@ -21,9 +21,6 @@ internal object ChatTodoTool {
 
     fun execute(context: Context, tool: AITool): ToolResult {
         val runtime = ToolExecutionManager.currentToolRuntimeContext()
-        if (runtime?.isSubagent == true) {
-            return failure(context.getString(R.string.chat_todo_tool_subagent_unavailable))
-        }
         val chatId = runtime?.callerChatId?.trim().orEmpty()
         if (chatId.isBlank()) {
             return failure(context.getString(R.string.chat_todo_tool_active_chat_required))

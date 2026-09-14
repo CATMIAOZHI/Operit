@@ -436,6 +436,9 @@ private fun shouldCollapseToolSequence(
     xmlToolRelatedCount: Int
 ): Boolean {
     if (xmlToolRelatedCount <= 0) return false
+    // 折叠标题统计的是工具调用数：只有工具结果、没有工具调用的片段（例如被媒体标记分隔）
+    // 会被渲染成“工具调用（0）”这种空标题，因此不参与折叠。
+    if (toolCount <= 0) return false
     return when (toolCollapseMode) {
         ToolCollapseMode.FULL -> true
         ToolCollapseMode.READ_ONLY, ToolCollapseMode.ALL -> toolCount >= 2 && xmlToolRelatedCount >= 2

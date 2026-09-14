@@ -4224,9 +4224,17 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
     }
 
+    suspend fun repairRepeatedIntermediateMessages(chatId: String): Int =
+        chatMutex(chatId).withLock {
+            database.withTransaction {
+                messageDao.deleteExactDuplicateIntermediateMessages(chatId)
+            }
+        }
+
     suspend fun loadRuntimeChatMessages(chatId: String): List<ChatMessage> {
         return withContext(Dispatchers.IO) {
             try {
+                repairRepeatedIntermediateMessages(chatId)
                 val latestSummaryTimestamp = messageDao.getLatestSummaryTimestamp(chatId)
                 val messageEntities =
                     if (latestSummaryTimestamp != null) {

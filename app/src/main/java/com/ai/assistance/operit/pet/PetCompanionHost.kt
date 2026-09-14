@@ -83,8 +83,7 @@ fun PetCompanionHost() {
         LaunchedEffect(settings.x, settings.y, settings.edge) { x = docked.x; y = docked.y }
         val anchorX = if (dragging) x else docked.x
         val anchorY = if (dragging) y else docked.y
-        val hasBubble = settings.showBubble
-        val width = petWidth(viewport, petSize, with(density) { PET_BUBBLE_WIDTH_DP.dp.toPx() }, settings.edge, hasBubble)
+        val width = petWidth(viewport, petSize, with(density) { PET_BUBBLE_WIDTH_DP.dp.toPx() }, settings.edge, bubbleOccupiesSpace(settings.showBubble))
         Layout(modifier = Modifier.fillMaxSize(), content = {
         PetCompanion(
             settings = settings,

@@ -1057,7 +1057,9 @@ private fun UnifiedMarkdownCanvas(
     val groupedItems = remember(nodeSnapshot, rendererId, nodeGrouper) {
         nodeGrouper.group(nodeSnapshot, rendererId)
     }
-    val processEnd = if (collapseCompletedProcess) completedProcessEnd(nodes) else -1
+    val transcriptExpanded = LocalResponseProcessExpanded.current
+    val processEnd =
+        if (collapseCompletedProcess || transcriptExpanded != null) completedProcessEnd(nodes) else -1
     val expanded = androidx.compose.runtime.saveable.rememberSaveable(rendererId) {
         androidx.compose.runtime.mutableStateOf(false)
     }
@@ -1123,7 +1125,7 @@ private fun UnifiedMarkdownCanvas(
                 }
                 itemEnd <= processEnd
             }.size
-            ResponseActivityHeader(
+            if (transcriptExpanded == null) ResponseActivityHeader(
                 durationMs = responseDurationMs,
                 expanded = expanded.value,
                 textColor = textColor,
@@ -1131,7 +1133,7 @@ private fun UnifiedMarkdownCanvas(
             )
             // Animate the process as one region, keeping the final answer outside its lifecycle.
             AnimatedVisibility(
-                visible = expanded.value,
+                visible = transcriptExpanded ?: expanded.value,
                 enter = expandVertically(tween(240), expandFrom = Alignment.Top) +
                     fadeIn(tween(180)),
                 exit = shrinkVertically(tween(240), shrinkTowards = Alignment.Top) +

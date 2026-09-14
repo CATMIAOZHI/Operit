@@ -1253,7 +1253,10 @@ private fun SubagentRunRow(
                         if (isAutoReview) {
                             stringResource(R.string.agent_profile_builtin_permission_reviewer_name)
                         } else {
-                            run.agentProfileId.ifBlank { "subagent" }
+                            val version = if (run.externalOwnerType ==
+                                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.OWNER_TYPE
+                            ) "v2" else "v1"
+                            "$version · ${run.agentProfileId.ifBlank { "subagent" }}"
                         },
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,

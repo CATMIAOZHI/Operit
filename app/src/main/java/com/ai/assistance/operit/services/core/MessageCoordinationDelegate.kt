@@ -717,7 +717,7 @@ class MessageCoordinationDelegate(
                 tokenUsageThreshold = tokenUsageThresholdForSend,
                 replyToMessage = pendingReply,
                 isAutoContinuation = isAutoContinuation,
-                enableSummary = !forceDisableSummary && !isBackgroundSend && chatContextSettings.enableSummary,
+                enableSummary = !turnOptions.isCollaborationAgent && !forceDisableSummary && !isBackgroundSend && chatContextSettings.enableSummary,
                 chatModelConfigIdOverride = resolvedChatModelConfigIdOverride,
                 chatModelIndexOverride = resolvedChatModelIndexOverride,
                 memorySpaceIdOverride = resolvedMemorySpaceIdOverride,
@@ -749,7 +749,7 @@ class MessageCoordinationDelegate(
         if (pendingText.isBlank() && currentAttachments.isEmpty() && !isAutoContinuation && !isGroupOrchestrationTurn) return false
 
         // 如果不是续写，检查是否需要总结
-        if (!forceDisableSummary && turnOptions.persistTurn && !isBackgroundSend && !isContinuation && !skipSummaryCheck) {
+        if (!turnOptions.isCollaborationAgent && !forceDisableSummary && turnOptions.persistTurn && !isBackgroundSend && !isContinuation && !skipSummaryCheck) {
             val currentMessages = runBlocking { chatHistoryDelegate.getCurrentRuntimeChatHistorySnapshot() }
             val currentTokens = tokenStatsDelegate.currentWindowSizeFlow.value
 

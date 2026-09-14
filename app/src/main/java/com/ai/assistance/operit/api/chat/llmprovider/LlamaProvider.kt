@@ -228,7 +228,10 @@ class LlamaProvider(
             throw IOException(context.getString(R.string.llama_error_chat_template_failed))
         }
 
-        logLargeString("Final prompt before llama generation: ", prompt)
+        // 完整 prompt（含全部历史与工具结果）落盘，可用 AppLogger.logRequestBodies 关闭
+        if (AppLogger.logRequestBodies) {
+            logLargeString("Final prompt before llama generation: ", prompt)
+        }
 
         val temperature = modelParameters
             .firstOrNull { it.id == "temperature" && it.isEnabled }

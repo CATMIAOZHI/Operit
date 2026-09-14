@@ -225,7 +225,7 @@ internal object StructuredToolCallBridge {
                     JSONObject().apply {
                         put("role", "tool")
                         put("tool_call_id", toolCallId)
-                        put("content", "User cancelled")
+                        put("content", "Tool result missing: no matching execution result was available. This does not indicate user cancellation.")
                     }
                 )
             }

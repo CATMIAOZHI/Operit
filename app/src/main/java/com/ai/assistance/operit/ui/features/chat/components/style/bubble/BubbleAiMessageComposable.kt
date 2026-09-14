@@ -61,6 +61,8 @@ import com.ai.assistance.operit.ui.theme.liquidGlass
 import com.ai.assistance.operit.ui.theme.resolveConfiguredFontFamily
 import com.ai.assistance.operit.ui.theme.waterGlass
 import kotlinx.coroutines.runBlocking
+import com.ai.assistance.operit.ui.features.chat.components.LocalResponseMessageSection
+import com.ai.assistance.operit.ui.features.chat.components.ResponseMessageSection
 
 private val ExpandedBubbleLayoutNodeTypes =
     setOf(
@@ -94,7 +96,10 @@ fun BubbleAiMessageComposable(
     enableDialogs: Boolean = true,
     enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
     onAvatarLongPressMention: ((String) -> Unit)? = null,
+    showHeader: Boolean = true,
 ) {
+    val section = LocalResponseMessageSection.current
+    val showIdentity = showHeader && section != ResponseMessageSection.BODY
     val context = LocalContext.current
     val preferencesManager = remember { UserPreferencesManager.getInstance(context) }
     val displayPreferencesManager = remember { DisplayPreferencesManager.getInstance(context) }
@@ -240,7 +245,7 @@ fun BubbleAiMessageComposable(
     val shouldUseExpandedBubbleLayout =
         rendererState.renderNodes.any { node -> node.type in ExpandedBubbleLayoutNodeTypes }
     val sizeTrackingModifier =
-        if (isHidden) {
+        if (isHidden || section == ResponseMessageSection.HEADER) {
             Modifier
         } else {
             Modifier.onSizeChanged { size ->
@@ -282,7 +287,8 @@ fun BubbleAiMessageComposable(
     MaterialTheme(typography = bubbleTypography) {
         ProvideAiMarkdownTextLayoutSettings {
         if (bubbleWideLayoutEnabled) {
-        val headerVisible = bubbleShowAvatar || roleNameText.isNotEmpty() || metadataText.isNotEmpty()
+        val headerVisible = showIdentity &&
+            (bubbleShowAvatar || roleNameText.isNotEmpty() || metadataText.isNotEmpty())
         val avatarModifier = Modifier
             .size(32.dp)
             .clip(avatarShape)
@@ -361,7 +367,7 @@ fun BubbleAiMessageComposable(
                 Spacer(modifier = Modifier.height(6.dp))
             }
 
-            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            if (section != ResponseMessageSection.HEADER) BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                 val maxBubbleWidth = maxWidth
                 if (imageUrl != null) {
                     AsyncImage(
@@ -493,7 +499,7 @@ fun BubbleAiMessageComposable(
         horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.Top
     ) {
-        if (bubbleShowAvatar) {
+        if (showIdentity && bubbleShowAvatar) {
             val avatarModifier = Modifier
                 .size(32.dp)
                 .clip(avatarShape)
@@ -523,6 +529,9 @@ fun BubbleAiMessageComposable(
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
+        } else if (bubbleShowAvatar) {
+            // Continuations align with the first bubble without repeating its avatar.
+            Spacer(modifier = Modifier.width(40.dp))
         }
 
         // 使用Column来垂直排列名称和消息气泡
@@ -558,7 +567,7 @@ fun BubbleAiMessageComposable(
                 }
             }
             
-            if (displayText.isNotEmpty()) {
+            if (showIdentity && displayText.isNotEmpty()) {
                 Text(
                     text = displayText,
                     style = MaterialTheme.typography.labelSmall,
@@ -567,7 +576,7 @@ fun BubbleAiMessageComposable(
                 )
             }
             
-            BoxWithConstraints {
+            if (section != ResponseMessageSection.HEADER) BoxWithConstraints {
                 val maxBubbleWidth = maxWidth * 0.85f
                 if (imageUrl != null) {
                     AsyncImage(
