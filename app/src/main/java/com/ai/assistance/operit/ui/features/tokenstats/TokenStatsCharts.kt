@@ -435,7 +435,7 @@ private fun ChartTooltip(
                     )
                 }
             }
-            unknownNote?.let {
+            unknownNote?.takeIf { LocalShowUnknownHints.current }?.let {
                 Text(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,

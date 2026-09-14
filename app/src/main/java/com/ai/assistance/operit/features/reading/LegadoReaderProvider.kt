@@ -145,6 +145,12 @@ class LegadoReaderProvider(
         val responseChapterIndex = item.getInt("chapterIndex")
         val readingChapterIndex = item.getInt("readingChapterIndex")
         val isComplete = item.optBoolean("isComplete")
+        val visibleStart = item.optNullableInt("visibleStart")
+        val visibleEnd = item.optNullableInt("visibleEnd")
+        if ((visibleStart == null) != (visibleEnd == null) ||
+            (visibleStart != null && (visibleStart < 0 || visibleStart > readableUntil ||
+                visibleEnd != readableUntil || isComplete))
+        ) throw invalidResponse("Legado 可见正文范围不一致")
         if (
             responseBookId != bookId ||
             responseChapterIndex != chapterIndex ||
@@ -175,6 +181,8 @@ class LegadoReaderProvider(
             isComplete = isComplete,
             readingChapterIndex = readingChapterIndex,
             capturedAt = item.optLong("capturedAt"),
+            visibleStart = visibleStart,
+            visibleEnd = visibleEnd,
         )
     }
 

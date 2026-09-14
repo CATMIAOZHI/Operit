@@ -32,7 +32,7 @@ class MimoProvider(
     supportsVideo = supportsVideo,
     enableToolCall = enableToolCall
 ) {
-    override fun applyAuthenticationHeaders(
+    override suspend fun applyAuthenticationHeaders(
         builder: Request.Builder,
         currentApiKey: String
     ) {

@@ -13,6 +13,8 @@ enum class ChatConfigReadinessIssue {
     PROVIDER_UNAVAILABLE,
     ENDPOINT_INVALID,
     MODEL_MISSING,
+    CODEX_LOGIN_REQUIRED,
+    ACCOUNT_LOGIN_REQUIRED,
     API_KEY_MISSING,
     API_KEY_INVALID
 }
@@ -26,6 +28,7 @@ object ChatConfigReadiness {
     private val credentialOptionalProviders =
         setOf(
             ApiProviderType.OPENAI_RESPONSES_GENERIC,
+            ApiProviderType.OPENAI_CODEX,
             ApiProviderType.OPENAI_GENERIC,
             ApiProviderType.ANTHROPIC_GENERIC,
             ApiProviderType.GEMINI_GENERIC,
@@ -35,7 +38,9 @@ object ChatConfigReadiness {
     fun evaluate(
         config: ModelConfigData,
         modelIndex: Int,
-        registeredPluginProviderIds: Set<String>
+        registeredPluginProviderIds: Set<String>,
+        codexAuthenticated: Boolean = false,
+        accountAuthenticated: Boolean = false,
     ): ChatConfigReadinessResult {
         val providerTypeId = config.apiProviderTypeId.trim()
         if (providerTypeId.isEmpty()) {
@@ -51,6 +56,13 @@ object ChatConfigReadiness {
 
         val providerType = ApiProviderType.fromProviderTypeId(providerTypeId)
             ?: return ChatConfigReadinessResult(ChatConfigReadinessIssue.PROVIDER_UNAVAILABLE)
+        if (providerType in setOf(ApiProviderType.GROK_ACCOUNT, ApiProviderType.GOOGLE_ANTIGRAVITY)
+            && !accountAuthenticated) {
+            return ChatConfigReadinessResult(ChatConfigReadinessIssue.ACCOUNT_LOGIN_REQUIRED)
+        }
+        if (providerType == ApiProviderType.OPENAI_CODEX && !codexAuthenticated) {
+            return ChatConfigReadinessResult(ChatConfigReadinessIssue.CODEX_LOGIN_REQUIRED)
+        }
         val validModelIndex = getValidModelIndex(config.modelName, modelIndex)
         if (getModelByIndex(config.modelName, validModelIndex).isBlank()) {
             return ChatConfigReadinessResult(ChatConfigReadinessIssue.MODEL_MISSING)
@@ -63,6 +75,10 @@ object ChatConfigReadiness {
         val completedEndpoint = EndpointCompleter.completeEndpoint(config.apiEndpoint, providerType)
         if (!isHttpEndpoint(completedEndpoint)) {
             return ChatConfigReadinessResult(ChatConfigReadinessIssue.ENDPOINT_INVALID)
+        }
+
+        if (providerType in setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT, ApiProviderType.GOOGLE_ANTIGRAVITY)) {
+            return ChatConfigReadinessResult()
         }
 
         val hasConfiguredKey =

@@ -56,6 +56,7 @@ internal fun JSONObject.applyChatCompletionsStreamUsageOption(
 ) {
     val supportsIncludeUsage =
         providerType == ApiProviderType.OPENAI ||
+            providerType == ApiProviderType.GROK_ACCOUNT ||
             providerType == ApiProviderType.DEEPSEEK ||
             providerType == ApiProviderType.MOONSHOT
     if (stream && !useResponsesApi && supportsIncludeUsage) {
@@ -115,7 +116,8 @@ open class OpenAIProvider(
     protected val supportsVision: Boolean = false, // 是否支持图片处理
     protected val supportsAudio: Boolean = false, // 是否支持音频输入
     protected val supportsVideo: Boolean = false, // 是否支持视频输入
-    val enableToolCall: Boolean = false // 是否启用Tool Call接口
+    protected val supportsFiles: Boolean = false, // 是否支持文件输入
+    val enableToolCall: Boolean = false, // 是否启用Tool Call接口
 ) : AIService {
     // private val client: OkHttpClient = HttpClientFactory.instance
 
@@ -229,7 +231,10 @@ open class OpenAIProvider(
     ) {
     }
 
-    protected open fun applyAuthenticationHeaders(
+    protected open val requiresStreamingResponse: Boolean = false
+    protected open fun applyRequestIdentityHeaders(builder: Request.Builder, logicalRequestId: String) {}
+
+    protected open suspend fun applyAuthenticationHeaders(
         builder: Request.Builder,
         currentApiKey: String
     ) {
@@ -924,9 +929,12 @@ open class OpenAIProvider(
 
         val audioLinks = mediaLinks.filter { it.type == "audio" }
         val videoLinks = mediaLinks.filter { it.type == "video" }
+        val fileLinks = mediaLinks.filter { it.type == "file" }
 
         val hasSupportedMedia =
-            (supportsAudio && audioLinks.isNotEmpty()) || (supportsVideo && videoLinks.isNotEmpty())
+            (supportsAudio && audioLinks.isNotEmpty()) ||
+                (supportsVideo && videoLinks.isNotEmpty()) ||
+                (supportsFiles && fileLinks.isNotEmpty())
 
         var textWithoutLinks = text
         if (hasMedia) {
@@ -954,6 +962,7 @@ open class OpenAIProvider(
             return when {
                 audioLinks.isNotEmpty() || videoLinks.isNotEmpty() -> context.getString(R.string.openai_audio_video_omitted)
                 imageLinks.isNotEmpty() -> context.getString(R.string.openai_image_omitted)
+                fileLinks.isNotEmpty() -> context.getString(R.string.openai_file_omitted)
                 else -> "[Empty]"
             }
         }
@@ -979,6 +988,17 @@ open class OpenAIProvider(
                             put("url", "data:${link.mimeType};base64,${link.base64Data}")
                         }
                     )
+                })
+            }
+        }
+
+        if (supportsFiles) {
+            fileLinks.forEach { link ->
+                val fileName = requireNotNull(link.fileName?.takeIf { it.isNotBlank() })
+                contentArray.put(JSONObject().apply {
+                    put("type", "input_file")
+                    put("filename", fileName)
+                    put("file_data", "data:${link.mimeType};base64,${link.base64Data}")
                 })
             }
         }
@@ -1794,7 +1814,8 @@ open class OpenAIProvider(
         requestBody: RequestBody,
         requestTraceId: String,
         stream: Boolean,
-        attemptNumber: Int
+        attemptNumber: Int,
+        logicalRequestId: String,
     ): Request {
         val currentApiKey = apiKeyProvider.getApiKey().trim()
         val endpointUrl = EndpointCompleter.completeEndpoint(apiEndpoint, providerType)
@@ -1820,6 +1841,7 @@ open class OpenAIProvider(
         }
 
         openCodeGoHeaders.applyTo(builder)
+        applyRequestIdentityHeaders(builder, logicalRequestId)
         val request = builder.post(requestBody).build()
         val bodyBytes = runCatching { requestBody.contentLength() }.getOrDefault(-1L)
         AppLogger.d(
@@ -2678,8 +2700,10 @@ open class OpenAIProvider(
         enableRetry: Boolean,
         statsCategory: com.ai.assistance.operit.data.stats.TokenStatCategory?
     ): Stream<String> {
+        val effectiveStream = stream || requiresStreamingResponse
         val eventChannel = MutableSharedStream<TextStreamEvent>(replay = Int.MAX_VALUE)
         val responseStream = stream {
+            val logicalRequestId = UUID.randomUUID().toString()
             isManuallyCancelled = false
             // 重置输出token计数（输入token由TokenCacheManager管理）
             tokenCacheManager.addOutputTokens(-tokenCacheManager.outputTokenCount)
@@ -2728,7 +2752,7 @@ open class OpenAIProvider(
                     currentHistory,
                     modelParameters,
                     enableThinking,
-                    stream,
+                    effectiveStream,
                     availableTools,
                     preserveThinkInHistory
                 )
@@ -2739,7 +2763,7 @@ open class OpenAIProvider(
                 )
                 val attemptNumber = retryCount + 1
                 val requestTraceId = "llm_${attemptNumber}_${UUID.randomUUID().toString().substring(0, 8)}"
-                val request = createRequest(requestBody, requestTraceId, stream, attemptNumber)
+                val request = createRequest(requestBody, requestTraceId, effectiveStream, attemptNumber, logicalRequestId)
                 AppLogger.d(
                     "AIService",
                     "[req=$requestTraceId] 【发送消息】请求体构建完成，目标模型: $modelName，API端点: $apiEndpoint"
@@ -2792,7 +2816,7 @@ open class OpenAIProvider(
                         val responseBody = response.body ?: throw IOException(context.getString(R.string.openai_error_response_empty))
 
                         // 根据stream参数处理响应
-                        if (stream) {
+                        if (effectiveStream) {
                             AppLogger.d("AIService", "[req=$requestTraceId] 【发送消息】开始读取流式响应")
                             val reader = responseBody.charStream().buffered()
                             processStreamingResponse(

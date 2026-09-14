@@ -126,6 +126,18 @@ class TokenUsageStatisticsViewModelTest {
         whenever(context.applicationContext).thenReturn(context)
         whenever(context.packageName).thenReturn("com.ai.assistance.operit")
         whenever(context.filesDir).thenReturn(filesDir)
+        val prefs = Mockito.mock(android.content.SharedPreferences::class.java)
+        val editor = Mockito.mock(android.content.SharedPreferences.Editor::class.java)
+        val hints = mutableMapOf<String, Boolean>()
+        whenever(context.getSharedPreferences(any(), org.mockito.kotlin.eq(Context.MODE_PRIVATE))).thenReturn(prefs)
+        whenever(prefs.getBoolean(any(), org.mockito.kotlin.any())).thenAnswer {
+            hints[it.getArgument<String>(0)] ?: it.getArgument<Boolean>(1)
+        }
+        whenever(prefs.edit()).thenReturn(editor)
+        whenever(editor.putBoolean(any(), org.mockito.kotlin.any())).thenAnswer {
+            hints[it.getArgument(0)] = it.getArgument(1)
+            editor
+        }
         whenever(context.getDatabasePath(any())).thenAnswer { invocation ->
             File(filesDir, invocation.getArgument<String>(0))
         }
@@ -184,6 +196,19 @@ class TokenUsageStatisticsViewModelTest {
 
     private fun newViewModel(): TokenUsageStatisticsViewModel =
         constructViewModel().also { it.loadForEntry() }
+
+    @Test fun unknownHintsDefaultOffAndPersistWithoutReloadingStats() {
+        val first = constructViewModel()
+        assertFalse(first.state.value.showUnknownHints)
+        val version = first.state.value.refreshVersion
+        first.setShowUnknownHints(true)
+        assertTrue(first.state.value.showUnknownHints)
+        assertEquals(version, first.state.value.refreshVersion)
+        val reopened = constructViewModel()
+        assertTrue(reopened.state.value.showUnknownHints)
+        reopened.setShowUnknownHints(false)
+        assertFalse(constructViewModel().state.value.showUnknownHints)
+    }
 
     /**
      * 等待异步查询落定：Room 在 arch 后台线程恢复协程，不能靠虚拟时间推进；

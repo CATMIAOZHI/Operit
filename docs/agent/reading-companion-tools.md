@@ -5,13 +5,26 @@
 
 ## 工具分组
 
-- `reading_companion`：选书、当前上下文、人物和章节回顾、读者记忆。
+- `reading_companion`：选书、当前上下文、人物和章节回顾、AI 伴读记忆及独立的读者笔记。
 - `reading_companion_tasks`：`start_task`、`get_task`、`list_tasks`、`cancel_task`。
 - `reading_companion_manage`：文件浏览、摘要范围设置、段评和审计记录。
 - `reading_companion_auto_commentary`：既有后台自动段评的状态和配置。启用手动生成任务不要求启用后台自动段评。
 
 新对话接口使用从 1 开始的章节号；Kotlin 内部仍使用零基索引。现有管理界面的
 `summary_batch_prefs` 保留一基章号，并支持 `book_id`，读写设置时可与生成任务绑定同一本书。
+
+## 当前页面上下文
+
+`get_context` 在新版 Legado 中直接采样阅读视图，正文截止到当前可见页面的末行，
+不再以保存进度的页首作为截止点。滚动模式跨章时以最后可见章节为当前章。
+`visibleStartPos` / `visibleEndPos` 是该章正文的可见范围（左闭右开），
+`startPos` / `endPos` 则是实际返回的上下文范围；前面的文字用于补充情节。
+这些位置表示屏幕可见内容，不表示用户视线已读到的精确字。
+
+`positionSource=viewport` 表示成功采样页面；旧版 Legado、排版尚未完成、
+正文坐标无法对应或采样超时时，返回 `saved_reading_prefix`，可见范围为空。
+此时 AI 必须说明当前页面未知，不能把历史前缀或本地 `content.md` 快照说成实时情节。
+此修复需要同时更新 Legado 和 Operit。
 
 ## 生成任务
 
@@ -32,6 +45,13 @@
 此前已被截断保存的正文无法自动还原，需要对相应章节重新生成段评。
 
 ## 文件与人物
+
+`companionMemoryPath` 指向当前角色的 `ai-memory.md`，记忆主体是 AI 角色。
+AI 应在回复前主动读取，并自主整合值得延续的观点、感受、猜测和共同话题，
+修正过时认识、合并重复内容，无需等待用户要求或逐次确认。
+不机械记录每轮对话，不写入用户尚未读到的剧情，猜测不能当成已确认事实。
+`readerMemories` / `add_memory` 是另一套读者笔记接口，不代表这份 AI 记忆。
+已有记忆文件保留内容，新规则通过工具使用说明和返回字段生效。
 
 人物查询基于 `characters.md` 和有效章节文件，不再依赖缺少生产路径的人物 FTS 索引。
 这些文档中的人物看法和读者记忆仍需与小说原文证据区分。
@@ -56,7 +76,13 @@
 
 ### 生成任务与聊天检索分离
 
-生成任务的初始输入由程序构造，包含固定任务说明、带段落锚点的目标章、近期前文以及角色信息。生成 subagent 无须主聊天先搜索。补查旧剧情只使用 `reading_commentary_grep` 定位当前任务书籍目录中的有效文件，再用 `reading_commentary_read_file` 按字符偏移分页读取原文。grep 返回路径、行号、字符偏移和下一页；不调用查询分析或重排模型。生成工具白名单不含 `task`。
+生成任务的初始输入由程序构造，只包含任务说明、书名、目标章序号以及角色信息，不内嵌正文。生成 subagent 先调用 `reading_commentary_list_chapters` 获取章节引用，再用 `reading_commentary_read_chapter` 阅读带段落锚点的目标章和紧邻的前四章；书籍开头不足四章时读取全部已有前文。仅生成摘要时必须读取目标章，前文按需读取。生成 subagent 无须主聊天先搜索。补查旧剧情只使用 `reading_commentary_grep` 定位当前任务书籍目录中的有效文件，再用 `reading_commentary_read_file` 按字符偏移分页读取原文。grep 返回路径、行号、字符偏移和下一页；不调用查询分析或重排模型。生成工具白名单不含 `task`。
+
+提示词按角色卡、固定生成规则、本次任务的顺序组织。书名、章节和阅读范围集中在末尾，使同一角色连续生成不同章节时保持稳定前缀，便于模型服务复用提示词缓存；摘要模式省略角色卡。
+
+`reading_commentary_read_chapter` 按字符分页（默认及上限 8000），使用 `nextOffset`
+继续读取直到 `hasMore=false`。偏移基于带锚点的完整文本，分页不重编号锚点；
+跨页段落需连读，避免超长章节被工具消息长度上限截断。
 
 主聊天通过渐进使用说明获取本书路径，自行 grep 和读取文件；复杂检索可委派 `task`，与生成任务互不依赖。生成仍使用多轮 subagent，无固定轮数上限、不回退单发；后台保持全局 CHAT 模型。
 

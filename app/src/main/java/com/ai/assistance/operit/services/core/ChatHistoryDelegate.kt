@@ -340,6 +340,9 @@ class ChatHistoryDelegate(
     suspend fun getChatHistory(chatId: String): List<ChatMessage> =
         chatHistoryManager.loadChatMessages(chatId)
 
+    suspend fun getRecentChatHistoryForTitle(chatId: String): List<ChatMessage> =
+        chatHistoryManager.loadChatMessagesDesc(chatId, limit = 48).asReversed()
+
     suspend fun chatExists(chatId: String): Boolean =
         chatHistoryManager.chatExists(chatId)
 
@@ -1445,20 +1448,24 @@ class ChatHistoryDelegate(
     /** 更新聊天标题 */
     fun updateChatTitle(chatId: String, title: String) {
         coroutineScope.launch {
-            // 更新数据库
-            chatHistoryManager.updateChatTitle(chatId, title)
-
-            // 更新UI状态
-            val updatedHistories =
-                    _chatHistories.value.map {
-                        if (it.id == chatId) {
-                            it.copy(title = title, updatedAt = LocalDateTime.now())
-                        } else {
-                            it
-                        }
-                    }
-            _chatHistories.value = updatedHistories
+            updateChatTitleAndWait(chatId, title)
         }
+    }
+
+    suspend fun updateChatTitleAndWait(chatId: String, title: String) {
+        // 更新数据库
+        chatHistoryManager.updateChatTitle(chatId, title)
+
+        // 更新UI状态
+        val updatedHistories =
+            _chatHistories.value.map {
+                if (it.id == chatId) {
+                    it.copy(title = title, updatedAt = LocalDateTime.now())
+                } else {
+                    it
+                }
+            }
+        _chatHistories.value = updatedHistories
     }
 
     suspend fun renameWorkspaceAndChat(

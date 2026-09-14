@@ -281,6 +281,7 @@ class ReadingCompanionService private constructor(
             .put("bookMetadataPath", fileStore.bookMetadataPath(state.book.id))
             .put("chaptersRootPath", fileStore.chaptersRootPath(state.book.id))
             .put("charactersPath", fileStore.ensureCharactersDocument(state.book.id).absolutePath)
+            .put("aiMemoryNotice", AI_MEMORY_NOTICE)
             .put(
                 "companionMemoryPath",
                 roleCardId
@@ -493,6 +494,12 @@ class ReadingCompanionService private constructor(
             put("chapterTitle", content.chapterTitle)
             put("startPos", start)
             put("endPos", safeEnd)
+            put("visibleStartPos", content.visibleStart ?: JSONObject.NULL)
+            put("visibleEndPos", content.visibleEnd ?: JSONObject.NULL)
+            put("positionSource", if (content.visibleStart != null) "viewport" else "saved_reading_prefix")
+            put("positionNotice", if (content.visibleStart != null)
+                "The visible range is the displayed part of this chapter, not an eye-tracked reading cursor. Earlier text is context."
+                else "Only a saved reading prefix is available. The current visible page is unknown; do not claim this is the current scene.")
             put("text", currentText)
             put(
                 "previousChapters",
@@ -562,9 +569,10 @@ class ReadingCompanionService private constructor(
             put("readerMemoryCount", boundedMemories.size)
             put("companionCommentCount", boundedComments.size)
             put("capturedAt", content.capturedAt)
-            put("boundary", "read_prefix_only")
+            put("boundary", if (content.visibleStart != null) "visible_page_end" else "read_prefix_only")
             put("readingCompanionFilesRoot", fileStore.rootPath())
             put("companionMemoryPath", companionMemoryPath ?: JSONObject.NULL)
+            put("aiMemoryNotice", AI_MEMORY_NOTICE)
             put("charactersPath", charactersPath)
         }
         return enforceSerializedContextBudget(result, requestedCharacters)
@@ -2228,6 +2236,12 @@ class ReadingCompanionService private constructor(
     }
 
     companion object {
+        private const val AI_MEMORY_NOTICE =
+            "companionMemoryPath is this AI role's own first-person companion memory, not the user's memory. " +
+                "Read it before replying and proactively edit it to maintain worthwhile views, reactions, " +
+                "predictions and shared discussion, without waiting for a user request or per-update approval. " +
+                "Revise outdated views and merge duplicates. Keep predictions unconfirmed and never include unread plot. " +
+                "readerMemories are separate reader notes."
         const val TOOLPKG_ID = "com.operit.reading_companion"
         const val SUBPACKAGE_NAME = "reading_companion"
         const val AUTO_COMMENTARY_SUBPACKAGE_NAME = "reading_companion_auto_commentary"

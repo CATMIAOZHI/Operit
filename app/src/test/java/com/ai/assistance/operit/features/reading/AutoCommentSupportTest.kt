@@ -262,6 +262,20 @@ class AutoCommentSupportTest {
         )
 
         assertEquals("legado_connection_failed", safeReadingCompanionError(error))
+        assertEquals(null, readingCompanionFailureDetail(error))
+    }
+
+    @Test
+    fun `known provider failure detail excludes private stack trace`() {
+        val error = ReaderProviderException(
+            ReaderProviderException.Reason.INVALID_RESPONSE,
+            "java.lang.IllegalStateException: 未找到书源\nprivate path and book payload",
+        )
+        assertEquals("未找到书源", readingCompanionFailureDetail(error))
+        assertEquals(null, readingCompanionFailureDetail(ReaderProviderException(
+            ReaderProviderException.Reason.INVALID_RESPONSE,
+            "unknown response with private path",
+        )))
     }
 
     @Test

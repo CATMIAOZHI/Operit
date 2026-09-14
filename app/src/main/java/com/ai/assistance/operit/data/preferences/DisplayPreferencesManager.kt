@@ -156,7 +156,7 @@ class DisplayPreferencesManager private constructor(private val context: Context
 
     val enableBackgroundKeepAlive: Flow<Boolean> =
         context.displayPreferencesDataStore.data.map { preferences ->
-            preferences[KEY_ENABLE_BACKGROUND_KEEP_ALIVE] ?: false
+            preferences[KEY_ENABLE_BACKGROUND_KEEP_ALIVE] ?: true
         }
 
     val enableExperimentalVirtualDisplay: Flow<Boolean> =
@@ -319,7 +319,7 @@ class DisplayPreferencesManager private constructor(private val context: Context
             preferences[KEY_START_WITH_NEW_CHAT] = false
             preferences.remove(KEY_GLOBAL_USER_AVATAR_URI)
             preferences.remove(KEY_GLOBAL_USER_NAME)
-            preferences[KEY_ENABLE_BACKGROUND_KEEP_ALIVE] = false
+            preferences[KEY_ENABLE_BACKGROUND_KEEP_ALIVE] = true
             preferences[KEY_ENABLE_EXPERIMENTAL_VIRTUAL_DISPLAY] = true
             preferences[KEY_HIDE_RUNTIME_TASK_VIEW] = false
             preferences.remove(KEY_SCREENSHOT_FORMAT)

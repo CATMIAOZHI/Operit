@@ -55,6 +55,7 @@ import com.ai.assistance.operit.data.stats.TokenStatsRangeData
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import java.time.ZoneId
 import kotlinx.coroutines.delay
+import androidx.compose.ui.semantics.contentDescription
 
 /** 性能卡指标切换。 */
 internal enum class PerfMetric { TTFT, GENERATION }
@@ -102,7 +103,7 @@ fun TokenUsageStatisticsScreen(
     }
     LaunchedEffect(Unit) { viewModel.loadForEntry() }
 
-    TokenStatsColorsProvider {
+    TokenStatsColorsProvider(showUnknownHints = state.showUnknownHints) {
         CustomScaffold(
             floatingActionButton = {
                 FloatingActionButton(
@@ -413,6 +414,7 @@ private fun TokenStatsPageContent(
     onOpenGroupManagement: () -> Unit,
     onOpenPricingManagement: () -> Unit,
 ) {
+    val unknownHintsLabel = stringResource(R.string.token_stats_show_unknown_hints)
     val lifetime = state.lifetime ?: return
     val hasAnyData = lifetime.eventTotals.requests > 0L || lifetime.baselineTotals.identityCount > 0L
     val context = LocalContext.current
@@ -442,6 +444,22 @@ private fun TokenStatsPageContent(
                 includeLegacy = state.includeLegacy,
                 onIncludeLegacyChange = viewModel::setIncludeLegacy,
             )
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(stringResource(R.string.token_stats_show_unknown_hints), modifier = Modifier.weight(1f))
+                androidx.compose.material3.Switch(
+                    modifier = Modifier.semantics {
+                        contentDescription = unknownHintsLabel
+                    },
+                    checked = state.showUnknownHints,
+                    onCheckedChange = viewModel::setShowUnknownHints,
+                )
+            }
         }
 
         item {
@@ -954,6 +972,7 @@ private fun PerformanceChartCard(
 
 @Composable
 private fun RangeUnknownHint(text: String) {
+    if (!LocalShowUnknownHints.current) return
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,

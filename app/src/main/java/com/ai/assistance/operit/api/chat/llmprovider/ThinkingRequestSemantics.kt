@@ -170,6 +170,10 @@ object ThinkingRequestSemantics {
         if (!enableThinking) {
             val preservedOverride =
                 when (ApiProviderType.fromProviderTypeId(providerTypeId)) {
+                    ApiProviderType.GROK_ACCOUNT ->
+                        enabledRawTextParameter(modelParameters, "reasoning_effort")
+                            ?.let { GrokAccountPolicy.effort(modelName, it) }
+                            ?.let(::textSummary) ?: ThinkingRequestSummary.NotSent
                     ApiProviderType.OPENAI,
                     ApiProviderType.OPENAI_GENERIC ->
                         resolveOpenAiChatReasoningEffortOverride(modelParameters)
@@ -193,6 +197,7 @@ object ThinkingRequestSemantics {
                             ?.let(::textSummary)
                             ?: ThinkingRequestSummary.NotSent
 
+                    ApiProviderType.OPENAI_CODEX,
                     ApiProviderType.OPENAI_RESPONSES,
                     ApiProviderType.OPENAI_RESPONSES_GENERIC ->
                         resolveResponsesOverride(modelParameters)
@@ -214,6 +219,8 @@ object ThinkingRequestSemantics {
                     ApiProviderType.SILICONFLOW ->
                         resolveSiliconFlowOverrideWhenThinkingDisabled(modelName, modelParameters)
 
+                    ApiProviderType.GOOGLE_ANTIGRAVITY -> ThinkingRequestSummary.Effort(
+                        antigravityThinkingEffort(modelName, qualityLevel, false, modelParameters))
                     ApiProviderType.GOOGLE,
                     ApiProviderType.GEMINI_GENERIC ->
                         if (isGemini37FlashModel(modelName)) {
@@ -232,6 +239,11 @@ object ThinkingRequestSemantics {
             ApiProviderType.fromProviderTypeId(providerTypeId)
                 ?: return ThinkingRequestSummary.NotSent
         return when (effectiveProviderType) {
+            ApiProviderType.GROK_ACCOUNT ->
+                GrokAccountPolicy.effort(modelName,
+                    enabledRawTextParameter(modelParameters, "reasoning_effort")
+                        ?: ApiPreferences.thinkingQualityEffort(qualityLevel))
+                    ?.let(::textSummary) ?: ThinkingRequestSummary.NotSent
             ApiProviderType.OPENAI,
             ApiProviderType.OPENAI_GENERIC ->
                 resolveOpenAiChatReasoningEffortOverride(modelParameters)
@@ -239,6 +251,7 @@ object ThinkingRequestSemantics {
                         defaultReasoningEffort(effectiveProviderType, qualityLevel)!!,
                     )
 
+            ApiProviderType.OPENAI_CODEX,
             ApiProviderType.OPENAI_RESPONSES,
             ApiProviderType.OPENAI_RESPONSES_GENERIC ->
                 resolveResponsesOverride(modelParameters)
@@ -340,6 +353,8 @@ object ThinkingRequestSemantics {
                 }
             }
 
+            ApiProviderType.GOOGLE_ANTIGRAVITY -> ThinkingRequestSummary.Effort(
+                antigravityThinkingEffort(modelName, qualityLevel, true, modelParameters))
             ApiProviderType.GOOGLE,
             ApiProviderType.GEMINI_GENERIC ->
                 resolveGeminiNativeThinkingConfigOverride(modelParameters)
@@ -370,8 +385,10 @@ object ThinkingRequestSemantics {
         val effort = ApiPreferences.thinkingQualityEffort(qualityLevel)
         return when (providerType) {
             ApiProviderType.DEEPSEEK -> normalizeDeepseekEffort(effort)
+            ApiProviderType.GROK_ACCOUNT -> effort
             ApiProviderType.OPENAI,
             ApiProviderType.OPENAI_GENERIC,
+            ApiProviderType.OPENAI_CODEX,
             ApiProviderType.OPENAI_RESPONSES,
             ApiProviderType.OPENAI_RESPONSES_GENERIC,
             ApiProviderType.NVIDIA -> effort

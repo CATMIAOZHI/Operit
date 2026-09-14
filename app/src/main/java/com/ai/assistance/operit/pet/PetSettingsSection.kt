@@ -26,6 +26,7 @@ fun PetSettingsSection() {
     val context = LocalContext.current
     val preferences = remember { PetPreferences.get(context) }
     val settings by preferences.settings.collectAsState()
+    val enabled by preferences.enabled.collectAsState()
     val usePetEntry by preferences.usePetEntry.collectAsState()
     val pets by preferences.pets.collectAsState()
     val selectedId by preferences.selectedId.collectAsState()
@@ -33,6 +34,8 @@ fun PetSettingsSection() {
     var choosingPet by remember { mutableStateOf(false) }
     var creatingPet by rememberSaveable { mutableStateOf(false) }
     var editingAnimations by rememberSaveable(selectedId) { mutableStateOf(!settings.isReady) }
+    var previewAnimation by rememberSaveable(selectedId) { mutableStateOf(PetAnimation.IDLE) }
+    var choosingPreviewAnimation by remember { mutableStateOf(false) }
     var pendingPetId by rememberSaveable { mutableStateOf("") }
     var pendingAnimation by rememberSaveable { mutableStateOf(PetAnimation.IDLE) }
     var deletingPet by remember { mutableStateOf<PetProfile?>(null) }
@@ -82,6 +85,7 @@ fun PetSettingsSection() {
     }
     Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
         Text(stringResource(R.string.pet_title), style = MaterialTheme.typography.titleMedium)
+        PetToggle(stringResource(R.string.pet_master_switch), enabled) { preferences.setEnabled(it) }
         Text(
             stringResource(R.string.pet_description),
             style = MaterialTheme.typography.bodySmall,
@@ -169,7 +173,29 @@ fun PetSettingsSection() {
             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
         ) {
             Column(Modifier.padding(12.dp)) {
-                Text(stringResource(R.string.pet_preview), style = MaterialTheme.typography.labelMedium)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.pet_preview), Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                    Box {
+                        OutlinedButton(onClick = { choosingPreviewAnimation = true }) {
+                            Text(stringResource(previewAnimation.label()))
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                        }
+                        DropdownMenu(
+                            expanded = choosingPreviewAnimation,
+                            onDismissRequest = { choosingPreviewAnimation = false },
+                        ) {
+                            PetAnimation.entries.forEach { animation ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(animation.label())) },
+                                    onClick = {
+                                        previewAnimation = animation
+                                        choosingPreviewAnimation = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
                 BoxWithConstraints(
                     Modifier.fillMaxWidth().heightIn(min = 152.dp),
                     contentAlignment = Alignment.Center,
@@ -182,6 +208,14 @@ fun PetSettingsSection() {
                         onToggleBubble = { preferences.update { it.copy(showBubble = !it.showBubble) } },
                         anchorX = anchor.x, anchorY = anchor.y,
                         modifier = Modifier.width(width).heightIn(max = 320.dp), preview = true,
+                        previewAnimation = previewAnimation,
+                    )
+                }
+                if (settings.mediaType != PetMediaType.ATLAS && previewAnimation !in settings.animations) {
+                    Text(
+                        stringResource(R.string.pet_animation_fallback),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

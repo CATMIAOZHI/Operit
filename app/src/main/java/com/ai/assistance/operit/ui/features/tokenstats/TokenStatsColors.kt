@@ -131,8 +131,14 @@ val LocalTokenStatsColors = staticCompositionLocalOf<TokenStatsColors> {
 }
 
 /** 在子树内提供统计页颜色。 */
+val LocalShowUnknownHints = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 @Composable
-fun TokenStatsColorsProvider(content: @Composable () -> Unit) {
+fun TokenStatsColorsProvider(showUnknownHints: Boolean = false, content: @Composable () -> Unit) {
     val colors = tokenStatsColors()
-    CompositionLocalProvider(LocalTokenStatsColors provides colors, content = content)
+    CompositionLocalProvider(
+        LocalTokenStatsColors provides colors,
+        LocalShowUnknownHints provides showUnknownHints,
+        content = content,
+    )
 }

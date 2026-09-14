@@ -25,16 +25,19 @@ class ModelProtocolCatalogRepository(
     val updatedAt = updatedAtMutable.asStateFlow()
 
     /** Applying protocols never refreshes the directory or requires network access. */
-    suspend fun loadCatalog(): ModelProtocolCatalog = withContext(Dispatchers.IO) {
+    suspend fun loadCatalog(): ModelProtocolCatalog = ModelProtocolCatalog.parse(loadCatalogJson())
+
+    /** Shared local directory for protocol matching and provider model selection. */
+    suspend fun loadCatalogJson(): String = withContext(Dispatchers.IO) {
         lock.withLock {
             val file = cacheFile()
             val cached = runCatching {
                 check(file.isFile && file.length() <= MAX_BYTES)
-                ModelProtocolCatalog.parse(file.readText(Charsets.UTF_8))
+                file.readText(Charsets.UTF_8).also { ModelProtocolCatalog.parse(it) }
             }.getOrNull()
             updatedAtMutable.value = if (cached != null) file.lastModified() else null
             cached ?: context.assets.open(BUNDLED_PATH).use {
-                ModelProtocolCatalog.parse(it.readBytes().toString(Charsets.UTF_8))
+                it.readBytes().toString(Charsets.UTF_8)
             }
         }
     }

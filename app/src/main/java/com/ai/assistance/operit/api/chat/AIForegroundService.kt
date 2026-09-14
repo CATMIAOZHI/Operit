@@ -1,4 +1,5 @@
 package com.ai.assistance.operit.api.chat
+import com.ai.assistance.operit.pet.isReady
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -116,6 +117,7 @@ class AIForegroundService : Service() {
         private const val REQUEST_CODE_EXIT_APP = 9003
 
         private const val ACTION_TOGGLE_WAKE_LISTENING = "com.ai.assistance.operit.action.TOGGLE_WAKE_LISTENING"
+        const val ACTION_TOGGLE_PET = "com.ai.assistance.operit.action.TOGGLE_PET"
         private const val REQUEST_CODE_TOGGLE_WAKE_LISTENING = 9006
         private const val REPLY_NOTIFICATION_TAG_PREFIX = "ai_reply:"
 
@@ -564,7 +566,7 @@ class AIForegroundService : Service() {
         }
 
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, createNotification())
+        com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
     }
 
     private fun startRecordingStateMonitoring() {
@@ -716,6 +718,7 @@ class AIForegroundService : Service() {
     private var hideRuntimeTaskViewEnabled: Boolean = false
     @Volatile
     private var backgroundKeepAliveEnabled: Boolean = false
+    @Volatile private var backgroundKeepAliveLoaded: Boolean = false
     @Volatile
     private var lastAppliedRuntimeTaskViewHidden: Boolean? = null
 
@@ -890,7 +893,7 @@ class AIForegroundService : Service() {
             return
         }
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, createNotification())
+        com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
     }
 
     private fun isExternalHttpEnabledNow(): Boolean {
@@ -902,6 +905,8 @@ class AIForegroundService : Service() {
     }
 
     private fun stopSelfIfIdle(ignoreAppForeground: Boolean = false) {
+        // The persisted setting may differ from the field's bootstrap value.
+        if (!backgroundKeepAliveLoaded) return
         val alwaysListeningEnabled = wakeListeningEnabled || isAlwaysListeningEnabledNow()
         val externalHttpEnabled = externalHttpStateFlow.value.isRunning || isExternalHttpEnabledNow()
         if (isAiBusy || alwaysListeningEnabled || backgroundKeepAliveEnabled || externalHttpEnabled) {
@@ -912,13 +917,7 @@ class AIForegroundService : Service() {
         }
 
         AppLogger.d(TAG, "No active foreground responsibilities, stopping AIForegroundService")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            @Suppress("DEPRECATION")
-            stopForeground(Service.STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
+        com.ai.assistance.operit.core.application.CompanionNotification.release(this)
         stopSelf()
     }
 
@@ -959,7 +958,7 @@ class AIForegroundService : Service() {
         chatRuntimeHolder
         createNotificationChannel()
         val notification = createNotification()
-        ForegroundServiceCompat.startForeground(
+        com.ai.assistance.operit.core.application.CompanionNotification.startForeground(
             service = this,
             notificationId = NOTIFICATION_ID,
             notification = notification,
@@ -969,6 +968,13 @@ class AIForegroundService : Service() {
             )
         )
         observeRuntimeTaskViewPreference()
+        serviceScope.launch {
+            com.ai.assistance.operit.pet.PetPreferences.get(this@AIForegroundService).enabled.collect {
+                com.ai.assistance.operit.core.application.CompanionNotification.update(
+                    this@AIForegroundService, createNotification(),
+                )
+            }
+        }
         observeBackgroundKeepAlivePreference()
         observeChatRuntimeStats()
         startWakeMonitoring()
@@ -1000,6 +1006,7 @@ class AIForegroundService : Service() {
                     .enableBackgroundKeepAlive
                     .collectLatest { enabled ->
                         backgroundKeepAliveEnabled = enabled
+                        backgroundKeepAliveLoaded = true
                         updateKeepAliveOverlayVisibility()
                         if (enabled) {
                             refreshServiceNotification()
@@ -1009,6 +1016,8 @@ class AIForegroundService : Service() {
                     }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "监听后台保活设置失败: ${e.message}", e)
+                backgroundKeepAliveLoaded = true
+                stopSelfIfIdle()
             }
         }
     }
@@ -1055,7 +1064,7 @@ class AIForegroundService : Service() {
             }.collect {
                 if (!isRunning.get()) return@collect
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                manager.notify(NOTIFICATION_ID, createNotification())
+                com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
             }
         }
     }
@@ -1095,7 +1104,7 @@ class AIForegroundService : Service() {
 
         val types = ForegroundServiceCompat.buildTypes(dataSync = true, microphone = true)
         return try {
-            ForegroundServiceCompat.startForeground(
+            com.ai.assistance.operit.core.application.CompanionNotification.startForeground(
                 service = this,
                 notificationId = NOTIFICATION_ID,
                 notification = createNotification(),
@@ -1109,6 +1118,31 @@ class AIForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_TOGGLE_PET) {
+            val preferences = com.ai.assistance.operit.pet.PetPreferences.get(this)
+            val enabled = !preferences.enabled.value
+            preferences.setEnabled(enabled)
+            val settings = preferences.settings.value
+            if (enabled && settings.isReady && android.provider.Settings.canDrawOverlays(this) &&
+                (settings.overlay || (preferences.usePetEntry.value &&
+                    com.ai.assistance.operit.pet.FloatingPetEntry.mode.value == com.ai.assistance.operit.pet.FloatingPetEntryMode.PET_DISABLED))) {
+                try {
+                    // Run directly in the notification action, while its background-start exemption applies.
+                    if (!settings.overlay) {
+                        com.ai.assistance.operit.pet.FloatingPetEntry.mode.value = com.ai.assistance.operit.pet.FloatingPetEntryMode.PET
+                    }
+                    androidx.core.content.ContextCompat.startForegroundService(
+                        this, Intent(this, com.ai.assistance.operit.pet.PetCompanionService::class.java),
+                    )
+                } catch (error: RuntimeException) {
+                    AppLogger.e(TAG, "Unable to enable pet from notification", error)
+                    preferences.setEnabled(false)
+                    android.widget.Toast.makeText(this, R.string.pet_overlay_failed, android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+            com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_EXIT_APP) {
             isRunning.set(false)
             updateAiBusyState(false)
@@ -1208,7 +1242,7 @@ class AIForegroundService : Service() {
                 }
 
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                manager.notify(NOTIFICATION_ID, createNotification())
+                com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
             }
             return START_NOT_STICKY
         }
@@ -1267,7 +1301,7 @@ class AIForegroundService : Service() {
                 AppLogger.e(TAG, "取消当前AI任务失败: ${e.message}", e)
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.notify(NOTIFICATION_ID, createNotification())
+            com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
             return START_NOT_STICKY
         }
 
@@ -1293,7 +1327,7 @@ class AIForegroundService : Service() {
                     return START_NOT_STICKY
                 }
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                manager.notify(NOTIFICATION_ID, createNotification())
+                com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
             }
         }
         
@@ -1303,6 +1337,7 @@ class AIForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        com.ai.assistance.operit.core.application.CompanionNotification.release(this)
         val stoppedPort = externalHttpCurrentPort ?: externalHttpStateFlow.value.port
         runCatching {
             externalHttpServer?.stopServer()
@@ -1438,7 +1473,7 @@ class AIForegroundService : Service() {
                     applyWakeListeningState()
 
                     val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    manager.notify(NOTIFICATION_ID, createNotification())
+                    com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
                 }
             }
     }
@@ -1606,7 +1641,7 @@ class AIForegroundService : Service() {
             } catch (_: Exception) {
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.notify(NOTIFICATION_ID, createNotification())
+            com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
             return
         }
 
@@ -1954,30 +1989,7 @@ class AIForegroundService : Service() {
         )
         builder.setContentIntent(contentPendingIntent)
 
-        val floatingIntent = Intent(this, FloatingChatService::class.java).apply {
-            putExtra("INITIAL_MODE", com.ai.assistance.operit.ui.floating.FloatingMode.FULLSCREEN.name)
-            putExtra(FloatingChatService.EXTRA_AUTO_ENTER_VOICE_CHAT, true)
-        }
-        val floatingPendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            PendingIntent.getForegroundService(
-                this,
-                9005,
-                floatingIntent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-        } else {
-            PendingIntent.getService(
-                this,
-                9005,
-                floatingIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT
-            )
-        }
-        builder.addAction(
-            android.R.drawable.ic_btn_speak_now,
-            getString(R.string.service_voice_floating_window),
-            floatingPendingIntent
-        )
+        builder.addAction(com.ai.assistance.operit.core.application.CompanionNotification.petAction(this))
 
         val toggleWakeIntent = Intent(this, AIForegroundService::class.java).apply {
             action = ACTION_TOGGLE_WAKE_LISTENING

@@ -19,6 +19,40 @@ class ReadingCompanionPersonaContextTest {
             "【口吻】短句、吐槽，关注细节描写与伏笔。"
 
     @Test
+    fun `changing book and chapter preserves the rules and persona prefix in both modes`() {
+        for (summaryOnly in listOf(false, true)) {
+            fun prompt(book: String, chapter: Int) =
+                ReadingCompanionSubagentCoordinator.buildSubagentTaskPrompt(
+                    bookName = book,
+                    chapterIndex = chapter,
+                    roleCardName = "Rainy",
+                    rolePrompt = fullPersona,
+                    summaryOnly = summaryOnly,
+                )
+            val first = prompt("Book A", 2)
+            val second = prompt("Book B", 8)
+            val separator = "\n\n本次任务：\n"
+            assertTrue(first.contains(separator))
+            org.junit.Assert.assertEquals(
+                first.substringBefore(separator),
+                second.substringBefore(separator),
+            )
+            assertFalse(first.substringBefore(separator).contains("Book A"))
+            assertFalse(first.substringBefore(separator).contains("阅读范围："))
+            assertTrue(first.substringAfter(separator).contains("阅读范围："))
+            if (!summaryOnly) {
+                assertTrue(first.startsWith("以下是本次伴读角色卡"))
+                assertTrue(
+                    first.indexOf("</reader_persona>") <
+                        first.indexOf("reading_commentary_list_chapters"),
+                )
+            }
+            assertTrue(first.substringAfter(separator).contains("第 3 章"))
+            assertTrue(second.substringAfter(separator).contains("第 9 章"))
+        }
+    }
+
+    @Test
     fun `task prompt carries the full persona inside a controlled reader_persona block`() {
         val prompt =
             ReadingCompanionSubagentCoordinator.buildSubagentTaskPrompt(

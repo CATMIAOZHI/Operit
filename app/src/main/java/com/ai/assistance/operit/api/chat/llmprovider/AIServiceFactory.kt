@@ -368,6 +368,38 @@ object AIServiceFactory {
                     enableToolCall = enableToolCall
                 )
 
+            ApiProviderType.GROK_ACCOUNT ->
+                GrokAccountProvider(
+                    com.ai.assistance.operit.data.api.ProviderAccountManager.get(context,
+                        com.ai.assistance.operit.data.api.AccountProvider.GROK),
+                    config.modelName, httpClient, customHeaders, supportsVision, enableToolCall,
+                )
+
+            ApiProviderType.GOOGLE_ANTIGRAVITY -> {
+                val manager = com.ai.assistance.operit.data.api.ProviderAccountManager.get(context,
+                    com.ai.assistance.operit.data.api.AccountProvider.ANTIGRAVITY)
+                GeminiProvider(
+                    apiEndpoint = com.ai.assistance.operit.data.api.ProviderAccountManager.CCA,
+                    apiKeyProvider = AccountApiKeyProvider(manager), modelName = config.modelName,
+                    client = httpClient, providerType = providerType,
+                    supportsVision = supportsVision, supportsAudio = supportsAudio, supportsVideo = supportsVideo,
+                    enableToolCall = enableToolCall, antigravity = AntigravityTransport(manager, config.modelName),
+                )
+            }
+
+            ApiProviderType.OPENAI_CODEX ->
+                CodexProvider(
+                    authManager = com.ai.assistance.operit.data.api.CodexAuthManager.getInstance(context),
+                    modelName = config.modelName,
+                    httpClient = httpClient,
+                    customHeaders = customHeaders,
+                    supportsVision = supportsVision,
+                    supportsAudio = false,
+                    supportsVideo = false,
+                    supportsFiles = supportsVision,
+                    enableToolCall = enableToolCall,
+                )
+
             // Claude格式，支持Anthropic Claude系列
             ApiProviderType.ANTHROPIC,
             ApiProviderType.ANTHROPIC_GENERIC ->

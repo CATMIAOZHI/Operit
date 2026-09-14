@@ -24,6 +24,7 @@ fun PetCompanionHost() {
     val preferences = remember { PetPreferences.get(context) }
     val model = remember { PetTasks.get(context) }
     val settings by preferences.settings.collectAsState()
+    val enabled by preferences.enabled.collectAsState()
     val entry by FloatingPetEntry.mode.collectAsState()
     val tasks by model.visibleTasks.collectAsState()
     val colors = MaterialTheme.colorScheme
@@ -50,8 +51,8 @@ fun PetCompanionHost() {
     }
     // Start while foreground; starting a foreground service for the first time in onStop is
     // restricted by Android. The service hides its window while this host is visible.
-    LaunchedEffect(settings.overlay, settings.isReady, resumed) {
-        if (resumed && settings.overlay && settings.isReady) {
+    LaunchedEffect(enabled, settings.overlay, settings.isReady, resumed) {
+        if (enabled && resumed && settings.overlay && settings.isReady) {
             if (!Settings.canDrawOverlays(context)) {
                 preferences.update { it.copy(overlay = false) }
             } else {
@@ -65,7 +66,7 @@ fun PetCompanionHost() {
             }
         }
     }
-    if ((!settings.inApp && entry != FloatingPetEntryMode.PET) ||
+    if (!enabled || (!settings.inApp && entry != FloatingPetEntryMode.PET) ||
         entry == FloatingPetEntryMode.LEGACY_BALL || entry == FloatingPetEntryMode.HIDDEN || !resumed || !settings.isReady) return
     BoxWithConstraints(
         Modifier.fillMaxSize().safeDrawingPadding().imePadding()
@@ -82,13 +83,13 @@ fun PetCompanionHost() {
         LaunchedEffect(settings.x, settings.y, settings.edge) { x = docked.x; y = docked.y }
         val anchorX = if (dragging) x else docked.x
         val anchorY = if (dragging) y else docked.y
-        val hasBubble = settings.showBubble && !dragging
+        val hasBubble = settings.showBubble
         val width = petWidth(viewport, petSize, with(density) { PET_BUBBLE_WIDTH_DP.dp.toPx() }, settings.edge, hasBubble)
         Layout(modifier = Modifier.fillMaxSize(), content = {
         PetCompanion(
             settings = settings,
             onToggleBubble = { preferences.update { it.copy(showBubble = !it.showBubble) } },
-            anchorX = anchorX, anchorY = anchorY, dragging = dragging,
+            anchorX = docked.x, anchorY = docked.y, dragging = dragging,
             onDragStart = { x = docked.x; y = docked.y; dragging = true },
             onDrag = { amount ->
                 x = (x + amount.x / (viewport - petSize).coerceAtLeast(1f)).coerceIn(0f, 1f)
@@ -108,7 +109,15 @@ fun PetCompanionHost() {
                 child.width.toFloat(), child.height.toFloat(), anchorX, anchorY,
             )
             layout(constraints.maxWidth, constraints.maxHeight) {
-                child.place(placement.left.roundToInt(), placement.top.roundToInt())
+                // Move the complete group by the pet's travel distance without changing
+                // the relative pet/bubble alignment underneath the active pointer.
+                val left = if (dragging) {
+                    (x - docked.x) * (viewport - petSize) + (viewport - child.width) * docked.x
+                } else placement.left
+                val top = if (dragging) {
+                    (y - docked.y) * (viewportHeight - petSize) + (viewportHeight - child.height) * docked.y
+                } else placement.top
+                child.place(left.roundToInt(), top.roundToInt())
             }
         }
     }

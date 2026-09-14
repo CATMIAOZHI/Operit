@@ -282,6 +282,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // 会话隔离：仅当“当前聊天ID == 正在流式的聊天ID”时，才显示处理中/停止按钮
     val activeStreamingChatIds: StateFlow<Set<String>> by lazy { messageProcessingDelegate.activeStreamingChatIds }
+    val activeRunStartedAt: StateFlow<Map<String, Long>> by lazy { messageProcessingDelegate.activeRunStartedAt }
     val currentChatIsLoading: StateFlow<Boolean> by lazy {
         kotlinx.coroutines.flow.combine(
             chatHistoryDelegate.currentChatId,
@@ -2561,7 +2562,51 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     /** 更新指定聊天的标题 */
     fun updateChatTitle(chatId: String, newTitle: String) {
+        titleGenerationJobs[chatId]?.cancel()
         chatHistoryDelegate.updateChatTitle(chatId, newTitle)
+    }
+
+    private val _regeneratingTitleIds = MutableStateFlow<Set<String>>(emptySet())
+    suspend fun estimateConversationCost(chatId: String): com.ai.assistance.operit.data.stats.ChatCostEstimate =
+        com.ai.assistance.operit.data.stats.estimateChatCost(context, chatHistoryDelegate.getChatHistory(chatId))
+
+    val regeneratingTitleIds: StateFlow<Set<String>> = _regeneratingTitleIds
+    private val titleGenerationJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
+
+    fun regenerateChatTitle(chatId: String) {
+        if (chatId in _regeneratingTitleIds.value) return
+        val originalTitle = chatHistories.value.firstOrNull { it.id == chatId }?.title ?: return
+        _regeneratingTitleIds.value += chatId
+        val job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            try {
+                val recentText = com.ai.assistance.operit.core.config.RecentConversationTitleInput.build(
+                    chatHistoryDelegate.getRecentChatHistoryForTitle(chatId).map { it.sender to it.content },
+                )
+                if (recentText.isBlank()) {
+                    uiStateDelegate.showErrorMessage(context.getString(R.string.chat_title_no_content))
+                    return@launch
+                }
+                val title = withTimeoutOrNull(60_000L) {
+                    EnhancedAIService.getChatInstance(context, chatId)
+                        .generateConversationTitle(userText = recentText, fromRecentConversation = true)
+                }.orEmpty()
+                if (title.isBlank()) {
+                    uiStateDelegate.showErrorMessage(context.getString(R.string.chat_title_generation_failed))
+                } else if (chatHistories.value.firstOrNull { it.id == chatId }?.title == originalTitle) {
+                    // 用户在请求期间手动改名或删除对话时，不用迟到的结果覆盖其操作。
+                    chatHistoryDelegate.updateChatTitleAndWait(chatId, title)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                uiStateDelegate.showErrorMessage(context.getString(R.string.chat_title_generation_failed))
+            } finally {
+                _regeneratingTitleIds.value -= chatId
+                titleGenerationJobs.remove(chatId)
+            }
+        }
+        titleGenerationJobs[chatId] = job
+        job.start()
     }
 
     /** 更新指定聊天绑定的角色卡 */

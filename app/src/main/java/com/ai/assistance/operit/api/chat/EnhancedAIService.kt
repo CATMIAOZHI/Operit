@@ -2588,13 +2588,15 @@ class EnhancedAIService private constructor(
 
     suspend fun generateConversationTitle(
         userText: String,
-        attachmentFileNames: List<String> = emptyList()
+        attachmentFileNames: List<String> = emptyList(),
+        fromRecentConversation: Boolean = false,
     ): String {
         return withContext(com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(providerSessionId)) {
             conversationService.generateConversationTitle(
                 userText = userText,
                 attachmentFileNames = attachmentFileNames,
-                multiServiceManager = multiServiceManager
+                multiServiceManager = multiServiceManager,
+                fromRecentConversation = fromRecentConversation,
             )
         }
     }

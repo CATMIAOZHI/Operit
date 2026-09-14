@@ -13,6 +13,7 @@ import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.data.stats.ProviderUsageSnapshot
 import com.ai.assistance.operit.data.stats.TokenStatCategory
+import com.ai.assistance.operit.util.AppLogger
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
@@ -97,6 +98,25 @@ class AutoCommentRoleNotSelectedException :
 
 class AutoCommentRoleUnavailableException :
     IllegalStateException("所选段评角色卡已不存在，请重新选择")
+
+/** Only expose known protocol failures; provider stack traces can contain private book data. */
+internal fun readingCompanionFailureDetail(error: Throwable): String? {
+    if (error !is ReaderProviderException) return null
+    val known = listOf(
+        "未找到书籍", "未找到章节", "未找到书源",
+        "该章节使用特殊排版，暂不生成 AI 段评",
+        "当前章节的安全正文位置暂不可用", "当前章节的安全正文暂不可用",
+        "拒绝读取未读章节", "目录已更新，请重试读取章节",
+        "Legado AI 段评章节响应不是对象", "Legado AI 段评章节身份不一致",
+        "Legado AI 段评章节缺少段落契约", "Legado AI 段评章节缺少段落",
+        "Legado AI 段评段落格式错误", "Legado AI 段评段落编号不连续",
+        "Legado AI 段评章节正文为空", "Legado 目录缺少目标章节身份",
+        "Legado 目录在正文读取期间发生变化",
+        "Legado ContentProvider 返回空游标", "Legado ContentProvider 缺少 result 列",
+    )
+    val firstLine = error.message.orEmpty().lineSequence().firstOrNull().orEmpty()
+    return known.firstOrNull { firstLine == it || firstLine.endsWith(": $it") }
+}
 
 internal fun safeReadingCompanionError(error: Throwable): String = when (error) {
     is AutoCommentModelTimeoutException -> "model_timeout"
@@ -1137,6 +1157,12 @@ class ReadingCompanionAutoCommentary private constructor(
                 )
             }
         } catch (error: Throwable) {
+            AppLogger.w(
+                "ReadingCompanion",
+                "Reader operation failed: operation=$operation runId=$runId " +
+                    "code=${safeReadingCompanionError(error)} " +
+                    "detail=${readingCompanionFailureDetail(error) ?: "unclassified"}",
+            )
             store.recordAutoCommentRunTrace(
                 runId = runId,
                 operation = operation,
@@ -1145,6 +1171,7 @@ class ReadingCompanionAutoCommentary private constructor(
                 finishedAt = System.currentTimeMillis(),
                 metadataJson = metadata
                     .put("error", safeReadingCompanionError(error))
+                    .put("errorDetail", readingCompanionFailureDetail(error))
                     .toString(),
             )
             throw error

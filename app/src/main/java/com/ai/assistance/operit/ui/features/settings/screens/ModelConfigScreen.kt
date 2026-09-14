@@ -37,6 +37,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.EnhancedAIService
+import com.ai.assistance.operit.data.api.CodexAuthManager
 import com.ai.assistance.operit.api.chat.llmprovider.AIService
 import com.ai.assistance.operit.api.chat.llmprovider.ApiKeyPoolAvailabilityTester
 import com.ai.assistance.operit.api.chat.llmprovider.ChatConfigReadiness
@@ -166,6 +167,8 @@ fun ModelConfigScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val configManager = remember { ModelConfigManager(context) }
     val functionalConfigManager = remember { FunctionalConfigManager(context) }
+    val codexAuthManager = remember { CodexAuthManager.getInstance(context) }
+    val codexAuthState by codexAuthManager.authState.collectAsState()
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val saveCoordinator = rememberModelConfigSaveCoordinator()
@@ -305,7 +308,12 @@ fun ModelConfigScreen(
                     ChatConfigReadiness.evaluate(
                         config = targetConfig,
                         modelIndex = targetModelIndex,
-                        registeredPluginProviderIds = registeredPluginProviderIds
+                        registeredPluginProviderIds = registeredPluginProviderIds,
+                        codexAuthenticated = codexAuthState != null,
+                        accountAuthenticated = com.ai.assistance.operit.data.api.AccountProvider.from(
+                            com.ai.assistance.operit.data.model.ApiProviderType.fromProviderTypeId(targetConfig.apiProviderTypeId))?.let {
+                                com.ai.assistance.operit.data.api.ProviderAccountManager.get(context, it).account.value != null
+                            } == true,
                     )
                 if (!readiness.isReady) {
                     val messageResId =
@@ -318,6 +326,10 @@ fun ModelConfigScreen(
                                 R.string.onboarding_config_endpoint_invalid
                             ChatConfigReadinessIssue.MODEL_MISSING ->
                                 R.string.onboarding_config_model_missing
+                            ChatConfigReadinessIssue.CODEX_LOGIN_REQUIRED ->
+                                R.string.onboarding_config_codex_login_required
+                            ChatConfigReadinessIssue.ACCOUNT_LOGIN_REQUIRED ->
+                                R.string.provider_account_login_required
                             ChatConfigReadinessIssue.API_KEY_MISSING ->
                                 R.string.onboarding_config_api_key_missing
                             ChatConfigReadinessIssue.API_KEY_INVALID ->

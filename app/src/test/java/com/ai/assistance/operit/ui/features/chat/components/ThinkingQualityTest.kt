@@ -24,6 +24,16 @@ import org.junit.Test
  * 思考程度档位、provider 最终请求语义与显示标签的映射测试。
  */
 class ThinkingQualityTest {
+    @Test
+    fun codexUsesTheSameUserSelectedEffortAsResponses() {
+        for (level in 0..4) {
+            assertEquals(
+                ThinkingRequestSemantics.defaultReasoningEffort(ApiProviderType.OPENAI_RESPONSES, level),
+                ThinkingRequestSemantics.defaultReasoningEffort(ApiProviderType.OPENAI_CODEX, level),
+            )
+        }
+    }
+
     private val goConfig = ModelConfigSummary(
         id = "go", name = "Go",
         apiProviderType = ApiProviderType.OPENCODE_GO,

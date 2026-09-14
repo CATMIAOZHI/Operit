@@ -437,7 +437,13 @@ object ReadingCompanionBridge {
         } catch (error: Throwable) {
             AppLogger.e(TAG, "Reading companion bridge failed: $action", error)
             val message = when (error) {
-                is ReaderProviderException -> safeReadingCompanionError(error)
+                is ReaderProviderException -> buildString {
+                    append(safeReadingCompanionError(error))
+                    readingCompanionFailureDetail(error)?.let { append(": ").append(it) }
+                    if (action == "get_context") {
+                        append("\n实时正文获取失败。不得把旧 content.md 快照或之前的阅读位置当作当前情节；请说明暂时无法确认当前位置。")
+                    }
+                }
                 is IllegalArgumentException,
                 is IllegalStateException -> error.message.orEmpty()
                 else -> "伴读操作失败，请确认 Legado 已安装并打开过目标书籍"

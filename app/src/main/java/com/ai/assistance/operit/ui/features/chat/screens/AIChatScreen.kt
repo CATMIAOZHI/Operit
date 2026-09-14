@@ -763,6 +763,14 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val showWebView by actualViewModel.showWebView.collectAsState()
     // 收集AI电脑显示状态
     val showAiComputer by actualViewModel.showAiComputer.collectAsState()
+    com.ai.assistance.operit.pet.PetViewedChatObserver(
+        currentChatId.takeIf {
+            !isFloatingMode && isCurrentScreen && !showChatHistorySelector &&
+                !showWebView && !showAiComputer && !isWorkspacePreparing && !showConfig &&
+                displayedChatId == currentChatId && !isLoadingDisplayWindow &&
+                !hasNewerDisplayHistory
+        },
+    )
     val shouldUseChatLocalImeHandling =
         inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT &&
             !showWebView &&

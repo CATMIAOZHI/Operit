@@ -112,6 +112,8 @@ function operationMetadataText(operation, english) {
   }
   const error = String(metadata.error || "").trim();
   if (error) parts.push(english ? `error: ${error}` : `错误：${error}`);
+  const errorDetail = String(metadata.errorDetail || "").trim();
+  if (errorDetail) parts.push(english ? `detail: ${errorDetail}` : `原因：${errorDetail}`);
   return parts.join(" · ");
 }
 

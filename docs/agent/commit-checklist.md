@@ -104,10 +104,11 @@ git diff --cached --check
 - `MAIN_MIRROR_TOKEN` 必须是仅授权本仓库 **Contents: read and write** 与 **Workflows: read and write** 的 fine-grained PAT；不得改用权限不足的 `GITHUB_TOKEN` 或复用其他服务的 token
 - 不直接提交、不接受 PR、不强推；同步失败时排查分叉，不得覆盖历史
 
-### 上游 main
+### 上游 dev
 
-- 以最新 `upstream/main` 为基线，为每个 PR 创建独立的 `contrib/<topic>` 分支
-- 创建 PR 时显式指定官方仓库及目标：`gh pr create --repo AAswordman/Operit --base main --head CATMIAOZHI:contrib/<topic>`
+- 以最新 `upstream/dev` 为基线，为每个 PR 创建独立分支；按改动类型使用 `feat/`、`fix/`、`docs/`、`ci/`、`refactor/` 或 `test/` 前缀，例如 `fix/<topic>`，已有分支维持原名
+- 创建 PR 时显式指定官方仓库及目标：`gh pr create --repo AAswordman/Operit --base dev --head CATMIAOZHI:fix/<topic>`
+- 官方 `main` 用于稳定发布和维护者执行的发布同步，不作为日常贡献目标
 - 不得混入 Operit Ry 的品牌、服务路由或发布配置
 - PR 流程以 `docs/doc-src/dev-core/CONTRIBUTING.md` 为准
 

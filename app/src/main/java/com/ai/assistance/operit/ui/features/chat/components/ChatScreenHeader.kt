@@ -240,6 +240,8 @@ fun ChatScreenHeader(
             maxWindowSizeInK = maxWindowSizeInK,
             inputTokenCount = inputTokenCount,
             outputTokenCount = outputTokenCount,
+            costChatId = currentChat.id,
+            loadCost = actualViewModel::estimateConversationCost,
         )
         return
     }
@@ -345,6 +347,8 @@ fun ChatScreenHeader(
             inputTokenCount = inputTokenCount,
             outputTokenCount = outputTokenCount,
             maxWindowSizeInK = maxWindowSizeInK,
+            costChatId = currentChatId,
+            loadCost = actualViewModel::estimateConversationCost,
         )
     }
 }
@@ -355,6 +359,8 @@ private fun TokenUsageRing(
     inputTokenCount: Long,
     outputTokenCount: Long,
     maxWindowSizeInK: Float,
+    costChatId: String?,
+    loadCost: suspend (String) -> com.ai.assistance.operit.data.stats.ChatCostEstimate,
     modifier: Modifier = Modifier,
 ) {
     // 统计信息
@@ -371,6 +377,23 @@ private fun TokenUsageRing(
 
     // 使用一个状态来跟踪是否显示详细信息
     val (showDetailedStats, setShowDetailedStats) = remember { mutableStateOf(false) }
+    var cost by remember(costChatId) {
+        mutableStateOf<com.ai.assistance.operit.data.stats.ChatCostEstimate?>(null)
+    }
+    var costFailed by remember(costChatId) { mutableStateOf(false) }
+    LaunchedEffect(showDetailedStats, costChatId, inputTokenCount, outputTokenCount) {
+        if (showDetailedStats && costChatId != null) {
+            costFailed = false
+            try {
+                cost = loadCost(costChatId)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                cost = null
+                costFailed = true
+            }
+        }
+    }
 
     Box(modifier) {
         // 主要显示（圆环进度）
@@ -413,6 +436,20 @@ private fun TokenUsageRing(
                 Modifier.width(IntrinsicSize.Min)
                     .background(MaterialTheme.colorScheme.surface)
         ) {
+            DropdownMenuItem(
+                text = {
+                    Text(when {
+                        cost != null -> stringResource(
+                            if (cost!!.incomplete) R.string.chat_estimated_cost_partial else R.string.chat_estimated_cost,
+                            String.format(java.util.Locale.ROOT, "%.4f", cost!!.cny),
+                        )
+                        costFailed -> stringResource(R.string.chat_estimated_cost_unavailable)
+                        else -> stringResource(R.string.chat_estimated_cost_loading)
+                    })
+                },
+                onClick = {},
+                enabled = false,
+            )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.context_window, currentWindowSize)) },
                 onClick = {},
@@ -467,6 +504,8 @@ private fun SubagentChatHeader(
     maxWindowSizeInK: Float,
     inputTokenCount: Long,
     outputTokenCount: Long,
+    costChatId: String?,
+    loadCost: suspend (String) -> com.ai.assistance.operit.data.stats.ChatCostEstimate,
     modifier: Modifier = Modifier,
 ) {
     var showSwitcher by rememberSaveable { mutableStateOf(false) }
@@ -525,6 +564,8 @@ private fun SubagentChatHeader(
             outputTokenCount = outputTokenCount,
             maxWindowSizeInK = maxWindowSizeInK,
             modifier = Modifier.padding(start = 8.dp),
+            costChatId = costChatId,
+            loadCost = loadCost,
         )
     }
 }
