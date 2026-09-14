@@ -104,7 +104,6 @@ fun BubbleAiMessageComposable(
     val timelineSlice = com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current
     // One turn is one card: only its first and last rows round the card off, the rest flow inside it.
     val cardEnds = LocalTranscriptCardEnds.current
-    val inlineFooter = com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptInlineFooter.current
     val firstBlock = cardEnds.first && timelineSlice?.first != false
     val lastBlock = cardEnds.last && timelineSlice?.last != false
     val showIdentity = showHeader && cardEnds.first && section != ResponseMessageSection.BODY
@@ -408,10 +407,9 @@ fun BubbleAiMessageComposable(
                                     state = rendererState,
                                     fillMaxWidth = shouldUseExpandedBubbleLayout,
                                 )
+                                }
                             }
                         }
-                        inlineFooter?.invoke()
-                      }
                     }
                     if (effectiveBubbleImageStyle != null) {
                         BubbleImageBackgroundSurface(
@@ -634,10 +632,9 @@ fun BubbleAiMessageComposable(
                                     state = rendererState,
                                     fillMaxWidth = shouldUseExpandedBubbleLayout,
                                 )
+                                }
                             }
                         }
-                        inlineFooter?.invoke()
-                      }
                     }
 
                     if (effectiveBubbleImageStyle != null) {
