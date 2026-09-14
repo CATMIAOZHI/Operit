@@ -847,9 +847,21 @@ internal fun ChatMessagesView(
                         com.ai.assistance.operit.ui.features.chat.components.ResponseProcessMessage(
                             responseProcessState, actualIndex, appearance.aiTextColor,
                         ) { messageIndex ->
+                        val floatingMessage = floatContext.messages[messageIndex]
                         FloatingMessageItem(
                             index = messageIndex,
-                            message = floatContext.messages[messageIndex],
+                            message = floatingMessage,
+                            // A reply written as several messages repeats its totals on each of them,
+                            // like the main chat, where only the row that closes the card shows them.
+                            // A collaboration row between two of them keeps the card open there, so it
+                            // is not what closes this reply here either.
+                            closesTurn =
+                                floatingMessage.sentAt <= 0L ||
+                                    floatContext.messages
+                                        .asSequence()
+                                        .drop(messageIndex + 1)
+                                        .firstOrNull { !it.displayMode.isCollaborationEvent }
+                                        ?.sentAt != floatingMessage.sentAt,
                             showAssistantHeader =
                                 !com.ai.assistance.operit.ui.features.chat.components.isAssistantContinuation(
                                     floatContext.messages, messageIndex,
@@ -909,6 +921,7 @@ private data object FloatingLoadingItem
 private fun FloatingMessageItem(
     index: Int,
     message: ChatMessage,
+    closesTurn: Boolean,
     appearance: ChatAppearance,
     heightMemory: ChatMessageHeightMemory,
     showTokenStats: Boolean,
@@ -964,7 +977,7 @@ private fun FloatingMessageItem(
                 )
             }
         }
-        if (message.sender == "ai") {
+        if (message.sender == "ai" && closesTurn) {
             MessageFooterBar(
                 message = message,
                 showMessageTokenStats = showTokenStats,

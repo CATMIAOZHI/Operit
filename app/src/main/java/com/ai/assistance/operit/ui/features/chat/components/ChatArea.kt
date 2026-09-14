@@ -1164,9 +1164,21 @@ internal fun MessageFooterBar(
             )
         }
     val statsTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
+    // The version switcher can be left alone on a row that does not close its card. Only the closing
+    // row is spaced away from the next message, so the ones before it have to hold themselves off it.
+    val hasStatistics =
+        (showMessageTokenStats && hasDisplayableTokenStats(message)) ||
+            (showMessageTimingStats && hasDisplayableTimingStats(message)) ||
+            (showMessageTimestamp && hasDisplayableMessageTimestamp(message))
+    val switcherAlone = !hasStatistics && message.variantCount > 1
 
     Column(
-        modifier = Modifier.padding(start = 16.dp, top = 4.dp),
+        modifier =
+            Modifier.padding(
+                start = 16.dp,
+                top = 4.dp,
+                bottom = if (switcherAlone && !LocalTranscriptCardEnds.current.last) 4.dp else 0.dp,
+            ),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (message.variantCount > 1) {
