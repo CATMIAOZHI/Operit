@@ -22,6 +22,16 @@ enum class ToolPermissionStop(
 
     companion object {
         /**
+         * The stop a fresh install starts on: automatic review with the fast reuse.
+         *
+         * It is the pair of the two stored defaults, which select it on their own when nothing is
+         * stored yet: an absent level key reads as [PermissionLevel.AUTO_REVIEW] and an absent reuse
+         * key reads as [PermissionReviewMode.FAST]. Naming the stop once, here, is what keeps the
+         * stored default and the first frame the slider shows from drifting apart.
+         */
+        val DEFAULT: ToolPermissionStop = AUTO_REVIEW_FAST
+
+        /**
          * The stop a slider position sits on. A freely dragged value carries no stop of its own, so
          * it is rounded to the nearest one and kept inside the range.
          */

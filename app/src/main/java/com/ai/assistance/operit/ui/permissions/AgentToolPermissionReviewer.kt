@@ -180,10 +180,18 @@ internal object PermissionReviewResponsePolicy {
 
     private fun defaultRationale(outcome: String): String =
         if (outcome.trim().equals("allow", ignoreCase = true)) {
-            "The reviewer submitted an allow decision without a rationale."
+            NO_RATIONALE_ALLOW
         } else {
-            "The reviewer submitted a deny decision without a rationale."
+            NO_RATIONALE_DENY
         }
+
+    /**
+     * The notes the policy itself writes onto a decision. They describe the review, not the action,
+     * so the review UI reports its own wording instead of quoting them back.
+     */
+    internal const val NO_RATIONALE_ALLOW = "The reviewer submitted an allow decision without a rationale."
+    internal const val NO_RATIONALE_DENY = "The reviewer submitted a deny decision without a rationale."
+    internal const val REVIEW_CANCELLED_RATIONALE = "Permission review was cancelled."
 
     fun failed(reason: String, failureKind: PermissionReviewFailureKind): PermissionReviewDecision =
         PermissionReviewDecision(
@@ -262,11 +270,12 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
             )
         // A subagent reviews actions in its own child chat, but the instructions the user actually
         // gave live in the chat the user sees.
+        val rootChatId =
+            PermissionReviewChatScope.resolveRootChatId(appContext, parentChatId) ?: parentChatId
         val retainedInstructions =
             PermissionReviewRetainedInstructionsReader.read(
                 context = appContext,
-                chatId = PermissionReviewChatScope.resolveRootChatId(appContext, parentChatId)
-                    ?: parentChatId,
+                chatId = rootChatId,
                 workspacePath = reviewContext.workspacePath,
                 workspaceEnv = reviewContext.workspaceEnv,
             )
@@ -281,7 +290,11 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
                 parentModelIndex = reviewContext.parentModelIndex,
             )
         val exactOverride =
-            PermissionReviewExactOverrideStore.reserve(parentChatId, actionFingerprint, reviewId)
+            PermissionReviewExactOverrideStore.reserve(
+                parentChatId = rootChatId,
+                actionFingerprint = actionFingerprint,
+                reviewId = reviewId,
+            )
         var latestReviewerTaskId =
             exactOverride
                 ?.originalReviewId
@@ -409,7 +422,7 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
                 completeEvent(
                     reviewId,
                     PermissionReviewStatus.ABORTED,
-                    "Permission review was cancelled.",
+                    PermissionReviewResponsePolicy.REVIEW_CANCELLED_RATIONALE,
                 )
                 PermissionReviewExactOverrideStore.release(reviewId)
                 throw cancelled
@@ -490,6 +503,8 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
         unrestricted but never writes files, executes commands, or reaches the network. The final
         submission must be the only tool call in its response. Do not return a JSON object instead
         of the tool call.
+        The user reads the rationale in the review panel, so write it in the same language as the
+        user's most recent messages.
 
         ${retainedInstructions.text}
 

@@ -182,6 +182,11 @@ class PermissionRiskScorerTest {
         assertNull(parsePermissionRiskVerdict(""))
         assertNull(parsePermissionRiskVerdict("I cannot classify this action."))
         assertNull(parsePermissionRiskVerdict("maybe high, maybe low"))
+        // A longer answer can be a quote of the action or of its arguments; only a lone word counts,
+        // so a quote can never turn into the verdict that lets a call run without the reviewer.
+        assertNull(parsePermissionRiskVerdict("low risk"))
+        assertNull(parsePermissionRiskVerdict("the command is low risk because git status is read-only"))
+        assertNull(parsePermissionRiskVerdict("low\n\nhigh"))
     }
 
     @Test

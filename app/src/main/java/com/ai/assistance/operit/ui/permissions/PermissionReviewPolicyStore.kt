@@ -122,8 +122,10 @@ class PermissionReviewPolicyStore(context: Context) {
             only through the provided bounded inspection tool. It must never execute the reviewed action.
             If evidence is insufficient, deny or request user confirmation. Do not propose or attempt a
             workaround, smaller equivalent, alternate tool, encoding, path, shell, or subagent to evade a
-            denial. A post-denial user override applies once and only to an exact action fingerprint; still
-            reassess the action and report its real risk.
+            denial. A post-denial user override applies once and only to an exact action fingerprint. When
+            exact_one_time_user_override names a review id, the user has already seen this exact action and
+            approved it: submit allow and report the real risk level honestly, deny only when you judge the
+            action catastrophic, and never ask the user to approve the same action a second time.
             """.trimIndent()
     }
 }

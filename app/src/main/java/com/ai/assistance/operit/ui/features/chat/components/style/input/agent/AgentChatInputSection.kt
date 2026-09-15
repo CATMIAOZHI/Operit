@@ -222,7 +222,7 @@ fun AgentChatInputSection(
     featureStates: Map<String, Boolean> = emptyMap(),
     onToggleFeature: (String) -> Unit = {},
     inputMenuRuntime: String = "main",
-    permissionStop: ToolPermissionStop = ToolPermissionStop.ASK,
+    permissionStop: ToolPermissionStop = ToolPermissionStop.DEFAULT,
     onSetPermissionStop: (ToolPermissionStop) -> Unit = {},
     enableMemoryAutoUpdate: Boolean = false,
     onToggleMemoryAutoUpdate: () -> Unit = {},

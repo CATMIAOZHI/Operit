@@ -15,6 +15,7 @@ import androidx.compose.ui.text.input.TextFieldValue.Companion
 import androidx.core.content.FileProvider
 import com.ai.assistance.operit.ui.features.chat.components.ChatStyle
 import com.ai.assistance.operit.ui.features.chat.components.TranscriptExpansionState
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionDenialDisplayText
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
@@ -1297,7 +1298,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             } catch (e: Exception) {
                 AppLogger.e(TAG, "单条重新生成失败", e)
                 uiStateDelegate.showErrorMessage(
-                    context.getString(R.string.chat_regenerate_single_failed, e.message ?: ""),
+                    context.getString(
+                        R.string.chat_regenerate_single_failed,
+                        // A failed regeneration can be the turn a permission denial stopped, so the
+                        // dialog reports the same conclusion the transcript does.
+                        e.message?.let { permissionDenialDisplayText(context, it) }.orEmpty(),
+                    ),
                 )
             }
         }

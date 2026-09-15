@@ -6,6 +6,7 @@ import android.os.Build
 import com.ai.assistance.operit.api.chat.protocol.ExecutableToolProtocolParser
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatMarkupRegex
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionDenialDisplayText
 import com.ai.assistance.operit.api.chat.enhance.ConversationMarkupManager
 import com.ai.assistance.operit.api.chat.enhance.ConversationRoundManager
 import com.ai.assistance.operit.api.chat.enhance.ConversationService
@@ -1480,7 +1481,19 @@ class EnhancedAIService private constructor(
                     AppLogger.e(TAG, "发送消息时发生错误: ${e.message}", e)
                     withContext(Dispatchers.Main) {
                         _inputProcessingState.value =
-                                InputProcessingState.Error(message = context.getString(R.string.enhanced_error_with_message, e.message ?: ""))
+                            InputProcessingState.Error(
+                                // A turn the automatic review stopped fails with the instruction
+                                // written for the model. This state reaches the error dialog, the
+                                // floating window and the web state endpoint, so it reports the
+                                // outcome here rather than leaving the instruction to be replaced
+                                // later by each reader.
+                                message =
+                                    context.getString(
+                                        R.string.enhanced_error_with_message,
+                                        e.message?.let { permissionDenialDisplayText(context, it) }
+                                            .orEmpty(),
+                                    )
+                            )
                     }
                 }
 
@@ -1534,7 +1547,12 @@ class EnhancedAIService private constructor(
                     invalidateExecutionContext(execContext, "sendMessage.completion.failed")
                     withContext(Dispatchers.Main) {
                         _inputProcessingState.value = InputProcessingState.Error(
-                            context.getString(R.string.enhanced_error_with_message, e.message ?: "")
+                            // Same reason as the stream failure above: this state is shown, and a
+                            // denied turn's own message is written for the model.
+                            context.getString(
+                                R.string.enhanced_error_with_message,
+                                e.message?.let { permissionDenialDisplayText(context, it) }.orEmpty(),
+                            )
                         )
                     }
                     if (!isSubTask) stopAiService(characterName, avatarUri)

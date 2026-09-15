@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.util.AppLogger
+import androidx.annotation.StringRes
 import androidx.compose.material3.ColorScheme
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -78,6 +79,7 @@ internal enum class ToolPermissionDenialSource {
     SETTINGS,
     USER,
     AUTOMATIC_REVIEW,
+    AUTOMATIC_REVIEW_CANCELLED,
 }
 
 internal sealed interface ToolPermissionDecision {
@@ -105,13 +107,27 @@ class ToolPermissionSystem private constructor(private val context: Context) {
          */
         internal const val FAST_REVIEW_RATIONALE =
             "Answered from the asynchronous risk score of the recent course of action."
+        /**
+         * The fixed English note a call that the circuit breaker skipped records. It says why the
+         * call never reached the reviewer, not anything about the call itself, so the review UI shows
+         * its own wording instead of quoting this back to the reader.
+         */
+        internal const val REVIEW_SKIPPED_RATIONALE =
+            "Skipped because repeated denials stopped this model turn."
         internal const val FAST_REVIEW_RESOLUTION_SOURCE = "fast_review_low_risk_score"
+        internal const val MANUAL_OR_SETTING_ALLOW_RESOLUTION_SOURCE = "manual_or_setting_allow"
+        internal const val MANUAL_OR_SETTING_DENY_RESOLUTION_SOURCE = "manual_or_setting_deny"
+        /** The level changed while the reviewer was still working, so the new level decided it. */
+        internal const val SETTINGS_REFRESHED_ALLOW_RESOLUTION_SOURCE = "settings_refreshed_allow"
+        internal const val SETTINGS_REFRESHED_DENY_RESOLUTION_SOURCE = "settings_refreshed_deny"
         
         // DataStore keys
         private val MASTER_SWITCH = stringPreferencesKey("master_switch")
         
-        // Default permission setting
-        private val DEFAULT_MASTER_SWITCH = PermissionLevel.ASK.name
+        // Default permission setting. A fresh install starts on the stop the slider itself names as
+        // its default, so the stored level and the reuse store cannot disagree about it. It is
+        // internal so the test can pin the stored value to that stop.
+        internal val DEFAULT_MASTER_SWITCH = ToolPermissionStop.DEFAULT.level.name
         
         @Volatile
         private var INSTANCE: ToolPermissionSystem? = null
@@ -205,10 +221,11 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     val permissionStopFlow: Flow<ToolPermissionStop> =
         combine(
             context.toolPermissionsDataStore.data.map { preferences ->
-                PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
+                val raw = preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH
+                PermissionLevel.fromString(raw) to raw
             },
             reviewPolicyStore.reviewModeFlow,
-        ) { level, mode -> ToolPermissionStop.of(level, mode) }
+        ) { (level, raw), mode -> resolvePermissionStop(level, raw, mode) }
 
     /**
      * Applies one stop of the permission slider.
@@ -301,11 +318,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         val duplicateParameterNames =
             findDuplicateToolParameterNames(tool)
         if (duplicateParameterNames.isNotEmpty()) {
-            return ToolPermissionDecision.Denied(
-                source = ToolPermissionDenialSource.SETTINGS,
-                rejection =
-                    "Tool execution rejected because duplicate parameter names are ambiguous: " +
-                        duplicateParameterNames.sorted().joinToString(", "),
+            return permissionDeniedBySettings(
+                "Duplicate parameter names are ambiguous: " +
+                    duplicateParameterNames.sorted().joinToString(", ")
             )
         }
 
@@ -356,13 +371,10 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                     status = PermissionReviewStatus.ABORTED,
                     startedAt = now,
                     completedAt = now,
-                    rationale = "Skipped because repeated denials stopped this model turn.",
+                    rationale = REVIEW_SKIPPED_RATIONALE,
                 )
             )
-            return permissionDeniedByAutomaticReview(
-                rationale = "This model turn was stopped after repeated denied actions.",
-                interruptTurn = true,
-            )
+            return permissionDeniedByRepeatedDenials()
         }
 
         return evaluatePermissionLevel(
@@ -493,9 +505,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                             status = enforcedStatus,
                             resolutionSource =
                                 if (refreshedDecision is ToolPermissionDecision.Allowed) {
-                                    "settings_refreshed_allow"
+                                    SETTINGS_REFRESHED_ALLOW_RESOLUTION_SOURCE
                                 } else {
-                                    "settings_refreshed_deny"
+                                    SETTINGS_REFRESHED_DENY_RESOLUTION_SOURCE
                                 }
                         )
                     }
@@ -542,6 +554,18 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     }
 
     /**
+     * The reuse level actually in force. A level an older build wrote predates the two automatic-review
+     * stops and never answered a call from a stored score, so it stays strict until the user picks one
+     * of the stops: that slider writes the level and the reuse level together.
+     */
+    private suspend fun effectiveReviewMode(): PermissionReviewMode =
+        if (isLegacyAutoReviewLevel(context.toolPermissionsDataStore.data.first()[MASTER_SWITCH])) {
+            PermissionReviewMode.STRICT
+        } else {
+            reviewPolicyStore.getReviewMode()
+        }
+
+    /**
      * Answers this call from the asynchronous risk score when the fast level produced a recent
      * low-risk verdict under the current authorization.
      *
@@ -556,7 +580,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         tool: AITool,
         reviewContext: ToolPermissionReviewContext,
     ): PermissionReviewDecision? {
-        if (reviewPolicyStore.getReviewMode() != PermissionReviewMode.FAST) return null
+        if (effectiveReviewMode() != PermissionReviewMode.FAST) return null
         val deferral =
             PermissionRiskScorer.getInstance(context)
                 .resolveFastPath(
@@ -664,9 +688,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                             status = reviewEventStatusForEnforcedDecision(manualDecision),
                             resolutionSource =
                                 if (manualDecision is ToolPermissionDecision.Allowed) {
-                                    "manual_or_setting_allow"
+                                    MANUAL_OR_SETTING_ALLOW_RESOLUTION_SOURCE
                                 } else {
-                                    "manual_or_setting_deny"
+                                    MANUAL_OR_SETTING_DENY_RESOLUTION_SOURCE
                                 }
                         )
                     }
@@ -728,8 +752,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
      * verdict for the actions the agent is about to run is already being computed while the reviews
      * of the same batch are still running. Every dispatched batch advances one scoring step, empty
      * ones included, so a stored score ages out after [PermissionRiskScorer.MAX_LAG_STEPS] batches,
-     * exactly like the Codex adaptive scorer. A batch made only of tools the permission system is
-     * never asked about is not an action batch and takes no step.
+     * the way the Codex adaptive scorer ages out its verdicts (Codex counts calls, this counts
+     * batches, so a score here can answer more calls). A batch made only of tools the permission
+     * system is never asked about is not an action batch and takes no step.
      *
      * Nothing here blocks the batch or decides anything: the tools that would be answered by the
      * workspace policy or by a permanent setting are only counted, not scored, and the score itself
@@ -789,6 +814,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             .beginBatch(
                 callerChatId = callerChatId,
                 turnScopeId = timingScopeId,
+                reviewMode = effectiveReviewMode(),
                 actions = actions,
                 workspacePath = workspacePath,
                 workspaceEnv = workspaceEnv,
@@ -1034,35 +1060,116 @@ internal fun resolveApprovalDecisionWithPermanentOverride(
         else -> approvalGranted
     }
 
-internal fun permissionDeniedBySettings(): ToolPermissionDecision.Denied =
+/** Levels an older build wrote before the automatic review was split into two stops. */
+internal fun isLegacyAutoReviewLevel(rawLevel: String?): Boolean =
+    rawLevel?.trim()?.uppercase() in LEGACY_AUTO_REVIEW_LEVELS
+
+private val LEGACY_AUTO_REVIEW_LEVELS = setOf("WORKSPACE", "WORKSPACE_REVIEWER", "REVIEWER")
+
+/** The slider stop that shows a stored level and reuse level. */
+internal fun resolvePermissionStop(
+    level: PermissionLevel,
+    rawLevel: String?,
+    mode: PermissionReviewMode,
+): ToolPermissionStop =
+    if (level == PermissionLevel.AUTO_REVIEW && isLegacyAutoReviewLevel(rawLevel)) {
+        // The strict stop keeps what those levels did: every reviewed call ran the reviewer.
+        ToolPermissionStop.AUTO_REVIEW_STRICT
+    } else {
+        ToolPermissionStop.of(level, mode)
+    }
+
+/**
+ * Denial texts are written for the model, so the transcript would otherwise show a long English
+ * instruction as the tool result. [permissionDenialSourceForMessage] recognizes these prefixes so
+ * the UI can report the outcome instead; keep the prefixes in sync with the texts below.
+ */
+internal const val SETTINGS_DENIAL_PREFIX = "Tool execution denied by permission settings."
+internal const val USER_DENIAL_PREFIX = "Tool execution denied by user."
+internal const val AUTOMATIC_REVIEW_DENIAL_PREFIX = "Automatic permission review denied"
+internal const val AUTOMATIC_REVIEW_CANCEL_PREFIX =
+    "Tool execution cancelled because automatic permission review"
+
+/** Null when [message] is an ordinary tool error rather than a permission denial. */
+internal fun permissionDenialSourceForMessage(message: String): ToolPermissionDenialSource? {
+    val trimmed = message.trim()
+    return when {
+        // The turn was stopped before this action ran, so reporting it as a denial would be wrong.
+        trimmed.startsWith(AUTOMATIC_REVIEW_CANCEL_PREFIX) ->
+            ToolPermissionDenialSource.AUTOMATIC_REVIEW_CANCELLED
+        trimmed.startsWith(AUTOMATIC_REVIEW_DENIAL_PREFIX) ->
+            ToolPermissionDenialSource.AUTOMATIC_REVIEW
+        trimmed.startsWith(USER_DENIAL_PREFIX) -> ToolPermissionDenialSource.USER
+        trimmed.startsWith(SETTINGS_DENIAL_PREFIX) -> ToolPermissionDenialSource.SETTINGS
+        else -> null
+    }
+}
+
+/** Null when [message] is an ordinary tool error rather than a permission denial. */
+@StringRes
+internal fun permissionDenialSummaryResId(message: String): Int? =
+    when (permissionDenialSourceForMessage(message)) {
+        ToolPermissionDenialSource.SETTINGS -> R.string.permission_denied_result_settings
+        ToolPermissionDenialSource.USER -> R.string.permission_denied_result_user
+        ToolPermissionDenialSource.AUTOMATIC_REVIEW ->
+            R.string.permission_denied_result_auto_review
+        ToolPermissionDenialSource.AUTOMATIC_REVIEW_CANCELLED ->
+            R.string.permission_denied_result_auto_review_cancelled
+        null -> null
+    }
+
+/** The user-facing summary of a denial text, or null when [message] is an ordinary tool error. */
+internal fun permissionDenialSummary(context: Context, message: String): String? =
+    permissionDenialSummaryResId(message)?.let(context::getString)
+
+internal fun permissionDeniedBySettings(reason: String? = null): ToolPermissionDecision.Denied =
     ToolPermissionDecision.Denied(
         source = ToolPermissionDenialSource.SETTINGS,
-        rejection = "Tool execution denied by permission settings.",
+        rejection =
+            SETTINGS_DENIAL_PREFIX +
+                reason?.trim()?.takeIf(String::isNotEmpty)?.let { " $it" }.orEmpty(),
     )
 
 internal fun permissionDeniedByUser(): ToolPermissionDecision.Denied =
     ToolPermissionDecision.Denied(
         source = ToolPermissionDenialSource.USER,
-        rejection = "Tool execution denied by user.",
+        rejection = USER_DENIAL_PREFIX,
     )
 
 internal fun permissionDeniedByAutomaticReview(
     rationale: String,
-    interruptTurn: Boolean = false,
 ): ToolPermissionDecision.Denied {
     val normalizedRationale = rationale.trim().take(1_000)
     val suffix = normalizedRationale.takeIf(String::isNotEmpty)?.let { ": $it" }.orEmpty()
     return ToolPermissionDecision.Denied(
         source = ToolPermissionDenialSource.AUTOMATIC_REVIEW,
         rejection =
-            "Automatic permission review denied the action$suffix. It is not authorized yet: do " +
+            "$AUTOMATIC_REVIEW_DENIAL_PREFIX the action$suffix. It is not authorized yet: do " +
                 "not reach the same goal another way (no rephrasing, splitting, encoding, " +
                 "delegation, or a different tool, path, or command). Ask the user to authorize " +
-                "it. Once the user approves, retry the exact same action unchanged; a one-time " +
-                "approval covers only that exact action and expires after a few minutes.",
-        interruptTurn = interruptTurn,
+                "this action (and only this action), then wait for their reply before retrying. " +
+                "Once the user approves, retry the exact same action unchanged; a one-time " +
+                "approval covers only that exact action and expires after 5 minutes. If this " +
+                "action was rated catastrophic, do not ask the user to authorize it: a one-time " +
+                "approval cannot apply, so wait for their instruction instead.",
     )
 }
+
+/**
+ * The circuit breaker skips the call and publishes it as ABORTED, so the user never gets a review
+ * prompt to authorize: promising a retry here would be wrong, and the turn is already over.
+ * The source stays [ToolPermissionDenialSource.AUTOMATIC_REVIEW] because the caller counts these as
+ * automatic-review denials; only the text differs, and it maps to the cancelled wording on screen.
+ */
+internal fun permissionDeniedByRepeatedDenials(): ToolPermissionDecision.Denied =
+    ToolPermissionDecision.Denied(
+        source = ToolPermissionDenialSource.AUTOMATIC_REVIEW,
+        rejection =
+            "$AUTOMATIC_REVIEW_CANCEL_PREFIX denied enough actions and stopped this turn, so no " +
+                "further tool calls will run in it. Do not retry the denied actions; tell the user " +
+                "which actions were denied and why, then wait for their instruction.",
+        interruptTurn = true,
+    )
 
 /** Null means the latest setting now requires a manual prompt. */
 internal fun resolveReviewDecisionAfterSettingsRefresh(

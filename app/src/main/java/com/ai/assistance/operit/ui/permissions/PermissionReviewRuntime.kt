@@ -399,12 +399,23 @@ object PermissionReviewEventRepository {
                 .take(10)
         }
 
-    fun approveExactActionOnce(reviewId: String): Boolean {
+    suspend fun approveExactActionOnce(reviewId: String): Boolean {
         ensureStoredEventsLoaded()
         val event = _events.value.firstOrNull { it.id == reviewId } ?: return false
         if (event.status != PermissionReviewStatus.DENIED) return false
+        // A subagent reviews its actions in its own child chat, but the button lives in the chat the
+        // user sees and tells them to retry there. Keying the approval by the root chat makes the
+        // retry in that chat find it again; the reviewer resolves the same chat before it reserves.
+        val approvalChatId =
+            applicationContext
+                ?.let { context ->
+                    PermissionReviewChatScope.resolveRootChatId(context, event.parentChatId)
+                }
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?: event.parentChatId
         val expiresAt = PermissionReviewExactOverrideStore.record(
-            parentChatId = event.parentChatId,
+            parentChatId = approvalChatId,
             actionFingerprint = event.actionFingerprint,
             originalReviewId = event.id,
         )
@@ -529,7 +540,6 @@ data class PermissionReviewCircuitBreakerResult(
 )
 
 object PermissionReviewCircuitBreaker {
-    const val INTERRUPT_MARKER = "[automatic-review-turn-interrupted]"
     private const val MAX_TURNS = 64
     private const val MAX_CONSECUTIVE_DENIALS = 3
     private const val MAX_RECENT_DENIALS = 10
@@ -576,6 +586,17 @@ object PermissionReviewCircuitBreaker {
         state.consecutiveDenials = 0
         state.recent.addLast(false)
         while (state.recent.size > WINDOW_SIZE) state.recent.removeFirst()
+    }
+
+    /**
+     * The turn scope starts over. A regenerated message keeps its turn scope id, so without this
+     * the breaker would abort the first reviewed call of the new attempt and a one-time approval
+     * could never be used: the user would be stuck with a turn that stops on its own.
+     */
+    @Synchronized
+    fun clearTurn(parentChatId: String, turnScopeId: String?) {
+        if (parentChatId.isBlank()) return
+        states.remove("$parentChatId:${turnScopeId ?: "unknown"}")
     }
 }
 
