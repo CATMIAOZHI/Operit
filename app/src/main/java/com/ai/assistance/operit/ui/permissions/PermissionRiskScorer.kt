@@ -53,6 +53,8 @@ internal data class PermissionRiskScore(
 internal data class PermissionRiskAction(
     val canonical: PermissionReviewAction,
     val scorable: Boolean,
+    /** The user's own settings refuse this action, so no reviewer ever judges it. */
+    val refusedBySettings: Boolean = false,
 )
 
 /**
@@ -68,13 +70,26 @@ internal enum class PermissionFastPathDeferral {
 }
 
 /** Why a dispatched batch was not scored. Every reason leaves the batch to the blocking reviewer. */
-private enum class ScoringUnavailable {
+internal enum class PermissionRiskScoringSkip {
     STRICT_MODE,
     NO_SCORABLE_ACTION,
     NO_MODEL,
     OFFLINE,
     COOLDOWN,
 }
+
+/**
+ * Whether a batch that was not scored must also discard the stored verdict.
+ *
+ * A batch with nothing to score only ages it, the way the `AgeScore` action of the Codex scorer
+ * does: no review can consume the verdict, and nothing failed. A batch that holds an action the
+ * user's own settings refused still discards it, because a refusal must never leave an older
+ * verdict reusable. Every other reason means a classification that should have happened did not.
+ */
+internal fun permissionRiskSkipDiscardsScore(
+    reason: PermissionRiskScoringSkip,
+    refusedBySettings: Boolean,
+): Boolean = reason != PermissionRiskScoringSkip.NO_SCORABLE_ACTION || refusedBySettings
 
 internal data class PermissionRiskProgress(
     val latestStep: Int = 0,
@@ -133,6 +148,8 @@ internal fun resolvePermissionFastPath(
  *   clock time, and a verdict from the current batch does not age itself;
  * - only the newest verdict is kept, and it may answer calls up to [MAX_LAG_STEPS] steps later,
  *   including calls from other tool families, exactly like the Codex score store;
+ * - a batch with nothing for the reviewer to judge does not discard the verdict, it only ages it, so
+ *   a hand-off to another agent cannot stop the next reviewed action from using a low-risk score;
  * - a failed, timed-out, unavailable, or unparsable classification fails closed: a high-risk score
  *   is stored, which only ever sends the call to the blocking reviewer;
  * - the score is bound to the authorization snapshot it was computed under. Codex deliberately
@@ -209,22 +226,31 @@ internal class PermissionRiskScorer private constructor(context: Context) {
         val modelKey = modelSelection?.let { mapping -> "${mapping.configId}#${mapping.modelIndex}" }
         val unavailableReason =
             when {
-                mode != PermissionReviewMode.FAST -> ScoringUnavailable.STRICT_MODE
-                scorableActions.isEmpty() -> ScoringUnavailable.NO_SCORABLE_ACTION
-                modelKey == null -> ScoringUnavailable.NO_MODEL
-                !NetworkUtils.isNetworkAvailable(appContext) -> ScoringUnavailable.OFFLINE
-                isCoolingDown(modelKey) -> ScoringUnavailable.COOLDOWN
+                mode != PermissionReviewMode.FAST -> PermissionRiskScoringSkip.STRICT_MODE
+                scorableActions.isEmpty() -> PermissionRiskScoringSkip.NO_SCORABLE_ACTION
+                modelKey == null -> PermissionRiskScoringSkip.NO_MODEL
+                !NetworkUtils.isNetworkAvailable(appContext) -> PermissionRiskScoringSkip.OFFLINE
+                isCoolingDown(modelKey) -> PermissionRiskScoringSkip.COOLDOWN
                 else -> null
             }
         if (unavailableReason != null) {
-            if (unavailableReason == ScoringUnavailable.OFFLINE) {
+            if (unavailableReason == PermissionRiskScoringSkip.OFFLINE) {
                 // An explicit offline state must not be retried; enter the cooldown directly.
                 startCooldown(modelKey)
             }
-            // Skipping a batch discards the older score: it can no longer speak for what the agent
-            // is doing now.
-            markStepFailed(scopeId = scopeId, progress = progress, step = step)
-            AppLogger.d(TAG, "Risk scoring skipped ($unavailableReason) for step=$step")
+            val discarded =
+                permissionRiskSkipDiscardsScore(
+                    reason = unavailableReason,
+                    refusedBySettings = actions.any(PermissionRiskAction::refusedBySettings),
+                )
+            if (discarded) {
+                // The older score can no longer speak for what the agent is doing now.
+                markStepFailed(scopeId = scopeId, progress = progress, step = step)
+            }
+            AppLogger.d(
+                TAG,
+                "Risk scoring skipped ($unavailableReason) for step=$step, discarded=$discarded"
+            )
             return
         }
 

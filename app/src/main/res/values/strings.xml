@@ -5454,6 +5454,7 @@
     <string name="global_permission_switch_description">此设置控制默认行为；单个工具的“以后都允许/拒绝”等例外规则优先级更高。</string>
     <string name="permission_level_allow">允许</string>
     <string name="permission_level_allow_description">这些工具将自动运行。</string>
+    <string name="permission_level_allow_default_hint">子代理协作工具（spawn_agent 等）默认就允许，没有单独的开关。想让它们换档位，就在其他分组里用 + 添加。</string>
     <string name="permission_level_auto_review">自动审核</string>
     <string name="permission_level_auto_review_description">可确认位于当前工作区内的操作直接放行；其余原本需要询问的操作交给隔离的独立代理审批，失败、超时或无有效结果时转回由你确认。单工具永久允许或拒绝始终优先。此模式不是系统沙箱。</string>
     <string name="permission_level_forbid">禁止</string>

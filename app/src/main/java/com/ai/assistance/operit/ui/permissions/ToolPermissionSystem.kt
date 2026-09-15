@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.ai.assistance.operit.core.agent.collaboration.CollaborationTools
 import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
 import com.ai.assistance.operit.data.model.AITool
 import kotlinx.coroutines.Dispatchers
@@ -349,7 +350,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         val preferences = context.toolPermissionsDataStore.data.first()
         val masterSwitch = PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
         val key = toolPermissionKey(toolName)
-        val overrideLevel = preferences[key]?.let { PermissionLevel.fromString(it) }
+        val overrideLevel =
+            preferences[key]?.let { PermissionLevel.fromString(it) }
+                ?: defaultPermissionLevelFor(toolName, masterSwitch)
         return resolveEffectivePermissionLevel(masterSwitch, overrideLevel)
     }
     
@@ -703,7 +706,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
      *
      * Nothing here blocks the batch or decides anything: the tools that would be answered by the
      * workspace policy or by a permanent setting are only counted, not scored, and the score itself
-     * can only ever remove a review.
+     * can only ever remove a review. A batch those tools fill completely only ages a stored verdict
+     * instead of discarding it, so the agent handing work to another agent cannot cost the next
+     * reviewed action its low-risk score.
      */
     internal suspend fun prepareBatchRiskScores(
         tools: List<AITool>,
@@ -740,6 +745,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             )
         val actions =
             reviewableTools.map { tool ->
+                val route = resolveCurrentPermissionRoute(tool, reviewContext)
                 PermissionRiskAction(
                     canonical =
                         PermissionReviewAction.fromTool(
@@ -748,9 +754,8 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                             reviewContext = reviewContext,
                             targetId = "",
                         ),
-                    scorable =
-                        resolveCurrentPermissionRoute(tool, reviewContext) ==
-                            PermissionRoute.REVIEWER,
+                    scorable = route == PermissionRoute.REVIEWER,
+                    refusedBySettings = route == PermissionRoute.FORBID,
                 )
             }
         PermissionRiskScorer.getInstance(context)
@@ -947,6 +952,26 @@ internal fun resolveEffectivePermissionLevel(
     masterLevel: PermissionLevel,
     toolOverride: PermissionLevel?,
 ): PermissionLevel = toolOverride ?: masterLevel
+
+/**
+ * The level a tool takes when the user has not chosen one for it, or null when it simply follows the
+ * [masterLevel].
+ *
+ * The agent's own collaboration tools are how one agent hands work to another. They touch no user
+ * data themselves, and the work they start is reviewed as each of its own tool calls runs, so asking
+ * about the hand-off as well only adds friction. A level the user stored for one of these tools still
+ * wins, which is why this is a default rather than an exemption from the permission system. A global
+ * "forbid" also wins: that setting is a deliberate whitelist, not a gap for a default to fill.
+ */
+internal fun defaultPermissionLevelFor(
+    toolName: String,
+    masterLevel: PermissionLevel,
+): PermissionLevel? =
+    if (masterLevel != PermissionLevel.FORBID && CollaborationTools.isCollaborationTool(toolName)) {
+        PermissionLevel.ALLOW
+    } else {
+        null
+    }
 
 internal fun findDuplicateToolParameterNames(tool: AITool): Set<String> =
     tool.parameters.groupingBy { parameter -> parameter.name }.eachCount()
