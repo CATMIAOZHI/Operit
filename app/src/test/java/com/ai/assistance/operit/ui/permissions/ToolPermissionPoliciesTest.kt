@@ -112,6 +112,59 @@ class ToolPermissionPoliciesTest {
     }
 
     @Test
+    fun permissionStopsAreTheStoredSettingsPutInOneOrderedChoice() {
+        // The slider is the only ordered choice the user makes, so the order it shows has to stay the
+        // order the stored settings form, most restrictive first.
+        assertEquals(
+            listOf(
+                ToolPermissionStop.FORBID,
+                ToolPermissionStop.ASK,
+                ToolPermissionStop.AUTO_REVIEW_STRICT,
+                ToolPermissionStop.AUTO_REVIEW_FAST,
+                ToolPermissionStop.ALLOW,
+            ),
+            ToolPermissionStop.values().toList(),
+        )
+        ToolPermissionStop.values().forEach { stop ->
+            assertEquals(
+                stop,
+                ToolPermissionStop.of(
+                    level = stop.level,
+                    reviewMode = stop.reviewMode ?: PermissionReviewMode.FAST,
+                ),
+            )
+        }
+        // Only the two automatic stops carry a reuse level, so leaving them for another stop keeps
+        // the stored level untouched.
+        listOf(
+                ToolPermissionStop.FORBID,
+                ToolPermissionStop.ASK,
+                ToolPermissionStop.ALLOW,
+            )
+            .forEach { stop -> assertNull(stop.toString(), stop.reviewMode) }
+        assertEquals(PermissionReviewMode.STRICT, ToolPermissionStop.AUTO_REVIEW_STRICT.reviewMode)
+        assertEquals(PermissionReviewMode.FAST, ToolPermissionStop.AUTO_REVIEW_FAST.reviewMode)
+        // A stored automatic level reads as strict unless it is the fast level.
+        assertEquals(
+            ToolPermissionStop.AUTO_REVIEW_STRICT,
+            ToolPermissionStop.of(PermissionLevel.AUTO_REVIEW, PermissionReviewMode.STRICT),
+        )
+    }
+
+    @Test
+    fun aDraggedSliderValueLandsOnTheNearestStop() {
+        assertEquals(ToolPermissionStop.FORBID, ToolPermissionStop.at(0f))
+        assertEquals(ToolPermissionStop.FORBID, ToolPermissionStop.at(-3f))
+        assertEquals(ToolPermissionStop.ASK, ToolPermissionStop.at(1.2f))
+        // A dragged value sits between two stops, so the nearer one wins.
+        assertEquals(ToolPermissionStop.ASK, ToolPermissionStop.at(1.4f))
+        assertEquals(ToolPermissionStop.AUTO_REVIEW_STRICT, ToolPermissionStop.at(1.6f))
+        assertEquals(ToolPermissionStop.AUTO_REVIEW_FAST, ToolPermissionStop.at(3.4f))
+        assertEquals(ToolPermissionStop.ALLOW, ToolPermissionStop.at(4f))
+        assertEquals(ToolPermissionStop.ALLOW, ToolPermissionStop.at(9f))
+    }
+
+    @Test
     fun permanentOverrideWinsIfItChangesWhileReviewerOrExplicitApprovalIsPending() {
         assertTrue(
             resolveApprovalDecisionWithPermanentOverride(

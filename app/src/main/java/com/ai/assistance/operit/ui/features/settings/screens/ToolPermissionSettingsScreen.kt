@@ -2,7 +2,6 @@ package com.ai.assistance.operit.ui.features.settings.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -30,10 +29,12 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
-import com.ai.assistance.operit.ui.permissions.PermissionReviewMode
+import com.ai.assistance.operit.ui.permissions.PermissionStopSlider
 import com.ai.assistance.operit.ui.permissions.PermissionReviewPolicyStore
 import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
+import com.ai.assistance.operit.ui.permissions.ToolPermissionStop
 import com.ai.assistance.operit.ui.permissions.defaultPermissionLevelFor
+import com.ai.assistance.operit.ui.permissions.descriptionRes
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,9 +56,6 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
         )
     var policyDraft by remember { mutableStateOf("") }
     var policyExpanded by remember { mutableStateOf(false) }
-    val reviewMode by
-        reviewPolicyStore.reviewModeFlow.collectAsState(initial = PermissionReviewMode.DEFAULT)
-    var reviewModeInput by remember { mutableStateOf(reviewMode) }
     val scope = rememberCoroutineScope()
 
     val allTools = remember {
@@ -67,8 +65,20 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
         }
     }
     val toolPermissions = remember { mutableStateMapOf<String, PermissionLevel>() }
-    val masterSwitch = toolPermissionSystem.masterSwitchFlow.collectAsState(initial = PermissionLevel.ASK).value
-    var masterSwitchInput by remember { mutableStateOf(masterSwitch) }
+    // The stored choice is read asynchronously, so the slider waits for it instead of starting on a
+    // stop the user never chose and sliding to the real one a frame later.
+    val selectedStop by toolPermissionSystem.permissionStopFlow.collectAsState(initial = null)
+    // The stop under the finger, held until the value written to storage comes back, so the name and
+    // the description below never disagree while dragging or right after a release. The stop the
+    // hold started from is remembered with it: while the two writes land, storage can only report
+    // that stop or the chosen one, so anything else means the choice came from somewhere else and
+    // has to win.
+    var pendingStop by remember { mutableStateOf<ToolPermissionStop?>(null) }
+    var pendingBase by remember { mutableStateOf<ToolPermissionStop?>(null) }
+
+    LaunchedEffect(selectedStop) {
+        if (pendingStop != null && selectedStop != pendingBase) pendingStop = null
+    }
 
     LaunchedEffect(allTools) {
         allTools.forEach { toolName ->
@@ -77,14 +87,6 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                 toolPermissions[toolName] = override
             }
         }
-    }
-
-    LaunchedEffect(masterSwitch) {
-        masterSwitchInput = masterSwitch
-    }
-
-    LaunchedEffect(reviewMode) {
-        reviewModeInput = reviewMode
     }
 
     fun handlePermissionChange(toolName: String, newLevel: PermissionLevel) {
@@ -102,6 +104,10 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                 toolPermissionSystem.saveToolPermission(toolName, newLevel)
             }
         }
+    }
+
+    fun selectPermissionStop(stop: ToolPermissionStop) {
+        scope.launch { toolPermissionSystem.savePermissionStop(stop) }
     }
 
     LazyColumn(
@@ -145,53 +151,27 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    CompactPermissionLevelSelector(
-                        selectedLevel = masterSwitchInput,
-                        onLevelSelected = { level ->
-                            masterSwitchInput = level
-                            scope.launch {
-                                toolPermissionSystem.saveMasterSwitch(level)
-                            }
-                        }
-                    )
-                }
-            }
-        }
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        stringResource(R.string.permission_review_mode_title),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        stringResource(R.string.permission_review_mode_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    CompactReviewModeSelector(
-                        selectedMode = reviewModeInput,
-                        onModeSelected = { mode ->
-                            reviewModeInput = mode
-                            scope.launch { reviewPolicyStore.saveReviewMode(mode) }
-                        }
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        stringResource(
-                            when (reviewModeInput) {
-                                PermissionReviewMode.STRICT ->
-                                    R.string.permission_review_mode_strict_hint
-                                PermissionReviewMode.FAST ->
-                                    R.string.permission_review_mode_fast_hint
-                            }
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    selectedStop?.let { stop ->
+                        val shownStop = pendingStop ?: stop
+                        PermissionStopSlider(
+                            stop = stop,
+                            onStopPreview = { preview ->
+                                if (pendingStop == null) pendingBase = selectedStop
+                                pendingStop = preview
+                            },
+                            onStopSelected = { newStop ->
+                                if (pendingStop == null) pendingBase = selectedStop
+                                pendingStop = newStop
+                                selectPermissionStop(newStop)
+                            },
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            stringResource(shownStop.descriptionRes),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f),
+                        )
+                    }
                 }
             }
         }
@@ -291,7 +271,9 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
             val allowedByDefault =
                 allTools.filter { toolName ->
                     toolName !in toolPermissions &&
-                        defaultPermissionLevelFor(toolName, masterSwitch) == PermissionLevel.ALLOW
+                        selectedStop?.level?.let { level ->
+                            defaultPermissionLevelFor(toolName, level)
+                        } == PermissionLevel.ALLOW
                 }
             PermissionGroup(
                 level = PermissionLevel.ALLOW,
@@ -546,87 +528,3 @@ private fun ToolSelectorDialog(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun CompactPermissionLevelSelector(
-    selectedLevel: PermissionLevel,
-    onLevelSelected: (PermissionLevel) -> Unit
-) {
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        PermissionLevel.values().forEach { level ->
-            val isSelected = selectedLevel == level
-            val (containerColor, textColor) = when {
-                isSelected -> Pair(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary)
-                else -> Pair(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.onSurface)
-            }
-
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(containerColor)
-                    .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
-                    .clickable { onLevelSelected(level) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Text(
-                    text = when (level) {
-                        PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
-                        PermissionLevel.AUTO_REVIEW ->
-                            stringResource(R.string.permission_level_auto_review)
-                        PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
-                        PermissionLevel.FORBID -> stringResource(R.string.forbid)
-                    },
-                    color = textColor,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun CompactReviewModeSelector(
-    selectedMode: PermissionReviewMode,
-    onModeSelected: (PermissionReviewMode) -> Unit
-) {
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        PermissionReviewMode.values().forEach { mode ->
-            val isSelected = selectedMode == mode
-            val (containerColor, textColor) = when {
-                isSelected -> Pair(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary)
-                else -> Pair(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.onSurface)
-            }
-
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(containerColor)
-                    .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
-                    .clickable { onModeSelected(mode) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Text(
-                    text = when (mode) {
-                        PermissionReviewMode.STRICT ->
-                            stringResource(R.string.permission_review_mode_strict)
-                        PermissionReviewMode.FAST ->
-                            stringResource(R.string.permission_review_mode_fast)
-                    },
-                    color = textColor,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        }
-    }
-}

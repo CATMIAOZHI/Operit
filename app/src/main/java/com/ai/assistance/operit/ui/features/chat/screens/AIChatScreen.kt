@@ -981,11 +981,11 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                         actualViewModel.toggleFeature(featureKey)
                                     },
                                     inputMenuRuntime = chatViewRuntime,
-                                    permissionLevel =
-                                            actualViewModel.masterPermissionLevel
+                                    permissionStop =
+                                            actualViewModel.masterPermissionStop
                                                     .collectAsState()
                                                     .value,
-                                    onSetPermissionLevel = actualViewModel::setMasterPermissionLevel,
+                                    onSetPermissionStop = actualViewModel::setMasterPermissionStop,
                                     enableThinkingMode = enableThinkingMode,
                                     onToggleThinkingMode = { actualViewModel.toggleThinkingMode() },
                                     thinkingQualityLevel = thinkingQualityLevel,
@@ -1537,7 +1537,7 @@ private fun ChatInputBottomBar(
     val attachments by actualViewModel.attachments.collectAsState()
     val attachmentPanelState by actualViewModel.attachmentPanelState.collectAsState()
     val replyToMessage by actualViewModel.replyToMessage.collectAsState()
-    val permissionLevel by actualViewModel.masterPermissionLevel.collectAsState()
+    val permissionStop by actualViewModel.masterPermissionStop.collectAsState()
     val isSummarizing by actualViewModel.isSummarizing.collectAsState()
     val isSendTriggeredSummarizing by actualViewModel.isSendTriggeredSummarizing.collectAsState()
     val isWaifuModeEnabled by waifuPreferences.enableWaifuModeFlow.collectAsState(initial = false)
@@ -1949,8 +1949,8 @@ private fun ChatInputBottomBar(
                 featureStates = featureStates,
                 onToggleFeature = actualViewModel::toggleFeature,
                 inputMenuRuntime = inputMenuRuntime,
-                permissionLevel = permissionLevel,
-                onSetPermissionLevel = actualViewModel::setMasterPermissionLevel,
+                permissionStop = permissionStop,
+                onSetPermissionStop = actualViewModel::setMasterPermissionStop,
                 enableMemoryAutoUpdate = enableMemoryAutoUpdate,
                 onToggleMemoryAutoUpdate = actualViewModel::toggleMemoryAutoUpdate,
                 isAutoReadEnabled = isAutoReadEnabled,

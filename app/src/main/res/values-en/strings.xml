@@ -1462,7 +1462,7 @@
     <string name="output_tokens">Output: %1$s</string>
     <string name="context_window">Context: %1$s</string>
     <string name="auto_approve">Auto-approve</string>
-    <string name="auto_approve_desc">Safe tools will be executed automatically without prompting. For specific group approvals, please go to Settings - Tool Permission Management.</string>
+    <string name="auto_approve_desc">Sets the default permission for AI tool calls. The slider goes from strict to loose: Forbid, Ask, Auto review (strict / fast), Allow. Per-tool exceptions in Settings - Tool Permission Management still win.</string>
     <string name="enabled">Enabled</string>
     <string name="ask">Ask</string>
     <string name="ai_planning_mode">Deep Search</string>
@@ -5081,6 +5081,13 @@
     <string name="permission_level_forbid">Forbidden</string>
     <string name="permission_level_forbid_description">These tools will never run.</string>
     <string name="permission_level_ask">Ask</string>
+    <string name="permission_stop_auto_review_strict">Auto review · strict</string>
+    <string name="permission_stop_auto_review_fast">Auto review · fast</string>
+    <string name="permission_stop_forbid_description">No tool will run.</string>
+    <string name="permission_stop_ask_description">Ask you before every tool call.</string>
+    <string name="permission_stop_auto_review_strict_description">Operations proven to stay in the workspace run directly; everything else goes to the approval agent, which judges every call on its own. Safest, and slowest.</string>
+    <string name="permission_stop_auto_review_fast_description">Like strict, plus a lightweight model scores the current course of action asynchronously; a recent low-risk verdict lets the next calls run without the approval agent. It only ever removes reviews, never refuses an action on its own, and is not a system sandbox.</string>
+    <string name="permission_stop_allow_description">Every tool runs directly, without asking.</string>
     <string name="permission_level_ask_description">Default behavior for all tools.</string>
     <string name="add_tool">Add Tool</string>
     <string name="no_tools_in_group">No tools added to this group.</string>
@@ -8507,12 +8514,6 @@
     <string name="remove_from_favorites">Remove from favorites</string>
     <string name="permission_review_policy_title">Automatic review policy</string>
     <string name="permission_review_policy_description">Add review rules here to reflect how you like to work; automatic review follows these rules. Policy version: %1$s</string>
-    <string name="permission_review_mode_title">Automatic review level</string>
-    <string name="permission_review_mode_description">Whether an approval may answer later calls. Strict reviews every call again; Fast (default) also scores the current course of action asynchronously and lets a recent low-risk verdict answer the next calls.</string>
-    <string name="permission_review_mode_strict">Strict</string>
-    <string name="permission_review_mode_strict_hint">Every call is judged by the approval reviewer again. Safest, and slowest.</string>
-    <string name="permission_review_mode_fast">Fast</string>
-    <string name="permission_review_mode_fast_hint">Default level. When tools are dispatched, a lightweight model scores that course of action asynchronously, and a recent low-risk verdict lets later calls run without the approval reviewer. A high-risk, unfinished, failed, or changed-authorization verdict goes to the approval reviewer as before. Fast only ever removes reviews, never refuses an action on its own, and is not a system sandbox.</string>
     <string name="permission_review_policy_edit">Edit managed rules</string>
     <string name="permission_review_policy_collapse">Collapse policy editor</string>
     <string name="permission_review_policy_managed_hint">These rules are sent to the review model as your custom requirements, and review judges risk and authorization according to your habits. Only add rules you truly intend to allow.</string>
