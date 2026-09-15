@@ -1055,9 +1055,11 @@ internal fun permissionDeniedByAutomaticReview(
     return ToolPermissionDecision.Denied(
         source = ToolPermissionDenialSource.AUTOMATIC_REVIEW,
         rejection =
-            "Automatic permission review denied the action$suffix. Do not retry, rephrase, " +
-                "split, encode, delegate, or use another tool or path to work around this denial. " +
-                "Ask the user for explicit authorization or choose a genuinely different safe action.",
+            "Automatic permission review denied the action$suffix. It is not authorized yet: do " +
+                "not reach the same goal another way (no rephrasing, splitting, encoding, " +
+                "delegation, or a different tool, path, or command). Ask the user to authorize " +
+                "it. Once the user approves, retry the exact same action unchanged; a one-time " +
+                "approval covers only that exact action and expires after a few minutes.",
         interruptTurn = interruptTurn,
     )
 }
