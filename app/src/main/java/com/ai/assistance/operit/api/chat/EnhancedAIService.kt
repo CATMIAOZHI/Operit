@@ -753,6 +753,13 @@ class EnhancedAIService private constructor(
         multiServiceManager.refreshAllServices()
     }
 
+    /**
+     * 供独立功能模块复用同一批功能服务实例（例如“自动审核”的异步风险分类器）。
+     *
+     * 复用这里的实例而不是各自新建，配置变更时的刷新才会同时作用到这些功能。
+     */
+    internal fun getFunctionalServiceManager(): MultiServiceManager = multiServiceManager
+
     private suspend fun getModelParametersForFunction(
         functionType: FunctionType,
         chatModelConfigIdOverride: String? = null,

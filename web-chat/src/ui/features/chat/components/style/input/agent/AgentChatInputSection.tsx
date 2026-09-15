@@ -89,7 +89,7 @@ const INFO_COPY = {
   autoApprove: {
     title: '工具权限',
     description:
-      '拒绝会阻止工具；询问由你确认；工作区允许仅放行可证明位于工作区内的操作；组合模式会放行工作区内操作并把其余询问交给独立代理；单工具永久允许或拒绝优先。'
+      '拒绝会阻止工具；询问由你确认；自动审核会直接放行可证明位于工作区内的操作，其余原本需要询问的交给独立代理，失败或超时转回由你确认；单工具永久允许或拒绝优先。'
   },
   disableGroup: {
     title: '禁用项',
@@ -796,27 +796,25 @@ export function AgentChatInputSection({
   const disableUserPreferenceDescription =
     inputSettings?.disable_user_preference_description ?? false;
   const permissionLevel = inputSettings?.permission_level ?? 'ASK';
-  const permissionLevels = [
-    'ASK',
-    'WORKSPACE',
-    'WORKSPACE_REVIEWER',
-    'REVIEWER',
-    'ALLOW',
-    'FORBID'
-  ] as const;
+  const permissionLevels = ['ASK', 'AUTO_REVIEW', 'ALLOW', 'FORBID'] as const;
   const permissionLabels: Record<(typeof permissionLevels)[number], string> = {
     ASK: '询问',
-    WORKSPACE: '工作区允许',
-    WORKSPACE_REVIEWER: '工作区 + 替我审批',
-    REVIEWER: '全部替我审批',
+    AUTO_REVIEW: '自动审核',
     ALLOW: '允许',
     FORBID: '拒绝'
   };
-  const normalizedPermissionLevel = permissionLevels.includes(
-    permissionLevel as (typeof permissionLevels)[number]
-  )
-    ? (permissionLevel as (typeof permissionLevels)[number])
-    : 'ASK';
+  // WORKSPACE, WORKSPACE_REVIEWER and REVIEWER were merged into AUTO_REVIEW on the app side,
+  // so a value stored by an older build must keep reading as auto review here too.
+  const mergedPermissionLevels: Record<string, (typeof permissionLevels)[number]> = {
+    WORKSPACE: 'AUTO_REVIEW',
+    WORKSPACE_REVIEWER: 'AUTO_REVIEW',
+    REVIEWER: 'AUTO_REVIEW'
+  };
+  const normalizedPermissionLevel =
+    mergedPermissionLevels[permissionLevel] ??
+    (permissionLevels.includes(permissionLevel as (typeof permissionLevels)[number])
+      ? (permissionLevel as (typeof permissionLevels)[number])
+      : 'ASK');
 
   useEffect(() => {
     const textarea = textareaRef.current;

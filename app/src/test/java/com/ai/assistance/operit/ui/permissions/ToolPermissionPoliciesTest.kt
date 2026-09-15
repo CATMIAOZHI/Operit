@@ -23,32 +23,31 @@ import kotlinx.coroutines.runBlocking
 
 class ToolPermissionPoliciesTest {
     @Test
-    fun permissionLevelParsingPreservesLegacyAndFailsUnknownToAsk() {
+    fun permissionLevelParsingMigratesTheMergedLevelsAndFailsUnknownToAsk() {
         assertEquals(PermissionLevel.ALLOW, PermissionLevel.fromString("ALLOW"))
-        assertEquals(PermissionLevel.WORKSPACE, PermissionLevel.fromString("WORKSPACE"))
+        assertEquals(PermissionLevel.AUTO_REVIEW, PermissionLevel.fromString("AUTO_REVIEW"))
+        // WORKSPACE, WORKSPACE_REVIEWER and REVIEWER were merged into AUTO_REVIEW, so stored
+        // preferences from an older build must migrate to it rather than reset to ASK.
+        assertEquals(PermissionLevel.AUTO_REVIEW, PermissionLevel.fromString("WORKSPACE"))
         assertEquals(
-            PermissionLevel.WORKSPACE_REVIEWER,
+            PermissionLevel.AUTO_REVIEW,
             PermissionLevel.fromString("WORKSPACE_REVIEWER"),
         )
-        assertEquals(PermissionLevel.REVIEWER, PermissionLevel.fromString("REVIEWER"))
+        assertEquals(PermissionLevel.AUTO_REVIEW, PermissionLevel.fromString("REVIEWER"))
         assertEquals(PermissionLevel.ASK, PermissionLevel.fromString("CAUTION"))
         assertEquals(PermissionLevel.ASK, PermissionLevel.fromString("unexpected"))
         assertEquals(PermissionLevel.ASK, PermissionLevel.fromString(null))
     }
 
     @Test
-    fun combinedWorkspaceReviewerRoutesInsideToAllowAndEverythingElseToReviewer() {
+    fun autoReviewRoutesInsideToAllowAndEverythingElseToReviewer() {
         assertEquals(
             PermissionRoute.ALLOW,
-            resolvePermissionRoute(PermissionLevel.WORKSPACE_REVIEWER, workspaceApproved = true),
+            resolvePermissionRoute(PermissionLevel.AUTO_REVIEW, workspaceApproved = true),
         )
         assertEquals(
             PermissionRoute.REVIEWER,
-            resolvePermissionRoute(PermissionLevel.WORKSPACE_REVIEWER, workspaceApproved = false),
-        )
-        assertEquals(
-            PermissionRoute.ASK,
-            resolvePermissionRoute(PermissionLevel.WORKSPACE, workspaceApproved = false),
+            resolvePermissionRoute(PermissionLevel.AUTO_REVIEW, workspaceApproved = false),
         )
     }
 
@@ -57,21 +56,21 @@ class ToolPermissionPoliciesTest {
         assertEquals(
             PermissionLevel.ALLOW,
             resolveEffectivePermissionLevel(
-                masterLevel = PermissionLevel.WORKSPACE_REVIEWER,
+                masterLevel = PermissionLevel.AUTO_REVIEW,
                 toolOverride = PermissionLevel.ALLOW,
             ),
         )
         assertEquals(
             PermissionLevel.FORBID,
             resolveEffectivePermissionLevel(
-                masterLevel = PermissionLevel.WORKSPACE_REVIEWER,
+                masterLevel = PermissionLevel.AUTO_REVIEW,
                 toolOverride = PermissionLevel.FORBID,
             ),
         )
         assertEquals(
-            PermissionLevel.WORKSPACE_REVIEWER,
+            PermissionLevel.AUTO_REVIEW,
             resolveEffectivePermissionLevel(
-                masterLevel = PermissionLevel.WORKSPACE_REVIEWER,
+                masterLevel = PermissionLevel.AUTO_REVIEW,
                 toolOverride = null,
             ),
         )
@@ -94,7 +93,7 @@ class ToolPermissionPoliciesTest {
         assertTrue(
             resolveApprovalDecisionWithPermanentOverride(
                 approvalGranted = true,
-                latestEffectiveLevel = PermissionLevel.WORKSPACE_REVIEWER,
+                latestEffectiveLevel = PermissionLevel.AUTO_REVIEW,
             )
         )
         assertFalse(

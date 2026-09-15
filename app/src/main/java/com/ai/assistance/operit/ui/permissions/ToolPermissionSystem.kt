@@ -47,20 +47,21 @@ internal object PermissionCircuitBreakerNoticeState {
  * Permission levels for tool operations
  */
 enum class PermissionLevel {
-    ALLOW,      // Allow automatically without asking
-    WORKSPACE,  // Allow only operations proven to stay inside the bound workspace
-    WORKSPACE_REVIEWER, // Allow proven workspace operations, review everything else
-    REVIEWER,   // Let an independent approval reviewer decide
-    ASK,        // Always ask
-    FORBID;     // Never allow
+    ALLOW,       // Allow automatically without asking
+    AUTO_REVIEW, // Allow proven workspace operations, review everything else
+    ASK,         // Always ask
+    FORBID;      // Never allow
 
     companion object {
         fun fromString(value: String?): PermissionLevel {
             return when (value) {
                 "ALLOW" -> ALLOW
-                "WORKSPACE" -> WORKSPACE
-                "WORKSPACE_REVIEWER" -> WORKSPACE_REVIEWER
-                "REVIEWER" -> REVIEWER
+                "AUTO_REVIEW" -> AUTO_REVIEW
+                // The three former middle levels were merged into AUTO_REVIEW. Preferences stored
+                // by an older build are migrated here instead of silently falling back to ASK.
+                "WORKSPACE" -> AUTO_REVIEW
+                "WORKSPACE_REVIEWER" -> AUTO_REVIEW
+                "REVIEWER" -> AUTO_REVIEW
                 "CAUTION" -> ASK
                 "ASK" -> ASK
                 "FORBID" -> FORBID
@@ -94,6 +95,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     companion object {
         private const val TAG = "ToolPermissionSystem"
         private const val PERMISSION_REQUEST_TIMEOUT_MS = 60000L // 60 seconds timeout
+        private const val FAST_REVIEW_RATIONALE =
+            "Answered from the asynchronous risk score of the recent course of action."
+        internal const val FAST_REVIEW_RESOLUTION_SOURCE = "fast_review_low_risk_score"
         
         // DataStore keys
         private val MASTER_SWITCH = stringPreferencesKey("master_switch")
@@ -118,6 +122,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val permissionRequestOverlay = PermissionRequestOverlay(context)
     private val circuitBreakerWarningOverlay = PermissionRequestOverlay(context)
+    private val reviewPolicyStore = PermissionReviewPolicyStore(context)
     private var currentPermissionCallback: ((PermissionRequestResult) -> Unit)? = null
     private var permissionRequestInfo: Pair<AITool, String>? = null
     private var currentRequestToken: Long = -1L
@@ -383,6 +388,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                                         ) {
                                             ToolPermissionDecision.Allowed
                                         } else {
+                                            invalidateStoredRiskScores(reviewContext)
                                             permissionDeniedByUser()
                                         }
                                     PermissionRoute.REVIEWER -> null
@@ -402,18 +408,24 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         reviewContext: ToolPermissionReviewContext,
         pendingRequestAlreadyCounted: Boolean = false,
     ): ToolPermissionDecision {
+        // Only the fast level reads a stored score, so the strict level keeps the previous behavior
+        // exactly and runs the blocking reviewer for every call.
+        val fastPathDecision = claimFastPathApproval(tool, reviewContext)
         val decision =
-            AgentToolPermissionReviewer.getInstance(context).review(
-                tool = tool,
-                operationDescription = getOperationDescription(tool),
-                reviewContext = reviewContext,
+            fastPathDecision
+                ?: AgentToolPermissionReviewer.getInstance(context).review(
+                    tool = tool,
+                    operationDescription = getOperationDescription(tool),
+                    reviewContext = reviewContext,
+                )
+        if (fastPathDecision == null) {
+            AppLogger.i(
+                TAG,
+                "Independent permission review completed: tool=${tool.name}, decision=${decision.outcome}, " +
+                    "risk=${decision.riskLevel}, authorization=${decision.userAuthorization}, " +
+                    "failure=${decision.failureKind}"
             )
-        AppLogger.i(
-            TAG,
-            "Independent permission review completed: tool=${tool.name}, decision=${decision.outcome}, " +
-                "risk=${decision.riskLevel}, authorization=${decision.userAuthorization}, " +
-                "failure=${decision.failureKind}"
-        )
+        }
         if (decision.failureKind != null) {
             return requestManualPermission(
                 tool = tool,
@@ -474,11 +486,20 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                 return refreshedDecision.copy(interruptTurn = circuit.interruptTurn)
             }
             if (refreshedDecision is ToolPermissionDecision.Allowed) {
-                PermissionReviewCircuitBreaker.recordNonDenial(
-                    reviewContext.callerChatId,
-                    reviewContext.timingScopeId,
-                )
+                // A stored score is not a fresh judgement of what the model is doing right now, so
+                // it must not clear the repeated-denial circuit breaker.
+                if (fastPathDecision == null) {
+                    PermissionReviewCircuitBreaker.recordNonDenial(
+                        reviewContext.callerChatId,
+                        reviewContext.timingScopeId,
+                    )
+                }
             }
+        }
+        if (refreshedDecision is ToolPermissionDecision.Denied) {
+            // A refusal changes what the agent's authorization means for everything that follows,
+            // so a stored low-risk score must not answer the next calls.
+            invalidateStoredRiskScores(reviewContext)
         }
         return refreshedDecision
             ?: requestManualPermission(
@@ -487,6 +508,86 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                 reviewFailureKind = null,
                 pendingRequestAlreadyCounted = pendingRequestAlreadyCounted,
             )
+    }
+
+    /**
+     * Answers this call from the asynchronous risk score when the fast level produced a recent
+     * low-risk verdict under the current authorization.
+     *
+     * The synthetic decision is deliberately shaped like a reviewer approval so the shared
+     * reconciliation below still applies: if the level changed to ASK or FORBID while the score was
+     * stored, that change wins and the call is prompted or denied instead of answered from the
+     * score. Anything else — a high-risk verdict, a stale or missing score, a failed classifier, or
+     * a changed authorization — leaves the call to the blocking reviewer, so the score can only ever
+     * remove a review, never widen a permission.
+     */
+    private suspend fun claimFastPathApproval(
+        tool: AITool,
+        reviewContext: ToolPermissionReviewContext,
+    ): PermissionReviewDecision? {
+        if (reviewPolicyStore.getReviewMode() != PermissionReviewMode.FAST) return null
+        val deferral =
+            PermissionRiskScorer.getInstance(context)
+                .resolveFastPath(
+                    callerChatId = reviewContext.callerChatId,
+                    turnScopeId = reviewContext.timingScopeId,
+                )
+        if (deferral != null) {
+            AppLogger.d(
+                TAG,
+                "Automatic review deferred to the blocking reviewer: tool=${tool.name}, reason=$deferral"
+            )
+            return null
+        }
+        AppLogger.i(TAG, "Fast automatic review answered from a recent low-risk score: tool=${tool.name}")
+        publishFastPathApprovalEvent(tool, reviewContext)
+        return PermissionReviewDecision(
+            outcome = PermissionReviewOutcome.ALLOW,
+            riskLevel = PermissionReviewRiskLevel.LOW,
+            userAuthorization = PermissionReviewAuthorization.UNKNOWN,
+            rationale = FAST_REVIEW_RATIONALE,
+        )
+    }
+
+    /**
+     * Records the reuse so the review history explains why the call was allowed. The event is
+     * published as already approved with its own resolution source; the reconciliation below only
+     * rewrites it when a settings change enforced a different outcome.
+     */
+    private fun publishFastPathApprovalEvent(
+        tool: AITool,
+        reviewContext: ToolPermissionReviewContext,
+    ) {
+        val chatId = reviewContext.callerChatId?.trim().orEmpty()
+        if (chatId.isEmpty()) return
+        PermissionReviewEventRepository.initialize(context)
+        val reviewId = PermissionReviewInspectionRegistry.newReviewId()
+        val action =
+            PermissionReviewAction.fromTool(
+                tool = tool,
+                operationDescription = getOperationDescription(tool),
+                reviewContext = reviewContext,
+                targetId = reviewContext.targetId ?: reviewId,
+            )
+        val now = System.currentTimeMillis()
+        PermissionReviewEventRepository.publish(
+            PermissionReviewEvent(
+                id = reviewId,
+                parentChatId = chatId,
+                timingScopeId = reviewContext.timingScopeId,
+                invocationIndex = reviewContext.invocationIndex,
+                batchPosition = reviewContext.batchPosition,
+                batchSize = reviewContext.batchSize,
+                action = action,
+                actionFingerprint = action.fingerprint(),
+                status = PermissionReviewStatus.APPROVED,
+                startedAt = now,
+                completedAt = now,
+                riskLevel = PermissionReviewRiskLevel.LOW,
+                rationale = FAST_REVIEW_RATIONALE,
+                resolutionSource = FAST_REVIEW_RESOLUTION_SOURCE,
+            )
+        )
     }
 
     private suspend fun requestManualPermission(
@@ -513,6 +614,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                         ) {
                             ToolPermissionDecision.Allowed
                         } else {
+                            invalidateStoredRiskScores(reviewContext)
                             permissionDeniedByUser()
                         }
                 }
@@ -553,10 +655,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     ): PermissionRoute {
         val level = getEffectivePermissionLevel(tool.name)
         val workspaceApproved =
-            if (
-                level == PermissionLevel.WORKSPACE ||
-                    level == PermissionLevel.WORKSPACE_REVIEWER
-            ) {
+            level == PermissionLevel.AUTO_REVIEW &&
                 WorkspaceToolPermissionPolicy.isAutoApproved(
                     context = context,
                     tool = tool,
@@ -564,9 +663,6 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                     workspaceEnv = reviewContext.workspaceEnv,
                     callerChatId = reviewContext.callerChatId,
                 )
-            } else {
-                false
-            }
         return resolvePermissionRoute(level, workspaceApproved)
     }
 
@@ -577,10 +673,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         onAsk: suspend () -> ToolPermissionDecision,
     ): ToolPermissionDecision {
         val workspaceApproved =
-            if (
-                level == PermissionLevel.WORKSPACE ||
-                    level == PermissionLevel.WORKSPACE_REVIEWER
-            ) {
+            level == PermissionLevel.AUTO_REVIEW &&
                 WorkspaceToolPermissionPolicy.isAutoApproved(
                     context = context,
                     tool = tool,
@@ -588,9 +681,6 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                     workspaceEnv = reviewContext.workspaceEnv,
                     callerChatId = reviewContext.callerChatId,
                 )
-            } else {
-                false
-            }
 
         return when (resolvePermissionRoute(level, workspaceApproved)) {
             PermissionRoute.ALLOW -> ToolPermissionDecision.Allowed
@@ -598,6 +688,74 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             PermissionRoute.REVIEWER -> reviewPermission(tool, reviewContext)
             PermissionRoute.FORBID -> permissionDeniedBySettings()
         }
+    }
+
+    /**
+     * Prepares the asynchronous risk score for one dispatched tool batch.
+     *
+     * Scoring starts when the batch is dispatched rather than when an approval is requested, so the
+     * verdict for the actions the agent is about to run is already being computed while the reviews
+     * of the same batch are still running. Every batch advances one scoring step, including batches
+     * that need no review at all, so a stored score ages out after
+     * [PermissionRiskScorer.MAX_LAG_STEPS] batches, exactly like the Codex adaptive scorer.
+     *
+     * Nothing here blocks the batch or decides anything: the tools that would be answered by the
+     * workspace policy or by a permanent setting are only counted, not scored, and the score itself
+     * can only ever remove a review.
+     */
+    internal suspend fun prepareBatchRiskScores(
+        tools: List<AITool>,
+        callerChatId: String?,
+        conversationLabel: String? = null,
+        workspacePath: String? = null,
+        workspaceEnv: String? = null,
+        parentModelConfigId: String? = null,
+        parentModelIndex: Int? = null,
+        timingScopeId: String? = null,
+        liveAssistantContent: String? = null,
+    ) {
+        val reviewContext =
+            ToolPermissionReviewContext(
+                callerChatId = callerChatId,
+                conversationLabel = conversationLabel,
+                workspacePath = workspacePath,
+                workspaceEnv = workspaceEnv,
+                parentModelConfigId = parentModelConfigId,
+                parentModelIndex = parentModelIndex,
+                timingScopeId = timingScopeId,
+                batchSize = tools.size,
+                liveAssistantContent = liveAssistantContent,
+            )
+        val actions =
+            tools.map { tool ->
+                PermissionRiskAction(
+                    canonical =
+                        PermissionReviewAction.fromTool(
+                            tool = tool,
+                            operationDescription = getOperationDescription(tool),
+                            reviewContext = reviewContext,
+                            targetId = "",
+                        ),
+                    scorable =
+                        resolveCurrentPermissionRoute(tool, reviewContext) ==
+                            PermissionRoute.REVIEWER,
+                )
+            }
+        PermissionRiskScorer.getInstance(context)
+            .beginBatch(
+                callerChatId = callerChatId,
+                turnScopeId = timingScopeId,
+                actions = actions,
+                workspacePath = workspacePath,
+                workspaceEnv = workspaceEnv,
+                liveAssistantContent = liveAssistantContent,
+            )
+    }
+
+    /** A refusal changes what the agent may assume for everything that follows it. */
+    private fun invalidateStoredRiskScores(reviewContext: ToolPermissionReviewContext) {
+        PermissionRiskScorer.getInstance(context)
+            .invalidate(reviewContext.callerChatId, reviewContext.timingScopeId)
     }
 
     /**
@@ -796,11 +954,8 @@ internal fun resolvePermissionRoute(
 ): PermissionRoute =
     when (level) {
         PermissionLevel.ALLOW -> PermissionRoute.ALLOW
-        PermissionLevel.WORKSPACE ->
-            if (workspaceApproved) PermissionRoute.ALLOW else PermissionRoute.ASK
-        PermissionLevel.WORKSPACE_REVIEWER ->
+        PermissionLevel.AUTO_REVIEW ->
             if (workspaceApproved) PermissionRoute.ALLOW else PermissionRoute.REVIEWER
-        PermissionLevel.REVIEWER -> PermissionRoute.REVIEWER
         PermissionLevel.ASK -> PermissionRoute.ASK
         PermissionLevel.FORBID -> PermissionRoute.FORBID
     }

@@ -343,9 +343,7 @@ export interface WebInputSettingsState {
   disable_user_preference_description: boolean;
   permission_level:
     | 'ALLOW'
-    | 'WORKSPACE'
-    | 'WORKSPACE_REVIEWER'
-    | 'REVIEWER'
+    | 'AUTO_REVIEW'
     | 'ASK'
     | 'FORBID'
     | string;
