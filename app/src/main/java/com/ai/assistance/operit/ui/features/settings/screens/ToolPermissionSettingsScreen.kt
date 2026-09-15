@@ -30,6 +30,7 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
+import com.ai.assistance.operit.ui.permissions.PermissionReviewMode
 import com.ai.assistance.operit.ui.permissions.PermissionReviewPolicyStore
 import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
 import kotlinx.coroutines.launch
@@ -53,6 +54,9 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
         )
     var policyDraft by remember { mutableStateOf("") }
     var policyExpanded by remember { mutableStateOf(false) }
+    val reviewMode by
+        reviewPolicyStore.reviewModeFlow.collectAsState(initial = PermissionReviewMode.DEFAULT)
+    var reviewModeInput by remember { mutableStateOf(reviewMode) }
     val scope = rememberCoroutineScope()
 
     val allTools = remember {
@@ -76,6 +80,10 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
 
     LaunchedEffect(masterSwitch) {
         masterSwitchInput = masterSwitch
+    }
+
+    LaunchedEffect(reviewMode) {
+        reviewModeInput = reviewMode
     }
 
     fun handlePermissionChange(toolName: String, newLevel: PermissionLevel) {
@@ -144,6 +152,44 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                                 toolPermissionSystem.saveMasterSwitch(level)
                             }
                         }
+                    )
+                }
+            }
+        }
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        stringResource(R.string.permission_review_mode_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        stringResource(R.string.permission_review_mode_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    CompactReviewModeSelector(
+                        selectedMode = reviewModeInput,
+                        onModeSelected = { mode ->
+                            reviewModeInput = mode
+                            scope.launch { reviewPolicyStore.saveReviewMode(mode) }
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        stringResource(
+                            when (reviewModeInput) {
+                                PermissionReviewMode.STRICT ->
+                                    R.string.permission_review_mode_strict_hint
+                                PermissionReviewMode.FAST ->
+                                    R.string.permission_review_mode_fast_hint
+                            }
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -248,37 +294,13 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
         }
         item {
             PermissionGroup(
-                level = PermissionLevel.WORKSPACE,
-                allTools = allTools,
-                toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.WORKSPACE }.keys,
-                toolHandler = toolHandler,
-                onToolToggled = { toolName ->
-                    handlePermissionChange(toolName, PermissionLevel.WORKSPACE)
-                }
-            )
-        }
-        item {
-            PermissionGroup(
-                level = PermissionLevel.REVIEWER,
-                allTools = allTools,
-                toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.REVIEWER }.keys,
-                toolHandler = toolHandler,
-                onToolToggled = { toolName ->
-                    handlePermissionChange(toolName, PermissionLevel.REVIEWER)
-                }
-            )
-        }
-        item {
-            PermissionGroup(
-                level = PermissionLevel.WORKSPACE_REVIEWER,
+                level = PermissionLevel.AUTO_REVIEW,
                 allTools = allTools,
                 toolsInLevel =
-                    toolPermissions.filterValues {
-                        it == PermissionLevel.WORKSPACE_REVIEWER
-                    }.keys,
+                    toolPermissions.filterValues { it == PermissionLevel.AUTO_REVIEW }.keys,
                 toolHandler = toolHandler,
                 onToolToggled = { toolName ->
-                    handlePermissionChange(toolName, PermissionLevel.WORKSPACE_REVIEWER)
+                    handlePermissionChange(toolName, PermissionLevel.AUTO_REVIEW)
                 }
             )
         }
@@ -319,20 +341,10 @@ private fun PermissionGroup(
             stringResource(R.string.permission_level_allow_description),
             MaterialTheme.colorScheme.primary
         )
-        PermissionLevel.WORKSPACE -> Triple(
-            stringResource(R.string.permission_level_workspace),
-            stringResource(R.string.permission_level_workspace_description),
+        PermissionLevel.AUTO_REVIEW -> Triple(
+            stringResource(R.string.permission_level_auto_review),
+            stringResource(R.string.permission_level_auto_review_description),
             MaterialTheme.colorScheme.tertiary
-        )
-        PermissionLevel.WORKSPACE_REVIEWER -> Triple(
-            stringResource(R.string.permission_level_workspace_reviewer),
-            stringResource(R.string.permission_level_workspace_reviewer_description),
-            MaterialTheme.colorScheme.tertiary
-        )
-        PermissionLevel.REVIEWER -> Triple(
-            stringResource(R.string.permission_level_reviewer),
-            stringResource(R.string.permission_level_reviewer_description),
-            MaterialTheme.colorScheme.secondary
         )
         PermissionLevel.FORBID -> Triple(
             stringResource(R.string.permission_level_forbid),
@@ -538,12 +550,52 @@ fun CompactPermissionLevelSelector(
                 Text(
                     text = when (level) {
                         PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
-                        PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
-                        PermissionLevel.WORKSPACE_REVIEWER ->
-                            stringResource(R.string.permission_level_workspace_reviewer)
-                        PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
+                        PermissionLevel.AUTO_REVIEW ->
+                            stringResource(R.string.permission_level_auto_review)
                         PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
                         PermissionLevel.FORBID -> stringResource(R.string.forbid)
+                    },
+                    color = textColor,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun CompactReviewModeSelector(
+    selectedMode: PermissionReviewMode,
+    onModeSelected: (PermissionReviewMode) -> Unit
+) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        PermissionReviewMode.values().forEach { mode ->
+            val isSelected = selectedMode == mode
+            val (containerColor, textColor) = when {
+                isSelected -> Pair(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary)
+                else -> Pair(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.onSurface)
+            }
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(containerColor)
+                    .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
+                    .clickable { onModeSelected(mode) }
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = when (mode) {
+                        PermissionReviewMode.STRICT ->
+                            stringResource(R.string.permission_review_mode_strict)
+                        PermissionReviewMode.FAST ->
+                            stringResource(R.string.permission_review_mode_fast)
                     },
                     color = textColor,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,

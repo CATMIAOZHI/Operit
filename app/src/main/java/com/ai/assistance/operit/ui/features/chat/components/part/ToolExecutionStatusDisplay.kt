@@ -73,6 +73,7 @@ import com.ai.assistance.operit.ui.permissions.PermissionReviewExactOverrideStat
 import com.ai.assistance.operit.ui.permissions.PermissionReviewFailureKind
 import com.ai.assistance.operit.ui.permissions.PermissionReviewRiskLevel
 import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
+import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
 import com.ai.assistance.operit.ui.permissions.effectiveExactOverrideState
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import kotlinx.coroutines.delay
@@ -470,10 +471,14 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
             Text(
                 text =
                     stringResource(
-                        if (source.endsWith("allow")) {
-                            R.string.permission_review_resolved_allow
-                        } else {
-                            R.string.permission_review_resolved_deny
+                        when {
+                            // A reused approval is an allow, but it was not decided by the user or
+                            // by a settings change, so it must not borrow the "allow" wording.
+            source == ToolPermissionSystem.FAST_REVIEW_RESOLUTION_SOURCE ->
+                                R.string.permission_review_resolved_reused
+                            source.endsWith("allow") ->
+                                R.string.permission_review_resolved_allow
+                            else -> R.string.permission_review_resolved_deny
                         }
                     ),
                 style = MaterialTheme.typography.labelSmall,

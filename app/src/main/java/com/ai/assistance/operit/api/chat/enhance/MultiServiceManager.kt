@@ -146,7 +146,7 @@ class MultiServiceManager(private val context: Context) {
             return it
         }
 
-        val configMapping = functionalConfigManager.getConfigMappingForFunction(functionType)
+        val configMapping = functionalConfigManager.getEffectiveConfigMappingForFunction(functionType)
         val config = modelConfigManager.getModelConfigFlow(configMapping.configId).first()
 
         val actualModelIndex = getValidModelIndex(config.modelName, configMapping.modelIndex)
@@ -262,6 +262,15 @@ class MultiServiceManager(private val context: Context) {
         ensureInitialized()
         serviceMutex.withLock {
             serviceInstances.remove(functionType)?.let { retireManagedServiceLocked(it) }
+
+            // A follower borrows this function's configuration, so its cached service may have been
+            // built from the previous one.
+            FunctionalConfigManager.FUNCTION_CONFIG_FOLLOWERS
+                .filterValues { followed -> followed == functionType }
+                .keys
+                .forEach { follower ->
+                    serviceInstances.remove(follower)?.let { retireManagedServiceLocked(it) }
+                }
 
             if (functionType == FunctionType.CHAT) {
                 defaultService = null
@@ -400,7 +409,7 @@ class MultiServiceManager(private val context: Context) {
             functionType: FunctionType
     ): List<com.ai.assistance.operit.data.model.ModelParameter<*>> {
         ensureInitialized()
-        val configMapping = functionalConfigManager.getConfigMappingForFunction(functionType)
+        val configMapping = functionalConfigManager.getEffectiveConfigMappingForFunction(functionType)
         return modelConfigManager.getModelParametersForConfig(configMapping.configId)
     }
 

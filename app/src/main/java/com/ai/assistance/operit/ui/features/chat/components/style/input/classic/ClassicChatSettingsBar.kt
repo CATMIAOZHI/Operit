@@ -296,10 +296,7 @@ fun ClassicChatSettingsBar(
         when (if (enableTools) permissionLevel else PermissionLevel.FORBID) {
             PermissionLevel.FORBID -> stringResource(R.string.agent_menu_permission_disabled)
             PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
-            PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
-            PermissionLevel.WORKSPACE_REVIEWER ->
-                stringResource(R.string.permission_level_workspace_reviewer)
-            PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
+            PermissionLevel.AUTO_REVIEW -> stringResource(R.string.permission_level_auto_review)
             PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
         }
     val behaviorSummary =
@@ -1234,9 +1231,7 @@ private fun ToolPermissionSettingItem(
             listOf(
                 PermissionLevel.FORBID,
                 PermissionLevel.ASK,
-                PermissionLevel.WORKSPACE,
-                PermissionLevel.WORKSPACE_REVIEWER,
-                PermissionLevel.REVIEWER,
+                PermissionLevel.AUTO_REVIEW,
                 PermissionLevel.ALLOW,
             ).forEach { level ->
                 val isSelected = selectedLevel == level
@@ -1244,10 +1239,8 @@ private fun ToolPermissionSettingItem(
                     when (level) {
                         PermissionLevel.FORBID -> stringResource(R.string.agent_menu_permission_disabled)
                         PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
-                        PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
-                        PermissionLevel.WORKSPACE_REVIEWER ->
-                            stringResource(R.string.permission_level_workspace_reviewer)
-                        PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
+                        PermissionLevel.AUTO_REVIEW ->
+                            stringResource(R.string.permission_level_auto_review)
                         PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
                     }
                 Box(

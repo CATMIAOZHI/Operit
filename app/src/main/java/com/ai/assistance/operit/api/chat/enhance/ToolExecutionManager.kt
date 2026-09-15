@@ -47,6 +47,7 @@ import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
 import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
 import com.ai.assistance.operit.ui.permissions.ToolPermissionDecision
 import com.ai.assistance.operit.ui.permissions.ToolPermissionDenialSource
+import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
 import com.ai.assistance.operit.ui.permissions.resolveApprovalDecisionWithPermanentOverride
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.LocaleUtils
@@ -1217,6 +1218,28 @@ object ToolExecutionManager {
             }
         }
 
+        // 3.1 “自动审核”快速档的异步风险评分：在整批派发时启动，覆盖本批全部动作，但不阻塞
+        // 本批的权限检查。评分只可能减少审核次数，任何异常都会退回阻塞审核。
+        //
+        // 空候选批次同样要走这一步：它会让旧分数按“一批一步”老化，否则被 hook 全部拦截的
+        // 派发不会消耗分数的时间预算。子代理精确重复拆分会递归进入本函数两次，因此这种少见的
+        // 派发会记两步——方向只会让分数更早失效，不会放宽任何判断。
+        withContext(Dispatchers.IO) {
+            toolHandler
+                .getToolPermissionSystem()
+                .prepareBatchRiskScores(
+                    tools = permissionCandidates.map { (_, _, tool) -> tool },
+                    callerChatId = callerChatId,
+                    conversationLabel = conversationLabel,
+                    workspacePath = workspacePath,
+                    workspaceEnv = workspaceEnv,
+                    parentModelConfigId = parentModelConfigId,
+                    parentModelIndex = parentModelIndex,
+                    timingScopeId = timingScopeId,
+                    liveAssistantContent = liveAssistantContent,
+                )
+        }
+
         val permissionChecks =
             parallelMapPreservingOrder(permissionCandidates) {
                     (batchIndex, invocation, interceptionTool) ->
@@ -1283,11 +1306,19 @@ object ToolExecutionManager {
                                 callerChatId,
                                 timingScopeId,
                                 invocation.invocationIndex,
-                            )?.status in
-                                setOf(
-                                    PermissionReviewStatus.APPROVED,
-                                    PermissionReviewStatus.DENIED,
-                                ),
+                            )
+                                ?.let { event ->
+                                    event.status in
+                                        setOf(
+                                            PermissionReviewStatus.APPROVED,
+                                            PermissionReviewStatus.DENIED,
+                                        ) &&
+                                        // A reused approval reuses an older verdict; it is not a
+                                        // fresh judgement, so it must not clear the circuit breaker.
+                                        event.resolutionSource !=
+                                            ToolPermissionSystem
+                                                .FAST_REVIEW_RESOLUTION_SOURCE
+                                } ?: false,
                     )
                 if (adjustedDecision is ToolPermissionDecision.Denied &&
                     adjustedDecision.interruptTurn &&

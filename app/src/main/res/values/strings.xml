@@ -2954,6 +2954,7 @@
     <string name="function_type_grep">Grep检索</string>
     <string name="function_type_role_response_planner">群组规划</string>
     <string name="function_type_permission_reviewer">权限审批</string>
+    <string name="function_type_permission_risk_scorer">审核风险评分</string>
     <string name="function_type_image_recognition">图像识别</string>
     <string name="function_type_audio_recognition">音频识别</string>
     <string name="function_type_video_recognition">视频识别</string>
@@ -2968,7 +2969,8 @@
     <string name="function_desc_translation">提供多语言翻译功能，支持文本内容的语言转换。建议使用支持多语言的模型。</string>
     <string name="function_desc_grep">用于grep_context的检索规划与结果筛选（多轮grep_code）</string>
     <string name="function_desc_role_response_planner">用于在群组中动态决定本轮发言顺序与跳过策略，支持多轮讨论</string>
-    <string name="function_desc_permission_reviewer">用于“替我审批”独立审查工具调用。审批代理只能使用内部结果提交工具，不能执行被审核操作；失败、超时或无有效结果时将转由你确认。</string>
+    <string name="function_desc_permission_reviewer">用于“自动审核”档位独立审查工具调用。审批代理只能使用内部结果提交工具，不能执行被审核操作；失败、超时或无有效结果时将转由你确认。</string>
+    <string name="function_desc_permission_risk_scorer">用于“自动审核”快速档的异步风险评分：派发工具时用一个轻量模型判断当前这组操作的风险高低，只回答 high 或 low。用便宜、响应快的模型就够。保持默认配置时跟随“权限审批”的模型。</string>
     <string name="function_desc_image_recognition">用于图像内容识别和分析，调用read_file工具读取图片时支持intent参数进行深度理解。建议使用支持视觉的多模态模型。</string>
     <string name="function_desc_audio_recognition">用于音频内容识别和分析，调用read_file工具读取音频时可使用intent参数进行深度理解（如转写/总结/识别说话内容）。建议使用支持音频输入或高质量转写的模型。</string>
     <string name="function_desc_video_recognition">用于视频内容识别和分析，调用read_file工具读取视频时可使用intent参数进行深度理解（如抽帧理解/场景描述/对话总结）。建议使用支持视频/图像输入的多模态模型。</string>
@@ -5452,12 +5454,8 @@
     <string name="global_permission_switch_description">此设置控制默认行为；单个工具的“以后都允许/拒绝”等例外规则优先级更高。</string>
     <string name="permission_level_allow">允许</string>
     <string name="permission_level_allow_description">这些工具将自动运行。</string>
-    <string name="permission_level_workspace">工作区允许</string>
-    <string name="permission_level_workspace_description">仅自动批准可确认目标都位于当前工作区内的文件操作和终端命令；访问工作区外、环境不匹配或无法确定范围时仍会询问。此模式不是系统沙箱。</string>
-    <string name="permission_level_workspace_reviewer">工作区 + 替我审批</string>
-    <string name="permission_level_workspace_reviewer_description">可确认位于工作区内的操作直接放行，其余原本需要询问的操作交给独立代理审批。单工具永久允许或拒绝始终优先。</string>
-    <string name="permission_level_reviewer">全部替我审批</string>
-    <string name="permission_level_reviewer_description">所有原本需要询问用户的调用都由隔离的独立代理审查。审批代理只能使用内部结果提交工具，不能执行被审核操作；失败、超时或无有效结果时将转由你确认。</string>
+    <string name="permission_level_auto_review">自动审核</string>
+    <string name="permission_level_auto_review_description">可确认位于当前工作区内的操作直接放行；其余原本需要询问的操作交给隔离的独立代理审批，失败、超时或无有效结果时转回由你确认。单工具永久允许或拒绝始终优先。此模式不是系统沙箱。</string>
     <string name="permission_level_forbid">禁止</string>
     <string name="permission_level_forbid_description">这些工具永远不会运行。</string>
     <string name="permission_level_ask">询问</string>
@@ -5585,6 +5583,8 @@
     <string name="permission_review_status_error">审核失败，已转人工</string>
     <string name="functional_config_permission_reviewer_test_invalid">模型已连接，但未按审批协议调用结果工具。</string>
     <string name="functional_config_permission_reviewer_test_success">审批协议测试成功：outcome=%1$s，risk=%2$s，authorization=%3$s</string>
+    <string name="functional_config_risk_scorer_test_invalid">模型已连接，但没有按要求只回答 high 或 low。</string>
+    <string name="functional_config_risk_scorer_test_success">风险评分测试成功：模型回答 %1$s</string>
     <string name="agent_profile_id">稳定 ID</string>
     <string name="agent_profile_id_hint">供主 Agent 调用，只能使用小写字母、数字、下划线或连字符。</string>
     <string name="agent_profile_id_invalid">ID 必须以字母开头，且只能包含小写字母、数字、下划线或连字符。</string>
@@ -8483,6 +8483,12 @@
     <string name="remove_from_favorites">取消收藏</string>
     <string name="permission_review_policy_title">自动审核策略</string>
     <string name="permission_review_policy_description">可在此按你的使用习惯追加审核规则，自动审核会遵守这些规则。当前策略版本：%1$s</string>
+    <string name="permission_review_mode_title">自动审核档位</string>
+    <string name="permission_review_mode_description">审核结论能不能被后面的调用复用。严格档每次都重新审；快速档（默认）会另外用一个轻量模型异步评估当前这组操作，最近的结论是低风险时，后面的调用直接放行。</string>
+    <string name="permission_review_mode_strict">严格</string>
+    <string name="permission_review_mode_strict_hint">每次调用都由审批代理重新判断。最安全，也最慢。</string>
+    <string name="permission_review_mode_fast">快速</string>
+    <string name="permission_review_mode_fast_hint">默认档位。派发工具时会另外用一个轻量模型异步评估这组操作：最近的结论是低风险，后面的调用就直接放行，不再启动审批代理。结论是高危、还没算完、算失败，或者你换了工作区、改了规则、刚被拒过一次，都照旧交给审批代理。它只会减少审核次数，不会自己拒绝操作，也没有系统级沙箱。</string>
     <string name="permission_review_policy_edit">编辑追加规则</string>
     <string name="permission_review_policy_collapse">收起策略编辑</string>
     <string name="permission_review_policy_managed_hint">这些规则会作为你的自定义要求发送给审核模型，审核会按你的习惯判断风险与授权。请只添加你真正愿意放行的规则。</string>
@@ -8512,6 +8518,7 @@
     <string name="permission_review_batch_lifecycle">Guardian · 本批工具 %1$d/%2$d · %3$s · %4$s</string>
     <string name="permission_review_resolved_allow">随后由你或最新设置允许</string>
     <string name="permission_review_resolved_deny">随后由你或最新设置拒绝</string>
+    <string name="permission_review_resolved_reused">已由最近的低风险评分放行</string>
     <string name="permission_review_tap_for_details">点击查看状态、结论和审核对话</string>
     <string name="permission_review_detail_title">Guardian 审核详情</string>
     <string name="permission_review_detail_status">状态：%1$s</string>

@@ -10,7 +10,8 @@ enum class FunctionType {
     TRANSLATION, // 翻译功能
     GREP, // Grep上下文检索/代码搜索规划
     ROLE_RESPONSE_PLANNER, // 角色回答顺序规划
-    PERMISSION_REVIEWER, // “替我审批”工具调用审查
+    PERMISSION_REVIEWER, // “自动审核”档位使用的工具调用审查
+    PERMISSION_RISK_SCORER, // “自动审核”快速档使用的异步风险分类器
     IMAGE_RECOGNITION, // 图像识别
     AUDIO_RECOGNITION, // 音频识别
     VIDEO_RECOGNITION // 视频识别

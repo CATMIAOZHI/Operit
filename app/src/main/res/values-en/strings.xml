@@ -2900,6 +2900,7 @@
     <string name="function_type_grep">Grep Retrieval</string>
     <string name="function_type_role_response_planner">Group Planner</string>
     <string name="function_type_permission_reviewer">Permission Approval</string>
+    <string name="function_type_permission_risk_scorer">Review Risk Scoring</string>
 
     <!-- Function Descriptions -->
     <string name="function_desc_chat">Main chat function for daily conversation interaction with users</string>
@@ -2910,7 +2911,8 @@
     <string name="function_desc_ui_controller">Used for automatic traversal and operation of UI interfaces. The corresponding UI controller model is only activated when the user explicitly requests to use an "agent" for control, for example by choosing dedicated models such as autoglm-phone-9b.</string>
     <string name="function_desc_grep">Used for grep_context planning and result filtering (multi-round grep_code)</string>
     <string name="function_desc_role_response_planner">Dynamically plans speaking order and skip decisions in groups, supports multi-turn discussions</string>
-    <string name="function_desc_permission_reviewer">Used by “approve for me” to review tool calls independently. The reviewer can only use an internal result-submission tool and cannot execute the reviewed action; failures, timeouts, and invalid responses are handed back to you.</string>
+    <string name="function_desc_permission_reviewer">Used by the “auto review” level to review tool calls independently. The reviewer can only use an internal result-submission tool and cannot execute the reviewed action; failures, timeouts, and invalid responses are handed back to you.</string>
+    <string name="function_desc_permission_risk_scorer">Used by the “auto review” fast level to score the risk of the tool calls being dispatched and answer with a single high or low token. A cheap, fast model is enough. Left on the default configuration, it follows the Permission Approval model.</string>
 
     <!-- Functional Prompt Config Screen -->
     <string name="advanced_config_notice">For advanced configurations like modifying system prompt templates, please go to the \"Manage All Prompts\" page.</string>
@@ -5073,12 +5075,8 @@
     <string name="global_permission_switch_description">This setting controls the default behavior. Per-tool exceptions such as “always allow/deny” take precedence.</string>
     <string name="permission_level_allow">Allowed</string>
     <string name="permission_level_allow_description">These tools will run automatically.</string>
-    <string name="permission_level_workspace">Allow in workspace</string>
-    <string name="permission_level_workspace_description">Automatically approves only file operations and terminal commands whose targets can be proven to stay inside the current workspace. External, mismatched-environment, or unknown scopes still ask. This mode is not an OS sandbox.</string>
-    <string name="permission_level_workspace_reviewer">Workspace + approve for me</string>
-    <string name="permission_level_workspace_reviewer_description">Provably in-workspace operations run directly; all other calls that would ask are reviewed by an independent agent. Permanent per-tool allow or deny rules always take precedence.</string>
-    <string name="permission_level_reviewer">Approve all for me</string>
-    <string name="permission_level_reviewer_description">Every call that would otherwise ask the user is reviewed by an isolated independent agent. The reviewer can only use an internal result-submission tool and cannot execute the reviewed action; failures, timeouts, and invalid responses are handed back to you.</string>
+    <string name="permission_level_auto_review">Auto review</string>
+    <string name="permission_level_auto_review_description">Provably in-workspace operations run directly; every other call that would ask is reviewed by an isolated independent agent, and failures, timeouts, or invalid responses fall back to you. Permanent per-tool allow or deny rules always take precedence. This mode is not an OS sandbox.</string>
     <string name="permission_level_forbid">Forbidden</string>
     <string name="permission_level_forbid_description">These tools will never run.</string>
     <string name="permission_level_ask">Ask</string>
@@ -5206,6 +5204,8 @@
     <string name="permission_review_status_error">Review failed, handed to user</string>
     <string name="functional_config_permission_reviewer_test_invalid">The model connected, but did not call the result tool using the approval protocol.</string>
     <string name="functional_config_permission_reviewer_test_success">Approval protocol test passed: outcome=%1$s, risk=%2$s, authorization=%3$s</string>
+    <string name="functional_config_risk_scorer_test_invalid">The model connected, but did not answer with only high or low.</string>
+    <string name="functional_config_risk_scorer_test_success">Risk scoring test passed: the model answered %1$s</string>
     <string name="agent_profile_id">Stable ID</string>
     <string name="agent_profile_id_hint">Used by the main Agent; lowercase letters, numbers, underscores, and hyphens only.</string>
     <string name="agent_profile_id_invalid">The ID must start with a letter and contain only lowercase letters, numbers, underscores, or hyphens.</string>
@@ -8506,6 +8506,12 @@
     <string name="remove_from_favorites">Remove from favorites</string>
     <string name="permission_review_policy_title">Automatic review policy</string>
     <string name="permission_review_policy_description">Add review rules here to reflect how you like to work; automatic review follows these rules. Policy version: %1$s</string>
+    <string name="permission_review_mode_title">Automatic review level</string>
+    <string name="permission_review_mode_description">Whether an approval may answer later calls. Strict reviews every call again; Fast (default) also scores the current course of action asynchronously and lets a recent low-risk verdict answer the next calls.</string>
+    <string name="permission_review_mode_strict">Strict</string>
+    <string name="permission_review_mode_strict_hint">Every call is judged by the approval reviewer again. Safest, and slowest.</string>
+    <string name="permission_review_mode_fast">Fast</string>
+    <string name="permission_review_mode_fast_hint">Default level. When tools are dispatched, a lightweight model scores that course of action asynchronously, and a recent low-risk verdict lets later calls run without the approval reviewer. A high-risk, unfinished, failed, or changed-authorization verdict goes to the approval reviewer as before. Fast only ever removes reviews, never refuses an action on its own, and is not a system sandbox.</string>
     <string name="permission_review_policy_edit">Edit managed rules</string>
     <string name="permission_review_policy_collapse">Collapse policy editor</string>
     <string name="permission_review_policy_managed_hint">These rules are sent to the review model as your custom requirements, and review judges risk and authorization according to your habits. Only add rules you truly intend to allow.</string>
@@ -8535,6 +8541,7 @@
     <string name="permission_review_batch_lifecycle">Guardian · batch tool %1$d/%2$d · %3$s · %4$s</string>
     <string name="permission_review_resolved_allow">Later allowed by you or current settings</string>
     <string name="permission_review_resolved_deny">Later denied by you or current settings</string>
+    <string name="permission_review_resolved_reused">Allowed by a recent low-risk score</string>
     <string name="permission_review_tap_for_details">Tap for status, decision, and review conversation</string>
     <string name="permission_review_detail_title">Guardian review details</string>
     <string name="permission_review_detail_status">Status: %1$s</string>
