@@ -8539,6 +8539,7 @@
     <string name="permission_risk_scores_description">This is what “Review Risk Scoring” in the function settings does on the fast level: when a tool batch is dispatched, a lightweight model judges the risk of that batch out of band. Only a low verdict saves later calls the review; a high, failed or unscored batch sends the call back to the review agent, and the pre-classification itself never denies anything.</string>
     <string name="permission_risk_scores_empty">This chat has no pre-classification records yet. Only the “auto review · fast” level scores, and only with a scoring model configured while online.</string>
     <string name="permission_risk_scores_strict">The current level is not “auto review · fast”, so no new pre-classification records are added.</string>
+    <string name="permission_risk_scores_trimmed">All chats together keep only the newest %1$d pre-classification records; older ones have been removed.</string>
     <string name="permission_risk_score_low">Low risk</string>
     <string name="permission_risk_score_high">High risk</string>
     <string name="permission_risk_score_failed">Scoring failed</string>

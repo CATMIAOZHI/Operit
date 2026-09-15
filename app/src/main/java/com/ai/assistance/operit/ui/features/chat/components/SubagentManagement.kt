@@ -597,7 +597,12 @@ internal fun SubagentManagementDialog(
                         onSelectRun = onSelect,
                     )
                 } else if (currentPage == SubagentManagementPage.RISK_SCORES) {
-                    PermissionRiskScoresPage(records = chatRiskScoreRecords)
+                    PermissionRiskScoresPage(
+                        records = chatRiskScoreRecords,
+                        // The store is shared, so a full one explains why any chat's oldest rows are
+                        // gone, whether or not this chat filled it on its own.
+                        trimmed = riskScoreRecords.size >= PermissionRiskScoreRepository.MAX_RECORDS,
+                    )
                 } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -993,7 +998,7 @@ private fun permissionRiskSkipText(skip: PermissionRiskScoringSkip): String =
  * of a review.
  */
 @Composable
-private fun PermissionRiskScoresPage(records: List<PermissionRiskScoreRecord>) {
+private fun PermissionRiskScoresPage(records: List<PermissionRiskScoreRecord>, trimmed: Boolean) {
     val context = LocalContext.current
     // A page that keeps its stored rows is still worth explaining when the level that produces them
     // is no longer selected, because nothing new will appear in it. What decides that is the whole
@@ -1075,6 +1080,19 @@ private fun PermissionRiskScoresPage(records: List<PermissionRiskScoreRecord>) {
                         text = stringResource(R.string.permission_risk_scores_strict),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                // Said only for a chat that has rows to miss: next to the empty state it would read
+                // as those rows having been removed.
+                if (trimmed && records.isNotEmpty()) {
+                    Text(
+                        text =
+                            stringResource(
+                                R.string.permission_risk_scores_trimmed,
+                                PermissionRiskScoreRepository.MAX_RECORDS,
+                            ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

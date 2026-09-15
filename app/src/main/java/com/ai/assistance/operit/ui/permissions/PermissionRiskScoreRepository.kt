@@ -134,7 +134,15 @@ internal fun permissionRiskScoreSummary(
  */
 internal object PermissionRiskScoreRepository {
     private const val TAG = "PermissionRiskScores"
-    private const val MAX_RECORDS = 200
+
+    /**
+     * How many records the store keeps, across every chat in the app rather than per chat, which is
+     * why the page says when the oldest ones started being dropped. One record is one dispatched
+     * tool batch, so this covers far more than the tool calls a single conversation dispatches, and
+     * the payload stays small enough to rewrite on every batch.
+     */
+    internal const val MAX_RECORDS = 500
+
     private const val PREFERENCES_NAME = "permission_risk_scores"
     private const val RECORDS_KEY = "records_v1"
 
