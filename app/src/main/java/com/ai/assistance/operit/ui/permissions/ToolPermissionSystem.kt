@@ -98,7 +98,12 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     companion object {
         private const val TAG = "ToolPermissionSystem"
         private const val PERMISSION_REQUEST_TIMEOUT_MS = 60000L // 60 seconds timeout
-        private const val FAST_REVIEW_RATIONALE =
+        /**
+         * The fixed English note a reuse decision records on its review event. It states where the
+         * answer came from rather than anything about the call, so the review UI never quotes it
+         * back to the reader.
+         */
+        internal const val FAST_REVIEW_RATIONALE =
             "Answered from the asynchronous risk score of the recent course of action."
         internal const val FAST_REVIEW_RESOLUTION_SOURCE = "fast_review_low_risk_score"
         
