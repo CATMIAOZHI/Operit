@@ -1446,7 +1446,7 @@
     <string name="output_tokens">累计出: %1$s</string>
     <string name="context_window">上下文: %1$s</string>
     <string name="auto_approve">自动批准:</string>
-    <string name="auto_approve_desc">用于控制 AI 工具调用时的全局默认策略：开启后，默认直接执行所有工具调用而不再弹出确认；你在“设置 - 工具权限管理”中为单个工具设置的例外规则仍然会优先生效。关闭后，默认对所有工具调用都弹出确认。</string>
+    <string name="auto_approve_desc">控制 AI 调用工具时的默认权限。滑块从左到右越来越宽松：禁止、询问、自动审核（严格 / 快速）、允许。单个工具在“设置 - 工具权限管理”里的例外规则仍然优先。</string>
     <string name="enabled">已开启</string>
     <string name="ask">询问</string>
     <string name="ai_planning_mode">深度搜索:</string>
@@ -5461,6 +5461,13 @@
     <string name="permission_level_forbid_description">这些工具永远不会运行。</string>
     <string name="permission_level_ask">询问</string>
     <string name="permission_level_ask_description">所有工具的默认行为。</string>
+    <string name="permission_stop_auto_review_strict">自动审核 · 严格</string>
+    <string name="permission_stop_auto_review_fast">自动审核 · 快速</string>
+    <string name="permission_stop_forbid_description">所有工具都不会运行。</string>
+    <string name="permission_stop_ask_description">每次调用工具前都弹窗问你。</string>
+    <string name="permission_stop_auto_review_strict_description">工作区内可确认安全的操作直接放行；其余交给审批代理，每次调用都重新判断。最安全，也最慢。</string>
+    <string name="permission_stop_auto_review_fast_description">和严格档一样，另外用一个轻量模型异步评估当前这组操作；结论是低风险时，后面的调用直接放行。它只会减少审核次数，不会自己拒绝操作，也没有系统级沙箱。</string>
+    <string name="permission_stop_allow_description">所有工具直接运行，不再询问。</string>
     <string name="add_tool">添加工具</string>
     <string name="no_tools_in_group">此组中未添加任何工具。</string>
     <string name="remove_tool">移除</string>
@@ -8484,12 +8491,6 @@
     <string name="remove_from_favorites">取消收藏</string>
     <string name="permission_review_policy_title">自动审核策略</string>
     <string name="permission_review_policy_description">可在此按你的使用习惯追加审核规则，自动审核会遵守这些规则。当前策略版本：%1$s</string>
-    <string name="permission_review_mode_title">自动审核档位</string>
-    <string name="permission_review_mode_description">审核结论能不能被后面的调用复用。严格档每次都重新审；快速档（默认）会另外用一个轻量模型异步评估当前这组操作，最近的结论是低风险时，后面的调用直接放行。</string>
-    <string name="permission_review_mode_strict">严格</string>
-    <string name="permission_review_mode_strict_hint">每次调用都由审批代理重新判断。最安全，也最慢。</string>
-    <string name="permission_review_mode_fast">快速</string>
-    <string name="permission_review_mode_fast_hint">默认档位。派发工具时会另外用一个轻量模型异步评估这组操作：最近的结论是低风险，后面的调用就直接放行，不再启动审批代理。结论是高危、还没算完、算失败，或者你换了工作区、改了规则、刚被拒过一次，都照旧交给审批代理。它只会减少审核次数，不会自己拒绝操作，也没有系统级沙箱。</string>
     <string name="permission_review_policy_edit">编辑追加规则</string>
     <string name="permission_review_policy_collapse">收起策略编辑</string>
     <string name="permission_review_policy_managed_hint">这些规则会作为你的自定义要求发送给审核模型，审核会按你的习惯判断风险与授权。请只添加你真正愿意放行的规则。</string>

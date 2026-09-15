@@ -19,6 +19,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -162,11 +163,6 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     private val _pendingPermissionRequestCount = MutableStateFlow(0)
     private val pendingPermissionRequestCount = _pendingPermissionRequestCount.asStateFlow()
     
-    // Permission level flows
-    val masterSwitchFlow: Flow<PermissionLevel> = context.toolPermissionsDataStore.data.map { preferences ->
-        PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
-    }
-    
     /**
      * Get permission level flow for a specific tool
      * If no permission is set for the tool, returns ASK as default
@@ -195,6 +191,32 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         context.toolPermissionsDataStore.edit { preferences ->
             preferences[MASTER_SWITCH] = level.name
         }
+    }
+
+    /**
+     * The permission choice as the settings slider and the chat menus show it: the stored level and
+     * the reuse level that comes with it, in one ordered value.
+     */
+    val permissionStopFlow: Flow<ToolPermissionStop> =
+        combine(
+            context.toolPermissionsDataStore.data.map { preferences ->
+                PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
+            },
+            reviewPolicyStore.reviewModeFlow,
+        ) { level, mode -> ToolPermissionStop.of(level, mode) }
+
+    /**
+     * Applies one stop of the permission slider.
+     *
+     * The reuse level is written first on purpose. While the two writes are in flight the combined
+     * value can only be the previous stop or the chosen one: going ALLOW to AUTO_REVIEW_STRICT, the
+     * middle state is still ALLOW, whereas the other order would briefly show AUTO_REVIEW_FAST, a
+     * stop the user never picked and a looser one than the choice. Calls reviewed during that window
+     * still run under the previous permission level, which this same order keeps until the end.
+     */
+    suspend fun savePermissionStop(stop: ToolPermissionStop) {
+        stop.reviewMode?.let { mode -> reviewPolicyStore.saveReviewMode(mode) }
+        saveMasterSwitch(stop.level)
     }
     
     /**
