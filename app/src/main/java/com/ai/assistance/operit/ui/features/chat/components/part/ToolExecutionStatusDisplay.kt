@@ -17,13 +17,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.SubdirectoryArrowRight
+import androidx.compose.material.icons.outlined.GppBad
+import androidx.compose.material.icons.outlined.GppMaybe
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -38,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -437,58 +441,92 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
             PermissionReviewStatus.FAILED ->
                 stringResource(R.string.permission_review_lifecycle_failed)
         }
-    val statusColor =
-        if (event.status == PermissionReviewStatus.DENIED ||
+    // A refused, failed or timed-out review is the outcome the badge has to shout about. A review
+    // that was aborted — including one a restart left unfinished — decided nothing at all, so it
+    // stays neutral instead of borrowing the look of an approval.
+    val isNegativeOutcome =
+        event.status == PermissionReviewStatus.DENIED ||
             event.status == PermissionReviewStatus.FAILED ||
             event.status == PermissionReviewStatus.TIMED_OUT
-        ) MaterialTheme.colorScheme.error
-        else MaterialTheme.colorScheme.primary
-    Column(
+    val isUnresolved = event.status == PermissionReviewStatus.ABORTED
+    // Only a risk the reviewer itself assessed reads as high. A review that broke records a stand-in
+    // high risk, and a denial that follows it can be the user's own answer rather than the review's.
+    val isAssessedHighRisk =
+        event.failureKind == null &&
+            (event.riskLevel == PermissionReviewRiskLevel.HIGH ||
+                event.riskLevel == PermissionReviewRiskLevel.CRITICAL)
+    // A run of reviewed calls stays quiet: grey while the review is ordinary, whether it is running,
+    // allowed or left unfinished, and the error colour only when there is something to warn about.
+    val statusColor =
+        if (isNegativeOutcome) MaterialTheme.colorScheme.error
+        else MaterialTheme.colorScheme.onSurfaceVariant
+    // An outcome worth warning about is spelled out on the line, because the colour alone cannot say
+    // whether the call was refused, ran out of time, or never got an answer at all.
+    val badgeLabel =
+        stringResource(
+            when (event.status) {
+                PermissionReviewStatus.DENIED ->
+                    if (isAssessedHighRisk) {
+                        R.string.permission_review_badge_denied_high_risk
+                    } else {
+                        R.string.permission_review_badge_denied
+                    }
+                PermissionReviewStatus.TIMED_OUT -> R.string.permission_review_badge_timed_out
+                PermissionReviewStatus.FAILED -> R.string.permission_review_badge_failed
+                else -> R.string.permission_level_auto_review
+            }
+        )
+    // The badge names the outcome itself when it has one; for the quiet states the outcome lives in
+    // the colour alone, so a reader that cannot see it is told about it here, and told again when it
+    // changes.
+    val semanticsDescription =
+        if (isNegativeOutcome) badgeLabel
+        else stringResource(R.string.permission_review_badge_description, lifecycle)
+    // One short line per reviewed call. Which batch it belonged to, where the verdict came from and
+    // everything the reviewer said belong to the dialog this line opens, so a run of reviewed calls
+    // stays scannable. The colour only warns, the words name what the warning is, and the shield
+    // carries the outcome of the quiet states.
+    Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .minimumInteractiveComponentSize()
                 .clip(RoundedCornerShape(6.dp))
                 .clickable(role = Role.Button) { showDetails = true }
-                .semantics { liveRegion = LiveRegionMode.Polite }
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .semantics {
+                    liveRegion = LiveRegionMode.Polite
+                    contentDescription = semanticsDescription
+                }
+                .padding(start = 24.dp, end = 8.dp, top = 2.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text =
-                stringResource(
-                    R.string.permission_review_batch_lifecycle,
-                    event.batchPosition,
-                    event.batchSize,
-                    lifecycle,
-                    event.action.summary,
-                ),
-            style = MaterialTheme.typography.labelSmall,
-            color = statusColor,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        event.resolutionSource?.let { source ->
-            Text(
-                text =
-                    stringResource(
-                        when {
-                            // A reused approval is an allow, but it was not decided by the user or
-                            // by a settings change, so it must not borrow the "allow" wording.
-            source == ToolPermissionSystem.FAST_REVIEW_RESOLUTION_SOURCE ->
-                                R.string.permission_review_resolved_reused
-                            source.endsWith("allow") ->
-                                R.string.permission_review_resolved_allow
-                            else -> R.string.permission_review_resolved_deny
-                        }
-                    ),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        if (event.status == PermissionReviewStatus.IN_PROGRESS) {
+            CircularProgressIndicator(
+                // The same 16dp box as the settled icon, so the label does not move a pixel when
+                // the review ends and the shield takes the spinner's place.
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = statusColor,
+            )
+        } else {
+            Icon(
+                imageVector =
+                    when {
+                        isNegativeOutcome -> Icons.Outlined.GppBad
+                        isUnresolved -> Icons.Outlined.GppMaybe
+                        else -> Icons.Outlined.Security
+                    },
+                contentDescription = null,
+                tint = statusColor,
+                modifier = Modifier.size(16.dp),
             )
         }
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = stringResource(R.string.permission_review_tap_for_details),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            text = badgeLabel,
+            style = MaterialTheme.typography.labelMedium,
+            color = statusColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 
@@ -508,6 +546,36 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
                         color = statusColor,
                         fontWeight = FontWeight.SemiBold,
                     )
+                    // A call that travelled alone has no batch to place itself in.
+                    if (event.batchSize > 1) {
+                        Text(
+                            stringResource(
+                                R.string.permission_review_detail_batch,
+                                event.batchPosition,
+                                event.batchSize,
+                            )
+                        )
+                    }
+                    event.resolutionSource?.let { source ->
+                        Text(
+                            stringResource(
+                                R.string.permission_review_detail_resolution,
+                                stringResource(
+                                    when {
+                                        // A reused approval is an allow, but it was not decided by
+                                        // the user or by a settings change, so it must not borrow the
+                                        // "allow" wording.
+                                        source ==
+                                            ToolPermissionSystem.FAST_REVIEW_RESOLUTION_SOURCE ->
+                                            R.string.permission_review_resolved_reused
+                                        source.endsWith("allow") ->
+                                            R.string.permission_review_resolved_allow
+                                        else -> R.string.permission_review_resolved_deny
+                                    }
+                                ),
+                            )
+                        )
+                    }
                     if (event.status == PermissionReviewStatus.DENIED) {
                         Button(
                             enabled =
@@ -609,7 +677,15 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
                             )
                         )
                     }
-                    event.rationale?.takeIf(String::isNotBlank)?.let { rationale ->
+                    // A reused approval already says so in the line above, in the reader's own
+                    // language. The note stored for it is a fixed English sentence about where the
+                    // answer came from, not about this call, so it is never quoted back — not even
+                    // when a settings change rewrote the outcome of the same event.
+                    val rationale =
+                        event.rationale
+                            ?.takeIf(String::isNotBlank)
+                            ?.takeIf { it != ToolPermissionSystem.FAST_REVIEW_RATIONALE }
+                    if (rationale != null) {
                         Text(
                             stringResource(
                                 R.string.permission_review_detail_rationale,
