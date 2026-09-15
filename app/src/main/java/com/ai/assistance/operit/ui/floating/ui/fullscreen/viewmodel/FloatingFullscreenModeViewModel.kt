@@ -250,7 +250,15 @@ class FloatingFullscreenModeViewModel(
 
                     // 不要立即清空，等待流内容到达
                     aiStreamJob = coroutineScope.launch {
-                        handleStreamResponse(stream, ttsCleanerRegexs)
+                        try {
+                            handleStreamResponse(stream, ttsCleanerRegexs)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // 本轮失败（例如自动审核中断）会通过共享流交给每个订阅者；这里再抛一次
+                            // 只会触发进程级未捕获处理，把一次失败的对话变成崩溃上报。
+                            AppLogger.d(TAG, "全屏朗读流结束: ${e.message}")
+                        }
                     }
                 } else {
                     aiStreamJob?.cancel()

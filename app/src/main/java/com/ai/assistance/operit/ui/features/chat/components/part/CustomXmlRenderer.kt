@@ -44,6 +44,7 @@ import com.ai.assistance.operit.ui.common.markdown.ToolXmlRenderInstanceKey
 import com.ai.assistance.operit.ui.common.markdown.XmlContentRenderer
 import com.ai.assistance.operit.ui.common.markdown.XmlRenderPluginRegistry
 import com.ai.assistance.operit.ui.common.rememberLocal
+import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.DisplayEndMatchResult
@@ -53,10 +54,13 @@ import com.ai.assistance.operit.util.findDisplayEndTagRange
 import com.ai.assistance.operit.util.findMarkupTagEnd
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.stream
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+
+private const val TAG = "CustomXmlRenderer"
 
 /** 支持多种 XML 标签的自定义渲染器 包含高效的前缀检测，直接解析标签类型 */
 private const val TOOL_PARAM_TOKEN_THRESHOLD = 50
@@ -997,8 +1001,16 @@ class CustomXmlRenderer(
 
         val estimatedTokens by produceState(initialValue = fallbackEstimate, key1 = xmlStream) {
             val counter = XmlInnerTokenCounter(tagName = "tool")
-            xmlStream.collect { chunk ->
-                value = maxOf(value, counter.append(chunk))
+            try {
+                xmlStream.collect { chunk ->
+                    value = maxOf(value, counter.append(chunk))
+                }
+            } catch (error: Throwable) {
+                // A shared stream hands its failure to every subscriber, and this one runs in the
+                // composition's own coroutine: letting it out would end the process instead of the
+                // estimate. The initial value is what the UI shows either way.
+                if (error is CancellationException) throw error
+                AppLogger.e(TAG, "统计工具输出 token 失败: ${error.message}", error)
             }
         }
 
