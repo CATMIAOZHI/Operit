@@ -38,6 +38,11 @@ import type {
   WebThemeSnapshot,
   WebUploadedAttachment
 } from '../../../../util/chatTypes';
+import {
+  PERMISSION_STOPS,
+  PERMISSION_STOP_LABELS,
+  resolvePermissionStop
+} from '../../../../util/permissionStops';
 
 type InfoContent = {
   title: string;
@@ -89,7 +94,7 @@ const INFO_COPY = {
   autoApprove: {
     title: '工具权限',
     description:
-      '拒绝会阻止工具；询问由你确认；自动审核会直接放行可证明位于工作区内的操作，其余原本需要询问的交给独立代理（App 里分严格/快速两档，快速档可能复用最近一次低风险判定），失败或超时转回由你确认；单工具永久允许或拒绝优先。'
+      '禁止会阻止工具；询问由你确认；自动审核会直接放行可证明位于工作区内的操作，其余原本需要询问的交给独立代理（分严格/快速两档，快速档可能复用最近一次低风险判定），失败或超时转回由你确认；单工具永久允许或禁止优先。'
   },
   disableGroup: {
     title: '禁用项',
@@ -753,6 +758,7 @@ export function AgentChatInputSection({
       disable_stream_output: boolean;
       disable_user_preference_description: boolean;
       permission_level: string;
+      permission_stop: string;
     }>
   ) => Promise<void>;
   theme: WebThemeSnapshot | null;
@@ -795,26 +801,10 @@ export function AgentChatInputSection({
   const disableStreamOutput = inputSettings?.disable_stream_output ?? false;
   const disableUserPreferenceDescription =
     inputSettings?.disable_user_preference_description ?? false;
-  const permissionLevel = inputSettings?.permission_level ?? 'ASK';
-  const permissionLevels = ['ASK', 'AUTO_REVIEW', 'ALLOW', 'FORBID'] as const;
-  const permissionLabels: Record<(typeof permissionLevels)[number], string> = {
-    ASK: '询问',
-    AUTO_REVIEW: '自动审核',
-    ALLOW: '允许',
-    FORBID: '拒绝'
-  };
-  // WORKSPACE, WORKSPACE_REVIEWER and REVIEWER were merged into AUTO_REVIEW on the app side,
-  // so a value stored by an older build must keep reading as auto review here too.
-  const mergedPermissionLevels: Record<string, (typeof permissionLevels)[number]> = {
-    WORKSPACE: 'AUTO_REVIEW',
-    WORKSPACE_REVIEWER: 'AUTO_REVIEW',
-    REVIEWER: 'AUTO_REVIEW'
-  };
-  const normalizedPermissionLevel =
-    mergedPermissionLevels[permissionLevel] ??
-    (permissionLevels.includes(permissionLevel as (typeof permissionLevels)[number])
-      ? (permissionLevel as (typeof permissionLevels)[number])
-      : 'ASK');
+  const permissionStop = resolvePermissionStop(
+    inputSettings?.permission_stop,
+    inputSettings?.permission_level
+  );
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1078,7 +1068,7 @@ export function AgentChatInputSection({
                 <span
                   className={joinClasses(
                     'agent-settings-icon',
-                    normalizedPermissionLevel !== 'FORBID' && 'is-active'
+                    permissionStop !== 'FORBID' && 'is-active'
                   )}
                 >
                   <LockIcon size={16} />
@@ -1092,13 +1082,13 @@ export function AgentChatInputSection({
                   aria-label="工具权限"
                   className="agent-settings-select"
                   onChange={(event) => {
-                    void onUpdateInputSettings({ permission_level: event.target.value });
+                    void onUpdateInputSettings({ permission_stop: event.target.value });
                   }}
-                  value={normalizedPermissionLevel}
+                  value={permissionStop}
                 >
-                  {permissionLevels.map((level) => (
-                    <option key={level} value={level}>
-                      {permissionLabels[level]}
+                  {PERMISSION_STOPS.map((stop) => (
+                    <option key={stop} value={stop}>
+                      {PERMISSION_STOP_LABELS[stop]}
                     </option>
                   ))}
                 </select>

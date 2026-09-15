@@ -4395,7 +4395,7 @@
     <string name="voice_interaction_service_name">Pembantu AI Operit</string>
     <string name="voice_interaction_service_summary">Perkhidmatan pembantu suara pintar</string>
     <string name="tool_permissions_title">Keizinan Alat</string>
-    <string name="tool_permissions_description">Secara lalai, semua alat memerlukan anda "bertanya". Anda boleh menambah pengecualian di bawah.</string>
+    <string name="tool_permissions_description">Secara lalai, semua alat melalui semakan automatik: operasi dalam ruang kerja dijalankan terus dan yang lain dinilai oleh ejen semakan. Anda boleh menambah pengecualian di bawah.</string>
     <string name="global_permission_switch">Suis Keizinan Global</string>
     <string name="global_permission_switch_description">Tetapan ini berfungsi sebagai kawalan utama dan boleh mengatasi keizinan alat individu.</string>
     <string name="permission_level_allow">Benarkan</string>
@@ -4403,7 +4403,7 @@
     <string name="permission_level_forbid">Larang</string>
     <string name="permission_level_forbid_description">Alat-alat ini tidak akan berjalan sama sekali.</string>
     <string name="permission_level_ask">Tanya</string>
-    <string name="permission_level_ask_description">Tingkah laku lalai untuk semua alat.</string>
+    <string name="permission_level_ask_description">Alat ini bertanya kepada anda sebelum setiap panggilan.</string>
     <string name="add_tool">Tambah Alat</string>
     <string name="no_tools_in_group">Tiada alat ditambah dalam kumpulan ini.</string>
     <string name="remove_tool">Alih Keluar</string>

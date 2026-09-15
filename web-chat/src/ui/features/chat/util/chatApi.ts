@@ -346,6 +346,7 @@ export async function updateInputSettings(
     disable_stream_output: boolean;
     disable_user_preference_description: boolean;
     permission_level: string;
+    permission_stop: string;
   }>
 ): Promise<WebInputSettingsState> {
   return requestJson<WebInputSettingsState>(
