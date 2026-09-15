@@ -230,7 +230,8 @@ class ToolPermissionPoliciesTest {
                 reviewerRationale = "destructive action",
             ) as ToolPermissionDecision.Denied
         assertEquals(ToolPermissionDenialSource.AUTOMATIC_REVIEW, reviewDenial.source)
-        assertTrue(reviewDenial.rejection.contains("Do not retry"))
+        assertTrue(reviewDenial.rejection.contains("do not reach the same goal another way"))
+        assertTrue(reviewDenial.rejection.contains("retry the exact same action unchanged"))
         assertEquals("Tool execution denied by user.", permissionDeniedByUser().rejection)
     }
 
