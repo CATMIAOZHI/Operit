@@ -4124,7 +4124,7 @@
     <string name="voice_interaction_service_name">Assistente Operat AI</string>
     <string name="voice_interaction_service_summary">Serviço de assistente de voz inteligente</string>
     <string name="tool_permissions_title">Permissões de ferramentas</string>
-    <string name="tool_permissions_description">Por padrão, todas as ferramentas exigem que você “pergunte”. Você pode adicionar exceções abaixo.</string>
+    <string name="tool_permissions_description">Por padrão, todas as ferramentas passam pela revisão automática: as operações dentro do espaço de trabalho são executadas diretamente e o restante é avaliado pelo agente de revisão. Você pode adicionar exceções abaixo.</string>
     <string name="global_permission_switch">Troca de permissão global</string>
     <string name="global_permission_switch_description">Essa configuração atua como um controle mestre e pode substituir permissões de ferramentas individuais.</string>
     <string name="permission_level_allow">permitir</string>
@@ -4132,7 +4132,7 @@
     <string name="permission_level_forbid">proibir</string>
     <string name="permission_level_forbid_description">Essas ferramentas nunca funcionam.</string>
     <string name="permission_level_ask">perguntar</string>
-    <string name="permission_level_ask_description">Comportamento padrão para todas as ferramentas.</string>
+    <string name="permission_level_ask_description">Estas ferramentas perguntam a você antes de cada chamada.</string>
     <string name="add_tool">Adicionar ferramenta</string>
     <string name="no_tools_in_group">Nenhuma ferramenta foi adicionada a este grupo.</string>
     <string name="remove_tool">Remover</string>

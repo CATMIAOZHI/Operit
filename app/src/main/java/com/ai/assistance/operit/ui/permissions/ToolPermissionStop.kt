@@ -50,5 +50,26 @@ enum class ToolPermissionStop(
                     if (reviewMode == PermissionReviewMode.FAST) AUTO_REVIEW_FAST
                     else AUTO_REVIEW_STRICT
             }
+
+        /**
+         * The stop a name selects, or null when this build does not know the name.
+         *
+         * Callers that write a stop use null to leave the stored one alone rather than guess, and a
+         * level an older build stored reads as the strict stop for the same reason the slider shows
+         * it that way: those levels never answered a call from a stored verdict.
+         */
+        fun fromString(value: String?): ToolPermissionStop? =
+            when (value?.trim()?.uppercase()) {
+                FORBID.name, PermissionLevel.FORBID.name -> FORBID
+                ASK.name, PermissionLevel.ASK.name -> ASK
+                AUTO_REVIEW_STRICT.name,
+                PermissionLevel.AUTO_REVIEW.name,
+                "WORKSPACE",
+                "WORKSPACE_REVIEWER",
+                "REVIEWER" -> AUTO_REVIEW_STRICT
+                AUTO_REVIEW_FAST.name -> AUTO_REVIEW_FAST
+                ALLOW.name, PermissionLevel.ALLOW.name -> ALLOW
+                else -> null
+            }
     }
 }

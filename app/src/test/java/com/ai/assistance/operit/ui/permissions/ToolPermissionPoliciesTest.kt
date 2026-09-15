@@ -55,6 +55,30 @@ class ToolPermissionPoliciesTest {
     }
 
     @Test
+    fun aStoredOrRequestedNameSelectsOneStop() {
+        // The web chat names the stop, so the parse has to know every stop by name, and a name this
+        // build does not know has to read as "leave the stored choice alone" rather than pick one.
+        ToolPermissionStop.values().forEach { stop ->
+            assertEquals(stop, ToolPermissionStop.fromString(stop.name))
+        }
+        assertEquals(ToolPermissionStop.ASK, ToolPermissionStop.fromString(" ask "))
+        // A level an older build stored reads as the strict stop, exactly as the slider shows it,
+        // because those levels never answered a call from a stored verdict.
+        assertEquals(ToolPermissionStop.AUTO_REVIEW_STRICT, ToolPermissionStop.fromString("AUTO_REVIEW"))
+        assertEquals(ToolPermissionStop.AUTO_REVIEW_STRICT, ToolPermissionStop.fromString("WORKSPACE"))
+        assertEquals(
+            ToolPermissionStop.AUTO_REVIEW_STRICT,
+            ToolPermissionStop.fromString("WORKSPACE_REVIEWER"),
+        )
+        assertEquals(ToolPermissionStop.AUTO_REVIEW_STRICT, ToolPermissionStop.fromString("REVIEWER"))
+        assertEquals(ToolPermissionStop.FORBID, ToolPermissionStop.fromString("FORBID"))
+        assertEquals(ToolPermissionStop.ALLOW, ToolPermissionStop.fromString("ALLOW"))
+        assertNull(ToolPermissionStop.fromString("AUTO_REVIEW_FASTER"))
+        assertNull(ToolPermissionStop.fromString(""))
+        assertNull(ToolPermissionStop.fromString(null))
+    }
+
+    @Test
     fun anOlderStoredLevelKeepsTheStrictStopUntilTheUserPicksOne() {
         // Those levels never answered a call from a stored score, so showing the fast stop would
         // silently widen what the user had set.

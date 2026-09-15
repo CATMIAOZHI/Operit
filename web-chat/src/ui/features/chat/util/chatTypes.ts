@@ -347,6 +347,11 @@ export interface WebInputSettingsState {
     | 'ASK'
     | 'FORBID'
     | string;
+  /**
+   * The whole permission choice, level and reuse level together. Absent from an older app, which
+   * names only the level.
+   */
+  permission_stop?: string;
   current_window_tokens: number;
   base_context_length_k: number;
   max_context_length_k: number;

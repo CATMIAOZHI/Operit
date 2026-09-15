@@ -5,6 +5,7 @@ import com.ai.assistance.operit.integrations.http.WebInputSettingsState
 import com.ai.assistance.operit.integrations.http.WebUpdateInputSettingsRequest
 import com.ai.assistance.operit.services.ChatServiceCore
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
+import com.ai.assistance.operit.ui.permissions.ToolPermissionStop
 import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
 import java.util.Locale
 import kotlinx.coroutines.delay
@@ -16,7 +17,9 @@ internal class WebChatInputSettingsBridge(
 ) {
     suspend fun resolveState(): WebInputSettingsState {
         val apiConfigDelegate = core.getApiConfigDelegate()
+        val toolPermissionSystem = ToolPermissionSystem.getInstance(appContext)
         val permissionLevel = core.getUiStateDelegate().masterPermissionLevel.first()
+        val permissionStop = toolPermissionSystem.permissionStopFlow.first()
         val currentWindowTokens = core.currentWindowSizeFlow.first()
         val baseContextLengthK = apiConfigDelegate.effectiveBaseContextLength.first()
         val maxContextLengthK = apiConfigDelegate.effectiveMaxContextLengthSetting.first()
@@ -31,6 +34,7 @@ internal class WebChatInputSettingsBridge(
             disableStreamOutput = apiConfigDelegate.disableStreamOutput.first(),
             disableUserPreferenceDescription = apiConfigDelegate.disableUserPreferenceDescription.first(),
             permissionLevel = permissionLevel.name,
+            permissionStop = permissionStop.name,
             currentWindowTokens = currentWindowTokens,
             baseContextLengthK = baseContextLengthK,
             maxContextLengthK = maxContextLengthK,
@@ -84,11 +88,26 @@ internal class WebChatInputSettingsBridge(
                 apiConfigDelegate.toggleDisableUserPreferenceDescription()
             }
         }
-        request.permissionLevel?.trim()?.takeIf { it.isNotBlank() }?.let { rawValue ->
-            val target = PermissionLevel.fromString(rawValue.uppercase(Locale.US))
-            if (uiStateDelegate.masterPermissionLevel.value != target) {
-                toolPermissionSystem.saveMasterSwitch(target)
-                uiStateDelegate.updateMasterPermissionLevel(target)
+        val stopTarget =
+            request.permissionStop
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { rawValue -> ToolPermissionStop.fromString(rawValue.uppercase(Locale.US)) }
+        if (stopTarget != null) {
+            // A client that names the stop names the whole choice, so the level it carries is written
+            // with it and the level field is not applied on top of it.
+            if (toolPermissionSystem.permissionStopFlow.first() != stopTarget) {
+                toolPermissionSystem.savePermissionStop(stopTarget)
+                uiStateDelegate.updateMasterPermissionStop(stopTarget)
+            }
+        } else {
+            // A client from before the stops names only the level, and it keeps the stored reuse level.
+            request.permissionLevel?.trim()?.takeIf { it.isNotBlank() }?.let { rawValue ->
+                val target = PermissionLevel.fromString(rawValue.uppercase(Locale.US))
+                if (uiStateDelegate.masterPermissionLevel.value != target) {
+                    toolPermissionSystem.saveMasterSwitch(target)
+                    uiStateDelegate.updateMasterPermissionLevel(target)
+                }
             }
         }
 
@@ -98,6 +117,10 @@ internal class WebChatInputSettingsBridge(
     private suspend fun waitForUpdate(
         request: WebUpdateInputSettingsRequest
     ): WebInputSettingsState {
+        val requestedStop =
+            request.permissionStop
+                ?.trim()
+                ?.let { rawValue -> ToolPermissionStop.fromString(rawValue.uppercase(Locale.US)) }
         repeat(12) {
             val snapshot = resolveState()
             val matches =
@@ -119,7 +142,8 @@ internal class WebChatInputSettingsBridge(
                                 PermissionLevel.fromString(
                                     request.permissionLevel?.uppercase(Locale.US)
                                 ).name
-                    )
+                    ) &&
+                    (requestedStop == null || snapshot.permissionStop == requestedStop.name)
             if (matches) {
                 return snapshot
             }

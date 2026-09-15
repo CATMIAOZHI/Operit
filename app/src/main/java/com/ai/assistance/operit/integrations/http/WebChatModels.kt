@@ -677,6 +677,12 @@ data class WebInputSettingsState(
     val disableUserPreferenceDescription: Boolean,
     @SerialName("permission_level")
     val permissionLevel: String,
+    /**
+     * The whole permission choice, level and reuse level together. It is sent beside
+     * [permissionLevel] so a client that predates it still reads the level it knows.
+     */
+    @SerialName("permission_stop")
+    val permissionStop: String,
     @SerialName("current_window_tokens")
     val currentWindowTokens: Long,
     @SerialName("base_context_length_k")
@@ -708,7 +714,9 @@ data class WebUpdateInputSettingsRequest(
     @SerialName("disable_user_preference_description")
     val disableUserPreferenceDescription: Boolean? = null,
     @SerialName("permission_level")
-    val permissionLevel: String? = null
+    val permissionLevel: String? = null,
+    @SerialName("permission_stop")
+    val permissionStop: String? = null
 )
 
 @Serializable
