@@ -2912,7 +2912,7 @@
     <string name="function_desc_grep">Used for grep_context planning and result filtering (multi-round grep_code)</string>
     <string name="function_desc_role_response_planner">Dynamically plans speaking order and skip decisions in groups, supports multi-turn discussions</string>
     <string name="function_desc_permission_reviewer">Used by the “auto review” level to review tool calls independently. The reviewer can only use an internal result-submission tool and cannot execute the reviewed action; failures, timeouts, and invalid responses are handed back to you.</string>
-    <string name="function_desc_permission_risk_scorer">Used by the “auto review” fast level to score the risk of the tool calls being dispatched and answer with a single high or low token. A cheap, fast model is enough. Left on the default configuration, it follows the Permission Approval model.</string>
+    <string name="function_desc_permission_risk_scorer">Used by the “auto review” fast level to score the risk of the tool calls being dispatched. A cheap, fast model is enough. Left on the default configuration, it follows the Permission Approval model.</string>
 
     <!-- Functional Prompt Config Screen -->
     <string name="advanced_config_notice">For advanced configurations like modifying system prompt templates, please go to the \"Manage All Prompts\" page.</string>
@@ -8527,6 +8527,36 @@
     <string name="permission_review_denial_unique_actions">Distinct actions</string>
     <string name="permission_review_recent_denials_description">The 10 most recent distinct denied actions are shown below. Select one to open its review Subagent and inspect the full process.</string>
     <string name="permission_review_recent_denials_empty">This chat has no actions denied by automatic review</string>
+    <string name="permission_risk_scores_title">Pre-classification results</string>
+    <string name="permission_risk_scores_statistics">Pre-classification statistics</string>
+    <string name="permission_risk_scores_open">View pre-classification results</string>
+    <string name="permission_risk_scores_summary">%1$d batches scored · %2$d low risk · %3$d reviews saved</string>
+    <string name="permission_risk_scores_stat_total">Scoring started</string>
+    <string name="permission_risk_scores_stat_low">Low risk</string>
+    <string name="permission_risk_scores_stat_high">High risk</string>
+    <string name="permission_risk_scores_stat_unscored">Not scored</string>
+    <string name="permission_risk_scores_stat_answered">Reviews saved</string>
+    <string name="permission_risk_scores_description">This is what “Review Risk Scoring” in the function settings does on the fast level: when a tool batch is dispatched, a lightweight model judges the risk of that batch out of band. Only a low verdict saves later calls the review; a high, failed or unscored batch sends the call back to the review agent, and the pre-classification itself never denies anything.</string>
+    <string name="permission_risk_scores_empty">This chat has no pre-classification records yet. Only the “auto review · fast” level scores, and only with a scoring model configured while online.</string>
+    <string name="permission_risk_scores_strict">The current level is not “auto review · fast”, so no new pre-classification records are added.</string>
+    <string name="permission_risk_score_low">Low risk</string>
+    <string name="permission_risk_score_high">High risk</string>
+    <string name="permission_risk_score_failed">Scoring failed</string>
+    <string name="permission_risk_score_skipped">Not scored</string>
+    <string name="permission_risk_score_running">Scoring</string>
+    <string name="permission_risk_score_batch">%1$d of this batch\'s %2$d actions need a judgment</string>
+    <string name="permission_risk_score_batch_no_action">Nothing in this batch needed a review</string>
+    <string name="permission_risk_score_answered">Saved %1$d reviews for later calls</string>
+    <string name="permission_risk_score_not_used">No call has used this verdict yet</string>
+    <string name="permission_risk_score_failed_detail">This scoring run produced no usable result, so it was treated as high risk and later calls go back to the review agent.</string>
+    <string name="permission_risk_score_discarded">This record retired the previous pre-classification verdict, so later calls are judged again.</string>
+    <string name="permission_risk_score_refused">This batch held an action your settings refuse outright.</string>
+    <string name="permission_risk_skip_strict">The current level is not the fast one, so nothing is pre-classified.</string>
+    <string name="permission_risk_skip_no_action">Nothing in this batch needed a review.</string>
+    <string name="permission_risk_skip_no_model">No scoring model is configured.</string>
+    <string name="permission_risk_skip_offline">The device is offline, so nothing is scored for now.</string>
+    <string name="permission_risk_skip_cooldown">Scoring failed repeatedly and is cooling down; it resumes on its own.</string>
+    <string name="permission_risk_skip_retained">Your earlier instructions, rule files and user profile could not be read, so nothing was scored and later calls go back to the review agent.</string>
     <string name="permission_review_open_subagent_details">Open review Subagent details</string>
     <string name="permission_review_subagent_unavailable">The corresponding review Subagent is unavailable</string>
     <string name="permission_review_allow_exact_once">Authorize re-review of exact action</string>
