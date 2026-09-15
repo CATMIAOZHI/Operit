@@ -36,10 +36,26 @@ internal data class PermissionReviewRetainedInstructions(
 )
 
 internal object PermissionReviewRetainedInstructionsReader {
-    internal const val MAX_CHARS = 8_000
-    internal const val MAX_AGENT_RULE_CHARS = 2_500
-    internal const val MAX_USER_PROFILE_CHARS = 2_000
-    internal const val MAX_USER_MESSAGE_CHARS = 800
+    /**
+     * The evidence budget for the retained instructions. It is deliberately wider than a few
+     * hundred characters per message, because a user request is routinely longer than that and a
+     * cap that low reports a restriction as unfinished for no reason. The rule file and the user
+     * document get their own caps so a long workspace rule file cannot crowd out the messages that
+     * say what to do right now.
+     *
+     * The blocks are ordered, and each block itself oldest first, so the part that changes least
+     * comes first: a provider that caches prompt prefixes then reuses the rule file and the profile
+     * document across the messages of one turn instead of paying for them on every classification.
+     *
+     * The block stays bounded, the newest messages are kept first, a piece too long for its own cap
+     * is cut with its markers, and a piece that does not fit the budget at all is dropped whole.
+     * Either way [PermissionReviewRetainedInstructions.complete] goes false and the host notice
+     * tells the reviewer not to read what is left as complete authorization.
+     */
+    internal const val MAX_CHARS = 40_000
+    internal const val MAX_AGENT_RULE_CHARS = 24_000
+    internal const val MAX_USER_PROFILE_CHARS = 8_000
+    internal const val MAX_USER_MESSAGE_CHARS = 4_000
 
     private const val TAG = "PermissionRetainedInstructions"
     private const val START_MARKER = ">>> RETAINED USER INSTRUCTIONS START"

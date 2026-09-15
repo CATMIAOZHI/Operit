@@ -597,10 +597,7 @@ object ToolExecutionManager {
         toolExposureMode: ToolExposureMode
     ): ToolResult? {
         val toolName = invocation.tool.name.trim()
-        if (
-            toolName in PermissionReviewInternalTools.names ||
-                AgentRunObservers.isCapabilityTool(toolName)
-        ) {
+        if (PermissionReviewInternalTools.bypassesPermissionCheck(toolName)) {
             return null
         }
         val useEnglish = isEnglishLanguage(context)
@@ -767,10 +764,7 @@ object ToolExecutionManager {
         deferCircuitBreaker: Boolean = false,
         liveAssistantContent: String? = null,
     ): ToolPermissionCheckResult {
-        if (
-            invocation.tool.name in PermissionReviewInternalTools.names ||
-                AgentRunObservers.isCapabilityTool(invocation.tool.name)
-        ) {
+        if (PermissionReviewInternalTools.bypassesPermissionCheck(invocation.tool.name)) {
             toolHandler.notifyToolPermissionChecked(
                 invocation.tool,
                 granted = true,

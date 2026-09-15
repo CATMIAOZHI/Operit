@@ -11,11 +11,14 @@ import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -234,15 +237,45 @@ object PermissionReviewEventRepository {
     private val lock = Any()
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     @Volatile private var applicationContext: Context? = null
+    @Volatile private var storedEventsLoaded = false
+    private val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _events = MutableStateFlow<List<PermissionReviewEvent>>(emptyList())
     val events: StateFlow<List<PermissionReviewEvent>> = _events.asStateFlow()
 
+    /**
+     * Registers the stored history. Reading and decoding it happen off the calling thread, because
+     * the chat screen's first composition used to do that work itself and blocked the main thread
+     * for over a second once the list was full.
+     */
     fun initialize(context: Context) {
         if (applicationContext != null) return
         synchronized(lock) {
             if (applicationContext != null) return
-            val appContext = context.applicationContext
-            applicationContext = appContext
+            applicationContext = context.applicationContext
+        }
+        loadScope.launch { ensureStoredEventsLoaded() }
+    }
+
+    /**
+     * Makes sure the stored events are in memory before a caller reads or rewrites them, so a call
+     * that arrives while the background load is still running cannot drop the part of the history
+     * it has not seen yet. A caller that arrives first therefore performs the load itself, on its
+     * own thread: in practice that is the review pipeline right after a cold start, where the work
+     * belongs, and not the composition that made the load asynchronous in the first place.
+     */
+    private fun ensureStoredEventsLoaded() {
+        if (storedEventsLoaded) return
+        synchronized(lock) {
+            if (storedEventsLoaded) return
+            loadStoredEventsLocked()
+        }
+    }
+
+    private fun loadStoredEventsLocked() {
+        // Nothing has been registered to load before initialize stores the context, and that is not
+        // the same as having loaded: leaving the flag down lets the next caller retry.
+        val appContext = applicationContext ?: return
+        try {
             val stored =
                 runCatching {
                         appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
@@ -264,7 +297,7 @@ object PermissionReviewEventRepository {
                         }
                         .getOrNull()
                 if (decoded != null) {
-                    _events.value =
+                    val storedEvents =
                         decoded
                         .map { event ->
                             val base =
@@ -303,15 +336,25 @@ object PermissionReviewEventRepository {
                             }
                         }
                         .takeLast(MAX_EVENTS)
-                    // Rewrite immediately so older builds cannot leave sensitive summaries or
-                    // stale in-progress/override flags on disk until the next review event.
+                    // Kept for the writers that run before initialize has a context: they add an
+                    // event and their rewrite writes nothing, so without this merge the assignment
+                    // below would drop that event together with the history it is joining.
+                    val pending =
+                        _events.value.filterNot { event -> storedEvents.any { it.id == event.id } }
+                    _events.value = (storedEvents + pending).takeLast(MAX_EVENTS)
+                    // Rewrite immediately so older builds cannot leave sensitive summaries or stale
+                    // in-progress/override flags on disk until the next review event.
                     persistLocked()
                 }
             }
+        } finally {
+            // A failed rewrite must not send every later caller through the read again.
+            storedEventsLoaded = true
         }
     }
 
     fun publish(event: PermissionReviewEvent) {
+        ensureStoredEventsLoaded()
         synchronized(lock) {
             val retained = _events.value.filterNot { existing -> existing.id == event.id }
             _events.value = (retained + event).takeLast(MAX_EVENTS)
@@ -320,25 +363,30 @@ object PermissionReviewEventRepository {
     }
 
     fun update(id: String, transform: (PermissionReviewEvent) -> PermissionReviewEvent) {
+        ensureStoredEventsLoaded()
         synchronized(lock) {
             _events.value = _events.value.map { event -> if (event.id == id) transform(event) else event }
             persistLocked()
         }
     }
 
-    fun findById(id: String): PermissionReviewEvent? =
-        _events.value.firstOrNull { event -> event.id == id }
+    fun findById(id: String): PermissionReviewEvent? {
+        ensureStoredEventsLoaded()
+        return _events.value.firstOrNull { event -> event.id == id }
+    }
 
     fun findForInvocation(
         parentChatId: String,
         timingScopeId: String?,
         invocationIndex: Int,
-    ): PermissionReviewEvent? =
-        _events.value.lastOrNull { event ->
+    ): PermissionReviewEvent? {
+        ensureStoredEventsLoaded()
+        return _events.value.lastOrNull { event ->
             event.parentChatId == parentChatId &&
                 event.timingScopeId == timingScopeId &&
                 event.invocationIndex == invocationIndex
         }
+    }
 
     fun recentDenials(parentChatId: String): kotlinx.coroutines.flow.Flow<List<PermissionReviewEvent>> =
         events.map { allEvents ->
@@ -352,6 +400,7 @@ object PermissionReviewEventRepository {
         }
 
     fun approveExactActionOnce(reviewId: String): Boolean {
+        ensureStoredEventsLoaded()
         val event = _events.value.firstOrNull { it.id == reviewId } ?: return false
         if (event.status != PermissionReviewStatus.DENIED) return false
         val expiresAt = PermissionReviewExactOverrideStore.record(
