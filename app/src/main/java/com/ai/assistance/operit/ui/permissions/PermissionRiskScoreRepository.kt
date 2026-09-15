@@ -43,7 +43,26 @@ internal data class PermissionRiskScoreRecord(
     /** A batch action the user's own settings refuse, which no reviewer ever judges. */
     val refusedBySettings: Boolean = false,
     val answeredCalls: Int = 0,
+    /** The tools the batch dispatched, bounded, so the row says what was judged. */
+    val toolNames: List<String> = emptyList(),
 )
+
+/** How many tool names one record keeps: a batch can hold many calls, and the row shows them all. */
+internal const val MAX_RECORDED_BATCH_TOOLS = 6
+
+/** A tool name comes from the package that registered it, so one long name cannot grow the store. */
+internal const val MAX_RECORDED_TOOL_NAME_CHARS = 48
+
+/**
+ * The tools a batch asked the classifier about, in the order they were dispatched. The list is
+ * distinct and bounded, and a batch that dispatched the same tool twice is named once.
+ */
+internal fun permissionRiskBatchToolNames(actions: List<PermissionRiskAction>): List<String> =
+    actions
+        .map { action -> action.canonical.toolName.trim().take(MAX_RECORDED_TOOL_NAME_CHARS) }
+        .filter(String::isNotEmpty)
+        .distinct()
+        .take(MAX_RECORDED_BATCH_TOOLS)
 
 /** How one record reads: what the classifier decided, or why it never ran. */
 internal enum class PermissionRiskScoreDisplay {

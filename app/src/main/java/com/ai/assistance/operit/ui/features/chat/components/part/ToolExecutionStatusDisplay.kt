@@ -27,7 +27,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -517,9 +516,9 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
         modifier =
             Modifier
                 .fillMaxWidth()
-                // The row is the only way into the review details, so it keeps a full touch target
-                // even though its contents are one short line.
-                .minimumInteractiveComponentSize()
+                // The line stays as tall as its own text: a run of reviewed calls has to read as a
+                // run, and a full touch target on every one of them turned that run into a column of
+                // 48dp rows. The row is still the way into the review details.
                 .clip(RoundedCornerShape(6.dp))
                 .clickable(role = Role.Button) { showDetails = true }
                 // The line already carries the outcome, so it is set once instead of being merged
