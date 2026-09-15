@@ -310,6 +310,21 @@ fun <T> MutableStateStream(initialValue: T): MutableStateStream<T> {
     return MutableStateStreamImpl(initialValue)
 }
 
+/**
+ * 在 root launch 里执行完成回调。
+ *
+ * 回调与上游收集共用一个 root 协程：回调抛出的异常既会掩盖真正的失败原因，又会从 root launch
+ * 逃逸到进程级未捕获处理，把一次失败的对话变成崩溃上报。
+ */
+internal suspend fun runCompletionHandler(onComplete: suspend () -> Unit) {
+    try {
+        onComplete()
+    } catch (error: Throwable) {
+        if (error is CancellationException) throw error
+        StreamLogger.e("share", "onComplete 失败: ${error.message}", error)
+    }
+}
+
 /** 将Stream转变为热流，类似于Flow的shareIn */
 fun <T> Stream<T>.share(
         scope: CoroutineScope,
@@ -338,7 +353,7 @@ fun <T> Stream<T>.share(
                             // 但由于SharedFlow本身不会"关闭"，依赖协程的结构化并发来清理是最好的方式。
                             // 此处的finally确保了协程在任何情况下（完成、取消、异常）都能结束。
                             sharedStream.close(failure) // 关闭流以允许收集器完成
-                            onComplete()
+                            runCompletionHandler(onComplete)
                         }
                     }
         }
@@ -360,7 +375,7 @@ fun <T> Stream<T>.share(
                                             if (error is CancellationException) throw error
                                         } finally {
                                             sharedStream.close(failure) // 关闭流以允许收集器完成
-                                            onComplete()
+                                            runCompletionHandler(onComplete)
                                         }
                                     }
                         } else if (count == 0) {
@@ -383,7 +398,7 @@ fun <T> Stream<T>.share(
                             if (error is CancellationException) throw error
                         } finally {
                             sharedStream.close(failure) // 关闭流以允许收集器完成
-                            onComplete()
+                            runCompletionHandler(onComplete)
                         }
                     }
                 }

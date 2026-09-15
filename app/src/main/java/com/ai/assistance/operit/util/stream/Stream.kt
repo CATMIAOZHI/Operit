@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.util.stream
 
 import com.ai.assistance.operit.util.AppLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
@@ -21,6 +22,10 @@ object StreamLogger {
     fun setEnabled(enabled: Boolean) {
         this.enabled = enabled
     }
+
+    /** 当前是否记录日志；调用方改动前先读它，才能把原值还回去。 */
+    val isEnabled: Boolean
+        get() = enabled
 
     /** 启用或禁用详细日志 */
     fun setVerboseEnabled(enabled: Boolean) {
@@ -243,9 +248,16 @@ fun <T> Stream<T>.asFlow(): Flow<T> = StreamAsFlow(this)
 fun <T> Stream<T>.launchIn(scope: CoroutineScope, onEach: suspend (T) -> Unit = {}): Job {
     StreamLogger.d("Stream.launchIn", "在协程作用域中启动Stream收集")
     return scope.launch {
-        collect { value ->
-            StreamLogger.v("Stream.launchIn", "收集到元素: $value")
-            onEach(value)
+        try {
+            collect { value ->
+                StreamLogger.v("Stream.launchIn", "收集到元素: $value")
+                onEach(value)
+            }
+        } catch (error: Throwable) {
+            // 收集失败是这条流自己的结局，交给进程级未捕获处理就会变成崩溃上报；与 share()/state()
+            // 一样在这里记下来，调用方只会看到 Job 结束。
+            if (error is CancellationException) throw error
+            StreamLogger.e("Stream.launchIn", "Stream收集失败: ${error.message}", error)
         }
     }
 }
