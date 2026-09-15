@@ -33,6 +33,7 @@ import com.ai.assistance.operit.ui.permissions.PermissionLevel
 import com.ai.assistance.operit.ui.permissions.PermissionReviewMode
 import com.ai.assistance.operit.ui.permissions.PermissionReviewPolicyStore
 import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
+import com.ai.assistance.operit.ui.permissions.defaultPermissionLevelFor
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -284,10 +285,19 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
         }
 
         item {
+            // A tool that carries its own default level is allowed without the user choosing it, so
+            // it belongs in this list instead of in none of them. Its chip has no remove button:
+            // there is no stored choice to clear, and giving it another level is what overrides it.
+            val allowedByDefault =
+                allTools.filter { toolName ->
+                    toolName !in toolPermissions &&
+                        defaultPermissionLevelFor(toolName, masterSwitch) == PermissionLevel.ALLOW
+                }
             PermissionGroup(
                 level = PermissionLevel.ALLOW,
                 allTools = allTools,
                 toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.ALLOW }.keys,
+                defaultTools = allowedByDefault.toSet(),
                 toolHandler = toolHandler,
                 onToolToggled = { toolName -> handlePermissionChange(toolName, PermissionLevel.ALLOW) }
             )
@@ -330,6 +340,7 @@ private fun PermissionGroup(
     level: PermissionLevel,
     allTools: List<String>,
     toolsInLevel: Set<String>,
+    defaultTools: Set<String> = emptySet(),
     toolHandler: AIToolHandler,
     onToolToggled: (String) -> Unit
 ) {
@@ -382,14 +393,26 @@ private fun PermissionGroup(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            if (toolsInLevel.isNotEmpty()) {
-                toolsInLevel.forEach { toolName ->
-                    ToolChip(toolName = toolName, onRemove = { onToolToggled(toolName) })
+            val chips = toolsInLevel + defaultTools
+            if (chips.isNotEmpty()) {
+                chips.forEach { toolName ->
+                    val onRemove: (() -> Unit)? =
+                        if (toolName in defaultTools) null else { { onToolToggled(toolName) } }
+                    ToolChip(toolName = toolName, onRemove = onRemove)
                 }
             } else {
                 Text(
                     stringResource(R.string.no_tools_in_group),
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (defaultTools.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.permission_level_allow_default_hint),
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -408,7 +431,7 @@ private fun PermissionGroup(
 }
 
 @Composable
-private fun ToolChip(toolName: String, onRemove: () -> Unit) {
+private fun ToolChip(toolName: String, onRemove: (() -> Unit)?) {
     Row(
         modifier = Modifier
             .padding(vertical = 4.dp)
@@ -424,14 +447,16 @@ private fun ToolChip(toolName: String, onRemove: () -> Unit) {
             modifier = Modifier.weight(1f),
             color = MaterialTheme.colorScheme.onSecondaryContainer
         )
-        Icon(
-            imageVector = Icons.Default.Close,
-            contentDescription = stringResource(R.string.remove_tool),
-            modifier = Modifier
-                .size(18.dp)
-                .clickable { onRemove() },
-            tint = MaterialTheme.colorScheme.onSecondaryContainer
-        )
+        if (onRemove != null) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = stringResource(R.string.remove_tool),
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable { onRemove() },
+                tint = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+        }
     }
 }
 

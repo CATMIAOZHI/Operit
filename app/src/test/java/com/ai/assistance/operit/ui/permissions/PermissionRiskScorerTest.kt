@@ -97,6 +97,38 @@ class PermissionRiskScorerTest {
     }
 
     @Test
+    fun `a batch with nothing to score ages the score without failing it`() {
+        // A batch the permission system was never asked about takes a step, so the verdict ages, but
+        // it must not be reported as a failure: a hand-off to another agent is not a scoring failure.
+        assertFalse(
+            permissionRiskSkipDiscardsScore(
+                reason = PermissionRiskScoringSkip.NO_SCORABLE_ACTION,
+                refusedBySettings = false,
+            )
+        )
+        // An action the user's own settings refused is not nothing, so it still discards the verdict.
+        assertTrue(
+            permissionRiskSkipDiscardsScore(
+                reason = PermissionRiskScoringSkip.NO_SCORABLE_ACTION,
+                refusedBySettings = true,
+            )
+        )
+        // Every other reason is a classification that should have happened and did not.
+        listOf(
+                PermissionRiskScoringSkip.STRICT_MODE,
+                PermissionRiskScoringSkip.NO_MODEL,
+                PermissionRiskScoringSkip.OFFLINE,
+                PermissionRiskScoringSkip.COOLDOWN,
+            )
+            .forEach { reason ->
+                assertTrue(
+                    reason.toString(),
+                    permissionRiskSkipDiscardsScore(reason, refusedBySettings = false),
+                )
+            }
+    }
+
+    @Test
     fun `a changed authorization invalidates the score`() {
         assertEquals(
             PermissionFastPathDeferral.AUTHORIZATION_CHANGED,

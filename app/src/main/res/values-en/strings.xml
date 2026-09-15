@@ -5075,6 +5075,7 @@
     <string name="global_permission_switch_description">This setting controls the default behavior. Per-tool exceptions such as “always allow/deny” take precedence.</string>
     <string name="permission_level_allow">Allowed</string>
     <string name="permission_level_allow_description">These tools will run automatically.</string>
+    <string name="permission_level_allow_default_hint">Subagent collaboration tools (spawn_agent and friends) are allowed by default, with no switch of their own. To give one a different level, add it in another group below.</string>
     <string name="permission_level_auto_review">Auto review</string>
     <string name="permission_level_auto_review_description">Provably in-workspace operations run directly; every other call that would ask is reviewed by an isolated independent agent, and failures, timeouts, or invalid responses fall back to you. Permanent per-tool allow or deny rules always take precedence. This mode is not an OS sandbox.</string>
     <string name="permission_level_forbid">Forbidden</string>

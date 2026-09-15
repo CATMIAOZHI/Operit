@@ -7,6 +7,7 @@ import com.ai.assistance.operit.core.config.SystemToolPrompts
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.protocol.ExecutableToolProtocolParser
 import com.ai.assistance.operit.core.agent.SubagentToolPolicy
+import com.ai.assistance.operit.core.agent.collaboration.CollaborationTools
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.AIToolHookDecision
@@ -1007,11 +1008,12 @@ object ToolExecutionManager {
                 val resolvedTool = resolveToolTarget(invocation.tool).tool
                 // Fingerprint the raw model call: the bound copy has canonicalized proxy params.
                 val consecutiveCount = subagentToolLoopGuard.record(rawToolsByIndex[index])
-                if (resolvedTool.name == "task") {
-                    // Nested Subagents are rejected below, so they must never trigger
-                    // an approval dialog that cannot make the invocation executable.
-                    // Recording first still lets this distinct call break another
-                    // tool's exact-repeat sequence.
+                if (CollaborationTools.isCollaborationTool(resolvedTool.name)) {
+                    // Handing work to another agent carries no side effect of its own and is allowed
+                    // by default, so repeating it is not the runaway loop this guard looks for. The
+                    // legacy task is also rejected below, where an approval dialog could not have
+                    // made the invocation executable. Recording first still lets this distinct call
+                    // break another tool's exact-repeat sequence.
                     continue
                 }
                 if (consecutiveCount < SUBAGENT_EXACT_REPEAT_REVIEW_THRESHOLD) {

@@ -11,6 +11,7 @@ object CollaborationToolPolicy {
             isSubTask || chatId.isNullOrBlank() -> 0
             else -> AgentProfileRepository.instance.apply { initialize(context) }.versionForChat(chatId)
         }
-        return CollaborationTools.names.associateWith { version == 2 } + ("task" to (version == 1))
+        return CollaborationTools.names.associateWith { version == 2 } +
+            (CollaborationTools.LEGACY_TASK_NAME to (version == 1))
     }
 }

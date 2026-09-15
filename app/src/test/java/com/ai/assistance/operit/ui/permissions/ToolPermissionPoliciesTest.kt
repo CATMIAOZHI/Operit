@@ -77,6 +77,41 @@ class ToolPermissionPoliciesTest {
     }
 
     @Test
+    fun collaborationToolsAreAllowedWithoutTheUserChoosingThem() {
+        // The v2 surface and the legacy v1 dispatcher both hand work to another agent, so neither may
+        // stop to ask about the hand-off itself. Every other tool keeps following the global default.
+        listOf(
+                "spawn_agent",
+                "send_message",
+                "followup_task",
+                "interrupt_agent",
+                "list_agents",
+                "wait_agent",
+                "list_agent_models",
+                "task",
+            )
+            .forEach { toolName ->
+                assertEquals(
+                    toolName,
+                    PermissionLevel.ALLOW,
+                    defaultPermissionLevelFor(toolName, PermissionLevel.AUTO_REVIEW),
+                )
+            }
+        assertNull(defaultPermissionLevelFor("read_file", PermissionLevel.AUTO_REVIEW))
+        assertNull(defaultPermissionLevelFor("terminal", PermissionLevel.ASK))
+        // A global forbid is a whitelist, so it wins over the built-in default. An explicit per-tool
+        // choice still wins over both, exactly as it does for every other tool.
+        assertNull(defaultPermissionLevelFor("spawn_agent", PermissionLevel.FORBID))
+        assertEquals(
+            PermissionLevel.FORBID,
+            resolveEffectivePermissionLevel(
+                masterLevel = PermissionLevel.FORBID,
+                toolOverride = defaultPermissionLevelFor("spawn_agent", PermissionLevel.FORBID),
+            ),
+        )
+    }
+
+    @Test
     fun permanentOverrideWinsIfItChangesWhileReviewerOrExplicitApprovalIsPending() {
         assertTrue(
             resolveApprovalDecisionWithPermanentOverride(
