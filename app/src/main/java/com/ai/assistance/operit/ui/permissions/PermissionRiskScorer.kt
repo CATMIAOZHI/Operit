@@ -20,9 +20,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /** Hard binary verdict of the asynchronous classifier, mirroring the Codex adaptive scorer. */
+@Serializable
 internal enum class PermissionRiskVerdict {
     LOW,
     HIGH,
@@ -70,13 +72,35 @@ internal enum class PermissionFastPathDeferral {
 }
 
 /** Why a dispatched batch was not scored. Every reason leaves the batch to the blocking reviewer. */
+@Serializable
 internal enum class PermissionRiskScoringSkip {
     STRICT_MODE,
     NO_SCORABLE_ACTION,
     NO_MODEL,
     OFFLINE,
     COOLDOWN,
+    /** A source of the user's own retained instructions could not be read at all. */
+    RETAINED_INSTRUCTIONS_UNAVAILABLE,
 }
+
+/**
+ * Whether a batch that was not scored deserves a row on the pre-classification page.
+ *
+ * The level being strict and the batch holding nothing a reviewer would judge are both the designed
+ * outcome of a dispatched batch, not an event: one row each would fill the bounded history with
+ * batches where nothing happened, and push out the records of the chats that did score. A reason
+ * behind a missing score that the user can act on (a model, a connection, a cooldown, an unreadable
+ * instruction source) is worth saying, because it explains calls that fell back to the reviewer.
+ */
+internal fun permissionRiskSkipIsReported(reason: PermissionRiskScoringSkip): Boolean =
+    when (reason) {
+        PermissionRiskScoringSkip.STRICT_MODE,
+        PermissionRiskScoringSkip.NO_SCORABLE_ACTION -> false
+        PermissionRiskScoringSkip.NO_MODEL,
+        PermissionRiskScoringSkip.OFFLINE,
+        PermissionRiskScoringSkip.COOLDOWN,
+        PermissionRiskScoringSkip.RETAINED_INSTRUCTIONS_UNAVAILABLE -> true
+    }
 
 /**
  * Whether a batch that was not scored must also discard the stored verdict.
@@ -206,6 +230,9 @@ internal class PermissionRiskScorer private constructor(context: Context) {
         workspaceEnv: String?,
         liveAssistantContent: String?,
     ) {
+        // Registering the history here, rather than only where it is read, is what makes a record of
+        // the first batch durable: the page that shows them may never be opened in this process.
+        PermissionRiskScoreRepository.initialize(appContext)
         val scopeId = PermissionReviewChatScope.resolveRootChatId(appContext, callerChatId) ?: return
         val progress = progressByScope.getOrPut(scopeId) { ScopeProgress() }
         val step =
@@ -217,6 +244,24 @@ internal class PermissionRiskScorer private constructor(context: Context) {
             }
         pruneScopes()
         val scorableActions = actions.filter(PermissionRiskAction::scorable)
+        val recordStartedAt = System.currentTimeMillis()
+        // One record per batch, keyed by the batch's own step so the running classification and the
+        // skip below land on the same row. The id also carries the process generation, so a batch of
+        // this process cannot take the place of an earlier process's record at the same step.
+        fun record(
+            complete: (PermissionRiskScoreRecord) -> PermissionRiskScoreRecord = { it }
+        ): PermissionRiskScoreRecord =
+            complete(
+                PermissionRiskScoreRecord(
+                    id = PermissionRiskScoreRepository.recordId(parentChatId = scopeId, step = step),
+                    parentChatId = scopeId,
+                    step = step,
+                    startedAt = recordStartedAt,
+                    scorableActions = scorableActions.size,
+                    totalActions = actions.size,
+                    refusedBySettings = actions.any(PermissionRiskAction::refusedBySettings),
+                )
+            )
         val modelSelection =
             runCatching {
                     functionalConfigManager.getEffectiveConfigMappingForFunction(
@@ -255,6 +300,17 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                 TAG,
                 "Risk scoring skipped ($unavailableReason) for step=$step, discarded=$discarded"
             )
+            if (permissionRiskSkipIsReported(unavailableReason)) {
+                PermissionRiskScoreRepository.publish(
+                    record {
+                        it.copy(
+                            completedAt = System.currentTimeMillis(),
+                            skip = unavailableReason,
+                            discardedStoredScore = discarded,
+                        )
+                    }
+                )
+            }
             return
         }
 
@@ -274,6 +330,16 @@ internal class PermissionRiskScorer private constructor(context: Context) {
             AppLogger.w(
                 TAG,
                 "Risk scoring skipped: the retained user instructions are unavailable for step=$step"
+            )
+            PermissionRiskScoreRepository.publish(
+                record {
+                    it.copy(
+                        completedAt = System.currentTimeMillis(),
+                        skip = PermissionRiskScoringSkip.RETAINED_INSTRUCTIONS_UNAVAILABLE,
+                        // Nothing may answer a later call from the score this batch just retired.
+                        discardedStoredScore = true,
+                    )
+                }
             )
             return
         }
@@ -314,6 +380,7 @@ internal class PermissionRiskScorer private constructor(context: Context) {
             "Risk scoring started: step=$step, model=$modelKey, actions=${actions.size}, " +
                 "retained_complete=${retained.complete}, scorable=${scorableActions.size}"
         )
+        PermissionRiskScoreRepository.publish(record())
         workScope.launch {
             val verdict = classify(input = input, modelKey = modelKey.orEmpty())
             if (verdict == null) {
@@ -332,6 +399,14 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                 )
                 markStepFailed(scopeId = scopeId, progress = progress, step = step)
                 AppLogger.w(TAG, "Risk scoring failed closed: step=$step, model=$modelKey")
+                PermissionRiskScoreRepository.publish(
+                    record {
+                        it.copy(
+                            completedAt = System.currentTimeMillis(),
+                            failedClosed = true,
+                        )
+                    }
+                )
                 return@launch
             }
             noteSuccess(modelKey.orEmpty())
@@ -346,6 +421,14 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                     ),
             )
             AppLogger.i(TAG, "Risk scoring completed: step=$step, verdict=$verdict")
+            PermissionRiskScoreRepository.publish(
+                record {
+                    it.copy(
+                        completedAt = System.currentTimeMillis(),
+                        verdict = verdict,
+                    )
+                }
+            )
         }
     }
 
@@ -370,7 +453,16 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                     stepTurnScopeId = progress.stepTurnScopeId,
                 )
             }
-        return resolvePermissionFastPath(progress = snapshot, turnScopeId = turnScopeId)
+        val deferral = resolvePermissionFastPath(progress = snapshot, turnScopeId = turnScopeId)
+        if (deferral == null) {
+            // This call never reaches the reviewer, so the verdict that answered it is what the user
+            // got instead of a review.
+            PermissionRiskScoreRepository.noteAnsweredCall(
+                parentChatId = scopeId,
+                step = snapshot.latestScoredStep,
+            )
+        }
+        return deferral
     }
 
     /**
