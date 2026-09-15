@@ -260,6 +260,7 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                     scorableActions = scorableActions.size,
                     totalActions = actions.size,
                     refusedBySettings = actions.any(PermissionRiskAction::refusedBySettings),
+                    toolNames = permissionRiskBatchToolNames(actions),
                 )
             )
         val modelSelection =

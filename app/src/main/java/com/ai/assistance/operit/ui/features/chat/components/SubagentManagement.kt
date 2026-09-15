@@ -1096,6 +1096,7 @@ private fun PermissionRiskScoresPage(records: List<PermissionRiskScoreRecord>) {
             ) { record ->
                 val display = record.display()
                 val outcomeColor = permissionRiskScoreOutcomeColor(display)
+                val toolSeparator = stringResource(R.string.permission_risk_score_tool_separator)
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(
                         modifier = Modifier.padding(14.dp),
@@ -1117,6 +1118,21 @@ private fun PermissionRiskScoresPage(records: List<PermissionRiskScoreRecord>) {
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = outcomeColor,
+                            )
+                        }
+                        if (record.toolNames.isNotEmpty()) {
+                            Text(
+                                text =
+                                    stringResource(
+                                        R.string.permission_risk_score_tools,
+                                        record.toolNames.joinToString(toolSeparator),
+                                    ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                // A tool is named by whatever package registered it, so the line is
+                                // capped rather than allowed to grow the card.
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                         Text(

@@ -8546,6 +8546,9 @@
     <string name="permission_risk_score_running">Scoring</string>
     <string name="permission_risk_score_batch">%1$d of this batch\'s %2$d actions need a judgment</string>
     <string name="permission_risk_score_batch_no_action">Nothing in this batch needed a review</string>
+    <string name="permission_risk_score_tools">Tools: %1$s</string>
+    <!-- Quoted so the space after the comma survives resource compilation. -->
+    <string name="permission_risk_score_tool_separator">", "</string>
     <string name="permission_risk_score_answered">Saved %1$d reviews for later calls</string>
     <string name="permission_risk_score_not_used">No call has used this verdict yet</string>
     <string name="permission_risk_score_failed_detail">This scoring run produced no usable result, so it was treated as high risk and later calls go back to the review agent.</string>

@@ -9,6 +9,18 @@ import org.junit.Test
  * so a record that never ran must not be counted as a verdict, and vice versa.
  */
 class PermissionRiskScoreRecordsTest {
+    private fun action(toolName: String) =
+        PermissionRiskAction(
+            canonical =
+                PermissionReviewAction(
+                    targetId = "target",
+                    kind = "shell",
+                    toolName = toolName,
+                    summary = "",
+                ),
+            scorable = true,
+        )
+
     private fun record(
         id: String = "chat#1",
         step: Int = 1,
@@ -133,5 +145,28 @@ class PermissionRiskScoreRecordsTest {
         PermissionRiskScoringSkip.entries.forEach { reason ->
             permissionRiskSkipIsReported(reason)
         }
+    }
+
+    @Test
+    fun theRowNamesTheToolsTheBatchDispatched() {
+        // The same tool twice is one name, in the order the batch dispatched them.
+        assertEquals(
+            listOf("shell", "read_file"),
+            permissionRiskBatchToolNames(
+                listOf(action("shell"), action("read_file"), action("shell"))
+            ),
+        )
+        // A name comes from whichever package registered the tool, so the record bounds both what a
+        // name may be and how many of them it keeps.
+        assertEquals(emptyList<String>(), permissionRiskBatchToolNames(listOf(action("   "))))
+        assertEquals(
+            MAX_RECORDED_TOOL_NAME_CHARS,
+            permissionRiskBatchToolNames(listOf(action("t".repeat(200)))).single().length,
+        )
+        val many = (1..MAX_RECORDED_BATCH_TOOLS + 3).map { index -> action("tool_$index") }
+        val recorded = permissionRiskBatchToolNames(many)
+        assertEquals(MAX_RECORDED_BATCH_TOOLS, recorded.size)
+        assertEquals("tool_1", recorded.first())
+        assertEquals("tool_$MAX_RECORDED_BATCH_TOOLS", recorded.last())
     }
 }

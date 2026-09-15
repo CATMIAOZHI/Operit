@@ -8523,6 +8523,8 @@
     <string name="permission_risk_score_running">评分中</string>
     <string name="permission_risk_score_batch">这批有 %1$d 个操作需要判断（共 %2$d 个）</string>
     <string name="permission_risk_score_batch_no_action">这批没有需要审核的操作</string>
+    <string name="permission_risk_score_tools">涉及工具：%1$s</string>
+    <string name="permission_risk_score_tool_separator">、</string>
     <string name="permission_risk_score_answered">已替后面的调用省下 %1$d 次审核</string>
     <string name="permission_risk_score_not_used">还没有调用用上这条结论</string>
     <string name="permission_risk_score_failed_detail">这次评分没有拿到可用结果，已按高风险处理，后面的调用交回审核代理重新判断。</string>
