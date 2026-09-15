@@ -2,6 +2,7 @@ package com.ai.assistance.operit.util.stream
 
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -324,13 +325,19 @@ fun <T> Stream<T>.share(
             // 这个Job现在是scope的直接子Job
             upstreamJob =
                     scope.launch {
+                        var failure: Throwable? = null
                         try {
                             this@share.collect { value -> sharedStream.emit(value) }
+                        } catch (error: Throwable) {
+                            // 关闭的共享流会把该原因交给订阅者。这里再抛一次只会触发进程级未捕获
+                            // 处理，把一次失败的对话变成崩溃上报。
+                            failure = error
+                            if (error is CancellationException) throw error
                         } finally {
                             // 当上游流完成或被取消时，我们不再需要这个共享流。
                             // 但由于SharedFlow本身不会"关闭"，依赖协程的结构化并发来清理是最好的方式。
                             // 此处的finally确保了协程在任何情况下（完成、取消、异常）都能结束。
-                            sharedStream.close() // 关闭流以允许收集器完成
+                            sharedStream.close(failure) // 关闭流以允许收集器完成
                             onComplete()
                         }
                     }
@@ -343,12 +350,16 @@ fun <T> Stream<T>.share(
                         if (count > 0 && upstreamJob?.isActive != true) {
                             upstreamJob =
                                     scope.launch {
+                                        var failure: Throwable? = null
                                         try {
                                             this@share.collect { emittedValue ->
                                                 sharedStream.emit(emittedValue)
                                             }
+                                        } catch (error: Throwable) {
+                                            failure = error
+                                            if (error is CancellationException) throw error
                                         } finally {
-                                            sharedStream.close() // 关闭流以允许收集器完成
+                                            sharedStream.close(failure) // 关闭流以允许收集器完成
                                             onComplete()
                                         }
                                     }
@@ -364,10 +375,14 @@ fun <T> Stream<T>.share(
                     )
                     // Fallback to EAGERLY behavior
                     scope.launch {
+                        var failure: Throwable? = null
                         try {
                             this@share.collect { value -> sharedStream.emit(value) }
+                        } catch (error: Throwable) {
+                            failure = error
+                            if (error is CancellationException) throw error
                         } finally {
-                            sharedStream.close() // 关闭流以允许收集器完成
+                            sharedStream.close(failure) // 关闭流以允许收集器完成
                             onComplete()
                         }
                     }
@@ -390,7 +405,15 @@ fun <T> Stream<T>.state(
 
     when (started) {
         StreamStart.EAGERLY -> {
-            scope.launch { this@state.collect { value -> stateStream.value = value } }
+            scope.launch {
+                try {
+                    this@state.collect { value -> stateStream.value = value }
+                } catch (error: Throwable) {
+                    // 状态流没有把失败交给订阅者的通道；在这里再抛只会触发进程级未捕获处理。
+                    if (error is CancellationException) throw error
+                    StreamLogger.e("state", "状态流上游收集出错: ${error.message}", error)
+                }
+            }
         }
         StreamStart.LAZILY -> {
             scope.launch {
@@ -400,8 +423,17 @@ fun <T> Stream<T>.state(
                         if (count > 0 && upstreamJob == null) {
                             upstreamJob =
                                     scope.launch {
-                                        this@state.collect { emittedValue ->
-                                            stateStream.value = emittedValue
+                                        try {
+                                            this@state.collect { emittedValue ->
+                                                stateStream.value = emittedValue
+                                            }
+                                        } catch (error: Throwable) {
+                                            if (error is CancellationException) throw error
+                                            StreamLogger.e(
+                                                    "state",
+                                                    "状态流上游收集出错: ${error.message}",
+                                                    error
+                                            )
                                         }
                                     }
                         }
@@ -412,7 +444,16 @@ fun <T> Stream<T>.state(
                     )
                     upstreamJob =
                             scope.launch {
-                                this@state.collect { value -> stateStream.value = value }
+                                try {
+                                    this@state.collect { value -> stateStream.value = value }
+                                } catch (error: Throwable) {
+                                    if (error is CancellationException) throw error
+                                    StreamLogger.e(
+                                            "state",
+                                            "状态流上游收集出错: ${error.message}",
+                                            error
+                                    )
+                                }
                             }
                 }
             }
