@@ -8516,6 +8516,7 @@
     <string name="permission_risk_scores_description">这是功能配置里「审核风险评分」在快速档下实际做的事：派发工具时用一个轻量模型异步判断当前这组操作的风险。只有低风险结论才会替后面的调用省下审核；高风险、失败和未评分都会把调用交回审核代理。预分类本身不会拒绝任何操作。</string>
     <string name="permission_risk_scores_empty">这个对话还没有预分类记录。只有「自动审核 · 快速」档在有评分模型且联网时才会评分。</string>
     <string name="permission_risk_scores_strict">当前档位不是「自动审核 · 快速」，不会新增预分类记录。</string>
+    <string name="permission_risk_scores_trimmed">所有对话一共只保留最近 %1$d 条预分类记录，更早的已自动清理。</string>
     <string name="permission_risk_score_low">低风险</string>
     <string name="permission_risk_score_high">高风险</string>
     <string name="permission_risk_score_failed">评分失败</string>
