@@ -20,11 +20,12 @@ class UiStateDelegate {
     private val _toastEvent = MutableStateFlow<String?>(null)
     val toastEvent: StateFlow<String?> = _toastEvent.asStateFlow()
 
-    private val _masterPermissionLevel = MutableStateFlow(PermissionLevel.ASK)
+    /** Before the stores emit, the chat shows the level a fresh install starts on. */
+    private val _masterPermissionLevel = MutableStateFlow(ToolPermissionStop.DEFAULT.level)
     val masterPermissionLevel: StateFlow<PermissionLevel> = _masterPermissionLevel.asStateFlow()
 
     /** The same choice as the permission slider shows it: the level plus its reuse level. */
-    private val _masterPermissionStop = MutableStateFlow(ToolPermissionStop.ASK)
+    private val _masterPermissionStop = MutableStateFlow(ToolPermissionStop.DEFAULT)
     val masterPermissionStop: StateFlow<ToolPermissionStop> = _masterPermissionStop.asStateFlow()
 
     // 文件选择器请求

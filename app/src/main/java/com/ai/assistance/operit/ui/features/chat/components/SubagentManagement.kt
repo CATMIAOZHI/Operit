@@ -88,6 +88,7 @@ import com.ai.assistance.operit.ui.permissions.PermissionReviewAuthorization
 import com.ai.assistance.operit.ui.permissions.PermissionReviewRiskLevel
 import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
 import com.ai.assistance.operit.ui.permissions.PermissionReviewResponsePolicy
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionReviewNoteForDisplay
 import kotlinx.coroutines.delay
 
 internal enum class SubagentListFilter {
@@ -722,6 +723,7 @@ private fun permissionReviewStatusText(status: PermissionReviewStatus): String =
 
 @Composable
 private fun PermissionReviewEventRow(event: PermissionReviewEvent) {
+    val context = LocalContext.current
     var showDetails by remember(event.id) { mutableStateOf(false) }
     val statusText = permissionReviewStatusText(event.status)
     val eventTime = event.completedAt ?: event.startedAt
@@ -859,7 +861,13 @@ private fun PermissionReviewEventRow(event: PermissionReviewEvent) {
                             )
                         )
                     }
-                    event.rationale?.takeIf(String::isNotBlank)?.let { rationale ->
+                    val rationale =
+                        permissionReviewNoteForDisplay(
+                            context = context,
+                            rationale = event.rationale,
+                            failureKind = event.failureKind,
+                        )
+                    if (rationale != null) {
                         Text(
                             stringResource(
                                 R.string.permission_review_detail_rationale,
@@ -889,6 +897,7 @@ private fun RecentPermissionDenialsPage(
     runs: List<SubagentRunEntity>,
     onSelectRun: (SubagentRunEntity) -> Unit,
 ) {
+    val context = LocalContext.current
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
@@ -968,7 +977,13 @@ private fun RecentPermissionDenialsPage(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.tertiary,
                         )
-                        event.rationale?.takeIf(String::isNotBlank)?.let { rationale ->
+                        val rationale =
+                            permissionReviewNoteForDisplay(
+                                context = context,
+                                rationale = event.rationale,
+                                failureKind = event.failureKind,
+                            )
+                        if (rationale != null) {
                             Text(
                                 text = rationale,
                                 style = MaterialTheme.typography.bodySmall,

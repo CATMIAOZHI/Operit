@@ -47,6 +47,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.ai.assistance.operit.core.tools.ToolProgressBus
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionDenialDisplayText
+import com.ai.assistance.operit.ui.permissions.permissionDenialSummary
+import com.ai.assistance.operit.ui.permissions.PermissionReviewCircuitBreaker
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -1674,12 +1677,27 @@ class MessageProcessingDelegate(
                     cancellationToPropagate = e
                 } else {
                     AppLogger.e(TAG, "发送消息时出错", e)
-                    terminalFailureMessage = e.message ?: e.javaClass.simpleName
+                    val rawFailureMessage = e.message ?: e.javaClass.simpleName
+                    // A permission denial carries a long English instruction for the model. Showing
+                    // it verbatim would put that internal text in the error dialog, so report the
+                    // same short conclusion the tool result shows.
+                    val userVisibleFailureMessage =
+                        permissionDenialSummary(context, rawFailureMessage) ?: rawFailureMessage
+                    // The turn terminal signal also carries this text to a subagent's caller, where the
+                    // model needs the original instruction (it explains what to do next), so only the
+                    // dialog and the input state get the short conclusion.
+                    terminalFailureMessage = rawFailureMessage
                     setChatInputProcessingState(
                         chatId,
-                        EnhancedInputProcessingState.Error(context.getString(R.string.message_send_failed, e.message))
+                        EnhancedInputProcessingState.Error(
+                            context.getString(R.string.message_send_failed, userVisibleFailureMessage)
+                        )
                     )
-                    withContext(Dispatchers.Main) { showErrorMessage(context.getString(R.string.message_send_failed, e.message)) }
+                    withContext(Dispatchers.Main) {
+                        showErrorMessage(
+                            context.getString(R.string.message_send_failed, userVisibleFailureMessage)
+                        )
+                    }
                 }
             } finally {
                 chatRuntime.canSteer = false
@@ -1827,6 +1845,9 @@ class MessageProcessingDelegate(
             throw IllegalStateException(context.getString(R.string.chat_regenerate_busy))
         }
         ToolExecutionTimingRepository.clearScope(targetMessageTimestamp.toString())
+        // A regenerated message keeps its turn scope, so the automatic-review circuit breaker has to
+        // start over with it; otherwise the new attempt is stopped by the previous one's verdicts.
+        PermissionReviewCircuitBreaker.clearTurn(chatId, targetMessageTimestamp.toString())
 
         val currentJob = coroutineContext[Job] ?: throw IllegalStateException("Missing coroutine job")
         var serviceForTerminalCleanup: EnhancedAIService? = null
@@ -2023,7 +2044,12 @@ class MessageProcessingDelegate(
                 setChatInputProcessingState(
                     chatId,
                     EnhancedInputProcessingState.Error(
-                        context.getString(R.string.chat_regenerate_single_failed, e.message ?: "")
+                        context.getString(
+                            R.string.chat_regenerate_single_failed,
+                            // A failed regeneration can be the turn a permission denial
+                            // stopped, so the dialog reports the same conclusion.
+                            e.message?.let { permissionDenialDisplayText(context, it) }.orEmpty(),
+                        )
                     ),
                 )
             }

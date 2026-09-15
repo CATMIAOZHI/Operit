@@ -752,7 +752,16 @@ private fun MemoryFragmentItem(
                 exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(animationSpec = tween(150))
             ) {
                 OutlinedTextField(
-                    value = fragment.body,
+                    // A status row a stopped run produced stores the instruction written for the
+                    // model, so the field reports the outcome instead. Only the field is mapped: the
+                    // fragment keeps the stored text, so saving without editing writes nothing back,
+                    // and the first keystroke replaces it with what the user wrote themselves.
+                    value =
+                        if (fragment.kind == "STATUS") {
+                            collaborationReportedStatusText(context, fragment.body)
+                        } else {
+                            fragment.body
+                        },
                     onValueChange = onBodyChange,
                     modifier = Modifier
                         .fillMaxWidth()

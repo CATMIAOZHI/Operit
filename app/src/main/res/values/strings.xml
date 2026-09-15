@@ -943,7 +943,7 @@
     
     <string name="settings_section_permissions">权限与安全</string>
     <string name="settings_tool_permissions">工具权限设置</string>
-    <string name="settings_tool_permissions_desc">配置AI助手工具的权限级别，可以设置为自动允许、询问或禁止</string>
+    <string name="settings_tool_permissions_desc">配置AI助手工具的权限级别，可以设置为禁止、询问、自动审核或允许</string>
     <string name="settings_configure_permissions">配置工具权限</string>
     
     <string name="settings_section_usage">使用统计</string>
@@ -5449,7 +5449,7 @@
 
     <!-- Tool Permission Settings -->
     <string name="tool_permissions_title">工具权限</string>
-    <string name="tool_permissions_description">默认情况下，所有工具都需要您"询问"。您可以在下面添加例外。</string>
+    <string name="tool_permissions_description">默认情况下，所有工具都走自动审核：工作区内的操作直接放行，其余交给审核代理判断。您可以在下面添加例外。</string>
     <string name="global_permission_switch">全局权限开关</string>
     <string name="global_permission_switch_description">此设置控制默认行为；单个工具的“以后都允许/拒绝”等例外规则优先级更高。</string>
     <string name="permission_level_allow">允许</string>
@@ -5460,7 +5460,7 @@
     <string name="permission_level_forbid">禁止</string>
     <string name="permission_level_forbid_description">这些工具永远不会运行。</string>
     <string name="permission_level_ask">询问</string>
-    <string name="permission_level_ask_description">所有工具的默认行为。</string>
+    <string name="permission_level_ask_description">这些工具每次调用前都会问你。</string>
     <string name="permission_stop_auto_review_strict">自动审核 · 严格</string>
     <string name="permission_stop_auto_review_fast">自动审核 · 快速</string>
     <string name="permission_stop_forbid_description">所有工具都不会运行。</string>
@@ -5503,6 +5503,7 @@
     <string name="execution_success">执行成功</string>
     <string name="tool_waiting_authorization">等待授权</string>
     <string name="tool_waiting_execution">等待执行</string>
+    <string name="tool_waiting_auto_review">等待自动审核</string>
     <string name="tool_executing_duration">执行中 · %1$s</string>
     <string name="subagent_status_creating">正在创建</string>
     <string name="subagent_status_started">开始工作</string>
@@ -8506,7 +8507,7 @@
     <string name="permission_review_open_subagent_details">查看审核 Subagent 详情</string>
     <string name="permission_review_subagent_unavailable">对应的审核 Subagent 已不可用</string>
     <string name="permission_review_allow_exact_once">授权相同操作重新审核</string>
-    <string name="permission_review_override_recorded">已授权，等待 Agent 重试</string>
+    <string name="permission_review_override_recorded">已授权；请回主对话让 Agent 重试</string>
     <string name="permission_review_override_in_review">正在重新审核</string>
     <string name="permission_review_override_consumed">本次授权已使用</string>
     <string name="permission_review_override_expired">授权已过期，可重新授权</string>
@@ -8522,6 +8523,13 @@
     <string name="permission_review_badge_denied">自动审核已拒绝</string>
     <string name="permission_review_badge_timed_out">自动审核超时</string>
     <string name="permission_review_badge_failed">自动审核失败</string>
+    <string name="permission_review_badge_denied_by_user">已由你或设置拒绝</string>
+    <string name="permission_review_badge_aborted">自动审核已中止</string>
+    <string name="permission_review_override_unavailable_catastrophic">该操作被自动审核判定为灾难性风险，一次性授权无法覆盖。如仍需执行，请先调整权限设置。</string>
+    <string name="permission_denied_result_auto_review">自动审核已拒绝该操作</string>
+    <string name="permission_denied_result_user">你已拒绝该操作</string>
+    <string name="permission_denied_result_settings">权限设置禁止该操作</string>
+    <string name="permission_denied_result_auto_review_cancelled">自动审核中止了本轮，该操作未执行</string>
     <string name="permission_review_resolved_allow">随后由你或最新设置允许</string>
     <string name="permission_review_resolved_deny">随后由你或最新设置拒绝</string>
     <string name="permission_review_resolved_reused">已由最近的低风险评分放行</string>

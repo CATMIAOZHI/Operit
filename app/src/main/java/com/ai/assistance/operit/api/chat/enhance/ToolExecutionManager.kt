@@ -43,6 +43,7 @@ import kotlinx.coroutines.ensureActive
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
+import com.ai.assistance.operit.ui.permissions.AUTOMATIC_REVIEW_CANCEL_PREFIX
 import com.ai.assistance.operit.ui.permissions.PermissionReviewCircuitBreaker
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
 import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
@@ -1350,7 +1351,7 @@ object ToolExecutionManager {
                             success = false,
                             result = StringResultData(""),
                             error =
-                                "Tool execution cancelled because automatic permission review " +
+                                "$AUTOMATIC_REVIEW_CANCEL_PREFIX " +
                                     "stopped this model turn after repeated denied actions.",
                             interruptTurn = true,
                         ).withExecutionMetadata(
@@ -1932,7 +1933,10 @@ internal fun applyDeferredPermissionReviewCircuit(
         decision is ToolPermissionDecision.Denied &&
             decision.source == ToolPermissionDenialSource.AUTOMATIC_REVIEW -> {
             val circuit = PermissionReviewCircuitBreaker.recordDenial(parentChatId, turnScopeId)
-            decision.copy(interruptTurn = circuit.interruptTurn)
+            // Keep a decision that already interrupts the turn: the breaker returns false once it
+            // has interrupted, so copying only its flag would clear the earlier signal and let the
+            // rest of the batch run tools that do not need a review.
+            decision.copy(interruptTurn = decision.interruptTurn || circuit.interruptTurn)
         }
         decision is ToolPermissionDecision.Allowed && wasAutomaticallyReviewed -> {
             PermissionReviewCircuitBreaker.recordNonDenial(parentChatId, turnScopeId)

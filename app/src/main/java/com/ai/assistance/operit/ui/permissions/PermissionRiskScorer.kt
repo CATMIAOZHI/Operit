@@ -192,10 +192,15 @@ internal class PermissionRiskScorer private constructor(context: Context) {
     /**
      * Advances the scoring step for one dispatched tool batch and, when the batch can use a score,
      * launches the classifier without blocking the batch.
+     *
+     * [reviewMode] is the reuse level the caller resolved, not the stored one: a level an older build
+     * wrote stays strict until the user picks a stop, and scoring from the stored level would spend a
+     * classification call on a verdict that level can never use.
      */
     suspend fun beginBatch(
         callerChatId: String?,
         turnScopeId: String?,
+        reviewMode: PermissionReviewMode,
         actions: List<PermissionRiskAction>,
         workspacePath: String?,
         workspaceEnv: String?,
@@ -212,7 +217,6 @@ internal class PermissionRiskScorer private constructor(context: Context) {
             }
         pruneScopes()
         val scorableActions = actions.filter(PermissionRiskAction::scorable)
-        val mode = policyStore.getReviewMode()
         val modelSelection =
             runCatching {
                     functionalConfigManager.getEffectiveConfigMappingForFunction(
@@ -226,7 +230,7 @@ internal class PermissionRiskScorer private constructor(context: Context) {
         val modelKey = modelSelection?.let { mapping -> "${mapping.configId}#${mapping.modelIndex}" }
         val unavailableReason =
             when {
-                mode != PermissionReviewMode.FAST -> PermissionRiskScoringSkip.STRICT_MODE
+                reviewMode != PermissionReviewMode.FAST -> PermissionRiskScoringSkip.STRICT_MODE
                 scorableActions.isEmpty() -> PermissionRiskScoringSkip.NO_SCORABLE_ACTION
                 modelKey == null -> PermissionRiskScoringSkip.NO_MODEL
                 !NetworkUtils.isNetworkAvailable(appContext) -> PermissionRiskScoringSkip.OFFLINE
@@ -275,7 +279,7 @@ internal class PermissionRiskScorer private constructor(context: Context) {
         }
         val authorization =
             PermissionRiskAuthorization(
-                reviewMode = mode.name,
+                reviewMode = reviewMode.name,
                 policyVersion = policySnapshot.version,
                 workspace = "${workspacePath.orEmpty()}|${workspaceEnv.orEmpty()}",
                 userMessageCount = retained.userMessageCount,
@@ -594,7 +598,11 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                         ?: PermissionRiskScorer(context.applicationContext).also { INSTANCE = it }
                 }
 
-        /** Mirrors the Codex `max_tool_call_lag` default of two tool-call steps. */
+        /**
+         * Two steps, the default of the Codex `max_tool_call_lag`. The unit differs: Codex counts
+         * one step per tool call, while this scorer counts one per dispatched batch, so a score can
+         * answer every call of the batches that follow it rather than the next two calls.
+         */
         internal const val MAX_LAG_STEPS = 2
         internal const val COOLDOWN_DURATION_MS = 120_000L
         internal const val CONSECUTIVE_FAILURES_BEFORE_COOLDOWN = 3
@@ -684,11 +692,15 @@ internal class PermissionRiskScorer private constructor(context: Context) {
 /**
  * Parses the single-token classification. Anything that is not an immediate verdict is treated as
  * a failure, so an unparsable answer defers to the blocking reviewer instead of clearing risk.
+ *
+ * Only a lone word counts. A longer answer can be the model quoting the action or its arguments,
+ * and the first word of a quote must never become the verdict that lets a call run unreviewed.
  */
 internal fun parsePermissionRiskVerdict(raw: String): PermissionRiskVerdict? {
     val cleaned = ChatUtils.removeThinkingContent(raw).trim().lowercase()
-    val token = Regex("[a-z]+").find(cleaned)?.value ?: return null
-    return when (token) {
+    val words = Regex("[a-z]+").findAll(cleaned).toList()
+    if (words.size != 1) return null
+    return when (words.single().value) {
         "high" -> PermissionRiskVerdict.HIGH
         "low" -> PermissionRiskVerdict.LOW
         else -> null

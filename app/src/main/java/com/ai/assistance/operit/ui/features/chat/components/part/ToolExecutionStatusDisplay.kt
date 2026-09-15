@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -34,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,10 +44,10 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,14 +77,17 @@ import com.ai.assistance.operit.ui.permissions.PermissionReviewAuthorization
 import com.ai.assistance.operit.ui.theme.stoppedAttention
 import com.ai.assistance.operit.ui.permissions.PermissionReviewExactOverrideState
 import com.ai.assistance.operit.ui.permissions.PermissionReviewFailureKind
+import com.ai.assistance.operit.ui.permissions.PermissionReviewResponsePolicy
 import com.ai.assistance.operit.ui.permissions.PermissionReviewRiskLevel
 import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
 import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
 import com.ai.assistance.operit.ui.permissions.effectiveExactOverrideState
+import com.ai.assistance.operit.ui.permissions.permissionDenialSummary
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 data class PersistedToolExecution(
     val callId: String?,
@@ -307,7 +312,7 @@ internal fun ToolExecutionStatusDisplay(
             fallbackDurationMs = liveExecution?.durationMs ?: persistedExecution?.durationMs,
             executionSuccess = success,
             executionResultText =
-                resolveResultText(liveExecution, persistedExecution, success),
+                resolveResultText(context, liveExecution, persistedExecution, success),
             requestedSubagentName = requestedSubagentName,
             requestedSubagentTaskId = requestedSubagentTaskId,
             modifier = Modifier,
@@ -324,7 +329,8 @@ internal fun ToolExecutionStatusDisplay(
             callId = liveExecution?.callId ?: persistedExecution?.callId,
             fallbackState = state,
             executionSuccess = success,
-            executionResultText = resolveResultText(liveExecution, persistedExecution, success),
+            executionResultText =
+                resolveResultText(context, liveExecution, persistedExecution, success),
             requestedAgentName = requestedSubagentName,
             bodyText = requestedSubagentTask?.takeIf { it.isNotBlank() },
             reviewEvent = reviewEvent,
@@ -348,7 +354,14 @@ internal fun ToolExecutionStatusDisplay(
     when (state) {
         ToolExecutionState.WAITING_AUTHORIZATION -> {
             ToolPendingStatusRow(
-                text = stringResource(R.string.tool_waiting_authorization),
+                // An automatic review runs without asking anyone, so "waiting for authorization"
+                // would tell the user to wait for a prompt that is never coming.
+                text =
+                    if (reviewEvent?.status == PermissionReviewStatus.IN_PROGRESS) {
+                        stringResource(R.string.tool_waiting_auto_review)
+                    } else {
+                        stringResource(R.string.tool_waiting_authorization)
+                    },
                 modifier = Modifier,
             )
         }
@@ -372,7 +385,7 @@ internal fun ToolExecutionStatusDisplay(
             val durationMs = liveExecution?.durationMs ?: persistedExecution?.durationMs ?: 0L
             val success = liveExecution?.success ?: persistedExecution?.success ?: false
             val resultText =
-                resolveResultText(liveExecution, persistedExecution, success)
+                resolveResultText(context, liveExecution, persistedExecution, success)
             ToolExecutionResultDisplay(
                 toolName = toolName,
                 result = resultText,
@@ -384,7 +397,7 @@ internal fun ToolExecutionStatusDisplay(
         }
         ToolExecutionState.NOT_EXECUTED -> {
             val success = false
-            val resultText = resolveResultText(liveExecution, persistedExecution, success)
+            val resultText = resolveResultText(context, liveExecution, persistedExecution, success)
             ToolExecutionResultDisplay(
                 toolName = liveExecution?.toolName ?: persistedExecution?.toolName.orEmpty(),
                 result = resultText,
@@ -401,6 +414,7 @@ internal fun ToolExecutionStatusDisplay(
 @Composable
 private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val repository = remember(context) { SubagentRunRepository.getInstance(context) }
     val chatCore =
         remember(context) {
@@ -466,13 +480,26 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
         stringResource(
             when (event.status) {
                 PermissionReviewStatus.DENIED ->
-                    if (isAssessedHighRisk) {
-                        R.string.permission_review_badge_denied_high_risk
-                    } else {
-                        R.string.permission_review_badge_denied
+                    when {
+                        // A refusal that came from the user's own answer (or from the settings it
+                        // switched to) is not the reviewer's verdict and must not be reported as
+                        // one.
+                        // Both a user refusal and a level that changed to "forbid" while the review
+                        // was in flight decide the call outside the reviewer, and the result line
+                        // says so, so the badge must not credit the automatic review either.
+                        event.resolutionSource ==
+                            ToolPermissionSystem.MANUAL_OR_SETTING_DENY_RESOLUTION_SOURCE ||
+                            event.resolutionSource ==
+                                ToolPermissionSystem.SETTINGS_REFRESHED_DENY_RESOLUTION_SOURCE ->
+                            R.string.permission_review_badge_denied_by_user
+                        isAssessedHighRisk -> R.string.permission_review_badge_denied_high_risk
+                        else -> R.string.permission_review_badge_denied
                     }
                 PermissionReviewStatus.TIMED_OUT -> R.string.permission_review_badge_timed_out
                 PermissionReviewStatus.FAILED -> R.string.permission_review_badge_failed
+                // "Aborted" and "allowed" share the neutral colour, so the label has to tell them
+                // apart on its own.
+                PermissionReviewStatus.ABORTED -> R.string.permission_review_badge_aborted
                 else -> R.string.permission_level_auto_review
             }
         )
@@ -490,9 +517,14 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
         modifier =
             Modifier
                 .fillMaxWidth()
+                // The row is the only way into the review details, so it keeps a full touch target
+                // even though its contents are one short line.
+                .minimumInteractiveComponentSize()
                 .clip(RoundedCornerShape(6.dp))
                 .clickable(role = Role.Button) { showDetails = true }
-                .semantics {
+                // The line already carries the outcome, so it is set once instead of being merged
+                // with the label and read twice.
+                .clearAndSetSemantics {
                     liveRegion = LiveRegionMode.Polite
                     contentDescription = semanticsDescription
                 }
@@ -577,37 +609,55 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
                         )
                     }
                     if (event.status == PermissionReviewStatus.DENIED) {
-                        Button(
-                            enabled =
-                                overrideState == null ||
-                                    overrideState == PermissionReviewExactOverrideState.EXPIRED,
-                            onClick = {
-                                PermissionReviewEventRepository.approveExactActionOnce(event.id)
-                            },
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                        ) {
+                        // A catastrophic action is denied before the one-time override is even
+                        // considered, so offering the button would promise a retry that the review
+                        // cannot allow. Say so instead of recording an approval that never applies.
+                        val overrideCannotApply =
+                            event.failureKind == null &&
+                                event.riskLevel == PermissionReviewRiskLevel.CRITICAL
+                        if (overrideCannotApply) {
                             Text(
                                 stringResource(
-                                    when (overrideState) {
-                                        PermissionReviewExactOverrideState.PENDING ->
-                                            R.string.permission_review_override_recorded
-                                        PermissionReviewExactOverrideState.IN_REVIEW ->
-                                            R.string.permission_review_override_in_review
-                                        PermissionReviewExactOverrideState.CONSUMED ->
-                                            R.string.permission_review_override_consumed
-                                        PermissionReviewExactOverrideState.EXPIRED ->
-                                            R.string.permission_review_override_expired
-                                        null -> R.string.permission_review_allow_exact_once
-                                    }
-                                )
-                            )
-                        }
-                        if (overrideState == PermissionReviewExactOverrideState.PENDING) {
-                            Text(
-                                stringResource(R.string.permission_review_override_next_step),
+                                    R.string.permission_review_override_unavailable_catastrophic
+                                ),
+                                modifier = Modifier.padding(vertical = 12.dp),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
                             )
+                        } else {
+                            Button(
+                                enabled =
+                                    overrideState == null ||
+                                        overrideState == PermissionReviewExactOverrideState.EXPIRED,
+                                onClick = {
+                                    scope.launch {
+                                        PermissionReviewEventRepository.approveExactActionOnce(event.id)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                            ) {
+                                Text(
+                                    stringResource(
+                                        when (overrideState) {
+                                            PermissionReviewExactOverrideState.PENDING ->
+                                                R.string.permission_review_override_recorded
+                                            PermissionReviewExactOverrideState.IN_REVIEW ->
+                                                R.string.permission_review_override_in_review
+                                            PermissionReviewExactOverrideState.CONSUMED ->
+                                                R.string.permission_review_override_consumed
+                                            PermissionReviewExactOverrideState.EXPIRED ->
+                                                R.string.permission_review_override_expired
+                                            null -> R.string.permission_review_allow_exact_once
+                                        }
+                                    )
+                                )
+                            }
+                            if (overrideState == PermissionReviewExactOverrideState.PENDING) {
+                                Text(
+                                    stringResource(R.string.permission_review_override_next_step),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         }
                     }
                     Text(
@@ -682,9 +732,11 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
                     // answer came from, not about this call, so it is never quoted back — not even
                     // when a settings change rewrote the outcome of the same event.
                     val rationale =
-                        event.rationale
-                            ?.takeIf(String::isNotBlank)
-                            ?.takeIf { it != ToolPermissionSystem.FAST_REVIEW_RATIONALE }
+                        permissionReviewNoteForDisplay(
+                            context = context,
+                            rationale = event.rationale,
+                            failureKind = event.failureKind,
+                        )
                     if (rationale != null) {
                         Text(
                             stringResource(
@@ -761,8 +813,14 @@ internal fun ToolExecutionResultDisplay(
     summaryPrefix: String? = null,
     enableDialog: Boolean = true,
 ) {
-    val fileDiff = remember(toolName, result, isSuccess) {
-        parseFileDiffResult(toolName, result, isSuccess)
+    val context = LocalContext.current
+    // 消息内容里的 <tool_result> 块等入口不经过 resolveResultText，这里兜底把权限拒绝原文换成结论；
+    // 已经换过的文本再走一次是幂等的。
+    val displayedResult = remember(context, result, isSuccess) {
+        if (isSuccess) result else permissionDenialDisplayText(context, result)
+    }
+    val fileDiff = remember(toolName, displayedResult, isSuccess) {
+        parseFileDiffResult(toolName, displayedResult, isSuccess)
     }
     if (fileDiff != null) {
         FileDiffDisplay(
@@ -774,7 +832,7 @@ internal fun ToolExecutionResultDisplay(
     } else {
         ToolResultDisplay(
             toolName = toolName,
-            result = result,
+            result = displayedResult,
             isSuccess = isSuccess,
             modifier = modifier,
             summaryPrefix = summaryPrefix,
@@ -1189,7 +1247,7 @@ private fun SubagentTaskStatusDisplay(
             fallbackState == ToolExecutionState.COMPLETED ||
                 fallbackState == ToolExecutionState.NOT_EXECUTED
         val fallbackResult =
-            extractSubagentTaskResult(executionResultText)
+            permissionDenialDisplayText(context, extractSubagentTaskResult(executionResultText))
                 .ifBlank { stringResource(R.string.subagent_result_empty) }
         var showFallbackResultDialog by
             remember(callId, fallbackState) {
@@ -1347,7 +1405,7 @@ private fun SubagentTaskStatusDisplay(
     val isTerminal =
         runIsTerminal && !resultIsSynchronizing
     val terminalResult =
-        extractSubagentTaskResult(executionResultText)
+        permissionDenialDisplayText(context, extractSubagentTaskResult(executionResultText))
             .ifBlank { stringResource(R.string.subagent_result_empty) }
     var showResultDialog by remember(resolvedRun.id) { androidx.compose.runtime.mutableStateOf(false) }
 
@@ -1435,6 +1493,7 @@ private fun resolveElapsedMs(snapshot: ToolExecutionTimingSnapshot?): Long {
 }
 
 private fun resolveResultText(
+    context: Context,
     liveExecution: ToolExecutionTimingSnapshot?,
     persistedExecution: PersistedToolExecution?,
     success: Boolean,
@@ -1451,8 +1510,56 @@ private fun resolveResultText(
         }
     if (success) return raw
 
-    return ChatMarkupRegex.errorTag.find(raw)?.groupValues?.getOrNull(1)?.trim() ?: raw
+    val text = ChatMarkupRegex.errorTag.find(raw)?.groupValues?.getOrNull(1)?.trim() ?: raw
+    return permissionDenialDisplayText(context, text)
 }
+
+/**
+ * A permission denial carries a long English instruction written for the model, so the transcript
+ * reports the outcome instead of pasting that instruction as the tool result.
+ *
+ * A subagent turn that the review stopped ends as "Turn <id> failed: <reason>", so the wrapper is
+ * dropped as well; the turn id means nothing to the reader and would otherwise hide the prefix.
+ */
+internal fun permissionDenialDisplayText(context: Context, text: String): String =
+    permissionDenialSummary(context, stripTurnFailedWrapper(text)) ?: text
+
+/**
+ * A turn that ends in a failure reports it as "Turn <id> failed: <reason>". The id is internal
+ * bookkeeping, so a reason that starts with a permission prefix is only recognizable once it goes.
+ */
+internal fun stripTurnFailedWrapper(text: String): String =
+    TURN_FAILED_WRAPPER.replaceFirst(text, "")
+
+private val TURN_FAILED_WRAPPER = Regex("""^Turn\s+\S+\s+failed:\s*""")
+
+/**
+ * The reader's version of the note stored on a review event, or null when the note says nothing
+ * about the call: a reused score, a call the circuit breaker skipped, or a review that broke all
+ * store an English sentence about the machinery, and the UI already names those outcomes itself.
+ */
+internal fun permissionReviewNoteForDisplay(
+    context: Context,
+    rationale: String?,
+    failureKind: PermissionReviewFailureKind?,
+): String? =
+    when {
+        rationale.isNullOrBlank() -> null
+        failureKind != null -> null
+        rationale in INTERNAL_REVIEW_NOTES -> null
+        rationale == ToolPermissionSystem.REVIEW_SKIPPED_RATIONALE ->
+            context.getString(R.string.permission_denied_result_auto_review_cancelled)
+        else -> rationale
+    }
+
+/** Notes the app itself writes onto a review event; none of them describe the call. */
+private val INTERNAL_REVIEW_NOTES =
+    setOf(
+        ToolPermissionSystem.FAST_REVIEW_RATIONALE,
+        PermissionReviewResponsePolicy.NO_RATIONALE_ALLOW,
+        PermissionReviewResponsePolicy.NO_RATIONALE_DENY,
+        PermissionReviewResponsePolicy.REVIEW_CANCELLED_RATIONALE,
+    )
 
 internal fun formatToolExecutionDuration(context: Context, durationMs: Long): String {
     val safeDurationMs = durationMs.coerceAtLeast(0L)

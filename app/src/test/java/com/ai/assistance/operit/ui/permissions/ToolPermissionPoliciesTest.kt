@@ -1,9 +1,11 @@
 package com.ai.assistance.operit.ui.permissions
 
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.PermissionReviewSubmissionTool
 import com.ai.assistance.operit.core.tools.PermissionReviewSubmissionRegistry
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.api.chat.enhance.shouldInterruptPendingToolBatch
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionReviewNoteForDisplay
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.model.ToolResult
@@ -22,6 +24,65 @@ import org.mockito.Mockito
 import kotlinx.coroutines.runBlocking
 
 class ToolPermissionPoliciesTest {
+    @Test
+    fun aFreshInstallStartsOnTheAutoReviewFastStop() {
+        // The default is named once, on the stop, and both stores have to fall back to it: an absent
+        // level key reads back as the stop's level, and an absent reuse key as the stop's reuse. If
+        // either store defaulted somewhere else, a fresh install would store the level and show a
+        // different stop until the user touched the slider.
+        assertEquals(ToolPermissionStop.AUTO_REVIEW_FAST, ToolPermissionStop.DEFAULT)
+        assertEquals(PermissionLevel.AUTO_REVIEW, ToolPermissionStop.DEFAULT.level)
+        assertEquals(PermissionReviewMode.FAST, ToolPermissionStop.DEFAULT.reviewMode)
+        assertEquals(PermissionReviewMode.DEFAULT, ToolPermissionStop.DEFAULT.reviewMode)
+
+        // The stored default is the stop's level name, so it has to parse back to the same level.
+        assertEquals(
+            ToolPermissionStop.DEFAULT.level.name,
+            ToolPermissionSystem.DEFAULT_MASTER_SWITCH,
+        )
+        assertEquals(
+            ToolPermissionStop.DEFAULT.level,
+            PermissionLevel.fromString(ToolPermissionStop.DEFAULT.level.name),
+        )
+        assertEquals(
+            ToolPermissionStop.DEFAULT,
+            resolvePermissionStop(
+                PermissionLevel.AUTO_REVIEW,
+                "AUTO_REVIEW",
+                PermissionReviewMode.DEFAULT,
+            ),
+        )
+    }
+
+    @Test
+    fun anOlderStoredLevelKeepsTheStrictStopUntilTheUserPicksOne() {
+        // Those levels never answered a call from a stored score, so showing the fast stop would
+        // silently widen what the user had set.
+        assertTrue(isLegacyAutoReviewLevel("WORKSPACE"))
+        assertTrue(isLegacyAutoReviewLevel(" workspace_reviewer "))
+        assertTrue(isLegacyAutoReviewLevel("REVIEWER"))
+        assertFalse(isLegacyAutoReviewLevel("AUTO_REVIEW"))
+        assertFalse(isLegacyAutoReviewLevel("ASK"))
+        assertFalse(isLegacyAutoReviewLevel(null))
+
+        assertEquals(
+            ToolPermissionStop.AUTO_REVIEW_STRICT,
+            resolvePermissionStop(PermissionLevel.AUTO_REVIEW, "REVIEWER", PermissionReviewMode.FAST),
+        )
+        assertEquals(
+            ToolPermissionStop.AUTO_REVIEW_FAST,
+            resolvePermissionStop(
+                PermissionLevel.AUTO_REVIEW,
+                "AUTO_REVIEW",
+                PermissionReviewMode.FAST,
+            ),
+        )
+        assertEquals(
+            ToolPermissionStop.ASK,
+            resolvePermissionStop(PermissionLevel.ASK, "ASK", PermissionReviewMode.FAST),
+        )
+    }
+
     @Test
     fun permissionLevelParsingMigratesTheMergedLevelsAndFailsUnknownToAsk() {
         assertEquals(PermissionLevel.ALLOW, PermissionLevel.fromString("ALLOW"))
@@ -232,7 +293,122 @@ class ToolPermissionPoliciesTest {
         assertEquals(ToolPermissionDenialSource.AUTOMATIC_REVIEW, reviewDenial.source)
         assertTrue(reviewDenial.rejection.contains("do not reach the same goal another way"))
         assertTrue(reviewDenial.rejection.contains("retry the exact same action unchanged"))
+        assertTrue(reviewDenial.rejection.contains("wait for their reply"))
+        assertFalse(reviewDenial.rejection.lowercase().contains("do not retry"))
+        val stoppedTurnDenial = permissionDeniedByRepeatedDenials()
+        assertEquals(ToolPermissionDenialSource.AUTOMATIC_REVIEW, stoppedTurnDenial.source)
+        assertTrue(stoppedTurnDenial.interruptTurn)
+        assertFalse(stoppedTurnDenial.rejection.lowercase().contains("retry the exact same action"))
         assertEquals("Tool execution denied by user.", permissionDeniedByUser().rejection)
+    }
+
+    @Test
+    fun denialTextsAndTheirUserFacingSummariesStayInSync() {
+        // The denial texts are matched by prefix in the Compose UI, in MessageProcessingDelegate, and
+        // in web-chat's ToolResultDisplay.tsx. These literals pin the contract those copies rely on.
+        assertEquals("Tool execution denied by permission settings.", SETTINGS_DENIAL_PREFIX)
+        assertEquals("Tool execution denied by user.", USER_DENIAL_PREFIX)
+        assertEquals("Automatic permission review denied", AUTOMATIC_REVIEW_DENIAL_PREFIX)
+        assertEquals(
+            "Tool execution cancelled because automatic permission review",
+            AUTOMATIC_REVIEW_CANCEL_PREFIX,
+        )
+
+        val reviewDenial = permissionDeniedByAutomaticReview("destructive action").rejection
+        val stoppedTurn = permissionDeniedByRepeatedDenials().rejection
+        val settingsDenial =
+            permissionDeniedBySettings("Duplicate parameter names are ambiguous: a, a").rejection
+        val userDenial = permissionDeniedByUser().rejection
+        // The batch-level cancellation in ToolExecutionManager keeps the same prefix with a
+        // different tail, so prefix matching must not depend on the exact sentence.
+        val batchCancellation =
+            "$AUTOMATIC_REVIEW_CANCEL_PREFIX stopped this model turn after repeated denied actions."
+
+        assertEquals(
+            ToolPermissionDenialSource.AUTOMATIC_REVIEW,
+            permissionDenialSourceForMessage(reviewDenial),
+        )
+        assertEquals(
+            ToolPermissionDenialSource.AUTOMATIC_REVIEW_CANCELLED,
+            permissionDenialSourceForMessage(stoppedTurn),
+        )
+        assertEquals(
+            ToolPermissionDenialSource.AUTOMATIC_REVIEW_CANCELLED,
+            permissionDenialSourceForMessage(batchCancellation),
+        )
+        assertEquals(
+            ToolPermissionDenialSource.SETTINGS,
+            permissionDenialSourceForMessage(settingsDenial),
+        )
+        assertEquals(ToolPermissionDenialSource.USER, permissionDenialSourceForMessage(userDenial))
+        assertNull(permissionDenialSourceForMessage("Error: file not found"))
+        // A denial that only appears mid-sentence is not one of ours.
+        assertNull(permissionDenialSourceForMessage("see $AUTOMATIC_REVIEW_DENIAL_PREFIX above"))
+
+        assertEquals(
+            R.string.permission_denied_result_auto_review,
+            permissionDenialSummaryResId(reviewDenial),
+        )
+        assertEquals(
+            R.string.permission_denied_result_auto_review_cancelled,
+            permissionDenialSummaryResId(stoppedTurn),
+        )
+        assertEquals(
+            R.string.permission_denied_result_settings,
+            permissionDenialSummaryResId(settingsDenial),
+        )
+        assertEquals(
+            R.string.permission_denied_result_user,
+            permissionDenialSummaryResId(userDenial),
+        )
+        assertNull(permissionDenialSummaryResId("Error: file not found"))
+    }
+
+    @Test
+    fun theStoppedTurnNoticeNeverPromisesARetryThatCannotHappen() {
+        val stoppedTurn = permissionDeniedByRepeatedDenials().rejection.lowercase()
+        assertFalse(stoppedTurn.contains("ask the user to authorize"))
+        assertFalse(stoppedTurn.contains("retry the exact same action"))
+        assertFalse(stoppedTurn.contains("wait for their reply"))
+        assertTrue(stoppedTurn.contains("stopped this turn"))
+        assertTrue(stoppedTurn.contains("do not retry the denied actions"))
+    }
+
+    @Test
+    fun internalReviewNotesAreNeverQuotedBackToTheReader() {
+        // The mock is never asked for a string here: every case below is decided before that, and the
+        // one note that is translated (the circuit-breaker skip) needs a real context and is covered
+        // by the UI rather than by this pure check.
+        val context = Mockito.mock(android.content.Context::class.java)
+        val internalNotes =
+            listOf(
+                ToolPermissionSystem.FAST_REVIEW_RATIONALE,
+                PermissionReviewResponsePolicy.NO_RATIONALE_ALLOW,
+                PermissionReviewResponsePolicy.NO_RATIONALE_DENY,
+                PermissionReviewResponsePolicy.REVIEW_CANCELLED_RATIONALE,
+            )
+        internalNotes.forEach { note ->
+            assertNull(permissionReviewNoteForDisplay(context, note, failureKind = null))
+        }
+        // A review that broke stores an English diagnostic sentence next to the failure it names.
+        assertNull(
+            permissionReviewNoteForDisplay(
+                context,
+                "The approval reviewer timed out.",
+                failureKind = PermissionReviewFailureKind.TIMED_OUT,
+            )
+        )
+        assertNull(permissionReviewNoteForDisplay(context, null, failureKind = null))
+        assertNull(permissionReviewNoteForDisplay(context, "   ", failureKind = null))
+        // What the reviewer itself wrote about the action is still shown.
+        assertEquals(
+            "Deletes the build directory the user asked to clear.",
+            permissionReviewNoteForDisplay(
+                context,
+                "Deletes the build directory the user asked to clear.",
+                failureKind = null,
+            ),
+        )
     }
 
     @Test

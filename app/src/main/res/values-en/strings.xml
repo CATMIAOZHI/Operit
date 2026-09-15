@@ -985,7 +985,7 @@
     
     <string name="settings_section_permissions">Permissions and Security</string>
     <string name="settings_tool_permissions">Tool Permission Settings</string>
-    <string name="settings_tool_permissions_desc">Configure permission levels for AI assistant tools, can be set to auto-allow, ask, or deny</string>
+    <string name="settings_tool_permissions_desc">Configure permission levels for AI assistant tools: forbid, ask, auto review, or allow</string>
     <string name="settings_configure_permissions">Configure Permissions</string>
     
     <string name="settings_section_usage">Usage Statistics</string>
@@ -5070,7 +5070,7 @@
 
     <!-- Tool Permission Settings -->
     <string name="tool_permissions_title">Tool Permissions</string>
-    <string name="tool_permissions_description">By default, all tools require you to \'Ask\'. You can add exceptions below.</string>
+    <string name="tool_permissions_description">By default every tool goes through the automatic review: operations inside the workspace run directly and the rest are judged by the review agent. You can add exceptions below.</string>
     <string name="global_permission_switch">Global Permission Switch</string>
     <string name="global_permission_switch_description">This setting controls the default behavior. Per-tool exceptions such as “always allow/deny” take precedence.</string>
     <string name="permission_level_allow">Allowed</string>
@@ -5088,7 +5088,7 @@
     <string name="permission_stop_auto_review_strict_description">Operations proven to stay in the workspace run directly; everything else goes to the approval agent, which judges every call on its own. Safest, and slowest.</string>
     <string name="permission_stop_auto_review_fast_description">Like strict, plus a lightweight model scores the current course of action asynchronously; a recent low-risk verdict lets the next calls run without the approval agent. It only ever removes reviews, never refuses an action on its own, and is not a system sandbox.</string>
     <string name="permission_stop_allow_description">Every tool runs directly, without asking.</string>
-    <string name="permission_level_ask_description">Default behavior for all tools.</string>
+    <string name="permission_level_ask_description">These tools ask you before every call.</string>
     <string name="add_tool">Add Tool</string>
     <string name="no_tools_in_group">No tools added to this group.</string>
     <string name="remove_tool">Remove</string>
@@ -5124,6 +5124,7 @@
     <string name="execution_success">Execution Successful</string>
     <string name="tool_waiting_authorization">Waiting for authorization</string>
     <string name="tool_waiting_execution">Waiting to execute</string>
+    <string name="tool_waiting_auto_review">Waiting for auto review</string>
     <string name="tool_executing_duration">Running · %1$s</string>
     <string name="subagent_status_creating">Creating</string>
     <string name="subagent_status_started">Started working</string>
@@ -8529,7 +8530,7 @@
     <string name="permission_review_open_subagent_details">Open review Subagent details</string>
     <string name="permission_review_subagent_unavailable">The corresponding review Subagent is unavailable</string>
     <string name="permission_review_allow_exact_once">Authorize re-review of exact action</string>
-    <string name="permission_review_override_recorded">Authorized; waiting for Agent retry</string>
+    <string name="permission_review_override_recorded">Authorized; return to the parent chat and ask the Agent to retry</string>
     <string name="permission_review_override_in_review">Re-review in progress</string>
     <string name="permission_review_override_consumed">This authorization was used</string>
     <string name="permission_review_override_expired">Authorization expired; authorize again</string>
@@ -8545,6 +8546,13 @@
     <string name="permission_review_badge_denied">Auto review denied the action</string>
     <string name="permission_review_badge_timed_out">Auto review timed out</string>
     <string name="permission_review_badge_failed">Auto review failed</string>
+    <string name="permission_review_badge_denied_by_user">Denied by you or settings</string>
+    <string name="permission_review_badge_aborted">Auto review aborted</string>
+    <string name="permission_review_override_unavailable_catastrophic">Auto review rated this action catastrophic, so a one-time authorization cannot override it. Adjust the permission settings first if it still has to run.</string>
+    <string name="permission_denied_result_auto_review">Auto review denied this action</string>
+    <string name="permission_denied_result_user">You denied this action</string>
+    <string name="permission_denied_result_settings">Permission settings forbid this action</string>
+    <string name="permission_denied_result_auto_review_cancelled">Auto review stopped this turn before this action ran</string>
     <string name="permission_review_resolved_allow">Later allowed by you or current settings</string>
     <string name="permission_review_resolved_deny">Later denied by you or current settings</string>
     <string name="permission_review_resolved_reused">Allowed by a recent low-risk score</string>

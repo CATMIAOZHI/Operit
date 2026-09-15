@@ -20,6 +20,7 @@ import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.AttachmentInfo
 import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.ui.permissions.permissionDenialSummary
 import com.ai.assistance.operit.data.model.ChatMessageTimestampAllocator
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.model.ToolPrompt
@@ -828,7 +829,10 @@ object AIMessageManager {
                     ?: ChatMarkupRegex.errorTag.find(block)?.groupValues?.getOrNull(1)
                     ?: extractXmlBody(block)
             val cleanedBody = stripXmlTagsForReview(resultBody)
-            return condenseHeadTail(cleanedBody, headChars = 140, tailChars = 56)
+            // A denial stores the instruction written for the model, and the summary is shown to the
+            // user, so it reports the conclusion instead of quoting that instruction back.
+            val rendered = permissionDenialSummary(context, cleanedBody) ?: cleanedBody
+            return condenseHeadTail(rendered, headChars = 140, tailChars = 56)
         }
 
         fun pruneUserMessageForReview(text: String): String {

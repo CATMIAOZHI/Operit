@@ -60,9 +60,12 @@ function normalizeToolResult(block: WebMessageContentBlock) {
     isFileDiffTool(toolName) && isSuccess && rawResultContent.includes('<file-diff')
       ? extractFileDiff(rawResultContent)
       : null;
+  const rawErrorContent = isSuccess
+    ? ''
+    : extractTaggedContent(rawResultContent, 'error') || rawResultContent;
   const resultContent = isSuccess
     ? stripFileDiff(rawResultContent)
-    : extractTaggedContent(rawResultContent, 'error') || rawResultContent;
+    : permissionDenialLabel(rawErrorContent) ?? rawErrorContent;
 
   return {
     toolName,
@@ -70,6 +73,40 @@ function normalizeToolResult(block: WebMessageContentBlock) {
     resultContent,
     fileDiff
   };
+}
+
+/**
+ * 权限拒绝的正文是写给模型的英文指令（含重试规则），直接贴出来会在对话里出现半句英文。
+ * 这里按同样的前缀换成结论；前缀必须与 app 侧 ToolPermissionSystem.kt 的常量保持一致。
+ * 子代理被中止时正文是「<task_error>Turn <id> failed: <指令></task_error>」，所以先剥掉这层包装。
+ */
+function permissionDenialLabel(resultContent: string): string | null {
+  const trimmed = stripTurnFailureWrapper(unwrapTaskError(resultContent)).trim();
+  // 取消前缀必须先判：它描述的是「本轮被中止、该操作没跑」，说成「已拒绝」会误导用户。
+  if (trimmed.startsWith('Tool execution cancelled because automatic permission review')) {
+    return '自动审核中止了本轮，该操作未执行';
+  }
+  if (trimmed.startsWith('Automatic permission review denied')) {
+    return '自动审核已拒绝该操作';
+  }
+  if (trimmed.startsWith('Tool execution denied by user.')) {
+    return '你已拒绝该操作';
+  }
+  if (trimmed.startsWith('Tool execution denied by permission settings.')) {
+    return '权限设置禁止该操作';
+  }
+  return null;
+}
+
+/** 取出 <task_error> 的正文，没有该标签时原样返回。 */
+function unwrapTaskError(content: string): string {
+  const match = content.match(/<task_error>([\s\S]*?)<\/task_error>/i);
+  return match ? decodeXmlText(match[1] ?? '') : content;
+}
+
+/** 去掉「Turn <id> failed: 」这层包装，它是内部记账用的。 */
+function stripTurnFailureWrapper(content: string): string {
+  return content.replace(/^Turn\s+\S+\s+failed:\s*/, '');
 }
 
 function buildSummaryText(result: string, isSuccess: boolean) {

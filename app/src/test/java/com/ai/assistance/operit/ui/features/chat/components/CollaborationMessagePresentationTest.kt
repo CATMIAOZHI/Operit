@@ -3,6 +3,8 @@ package com.ai.assistance.operit.ui.features.chat.components
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.agent.collaboration.AgentMessage
 import com.ai.assistance.operit.core.agent.collaboration.AgentMessageKind
+import com.ai.assistance.operit.ui.permissions.permissionDenialSummaryResId
+import com.ai.assistance.operit.ui.permissions.permissionDeniedByRepeatedDenials
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -37,6 +39,30 @@ class CollaborationMessagePresentationTest {
         // A task handed over and a status line are not something the agent returned.
         assertNull(collaborationReturnedBody("NEW_TASK", "do the thing"))
         assertNull(collaborationReturnedBody("STATUS", "still working"))
+    }
+
+    @Test fun aStatusLineGivesUpTheRunsOwnLabel() {
+        // CollaborationCoordinator writes "<path>: <status>: <reason>", so a reason the app wrote for
+        // the model no longer sits at the start of the line. Without the label removed the mapping
+        // that recognizes it cannot see it, and a stopped run would report its instruction instead.
+        val stopped = permissionDeniedByRepeatedDenials().rejection
+        assertEquals(stopped, collaborationStatusReason("/root/worker: FAILED: $stopped"))
+        assertEquals(
+            R.string.permission_denied_result_auto_review_cancelled,
+            permissionDenialSummaryResId(
+                collaborationStatusReason("/root/worker: FAILED: $stopped"),
+            ),
+        )
+        // The other two statuses carry the same label.
+        assertEquals("done", collaborationStatusReason("/root/worker: COMPLETED: done"))
+        assertEquals("stopped", collaborationStatusReason("/root/worker: INTERRUPTED: stopped"))
+        // A reason that already stands on its own is left alone.
+        assertEquals(stopped, collaborationStatusReason(stopped))
+        assertEquals("plain", collaborationStatusReason("plain"))
+        // An ordinary failure keeps its own words; the label goes with the run's own name.
+        val failure = collaborationStatusReason("/root/worker: FAILED: something broke")
+        assertEquals("something broke", failure)
+        assertNull(permissionDenialSummaryResId(failure))
     }
 
     @Test fun aRowSaysWhatKindOfMessageItIs() {

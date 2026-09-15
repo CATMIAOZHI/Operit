@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionDenialDisplayText
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.agent.SubagentResultExtractor
 import com.ai.assistance.operit.data.model.ChatMessage
@@ -537,6 +538,7 @@ internal fun SubagentAgentCard(
  */
 @Composable
 internal fun SubagentDetailCard(request: SubagentDetailRequest, onDismiss: () -> Unit) {
+    val context = LocalContext.current
     val returned =
         rememberSubagentReturnedContent(
             childChatId = request.childChatId,
@@ -583,7 +585,12 @@ internal fun SubagentDetailCard(request: SubagentDetailRequest, onDismiss: () ->
             ) {
                 Column {
                     // A run that ended badly says why before it says what it managed to return.
-                    request.failureText?.takeIf { it.isNotBlank() }?.let { text ->
+                    // A failure the automatic review caused stores the instruction written for the
+                    // model, so the reader gets the same conclusion the tool row shows.
+                    request.failureText
+                        ?.let { permissionDenialDisplayText(context, it) }
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { text ->
                         Text(
                             text = text,
                             modifier = Modifier.padding(bottom = 8.dp),
