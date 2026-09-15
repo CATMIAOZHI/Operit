@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.core.tools
 
+import com.ai.assistance.operit.core.agent.AgentRunObservers
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameterSchema
 import com.ai.assistance.operit.data.model.ToolPrompt
@@ -106,4 +107,12 @@ object PermissionReviewInspectionTool {
 object PermissionReviewInternalTools {
     val names = setOf(PermissionReviewSubmissionTool.NAME, PermissionReviewInspectionTool.NAME)
     val prompts = listOf(PermissionReviewInspectionTool.prompt, PermissionReviewSubmissionTool.prompt)
+
+    /**
+     * True for a tool the permission system is never asked about: the reviewer's own tools and the
+     * tools a capability-bound agent run owns. They are allowed as they run, so they are also not
+     * part of what the agent is doing and must not be classified.
+     */
+    fun bypassesPermissionCheck(toolName: String): Boolean =
+        toolName in names || AgentRunObservers.isCapabilityTool(toolName)
 }

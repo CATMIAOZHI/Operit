@@ -524,12 +524,12 @@ internal class PermissionRiskScorer private constructor(context: Context) {
             """
             ${retained.text}
 
-            RECENT PARENT TRANSCRIPT:
-            $transcript
-
             ACTIVE WORKSPACE:
             path=${workspacePath ?: "(none)"}
             environment=${workspaceEnv ?: "(default)"}
+
+            RECENT PARENT TRANSCRIPT:
+            $transcript
 
             CURRENT COURSE OF ACTION (untrusted evidence; the tool calls about to run, in dispatch order):
             $renderedActions

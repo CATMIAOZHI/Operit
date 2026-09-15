@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
 import com.ai.assistance.operit.data.model.AITool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -695,9 +696,10 @@ class ToolPermissionSystem private constructor(private val context: Context) {
      *
      * Scoring starts when the batch is dispatched rather than when an approval is requested, so the
      * verdict for the actions the agent is about to run is already being computed while the reviews
-     * of the same batch are still running. Every batch advances one scoring step, including batches
-     * that need no review at all, so a stored score ages out after
-     * [PermissionRiskScorer.MAX_LAG_STEPS] batches, exactly like the Codex adaptive scorer.
+     * of the same batch are still running. Every dispatched batch advances one scoring step, empty
+     * ones included, so a stored score ages out after [PermissionRiskScorer.MAX_LAG_STEPS] batches,
+     * exactly like the Codex adaptive scorer. A batch made only of tools the permission system is
+     * never asked about is not an action batch and takes no step.
      *
      * Nothing here blocks the batch or decides anything: the tools that would be answered by the
      * workspace policy or by a permanent setting are only counted, not scored, and the score itself
@@ -714,6 +716,16 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         timingScopeId: String? = null,
         liveAssistantContent: String? = null,
     ) {
+        // Scoring a tool the permission system is never asked about would spend a classification
+        // call on work the agent never dispatched to the user, let that verdict answer a later real
+        // call, and age the reuse window for an action nobody saw. A batch that held only such
+        // tools is not an action batch at all and takes no step. Every other batch keeps its step,
+        // empty ones included, so a dispatch that was intercepted whole still ages a stored verdict.
+        val reviewableTools =
+            tools.filterNot { tool ->
+                PermissionReviewInternalTools.bypassesPermissionCheck(tool.name)
+            }
+        if (tools.isNotEmpty() && reviewableTools.isEmpty()) return
         val reviewContext =
             ToolPermissionReviewContext(
                 callerChatId = callerChatId,
@@ -723,11 +735,11 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                 parentModelConfigId = parentModelConfigId,
                 parentModelIndex = parentModelIndex,
                 timingScopeId = timingScopeId,
-                batchSize = tools.size,
+                batchSize = reviewableTools.size,
                 liveAssistantContent = liveAssistantContent,
             )
         val actions =
-            tools.map { tool ->
+            reviewableTools.map { tool ->
                 PermissionRiskAction(
                     canonical =
                         PermissionReviewAction.fromTool(
