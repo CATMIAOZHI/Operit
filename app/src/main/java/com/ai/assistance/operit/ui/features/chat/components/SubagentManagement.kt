@@ -32,6 +32,9 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.GppBad
+import androidx.compose.material.icons.outlined.GppMaybe
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.AlertDialog
@@ -793,61 +796,89 @@ private fun PermissionReviewEventRow(event: PermissionReviewEvent) {
     var showDetails by remember(event.id) { mutableStateOf(false) }
     val statusText = permissionReviewStatusText(event.status)
     val eventTime = event.completedAt ?: event.startedAt
-    val statusColor =
-        if (event.status == PermissionReviewStatus.DENIED ||
+    // The colour only warns. A call the review allowed is the ordinary outcome, and a list of them
+    // has to stay quiet, so an approval reads neutral and the shield carries it.
+    val isNegative =
+        event.status == PermissionReviewStatus.DENIED ||
             event.status == PermissionReviewStatus.FAILED ||
             event.status == PermissionReviewStatus.TIMED_OUT
-        ) {
-            MaterialTheme.colorScheme.error
-        } else {
-            MaterialTheme.colorScheme.primary
+    val isOrdinary = event.status == PermissionReviewStatus.APPROVED
+    val statusColor =
+        when {
+            isNegative -> MaterialTheme.colorScheme.error
+            isOrdinary -> MaterialTheme.colorScheme.onSurfaceVariant
+            event.status == PermissionReviewStatus.ABORTED ->
+                MaterialTheme.colorScheme.stoppedAttention
+            else -> MaterialTheme.colorScheme.primary
         }
-
+    val statusIcon =
+        when {
+            isNegative -> Icons.Outlined.GppBad
+            isOrdinary -> Icons.Outlined.Security
+            else -> Icons.Outlined.GppMaybe
+        }
+    // The summary usually names the tool itself, so the name is only repeated when it adds something.
+    val toolName =
+        event.action.toolName.takeIf { name ->
+            name.isNotBlank() && !event.action.summary.contains(name, ignoreCase = true)
+        }
+    // One reviewed call is one compact row, the way the review runs beside it read: the action is the
+    // line to scan, the outcome sits under it with the time, and the batch it travelled in and
+    // everything the reviewer said stay in the dialog behind a tap.
     Card(
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         modifier =
             Modifier.fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .padding(horizontal = 8.dp, vertical = 2.dp)
                 .clickable { showDetails = true },
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Box(
+                modifier =
+                    Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(statusColor.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = "[${event.batchPosition}/${event.batchSize}] ${event.action.summary}",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = statusColor,
+                Icon(
+                    imageVector = statusIcon,
+                    contentDescription = null,
+                    tint = statusColor,
+                    modifier = Modifier.size(20.dp),
                 )
             }
-            Text(
-                text = event.action.toolName,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.tertiary,
-            )
-            Text(
-                text =
-                    DateUtils.getRelativeTimeSpanString(
-                            eventTime,
-                            System.currentTimeMillis(),
-                            DateUtils.MINUTE_IN_MILLIS,
-                        )
-                        .toString(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = event.action.summary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text =
+                        listOfNotNull(
+                                statusText,
+                                toolName,
+                                DateUtils.getRelativeTimeSpanString(
+                                        eventTime,
+                                        System.currentTimeMillis(),
+                                        DateUtils.MINUTE_IN_MILLIS,
+                                    )
+                                    .toString(),
+                            )
+                            .joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = statusColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 
@@ -866,6 +897,18 @@ private fun PermissionReviewEventRow(event: PermissionReviewEvent) {
                         color = statusColor,
                         fontWeight = FontWeight.SemiBold,
                     )
+                    // The row reads as one action, so where it sat in the batch it travelled in lives
+                    // here, the same way the call's own badge reports it. A call that travelled alone
+                    // has no batch to place itself in.
+                    if (event.batchSize > 1) {
+                        Text(
+                            stringResource(
+                                R.string.permission_review_detail_batch,
+                                event.batchPosition,
+                                event.batchSize,
+                            )
+                        )
+                    }
                     Text(
                         stringResource(
                             R.string.permission_review_detail_action,
@@ -1584,7 +1627,10 @@ private fun SubagentRunRow(
             ?: subagentRunStatusText(status = status, currentTool = currentTool)
     val statusColor =
         when (reviewDisplayState) {
-            PermissionReviewRunDisplayState.ALLOWED -> MaterialTheme.colorScheme.primary
+            // An approval is the ordinary outcome of a review run, the way a completed run is for any
+            // other agent, so it reads neutral and the list stays quiet around the refusals.
+            PermissionReviewRunDisplayState.ALLOWED ->
+                MaterialTheme.colorScheme.onSurfaceVariant
             PermissionReviewRunDisplayState.DENIED -> MaterialTheme.colorScheme.tertiary
             PermissionReviewRunDisplayState.INVALID_OUTPUT,
             PermissionReviewRunDisplayState.CANCELLED_OR_TIMED_OUT,
