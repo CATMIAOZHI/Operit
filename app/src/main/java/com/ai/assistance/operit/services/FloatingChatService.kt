@@ -41,6 +41,7 @@ import com.ai.assistance.operit.data.model.SerializableTypography
 import com.ai.assistance.operit.data.model.toComposeColorScheme
 import com.ai.assistance.operit.data.model.toComposeTypography
 import com.ai.assistance.operit.data.model.PromptFunctionType
+import com.ai.assistance.operit.pet.FloatingPetEntry
 import com.ai.assistance.operit.services.floating.FloatingWindowCallback
 import com.ai.assistance.operit.services.floating.FloatingWindowManager
 import com.ai.assistance.operit.services.floating.FloatingWindowState
@@ -367,6 +368,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         coreObservation = serviceScope.launch {
             launch { core.chatHistory.collect { chatMessages.value = it } }
             launch { core.attachments.collect { attachments.value = it } }
+            // The pet needs the conversation this window shows, not the one it last opened.
+            launch { core.currentChatId.collect { FloatingPetEntry.chatId.value = it } }
             launch {
                 combine(core.currentChatId, core.inputProcessingStateByChatId) { id, states ->
                     states[id] ?: InputProcessingState.Idle

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Minimize
 import androidx.compose.material.icons.filled.Pets
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -93,6 +94,7 @@ internal fun PetCompanion(
     val tasks = model?.visibleTasks?.collectAsState()?.value.orEmpty()
     val selectedKey = model?.selectedKey?.collectAsState()?.value
     val floatingEntry by FloatingPetEntry.mode.collectAsState()
+    val floatingChatId by FloatingPetEntry.chatId.collectAsState()
     val task = if (preview) {
         PetTask("preview", "", com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN,
             stringResource(R.string.pet_preview_task), PetActivity.THINKING, true)
@@ -101,6 +103,8 @@ internal fun PetCompanion(
         selected?.takeUnless { it.activity == PetActivity.IDLE }
             ?: tasks.firstOrNull { it.active } ?: selected ?: tasks.lastOrNull()
     }
+    // The window may be showing another conversation; then this button opens this task instead.
+    val bubbleAction = petBubbleAction(task, floatingEntry, floatingChatId)
     var interaction by remember { mutableIntStateOf(0) }
     val recentTaps = remember(settings.animations, settings.mediaType) { ArrayDeque<Long>() }
     var dizzyUntil by remember(settings.animations, settings.mediaType) { mutableLongStateOf(0L) }
@@ -240,9 +244,10 @@ internal fun PetCompanion(
                                     modifier = Modifier.size(48.dp),
                                 ) {
                                     Icon(
-                                        Icons.AutoMirrored.Filled.OpenInNew,
+                                        if (bubbleAction == PetBubbleAction.MINIMIZE)
+                                            Icons.Default.Minimize else Icons.AutoMirrored.Filled.OpenInNew,
                                         contentDescription = stringResource(
-                                            if (floatingEntry == FloatingPetEntryMode.CHAT_WINDOW)
+                                            if (bubbleAction == PetBubbleAction.MINIMIZE)
                                                 R.string.pet_minimize_floating else R.string.pet_open_floating,
                                         ),
                                         modifier = Modifier.size(18.dp),

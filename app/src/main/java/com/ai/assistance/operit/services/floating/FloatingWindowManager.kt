@@ -229,6 +229,7 @@ class FloatingWindowManager(
     fun destroy() {
         entryObserver.cancel()
         FloatingPetEntry.mode.value = FloatingPetEntryMode.NONE
+        FloatingPetEntry.chatId.value = null
         finishWindowResize()
         hideStatusIndicator()
         if (isViewAdded) {

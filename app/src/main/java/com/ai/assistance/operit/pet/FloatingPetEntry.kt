@@ -7,4 +7,10 @@ enum class FloatingPetEntryMode { NONE, HIDDEN, PET_DISABLED, PET, LEGACY_BALL, 
 
 object FloatingPetEntry {
     val mode = MutableStateFlow(FloatingPetEntryMode.NONE)
+
+    /**
+     * Conversation the chat window currently shows. The pet compares it with the task in its
+     * bubble, so one button can either open that task or minimize the window already showing it.
+     */
+    val chatId = MutableStateFlow<String?>(null)
 }
