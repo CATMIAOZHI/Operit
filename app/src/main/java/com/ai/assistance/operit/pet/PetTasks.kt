@@ -96,6 +96,16 @@ class PetTasks private constructor(private val context: Context) {
 
     init {
         scope.launch {
+            // The window's conversation is what the user is looking at, so the bubble follows it.
+            // Keying on that one conversation (not on the whole list) leaves a manual "next task"
+            // pick alone while unrelated conversations start or finish their runs.
+            combine(FloatingPetEntry.chatId, visibleTasks) { chatId, visible -> petTaskForChat(visible, chatId)?.key }
+                .distinctUntilChanged()
+                .collect { key ->
+                    if (key != null && selectedKey.value != key) selectedKey.value = key
+                }
+        }
+        scope.launch {
             combine(PetPreferences.get(context).settings, FloatingPetEntry.mode) { settings, entry ->
                 (settings.inApp || settings.overlay || entry != FloatingPetEntryMode.NONE) && settings.isReady
             }.distinctUntilChanged().collectLatest { enabled ->
@@ -197,7 +207,8 @@ class PetTasks private constructor(private val context: Context) {
     }
 
     fun openFloating(task: PetTask?) {
-        if (FloatingPetEntry.mode.value == FloatingPetEntryMode.CHAT_WINDOW) {
+        val windowMode = FloatingPetEntry.mode.value
+        if (petBubbleAction(task, windowMode, FloatingPetEntry.chatId.value) == PetBubbleAction.MINIMIZE) {
             FloatingChatService.getInstance()?.let {
                 it.minimizeToPet()
                 return
@@ -258,3 +269,23 @@ internal fun visiblePetTasks(tasks: List<PetTask>, acknowledgedRuns: Map<String,
 internal fun shouldAcknowledgeViewedPetTask(task: PetTask, chatId: String): Boolean =
     task.slot == ChatRuntimeSlot.MAIN && task.chatId == chatId &&
         !task.active && task.activity == PetActivity.COMPLETE
+
+/** What the bubble's one button does for the task it currently shows. */
+internal enum class PetBubbleAction { OPEN, MINIMIZE }
+
+/**
+ * The bubble shows one task while the chat window shows one conversation, and the two often
+ * differ once several conversations run. The button may only minimize the window it is already
+ * looking at; anything else has to open the task in the bubble.
+ */
+internal fun petBubbleAction(
+    task: PetTask?,
+    windowMode: FloatingPetEntryMode,
+    windowChatId: String?,
+): PetBubbleAction = if (
+    windowMode == FloatingPetEntryMode.CHAT_WINDOW && (task == null || task.chatId == windowChatId)
+) PetBubbleAction.MINIMIZE else PetBubbleAction.OPEN
+
+/** The run a conversation is currently shown as; the pet follows the window's conversation. */
+internal fun petTaskForChat(tasks: List<PetTask>, chatId: String?): PetTask? =
+    chatId?.let { id -> tasks.lastOrNull { it.chatId == id } }
