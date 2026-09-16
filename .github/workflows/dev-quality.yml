@@ -60,6 +60,10 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          # 该 action 的默认值是 "tools platform-tools"，但 Google 已从 SDK 仓库下架
+          # 旧的 "tools" 包，`sdkmanager tools` 会以 exit code 1 结束。显式只装还在维护的包。
+          packages: 'platform-tools'
 
       - name: Install JVM-check Android toolchain
         shell: bash
