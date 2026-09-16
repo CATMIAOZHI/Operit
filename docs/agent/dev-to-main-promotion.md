@@ -107,8 +107,10 @@ git pull origin personal/main
 
 ### 3. 创建晋升分支
 
+一个发布轮次对应一个晋升分支，用本轮稳定版本号命名（如 `promote/ry.8`）：
+
 ```bash
-git checkout -b promote/<feature-name>   # 从 personal/main 创建
+git checkout -b promote/<release>   # 从 personal/main 创建；<release> 是本轮稳定版本号，如 ry.8
 ```
 
 ### 4. 挑选通用功能提交
@@ -186,11 +188,13 @@ test -f app/src/debug/res/drawable/ic_launcher_dev_badge.xml \
 
 ### 7. 推送并创建 PR
 
+晋升说明按功能域分组，交代本轮带入了什么，并列出检查点 tag、本轮基线、提交数和排除掉的开发版专属内容：
+
 ```bash
-git push origin promote/<feature-name>
-gh pr create --base personal/main --head promote/<feature-name> \
-  --title "<type>: <description>" \
-  --body "从 personal/dev 晋升已通过测试的功能。"
+git push origin promote/<release>
+gh pr create --base personal/main --head promote/<release> \
+  --title "<type>: promote <本轮的几组改动> for <release>" \
+  --body-file <按功能域分组写好的晋升说明>
 ```
 
 ### 8. 等待 CI 并合并
@@ -350,4 +354,4 @@ git push --atomic origin personal/dev "$CHECKPOINT"
 - **不要直接 merge `personal/dev` 到 `personal/main`**：dev 分支包含大量开发版专属提交，直接 merge 会全部带入。
 - **不要省略测试**：晋升 PR 必须通过 CI 必需检查，`personal/main` 受 Ruleset 保护。
 - **上游更新方向相反**：上游更新走 `upstream/main → personal/dev`（先测试）→ `personal/main`，晋升走 `personal/dev → personal/main`，两条路径都经过 dev 验证，不要混用。
-- **一次只晋升一个功能**：多个功能应分开 PR，便于回滚和审查。
+- **一个发布轮次一个晋升 PR**：检查点之后的所有通用改动一次性晋升，`personal/main` 每轮只推进一个稳定版本号。说明按功能域分组，每个功能仍保留自己的提交边界，需要回滚时只 revert 该功能的提交，不必放弃整轮。
