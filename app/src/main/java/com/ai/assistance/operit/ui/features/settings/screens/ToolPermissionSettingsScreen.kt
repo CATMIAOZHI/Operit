@@ -527,4 +527,3 @@ private fun ToolSelectorDialog(
         }
     }
 }
-
