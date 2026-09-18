@@ -16,6 +16,18 @@ data class ChatTurnOptions(
     val collaborationHistoryCutoff: Long? = null,
     /** Runtime model-function route. Internal turns can use a functional model without becoming CHAT. */
     val functionType: FunctionType = FunctionType.CHAT,
+    /**
+     * The provider conversation this turn belongs to, when that is not the chat the turn runs in.
+     * An internal turn whose conversation outlives any single chat pins it here so a provider that
+     * caches prompt prefixes keeps reusing the prefix a sibling turn already warmed.
+     */
+    val providerSessionId: String? = null,
+    /**
+     * Keeps this turn's chat out of the automatic history summary. A turn whose chat is continued by
+     * a later turn needs the earlier prompt to still be in the conversation verbatim, because that
+     * prompt is the part a provider caches and the part the next turn does not resend.
+     */
+    val disableSummary: Boolean = false,
     /** Per-turn hard gate. False hides tool schemas and ignores tool-call markup in the response. */
     val toolsEnabled: Boolean = true,
     /** When set, exposes only these tools and bypasses the ordinary global/tool-selector list. */

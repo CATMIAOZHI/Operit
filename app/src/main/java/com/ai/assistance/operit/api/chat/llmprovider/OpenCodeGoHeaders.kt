@@ -21,6 +21,22 @@ internal class OpenCodeSessionContext(
     companion object Key : CoroutineContext.Key<OpenCodeSessionContext>
 }
 
+/**
+ * The conversation identity a stable scope stands for, in the shape every other identity has.
+ *
+ * A scope names a conversation that outlives the chat a single turn runs in. The automatic
+ * permission review is why this exists: each review of one conversation may run in a reviewer chat
+ * of its own, but every one of them is about the same conversation, and a provider only reuses a
+ * cached prompt prefix while the identity it was asked under stays the same. The reference
+ * implementation scopes its reviewer the same way, keying its cache by `guardian:<parent thread>`
+ * instead of by the reviewer's own session.
+ *
+ * The value is hashed into a UUID so it stays the shape a conversation identity has everywhere else
+ * and cannot be confused with a chat id.
+ */
+internal fun providerSessionIdForScope(scope: String): String =
+    UUID.nameUUIDFromBytes("operit-provider-session:$scope".toByteArray(Charsets.UTF_8)).toString()
+
 /** Used by direct provider calls (for example connection tests) without a chat context. */
 internal class OpenCodeGoHeaders {
     private val fallbackSessionId = UUID.randomUUID().toString()

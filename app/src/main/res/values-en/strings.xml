@@ -3715,6 +3715,8 @@
     <string name="token_stats_category_character">Character generation</string>
     <string name="token_stats_category_reading_companion">AI Reading Companion</string>
     <string name="token_stats_category_connection_test">Connection test</string>
+    <string name="token_stats_category_permission_reviewer">Automatic review (per call)</string>
+    <string name="token_stats_category_permission_risk_scorer">Automatic review (risk score)</string>
     <string name="token_stats_category_other">Other</string>
     <string name="token_stats_status_completed">Completed</string>
     <string name="token_stats_status_cancelled">Cancelled</string>
@@ -8548,6 +8550,11 @@
     <string name="permission_risk_score_batch">%1$d of this batch\'s %2$d actions need a judgment</string>
     <string name="permission_risk_score_batch_no_action">Nothing in this batch needed a review</string>
     <string name="permission_risk_score_tools">Tools: %1$s</string>
+    <string name="permission_risk_score_prior_reviews">Earlier reviews carried: %1$d decisions, %2$d characters, fingerprint %3$s</string>
+    <string name="permission_risk_score_prior_reviews_none">No earlier reviews carried</string>
+    <string name="permission_risk_score_usage_cache_unreported">This call: input %1$s, cache read not reported, output %2$s tokens</string>
+    <string name="permission_risk_score_usage_cached">This call: input %1$s, cache read %2$s (%3$d%%), output %4$s tokens</string>
+    <string name="permission_risk_score_usage_unreported">This call: the model reported no usage</string>
     <!-- Quoted so the space after the comma survives resource compilation. -->
     <string name="permission_risk_score_tool_separator">", "</string>
     <string name="permission_risk_score_answered">Saved %1$d reviews for later calls</string>

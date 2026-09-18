@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.ui.permissions
 
 import android.content.Context
+import com.ai.assistance.operit.data.stats.TokenCostCalculator
 import com.ai.assistance.operit.util.AppLogger
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
@@ -13,6 +14,13 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+
+/**
+ * How the stored pre-classification history is written and read. It is named rather than inlined so
+ * the test that pins compatibility with rows an older version wrote reads them the way the app does
+ * instead of through a configuration of its own.
+ */
+internal val permissionRiskScoreJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
 /**
  * One tool batch as the fast level's pre-classification saw it: what the lightweight classifier was
@@ -45,6 +53,30 @@ internal data class PermissionRiskScoreRecord(
     val answeredCalls: Int = 0,
     /** The tools the batch dispatched, bounded, so the row says what was judged. */
     val toolNames: List<String> = emptyList(),
+    /**
+     * What the classifier's own call cost, as the provider reported it, or null when it reported
+     * nothing. The classifier makes one call with no conversation behind it, so these are the numbers
+     * the usage statistics page counts under its category, and the row can say what a batch actually
+     * spent instead of leaving it to be inferred from the prompt's size.
+     */
+    val usage: PermissionRiskScoreUsage? = null,
+    /**
+     * The earlier review decisions this batch's classifier input carried: how many, how many
+     * characters they took, and a fingerprint of the rendered block.
+     *
+     * The classifier's request is a single call rather than a conversation, so there is no session to
+     * read the prompt back from. The block is rebuilt from the review events instead, and these three
+     * are what makes the batch's evidence checkable: the count says whether decisions were carried at
+     * all, and a rebuild that ends with the same fingerprint proves it is the same block.
+     *
+     * The fingerprint is a claim about the events the batch was shown, not a permanent one. The
+     * review history is a bounded window whose stored form drops each event's rationale and action
+     * arguments, and the block itself drops its oldest fragments once its budget is reached, so a
+     * later rebuild can legitimately differ even though nothing about this batch changed.
+     */
+    val priorReviewCount: Int = 0,
+    val priorReviewChars: Int = 0,
+    val priorReviewHash: String = "",
 )
 
 /** How many tool names one record keeps: a batch can hold many calls, and the row shows them all. */
@@ -52,6 +84,12 @@ internal const val MAX_RECORDED_BATCH_TOOLS = 6
 
 /** A tool name comes from the package that registered it, so one long name cannot grow the store. */
 internal const val MAX_RECORDED_TOOL_NAME_CHARS = 48
+
+/**
+ * How much of a block's fingerprint the row shows. The full value is long enough to make the row
+ * unreadable, and a prefix is enough to compare two rows or a row against a rebuild by eye.
+ */
+internal const val PRIOR_REVIEW_FINGERPRINT_CHARS = 8
 
 /**
  * The tools a batch asked the classifier about, in the order they were dispatched. The list is
@@ -72,6 +110,73 @@ internal enum class PermissionRiskScoreDisplay {
     FAILED,
     SKIPPED,
 }
+
+/**
+ * What the classifier's own call cost, as the provider reported it.
+ *
+ * Every component is nullable for the reason the usage ledger gives: a component the provider did not
+ * report is unknown, not zero, and a provider that reported nothing at all leaves the whole value
+ * null.
+ *
+ * The cache read and the output come straight from the reports the ledger counted, through the same
+ * merging and aggregation, so those two say what the usage statistics page says. [inputTokens] is a
+ * derivation rather than one of the ledger's own figures: the ledger bills the split parts, and falls
+ * back to a stated total only when the split is unknown and both input prices are equal; its canonical
+ * and context input totals also need the cache-write count that Anthropic prices separately. The row
+ * prices nothing, so it reports what the provider gave instead of the figure the ledger can bill.
+ */
+@Serializable
+internal data class PermissionRiskScoreUsage(
+    val uncachedInputTokens: Long? = null,
+    val cachedInputTokens: Long? = null,
+    val totalInputTokens: Long? = null,
+    val outputTokens: Long? = null,
+)
+
+/**
+ * The call's input as the row states it: the total the provider gave, or the two parts it split the
+ * input into. Without a split it falls back to the uncached part alone, which is what a provider that
+ * reports no cache field is saying the input was, and it refuses to call the cached part an input,
+ * because a cache read is only a share of one.
+ *
+ * This is not one of the ledger's own figures: its billed input is the two parts summed and never a
+ * stated total, and it is unknown when the cache read is; its canonical and context input totals also
+ * need the cache-write count that Anthropic prices separately. The row prices nothing, so it states
+ * what it was given instead of withholding it.
+ */
+internal fun PermissionRiskScoreUsage.inputTokens(): Long? =
+    totalInputTokens
+        ?: if (uncachedInputTokens != null && cachedInputTokens != null) {
+            TokenCostCalculator.saturatedAdd(uncachedInputTokens, cachedInputTokens)
+        } else {
+            uncachedInputTokens
+        }
+
+/**
+ * The share of this call's input the provider served from its own cache, or null when it did not
+ * report enough to say. Zero is a real answer - the provider stated that nothing was read from the
+ * cache - and is what a batch with no cache hit reads as.
+ */
+internal fun PermissionRiskScoreUsage.cacheReadPercent(): Int? {
+    val input = inputTokens() ?: return null
+    val cached = cachedInputTokens ?: return null
+    if (input <= 0L) return null
+    return ((cached * 100L) / input).toInt().coerceIn(0, 100)
+}
+
+/**
+ * One log line for a batch's call. A component the provider did not report reads as a dash rather
+ * than a zero, so a reader of the log cannot mistake an unknown for a measurement.
+ */
+internal fun PermissionRiskScoreUsage?.summaryForLog(): String =
+    this?.let { usage ->
+        "in=${usage.inputTokens() ?: UNREPORTED_TOKEN_COUNT}" +
+            ",cached=${usage.cachedInputTokens ?: UNREPORTED_TOKEN_COUNT}" +
+            ",out=${usage.outputTokens ?: UNREPORTED_TOKEN_COUNT}"
+    } ?: "unreported"
+
+/** How a component the provider did not report is written in a log line. */
+private const val UNREPORTED_TOKEN_COUNT = "-"
 
 internal fun PermissionRiskScoreRecord.display(): PermissionRiskScoreDisplay =
     when {
@@ -154,7 +259,6 @@ internal object PermissionRiskScoreRepository {
     internal val processGeneration: String = UUID.randomUUID().toString().take(8)
 
     private val lock = Any()
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     @Volatile private var applicationContext: Context? = null
     @Volatile private var storedRecordsLoaded = false
     private val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -193,7 +297,10 @@ internal object PermissionRiskScoreRepository {
                     .getOrNull()
             if (!stored.isNullOrBlank()) {
                 val decoded =
-                    runCatching { json.decodeFromString<List<PermissionRiskScoreRecord>>(stored) }
+                    runCatching {
+                            permissionRiskScoreJson
+                                .decodeFromString<List<PermissionRiskScoreRecord>>(stored)
+                        }
                         .onFailure { error ->
                             AppLogger.e(
                                 TAG,
@@ -233,7 +340,9 @@ internal object PermissionRiskScoreRepository {
 
     private fun persistLocked() {
         val appContext = applicationContext ?: return
-        val payload = runCatching { json.encodeToString(_records.value) }.getOrNull() ?: return
+        val payload =
+            runCatching { permissionRiskScoreJson.encodeToString(_records.value) }.getOrNull()
+                ?: return
         runCatching {
                 appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
                     .edit()

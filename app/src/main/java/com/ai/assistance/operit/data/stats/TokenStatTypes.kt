@@ -13,6 +13,10 @@ enum class TokenStatCategory {
     CHARACTER_GENERATION,
     READING_COMPANION,
     CONNECTION_TEST,
+    /** The automatic review: the blocking reviewer that judges one tool call. */
+    PERMISSION_REVIEWER,
+    /** The automatic review: the asynchronous classifier that scores one dispatched batch. */
+    PERMISSION_RISK_SCORER,
     OTHER;
 
     companion object {

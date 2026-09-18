@@ -3606,6 +3606,8 @@
     <string name="token_stats_category_character">角色生成</string>
     <string name="token_stats_category_reading_companion">AI 阅读伴侣</string>
     <string name="token_stats_category_connection_test">连接测试</string>
+    <string name="token_stats_category_permission_reviewer">自动审核（逐条审核）</string>
+    <string name="token_stats_category_permission_risk_scorer">自动审核（风险评分）</string>
     <string name="token_stats_category_other">其他</string>
     <string name="token_stats_status_completed">完成</string>
     <string name="token_stats_status_cancelled">取消</string>
@@ -8525,6 +8527,11 @@
     <string name="permission_risk_score_batch">这批有 %1$d 个操作需要判断（共 %2$d 个）</string>
     <string name="permission_risk_score_batch_no_action">这批没有需要审核的操作</string>
     <string name="permission_risk_score_tools">涉及工具：%1$s</string>
+    <string name="permission_risk_score_prior_reviews">携带历史审核：%1$d 条 / %2$d 字符 / 指纹 %3$s</string>
+    <string name="permission_risk_score_prior_reviews_none">未携带历史审核</string>
+    <string name="permission_risk_score_usage_cache_unreported">本次调用 token：输入 %1$s · 缓存命中未上报 · 输出 %2$s</string>
+    <string name="permission_risk_score_usage_cached">本次调用 token：输入 %1$s · 缓存命中 %2$s（%3$d%%）· 输出 %4$s</string>
+    <string name="permission_risk_score_usage_unreported">本次调用 token：模型没有上报用量</string>
     <string name="permission_risk_score_tool_separator">、</string>
     <string name="permission_risk_score_answered">已替后面的调用省下 %1$d 次审核</string>
     <string name="permission_risk_score_not_used">还没有调用用上这条结论</string>
