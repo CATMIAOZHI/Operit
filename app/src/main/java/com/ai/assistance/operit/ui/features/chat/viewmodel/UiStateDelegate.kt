@@ -3,6 +3,7 @@ package com.ai.assistance.operit.ui.features.chat.viewmodel
 import android.content.Intent
 import com.ai.assistance.operit.data.model.AiReference
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
+import com.ai.assistance.operit.ui.permissions.ToolPermissionStop
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,8 +20,13 @@ class UiStateDelegate {
     private val _toastEvent = MutableStateFlow<String?>(null)
     val toastEvent: StateFlow<String?> = _toastEvent.asStateFlow()
 
-    private val _masterPermissionLevel = MutableStateFlow(PermissionLevel.ASK)
+    /** Before the stores emit, the chat shows the level a fresh install starts on. */
+    private val _masterPermissionLevel = MutableStateFlow(ToolPermissionStop.DEFAULT.level)
     val masterPermissionLevel: StateFlow<PermissionLevel> = _masterPermissionLevel.asStateFlow()
+
+    /** The same choice as the permission slider shows it: the level plus its reuse level. */
+    private val _masterPermissionStop = MutableStateFlow(ToolPermissionStop.DEFAULT)
+    val masterPermissionStop: StateFlow<ToolPermissionStop> = _masterPermissionStop.asStateFlow()
 
     // 文件选择器请求
     private val _fileChooserRequest = MutableStateFlow<Intent?>(null)
@@ -56,9 +62,17 @@ class UiStateDelegate {
         _toastEvent.value = null
     }
 
-    /** 更新主权限级别 */
+    /**
+     * 更新主权限级别。只改变等级，复用等级由 [updateMasterPermissionStop] 跟随存储值维护。
+     */
     fun updateMasterPermissionLevel(level: PermissionLevel) {
         _masterPermissionLevel.value = level
+    }
+
+    /** 更新主权限档位（滑块上选中的那一档），等级随之同步。 */
+    fun updateMasterPermissionStop(stop: ToolPermissionStop) {
+        _masterPermissionStop.value = stop
+        _masterPermissionLevel.value = stop.level
     }
 
     /** 请求文件选择器 */

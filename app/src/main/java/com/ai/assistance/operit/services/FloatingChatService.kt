@@ -41,6 +41,7 @@ import com.ai.assistance.operit.data.model.SerializableTypography
 import com.ai.assistance.operit.data.model.toComposeColorScheme
 import com.ai.assistance.operit.data.model.toComposeTypography
 import com.ai.assistance.operit.data.model.PromptFunctionType
+import com.ai.assistance.operit.pet.FloatingPetEntry
 import com.ai.assistance.operit.services.floating.FloatingWindowCallback
 import com.ai.assistance.operit.services.floating.FloatingWindowManager
 import com.ai.assistance.operit.services.floating.FloatingWindowState
@@ -105,6 +106,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
 
     companion object {
         private const val ACTION_CLOSE = "com.ai.assistance.operit.action.CLOSE_FLOATING_CHAT"
+        private const val BRING_INTO_VIEW_UNPLACED_MESSAGE =
+            "Expected BringIntoViewRequester to not be used before parents are placed."
         @Volatile
         private var instance: FloatingChatService? = null
 
@@ -183,6 +186,16 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     override fun onBind(intent: Intent): IBinder = binder
 
     private fun handleServiceCrash(thread: Thread, throwable: Throwable) {
+        if (isRecoverableRelocationFailure(throwable)) {
+            // Compose failed a bring-into-view relocation that raced with a layout change of the
+            // floating window. It is raised from inside a coroutine body, so kotlinx routes it to
+            // this handler directly (CoroutineExceptionHandlerImplKt) instead of unwinding the
+            // main Looper: returning here keeps the process and its UI thread alive, at the cost
+            // of one skipped scroll-into-view. It must not reach defaultExceptionHandler, which
+            // shows the crash report, exits the process and feeds the service-disable fuse.
+            AppLogger.e(TAG, "Ignoring recoverable Compose relocation failure", throwable)
+            return
+        }
         try {
             AppLogger.e(TAG, "Service crashed: ${throwable.message}", throwable)
             val currentTime = System.currentTimeMillis()
@@ -208,6 +221,16 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         } finally {
             defaultExceptionHandler?.uncaughtException(thread, throwable)
         }
+    }
+
+    /**
+     * The floating window hides and resizes itself while Compose still has queued focus/scroll
+     * work; a bring-into-view that lands on a not-yet-placed scroll container throws
+     * [IllegalStateException]. It is a UI-only race, so it is logged instead of crashing.
+     */
+    private fun isRecoverableRelocationFailure(throwable: Throwable): Boolean {
+        if (throwable !is IllegalStateException) return false
+        return throwable.message?.contains(BRING_INTO_VIEW_UNPLACED_MESSAGE) == true
     }
 
     override fun onCreate() {
@@ -345,6 +368,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         coreObservation = serviceScope.launch {
             launch { core.chatHistory.collect { chatMessages.value = it } }
             launch { core.attachments.collect { attachments.value = it } }
+            // The pet needs the conversation this window shows, not the one it last opened.
+            launch { core.currentChatId.collect { FloatingPetEntry.chatId.value = it } }
             launch {
                 combine(core.currentChatId, core.inputProcessingStateByChatId) { id, states ->
                     states[id] ?: InputProcessingState.Idle

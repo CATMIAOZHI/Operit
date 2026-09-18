@@ -30,6 +30,24 @@ class TranscriptRowsTest {
         assertEquals(listOf(false, true, true), rows.map { it.cardLast })
     }
 
+    @Test fun aReplyWrittenAsSeveralMessagesClosesItsCardOnce() {
+        // Waifu mode writes one reply as several messages that share a sentAt and repeat the turn's
+        // totals, so only the last of them may close the card the statistics hang off.
+        val messages =
+            listOf(
+                message(1, "user"),
+                message(2, "ai").copy(sentAt = 100),
+                message(3, "ai").copy(sentAt = 100),
+                message(4, "ai").copy(sentAt = 100),
+            )
+
+        val rows = withCardEnds(transcriptRows(messages, ResponseProcessState(emptyMap(), { true }, {}, {})))
+        val reply = rows.drop(1)
+
+        assertEquals(listOf(true, false, false), reply.map { it.cardFirst })
+        assertEquals(listOf(false, false, true), reply.map { it.cardLast })
+    }
+
     @Test fun selectionKeepsIdentityWhenProcessRowsAreInserted() {
         val selected = TranscriptSelection()
         fun message(timestamp: Long) = ChatMessage(timestamp = timestamp, sender = "ai", content = "")

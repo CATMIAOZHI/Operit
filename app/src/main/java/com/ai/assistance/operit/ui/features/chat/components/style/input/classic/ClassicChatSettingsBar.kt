@@ -98,7 +98,9 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.t
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardMemoryBindingSwitchConfirmDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardModelBindingSwitchConfirmDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ToolPromptManagerDialog
-import com.ai.assistance.operit.ui.permissions.PermissionLevel
+import com.ai.assistance.operit.ui.permissions.PermissionStopSlider
+import com.ai.assistance.operit.ui.permissions.ToolPermissionStop
+import com.ai.assistance.operit.ui.permissions.labelRes
 import java.text.DecimalFormat
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -112,8 +114,8 @@ fun ClassicChatSettingsBar(
     featureStates: Map<String, Boolean>,
     onToggleFeature: (String) -> Unit,
     inputMenuRuntime: String = "main",
-    permissionLevel: PermissionLevel,
-    onSetPermissionLevel: (PermissionLevel) -> Unit,
+    permissionStop: ToolPermissionStop,
+    onSetPermissionStop: (ToolPermissionStop) -> Unit,
     enableThinkingMode: Boolean,
     onToggleThinkingMode: () -> Unit,
     thinkingQualityLevel: Int,
@@ -293,15 +295,9 @@ fun ClassicChatSettingsBar(
         }
     val maxThinkingQualityLevel = ApiPreferences.MAX_THINKING_QUALITY_LEVEL
     val toolPermissionText =
-        when (if (enableTools) permissionLevel else PermissionLevel.FORBID) {
-            PermissionLevel.FORBID -> stringResource(R.string.agent_menu_permission_disabled)
-            PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
-            PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
-            PermissionLevel.WORKSPACE_REVIEWER ->
-                stringResource(R.string.permission_level_workspace_reviewer)
-            PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
-            PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
-        }
+        stringResource(
+            (if (enableTools) permissionStop else ToolPermissionStop.FORBID).labelRes
+        )
     val behaviorSummary =
         if (disableStreamOutput) {
             stringResource(R.string.agent_menu_behavior_non_streaming)
@@ -714,9 +710,9 @@ fun ClassicChatSettingsBar(
                             ) {
                             ToolPermissionSettingItem(
                                 enableTools = enableTools,
-                                permissionLevel = permissionLevel,
+                                permissionStop = permissionStop,
                                 onToggleTools = onToggleTools,
-                                onSetPermissionLevel = onSetPermissionLevel,
+                                onSetPermissionStop = onSetPermissionStop,
                                 onManageToolsClick = {
                                     showToolPromptManagerDialog = true
                                     showMenu = false
@@ -1199,15 +1195,14 @@ private fun ClassicSettingsFoldSection(
 }
 
 @Composable
-@OptIn(ExperimentalLayoutApi::class)
 private fun ToolPermissionSettingItem(
     enableTools: Boolean,
-    permissionLevel: PermissionLevel,
+    permissionStop: ToolPermissionStop,
     onToggleTools: () -> Unit,
-    onSetPermissionLevel: (PermissionLevel) -> Unit,
+    onSetPermissionStop: (ToolPermissionStop) -> Unit,
     onManageToolsClick: () -> Unit
 ) {
-    val selectedLevel = if (enableTools) permissionLevel else PermissionLevel.FORBID
+    val selectedStop = if (enableTools) permissionStop else ToolPermissionStop.FORBID
 
     Column(
         modifier =
@@ -1226,72 +1221,21 @@ private fun ToolPermissionSettingItem(
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.height(6.dp))
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-            listOf(
-                PermissionLevel.FORBID,
-                PermissionLevel.ASK,
-                PermissionLevel.WORKSPACE,
-                PermissionLevel.WORKSPACE_REVIEWER,
-                PermissionLevel.REVIEWER,
-                PermissionLevel.ALLOW,
-            ).forEach { level ->
-                val isSelected = selectedLevel == level
-                val label =
-                    when (level) {
-                        PermissionLevel.FORBID -> stringResource(R.string.agent_menu_permission_disabled)
-                        PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
-                        PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
-                        PermissionLevel.WORKSPACE_REVIEWER ->
-                            stringResource(R.string.permission_level_workspace_reviewer)
-                        PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
-                        PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
+            PermissionStopSlider(
+                stop = selectedStop,
+                onStopSelected = { stop ->
+                    // Turning tools off and turning them back on stay part of choosing the level.
+                    if (!enableTools && stop != ToolPermissionStop.FORBID) {
+                        onToggleTools()
                     }
-                Box(
-                    modifier =
-                        Modifier
-                            .height(32.dp)
-                            .widthIn(min = 72.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(
-                                if (isSelected) MaterialTheme.colorScheme.primary
-                                else Color.Transparent
-                            )
-                            .border(
-                                1.dp,
-                                if (isSelected) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
-                                RoundedCornerShape(999.dp)
-                            )
-                            .clickable {
-                                if (!enableTools && level != PermissionLevel.FORBID) {
-                                    onToggleTools()
-                                }
-                                if (enableTools && level == PermissionLevel.FORBID) {
-                                    onToggleTools()
-                                }
-                                if (permissionLevel != level) {
-                                    onSetPermissionLevel(level)
-                                }
-                            }
-                            .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = label,
-                        color =
-                            if (isSelected) MaterialTheme.colorScheme.onPrimary
-                            else MaterialTheme.colorScheme.onSurface,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
+                    if (enableTools && stop == ToolPermissionStop.FORBID) {
+                        onToggleTools()
+                    }
+                    if (permissionStop != stop) {
+                        onSetPermissionStop(stop)
+                    }
+                },
+            )
         }
 
         Box(

@@ -36,6 +36,15 @@ class FunctionalConfigManager(private val context: Context) {
         // 默认映射值
         const val DEFAULT_CONFIG_ID = "default"
 
+        /**
+         * 跟随另一个功能的模型选择的功能。
+         *
+         * “自动审核”的异步风险分类器是审批的子功能：用户没有单独指定它时，它使用审批代理的
+         * 配置，这样只设置一次“权限审批”就能同时生效。
+         */
+        val FUNCTION_CONFIG_FOLLOWERS: Map<FunctionType, FunctionType> =
+            mapOf(FunctionType.PERMISSION_RISK_SCORER to FunctionType.PERMISSION_REVIEWER)
+
         /** 功能请求固定使用与聊天设置一致的五档推理强度。 */
         const val DEFAULT_THINKING_QUALITY_LEVEL =
             ApiPreferences.DEFAULT_THINKING_QUALITY_LEVEL
@@ -137,6 +146,19 @@ class FunctionalConfigManager(private val context: Context) {
     suspend fun getConfigMappingForFunction(functionType: FunctionType): FunctionConfigMapping {
         val mapping = functionConfigMappingWithIndexFlow.first()
         return mapping[functionType] ?: FunctionConfigMapping(DEFAULT_CONFIG_ID, 0)
+    }
+
+    /**
+     * 功能实际生效的配置。
+     *
+     * 只有 [FUNCTION_CONFIG_FOLLOWERS] 中的功能会跟随：当它自己的配置仍是应用默认配置
+     * （用户没有单独选择）时，返回被跟随功能的配置。
+     */
+    suspend fun getEffectiveConfigMappingForFunction(functionType: FunctionType): FunctionConfigMapping {
+        val configured = getConfigMappingForFunction(functionType)
+        val followed = FUNCTION_CONFIG_FOLLOWERS[functionType] ?: return configured
+        if (configured.configId != DEFAULT_CONFIG_ID) return configured
+        return getConfigMappingForFunction(followed)
     }
 
     // 设置指定功能的配置ID

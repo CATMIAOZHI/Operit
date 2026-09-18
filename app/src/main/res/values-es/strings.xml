@@ -4486,7 +4486,7 @@
     <string name="voice_interaction_service_name">Asistente Operit AI</string>
     <string name="voice_interaction_service_summary">Servicio de asistente de voz inteligente</string>
     <string name="tool_permissions_title">Permisos de herramientas</string>
-    <string name="tool_permissions_description">De forma predeterminada, todas las herramientas requieren su "consulta". Puede agregar excepciones a continuación.</string>
+    <string name="tool_permissions_description">De forma predeterminada, todas las herramientas pasan por la revisión automática: las operaciones dentro del espacio de trabajo se ejecutan directamente y el resto lo decide el agente de revisión. Puede agregar excepciones a continuación.</string>
     <string name="global_permission_switch">Interruptor de permisos global</string>
     <string name="global_permission_switch_description">Esta configuración actúa como control principal y puede anular los permisos individuales de las herramientas.</string>
     <string name="permission_level_allow">Permitir</string>
@@ -4494,7 +4494,7 @@
     <string name="permission_level_forbid">Prohibir</string>
     <string name="permission_level_forbid_description">Estas herramientas nunca se ejecutarán.</string>
     <string name="permission_level_ask">Preguntar</string>
-    <string name="permission_level_ask_description">Comportamiento predeterminado para todas las herramientas.</string>
+    <string name="permission_level_ask_description">Estas herramientas le preguntan antes de cada llamada.</string>
     <string name="add_tool">Agregar herramienta</string>
     <string name="no_tools_in_group">No se ha agregado ninguna herramienta a este grupo.</string>
     <string name="remove_tool">Eliminar</string>

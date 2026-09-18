@@ -15,6 +15,7 @@ import androidx.compose.ui.text.input.TextFieldValue.Companion
 import androidx.core.content.FileProvider
 import com.ai.assistance.operit.ui.features.chat.components.ChatStyle
 import com.ai.assistance.operit.ui.features.chat.components.TranscriptExpansionState
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionDenialDisplayText
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
@@ -42,8 +43,8 @@ import com.ai.assistance.operit.data.repository.observeChatTodos
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.ui.features.chat.webview.LocalWebServer
 import com.ai.assistance.operit.ui.floating.FloatingMode
-import com.ai.assistance.operit.ui.permissions.PermissionLevel
 import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
+import com.ai.assistance.operit.ui.permissions.ToolPermissionStop
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -320,8 +321,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     val errorMessage: StateFlow<String?> by lazy { uiStateDelegate.errorMessage }
     val popupMessage: StateFlow<String?> by lazy { uiStateDelegate.popupMessage }
     val toastEvent: StateFlow<String?> by lazy { uiStateDelegate.toastEvent }
-    val masterPermissionLevel: StateFlow<PermissionLevel> by lazy {
-        uiStateDelegate.masterPermissionLevel
+    /** The permission choice as one of the slider's five stops; the level comes with it. */
+    val masterPermissionStop: StateFlow<ToolPermissionStop> by lazy {
+        uiStateDelegate.masterPermissionStop
     }
 
     // 聊天统计相关
@@ -521,8 +523,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun setupPermissionSystemCollection() {
         viewModelScope.launch {
-            toolPermissionSystem.masterSwitchFlow.collect { level ->
-                uiStateDelegate.updateMasterPermissionLevel(level)
+            // The stop carries both settings, and the level the rest of the app reads follows it.
+            toolPermissionSystem.permissionStopFlow.collect { stop ->
+                uiStateDelegate.updateMasterPermissionStop(stop)
             }
         }
     }
@@ -1295,7 +1298,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             } catch (e: Exception) {
                 AppLogger.e(TAG, "单条重新生成失败", e)
                 uiStateDelegate.showErrorMessage(
-                    context.getString(R.string.chat_regenerate_single_failed, e.message ?: ""),
+                    context.getString(
+                        R.string.chat_regenerate_single_failed,
+                        // A failed regeneration can be the turn a permission denial stopped, so the
+                        // dialog reports the same conclusion the transcript does.
+                        e.message?.let { permissionDenialDisplayText(context, it) }.orEmpty(),
+                    ),
                 )
             }
         }
@@ -1868,10 +1876,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         floatingWindowDelegate.toggleFloatingMode(colorScheme, typography)
     }
 
-    fun setMasterPermissionLevel(level: PermissionLevel) {
-        viewModelScope.launch {
-            toolPermissionSystem.saveMasterSwitch(level)
-        }
+    fun setMasterPermissionStop(stop: ToolPermissionStop) {
+        // Take the choice now. Storage comes back a frame or two later, and until it does the menus
+        // would fall back to the stop that was there before (the old level once tools flip on).
+        uiStateDelegate.updateMasterPermissionStop(stop)
+        viewModelScope.launch { toolPermissionSystem.savePermissionStop(stop) }
     }
 
     // 附件相关方法

@@ -165,7 +165,9 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.t
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabelRes
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.floating.FloatingMode
-import com.ai.assistance.operit.ui.permissions.PermissionLevel
+import com.ai.assistance.operit.ui.permissions.PermissionStopSlider
+import com.ai.assistance.operit.ui.permissions.ToolPermissionStop
+import com.ai.assistance.operit.ui.permissions.labelRes
 import com.ai.assistance.operit.ui.theme.isLiquidGlassSupported
 import com.ai.assistance.operit.ui.theme.isWaterGlassSupported
 import com.ai.assistance.operit.ui.theme.liquidGlass
@@ -220,8 +222,8 @@ fun AgentChatInputSection(
     featureStates: Map<String, Boolean> = emptyMap(),
     onToggleFeature: (String) -> Unit = {},
     inputMenuRuntime: String = "main",
-    permissionLevel: PermissionLevel = PermissionLevel.ASK,
-    onSetPermissionLevel: (PermissionLevel) -> Unit = {},
+    permissionStop: ToolPermissionStop = ToolPermissionStop.DEFAULT,
+    onSetPermissionStop: (ToolPermissionStop) -> Unit = {},
     enableMemoryAutoUpdate: Boolean = false,
     onToggleMemoryAutoUpdate: () -> Unit = {},
     isAutoReadEnabled: Boolean = false,
@@ -1489,8 +1491,8 @@ fun AgentChatInputSection(
                 inputMenuRuntime = inputMenuRuntime,
                 isAutoReadEnabled = isAutoReadEnabled,
                 onToggleAutoRead = onToggleAutoRead,
-                permissionLevel = permissionLevel,
-                onSetPermissionLevel = onSetPermissionLevel,
+                permissionStop = permissionStop,
+                onSetPermissionStop = onSetPermissionStop,
                 enableTools = enableTools,
                 onToggleTools = onToggleTools,
                 disableStreamOutput = disableStreamOutput,
@@ -2364,8 +2366,8 @@ private fun AgentExtraSettingsPopup(
     inputMenuRuntime: String,
     isAutoReadEnabled: Boolean,
     onToggleAutoRead: () -> Unit,
-    permissionLevel: PermissionLevel,
-    onSetPermissionLevel: (PermissionLevel) -> Unit,
+    permissionStop: ToolPermissionStop,
+    onSetPermissionStop: (ToolPermissionStop) -> Unit,
     enableTools: Boolean,
     onToggleTools: () -> Unit,
     disableStreamOutput: Boolean,
@@ -2513,18 +2515,19 @@ private fun AgentExtraSettingsPopup(
 
                     AgentToolsPermissionGroupItem(
                         enableTools = enableTools,
-                        permissionLevel = permissionLevel,
+                        permissionStop = permissionStop,
                         expanded = showToolPermissionDropdown,
                         onExpandedChange = { showToolPermissionDropdown = it },
-                        onSelectPermissionLevel = { level ->
-                            if (!enableTools && level != PermissionLevel.FORBID) {
+                        onSelectPermissionStop = { stop ->
+                            // Turning tools off and turning them back on stay part of choosing.
+                            if (!enableTools && stop != ToolPermissionStop.FORBID) {
                                 onToggleTools()
                             }
-                            if (enableTools && level == PermissionLevel.FORBID) {
+                            if (enableTools && stop == ToolPermissionStop.FORBID) {
                                 onToggleTools()
                             }
-                            if (permissionLevel != level) {
-                                onSetPermissionLevel(level)
+                            if (permissionStop != stop) {
+                                onSetPermissionStop(stop)
                             }
                         },
                         toolSlotToggles = inputMenuTogglesBySlot[InputMenuToggleSlots.TOOLS].orEmpty(),
@@ -2807,26 +2810,17 @@ private fun AgentSettingsGroupHeader(
 @Composable
 private fun AgentToolsPermissionGroupItem(
     enableTools: Boolean,
-    permissionLevel: PermissionLevel,
+    permissionStop: ToolPermissionStop,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
-    onSelectPermissionLevel: (PermissionLevel) -> Unit,
+    onSelectPermissionStop: (ToolPermissionStop) -> Unit,
     toolSlotToggles: List<InputMenuToggleDefinition>,
     onToggleInfoClick: (String, String) -> Unit,
     onManageTools: () -> Unit,
     onInfoClick: () -> Unit,
 ) {
-    val effectiveLevel = if (enableTools) permissionLevel else PermissionLevel.FORBID
-    val valueText =
-        when (effectiveLevel) {
-            PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
-            PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
-            PermissionLevel.WORKSPACE_REVIEWER ->
-                stringResource(R.string.permission_level_workspace_reviewer)
-            PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
-            PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
-            PermissionLevel.FORBID -> stringResource(R.string.agent_menu_permission_disabled)
-        }
+    val effectiveStop = if (enableTools) permissionStop else ToolPermissionStop.FORBID
+    val valueText = stringResource(effectiveStop.labelRes)
 
     AgentSettingsGroupHeader(
         title = stringResource(R.string.agent_menu_tools),
@@ -2845,9 +2839,10 @@ private fun AgentToolsPermissionGroupItem(
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
-            AgentPermissionSegmentedControl(
-                selectedLevel = effectiveLevel,
-                onSelectPermissionLevel = onSelectPermissionLevel,
+            AgentPermissionStopSlider(
+                enableTools = enableTools,
+                permissionStop = permissionStop,
+                onSelectPermissionStop = onSelectPermissionStop,
             )
             toolSlotToggles.forEach { toggle ->
                 AgentInputMenuToggleSettingItem(
@@ -2874,10 +2869,10 @@ private fun AgentToolsPermissionGroupItem(
 }
 
 @Composable
-@OptIn(ExperimentalLayoutApi::class)
-private fun AgentPermissionSegmentedControl(
-    selectedLevel: PermissionLevel,
-    onSelectPermissionLevel: (PermissionLevel) -> Unit,
+private fun AgentPermissionStopSlider(
+    enableTools: Boolean,
+    permissionStop: ToolPermissionStop,
+    onSelectPermissionStop: (ToolPermissionStop) -> Unit,
 ) {
     Column(
         modifier =
@@ -2893,62 +2888,10 @@ private fun AgentPermissionSegmentedControl(
             overflow = TextOverflow.Ellipsis,
         )
         Spacer(modifier = Modifier.height(6.dp))
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            listOf(
-                PermissionLevel.FORBID,
-                PermissionLevel.ASK,
-                PermissionLevel.WORKSPACE,
-                PermissionLevel.WORKSPACE_REVIEWER,
-                PermissionLevel.REVIEWER,
-                PermissionLevel.ALLOW,
-            ).forEach { level ->
-                val isSelected = selectedLevel == level
-                val label =
-                    when (level) {
-                        PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
-                        PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
-                        PermissionLevel.WORKSPACE_REVIEWER ->
-                            stringResource(R.string.permission_level_workspace_reviewer)
-                        PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
-                        PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
-                        PermissionLevel.FORBID -> stringResource(R.string.agent_menu_permission_disabled)
-                    }
-                Box(
-                    modifier =
-                        Modifier
-                            .height(32.dp)
-                            .widthIn(min = 72.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(
-                                if (isSelected) MaterialTheme.colorScheme.primary
-                                else Color.Transparent
-                            )
-                            .border(
-                                1.dp,
-                                if (isSelected) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
-                                RoundedCornerShape(999.dp),
-                            )
-                            .clickable { onSelectPermissionLevel(level) }
-                            .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = label,
-                        color =
-                            if (isSelected) MaterialTheme.colorScheme.onPrimary
-                            else MaterialTheme.colorScheme.onSurface,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
+        PermissionStopSlider(
+            stop = if (enableTools) permissionStop else ToolPermissionStop.FORBID,
+            onStopSelected = onSelectPermissionStop,
+        )
     }
 }
 

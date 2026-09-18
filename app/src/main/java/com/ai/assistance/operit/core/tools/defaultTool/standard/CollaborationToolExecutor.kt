@@ -12,6 +12,7 @@ import com.ai.assistance.operit.core.tools.ToolExecutor
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionDenialDisplayText
 import com.ai.assistance.operit.util.LocaleUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -100,6 +101,12 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                     put("max_depth", limits.maxDepth)
                     put("agents", buildJsonArray {
                         coordinator.list(chatId, optional("path_prefix")).forEach {
+                            // A run the review stopped stores the English instruction written for
+                            // the model, and polling status would otherwise replay it verbatim into
+                            // the caller's context and the transcript. Report the outcome instead.
+                            val reportedError = it.lastError?.let { error ->
+                                permissionDenialDisplayText(appContext, error)
+                            }
                             add(buildJsonObject {
                                 put("task_name", it.path)
                                 put("agent_name", it.path)
@@ -109,14 +116,14 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                                         // not replay that same output into the parent's context.
                                         buildJsonObject { put("completed", JsonNull) }
                                     com.ai.assistance.operit.core.agent.collaboration.CollaborationStatus.FAILED ->
-                                        buildJsonObject { put("errored", it.lastError.orEmpty()) }
+                                        buildJsonObject { put("errored", reportedError.orEmpty()) }
                                     com.ai.assistance.operit.core.agent.collaboration.CollaborationStatus.IDLE ->
                                         JsonPrimitive("pending_init")
                                     else -> JsonPrimitive(it.status.name.lowercase())
                                 })
                                 put("agent_id", it.chatId)
                                 put("status", it.status.name.lowercase())
-                                it.lastError?.let { error -> put("error", error) }
+                                reportedError?.let { error -> put("error", error) }
                             })
                         }
                     })

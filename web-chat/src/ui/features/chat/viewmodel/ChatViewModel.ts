@@ -581,6 +581,7 @@ export interface ChatViewModelActions {
       disable_stream_output: boolean;
       disable_user_preference_description: boolean;
       permission_level: string;
+      permission_stop: string;
     }>
   ) => Promise<void>;
   selectMemoryProfile: (profileId: string) => Promise<void>;
@@ -1562,6 +1563,7 @@ export function useChatViewModel(): ChatViewModel {
       disable_stream_output: boolean;
       disable_user_preference_description: boolean;
       permission_level: string;
+      permission_stop: string;
     }>
   ) {
     if (!token) {

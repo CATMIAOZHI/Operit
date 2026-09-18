@@ -32,6 +32,9 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.GppBad
+import androidx.compose.material.icons.outlined.GppMaybe
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.AlertDialog
@@ -88,6 +91,16 @@ import com.ai.assistance.operit.ui.permissions.PermissionReviewAuthorization
 import com.ai.assistance.operit.ui.permissions.PermissionReviewRiskLevel
 import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
 import com.ai.assistance.operit.ui.permissions.PermissionReviewResponsePolicy
+import com.ai.assistance.operit.ui.permissions.PermissionRiskScoreDisplay
+import com.ai.assistance.operit.ui.permissions.PermissionRiskScoreRecord
+import com.ai.assistance.operit.ui.permissions.PermissionRiskScoreRepository
+import com.ai.assistance.operit.ui.permissions.PermissionRiskScoringSkip
+import com.ai.assistance.operit.ui.permissions.PermissionRiskVerdict
+import com.ai.assistance.operit.ui.permissions.ToolPermissionStop
+import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
+import com.ai.assistance.operit.ui.permissions.display
+import com.ai.assistance.operit.ui.permissions.permissionRiskScoreSummary
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionReviewNoteForDisplay
 import kotlinx.coroutines.delay
 
 internal enum class SubagentListFilter {
@@ -104,6 +117,7 @@ internal enum class SubagentListFilter {
 private enum class SubagentManagementPage {
     RUNS,
     RECENT_DENIALS,
+    RISK_SCORES,
 }
 
 internal enum class PermissionReviewRunDisplayState {
@@ -417,8 +431,16 @@ internal fun SubagentManagementDialog(
 ) {
     val context = LocalContext.current
     remember(context) { PermissionReviewEventRepository.initialize(context); true }
+    remember(context) { PermissionRiskScoreRepository.initialize(context); true }
     val autoReviewDisplayName = stringResource(R.string.agent_profile_builtin_permission_reviewer_name)
     val reviewEvents by PermissionReviewEventRepository.events.collectAsState()
+    val riskScoreRecords by PermissionRiskScoreRepository.records.collectAsState()
+    val chatRiskScoreRecords =
+        remember(riskScoreRecords, parentChatId) {
+            riskScoreRecords
+                .filter { record -> record.parentChatId == parentChatId }
+                .sortedByDescending { record -> record.startedAt }
+        }
     val parentReviewEvents =
         remember(reviewEvents, parentChatId) {
             reviewEvents.filter { event -> event.parentChatId == parentChatId }
@@ -504,7 +526,7 @@ internal fun SubagentManagementDialog(
 
     Dialog(
         onDismissRequest = {
-            if (currentPage == SubagentManagementPage.RECENT_DENIALS) {
+            if (currentPage != SubagentManagementPage.RUNS) {
                 currentPage = SubagentManagementPage.RUNS
             } else {
                 onDismiss()
@@ -524,10 +546,13 @@ internal fun SubagentManagementDialog(
                             Text(
                                 text =
                                     stringResource(
-                                        if (currentPage == SubagentManagementPage.RECENT_DENIALS) {
-                                            R.string.permission_review_recent_denials
-                                        } else {
-                                            R.string.subagent_manage
+                                        when (currentPage) {
+                                            SubagentManagementPage.RECENT_DENIALS ->
+                                                R.string.permission_review_recent_denials
+                                            SubagentManagementPage.RISK_SCORES ->
+                                                R.string.permission_risk_scores_title
+                                            SubagentManagementPage.RUNS ->
+                                                R.string.subagent_manage
                                         }
                                     ),
                                 maxLines = 1,
@@ -545,7 +570,7 @@ internal fun SubagentManagementDialog(
                     navigationIcon = {
                         IconButton(
                             onClick = {
-                                if (currentPage == SubagentManagementPage.RECENT_DENIALS) {
+                                if (currentPage != SubagentManagementPage.RUNS) {
                                     currentPage = SubagentManagementPage.RUNS
                                 } else {
                                     onDismiss()
@@ -573,6 +598,13 @@ internal fun SubagentManagementDialog(
                         recentDeniedEvents = recentDeniedReviews,
                         runs = runs,
                         onSelectRun = onSelect,
+                    )
+                } else if (currentPage == SubagentManagementPage.RISK_SCORES) {
+                    PermissionRiskScoresPage(
+                        records = chatRiskScoreRecords,
+                        // The store is shared, so a full one explains why any chat's oldest rows are
+                        // gone, whether or not this chat filled it on its own.
+                        trimmed = riskScoreRecords.size >= PermissionRiskScoreRepository.MAX_RECORDS,
                     )
                 } else {
                 LazyColumn(
@@ -657,6 +689,44 @@ internal fun SubagentManagementDialog(
                             }
                             HorizontalDivider()
                         }
+                        item(key = "risk_scores") {
+                            val riskSummary = permissionRiskScoreSummary(chatRiskScoreRecords)
+                            Card(
+                                modifier =
+                                    Modifier.fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                        .clickable {
+                                            currentPage = SubagentManagementPage.RISK_SCORES
+                                        },
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(
+                                        stringResource(R.string.permission_risk_scores_title),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                    Text(
+                                        stringResource(
+                                            R.string.permission_risk_scores_summary,
+                                            riskSummary.scored,
+                                            riskSummary.low,
+                                            riskSummary.answeredCalls,
+                                        ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        stringResource(R.string.permission_risk_scores_open),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                            HorizontalDivider()
+                        }
                     }
                     if (visibleRuns.isEmpty() && orphanReviewEvents.isEmpty()) {
                         item(key = "empty") {
@@ -722,64 +792,93 @@ private fun permissionReviewStatusText(status: PermissionReviewStatus): String =
 
 @Composable
 private fun PermissionReviewEventRow(event: PermissionReviewEvent) {
+    val context = LocalContext.current
     var showDetails by remember(event.id) { mutableStateOf(false) }
     val statusText = permissionReviewStatusText(event.status)
     val eventTime = event.completedAt ?: event.startedAt
-    val statusColor =
-        if (event.status == PermissionReviewStatus.DENIED ||
+    // The colour only warns. A call the review allowed is the ordinary outcome, and a list of them
+    // has to stay quiet, so an approval reads neutral and the shield carries it.
+    val isNegative =
+        event.status == PermissionReviewStatus.DENIED ||
             event.status == PermissionReviewStatus.FAILED ||
             event.status == PermissionReviewStatus.TIMED_OUT
-        ) {
-            MaterialTheme.colorScheme.error
-        } else {
-            MaterialTheme.colorScheme.primary
+    val isOrdinary = event.status == PermissionReviewStatus.APPROVED
+    val statusColor =
+        when {
+            isNegative -> MaterialTheme.colorScheme.error
+            isOrdinary -> MaterialTheme.colorScheme.onSurfaceVariant
+            event.status == PermissionReviewStatus.ABORTED ->
+                MaterialTheme.colorScheme.stoppedAttention
+            else -> MaterialTheme.colorScheme.primary
         }
-
+    val statusIcon =
+        when {
+            isNegative -> Icons.Outlined.GppBad
+            isOrdinary -> Icons.Outlined.Security
+            else -> Icons.Outlined.GppMaybe
+        }
+    // The summary usually names the tool itself, so the name is only repeated when it adds something.
+    val toolName =
+        event.action.toolName.takeIf { name ->
+            name.isNotBlank() && !event.action.summary.contains(name, ignoreCase = true)
+        }
+    // One reviewed call is one compact row, the way the review runs beside it read: the action is the
+    // line to scan, the outcome sits under it with the time, and the batch it travelled in and
+    // everything the reviewer said stay in the dialog behind a tap.
     Card(
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         modifier =
             Modifier.fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .padding(horizontal = 8.dp, vertical = 2.dp)
                 .clickable { showDetails = true },
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Box(
+                modifier =
+                    Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(statusColor.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = "[${event.batchPosition}/${event.batchSize}] ${event.action.summary}",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = statusColor,
+                Icon(
+                    imageVector = statusIcon,
+                    contentDescription = null,
+                    tint = statusColor,
+                    modifier = Modifier.size(20.dp),
                 )
             }
-            Text(
-                text = event.action.toolName,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.tertiary,
-            )
-            Text(
-                text =
-                    DateUtils.getRelativeTimeSpanString(
-                            eventTime,
-                            System.currentTimeMillis(),
-                            DateUtils.MINUTE_IN_MILLIS,
-                        )
-                        .toString(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = event.action.summary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text =
+                        listOfNotNull(
+                                statusText,
+                                toolName,
+                                DateUtils.getRelativeTimeSpanString(
+                                        eventTime,
+                                        System.currentTimeMillis(),
+                                        DateUtils.MINUTE_IN_MILLIS,
+                                    )
+                                    .toString(),
+                            )
+                            .joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = statusColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 
@@ -798,6 +897,18 @@ private fun PermissionReviewEventRow(event: PermissionReviewEvent) {
                         color = statusColor,
                         fontWeight = FontWeight.SemiBold,
                     )
+                    // The row reads as one action, so where it sat in the batch it travelled in lives
+                    // here, the same way the call's own badge reports it. A call that travelled alone
+                    // has no batch to place itself in.
+                    if (event.batchSize > 1) {
+                        Text(
+                            stringResource(
+                                R.string.permission_review_detail_batch,
+                                event.batchPosition,
+                                event.batchSize,
+                            )
+                        )
+                    }
                     Text(
                         stringResource(
                             R.string.permission_review_detail_action,
@@ -859,7 +970,13 @@ private fun PermissionReviewEventRow(event: PermissionReviewEvent) {
                             )
                         )
                     }
-                    event.rationale?.takeIf(String::isNotBlank)?.let { rationale ->
+                    val rationale =
+                        permissionReviewNoteForDisplay(
+                            context = context,
+                            rationale = event.rationale,
+                            failureKind = event.failureKind,
+                        )
+                    if (rationale != null) {
                         Text(
                             stringResource(
                                 R.string.permission_review_detail_rationale,
@@ -883,12 +1000,285 @@ private fun PermissionReviewEventRow(event: PermissionReviewEvent) {
 }
 
 @Composable
+private fun permissionRiskScoreOutcomeText(display: PermissionRiskScoreDisplay): String =
+    stringResource(
+        when (display) {
+            PermissionRiskScoreDisplay.LOW -> R.string.permission_risk_score_low
+            PermissionRiskScoreDisplay.HIGH -> R.string.permission_risk_score_high
+            PermissionRiskScoreDisplay.FAILED -> R.string.permission_risk_score_failed
+            PermissionRiskScoreDisplay.SKIPPED -> R.string.permission_risk_score_skipped
+            PermissionRiskScoreDisplay.RUNNING -> R.string.permission_risk_score_running
+        }
+    )
+
+@Composable
+private fun permissionRiskScoreOutcomeColor(display: PermissionRiskScoreDisplay): Color =
+    when (display) {
+        PermissionRiskScoreDisplay.LOW -> MaterialTheme.colorScheme.primary
+        PermissionRiskScoreDisplay.HIGH,
+        PermissionRiskScoreDisplay.FAILED -> MaterialTheme.colorScheme.error
+        PermissionRiskScoreDisplay.SKIPPED,
+        PermissionRiskScoreDisplay.RUNNING -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+@Composable
+private fun permissionRiskSkipText(skip: PermissionRiskScoringSkip): String =
+    stringResource(
+        when (skip) {
+            PermissionRiskScoringSkip.STRICT_MODE -> R.string.permission_risk_skip_strict
+            PermissionRiskScoringSkip.NO_SCORABLE_ACTION -> R.string.permission_risk_skip_no_action
+            PermissionRiskScoringSkip.NO_MODEL -> R.string.permission_risk_skip_no_model
+            PermissionRiskScoringSkip.OFFLINE -> R.string.permission_risk_skip_offline
+            PermissionRiskScoringSkip.COOLDOWN -> R.string.permission_risk_skip_cooldown
+            PermissionRiskScoringSkip.RETAINED_INSTRUCTIONS_UNAVAILABLE ->
+                R.string.permission_risk_skip_retained
+        }
+    )
+
+/**
+ * What the fast level's pre-classification did for this conversation: the batches it scored and the
+ * ones it could not score, and whether the verdict it produced is what answered later calls instead
+ * of a review.
+ */
+@Composable
+private fun PermissionRiskScoresPage(records: List<PermissionRiskScoreRecord>, trimmed: Boolean) {
+    val context = LocalContext.current
+    // A page that keeps its stored rows is still worth explaining when the level that produces them
+    // is no longer selected, because nothing new will appear in it. What decides that is the whole
+    // permission choice the app resolves, not the stored reuse level on its own: the deterministic
+    // stops never score either.
+    val permissionStop by
+        remember(context) { ToolPermissionSystem.getInstance(context).permissionStopFlow }
+            .collectAsState(initial = null)
+    val summary = permissionRiskScoreSummary(records)
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item(key = "risk_score_statistics") {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = stringResource(R.string.permission_risk_scores_statistics),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PermissionReviewStatisticCard(
+                        value = summary.scored.toString(),
+                        label = stringResource(R.string.permission_risk_scores_stat_total),
+                        modifier = Modifier.weight(1f),
+                    )
+                    PermissionReviewStatisticCard(
+                        value = summary.low.toString(),
+                        label = stringResource(R.string.permission_risk_scores_stat_low),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PermissionReviewStatisticCard(
+                        value = summary.high.toString(),
+                        label = stringResource(R.string.permission_risk_scores_stat_high),
+                        modifier = Modifier.weight(1f),
+                    )
+                    PermissionReviewStatisticCard(
+                        value = summary.failed.toString(),
+                        label = stringResource(R.string.permission_risk_score_failed),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PermissionReviewStatisticCard(
+                        value = summary.skipped.toString(),
+                        label = stringResource(R.string.permission_risk_scores_stat_unscored),
+                        modifier = Modifier.weight(1f),
+                    )
+                    PermissionReviewStatisticCard(
+                        value = summary.answeredCalls.toString(),
+                        label = stringResource(R.string.permission_risk_scores_stat_answered),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.permission_risk_scores_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // The stop is read asynchronously, so an unread one must not be reported as "not the
+                // fast stop" and flash the line on a page that will keep scoring.
+                if (records.isNotEmpty() &&
+                    permissionStop != null &&
+                    permissionStop != ToolPermissionStop.AUTO_REVIEW_FAST
+                ) {
+                    Text(
+                        text = stringResource(R.string.permission_risk_scores_strict),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                // Said only for a chat that has rows to miss: next to the empty state it would read
+                // as those rows having been removed.
+                if (trimmed && records.isNotEmpty()) {
+                    Text(
+                        text =
+                            stringResource(
+                                R.string.permission_risk_scores_trimmed,
+                                PermissionRiskScoreRepository.MAX_RECORDS,
+                            ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        if (records.isEmpty()) {
+            item(key = "risk_scores_empty") {
+                Text(
+                    text = stringResource(R.string.permission_risk_scores_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 20.dp),
+                )
+            }
+        } else {
+            items(
+                items = records,
+                key = { record -> record.id },
+            ) { record ->
+                val display = record.display()
+                val outcomeColor = permissionRiskScoreOutcomeColor(display)
+                val toolSeparator = stringResource(R.string.permission_risk_score_tool_separator)
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Box(
+                                modifier =
+                                    Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(outcomeColor)
+                            )
+                            Text(
+                                text = permissionRiskScoreOutcomeText(display),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = outcomeColor,
+                            )
+                        }
+                        if (record.toolNames.isNotEmpty()) {
+                            Text(
+                                text =
+                                    stringResource(
+                                        R.string.permission_risk_score_tools,
+                                        record.toolNames.joinToString(toolSeparator),
+                                    ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                // A tool is named by whatever package registered it, so the line is
+                                // capped rather than allowed to grow the card.
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Text(
+                            text =
+                                if (record.scorableActions > 0) {
+                                    stringResource(
+                                        R.string.permission_risk_score_batch,
+                                        record.scorableActions,
+                                        record.totalActions,
+                                    )
+                                } else {
+                                    stringResource(R.string.permission_risk_score_batch_no_action)
+                                },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        record.skip?.let { skip ->
+                            Text(
+                                text = permissionRiskSkipText(skip),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (display == PermissionRiskScoreDisplay.FAILED) {
+                            Text(
+                                text = stringResource(R.string.permission_risk_score_failed_detail),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (display == PermissionRiskScoreDisplay.LOW) {
+                            Text(
+                                text =
+                                    if (record.answeredCalls > 0) {
+                                        stringResource(
+                                            R.string.permission_risk_score_answered,
+                                            record.answeredCalls,
+                                        )
+                                    } else {
+                                        stringResource(R.string.permission_risk_score_not_used)
+                                    },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (record.discardedStoredScore) {
+                            Text(
+                                text = stringResource(R.string.permission_risk_score_discarded),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (record.refusedBySettings) {
+                            Text(
+                                text = stringResource(R.string.permission_risk_score_refused),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text(
+                            text =
+                                DateUtils.getRelativeTimeSpanString(
+                                        record.completedAt ?: record.startedAt,
+                                        System.currentTimeMillis(),
+                                        DateUtils.MINUTE_IN_MILLIS,
+                                    )
+                                    .toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun RecentPermissionDenialsPage(
     deniedEvents: List<PermissionReviewEvent>,
     recentDeniedEvents: List<PermissionReviewEvent>,
     runs: List<SubagentRunEntity>,
     onSelectRun: (SubagentRunEntity) -> Unit,
 ) {
+    val context = LocalContext.current
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
@@ -968,7 +1358,13 @@ private fun RecentPermissionDenialsPage(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.tertiary,
                         )
-                        event.rationale?.takeIf(String::isNotBlank)?.let { rationale ->
+                        val rationale =
+                            permissionReviewNoteForDisplay(
+                                context = context,
+                                rationale = event.rationale,
+                                failureKind = event.failureKind,
+                            )
+                        if (rationale != null) {
                             Text(
                                 text = rationale,
                                 style = MaterialTheme.typography.bodySmall,
@@ -1231,7 +1627,10 @@ private fun SubagentRunRow(
             ?: subagentRunStatusText(status = status, currentTool = currentTool)
     val statusColor =
         when (reviewDisplayState) {
-            PermissionReviewRunDisplayState.ALLOWED -> MaterialTheme.colorScheme.primary
+            // An approval is the ordinary outcome of a review run, the way a completed run is for any
+            // other agent, so it reads neutral and the list stays quiet around the refusals.
+            PermissionReviewRunDisplayState.ALLOWED ->
+                MaterialTheme.colorScheme.onSurfaceVariant
             PermissionReviewRunDisplayState.DENIED -> MaterialTheme.colorScheme.tertiary
             PermissionReviewRunDisplayState.INVALID_OUTPUT,
             PermissionReviewRunDisplayState.CANCELLED_OR_TIMED_OUT,

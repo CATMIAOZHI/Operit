@@ -29,6 +29,35 @@ import org.junit.Test
 
 class ToolExecutionPresentationTest {
     @Test
+    fun aTurnFailureWrapperIsStrippedBeforeTheDenialTextIsRecognized() {
+        // A subagent whose turn the automatic review stopped reports "<task_error>Turn <id> failed:
+        // <model instruction></task_error>", so the wrapper has to go before the prefix can match.
+        assertEquals(
+            "Automatic permission review denied the action.",
+            stripTurnFailedWrapper(
+                "Turn 9f2c-abc failed: Automatic permission review denied the action."
+            ),
+        )
+        assertEquals(
+            "Tool execution cancelled because automatic permission review stopped this turn.",
+            stripTurnFailedWrapper(
+                "Turn 9f2c-abc failed: Tool execution cancelled because automatic permission " +
+                    "review stopped this turn."
+            ),
+        )
+        // Only the leading wrapper goes, and an ordinary message is left untouched.
+        assertEquals(
+            "Automatic permission review denied the action.",
+            stripTurnFailedWrapper("Automatic permission review denied the action."),
+        )
+        assertEquals(
+            "error: Turn 9f2c-abc failed: x",
+            stripTurnFailedWrapper("error: Turn 9f2c-abc failed: x"),
+        )
+        assertEquals("", stripTurnFailedWrapper(""))
+    }
+
+    @Test
     fun aCollaborationRowReportsItsOwnCallRatherThanWhatTheRunBecame() {
         // A call that ran is the hand-over itself: a run that later failed, finished or was stopped
         // by an app restart is not this row's business, so no run state ever makes a row fail.

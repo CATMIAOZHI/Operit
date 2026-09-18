@@ -229,6 +229,7 @@ class FloatingWindowManager(
     fun destroy() {
         entryObserver.cancel()
         FloatingPetEntry.mode.value = FloatingPetEntryMode.NONE
+        FloatingPetEntry.chatId.value = null
         finishWindowResize()
         hideStatusIndicator()
         if (isViewAdded) {
@@ -407,9 +408,16 @@ class FloatingWindowManager(
         )
 
         view?.let { v ->
-            if (usePet) {
-                // GONE does not dispose Compose. Cancel the outgoing conversation's
-                // focus/scroll jobs before hiding and resizing its unplaced parent.
+            if (usePet || petEntryDisabled) {
+                // GONE does not dispose Compose, and a GONE window is never measured again: the
+                // conversation keeps recomposing while its nodes can no longer be placed, so a
+                // pending focus/scroll bring-into-view job can throw
+                // "Expected BringIntoViewRequester to not be used before parents are placed".
+                // Cancel those jobs before hiding and resizing the unplaced parent.
+                // Scope: the ball-entry hides are the ones that also resize the window to the ball
+                // in the same frame. The AI-tool hides (windowDisplayEnabled / windowPersistentHidden)
+                // keep the composition, since they restore the same window and size; should they ever
+                // hit the same assertion, FloatingChatService's crash-handler whitelist catches it.
                 v.disposeComposition()
             }
             v.visibility = if (windowVisible) View.VISIBLE else View.GONE

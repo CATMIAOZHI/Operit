@@ -46,6 +46,8 @@ import com.ai.assistance.operit.services.core.resolveDisplayPageRanges
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.StructuredAssistantContentParser
+import com.ai.assistance.operit.ui.features.chat.components.collaborationStatusDisplayText
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionDenialDisplayText
 import com.ai.assistance.operit.ui.theme.resolveThemeColorScheme
 import fi.iki.elonen.NanoHTTPD
 import java.io.BufferedWriter
@@ -1320,7 +1322,13 @@ class WebChatHttpBridge(
                             WebChatStreamEvent(
                                 event = STREAM_EVENT_ERROR,
                                 chatId = chatId,
-                                error = e.message ?: "Unknown error"
+                                // A turn the automatic review stopped fails with the instruction
+                                // written for the model; the browser shows this line, so it reports
+                                // the same conclusion the app does.
+                                error =
+                                    e.message?.let { message ->
+                                        permissionDenialDisplayText(appContext, message)
+                                    } ?: "Unknown error"
                             )
                         )
                     }
@@ -1813,6 +1821,13 @@ class WebChatHttpBridge(
     }
 
     private fun parseUserMessageContent(content: String): UserMessageRenderResult {
+        // A run the automatic review stopped ends with the instruction written for the model, and a
+        // status row carries it in its payload. The App's collaboration card never shows that payload;
+        // the browser has no such card, so it would print it as a message the user sent.
+        collaborationStatusDisplayText(appContext, content)?.let { reported ->
+            return UserMessageRenderResult(displayContent = reported)
+        }
+
         var cleanedContent = content.replace(ChatMarkupRegex.memoryTag, "").trim()
 
         val proxySenderMatch = ChatMarkupRegex.proxySenderTag.find(cleanedContent)

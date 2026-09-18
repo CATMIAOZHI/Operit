@@ -286,16 +286,24 @@ object XmlRenderPluginRegistry {
             }
 
             val builder = StringBuilder()
-            xmlStream.collect { chunk ->
-                builder.append(chunk)
-                val nextContent = builder.toString()
-                if (
-                    nextContent.isNotEmpty() &&
-                    nextContent.length >= liveXmlContent.length &&
-                    nextContent != liveXmlContent
-                ) {
-                    liveXmlContent = nextContent
+            try {
+                xmlStream.collect { chunk ->
+                    builder.append(chunk)
+                    val nextContent = builder.toString()
+                    if (
+                        nextContent.isNotEmpty() &&
+                        nextContent.length >= liveXmlContent.length &&
+                        nextContent != liveXmlContent
+                    ) {
+                        liveXmlContent = nextContent
+                    }
                 }
+            } catch (error: Throwable) {
+                // A shared stream hands its failure to every subscriber, and this one runs in the
+                // composition's own coroutine: letting it out would end the process instead of the
+                // preview. The content collected so far is what the plugin screen shows.
+                if (error is CancellationException) throw error
+                AppLogger.e(TAG, "compose_dsl xml stream failed: ${error.message}", error)
             }
         }
 

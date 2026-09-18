@@ -7,10 +7,15 @@ import com.ai.assistance.operit.data.model.ToolPrompt
 
 /** The separate Codex v2 tool surface. The legacy task schema remains owned by v1. */
 object CollaborationTools {
+    /** The v1 dispatcher the v2 surface replaced: both hand work to another agent. */
+    const val LEGACY_TASK_NAME = "task"
+
     val names = setOf(
         "spawn_agent", "send_message", "followup_task", "interrupt_agent", "list_agents", "wait_agent",
         "list_agent_models",
     )
+
+    fun isCollaborationTool(name: String): Boolean = name in names || name == LEGACY_TASK_NAME
 
     /**
      * Travelling with the model catalogue rather than in the tool description: the catalogue exists

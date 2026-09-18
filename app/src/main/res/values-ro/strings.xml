@@ -5143,7 +5143,7 @@
 
     <!-- Tool Permission Settings -->
     <string name="tool_permissions_title">Drepturi de acces la instrumente</string>
-    <string name="tool_permissions_description">În mod implicit, toate instrumentele necesită o „confirmare” din partea ta. Poți adăuga excepții mai jos.</string>
+    <string name="tool_permissions_description">În mod implicit, toate instrumentele trec prin revizuirea automată: operațiile din spațiul de lucru rulează direct, iar restul sunt evaluate de agentul de revizuire. Poți adăuga excepții mai jos.</string>
     <string name="global_permission_switch">Comutator de permisiuni globale</string>
     <string name="global_permission_switch_description">Această setare funcționează ca setare principală și poate prevala asupra permisiunilor individuale ale instrumentelor.</string>
     <string name="permission_level_allow">Permis</string>
@@ -5151,7 +5151,7 @@
     <string name="permission_level_forbid">Interzis</string>
     <string name="permission_level_forbid_description">Aceste instrumente nu vor funcționa niciodată.</string>
     <string name="permission_level_ask">Întrebare</string>
-    <string name="permission_level_ask_description">Comportamentul implicit al tuturor instrumentelor.</string>
+    <string name="permission_level_ask_description">Aceste instrumente te întreabă înainte de fiecare apel.</string>
     <string name="add_tool">Instrumente de adăugare</string>
     <string name="no_tools_in_group">Nu a fost adăugat niciun instrument în această grupă.</string>
     <string name="remove_tool">Eliminare</string>

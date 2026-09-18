@@ -45,6 +45,9 @@ import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.core.config.FunctionalPrompts
 import com.ai.assistance.operit.core.tools.PermissionReviewSubmissionTool
 import com.ai.assistance.operit.ui.permissions.PermissionReviewResponsePolicy
+import com.ai.assistance.operit.ui.permissions.PermissionReviewPolicyStore
+import com.ai.assistance.operit.ui.permissions.PermissionRiskScorer
+import com.ai.assistance.operit.ui.permissions.parsePermissionRiskVerdict
 import com.ai.assistance.operit.util.ImagePoolManager
 import com.ai.assistance.operit.util.MediaPoolManager
 import com.ai.assistance.operit.util.LocaleUtils
@@ -317,6 +320,10 @@ fun FunctionConfigCard(
         stringResource(R.string.functional_config_permission_reviewer_test_invalid)
     val permissionReviewerTestSuccessTemplate =
         stringResource(R.string.functional_config_permission_reviewer_test_success)
+    val riskScorerTestInvalidMessage =
+        stringResource(R.string.functional_config_risk_scorer_test_invalid)
+    val riskScorerTestSuccessTemplate =
+        stringResource(R.string.functional_config_risk_scorer_test_success)
 
     LaunchedEffect(functionType, currentConfig?.id, currentModelIndex) {
         mediaSupportWarningResId = null
@@ -787,6 +794,30 @@ fun FunctionConfigCard(
                                                         decision.userAuthorization.name.lowercase(),
                                                     )
                                                 }
+                                                FunctionType.PERMISSION_RISK_SCORER -> {
+                                                    val parameters =
+                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                    val buffer = StringBuilder()
+                                                    service.sendMessage(
+                                                        context,
+                                                        PermissionRiskScorer.buildSelfTestTurns(
+                                                            PermissionReviewPolicyStore(context)
+                                                                .getSnapshot()
+                                                                .text
+                                                        ),
+                                                        parameters,
+                                                        stream = false,
+                                                        enableRetry = false,
+                                                        statsCategory = com.ai.assistance.operit.data.stats.TokenStatCategory.CONNECTION_TEST
+                                                    )
+                                                        .collect { chunk -> buffer.append(chunk) }
+                                                    val verdict =
+                                                        parsePermissionRiskVerdict(buffer.toString())
+                                                            ?: error(riskScorerTestInvalidMessage)
+                                                    riskScorerTestSuccessTemplate.format(
+                                                        verdict.name.lowercase()
+                                                    )
+                                                }
                                             }
                                             testResult = Result.success(result)
                                         } catch (e: Exception) {
@@ -1098,6 +1129,8 @@ fun getFunctionDisplayName(functionType: FunctionType): String {
         FunctionType.GREP -> stringResource(id = R.string.function_type_grep)
         FunctionType.ROLE_RESPONSE_PLANNER -> stringResource(id = R.string.function_type_role_response_planner)
         FunctionType.PERMISSION_REVIEWER -> stringResource(id = R.string.function_type_permission_reviewer)
+        FunctionType.PERMISSION_RISK_SCORER ->
+            stringResource(id = R.string.function_type_permission_risk_scorer)
         FunctionType.IMAGE_RECOGNITION -> stringResource(id = R.string.function_type_image_recognition)
         FunctionType.AUDIO_RECOGNITION -> stringResource(id = R.string.function_type_audio_recognition)
         FunctionType.VIDEO_RECOGNITION -> stringResource(id = R.string.function_type_video_recognition)
@@ -1117,6 +1150,8 @@ fun getFunctionDescription(functionType: FunctionType): String {
         FunctionType.GREP -> stringResource(id = R.string.function_desc_grep)
         FunctionType.ROLE_RESPONSE_PLANNER -> stringResource(id = R.string.function_desc_role_response_planner)
         FunctionType.PERMISSION_REVIEWER -> stringResource(id = R.string.function_desc_permission_reviewer)
+        FunctionType.PERMISSION_RISK_SCORER ->
+            stringResource(id = R.string.function_desc_permission_risk_scorer)
         FunctionType.IMAGE_RECOGNITION -> stringResource(id = R.string.function_desc_image_recognition)
         FunctionType.AUDIO_RECOGNITION -> stringResource(id = R.string.function_desc_audio_recognition)
         FunctionType.VIDEO_RECOGNITION -> stringResource(id = R.string.function_desc_video_recognition)

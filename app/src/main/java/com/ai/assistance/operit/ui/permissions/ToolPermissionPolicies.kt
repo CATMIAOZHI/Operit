@@ -25,9 +25,10 @@ data class ToolPermissionReviewContext(
 /**
  * Resource-scoped workspace approval inspired by OpenCode's external_directory checks.
  *
- * WORKSPACE is deliberately fail-closed: only fixed file-tool schemas and a conservative subset
- * of shell commands can be proven to stay inside the bound workspace. Everything else returns
- * false so the existing manual permission overlay remains the authority.
+ * The workspace branch of AUTO_REVIEW is deliberately fail-closed: only fixed file-tool schemas
+ * and a conservative subset of shell commands can be proven to stay inside the bound workspace.
+ * Everything else returns false, so those calls go to the independent reviewer (or to the manual
+ * permission overlay) instead of being auto-approved.
  */
 internal object WorkspaceToolPermissionPolicy {
     private const val ANDROID_ENV = "android"

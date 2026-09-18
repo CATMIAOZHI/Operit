@@ -2,7 +2,6 @@ package com.ai.assistance.operit.ui.features.settings.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -30,8 +29,12 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
+import com.ai.assistance.operit.ui.permissions.PermissionStopSlider
 import com.ai.assistance.operit.ui.permissions.PermissionReviewPolicyStore
 import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
+import com.ai.assistance.operit.ui.permissions.ToolPermissionStop
+import com.ai.assistance.operit.ui.permissions.defaultPermissionLevelFor
+import com.ai.assistance.operit.ui.permissions.descriptionRes
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -62,8 +65,20 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
         }
     }
     val toolPermissions = remember { mutableStateMapOf<String, PermissionLevel>() }
-    val masterSwitch = toolPermissionSystem.masterSwitchFlow.collectAsState(initial = PermissionLevel.ASK).value
-    var masterSwitchInput by remember { mutableStateOf(masterSwitch) }
+    // The stored choice is read asynchronously, so the slider waits for it instead of starting on a
+    // stop the user never chose and sliding to the real one a frame later.
+    val selectedStop by toolPermissionSystem.permissionStopFlow.collectAsState(initial = null)
+    // The stop under the finger, held until the value written to storage comes back, so the name and
+    // the description below never disagree while dragging or right after a release. The stop the
+    // hold started from is remembered with it: while the two writes land, storage can only report
+    // that stop or the chosen one, so anything else means the choice came from somewhere else and
+    // has to win.
+    var pendingStop by remember { mutableStateOf<ToolPermissionStop?>(null) }
+    var pendingBase by remember { mutableStateOf<ToolPermissionStop?>(null) }
+
+    LaunchedEffect(selectedStop) {
+        if (pendingStop != null && selectedStop != pendingBase) pendingStop = null
+    }
 
     LaunchedEffect(allTools) {
         allTools.forEach { toolName ->
@@ -72,10 +87,6 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                 toolPermissions[toolName] = override
             }
         }
-    }
-
-    LaunchedEffect(masterSwitch) {
-        masterSwitchInput = masterSwitch
     }
 
     fun handlePermissionChange(toolName: String, newLevel: PermissionLevel) {
@@ -93,6 +104,10 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                 toolPermissionSystem.saveToolPermission(toolName, newLevel)
             }
         }
+    }
+
+    fun selectPermissionStop(stop: ToolPermissionStop) {
+        scope.launch { toolPermissionSystem.savePermissionStop(stop) }
     }
 
     LazyColumn(
@@ -136,15 +151,27 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    CompactPermissionLevelSelector(
-                        selectedLevel = masterSwitchInput,
-                        onLevelSelected = { level ->
-                            masterSwitchInput = level
-                            scope.launch {
-                                toolPermissionSystem.saveMasterSwitch(level)
-                            }
-                        }
-                    )
+                    selectedStop?.let { stop ->
+                        val shownStop = pendingStop ?: stop
+                        PermissionStopSlider(
+                            stop = stop,
+                            onStopPreview = { preview ->
+                                if (pendingStop == null) pendingBase = selectedStop
+                                pendingStop = preview
+                            },
+                            onStopSelected = { newStop ->
+                                if (pendingStop == null) pendingBase = selectedStop
+                                pendingStop = newStop
+                                selectPermissionStop(newStop)
+                            },
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            stringResource(shownStop.descriptionRes),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f),
+                        )
+                    }
                 }
             }
         }
@@ -238,47 +265,34 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
         }
 
         item {
+            // A tool that carries its own default level is allowed without the user choosing it, so
+            // it belongs in this list instead of in none of them. Its chip has no remove button:
+            // there is no stored choice to clear, and giving it another level is what overrides it.
+            val allowedByDefault =
+                allTools.filter { toolName ->
+                    toolName !in toolPermissions &&
+                        selectedStop?.level?.let { level ->
+                            defaultPermissionLevelFor(toolName, level)
+                        } == PermissionLevel.ALLOW
+                }
             PermissionGroup(
                 level = PermissionLevel.ALLOW,
                 allTools = allTools,
                 toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.ALLOW }.keys,
+                defaultTools = allowedByDefault.toSet(),
                 toolHandler = toolHandler,
                 onToolToggled = { toolName -> handlePermissionChange(toolName, PermissionLevel.ALLOW) }
             )
         }
         item {
             PermissionGroup(
-                level = PermissionLevel.WORKSPACE,
-                allTools = allTools,
-                toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.WORKSPACE }.keys,
-                toolHandler = toolHandler,
-                onToolToggled = { toolName ->
-                    handlePermissionChange(toolName, PermissionLevel.WORKSPACE)
-                }
-            )
-        }
-        item {
-            PermissionGroup(
-                level = PermissionLevel.REVIEWER,
-                allTools = allTools,
-                toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.REVIEWER }.keys,
-                toolHandler = toolHandler,
-                onToolToggled = { toolName ->
-                    handlePermissionChange(toolName, PermissionLevel.REVIEWER)
-                }
-            )
-        }
-        item {
-            PermissionGroup(
-                level = PermissionLevel.WORKSPACE_REVIEWER,
+                level = PermissionLevel.AUTO_REVIEW,
                 allTools = allTools,
                 toolsInLevel =
-                    toolPermissions.filterValues {
-                        it == PermissionLevel.WORKSPACE_REVIEWER
-                    }.keys,
+                    toolPermissions.filterValues { it == PermissionLevel.AUTO_REVIEW }.keys,
                 toolHandler = toolHandler,
                 onToolToggled = { toolName ->
-                    handlePermissionChange(toolName, PermissionLevel.WORKSPACE_REVIEWER)
+                    handlePermissionChange(toolName, PermissionLevel.AUTO_REVIEW)
                 }
             )
         }
@@ -308,6 +322,7 @@ private fun PermissionGroup(
     level: PermissionLevel,
     allTools: List<String>,
     toolsInLevel: Set<String>,
+    defaultTools: Set<String> = emptySet(),
     toolHandler: AIToolHandler,
     onToolToggled: (String) -> Unit
 ) {
@@ -319,20 +334,10 @@ private fun PermissionGroup(
             stringResource(R.string.permission_level_allow_description),
             MaterialTheme.colorScheme.primary
         )
-        PermissionLevel.WORKSPACE -> Triple(
-            stringResource(R.string.permission_level_workspace),
-            stringResource(R.string.permission_level_workspace_description),
+        PermissionLevel.AUTO_REVIEW -> Triple(
+            stringResource(R.string.permission_level_auto_review),
+            stringResource(R.string.permission_level_auto_review_description),
             MaterialTheme.colorScheme.tertiary
-        )
-        PermissionLevel.WORKSPACE_REVIEWER -> Triple(
-            stringResource(R.string.permission_level_workspace_reviewer),
-            stringResource(R.string.permission_level_workspace_reviewer_description),
-            MaterialTheme.colorScheme.tertiary
-        )
-        PermissionLevel.REVIEWER -> Triple(
-            stringResource(R.string.permission_level_reviewer),
-            stringResource(R.string.permission_level_reviewer_description),
-            MaterialTheme.colorScheme.secondary
         )
         PermissionLevel.FORBID -> Triple(
             stringResource(R.string.permission_level_forbid),
@@ -370,14 +375,26 @@ private fun PermissionGroup(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            if (toolsInLevel.isNotEmpty()) {
-                toolsInLevel.forEach { toolName ->
-                    ToolChip(toolName = toolName, onRemove = { onToolToggled(toolName) })
+            val chips = toolsInLevel + defaultTools
+            if (chips.isNotEmpty()) {
+                chips.forEach { toolName ->
+                    val onRemove: (() -> Unit)? =
+                        if (toolName in defaultTools) null else { { onToolToggled(toolName) } }
+                    ToolChip(toolName = toolName, onRemove = onRemove)
                 }
             } else {
                 Text(
                     stringResource(R.string.no_tools_in_group),
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (defaultTools.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.permission_level_allow_default_hint),
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -396,7 +413,7 @@ private fun PermissionGroup(
 }
 
 @Composable
-private fun ToolChip(toolName: String, onRemove: () -> Unit) {
+private fun ToolChip(toolName: String, onRemove: (() -> Unit)?) {
     Row(
         modifier = Modifier
             .padding(vertical = 4.dp)
@@ -412,14 +429,16 @@ private fun ToolChip(toolName: String, onRemove: () -> Unit) {
             modifier = Modifier.weight(1f),
             color = MaterialTheme.colorScheme.onSecondaryContainer
         )
-        Icon(
-            imageVector = Icons.Default.Close,
-            contentDescription = stringResource(R.string.remove_tool),
-            modifier = Modifier
-                .size(18.dp)
-                .clickable { onRemove() },
-            tint = MaterialTheme.colorScheme.onSecondaryContainer
-        )
+        if (onRemove != null) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = stringResource(R.string.remove_tool),
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable { onRemove() },
+                tint = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+        }
     }
 }
 
@@ -504,51 +523,6 @@ private fun ToolSelectorDialog(
                 ) {
                     Text(stringResource(R.string.done))
                 }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun CompactPermissionLevelSelector(
-    selectedLevel: PermissionLevel,
-    onLevelSelected: (PermissionLevel) -> Unit
-) {
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        PermissionLevel.values().forEach { level ->
-            val isSelected = selectedLevel == level
-            val (containerColor, textColor) = when {
-                isSelected -> Pair(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary)
-                else -> Pair(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.onSurface)
-            }
-
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(containerColor)
-                    .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
-                    .clickable { onLevelSelected(level) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Text(
-                    text = when (level) {
-                        PermissionLevel.ALLOW -> stringResource(R.string.permission_level_allow)
-                        PermissionLevel.WORKSPACE -> stringResource(R.string.permission_level_workspace)
-                        PermissionLevel.WORKSPACE_REVIEWER ->
-                            stringResource(R.string.permission_level_workspace_reviewer)
-                        PermissionLevel.REVIEWER -> stringResource(R.string.permission_level_reviewer)
-                        PermissionLevel.ASK -> stringResource(R.string.permission_level_ask)
-                        PermissionLevel.FORBID -> stringResource(R.string.forbid)
-                    },
-                    color = textColor,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    style = MaterialTheme.typography.bodyMedium
-                )
             }
         }
     }

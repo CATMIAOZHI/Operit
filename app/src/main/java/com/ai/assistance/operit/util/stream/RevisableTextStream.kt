@@ -192,7 +192,7 @@ fun Stream<String>.shareRevisable(
         } finally {
             sharedEventStream.close(failure)
             sharedTextStream.close(failure)
-            onComplete()
+            runCompletionHandler(onComplete)
         }
     }
     return sharedTextStream.withEventChannel(sharedEventStream)

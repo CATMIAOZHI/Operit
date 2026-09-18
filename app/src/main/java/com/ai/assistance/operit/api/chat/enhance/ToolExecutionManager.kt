@@ -7,6 +7,7 @@ import com.ai.assistance.operit.core.config.SystemToolPrompts
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.protocol.ExecutableToolProtocolParser
 import com.ai.assistance.operit.core.agent.SubagentToolPolicy
+import com.ai.assistance.operit.core.agent.collaboration.CollaborationTools
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.AIToolHookDecision
@@ -42,11 +43,13 @@ import kotlinx.coroutines.ensureActive
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
+import com.ai.assistance.operit.ui.permissions.AUTOMATIC_REVIEW_CANCEL_PREFIX
 import com.ai.assistance.operit.ui.permissions.PermissionReviewCircuitBreaker
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
 import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
 import com.ai.assistance.operit.ui.permissions.ToolPermissionDecision
 import com.ai.assistance.operit.ui.permissions.ToolPermissionDenialSource
+import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
 import com.ai.assistance.operit.ui.permissions.resolveApprovalDecisionWithPermanentOverride
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.LocaleUtils
@@ -596,10 +599,7 @@ object ToolExecutionManager {
         toolExposureMode: ToolExposureMode
     ): ToolResult? {
         val toolName = invocation.tool.name.trim()
-        if (
-            toolName in PermissionReviewInternalTools.names ||
-                AgentRunObservers.isCapabilityTool(toolName)
-        ) {
+        if (PermissionReviewInternalTools.bypassesPermissionCheck(toolName)) {
             return null
         }
         val useEnglish = isEnglishLanguage(context)
@@ -766,10 +766,7 @@ object ToolExecutionManager {
         deferCircuitBreaker: Boolean = false,
         liveAssistantContent: String? = null,
     ): ToolPermissionCheckResult {
-        if (
-            invocation.tool.name in PermissionReviewInternalTools.names ||
-                AgentRunObservers.isCapabilityTool(invocation.tool.name)
-        ) {
+        if (PermissionReviewInternalTools.bypassesPermissionCheck(invocation.tool.name)) {
             toolHandler.notifyToolPermissionChecked(
                 invocation.tool,
                 granted = true,
@@ -1012,11 +1009,12 @@ object ToolExecutionManager {
                 val resolvedTool = resolveToolTarget(invocation.tool).tool
                 // Fingerprint the raw model call: the bound copy has canonicalized proxy params.
                 val consecutiveCount = subagentToolLoopGuard.record(rawToolsByIndex[index])
-                if (resolvedTool.name == "task") {
-                    // Nested Subagents are rejected below, so they must never trigger
-                    // an approval dialog that cannot make the invocation executable.
-                    // Recording first still lets this distinct call break another
-                    // tool's exact-repeat sequence.
+                if (CollaborationTools.isCollaborationTool(resolvedTool.name)) {
+                    // Handing work to another agent carries no side effect of its own and is allowed
+                    // by default, so repeating it is not the runaway loop this guard looks for. The
+                    // legacy task is also rejected below, where an approval dialog could not have
+                    // made the invocation executable. Recording first still lets this distinct call
+                    // break another tool's exact-repeat sequence.
                     continue
                 }
                 if (consecutiveCount < SUBAGENT_EXACT_REPEAT_REVIEW_THRESHOLD) {
@@ -1217,6 +1215,28 @@ object ToolExecutionManager {
             }
         }
 
+        // 3.1 “自动审核”快速档的异步风险评分：在整批派发时启动，覆盖本批全部动作，但不阻塞
+        // 本批的权限检查。评分只可能减少审核次数，任何异常都会退回阻塞审核。
+        //
+        // 空候选批次同样要走这一步：它会让旧分数按“一批一步”老化，否则被 hook 全部拦截的
+        // 派发不会消耗分数的时间预算。子代理精确重复拆分会递归进入本函数两次，因此这种少见的
+        // 派发会记两步——方向只会让分数更早失效，不会放宽任何判断。
+        withContext(Dispatchers.IO) {
+            toolHandler
+                .getToolPermissionSystem()
+                .prepareBatchRiskScores(
+                    tools = permissionCandidates.map { (_, _, tool) -> tool },
+                    callerChatId = callerChatId,
+                    conversationLabel = conversationLabel,
+                    workspacePath = workspacePath,
+                    workspaceEnv = workspaceEnv,
+                    parentModelConfigId = parentModelConfigId,
+                    parentModelIndex = parentModelIndex,
+                    timingScopeId = timingScopeId,
+                    liveAssistantContent = liveAssistantContent,
+                )
+        }
+
         val permissionChecks =
             parallelMapPreservingOrder(permissionCandidates) {
                     (batchIndex, invocation, interceptionTool) ->
@@ -1283,11 +1303,19 @@ object ToolExecutionManager {
                                 callerChatId,
                                 timingScopeId,
                                 invocation.invocationIndex,
-                            )?.status in
-                                setOf(
-                                    PermissionReviewStatus.APPROVED,
-                                    PermissionReviewStatus.DENIED,
-                                ),
+                            )
+                                ?.let { event ->
+                                    event.status in
+                                        setOf(
+                                            PermissionReviewStatus.APPROVED,
+                                            PermissionReviewStatus.DENIED,
+                                        ) &&
+                                        // A reused approval reuses an older verdict; it is not a
+                                        // fresh judgement, so it must not clear the circuit breaker.
+                                        event.resolutionSource !=
+                                            ToolPermissionSystem
+                                                .FAST_REVIEW_RESOLUTION_SOURCE
+                                } ?: false,
                     )
                 if (adjustedDecision is ToolPermissionDecision.Denied &&
                     adjustedDecision.interruptTurn &&
@@ -1323,7 +1351,7 @@ object ToolExecutionManager {
                             success = false,
                             result = StringResultData(""),
                             error =
-                                "Tool execution cancelled because automatic permission review " +
+                                "$AUTOMATIC_REVIEW_CANCEL_PREFIX " +
                                     "stopped this model turn after repeated denied actions.",
                             interruptTurn = true,
                         ).withExecutionMetadata(
@@ -1905,7 +1933,10 @@ internal fun applyDeferredPermissionReviewCircuit(
         decision is ToolPermissionDecision.Denied &&
             decision.source == ToolPermissionDenialSource.AUTOMATIC_REVIEW -> {
             val circuit = PermissionReviewCircuitBreaker.recordDenial(parentChatId, turnScopeId)
-            decision.copy(interruptTurn = circuit.interruptTurn)
+            // Keep a decision that already interrupts the turn: the breaker returns false once it
+            // has interrupted, so copying only its flag would clear the earlier signal and let the
+            // rest of the batch run tools that do not need a review.
+            decision.copy(interruptTurn = decision.interruptTurn || circuit.interruptTurn)
         }
         decision is ToolPermissionDecision.Allowed && wasAutomaticallyReviewed -> {
             PermissionReviewCircuitBreaker.recordNonDenial(parentChatId, turnScopeId)

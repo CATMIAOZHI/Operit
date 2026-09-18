@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import android.content.Context
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
@@ -19,6 +20,7 @@ import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.CharacterGroupCardManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionDenialDisplayText
 import com.ai.assistance.operit.ui.features.chat.components.part.resolveSubagentDisplayedTool
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -30,6 +32,40 @@ private val collaborationEnvelopeHeader = Regex(
     "^Message ID: [0-9a-f-]{36}\\nMessage Type: (MESSAGE|NEW_TASK|FINAL_ANSWER|STATUS)\\n" +
         "Task name: [^\\n]+\\nSender: ([^\\n]+)\\nPayload:\\n",
 )
+
+/** The label [CollaborationCoordinator.finish] puts in front of a status line's reason. */
+private val collaborationStatusLabel = Regex("^[^\\n:]*: (?:FAILED|INTERRUPTED|COMPLETED): ")
+
+/**
+ * What a status row should report in place of its payload.
+ *
+ * A run the automatic review stopped ends with the instruction written for the model, and the status
+ * line carries it behind the run's own "<path>: FAILED: " label. Only that line has to be replaced:
+ * every other status is the run's own error text and already reads as what happened.
+ */
+internal fun collaborationReportedStatusText(context: Context, body: String): String {
+    val reason = collaborationStatusReason(body)
+    return permissionDenialDisplayText(context, reason).takeIf { it != reason } ?: body
+}
+
+/**
+ * A status line without the run's own label, which is `"<path>: <status>: "`. The reason is what a
+ * reader needs, and it is the part that can hold the instruction written for the model.
+ */
+internal fun collaborationStatusReason(body: String): String =
+    collaborationStatusLabel.replaceFirst(body, "")
+
+/**
+ * The payload a browser should report for [content], or null when it is not a status row.
+ *
+ * The App's card reports a stopped run through its own line and never shows the payload; the browser
+ * has no such card, so it would print the whole envelope as a message the user sent.
+ */
+internal fun collaborationStatusDisplayText(context: Context, content: String): String? {
+    val match = collaborationEnvelopeHeader.find(content) ?: return null
+    if (match.groupValues[1] != "STATUS") return null
+    return collaborationReportedStatusText(context, content.substring(match.range.last + 1).trim())
+}
 
 internal fun collaborationDisplayMessages(content: String, sender: String): List<CollaborationDisplayMessage> {
     val match = collaborationEnvelopeHeader.find(content)
@@ -215,7 +251,14 @@ fun CollaborationMessageCard(message: ChatMessage, horizontalPadding: androidx.c
                 CollaborationAgentMessage(
                     sender = event.sender,
                     kindLabel = stringResource(collaborationKindLabelRes(event.kind)),
-                    body = event.body,
+                    // A status line can carry the instruction written for the model, and this card is
+                    // the only place a row without a live run shows its payload.
+                    body =
+                        if (event.kind == "STATUS") {
+                            collaborationReportedStatusText(context, event.body)
+                        } else {
+                            event.body
+                        },
                     chatId = currentChatId,
                 )
             }
