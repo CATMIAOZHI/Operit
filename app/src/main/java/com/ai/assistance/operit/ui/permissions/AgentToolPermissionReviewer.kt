@@ -302,8 +302,16 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
         // conversation of its own. The lock is what keeps a later batch, whose review arrives while
         // this one is still running, from cutting into that chain.
         val chatLock = PermissionReviewContinuationStore.chatLock(parentChatId)
-        val serialized = withTimeoutOrNull(CONTINUATION_WAIT_MS) { chatLock.lock(); true } ?: false
+        // The wait belongs to the `try`: a review cancelled while it waits still has to give back the
+        // one-time approval it reserved above, which is the whole reason the release lives in that
+        // `finally`. Ownership is recorded where the lock is taken rather than from the wait's result,
+        // so a wait that times out exactly as the lock is acquired still unlocks it.
+        var serialized = false
         try {
+            withTimeoutOrNull(CONTINUATION_WAIT_MS) {
+                chatLock.lock()
+                serialized = true
+            }
             PermissionReviewEventRepository.publish(
             PermissionReviewEvent(
                 id = reviewId,

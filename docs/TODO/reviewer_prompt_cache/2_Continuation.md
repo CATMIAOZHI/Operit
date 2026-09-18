@@ -200,15 +200,19 @@ being rebuilt beside the one that was already warm.
 - An entry older than the cursor that the earlier render dropped for budget and a later render
   selects again is not re-sent. The reviewer's conversation still carries the omission notice, so the
   gap is announced rather than silent, but the guarantee is "nothing that the earlier review had left
-  unread is dropped", not "the window is always reproduced exactly".
+  unread is dropped", not "the window is always reproduced exactly". A history longer than the
+  candidate tail carries the notice for the same reason, and that one is written when the window is
+  built rather than when a render drops an entry ([Window](1_Window.md)).
 - The per-chat lock map is a `ConcurrentHashMap` behind Kotlin's non-atomic `getOrPut` and a
   `firstOrNull { !isLocked }` eviction, so two reviews can briefly hold different locks for one chat.
   The failure mode is a redundant run and an `AlreadyRunning` answer, which falls back to the full
   prompt; it never widens a review. A lock can also be left behind if the wait is cancelled at the
   moment the lock changes hands, which costs latency rather than correctness.
-- `PermissionReviewExactOverrideStore.reserve` is released in the `finally` that the new wait now sits
-  inside, so a cancellation during that wait leaves the reservation behind for longer than it used
-  to. The reservation was already between those two points; only its window grew.
+- `PermissionReviewExactOverrideStore.reserve` is released in the `finally` the wait for the lock sits
+  inside, so a review cancelled while it waits gives the one-time approval back instead of leaving it
+  reserved. That wait is the only cancellable step between the reservation and the release, and it is
+  inside the `finally`; ownership is recorded where the lock is taken, so a wait that times out as the
+  lock changes hands still unlocks it. A lock the map loses to its own eviction is the residue above.
 - `AgentToolPermissionReviewer.review` itself is still not unit-tested: its orchestration needs a chat
   core and a coordinator. Only the cursor, the delta decision, the prompt shape, the store, and the
   window are. Four pieces of the wiring share that gap: the review orchestration, the branch that
