@@ -77,11 +77,16 @@ internal fun permissionReviewTranscriptEntries(
  * that and any ceiling are reported rather than silent: [OMITTED_ENTRIES_NOTICE] tells the reviewer
  * its view is partial, and a window that lost its user turn re-adds the last user entry so an action
  * is never read without the request it answers.
+ *
+ * [olderEntriesOmitted] is how the caller reports material that was cut before the window saw it,
+ * which the window cannot notice on its own; the candidate tail a caller applies is the case that
+ * needs it.
  */
 internal fun renderPermissionReviewTranscriptWindow(
     entries: List<PermissionReviewTranscriptEntry>,
     maxMessages: Int,
     maxChars: Int,
+    olderEntriesOmitted: Boolean = false,
 ): String {
     val newestFirst = mutableListOf<PermissionReviewTranscriptEntry>()
     var selectedChars = 0
@@ -100,7 +105,7 @@ internal fun renderPermissionReviewTranscriptWindow(
     }
     val selected = newestFirst.asReversed()
     val rendered = mutableListOf<String>()
-    if (omitted) rendered += "$OMITTED_ENTRIES_NOTICE\n"
+    if (omitted || olderEntriesOmitted) rendered += "$OMITTED_ENTRIES_NOTICE\n"
     if (selected.none { entry -> entry.isUser }) {
         entries.lastOrNull { entry -> entry.isUser }?.let { anchor ->
             rendered += "$USER_ANCHOR_PREFIX\n${anchor.rendered}"
@@ -133,6 +138,12 @@ internal suspend fun loadPermissionReviewTranscriptMessages(
  * superset of the window a count cap used to produce; the classifier passes its own smaller ceiling.
  * The classifier additionally receives the retained user instructions, so a restriction that scrolled
  * out of this window is still visible to it.
+ *
+ * The candidate tail bounds the history the window is even offered, so a history beyond it is
+ * reported as an omission: the reviewer prompt reads a missing [OMITTED_ENTRIES_NOTICE] as "nothing
+ * was left out", and a conversation whose tail fits the budget would otherwise look complete. The
+ * check is made on the offered messages, so it reports an omission whenever the tail was cut rather
+ * than only when an entry was really dropped, which errs towards saying the view is partial.
  */
 internal suspend fun buildPermissionReviewTranscript(
     chatCore: ChatServiceCore,
@@ -168,9 +179,10 @@ internal fun buildPermissionReviewTranscript(
     val persistedLiveAssistant =
         sanitizedLiveAssistant?.let { persistedLiveAssistantMessage(history, timingScopeId) }
 
+    val candidates = history.takeLast(MAX_TRANSCRIPT_CANDIDATES)
     val entries =
         permissionReviewTranscriptEntries(
-                candidates = history.takeLast(MAX_TRANSCRIPT_CANDIDATES),
+                candidates = candidates,
                 maxMessageChars = maxMessageChars,
                 skipTimestamp = persistedLiveAssistant?.timestamp,
             )
@@ -187,6 +199,7 @@ internal fun buildPermissionReviewTranscript(
         entries = entries,
         maxMessages = maxMessages,
         maxChars = maxChars,
+        olderEntriesOmitted = candidates.size < history.size,
     )
 }
 

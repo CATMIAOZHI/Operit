@@ -23,11 +23,15 @@ action last, so the window was the part worth fixing.
   here, though its rendering now also carries the omission notice whenever the ceiling or its budget
   cuts something.
 - Entries the budget leaves out are reported with a host notice, in the same shape the retained
-  instructions use, so a partial view is never read as a complete one.
+  instructions use, so a partial view is never read as a complete one. So is the history the
+  candidate tail cuts before the window: the window cannot see what it was never offered, and the
+  reviewer prompt reads a missing notice as "nothing was left out", so the caller reports that cut
+  and the notice is emitted whenever the tail was shortened. The check is made on the offered
+  messages rather than on the rendered entries, which errs towards saying the view is partial.
 - The last user entry stays in view when the window had to drop the user turn, so an action is never
   read without the request it answers.
 - Entries are still drawn from the newest candidate tail, which keeps the work of one review
-  bounded.
+  bounded, and a history longer than that tail reaches the reviewer as an announced omission.
 
 What this does not do: once the character budget is full, the oldest entries still fall out and the
 rendering moves. The guarantee is "stable while the budget holds", not "stable for a whole turn".
@@ -52,11 +56,11 @@ change may never lower the evidence.
   ceiling is still accepted and both call sites pass one: the reviewer passes
   `REVIEWER_MAX_TRANSCRIPT_MESSAGES`, which is pinned to "no ceiling", and the classifier passes its
   own eight.
-- `buildPermissionReviewTranscript` gathers the history, takes the newest candidate tail, and adds
-  the live assistant entry.
+- `buildPermissionReviewTranscript` gathers the history, takes the newest candidate tail, reports a
+  history longer than that tail as an omission, and adds the live assistant entry.
 - `PermissionReviewTranscriptTest.kt` fixes the contract: the reviewer's ceiling letting forty entries
   through, the prefix holding still as a turn grows, the omission notice, the user-anchor fallback,
-  the empty window, and the entry rendering.
+  the cut candidate tail, the empty window, and the entry rendering.
 
 ## Validation
 

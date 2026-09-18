@@ -106,6 +106,53 @@ class PermissionReviewTranscriptTest {
         assertFalse(rendered.contains(OMITTED_ENTRIES_NOTICE))
     }
 
+    /**
+     * The window is only offered the newest candidates, so what the tail cut never reaches it and it
+     * cannot report it. The reviewer prompt reads a missing notice as "nothing was left out", so a
+     * long conversation whose entries all fit the budget must still say its view is partial.
+     */
+    @Test
+    fun reportsTheHistoryTheCandidateTailCutBeforeTheWindow() {
+        val history =
+            (1..MAX_TRANSCRIPT_CANDIDATES + 5).map { index ->
+                message(timestamp = index.toLong(), sender = "user", content = "kept-$index")
+            }
+
+        val rendered =
+            buildPermissionReviewTranscript(
+                history = history,
+                timingScopeId = null,
+                liveAssistantContent = null,
+                maxMessages = REVIEWER_MAX_TRANSCRIPT_MESSAGES,
+            )
+
+        assertTrue(rendered.contains(OMITTED_ENTRIES_NOTICE))
+        assertFalse(
+            "the message the candidate tail cut is not rendered",
+            rendered.contains("kept-1\n"),
+        )
+        assertTrue("the newest message is still rendered", rendered.contains("kept-29\n"))
+    }
+
+    @Test
+    fun doesNotReportAnOmissionWhenTheCandidateTailHoldsTheWholeHistory() {
+        val history =
+            (1..MAX_TRANSCRIPT_CANDIDATES).map { index ->
+                message(timestamp = index.toLong(), sender = "user", content = "kept-$index")
+            }
+
+        val rendered =
+            buildPermissionReviewTranscript(
+                history = history,
+                timingScopeId = null,
+                liveAssistantContent = null,
+                maxMessages = REVIEWER_MAX_TRANSCRIPT_MESSAGES,
+            )
+
+        assertFalse(rendered.contains(OMITTED_ENTRIES_NOTICE))
+        assertTrue(rendered.contains("kept-1\n"))
+    }
+
     @Test
     fun reAddsTheLastUserEntryWhenTheWindowLostItsUserTurn() {
         val request = "r".repeat(200)
