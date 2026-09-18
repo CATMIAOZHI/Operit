@@ -308,8 +308,9 @@ internal class SpoolConcurrencyTest : TokenStatReliabilityTestBase() {
             awaitEvent("rerun-a")
             awaitEvent("rerun-b")
             awaitNoSealedSegments(spool)
-            assertFalse("request must be consumed by the rerun", TokenStatSpool.drainRequestPendingForTest())
-            assertFalse("worker must retire after the rerun", TokenStatSpool.drainScheduledForTest())
+            // 事件进入 Room 后 worker 仍在收尾，等它把请求消费掉并 retire 再断言（同 CleanupReliabilityTest 的
+            // awaitDrainIdle 用法）：直接采样会在机器繁忙时读到还在跑的那一轮。
+            awaitDrainIdle()
         } finally {
             TokenStatSpool.afterDrainRoundForTest = null
         }
@@ -327,8 +328,8 @@ internal class SpoolConcurrencyTest : TokenStatReliabilityTestBase() {
             TokenStatSpool.rejectDrainScheduleForTest = false
             TokenStatSpool.replay(context)
             awaitEvent("rejected-schedule-a")
-            assertFalse(TokenStatSpool.drainRequestPendingForTest())
-            assertFalse(TokenStatSpool.drainScheduledForTest())
+            // 同上：等这一轮真正收尾，而不是在事件刚落库时采样。
+            awaitDrainIdle()
         } finally {
             TokenStatSpool.rejectDrainScheduleForTest = false
         }
@@ -353,8 +354,7 @@ internal class SpoolConcurrencyTest : TokenStatReliabilityTestBase() {
             awaitEvent("init-drain-a")
             awaitEvent("init-drain-b")
             awaitNoSealedSegments(spool)
-            assertFalse(TokenStatSpool.drainRequestPendingForTest())
-            assertFalse(TokenStatSpool.drainScheduledForTest())
+            awaitDrainIdle()
         } finally {
             TokenStatSpool.dirSyncForTest = null
         }
