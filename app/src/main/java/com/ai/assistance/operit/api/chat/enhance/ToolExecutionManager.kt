@@ -1237,59 +1237,81 @@ object ToolExecutionManager {
                 )
         }
 
-        val permissionChecks =
-            parallelMapPreservingOrder(permissionCandidates) {
-                    (batchIndex, invocation, interceptionTool) ->
-                        val check =
-                        if (loopApprovedInvocations.containsKey(invocation)) {
-                            toolHandler.notifyToolPermissionChecked(
-                                interceptionTool,
-                                granted = true,
-                                reason = "Approved by Subagent exact-repeat loop review",
-                            )
-                            ToolPermissionCheckResult(ToolPermissionDecision.Allowed, null)
-                        } else {
-                            checkToolPermission(
-                                toolHandler,
-                                invocation,
-                                toolExposureMode,
-                                conversationLabel,
-                                workspacePath,
-                                workspaceEnv,
-                                callerChatId,
-                                parentModelConfigId,
-                                parentModelIndex,
-                                timingScopeId,
-                                batchIndex + 1,
-                                roleCardPermittedInvocations.size,
-                                deferCircuitBreaker = true,
-                                liveAssistantContent = liveAssistantContent,
-                            )
-                        }
-                        val finalError =
-                            check.errorResult?.withExecutionMetadata(
-                                invocation = invocation,
-                                state = ToolExecutionState.NOT_EXECUTED,
-                            )
-                        if (check.granted) {
-                            ToolExecutionTimingRepository.markWaitingExecution(
-                                timingScopeId,
-                                invocation,
-                            )
-                        } else if (finalError != null) {
-                            ToolExecutionTimingRepository.markFinished(
-                                timingScopeId,
-                                invocation,
-                                finalError,
-                                durationMs = null,
-                                state = ToolExecutionState.NOT_EXECUTED,
-                            )
-                        }
-                        Triple(invocation, check, finalError)
-                }
+        // 3.3 The independent reviewer answers a batch in the order it is handed the actions: the
+        // first one it reaches builds the prompt, and the reviews behind it continue that same
+        // reviewer conversation instead of each paying for a prompt of their own. Walking the batch
+        // in the model's own call order is what makes that chain follow the order the actions are
+        // executed in and read in. Handing the whole batch over at once left that order to a race
+        // between coroutines: whichever arrived first built the prompt, and the ones behind it waited
+        // for that review only up to the reviewer's continuation timeout, past which they sent a
+        // prompt of their own. A level that never reaches the reviewer keeps the parallel dispatch,
+        // where order can only decide which reply comes back first.
+        val permissionSystem = toolHandler.getToolPermissionSystem()
+        val candidateLevels =
+            permissionCandidates.map { (_, _, interceptionTool) ->
+                permissionSystem.getEffectivePermissionLevel(interceptionTool.name)
+            }
+        val reviewsInOrder = batchNeedsReviewOrder(candidateLevels)
 
-        // awaitAll preserves the candidate order, so UI state and later execution remain stable
-        // even when individual reviewers finish out of order.
+        suspend fun checkCandidate(
+            batchIndex: Int,
+            invocation: ToolInvocation,
+            interceptionTool: AITool,
+        ): Triple<ToolInvocation, ToolPermissionCheckResult, ToolResult?> {
+            val check =
+                if (loopApprovedInvocations.containsKey(invocation)) {
+                    toolHandler.notifyToolPermissionChecked(
+                        interceptionTool,
+                        granted = true,
+                        reason = "Approved by Subagent exact-repeat loop review",
+                    )
+                    ToolPermissionCheckResult(ToolPermissionDecision.Allowed, null)
+                } else {
+                    checkToolPermission(
+                        toolHandler,
+                        invocation,
+                        toolExposureMode,
+                        conversationLabel,
+                        workspacePath,
+                        workspaceEnv,
+                        callerChatId,
+                        parentModelConfigId,
+                        parentModelIndex,
+                        timingScopeId,
+                        batchIndex + 1,
+                        roleCardPermittedInvocations.size,
+                        deferCircuitBreaker = true,
+                        liveAssistantContent = liveAssistantContent,
+                    )
+                }
+            val finalError =
+                check.errorResult?.withExecutionMetadata(
+                    invocation = invocation,
+                    state = ToolExecutionState.NOT_EXECUTED,
+                )
+            if (check.granted) {
+                ToolExecutionTimingRepository.markWaitingExecution(
+                    timingScopeId,
+                    invocation,
+                )
+            } else if (finalError != null) {
+                ToolExecutionTimingRepository.markFinished(
+                    timingScopeId,
+                    invocation,
+                    finalError,
+                    durationMs = null,
+                    state = ToolExecutionState.NOT_EXECUTED,
+                )
+            }
+            return Triple(invocation, check, finalError)
+        }
+
+        val permissionChecks =
+            mapBatchInReviewOrder(permissionCandidates, ordered = reviewsInOrder) {
+                    (batchIndex, invocation, interceptionTool) ->
+                    checkCandidate(batchIndex, invocation, interceptionTool)
+            }
+
         for ((invocation, permissionCheck, initialErrorResult) in permissionChecks) {
             var errorResult = initialErrorResult
             if (!callerChatId.isNullOrBlank()) {
@@ -1959,3 +1981,31 @@ internal suspend fun <T, R> parallelMapPreservingOrder(
 ): List<R> = coroutineScope {
     values.map { value -> async { transform(value) } }.awaitAll()
 }
+
+/**
+ * Runs one batch's permission checks, one at a time in the order [values] was given when [ordered],
+ * and through [parallelMapPreservingOrder] otherwise.
+ *
+ * Order belongs to the reviewer: the first action of a batch builds its prompt and the reviews behind
+ * it continue that conversation, so a batch the reviewer serves has to reach it in the order the
+ * model asked for its actions. Every other level decides each action on its own, and there a batch can
+ * be worked through in parallel.
+ */
+internal suspend fun <T, R> mapBatchInReviewOrder(
+    values: List<T>,
+    ordered: Boolean,
+    transform: suspend (T) -> R,
+): List<R> =
+    if (ordered) {
+        values.map { value -> transform(value) }
+    } else {
+        parallelMapPreservingOrder(values, transform)
+    }
+
+/**
+ * Whether one batch holds an action the independent reviewer serves, which is the only thing that
+ * makes the batch's order matter: every other level decides each action on its own, and only
+ * [PermissionLevel.AUTO_REVIEW] can route an action to the reviewer.
+ */
+internal fun batchNeedsReviewOrder(levels: List<PermissionLevel>): Boolean =
+    levels.any { level -> level == PermissionLevel.AUTO_REVIEW }

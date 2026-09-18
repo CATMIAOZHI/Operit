@@ -7,6 +7,7 @@ import com.ai.assistance.operit.services.ChatServiceCore
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
+import com.ai.assistance.operit.data.stats.ProviderUsageAccumulator
 import com.ai.assistance.operit.data.stats.TokenStatCategory
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
@@ -233,7 +234,17 @@ internal class PermissionRiskScorer private constructor(context: Context) {
         // Registering the history here, rather than only where it is read, is what makes a record of
         // the first batch durable: the page that shows them may never be opened in this process.
         PermissionRiskScoreRepository.initialize(appContext)
+        // The classifier is shown the decisions this chat already reached, so the history has to be
+        // registered here rather than only where it is written.
+        PermissionReviewEventRepository.initialize(appContext)
         val scopeId = PermissionReviewChatScope.resolveRootChatId(appContext, callerChatId) ?: return
+        // A sub-agent's actions are reviewed and recorded under the sub-agent's own chat, while this
+        // scorer reasons about the root conversation, so a batch is shown the decisions of both.
+        val decisionsChatIds =
+            buildSet {
+                add(scopeId)
+                callerChatId?.trim()?.takeIf(String::isNotEmpty)?.let(::add)
+            }
         val progress = progressByScope.getOrPut(scopeId) { ScopeProgress() }
         val step =
             synchronized(progress) {
@@ -245,6 +256,16 @@ internal class PermissionRiskScorer private constructor(context: Context) {
         pruneScopes()
         val scorableActions = actions.filter(PermissionRiskAction::scorable)
         val recordStartedAt = System.currentTimeMillis()
+        // What the classifier was shown of this conversation's earlier decisions. It is filled in
+        // once the authorization snapshot is known, and the record builder below reads it, so the
+        // three publishes of one batch all report the same block. The skip paths publish before it is
+        // filled in, which is accurate: a batch that was never classified carried no block.
+        var priorReviews: PriorReviewsRender? = null
+        // What the classifier's own call cost. It arrives only when the call finishes, and the record
+        // builder below reads it, so the publishes of one batch report the same call's usage. The skip
+        // paths publish before it is filled in, which is accurate: nothing was asked and nothing was
+        // spent.
+        var classifierUsage: PermissionRiskScoreUsage? = null
         // One record per batch, keyed by the batch's own step so the running classification and the
         // skip below land on the same row. The id also carries the process generation, so a batch of
         // this process cannot take the place of an earlier process's record at the same step.
@@ -261,6 +282,10 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                     totalActions = actions.size,
                     refusedBySettings = actions.any(PermissionRiskAction::refusedBySettings),
                     toolNames = permissionRiskBatchToolNames(actions),
+                    usage = classifierUsage,
+                    priorReviewCount = priorReviews?.count ?: 0,
+                    priorReviewChars = priorReviews?.chars ?: 0,
+                    priorReviewHash = priorReviews?.hash.orEmpty(),
                 )
             )
         val modelSelection =
@@ -366,11 +391,20 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                 maxMessageChars = MAX_CLASSIFIER_TRANSCRIPT_MESSAGE_CHARS,
                 maxChars = MAX_CLASSIFIER_TRANSCRIPT_CHARS,
             )
+        priorReviews =
+            renderPriorReviews(
+                events = PermissionReviewEventRepository.decisionsFor(decisionsChatIds),
+                parentChatIds = decisionsChatIds,
+                policyVersion = policySnapshot.version,
+                retainedInstructionsHash = retained.hash,
+                workspaceKey = permissionReviewWorkspaceKey(workspacePath, workspaceEnv),
+            )
         val input =
             buildClassifierInput(
                 actions = actions,
                 retained = retained,
                 transcript = transcript,
+                priorReviews = priorReviews?.block,
                 workspacePath = workspacePath,
                 workspaceEnv = workspaceEnv,
                 policyText = policySnapshot.text,
@@ -379,11 +413,14 @@ internal class PermissionRiskScorer private constructor(context: Context) {
         AppLogger.i(
             TAG,
             "Risk scoring started: step=$step, model=$modelKey, actions=${actions.size}, " +
-                "retained_complete=${retained.complete}, scorable=${scorableActions.size}"
+                "retained_complete=${retained.complete}, scorable=${scorableActions.size}, " +
+                "prior_reviews=${priorReviews?.count ?: 0}"
         )
         PermissionRiskScoreRepository.publish(record())
         workScope.launch {
-            val verdict = classify(input = input, modelKey = modelKey.orEmpty())
+            val outcome = classify(input = input, modelKey = modelKey.orEmpty())
+            classifierUsage = outcome.usage
+            val verdict = outcome.verdict
             if (verdict == null) {
                 noteFailure(modelKey.orEmpty())
                 // Fail closed. A high-risk score can only ever send later calls to the blocking
@@ -399,7 +436,11 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                         ),
                 )
                 markStepFailed(scopeId = scopeId, progress = progress, step = step)
-                AppLogger.w(TAG, "Risk scoring failed closed: step=$step, model=$modelKey")
+                AppLogger.w(
+                    TAG,
+                    "Risk scoring failed closed: step=$step, model=$modelKey, " +
+                        "usage=${classifierUsage.summaryForLog()}"
+                )
                 PermissionRiskScoreRepository.publish(
                     record {
                         it.copy(
@@ -421,7 +462,11 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                         authorization = authorization,
                     ),
             )
-            AppLogger.i(TAG, "Risk scoring completed: step=$step, verdict=$verdict")
+            AppLogger.i(
+                TAG,
+                "Risk scoring completed: step=$step, verdict=$verdict, " +
+                    "usage=${classifierUsage.summaryForLog()}"
+            )
             PermissionRiskScoreRepository.publish(
                 record {
                     it.copy(
@@ -585,7 +630,24 @@ internal class PermissionRiskScorer private constructor(context: Context) {
         }
     }
 
-    private suspend fun classify(input: PermissionRiskClassifierInput, modelKey: String): PermissionRiskVerdict? {
+    /**
+     * What one classification call left behind: the verdict, and what the call itself cost. The usage
+     * is reported even when the call failed or ran out of time, because a provider that was asked and
+     * answered part of the question has still been paid for what it read.
+     */
+    private data class ClassificationOutcome(
+        val verdict: PermissionRiskVerdict?,
+        val usage: PermissionRiskScoreUsage?,
+    ) {
+        companion object {
+            val NOT_ASKED = ClassificationOutcome(verdict = null, usage = null)
+        }
+    }
+
+    private suspend fun classify(
+        input: PermissionRiskClassifierInput,
+        modelKey: String,
+    ): ClassificationOutcome {
         val lease =
             runCatching {
                     EnhancedAIService.getInstance(appContext)
@@ -594,8 +656,11 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                 }
                 .getOrElse { error ->
                     AppLogger.w(TAG, "Failed to acquire the scoring service", error)
-                    return null
+                    return ClassificationOutcome.NOT_ASKED
                 }
+        // The provider reports its usage through the same channel the token ledger counts, so the row
+        // on the pre-classification page says what the statistics page says.
+        val reportedUsage = ProviderUsageAccumulator()
         return try {
             val buffer = StringBuilder()
             val completed =
@@ -608,28 +673,48 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                             stream = false,
                             enableThinking = false,
                             enableRetry = false,
-                            statsCategory = TokenStatCategory.OTHER,
+                            statsCategory = TokenStatCategory.PERMISSION_RISK_SCORER,
+                            onUsageReported = { usage, attempt ->
+                                reportedUsage.onUsage(usage, attempt)
+                            },
                         )
                         .collect { chunk -> buffer.append(chunk) }
                 }
-            if (completed == null) {
-                AppLogger.w(TAG, "Risk scoring timed out for model=$modelKey")
-                null
-            } else {
-                parsePermissionRiskVerdict(buffer.toString())
-            }
+            val verdict =
+                if (completed == null) {
+                    AppLogger.w(TAG, "Risk scoring timed out for model=$modelKey")
+                    null
+                } else {
+                    parsePermissionRiskVerdict(buffer.toString())
+                }
+            ClassificationOutcome(verdict = verdict, usage = reportedUsage.toScoreUsage())
         } catch (error: Exception) {
             AppLogger.w(TAG, "Risk scoring call failed for model=$modelKey", error)
-            null
+            ClassificationOutcome(verdict = null, usage = reportedUsage.toScoreUsage())
         } finally {
             runCatching { lease.close() }
         }
+    }
+
+    /**
+     * The parts of the request's usage the row shows. The aggregation already refused to sum a
+     * component that one of the attempts did not report, so an unknown component stays null here.
+     */
+    private fun ProviderUsageAccumulator.toScoreUsage(): PermissionRiskScoreUsage? {
+        val aggregated = aggregatedUsage() ?: return null
+        return PermissionRiskScoreUsage(
+            uncachedInputTokens = aggregated.uncachedInputTokens,
+            cachedInputTokens = aggregated.cachedInputTokens,
+            totalInputTokens = aggregated.totalInputTokens,
+            outputTokens = aggregated.outputTokens,
+        )
     }
 
     private fun buildClassifierInput(
         actions: List<PermissionRiskAction>,
         retained: PermissionReviewRetainedInstructions,
         transcript: String,
+        priorReviews: String?,
         workspacePath: String?,
         workspaceEnv: String?,
         policyText: String,
@@ -643,6 +728,10 @@ internal class PermissionRiskScorer private constructor(context: Context) {
             )
         val system =
             CLASSIFIER_INSTRUCTIONS + "\n\n# Current security policy (version $policyVersion)\n" + policyText
+        // The earlier decisions go after the workspace and before the transcript: they change as the
+        // conversation proceeds, so they belong on the volatile side of the prompt, but nothing that
+        // holds still is placed after them, so the reusable prefix still ends where it did.
+        val priorReviewsBlock = priorReviews?.let { block -> "$block\n\n" }.orEmpty()
         val user =
             """
             ${retained.text}
@@ -651,7 +740,7 @@ internal class PermissionRiskScorer private constructor(context: Context) {
             path=${workspacePath ?: "(none)"}
             environment=${workspaceEnv ?: "(default)"}
 
-            RECENT PARENT TRANSCRIPT:
+            ${priorReviewsBlock}RECENT PARENT TRANSCRIPT:
             $transcript
 
             CURRENT COURSE OF ACTION (untrusted evidence; the tool calls about to run, in dispatch order):

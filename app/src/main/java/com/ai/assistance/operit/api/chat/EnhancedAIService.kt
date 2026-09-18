@@ -49,6 +49,7 @@ import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.ExternalHttpApiPreferences
 import com.ai.assistance.operit.data.preferences.WakeWordPreferences
+import com.ai.assistance.operit.data.stats.TokenStatCategory
 import com.ai.assistance.operit.util.stream.MutableSharedStream
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.StreamCollector
@@ -357,6 +358,12 @@ class EnhancedAIService private constructor(
         var workspacePath: String? = null,
         var workspaceEnv: String? = null,
         var functionType: FunctionType = FunctionType.CHAT,
+        /**
+         * The provider conversation this turn belongs to, when it is not the chat the turn runs in.
+         * An internal turn whose conversation outlives its chat pins it here so a provider that caches
+         * prompt prefixes keeps reusing them; null means the turn's own chat is the conversation.
+         */
+        var providerSessionId: String? = null,
         var promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT,
         var enableThinking: Boolean = false,
         var enableMemoryAutoUpdate: Boolean = true,
@@ -473,6 +480,8 @@ class EnhancedAIService private constructor(
         val toolTimingScopeId: String? = null,
         val workspacePath: String? = null,
         val workspaceEnv: String? = null,
+        /** The conversation identity this turn asks its provider under, resolved by the turn itself. */
+        val providerSessionId: String? = null,
         val toolsEnabled: Boolean = true,
         val isolatedToolPrompts: List<ToolPrompt>? = null,
         val terminalToolNames: Set<String> = emptySet(),
@@ -1105,6 +1114,14 @@ class EnhancedAIService private constructor(
         currentRequestOutputTokenCount = 0
         currentRequestCachedInputTokenCount = 0
 
+        // A turn that belongs to a conversation of its own asks under that identity everywhere it
+        // reaches a provider, including the tool continuations it starts: a provider only reuses the
+        // prompt prefix a sibling turn warmed while the identity stays the same.
+        val providerConversationId =
+            options.providerSessionId?.takeIf { it.isNotBlank() }
+                ?: chatId?.takeIf { it.isNotBlank() }
+                ?: providerSessionId
+
         val eventChannel = MutableSharedStream<TextStreamEvent>(replay = Int.MAX_VALUE)
         val wrappedStream = stream {
             val responseCollector = this
@@ -1119,6 +1136,7 @@ class EnhancedAIService private constructor(
                     toolTimingScopeId = toolTimingScopeId,
                     workspacePath = workspacePath,
                     workspaceEnv = workspaceEnv,
+                    providerSessionId = providerConversationId,
                     toolsEnabled = toolsEnabled,
                     isolatedToolPrompts = isolatedToolPrompts,
                     terminalToolNames = terminalToolNames,
@@ -1353,11 +1371,10 @@ class EnhancedAIService private constructor(
                                     },
                                     onNonFatalError = onNonFatalError,
                                     statsCategory =
-                                        if (isSubTask) {
-                                            com.ai.assistance.operit.data.stats.TokenStatCategory.SUBAGENT
-                                        } else {
-                                            com.ai.assistance.operit.data.stats.TokenStatCategory.CHAT
-                                        }
+                                        tokenStatsCategoryFor(
+                                            functionType = options.functionType,
+                                            isSubTask = isSubTask,
+                                        )
                             )
                     val revisableStream = responseStream as? TextStreamEventCarrier
 
@@ -1566,7 +1583,7 @@ class EnhancedAIService private constructor(
             }
         }
         val sessionContext = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
-            chatId?.takeIf { it.isNotBlank() } ?: providerSessionId,
+            providerConversationId,
             workspacePath,
         )
         val sessionStream = object : Stream<String> by wrappedStream {
@@ -2102,7 +2119,9 @@ class EnhancedAIService private constructor(
         // This independent scope must retain the conversation identity for tool continuations.
         val processToolJob = toolProcessingScope.async(
             context = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
-                chatId?.takeIf { it.isNotBlank() } ?: providerSessionId,
+                context.providerSessionId
+                    ?: chatId?.takeIf { it.isNotBlank() }
+                    ?: providerSessionId,
                 context.workspacePath,
             ),
             start = CoroutineStart.LAZY,
@@ -2503,11 +2522,10 @@ class EnhancedAIService private constructor(
                                 },
                                 onNonFatalError = onNonFatalError,
                                 statsCategory =
-                                    if (isSubTask) {
-                                        com.ai.assistance.operit.data.stats.TokenStatCategory.SUBAGENT
-                                    } else {
-                                        com.ai.assistance.operit.data.stats.TokenStatCategory.CHAT
-                                    }
+                                    tokenStatsCategoryFor(
+                                        functionType = functionType,
+                                        isSubTask = isSubTask,
+                                    )
                         )
 
                 // 更新状态为接收中
@@ -3392,4 +3410,18 @@ class EnhancedAIService private constructor(
     suspend fun analyzeVideoWithIntent(videoPath: String, userIntent: String?): String {
         return conversationService.analyzeVideoWithIntent(videoPath, userIntent, multiServiceManager)
     }
+
+    /**
+     * The automatic review's calls are sub-tasks too, and they are the ones whose prompt reuse is
+     * worth watching, so they are counted apart from the other sub-agents.
+     */
+    private fun tokenStatsCategoryFor(
+        functionType: FunctionType,
+        isSubTask: Boolean,
+    ): TokenStatCategory =
+        when {
+            functionType == FunctionType.PERMISSION_REVIEWER -> TokenStatCategory.PERMISSION_REVIEWER
+            isSubTask -> TokenStatCategory.SUBAGENT
+            else -> TokenStatCategory.CHAT
+        }
 }

@@ -100,95 +100,23 @@ class TokenStatRequestContext(
      */
     fun onUsage(usage: ProviderUsageSnapshot, attempt: Int = 1) {
         val normalizedAttempt = attempt.coerceAtLeast(1)
-        val sanitized = sanitizeUsage(usage)
+        val sanitized = sanitizeProviderUsage(usage)
         usageReportCount += 1
         lastUsage = sanitized
         attemptUsages[normalizedAttempt] =
-            mergeSameAttemptSnapshot(attemptUsages[normalizedAttempt], sanitized)
+            mergeSameAttemptUsage(attemptUsages[normalizedAttempt], sanitized)
         if (normalizedAttempt > attemptCount) {
             attemptCount = normalizedAttempt
         }
     }
 
-    /** 防御：负值分量一律拒绝为未知（真实负值只会来自异常 provider 数据）。 */
-    private fun sanitizeUsage(usage: ProviderUsageSnapshot): ProviderUsageSnapshot {
-        fun nonNegative(value: Long?): Long? = value?.takeIf { it >= 0 }
-        return ProviderUsageSnapshot(
-            uncachedInputTokens = nonNegative(usage.uncachedInputTokens),
-            cachedInputTokens = nonNegative(usage.cachedInputTokens),
-            cacheWriteTokens = nonNegative(usage.cacheWriteTokens),
-            totalInputTokens = nonNegative(usage.totalInputTokens),
-            outputTokens = nonNegative(usage.outputTokens),
-            reasoningTokens = nonNegative(usage.reasoningTokens),
-            reasoningIncludedInOutput = usage.reasoningIncludedInOutput,
-            cacheWriteSeparateBilling = usage.cacheWriteSeparateBilling,
-            completeSnapshot = usage.completeSnapshot,
-            source = usage.source,
-        )
-    }
-
     /**
-     * 同一 attempt 的快照合并：
-     * - 完整快照（[ProviderUsageSnapshot.completeSnapshot] = true）：整份覆盖，
-     *   null 字段 = 明确未知（撤销旧值）；
-     * - 部分更新（false）：最新上报的非空字段优先；新快照缺失的字段保留旧值。
-     *   累计字段（output 等）直接取最新值，不能 start/delta 相加。
-     */
-    private fun mergeSameAttemptSnapshot(
-        previous: ProviderUsageSnapshot?,
-        latest: ProviderUsageSnapshot,
-    ): ProviderUsageSnapshot {
-        if (previous == null) return latest
-        if (latest.completeSnapshot) return latest
-        return ProviderUsageSnapshot(
-            uncachedInputTokens = latest.uncachedInputTokens ?: previous.uncachedInputTokens,
-            cachedInputTokens = latest.cachedInputTokens ?: previous.cachedInputTokens,
-            cacheWriteTokens = latest.cacheWriteTokens ?: previous.cacheWriteTokens,
-            totalInputTokens = latest.totalInputTokens ?: previous.totalInputTokens,
-            outputTokens = latest.outputTokens ?: previous.outputTokens,
-            reasoningTokens = latest.reasoningTokens ?: previous.reasoningTokens,
-            reasoningIncludedInOutput =
-                latest.reasoningIncludedInOutput ?: previous.reasoningIncludedInOutput,
-            cacheWriteSeparateBilling = latest.cacheWriteSeparateBilling,
-            completeSnapshot = false,
-            source = latest.source,
-        )
-    }
-
-    /**
-     * 按 attempt 聚合后的 usage：分量在所有上报 attempt 中都已知时才求和
-     * （Long 饱和加法，绝不溢出为负），任一 attempt 该分量未知则聚合值保持未知；
-     * 来源/包含推理声明取最后一次。
+     * 按 attempt 聚合后的 usage，规则与账本一致，见 [aggregateAttemptUsages]：分量在所有上报
+     * attempt 中都已知时才求和，任一 attempt 该分量未知则保持未知。spool 重放时直接返回已聚合结果。
      */
     fun aggregatedUsage(): ProviderUsageSnapshot? {
         replayAggregatedUsage?.let { return it }
-        val snapshots = attemptUsages.values.toList()
-        if (snapshots.isEmpty()) return null
-        val allAttemptsReported =
-            attemptCount > 0 && (1..attemptCount).all { attemptUsages.containsKey(it) }
-        return ProviderUsageSnapshot(
-            uncachedInputTokens = sumComponent(snapshots, allAttemptsReported) { it.uncachedInputTokens },
-            cachedInputTokens = sumComponent(snapshots, allAttemptsReported) { it.cachedInputTokens },
-            cacheWriteTokens = sumComponent(snapshots, allAttemptsReported) { it.cacheWriteTokens },
-            totalInputTokens = sumComponent(snapshots, allAttemptsReported) { it.totalInputTokens },
-            outputTokens = sumComponent(snapshots, allAttemptsReported) { it.outputTokens },
-            reasoningTokens = sumComponent(snapshots, allAttemptsReported) { it.reasoningTokens },
-            reasoningIncludedInOutput = snapshots.lastOrNull()?.reasoningIncludedInOutput,
-            cacheWriteSeparateBilling = snapshots.lastOrNull()?.cacheWriteSeparateBilling ?: true,
-            completeSnapshot = true,
-            source = snapshots.lastOrNull()?.source ?: "unknown",
-        )
-    }
-
-    private fun sumComponent(
-        snapshots: List<ProviderUsageSnapshot>,
-        allAttemptsReported: Boolean,
-        pick: (ProviderUsageSnapshot) -> Long?,
-    ): Long? {
-        if (!allAttemptsReported) return null
-        val values = snapshots.mapNotNull(pick)
-        if (values.size != snapshots.size) return null
-        return values.fold(0L) { acc, value -> TokenCostCalculator.saturatedAdd(acc, value) }
+        return aggregateAttemptUsages(attemptUsages, attemptCount)
     }
 
     /** 结束请求：只能设置一次，后续调用被忽略。 */
