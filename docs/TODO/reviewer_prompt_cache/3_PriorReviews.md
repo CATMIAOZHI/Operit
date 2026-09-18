@@ -86,7 +86,9 @@ registration in `guardian-context/src/lib.rs`, and `ext/guardian-v2/src/async_sc
   before the background decode cannot see the chat's own earlier decisions as absent.
 - `PermissionRiskScorer.beginBatch` registers that repository and passes the rendered block into
   `buildClassifierInput`, which places it between the workspace block and the transcript. With no
-  qualifying decision the prompt is byte-for-byte what it was before this change.
+  qualifying decision the prompt carries no block of its own and is byte-for-byte what it was before
+  this change, apart from the omission notice a history longer than the candidate tail adds
+  ([Window](1_Window.md)).
 - The batch's own record keeps what it was shown: `PermissionRiskScoreRecord.priorReviewCount`,
   `priorReviewChars`, and `priorReviewHash`, filled from the render. The pre-classification page shows
   them as "earlier reviews carried" on every batch that reached the classifier, and says when a batch

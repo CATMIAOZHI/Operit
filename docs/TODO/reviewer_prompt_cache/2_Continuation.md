@@ -211,8 +211,9 @@ being rebuilt beside the one that was already warm.
 - `PermissionReviewExactOverrideStore.reserve` is released in the `finally` the wait for the lock sits
   inside, so a review cancelled while it waits gives the one-time approval back instead of leaving it
   reserved. That wait is the only cancellable step between the reservation and the release, and it is
-  inside the `finally`; ownership is recorded where the lock is taken, so a wait that times out as the
-  lock changes hands still unlocks it. A lock the map loses to its own eviction is the residue above.
+  the `finally` the release lives in that covers it; ownership is recorded where the lock is taken, so
+  a wait that times out as the lock changes hands still unlocks it. A lock the map loses to its own
+  eviction is the residue above.
 - `AgentToolPermissionReviewer.review` itself is still not unit-tested: its orchestration needs a chat
   core and a coordinator. Only the cursor, the delta decision, the prompt shape, the store, and the
   window are. Four pieces of the wiring share that gap: the review orchestration, the branch that
