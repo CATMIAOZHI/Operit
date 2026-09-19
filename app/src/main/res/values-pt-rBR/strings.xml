@@ -90,7 +90,7 @@
     <string name="colorpicker_select_color">Escolha a cor</string>
     <string name="colorpicker_sample_text">texto de exemplo</string>
     <string name="colorpicker_high_contrast">alto contraste</string>
-    <string name="colorpicker_low_contrast">baixo contraste</string>
+    <string name="colorpicker_low_contrast">contraste moderado</string>
     <string name="colorpicker_manual_input">Insira a cor manualmente</string>
     <string name="colorpicker_paste">Colar</string>
     <string name="colorpicker_apply">aplicativo</string>

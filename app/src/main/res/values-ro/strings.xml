@@ -102,7 +102,7 @@
     <string name="colorpicker_select_color">Alegeți culoarea</string>
     <string name="colorpicker_sample_text">Text de exemplu</string>
     <string name="colorpicker_high_contrast">Contrast ridicat</string>
-    <string name="colorpicker_low_contrast">Contrast redus</string>
+    <string name="colorpicker_low_contrast">Contrast moderat</string>
     <string name="colorpicker_manual_input">Introducerea manuală a culorilor</string>
     <string name="colorpicker_paste">Lipiți</string>
     <string name="colorpicker_apply">Aplicații</string>
