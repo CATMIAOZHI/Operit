@@ -44,9 +44,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
-import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_AUTO
-import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_DARK
-import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_LIGHT
 import com.google.android.exoplayer2.DefaultLoadControl
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
@@ -459,22 +456,14 @@ internal fun generateLightColorScheme(
     // pick has to be strengthened before it is readable on the light surfaces.
     val accent = ensureResolvedLightAccentContrast(primaryColor)
     val accentSecondary = ensureResolvedLightAccentContrast(secondaryColor)
-    val onPrimary = when (onColorMode) {
-        ON_COLOR_MODE_LIGHT -> Color.White
-        ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(accent)
-    }
-    val onSecondary = when (onColorMode) {
-        ON_COLOR_MODE_LIGHT -> Color.White
-        ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(accentSecondary)
-    }
+    val onPrimary = resolveContrastingTextColor(accent, onColorMode)
+    val onSecondary = resolveContrastingTextColor(accentSecondary, onColorMode)
 
     // Tints keep the value the user picked; only the accent itself is strengthened.
     val primaryContainer = lightenColor(primaryColor, 0.7f)
-    val onPrimaryContainer = getContrastingTextColor(primaryContainer)
+    val onPrimaryContainer = getResolvedContrastingTextColor(primaryContainer)
     val secondaryContainer = lightenColor(secondaryColor, 0.7f)
-    val onSecondaryContainer = getContrastingTextColor(secondaryContainer)
+    val onSecondaryContainer = getResolvedContrastingTextColor(secondaryContainer)
 
     // Return a complete color scheme, ensuring onSurface and onSurfaceVariant are consistent
     return rainyBaseColorScheme(darkTheme = false).copy(
@@ -506,23 +495,15 @@ internal fun generateDarkColorScheme(
     val accent = ensureResolvedDarkAccentContrast(adjustedPrimaryColor)
     val accentSecondary = ensureResolvedDarkAccentContrast(adjustedSecondaryColor)
 
-    val onPrimary = when (onColorMode) {
-        ON_COLOR_MODE_LIGHT -> Color.White
-        ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(accent)
-    }
-    val onSecondary = when (onColorMode) {
-        ON_COLOR_MODE_LIGHT -> Color.White
-        ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(accentSecondary)
-    }
+    val onPrimary = resolveContrastingTextColor(accent, onColorMode)
+    val onSecondary = resolveContrastingTextColor(accentSecondary, onColorMode)
 
     val primaryContainer = darkenColor(primaryColor, 0.3f)
     // Measured like every other label: a light pick leaves this container light enough that a
     // forced white label would sit at 2.1:1 on it.
-    val onPrimaryContainer = getContrastingTextColor(primaryContainer)
+    val onPrimaryContainer = getResolvedContrastingTextColor(primaryContainer)
     val secondaryContainer = darkenColor(secondaryColor, 0.3f)
-    val onSecondaryContainer = getContrastingTextColor(secondaryContainer)
+    val onSecondaryContainer = getResolvedContrastingTextColor(secondaryContainer)
 
     // Return a complete color scheme, ensuring onSurface and onSurfaceVariant are consistent
     return rainyBaseColorScheme(darkTheme = true).copy(
@@ -539,21 +520,6 @@ internal fun generateDarkColorScheme(
         onSurfaceVariant = Color.White.copy(alpha = 0.7f),
         onBackground = Color.White
     )
-}
-
-/**
- * The label colour for a filled surface: whichever of black and white actually contrasts better,
- * so the pair never lands below ~4.58:1 on an opaque fill. Only [ON_COLOR_MODE_LIGHT] and
- * [ON_COLOR_MODE_DARK] skip the measurement, because they are the user asking for that side.
- */
-private fun getContrastingTextColor(backgroundColor: Color): Color {
-    return if (resolvedContrastRatio(Color.Black, backgroundColor) >=
-        resolvedContrastRatio(Color.White, backgroundColor)
-    ) {
-        Color.Black
-    } else {
-        Color.White
-    }
 }
 
 /** 使颜色变亮 */
